@@ -169,6 +169,10 @@
         "unchecked": {
           "label": "Sin revisar",
           "title": "Un token de esta oferta no pudo ser revisado por el filtro de seguridad independiente. Trátalo con cuidado adicional."
+        },
+        "checking": {
+          "label": "Revisando",
+          "title": "La revisión de seguridad independiente de los tokens de esta oferta aún no ha terminado. Podrás elegirla cuando termine."
         }
       },
       "matchesHidden_zero": "{{count}} ofertas coincidentes están ocultas porque una revisión de seguridad independiente marcó uno de sus tokens como peligroso.",
@@ -177,6 +181,8 @@
       "matchesHidden_few": "{{count}} ofertas coincidentes están ocultas porque una revisión de seguridad independiente marcó uno de sus tokens como peligroso.",
       "matchesHidden_many": "{{count}} ofertas coincidentes están ocultas porque una revisión de seguridad independiente marcó uno de sus tokens como peligroso.",
       "matchesHidden_other": "{{count}} ofertas coincidentes están ocultas porque una revisión de seguridad independiente marcó uno de sus tokens como peligroso.",
+      "matchesUnscreenedTail": "Hay más ofertas coincidentes además de las revisadas aquí. No se recomiendan sin una revisión de seguridad. El Libro de ofertas las muestra todas y marca las que la revisión de seguridad señala.",
+      "matchesOfferBookLink": "Abrir el Libro de ofertas",
       "reputationListedTop": "Listado de mercado encontrado: {{name}}{{symbolSuffix}}, puesto #{{rank}} por tamaño de mercado. Verifica que coincida con el token que querías.",
       "reputationListedDeep": "Listado de mercado encontrado: {{name}}{{symbolSuffix}} — fuera del top 200 por tamaño de mercado. Los tokens más pequeños se mueven con más dificultad y desaparecen más rápido; revisa el proyecto.",
       "reputationUnlisted": "No se encontró listado de mercado para esta dirección — el mercado más amplio no conoce este token. Eso por sí solo no lo hace malo, pero verifica la dirección del contrato con el proyecto antes de operar con él."
@@ -301,6 +307,12 @@
       "pushEnable": "Activar entrega Push",
       "pushEnabled": "La entrega Push está activa para esta billetera.",
       "pushButton": "Abrir el canal Push",
+      "pushChecking": "Comprobando si ahora se pueden enviar alertas Push…",
+      "pushUnavailable": "Push no se puede activar ahora: esta implementación no puede enviar recordatorios de pago por Push en este momento.",
+      "pushScopeAgent": "Esta comprobación cubre los recordatorios de pago. Los avisos cuando un préstamo se vuelve arriesgado se envían por separado, y esta página no puede confirmar que lleguen a Push — mantén otro canal de alertas activado para ellos.",
+      "pushUnknown": "No pudimos comprobar si ahora se pueden enviar alertas Push, así que la opción está desactivada. Vuelve a intentarlo más tarde.",
+      "pushKeptNote": "La opción de Push que elegiste antes para esta cartera se conserva, y las alertas vuelven a llegar por Push cuando el envío se restablezca.",
+      "pushNotSaved": "Tus demás ajustes se guardaron, pero Push no se activó: esta implementación no puede enviar recordatorios de pago por Push ahora mismo.",
       "loanNudge": "¿Quieres un aviso de Telegram si este préstamo se vuelve riesgoso? Configura alertas en Configuración.",
       "unlinkedChainOnly": "Desvinculado para {{network}}. Un monedero de cuenta inteligente se desconecta por red — si este monedero está vinculado en otras redes, desvincule cada una desde allí con su propia firma."
     },
@@ -547,6 +559,11 @@
       "liquidityChecking": "Comprobando cómo valora el protocolo estos activos…",
       "liquidityCheckFailed": "No pudimos comprobar cómo se valoran estos activos, y esa revisión decide una advertencia importante — la firma queda pausada hasta que tenga éxito.",
       "linkedLoanCheckFailed": "No pudimos comprobar si esta oferta es una venta de posición de un préstamo activo, y esa revisión decide un aviso importante — la firma queda pausada hasta que tenga éxito.",
+      "refinanceRequestBanner": "Esta es una solicitud de refinanciación del préstamo #{{loanId}}. Aceptarla abre tu préstamo y, en la misma transacción, liquida y cierra el préstamo #{{loanId}}. Como en cualquier préstamo, el importe que prestas, menos la comisión de originación del prestatario, va a la billetera del prestatario. Después, el pago al prestamista actual de ese préstamo se toma de la billetera del prestatario, así que tu préstamo puede financiarlo en parte o por completo, y el prestatario cubre cualquier diferencia. Lo que se te debe lo fijan los términos y la garantía de tu nuevo préstamo.",
+      "refinanceRequestChecking": "Comprobando si esta solicitud refinancia un préstamo en curso — la revisión debe indicarlo antes de que puedas firmar.",
+      "refinanceRequestCheckFailed": "No pudimos comprobar si esta solicitud refinancia un préstamo en curso, y eso cambia lo que hace aceptarla — la firma queda en pausa hasta que la comprobación funcione.",
+      "refinanceRequestUnavailable": "Esta solicitud pide refinanciar el préstamo #{{loanId}}, pero ahora mismo no se puede aceptar. {{reason}} Aceptarla fallaría, así que no hay nada que firmar.",
+      "refinanceRequestUnchecked": "Esta app no puede comprobar aquí si la solicitud aún se puede aceptar: el préstamo puede haberse reembolsado, cerrado o cambiado desde que se publicó. Si no se puede, la aceptación falla en la cadena y no se transfiere nada, aunque la comisión de red del intento se paga igualmente.",
       "graceChecking": "Confirmando la ventana de gracia de pago con la que se juzga esta operación…",
       "graceCheckFailed": "No pudimos confirmar la ventana de gracia de pago, y la revisión debe mostrar la real — la firma queda pausada hasta que tenga éxito.",
       "riskGateBlocked": "Las reglas de acceso por riesgo del protocolo bloquean esta aceptación para tu billetera ahora mismo — necesita un reconocimiento on-chain permanente o un nivel de acceso que esta app aún no puede recopilar. No se envió ni aprobó nada.",
@@ -785,6 +802,7 @@
       "payoffNote": "El pago para cerrar el préstamo anterior siempre es el importe del préstamo más los intereses de todo el plazo restante — aunque los intereses del préstamo normalmente se vayan sumando día a día. Eso es lo que le corresponde de forma fija al prestamista que sale cuando la salida es anticipada.",
       "walletNote": "El payoff se toma automáticamente de tu wallet en el momento en que un prestamista acepta. El dinero del nuevo préstamo llega en la misma transacción, así que mantén unos {{topUp}} libres en tu wallet (la parte de intereses más la comisión de iniciación del nuevo préstamo) mientras la solicitud esté abierta.",
       "shortIsSafe": "Si tu billetera no tiene suficiente cuando un prestamista intenta aceptar, la aceptación simplemente falla — no se toma nada y tu préstamo actual continúa sin cambios.",
+      "noGuarantee": "Una solicitud de refinanciación no garantiza que un prestamista la acepte. Hasta que alguien la acepte, este préstamo mantiene su fecha de vencimiento y su período de gracia; si nadie la acepta a tiempo, el préstamo puede entrar en impago como cualquier otro. Prepárate para devolverlo tú mismo si la solicitud no se acepta.",
       "autoMatchOff": "La coincidencia automática de solicitudes de refinanciación está desactivada en este despliegue, así que el emparejador de órdenes no completará tu solicitud. Esta configuración no impide que un prestamista la acepte directamente.",
       "autoMatchPaused": "El protocolo está en pausa ahora mismo, así que ningún prestamista puede aceptar tu solicitud de refinanciación y el emparejador de órdenes no puede completarla hasta que termine la pausa.",
       "autoMatchUnknown": "No podemos confirmar ahora mismo el estado de refinanciación de este despliegue, así que si el emparejador de órdenes puede completar tu solicitud, y si el protocolo está en pausa, sigue siendo desconocido hasta que se cargue el estado.",
@@ -847,6 +865,8 @@
       "loading": "Leyendo tus aprobaciones permanentes…",
       "unavailable": "No pudimos leer tus aprobaciones ahora mismo — inténtalo de nuevo en un momento.",
       "sourcesUnavailable": "No pudimos cargar tus préstamos y ofertas ahora mismo, así que esta lista no puede construirse completa — en lugar de mostrar una imagen parcial, inténtalo de nuevo en un momento.",
+      "sourcesDegraded": "Tu lista de préstamos u ofertas se leyó ahora mismo desde la fuente de respaldo, que puede ir uno o dos minutos por detrás de la cadena, así que puede faltar en esta lista un token de una posición abierta o recibida muy recientemente. Aparecerá cuando la fuente de respaldo se ponga al día.",
+      "sourcesPartial": "No se pudo leer parte de tu lista de ofertas ahora mismo, así que pueden faltar en esta lista tokens de ofertas que tienes, sin importar su antigüedad. Inténtalo de nuevo en un momento.",
       "revoke": "Revocar",
       "staleNote": "No pudimos actualizar esta lista ahora mismo — las filas mostradas pueden estar algo desactualizadas. Revocar sigue funcionando.",
       "revoked": "Aprobación eliminada para {{symbol}}. Si una solicitud o listado activo la necesitaba, su tarjeta avisará y ofrecerá restaurarla."
@@ -1568,6 +1588,7 @@
       "collateralLabel": "garantía",
       "collateralNone": "ninguna",
       "illiquidCollateralTag": "ilíquida al publicarse (se vuelve a comprobar al aceptar) — si lo es, se entrega tal cual si no se devuelve",
+      "refinanceRequestTag": "solicitud de refinanciación: el prestatario quiere trasladar el préstamo #{{loanId}} a un nuevo prestamista",
       "collateralAtLeast": "al menos {{amount}}",
       "collateralRange": "{{committed}} comprometido (mínimo de la solicitud {{floor}}); cuánto bloquea una ejecución depende de cómo se ejecute",
       "collateralRangeRemaining": "{{remaining}} aún comprometido ({{used}} consumido por ejecuciones anteriores; mínimo de la solicitud {{floor}}); cuánto bloquea una ejecución depende de cómo se ejecute",
@@ -2197,6 +2218,8 @@
       "unreadableCount_many": "{{count}} activos",
       "unreadableCount_other": "{{count}} activos",
       "unreadableWarn": "No pudimos leer {{assets}} ahora ({{list}}) — la lista de abajo puede omitir saldos. Esto suele corregirse en el siguiente refresco.",
+      "sourcesDegraded": "Tu lista de préstamos u ofertas se leyó ahora mismo desde la fuente de respaldo, que puede ir uno o dos minutos por detrás de la cadena, así que puede faltar abajo un activo de una posición abierta o recibida muy recientemente. Aparecerá cuando la fuente de respaldo se ponga al día.",
+      "sourcesPartial": "No se pudo leer parte de tu lista de ofertas ahora mismo, así que puede faltar abajo un activo de una oferta que tienes, sin importar su antigüedad. Inténtalo de nuevo en un momento.",
       "noBalancesInWindow": "Sin saldos entre los primeros {{count}} tokens revisados — amplía el escaneo abajo para seguir buscando.",
       "loading": "Leyendo tu vault…",
       "addressLabel": "Dirección del Vault:",
@@ -2407,6 +2430,8 @@
         "lenderYouLockAccept": "{{principal}} prestado al prestatario, ahora.",
         "lenderYouLockPost": "{{principal}} ahora, hasta que tu oferta sea aceptada o la canceles.",
         "lenderCollateralLock": "Bloquean {{collateral}}.",
+        "lenderCollateralCarriedOver": "Su {{collateral}}, ya bloqueado en el préstamo #{{loanId}}, pasa a tu préstamo — no es una nueva garantía.",
+        "lenderCollateralFreshPledge": "Bloquea un nuevo {{collateral}} para tu préstamo; la garantía del préstamo #{{loanId}} vuelve a la otra parte cuando ese préstamo se cierra.",
         "lenderCollateralMustLock": "Deben bloquear {{collateral}}.",
         "lenderWhenEndsAccept": "El reembolso vence dentro de {{duration}} (período de gracia: {{grace}}). Luego reclamas tus fondos.",
         "lenderWhenEndsPost": "El reembolso vence {{duration}} después de que un prestatario acepte (período de gracia: {{grace}}). Luego reclamas tus fondos.",

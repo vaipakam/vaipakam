@@ -169,6 +169,10 @@
         "unchecked": {
           "label": "未筛查",
           "title": "此报价中的某个 token 无法通过独立安全筛查。请格外谨慎。"
+        },
+        "checking": {
+          "label": "检查中",
+          "title": "对此报价代币的独立安全检查尚未完成。完成后即可选择。"
         }
       },
       "matchesHidden_zero": "{{count}} 个匹配报价被隐藏，因为独立安全检查将其中一个 token 标记为危险。",
@@ -177,6 +181,8 @@
       "matchesHidden_few": "{{count}} 个匹配报价被隐藏，因为独立安全检查将其中一个 token 标记为危险。",
       "matchesHidden_many": "{{count}} 个匹配报价被隐藏，因为独立安全检查将其中一个 token 标记为危险。",
       "matchesHidden_other": "{{count}} 个匹配报价被隐藏，因为独立安全检查将其中一个 token 标记为危险。",
+      "matchesUnscreenedTail": "除此处已检查的报价外，还有更多匹配的报价。未经安全检查的报价不予推荐。报价簿会列出全部报价，并标记安全检查发出警告的报价。",
+      "matchesOfferBookLink": "打开报价簿",
       "reputationListedTop": "找到市场 listing: {{name}}{{symbolSuffix}}，按市值排名 #{{rank}}。请确认它与你想要的 token 一致。",
       "reputationListedDeep": "找到市场 listing: {{name}}{{symbolSuffix}} — 不在市值前 200。较小 token 更难流通，也更容易消失；请再次检查项目。",
       "reputationUnlisted": "未找到此地址的市场 listing — 更广泛的市场不了解此 token。这本身不代表它有问题，但交易前请与项目方核对合约地址。"
@@ -301,6 +307,12 @@
       "pushEnable": "启用 Push 投递",
       "pushEnabled": "此钱包的 Push 投递已开启。",
       "pushButton": "打开 Push 频道",
+      "pushChecking": "正在检查当前是否可以发送 Push 提醒…",
+      "pushUnavailable": "目前无法开启 Push：此部署暂时无法通过 Push 发送还款提醒。",
+      "pushScopeAgent": "此检查仅涵盖还款提醒。贷款变得有风险时的警告是单独发送的，本页面无法确认这些警告能送达 Push——请为它们保留另一个提醒渠道。",
+      "pushUnknown": "我们暂时无法确认是否可以发送 Push 提醒，因此该选项已关闭。请稍后再试。",
+      "pushKeptNote": "你之前为此钱包做出的 Push 选择会被保留，发送恢复后提醒会重新通过 Push 送达。",
+      "pushNotSaved": "您的其他设置已保存，但 Push 未开启：此部署目前无法通过 Push 发送还款提醒。",
       "loanNudge": "想在此贷款变得有风险时收到 Telegram 警告？请在设置中配置提醒。",
       "unlinkedChainOnly": "已为 {{network}} 解除关联。智能账户钱包按网络断开连接——如果此钱包在其他网络上也已关联，请分别在相应网络上用其各自的签名解除关联。"
     },
@@ -547,6 +559,11 @@
       "liquidityChecking": "正在检查协议如何为这些资产定价…",
       "liquidityCheckFailed": "无法检查这些资产如何定价，而该检查决定一项重要警告 — 成功前签署保持暂停。",
       "linkedLoanCheckFailed": "无法检查此报价是否为运行中贷款的持仓销售，而该检查决定一项重要披露 — 成功前签署保持暂停。",
+      "refinanceRequestBanner": "这是针对贷款 #{{loanId}} 的再融资请求。接受后会开立您的贷款，并在同一笔交易中偿还并关闭贷款 #{{loanId}}。与任何贷款一样，您出借的金额在扣除借款人的贷款发起费后进入借款人的钱包。随后，向该贷款当前出借人的还款从借款人的钱包中扣取，因此您的贷款可能承担其中部分或全部，差额由借款人补足。您应收的款项由新贷款的条款和抵押品决定。",
+      "refinanceRequestChecking": "正在检查此请求是否为进行中贷款的再融资——签名前审核必须说明这一点。",
+      "refinanceRequestCheckFailed": "我们无法确认此请求是否为进行中贷款的再融资，而这会改变接受它的结果——签名将暂停，直到检查成功。",
+      "refinanceRequestUnavailable": "此请求要求为贷款 #{{loanId}} 再融资，但目前无法接受。{{reason}} 接受将会失败，因此没有需要签名的内容。",
+      "refinanceRequestUnchecked": "本应用无法在此确认该请求是否仍可被接受：自发布以来，贷款可能已被偿还、关闭或更改。如果不可接受，链上接受将失败且不会转移任何资产，但尝试的网络费用仍会产生。",
       "graceChecking": "正在确认用于判断此交易的还款宽限窗口…",
       "graceCheckFailed": "无法确认还款宽限窗口，而审核必须显示真实窗口 — 成功前签署保持暂停。",
       "riskGateBlocked": "协议的风险访问规则当前阻止您的钱包接受此项 — 它需要此应用尚无法收集的常设链上确认或访问级别。没有发送或批准任何内容。",
@@ -785,6 +802,7 @@
       "payoffNote": "旧贷款的还清金额始终是贷款金额加剩余全部期限的利息——即使这笔贷款的利息通常按天累积。这是提前退出的出借人在提前退出时固定应得的部分。",
       "walletNote": "贷方接受时，payoff 会自动从你的钱包拉取。新贷款资金会在同一交易中到达，因此请求打开期间请在钱包中保留约 {{topUp}} 备用（利息部分加新贷款发起费）。",
       "shortIsSafe": "如果出借人尝试接受时您的钱包余额不足，接受会直接失败 — 不会取走任何内容，当前贷款保持不变。",
+      "noGuarantee": "再融资请求并不保证会有出借人接受。在有人接受之前，此贷款的到期日和宽限期保持不变；如果没有人及时接受，该贷款仍可能像其他贷款一样违约。如果请求未被接受，请做好自行还款的准备。",
       "autoMatchOff": "此部署已关闭再融资请求的自动撮合，因此订单撮合器不会成交你的请求。此设置不会阻止出借人直接接受该请求。",
       "autoMatchPaused": "协议目前处于暂停状态，因此在暂停结束前，任何出借人都无法接受你的再融资请求，订单撮合器也无法成交。",
       "autoMatchUnknown": "我们目前无法确认此部署的再融资状态，因此在状态加载完成之前，订单撮合器能否成交你的请求、以及协议是否处于暂停状态，都仍然未知。",
@@ -847,6 +865,8 @@
       "loading": "正在读取您的常设批准…",
       "unavailable": "当前无法读取您的批准 — 请稍后重试。",
       "sourcesUnavailable": "刚才无法加载您的贷款和报价，因此无法完整构建此列表 — 与其显示部分图景，请稍后重试。",
+      "sourcesDegraded": "你的贷款或报价列表刚刚是从备用数据源读取的，该数据源可能比链上落后一两分钟，因此此列表可能缺少最近开立或收到的仓位中的代币。备用数据源跟上后即会显示。",
+      "sourcesPartial": "暂时无法读取你的部分报价列表，因此此列表可能缺少你持有的报价中的代币，无论这些报价多久之前创建。请稍后再试。",
       "revoke": "撤销",
       "staleNote": "刚才无法刷新此列表 — 显示的行可能略有滞后。撤销仍可工作。",
       "revoked": "已移除 {{symbol}} 的授权。如果某个实时请求或 listing 需要它，其卡片会提示并提供恢复。"
@@ -1568,6 +1588,7 @@
       "collateralLabel": "抵押品",
       "collateralNone": "无",
       "illiquidCollateralTag": "发布时为非流动（接受时会重新检查）——若是，未还款时将原样移交",
+      "refinanceRequestTag": "再融资请求：借款人希望将贷款 #{{loanId}} 转给新的出借人",
       "collateralAtLeast": "至少 {{amount}}",
       "collateralRange": "已承诺 {{committed}}（请求下限 {{floor}}）；一笔成交锁定多少取决于成交方式",
       "collateralRangeRemaining": "仍承诺 {{remaining}}（此前成交已消耗 {{used}}；请求下限 {{floor}}）；一笔成交锁定多少取决于成交方式",
@@ -2197,6 +2218,8 @@
       "unreadableCount_many": "{{count}} 个资产",
       "unreadableCount_other": "{{count}} 个资产",
       "unreadableWarn": "我们刚才无法读取 {{assets}}（{{list}}）— 下方列表可能缺少余额。通常下次刷新会恢复。",
+      "sourcesDegraded": "你的贷款或报价列表刚刚是从备用数据源读取的，该数据源可能比链上落后一两分钟，因此下方可能缺少最近开立或收到的仓位所涉及的资产。备用数据源跟上后即会显示。",
+      "sourcesPartial": "暂时无法读取你的部分报价列表，因此下方可能缺少你持有的报价所涉及的资产，无论该报价多久之前创建。请稍后再试。",
       "noBalancesInWindow": "前 {{count}} 个已检查 token 中没有余额 — 可在下方扩大扫描继续寻找。",
       "loading": "正在读取您的 vault…",
       "addressLabel": "Vault 地址：",
@@ -2407,6 +2430,8 @@
         "lenderYouLockAccept": "现在把 {{principal}} 借给借款人。",
         "lenderYouLockPost": "现在锁定 {{principal}}，直到报价被接受或你取消。",
         "lenderCollateralLock": "他们锁定 {{collateral}}。",
+        "lenderCollateralCarriedOver": "对方已锁定在贷款 #{{loanId}} 下的 {{collateral}} 将转入您的贷款——这不是新的抵押。",
+        "lenderCollateralFreshPledge": "对方为您的贷款新锁定 {{collateral}}；贷款 #{{loanId}} 下的抵押品在该贷款结清时退还给对方。",
         "lenderCollateralMustLock": "他们必须锁定 {{collateral}}。",
         "lenderWhenEndsAccept": "还款在 {{duration}} 内到期（宽限期: {{grace}}）。随后你领取资金。",
         "lenderWhenEndsPost": "借款人接受后 {{duration}} 到期还款（宽限期: {{grace}}）。随后你领取资金。",

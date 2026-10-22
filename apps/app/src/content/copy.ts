@@ -253,12 +253,24 @@ const copySource = {
         title:
           'A token in this offer could not be checked by the independent security screen. Treat it with extra care.',
       },
+      // #2535 — guided matching only: a recommended offer whose screen
+      // has not answered yet. It cannot be chosen until it has.
+      checking: {
+        label: 'Checking',
+        title:
+          'The independent security check on this offer’s tokens has not finished yet. You can choose it once it has.',
+      },
     },
     matchesHidden: tmpl(
       '{{count}} matching offers are hidden because an independent security check flagged one of their tokens as dangerous.',
       ['count'],
       { one: '1 matching offer is hidden because an independent security check flagged one of its tokens as dangerous.' },
     ),
+    // #2535 — the security check covers a bounded head of the candidate
+    // list; past it, offers are not recommended unchecked.
+    matchesUnscreenedTail:
+      'More matching offers exist beyond the ones checked here. They are not recommended without a security check. The Offer Book lists them all and marks those the security check warns about.',
+    matchesOfferBookLink: 'Open the Offer Book',
     // CoinGecko reputation soft-signal (#1036 fallback layer) — only
     // on networks with market data; never a block, never a gate.
     reputationListedTop: tmpl(
@@ -704,6 +716,21 @@ const copySource = {
     pushEnable: 'Enable Push delivery',
     pushEnabled: 'Push delivery is on for this wallet.',
     pushButton: 'Open the Push channel',
+    // #2251 — the Push option is offered only when the alert service says it
+    // can send; every other state is stated rather than hidden.
+    pushChecking: 'Checking whether Push alerts can be sent right now…',
+    pushUnavailable:
+      'Push can’t be switched on right now: this deployment can’t send Push payment reminders at the moment.',
+    // Codex #2665 r1 — the readiness answer covers the payment-reminder
+    // sender only; the risky-loan warnings have their own sender.
+    pushScopeAgent:
+      'This check covers payment reminders. Warnings when a loan gets risky are sent separately, and this page can’t confirm those reach Push — keep another alert channel on for them.',
+    pushUnknown:
+      'We couldn’t check whether Push alerts can be sent right now, so the option is switched off. Please try again later.',
+    pushKeptNote:
+      'The Push choice you made earlier for this wallet is kept, and alerts resume on Push once sending is back.',
+    pushNotSaved:
+      'Your other settings were saved, but Push wasn’t switched on: this deployment can’t send Push payment reminders right now.',
     loanNudge: 'Want a Telegram warning if this loan gets risky? Set up alerts in Settings.',
   },
   notifications: {
@@ -1137,6 +1164,27 @@ const copySource = {
       'We couldn’t check how these assets are priced, and that check decides an important warning — signing stays paused until it succeeds.',
     linkedLoanCheckFailed:
       'We couldn’t check whether this offer is a position sale of a running loan, and that check decides an important disclosure — signing stays paused until it succeeds.',
+    // #2421 — a borrow request tagged with a running loan: accepting it is
+    // also the payoff and close of that loan, in the same transaction.
+    refinanceRequestBanner: tmpl(
+      `This is a refinance request for loan #{{loanId}}. Accepting it opens your loan and, in the same transaction, pays off and closes loan #{{loanId}}. As with any loan, the amount you lend, less the borrower’s loan-initiation fee, goes to the borrower’s wallet. The payoff to that loan’s current lender is then drawn from the borrower’s wallet, so your loan can fund part or all of it, with the borrower covering any difference. What you are owed is set by your new loan’s terms and collateral.`,
+      ['loanId'],
+    ),
+    refinanceRequestChecking:
+      'Checking whether this request refinances a running loan — the review must say so before you can sign.',
+    refinanceRequestCheckFailed:
+      'We couldn’t check whether this request refinances a running loan, and that changes what accepting it does — signing stays paused until it succeeds.',
+    // Codex #2668 r1 — the acceptance check the contract re-runs refused
+    // the request: the target loan closed or changed since it was posted.
+    // `reason` is the decoded refusal, a full sentence.
+    refinanceRequestUnavailable: tmpl(
+      `This request asks to refinance loan #{{loanId}}, but it can’t be taken right now. {{reason}} Accepting it would fail, so there is nothing to sign.`,
+      ['loanId', 'reason'],
+    ),
+    // A Diamond without the acceptance-check view: the app cannot vouch
+    // that the request is still takeable, and says so.
+    refinanceRequestUnchecked:
+      'This app can’t check here whether the request can still be taken: the loan may have been repaid, closed or changed since it was posted. If it can’t, the accept fails on-chain and nothing is transferred, though the network fee for the attempt is still spent.',
     graceChecking:
       'Confirming the repayment grace window this deal is judged against…',
     graceCheckFailed:
@@ -1592,6 +1640,10 @@ const copySource = {
     ),
     shortIsSafe:
       'If your wallet is short when a lender tries to accept, the acceptance simply fails — nothing is taken and your current loan continues unchanged.',
+    // #544 — posting a request changes nothing about the loan until a
+    // lender takes it; no match is guaranteed.
+    noGuarantee:
+      'A refinance request is not a guarantee that a lender will take it. Until one accepts, this loan keeps its due date and grace window; if none accepts in time, the loan can still default like any other. Be ready to repay it yourself if the request isn’t taken.',
     /** #2349 / #2355 r5-r6 — the order matcher cannot fill the request:
      *  the auto-refinance switch or the matcher's own master switch is off.
      *  Says only that the SETTING does not stop a direct accept — never
@@ -1754,6 +1806,14 @@ const copySource = {
       'We couldn’t read your approvals right now — please try again in a moment.',
     sourcesUnavailable:
       'We couldn’t load your loans and offers just now, so this list can’t be built completely — rather than show a partial picture, try again in a moment.',
+    // #2536 — the lists answered, but from the slower backup source:
+    // the rows shown are real, a just-changed position's token may not be.
+    sourcesDegraded:
+      'Your loan or offer list was read from the backup source just now, which can trail the chain by a minute or two, so a token from a position opened or received very recently may be missing from this list. It appears once the backup source catches up.',
+    // #2536 — a part of the offer list neither source could read (held
+    // offers on an older deployment, with the backup source down too).
+    sourcesPartial:
+      'Part of your offer list could not be read just now, so tokens from offers you hold may be missing from this list, however old those offers are. Try again in a moment.',
     revoke: 'Revoke',
     staleNote:
       'We couldn’t refresh this list just now — the rows shown may be slightly stale. Revoking still works.',
@@ -3789,6 +3849,13 @@ const copySource = {
     // #2378 r2 — the flag is the offer's creation-time record; acceptance
     // checks liquidity again and the loan follows THAT result.
     illiquidCollateralTag: 'illiquid when posted (checked again at acceptance) — if so, handed over as-is if not repaid',
+    // #2528 — a borrow request tagged with the running loan it asks to
+    // refinance. Shown only on a positive tag: an unread tag is unknown, and
+    // absence is never presented as "not a refinance request".
+    refinanceRequestTag: tmpl(
+      'refinance request: the borrower wants to move loan #{{loanId}} to a new lender',
+      ['loanId'],
+    ),
     collateralAtLeast: tmpl('at least {{amount}}', ['amount']),
     // #2382 — a borrow request's collateral, once the indexer has read its
     // range. TERMS ONLY (r4): what the request commits now and its floor —
@@ -4961,6 +5028,12 @@ const copySource = {
       'We couldn’t read {{assets}} just now ({{list}}) — the list below may be missing balances. This usually clears on the next refresh.',
       ['assets', 'list'],
     ),
+    // #2536 — the asset list comes from the wallet's positions, and one
+    // of those lists was read from the slower backup source.
+    sourcesDegraded:
+      'Your loan or offer list was read from the backup source just now, which can trail the chain by a minute or two, so an asset behind a position opened or received very recently may be missing below. It appears once the backup source catches up.',
+    sourcesPartial:
+      'Part of your offer list could not be read just now, so an asset behind an offer you hold may be missing below, however old that offer is. Try again in a moment.',
     noBalancesInWindow: tmpl(
       'No balances among the first {{count}} tokens checked — widen the scan below to keep looking.',
       ['count'],
@@ -5354,6 +5427,16 @@ const copySource = {
         ['principal'],
       ),
       lenderCollateralLock: tmpl('They lock {{collateral}}.', ['collateral']),
+      // #2421 — a refinance request's collateral, from the offer's recorded
+      // carry-over decision.
+      lenderCollateralCarriedOver: tmpl(
+        'Their {{collateral}}, already locked under loan #{{loanId}}, carries over to your loan — it is not a new pledge.',
+        ['collateral', 'loanId'],
+      ),
+      lenderCollateralFreshPledge: tmpl(
+        'They lock a new {{collateral}} for your loan; the collateral under loan #{{loanId}} goes back to them when that loan closes.',
+        ['collateral', 'loanId'],
+      ),
       lenderCollateralMustLock: tmpl('They must lock {{collateral}}.', ['collateral']),
       lenderWhenEndsAccept: tmpl(
         'Repayment is due within {{duration}} (grace period: {{grace}}). You then claim your funds.',

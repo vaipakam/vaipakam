@@ -169,6 +169,10 @@
         "unchecked": {
           "label": "Screened नहीं",
           "title": "इस offer का कोई token independent security screen से check नहीं हो सका। इसे extra care से treat करें।"
+        },
+        "checking": {
+          "label": "जाँच जारी",
+          "title": "इस ऑफ़र के टोकन की स्वतंत्र सुरक्षा जाँच अभी पूरी नहीं हुई है। पूरी होने पर आप इसे चुन सकेंगे।"
         }
       },
       "matchesHidden_zero": "{{count}} matching offers hidden हैं क्योंकि independent security check ने उनके tokens में से एक को dangerous flag किया।",
@@ -177,6 +181,8 @@
       "matchesHidden_few": "{{count}} matching offers hidden हैं क्योंकि independent security check ने उनके tokens में से एक को dangerous flag किया।",
       "matchesHidden_many": "{{count}} matching offers hidden हैं क्योंकि independent security check ने उनके tokens में से एक को dangerous flag किया।",
       "matchesHidden_other": "{{count}} matching offers hidden हैं क्योंकि independent security check ने उनके tokens में से एक को dangerous flag किया।",
+      "matchesUnscreenedTail": "यहाँ जाँचे गए ऑफ़र के अलावा और भी मेल खाते ऑफ़र मौजूद हैं। सुरक्षा जाँच के बिना उनकी सिफ़ारिश नहीं की जाती। ऑफ़र बुक उन सभी को दिखाती है और जिन पर सुरक्षा जाँच चेतावनी देती है, उन्हें चिह्नित करती है।",
+      "matchesOfferBookLink": "ऑफ़र बुक खोलें",
       "reputationListedTop": "Market listing found: {{name}}{{symbolSuffix}}, market size rank #{{rank}}। Check करें कि यह वही token है जो आप चाहते थे।",
       "reputationListedDeep": "Market listing found: {{name}}{{symbolSuffix}} — market size में top 200 से बाहर। Smaller tokens move करना कठिन और जल्दी गायब हो सकते हैं; project double-check करें।",
       "reputationUnlisted": "इस address के लिए कोई market listing नहीं मिली — wider market इस token को नहीं जानता। इससे अकेले यह bad नहीं हो जाता, लेकिन इसमें deal करने से पहले project से contract address verify करें।"
@@ -301,6 +307,12 @@
       "pushEnable": "Push delivery enable करें",
       "pushEnabled": "इस wallet के लिए Push delivery on है।",
       "pushButton": "Push channel खोलें",
+      "pushChecking": "जाँच की जा रही है कि अभी Push अलर्ट भेजे जा सकते हैं या नहीं…",
+      "pushUnavailable": "Push अभी चालू नहीं किया जा सकता: यह डिप्लॉयमेंट इस समय Push भुगतान रिमाइंडर नहीं भेज सकता।",
+      "pushScopeAgent": "यह जाँच भुगतान रिमाइंडर को कवर करती है। ऋण जोखिम में आने की चेतावनियाँ अलग से भेजी जाती हैं, और यह पेज पुष्टि नहीं कर सकता कि वे Push तक पहुँचती हैं — उनके लिए कोई दूसरा अलर्ट चैनल चालू रखें।",
+      "pushUnknown": "हम जाँच नहीं पाए कि अभी Push अलर्ट भेजे जा सकते हैं या नहीं, इसलिए यह विकल्प बंद है। कृपया बाद में फिर कोशिश करें।",
+      "pushKeptNote": "इस वॉलेट के लिए आपका पहले का Push विकल्प बना रहता है, और भेजना बहाल होते ही अलर्ट फिर से Push पर आने लगेंगे।",
+      "pushNotSaved": "आपकी बाकी सेटिंग्स सहेज ली गईं, लेकिन Push चालू नहीं हुआ: यह डिप्लॉयमेंट अभी Push भुगतान रिमाइंडर नहीं भेज सकता।",
       "loanNudge": "इस loan के risky होने पर Telegram warning चाहिए? Settings में alerts set up करें।",
       "unlinkedChainOnly": "{{network}} के लिए अनलिंक किया गया। स्मार्ट-अकाउंट वॉलेट प्रत्येक नेटवर्क पर अलग से डिस्कनेक्ट होता है — यदि यह वॉलेट अन्य नेटवर्क पर भी लिंक है, तो प्रत्येक को वहीं से उसके अपने हस्ताक्षर के साथ अनलिंक करें।"
     },
@@ -547,6 +559,11 @@
       "liquidityChecking": "Protocol इन assets को कैसे price करता है, check कर रहे हैं…",
       "liquidityCheckFailed": "इन assets की pricing check नहीं कर सके, और वही एक important warning तय करती है — success तक signing paused है।",
       "linkedLoanCheckFailed": "यह offer running loan की position sale है या नहीं check नहीं कर सके, और वही important disclosure तय करता है — success तक signing paused है।",
+      "refinanceRequestBanner": "यह ऋण #{{loanId}} के लिए रीफ़ाइनेंस अनुरोध है। इसे स्वीकार करने से आपका ऋण खुलता है और उसी लेनदेन में ऋण #{{loanId}} चुकाकर बंद हो जाता है। किसी भी ऋण की तरह, आप जो राशि उधार देते हैं, उधारकर्ता का ऋण-आरंभ शुल्क घटाकर, वह उधारकर्ता के वॉलेट में जाती है। फिर उस ऋण के मौजूदा ऋणदाता का भुगतान उधारकर्ता के वॉलेट से लिया जाता है, इसलिए आपका ऋण उसका कुछ या पूरा हिस्सा दे सकता है, और कोई अंतर उधारकर्ता पूरा करता है। आपको क्या मिलना है, यह आपके नए ऋण की शर्तें और संपार्श्विक तय करते हैं।",
+      "refinanceRequestChecking": "जाँच रहे हैं कि क्या यह अनुरोध किसी चालू ऋण को रीफ़ाइनेंस करता है — हस्ताक्षर से पहले समीक्षा में यह बताया जाना ज़रूरी है।",
+      "refinanceRequestCheckFailed": "हम जाँच नहीं पाए कि क्या यह अनुरोध किसी चालू ऋण को रीफ़ाइनेंस करता है, और इससे स्वीकार करने का असर बदलता है — जाँच सफल होने तक हस्ताक्षर रुका रहेगा।",
+      "refinanceRequestUnavailable": "यह अनुरोध ऋण #{{loanId}} को रीफ़ाइनेंस करना चाहता है, लेकिन अभी इसे स्वीकार नहीं किया जा सकता। {{reason}} स्वीकार करना विफल होगा, इसलिए हस्ताक्षर करने के लिए कुछ नहीं है।",
+      "refinanceRequestUnchecked": "यह ऐप यहाँ जाँच नहीं सकता कि अनुरोध अभी भी स्वीकार किया जा सकता है या नहीं: पोस्ट होने के बाद ऋण चुकाया, बंद या बदला जा सकता है। अगर नहीं, तो स्वीकृति ऑन-चेन विफल होती है और कुछ भी ट्रांसफ़र नहीं होता, हालाँकि प्रयास का नेटवर्क शुल्क फिर भी लगता है।",
       "graceChecking": "इस deal को जिस repayment grace window से judge किया जाता है, उसे confirm कर रहे हैं…",
       "graceCheckFailed": "Repayment grace window confirm नहीं कर सके, और review को real one दिखाना जरूरी है — success तक signing paused है।",
       "riskGateBlocked": "Protocol की risk-access rules इस acceptance को आपके wallet के लिए अभी block करती हैं — इसे standing on-chain acknowledgement या access level चाहिए जिसे app अभी collect नहीं कर सकती। कुछ भेजा या approve नहीं हुआ।",
@@ -785,6 +802,7 @@
       "payoffNote": "पुराने लोन की चुकौती हमेशा लोन की राशि और बाकी पूरी अवधि का ब्याज होती है — भले ही इस लोन पर ब्याज सामान्य रूप से दिन-ब-दिन जुड़ता हो। जल्दी बाहर निकलने पर यह बाहर जा रहे उधार देने वाले का तय हक़ है।",
       "walletNote": "Lender accept करते ही payoff आपके wallet से automatically pulled होता है। New loan का पैसा उसी transaction में आता है, इसलिए request open रहते wallet में लगभग {{topUp}} spare रखें (interest portion plus new loan initiation fee)।",
       "shortIsSafe": "अगर lender accept करते समय आपका wallet short है, acceptance simply fail होगी — कुछ taken नहीं होगा और current loan unchanged रहेगा।",
+      "noGuarantee": "रीफ़ाइनेंस अनुरोध इस बात की गारंटी नहीं है कि कोई ऋणदाता इसे स्वीकार करेगा। जब तक कोई स्वीकार नहीं करता, इस ऋण की नियत तिथि और ग्रेस अवधि वही रहती है; अगर समय पर कोई स्वीकार नहीं करता, तो ऋण किसी भी अन्य ऋण की तरह डिफ़ॉल्ट हो सकता है। अनुरोध स्वीकार न होने पर इसे खुद चुकाने के लिए तैयार रहें।",
       "autoMatchOff": "इस डिप्लॉयमेंट पर रीफ़ाइनेंस अनुरोधों की स्वचालित मैचिंग बंद है, इसलिए ऑर्डर मैचर आपका अनुरोध पूरा नहीं करेगा। यह सेटिंग किसी ऋणदाता को इसे सीधे स्वीकार करने से नहीं रोकती।",
       "autoMatchPaused": "प्रोटोकॉल अभी रुका हुआ है, इसलिए विराम समाप्त होने तक कोई भी ऋणदाता आपका रीफ़ाइनेंस अनुरोध स्वीकार नहीं कर सकता और ऑर्डर मैचर इसे पूरा नहीं कर सकता।",
       "autoMatchUnknown": "हम अभी इस डिप्लॉयमेंट की रीफ़ाइनेंस स्थिति की पुष्टि नहीं कर पा रहे हैं, इसलिए ऑर्डर मैचर आपका अनुरोध पूरा कर सकता है या नहीं, और प्रोटोकॉल रुका हुआ है या नहीं, यह स्थिति लोड होने तक अज्ञात रहेगा।",
@@ -847,6 +865,8 @@
       "loading": "आपकी standing approvals read कर रहे हैं…",
       "unavailable": "अभी आपकी approvals read नहीं कर सके — थोड़ी देर में try करें।",
       "sourcesUnavailable": "अभी आपके loans और offers load नहीं कर सके, इसलिए यह list completely build नहीं हो सकती — partial picture दिखाने के बजाय थोड़ी देर में try करें।",
+      "sourcesDegraded": "आपकी लोन या ऑफ़र सूची अभी बैकअप स्रोत से पढ़ी गई है, जो चेन से एक-दो मिनट पीछे रह सकता है, इसलिए हाल ही में खोली या प्राप्त की गई किसी पोज़िशन का टोकन इस सूची से छूट सकता है। बैकअप स्रोत के बराबर आते ही यह दिखेगा।",
+      "sourcesPartial": "आपकी ऑफ़र सूची का कुछ हिस्सा अभी पढ़ा नहीं जा सका, इसलिए आपके पास मौजूद ऑफ़र के टोकन इस सूची से छूट सकते हैं, चाहे वे ऑफ़र कितने भी पुराने हों। थोड़ी देर में फिर कोशिश करें।",
       "revoke": "Revoke",
       "staleNote": "अभी यह list refresh नहीं कर सके — rows थोड़ी stale हो सकती हैं। Revoking फिर भी काम करता है।",
       "revoked": "{{symbol}} के लिए approval removed। यदि किसी live request या listing को इसकी ज़रूरत थी, उसका card warn करेगा और restore option देगा।"
@@ -1568,6 +1588,7 @@
       "collateralLabel": "collateral",
       "collateralNone": "none",
       "illiquidCollateralTag": "पोस्ट करते समय इलिक्विड (स्वीकार करते समय फिर जाँचा जाता है) — अगर ऐसा है, तो न चुकाने पर जैसा है वैसा सौंप दिया जाता है",
+      "refinanceRequestTag": "रीफ़ाइनेंस अनुरोध: उधारकर्ता ऋण #{{loanId}} को किसी नए ऋणदाता के पास ले जाना चाहता है",
       "collateralAtLeast": "कम से कम {{amount}}",
       "collateralRange": "{{committed}} प्रतिबद्ध (अनुरोध की न्यूनतम सीमा {{floor}}); कोई भराव कितना लॉक करता है, यह इस पर निर्भर है कि उसे कैसे भरा जाता है",
       "collateralRangeRemaining": "{{remaining}} अब भी प्रतिबद्ध ({{used}} पिछले भराव में उपयोग हुआ; अनुरोध की न्यूनतम सीमा {{floor}}); कोई भराव कितना लॉक करता है, यह इस पर निर्भर है कि उसे कैसे भरा जाता है",
@@ -2197,6 +2218,8 @@
       "unreadableCount_many": "{{count}} assets",
       "unreadableCount_other": "{{count}} assets",
       "unreadableWarn": "हम अभी {{assets}} पढ़ नहीं सके ({{list}}) — नीचे list में balances missing हो सकते हैं। यह आम तौर पर next refresh पर clear हो जाता है।",
+      "sourcesDegraded": "आपकी लोन या ऑफ़र सूची अभी बैकअप स्रोत से पढ़ी गई है, जो चेन से एक-दो मिनट पीछे रह सकता है, इसलिए हाल ही में खोली या प्राप्त की गई किसी पोज़िशन की संपत्ति नीचे से छूट सकती है। बैकअप स्रोत के बराबर आते ही यह दिखेगी।",
+      "sourcesPartial": "आपकी ऑफ़र सूची का कुछ हिस्सा अभी पढ़ा नहीं जा सका, इसलिए आपके पास मौजूद किसी ऑफ़र की संपत्ति नीचे से छूट सकती है, चाहे वह ऑफ़र कितना भी पुराना हो। थोड़ी देर में फिर कोशिश करें।",
       "noBalancesInWindow": "पहले {{count}} checked tokens में कोई balances नहीं — खोज जारी रखने के लिए scan नीचे widen करें।",
       "loading": "आपका vault पढ़ा जा रहा है…",
       "addressLabel": "Vault address:",
@@ -2407,6 +2430,8 @@
         "lenderYouLockAccept": "{{principal}} borrower को lent, अभी।",
         "lenderYouLockPost": "{{principal}} अभी, जब तक आपका offer accepted या cancel नहीं होता।",
         "lenderCollateralLock": "वे {{collateral}} lock करते हैं।",
+        "lenderCollateralCarriedOver": "उनका {{collateral}}, जो पहले से ऋण #{{loanId}} के तहत लॉक है, आपके ऋण में स्थानांतरित होता है — यह नई गिरवी नहीं है।",
+        "lenderCollateralFreshPledge": "वे आपके ऋण के लिए नया {{collateral}} लॉक करते हैं; ऋण #{{loanId}} के तहत की गिरवी उस ऋण के बंद होने पर उन्हें वापस मिलती है।",
         "lenderCollateralMustLock": "उन्हें {{collateral}} lock करना होगा।",
         "lenderWhenEndsAccept": "Repayment {{duration}} के भीतर due है (grace period: {{grace}})। फिर आप funds claim करते हैं।",
         "lenderWhenEndsPost": "Borrower accept करने के {{duration}} बाद repayment due है (grace period: {{grace}})। फिर आप funds claim करते हैं।",

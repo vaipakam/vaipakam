@@ -201,6 +201,33 @@ runs half of it on old code:
   carries the three consumers but not OracleFacet, so it refuses such a Diamond
   (`PredatesOraclePriceStatus`) and the oracle is refreshed first.
 
+- **VaultFactoryFacet + the vault implementation + every facet that sets a
+  renter (#902).** Every rental step writes the renter through one route,
+  `vaultSetRentalUser(loanId, renter, expires)`, which reads the loan and
+  writes an ERC-1155 rental as its own vault row keyed by the loan
+  (`setRental1155`, on the vault IMPLEMENTATION). The writers are
+  OfferAcceptFacet (origination, right after `initiateLoan` returns the loan
+  id), RepayPeriodicFacet, RepayFacet, PrecloseFacet and DefaultedFacet. The retired `vaultSetNFTUser` /
+  `vaultSetNFTUser1155` routes are gone, so a writer refreshed without the
+  route reverts `FunctionDoesNotExist`. The route upgrades a lender vault
+  stamped below `currentVaultVersion` to the current template before it
+  writes, so no lender has to upgrade first, but the TEMPLATE itself must
+  already be the #902 implementation: with an older template every ERC-1155
+  rental step reverts. `RedeployFacets` carries neither RepayFacet nor the
+  vault implementation and refuses a Diamond that does not already route
+  `vaultSetRentalUser`; cross it by fresh deploy, or by
+  `UpgradeVaultImplementation` and `RefreshAllFacetsInPlace` in one paused
+  window. A pre-#902 vault keys an ERC-1155 rental by renter, which the
+  per-rental writes never find, so both in-place refreshes
+  (`RefreshAllFacetsInPlace`, `RefreshChangedFacetsInPlace`) refuse to cross
+  the boundary while any ERC-1155 loan is open — read from every loan id,
+  not the metrics active list, which can miss a live legacy loan
+  (`OpenErc1155RentalAcrossPerRentalRows`); close those rentals first, or
+  fresh-deploy. That check is taken before the run's own pause, so it holds
+  only if no accept can land after it: the crossing runs only under the
+  operator's manual pause, already in force
+  (`PerRentalRowsCrossingNeedsManualPause` otherwise).
+
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place
 across this boundary and no pre-slice row is migrated; slices 2–3 make a

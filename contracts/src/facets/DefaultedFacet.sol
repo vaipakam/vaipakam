@@ -187,7 +187,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
      * @dev If liquid collateral: Calls triggerLiquidation (0x swap).
      *      If illiquid: Transfers full collateral to lender.
      *      Enhanced for NFTs: Transfers prepay (amount * durationDays) to lender, buffer (5%) to treasury from borrower vault.
-     *      Resets renter via vaultSetNFTUser(address(0), 0).
+     *      Revokes this rental's renter via vaultSetRentalUser(loanId, address(0), 0).
      *      Updates loan to Defaulted, burns NFTs.
      *      Emits LoanDefaulted.
      * @param loanId The loan ID to default.
@@ -698,10 +698,8 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // Reset renter
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultSetNFTUser.selector,
-                    loan.lender,
-                    loan.principalAsset,
-                    loan.tokenId,
+                    VaultFactoryFacet.vaultSetRentalUser.selector,
+                    loan.id,
                     address(0),
                     0
                 ),

@@ -89,6 +89,7 @@ import {
   formatBpsAsPercent,
   formatDurationDays,
   formatTokenAmount,
+  formatTokenAmountExact,
   shortAddress,
 } from '../lib/format';
 import { captureTxError } from '../lib/errors';
@@ -276,7 +277,7 @@ function ListNftFlow() {
     const days = Number(durationDays);
     const totalFees = dailyFeeWei * BigInt(days);
     const pay = prepayMeta.data.symbol;
-    const feesStr = `${formatTokenAmount(totalFees, prepayMeta.data.decimals)} ${pay}`;
+    const feesStr = `${formatTokenAmountExact(totalFees, prepayMeta.data.decimals)} ${pay}`;
     const nftStr = `${shortAddress(contract)} #${tokenId}${
       standard === 'erc1155' ? ` ×${quantity || '1'}` : ''
     }`;
@@ -920,7 +921,7 @@ function RentNftFlow() {
   const receipt = useMemo((): ReceiptData | null => {
     if (!selected || !prepayMeta.data || totalPrepay === undefined) return null;
     const pay = prepayMeta.data.symbol;
-    const totalStr = `${formatTokenAmount(totalPrepay, prepayMeta.data.decimals)} ${pay}`;
+    const totalStr = `${formatTokenAmountExact(totalPrepay, prepayMeta.data.decimals)} ${pay}`;
     const nftStr = `${shortAddress(selected.lendingAsset)} #${selected.tokenId}`;
     const durationStr = formatDurationDays(selected.durationDays);
     return {

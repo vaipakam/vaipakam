@@ -56,7 +56,7 @@ import {
   formatBpsAsPercent,
   formatDate,
   formatDurationDays,
-  formatTokenAmount,
+  formatTokenAmountExact,
   exactUnitsOrNull,
   formatTokenAmountDown,
   parseExactUnits,
@@ -2308,7 +2308,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   }
 
   const principalStr = principal
-    ? `${formatTokenAmount(row.principal, principal.decimals)} ${principal.symbol}`
+    ? `${formatTokenAmountExact(row.principal, principal.decimals)} ${principal.symbol}`
     : '…';
   // #2453 — the headline's amount is what the loan was INITIATED with;
   // `principalStr` is the live outstanding amount (zero after a full
@@ -2318,10 +2318,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     initPrincipal === null
       ? null
       : principal
-        ? `${formatTokenAmount(initPrincipal, principal.decimals)} ${principal.symbol}`
+        ? `${formatTokenAmountExact(initPrincipal, principal.decimals)} ${principal.symbol}`
         : '…';
   const interestStr = principal
-    ? `${formatTokenAmount(interest, principal.decimals)} ${principal.symbol}`
+    ? `${formatTokenAmountExact(interest, principal.decimals)} ${principal.symbol}`
     : '…';
   async function runAddCollateral() {
     if (!address || !walletChain || !walletClient || !publicClient || !collateralMeta.data) return;
@@ -2911,7 +2911,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     : row.collateralAssetType !== AssetType.ERC20
       ? `NFT ${shortAddress(row.collateralAsset)} #${row.collateralTokenId}`
       : collateral
-        ? `${formatTokenAmount(row.collateralAmount, collateral.decimals)} ${collateral.symbol}`
+        ? `${formatTokenAmountExact(row.collateralAmount, collateral.decimals)} ${collateral.symbol}`
         : '…';
   const nftStr = `NFT ${shortAddress(row.lendingAsset)} #${row.tokenId}`;
   const dueDate = formatDate(row.startTime + row.durationDays * 86_400);
@@ -3229,7 +3229,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 {feeModeWord(feeEnt.data.borrowerMode)}
                 {feeEnt.data.borrowerTariffPaid > 0n
                   ? ` (${copy.tariff.tariffPaidLine(
-                      formatTokenAmount(feeEnt.data.borrowerTariffPaid, VPFI_DECIMALS),
+                      formatTokenAmountExact(feeEnt.data.borrowerTariffPaid, VPFI_DECIMALS),
                     )})`
                   : ''}
                 {' · '}
@@ -3237,7 +3237,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 {feeModeWord(feeEnt.data.lenderMode)}
                 {feeEnt.data.lenderTariffPaid > 0n
                   ? ` (${copy.tariff.tariffPaidLine(
-                      formatTokenAmount(feeEnt.data.lenderTariffPaid, VPFI_DECIMALS),
+                      formatTokenAmountExact(feeEnt.data.lenderTariffPaid, VPFI_DECIMALS),
                     )})`
                   : ''}
                 {feeEnt.data.lenderMode === FEE_MODE_FULL ? (
@@ -3550,7 +3550,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
               {collateralInputWei !== null && collateralBalance.data !== undefined
                 ? copy.errors.needMoreBy(
-                    formatTokenAmount(
+                    formatTokenAmountExact(
                       collateralInputWei - collateralBalance.data,
                       collateral.decimals,
                     ),
@@ -3917,7 +3917,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
               {partialInputWei !== null && principalBalance.data !== undefined
                 ? copy.errors.needMoreBy(
-                    formatTokenAmount(
+                    formatTokenAmountExact(
                       partialInputWei - principalBalance.data,
                       principal.decimals,
                     ),
@@ -4079,7 +4079,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                     : copy.positions.details.receipt.noCollateralBack,
                   youLock: copy.positions.details.receipt.nothingNew,
                   youMayOwe: `${copy.positions.details.paidNow(
-                    formatTokenAmount(loanLive.data.calcDue, principal.decimals),
+                    formatTokenAmountExact(loanLive.data.calcDue, principal.decimals),
                     principal.symbol,
                   )} ${
                     loanLive.data.live.useFullTermInterest

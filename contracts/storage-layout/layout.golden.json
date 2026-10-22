@@ -366,6 +366,7 @@
     "L|uups:VaipakamVaultImplementation@2[address]@0[uint256]@0[]|0|0|address|_rentalEntries[][][].user",
     "L|uups:VaipakamVaultImplementation@2[address]@0[uint256]@0[]|0|20|uint64|_rentalEntries[][][].expires",
     "L|uups:VaipakamVaultImplementation@2[address]@0[uint256]@0[]|1|0|uint128|_rentalEntries[][][].quantity",
+    "L|uups:VaipakamVaultImplementation@2[address]@0[uint256]@0[]|1|16|uint128|_rentalEntries[][][].rentalId",
     "L|uups:VaipakamVaultImplementation@3[bytes32]|0|0|address|_listingExecutor[]",
     "L|uups:VaipakamVaultImplementation|0|0|address|diamond",
     "L|uups:VaipakamVaultImplementation|1|0|address|implementationAddress",

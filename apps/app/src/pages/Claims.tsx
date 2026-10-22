@@ -228,7 +228,9 @@ function RewardsCard() {
 
 function ClaimRow({ loan }: { loan: ClaimableLoan }) {
   const isRental = loan.assetType !== AssetType.ERC20;
-  const { what, why, note } = useClaimPayoutText(loan);
+  // #2662 — a link to the loan page, where the claim is confirmed with the
+  // exact figure; the list itself rounds, like every browsing row.
+  const { what, why, note } = useClaimPayoutText(loan, 'rounded');
 
   return (
     <Link to={`/positions/${loan.loanId}`} className="item-row">

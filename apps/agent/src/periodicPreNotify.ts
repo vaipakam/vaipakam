@@ -33,7 +33,8 @@ import { createPublicClient, http, type Abi, type Address, type PublicClient } f
 import { AdminFacetABI, LoanFacetABI, NumeraireConfigFacetABI } from '@vaipakam/contracts/abis';
 import type { Env } from './env';
 import { getChainConfigs } from './env';
-import { sendPush } from './push';
+import { pushRailStatus, sendPush } from '@vaipakam/push';
+import { pushRailConfigOf } from './pushRail';
 import { sendMessage } from './telegram';
 import {
   periodicIntervalDays,
@@ -857,24 +858,34 @@ async function preNotifyChain(
     // operator to look for an unset binding when the value is sitting there
     // and invalid, which is the slower of the two things to discover.
     //
+    // THE CAUSES ARE NOW NAMED BY THE RAIL ITSELF (#2251). The shared rail
+    // answers why it cannot issue a request — no key, a key it cannot build a
+    // signer from, a signer that cannot sign the SDK's way, or a configured
+    // channel that is not an address — so the line names the setting to fix
+    // instead of listing every possibility.
+    //
     // A THIRD CAUSE WAS REMOVED, not forgotten (#2220 r1). This line used to
     // name "the installed Push SDK and the installed ethers major disagree
     // about how to sign" and to spell out the v5 `_signTypedData` call. That
     // WAS the live condition — the SDK pin was `^0.0.1`, which on a `0.0.x`
     // version means exactly `0.0.1`, and that release signs the v5 way only.
     // Correcting the pin removed it: `1.7.32` adapts to either signing style,
-    // and the guard in `push.ts` now accepts either too. Leaving the sentence
+    // and the rail's guard (`packages/push`) now accepts either too. Leaving the sentence
     // would point a responder at a dependency pair that can no longer be the
     // answer — the most expensive kind of stale diagnostic, because it reads
     // as specific expertise.
+    const rail = pushRailStatus(pushRailConfigOf(env));
+    const cause = rail.usable ? 'unknown' : rail.reason;
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: ${pushUnconfigured.size} ` +
         `subscriber(s) this tick have a Push channel set while this ` +
         `deployment cannot send Push at all, so no Push was sent to them and ` +
-        `none can be. They were reached on Telegram or not at all. Two ` +
-        `things produce this and the fix differs: PUSH_CHANNEL_PK is unset, ` +
-        `or it is set but not a valid key. Check the secret — either way the ` +
-        `Push channel on those subscriptions is inert.`,
+        `none can be. They were reached on Telegram or not at all. Cause: ` +
+        `${cause} (signer-unset: PUSH_CHANNEL_PK is unset; signer-malformed: ` +
+        `it is set but not a valid key; signer-unsupported: the signer cannot ` +
+        `sign the way the Push SDK expects; channel-malformed: ` +
+        `PUSH_CHANNEL_ADDRESS is set but not an address). Either way the Push ` +
+        `channel on those subscriptions is inert, and the app says so.`,
     );
   }
   // THE SAME DISCLOSURE FOR THE OTHER RAIL (#2213 r22 `4015173418`). r19 fixed
@@ -2075,6 +2086,7 @@ async function pushIfSubscribed(
   // that decides whether a request happens has to BE the condition that
   // charges for it.
   const pushSigner = sub.push_channel ? env.PUSH_CHANNEL_PK : undefined;
+  const pushRail = pushRailConfigOf(env);
   const tgRoute =
     sub.tg_chat_id && env.TG_BOT_TOKEN
       ? { chat: sub.tg_chat_id, token: env.TG_BOT_TOKEN }
@@ -2106,7 +2118,7 @@ async function pushIfSubscribed(
     // rather than merely handled — there is no path to a send that skips this
     // line, and no path to this line that skips a send.
     try {
-      const attempt = await sendPush(pushSigner, {
+      const attempt = await sendPush({ ...pushRail, channelPk: pushSigner }, {
         subscriber: wallet,
         title,
         body,

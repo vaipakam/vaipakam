@@ -35,7 +35,7 @@
  *  re-tagged. Flag plus balance pins the path AND its effect; either
  *  alone leaves a green run that never exercised the re-tag.
  */
-import { test, expect } from '../lib/wallet-fixture';
+import { test, expect, connectWallet } from '../lib/wallet-fixture';
 import { seedDeskOffer, acceptOfferDirect, getOffer } from '../lib/desk';
 import { accountFor } from '../lib/wallets';
 import { newestOfferIdFor } from '../lib/flows';
@@ -202,6 +202,44 @@ test('refinance request completes: old loan closes, new loan carries the collate
     page.getByText(new RegExp(`refinance request #${requestId} is live`, 'i')),
   ).toBeVisible({ timeout: 30_000 });
   await adv.ctx.close();
+
+  // #2528 — a lender browsing the Offer Book sees the request FOR what it
+  // is: a refinance of this running loan, not an ordinary borrow request.
+  // The row is keyed on its accept link (rendered only for another user's
+  // offer), so the tag asserted is this request's own.
+  const browsing = await launchWallet('newLender');
+  await browsing.page.goto('/offers', { waitUntil: 'domcontentloaded' });
+  const requestRow = browsing.page
+    .locator('.item-row')
+    .filter({ has: browsing.page.locator(`a[href*="offer=${requestId}&"]`) });
+  await expect(requestRow).toBeVisible({ timeout: 60_000 });
+  await expect(
+    requestRow.getByText(
+      new RegExp(
+        `refinance request: the borrower wants to move loan #${oldLoanId} to a new lender`,
+        'i',
+      ),
+    ),
+  ).toBeVisible({ timeout: 30_000 });
+
+  // #2421 — the lender's funding REVIEW says it too: accepting also pays
+  // off and closes the running loan, and the collateral is the stake
+  // already locked under it (the request's recorded carry-over decision,
+  // asserted on chain above), not a new pledge. Read off the deep link the
+  // row's accept action opens; nothing is signed here.
+  await browsing.page.goto(`/lend?offer=${requestId}`, { waitUntil: 'domcontentloaded' });
+  await connectWallet(browsing.page);
+  await expect(browsing.page.getByTestId('refinance-request-banner')).toContainText(
+    new RegExp(`refinance request for loan #${oldLoanId}\\b.*pays off and closes loan #${oldLoanId}\\b`, 'i'),
+    { timeout: 60_000 },
+  );
+  await expect(
+    browsing.page.getByText(
+      new RegExp(`already locked under loan #${oldLoanId}, carries over to your loan`, 'i'),
+    ),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(browsing.page.getByText(/They lock \d/)).toHaveCount(0);
+  await browsing.ctx.close();
 
   // A different lender accepts it — one transaction that opens the new
   // loan, pays off the old lender and closes the old loan.

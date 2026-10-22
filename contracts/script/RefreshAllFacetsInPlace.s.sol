@@ -21,6 +21,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -277,6 +278,60 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
     }
 
+    /// @notice #902 - the target Diamond predates the per-rental renter rows and
+    ///         has an ERC-1155 rental open; see {_requireNoOpenErc1155RentalAcross902}.
+    error OpenErc1155RentalAcrossPerRentalRows(address diamond, uint256 loanId);
+
+    /// @notice #902 - the target Diamond predates the per-rental renter rows and
+    ///         is not under the manual pause, so a scan for open ERC-1155
+    ///         rentals would not stay true until the cuts land.
+    error PerRentalRowsCrossingNeedsManualPause(address diamond);
+
+    /// @dev #902 - a pre-#902 vault records an ERC-1155 rental under its renter,
+    ///      not its loan (`rentalId` 0). Once this refresh routes the per-rental
+    ///      writes, such a row is never found by its loan: the rental's next
+    ///      expiry refresh adds a second row, and its handover's revoke leaves the
+    ///      old renter reported until the old row expires. A chain with no open
+    ///      ERC-1155 rental has no such row to carry, so crossing the boundary
+    ///      in place is refused only while one is open: close those rentals, or
+    ///      cross by fresh deploy. A Diamond that already routes
+    ///      `vaultSetRentalUser` is past the boundary and is not walked. Called
+    ///      before any facet is deployed, so a refused run sends nothing.
+    ///
+    ///      The walk reads EVERY loan id up to the id high-water mark
+    ///      (`getGlobalCounts`), not the metrics active list: the lifecycle
+    ///      library documents active loans absent from that list (loans that
+    ///      predate the counter layer or its backfill), and a rental among them
+    ///      would carry a renter-keyed row across unseen. Each loan record is
+    ///      read directly, so the answer rests on the loans themselves rather
+    ///      than on an index of them. A loan whose rental is still open is one
+    ///      not yet closed: `Active`, or `FallbackPending`, which has not reached
+    ///      a terminal path either.
+    ///
+    ///      The walk is a read taken before the run's own pause, so on its own
+    ///      it would not hold: an accept landing between the walk and that
+    ///      pause opens the very rental it looked for. A crossing therefore
+    ///      runs only under the operator's MANUAL pause, already in force when
+    ///      the walk is taken (an auto-pause window lapses by itself, so it
+    ///      does not count). Every accept entry point is `whenNotPaused`, so no
+    ///      rental can open between the walk and the cuts, and both refreshes
+    ///      leave a Diamond they found paused paused. What the walk cannot
+    ///      exclude is an Unpauser lifting that pause mid-run, which is an
+    ///      operator action rather than a race any borrower can win.
+    function _requireNoOpenErc1155RentalAcross902(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.vaultSetRentalUser.selector) != address(0)) {
+            return;
+        }
+        (bool manual,,,) = LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
+        if (!manual) revert PerRentalRowsCrossingNeedsManualPause(diamond);
+        (uint256 highestLoanId,) = MetricsFacet(diamond).getGlobalCounts();
+        for (uint256 loanId = 1; loanId <= highestLoanId; ++loanId) {
+            if (_isOpenErc1155Rental(diamond, loanId)) {
+                revert OpenErc1155RentalAcrossPerRentalRows(diamond, loanId);
+            }
+        }
+    }
+
     /// @notice #934 (Codex #2642 r8) - the target Diamond's role root is not
     ///         where D1 requires it; see {_requireD1RootTopology}.
     error RootAdminNotOnOwner(address diamond, address owner);
@@ -310,6 +365,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
     }
 
+    /// @dev Kept in its own frame: the full loan record is decoded here only.
+    ///      A never-written id reads as a zeroed record (ERC-20), so it passes.
+    function _isOpenErc1155Rental(address diamond, uint256 loanId) private view returns (bool) {
+        LibVaipakam.Loan memory loan = LoanFacet(diamond).getLoanDetails(loanId);
+        return loan.assetType == LibVaipakam.AssetType.ERC1155
+            && (loan.status == LibVaipakam.LoanStatus.Active || loan.status == LibVaipakam.LoanStatus.FallbackPending);
+    }
+
     function refresh() external {
         uint256 cid = block.chainid;
         require(
@@ -335,6 +398,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "RefreshAllFacetsInPlace: ADMIN_PRIVATE_KEY is not the diamond owner (handover / timelock?)"
         );
         _requireSlice3Diamond(diamond);
+        _requireNoOpenErc1155RentalAcross902(diamond);
         _requireD1RootTopology(diamond, currentOwner);
 
         console.log("=== Full-facet in-place refresh ===");

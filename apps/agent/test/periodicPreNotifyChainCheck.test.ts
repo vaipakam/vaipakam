@@ -59,12 +59,15 @@ let pushAttemptFor: (subscriber: string) => 'accepted' | 'failed' | 'not-request
  * them could not exercise the distinction.
  */
 let tgAccepts: 'accepted' | 'refused' | 'unknown';
-vi.mock('../src/push', () => ({
-  sendPush: vi.fn(async (_pk: string, m: { subscriber: string }) => {
+// The shared rail (#2248): the lane passes its whole rail configuration, not
+// a bare key, and reads the rail's status once per chain for its disclosure.
+vi.mock('@vaipakam/push', () => ({
+  sendPush: vi.fn(async (_rail: unknown, m: { subscriber: string }) => {
     const attempt = pushAttemptFor(m.subscriber);
     if (attempt !== 'not-requested') sends.push(`push:${m.subscriber}`);
     return attempt;
   }),
+  pushRailStatus: vi.fn(() => ({ usable: false, reason: 'signer-malformed' })),
 }));
 vi.mock('../src/telegram', () => ({
   sendMessage: vi.fn(async (_t: string, chat: string) => {

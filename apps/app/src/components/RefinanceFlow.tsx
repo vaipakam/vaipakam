@@ -76,7 +76,7 @@ import {
 import {
   formatBpsAsPercent,
   formatDate,
-  formatTokenAmount,
+  formatTokenAmountExact,
 } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import type { TokenMeta } from '../contracts/erc20';
@@ -206,9 +206,9 @@ export function RefinanceFlow({
 
   const sym = principalMeta.symbol;
   const dec = principalMeta.decimals;
-  const payoffStr = `${formatTokenAmount(payoff, dec)} ${sym}`;
-  const topUpStr = `${formatTokenAmount(walletTopUp, dec)} ${sym}`;
-  const headroomStr = `${formatTokenAmount(payoffHeadroom, dec)} ${sym}`;
+  const payoffStr = `${formatTokenAmountExact(payoff, dec)} ${sym}`;
+  const topUpStr = `${formatTokenAmountExact(walletTopUp, dec)} ${sym}`;
+  const headroomStr = `${formatTokenAmountExact(payoffHeadroom, dec)} ${sym}`;
 
   // The consent rule covers the FIGURES too: the live-loan prop, the
   // fee config, and the grace bucket refresh in the background, so a
@@ -617,6 +617,11 @@ export function RefinanceFlow({
     <section className="card">
       <h3>{copy.refinance.title}</h3>
       <p className="muted">{copy.refinance.blurb}</p>
+      {/* #544 — a request is not a match: the loan's due date and default
+          rules stand until a lender accepts. Always visible on the form. */}
+      <div className="banner banner-info" style={{ marginBottom: 12 }}>
+        <span className="banner-body">{copy.refinance.noGuarantee}</span>
+      </div>
 
       <div>
         {pastDue ? (
@@ -721,7 +726,7 @@ export function RefinanceFlow({
                     ? `${copy.refinance.lateFeeDisclosure(headroomStr)} `
                     : ''
                 }${copy.refinance.walletNote(topUpStr)}`,
-                youCanLose: copy.refinance.shortIsSafe,
+                youCanLose: `${copy.refinance.noGuarantee} ${copy.refinance.shortIsSafe}`,
                 fees: `${copy.fees.borrowerLIF(formatBpsAsPercent(fees.loanInitiationFeeBps))} ${copy.refinance.feesTreasuryNote(formatBpsAsPercent(fees.treasuryFeeBps))}`,
                 whenThisEnds: `${copy.refinance.whenEndsComposed(
                   expiryGraceClamped

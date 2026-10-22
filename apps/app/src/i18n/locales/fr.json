@@ -169,6 +169,10 @@
         "unchecked": {
           "label": "Non vérifié",
           "title": "Un token de cette offre n'a pas pu être vérifié par le filtre de sécurité indépendant. Traitez-le avec une prudence supplémentaire."
+        },
+        "checking": {
+          "label": "Vérification",
+          "title": "La vérification de sécurité indépendante des jetons de cette offre n’est pas encore terminée. Vous pourrez la choisir une fois terminée."
         }
       },
       "matchesHidden_zero": "{{count}} offres correspondantes sont masquées parce qu’un contrôle de sécurité indépendant a signalé l’un de leurs tokens comme dangereux.",
@@ -177,6 +181,8 @@
       "matchesHidden_few": "{{count}} offres correspondantes sont masquées parce qu’un contrôle de sécurité indépendant a signalé l’un de leurs tokens comme dangereux.",
       "matchesHidden_many": "{{count}} offres correspondantes sont masquées parce qu’un contrôle de sécurité indépendant a signalé l’un de leurs tokens comme dangereux.",
       "matchesHidden_other": "{{count}} offres correspondantes sont masquées parce qu’un contrôle de sécurité indépendant a signalé l’un de leurs tokens comme dangereux.",
+      "matchesUnscreenedTail": "D’autres offres correspondantes existent au-delà de celles vérifiées ici. Elles ne sont pas recommandées sans vérification de sécurité. Le carnet d’offres les liste toutes et signale celles sur lesquelles la vérification de sécurité émet une alerte.",
+      "matchesOfferBookLink": "Ouvrir le carnet d’offres",
       "reputationListedTop": "Cotation de marché trouvée : {{name}}{{symbolSuffix}}, classé n°{{rank}} par taille de marché. Vérifiez que cela correspond au token voulu.",
       "reputationListedDeep": "Cotation de marché trouvée : {{name}}{{symbolSuffix}} — hors du top 200 par taille de marché. Les petits tokens bougent plus difficilement et disparaissent plus vite ; revérifiez le projet.",
       "reputationUnlisted": "Aucune cotation de marché trouvée pour cette adresse — le marché au sens large ne connaît pas ce token. Cela ne le rend pas mauvais en soi, mais vérifiez l'adresse du contrat auprès du projet avant de l'utiliser."
@@ -301,6 +307,12 @@
       "pushEnable": "Activer la livraison Push",
       "pushEnabled": "La livraison Push est activée pour ce portefeuille.",
       "pushButton": "Ouvrir le canal Push",
+      "pushChecking": "Vérification de la possibilité d’envoyer des alertes Push en ce moment…",
+      "pushUnavailable": "Push ne peut pas être activé pour le moment : ce déploiement ne peut pas envoyer de rappels de paiement Push actuellement.",
+      "pushScopeAgent": "Cette vérification couvre les rappels de paiement. Les avertissements quand un prêt devient risqué sont envoyés séparément, et cette page ne peut pas confirmer qu’ils arrivent sur Push — gardez un autre canal d’alerte activé pour eux.",
+      "pushUnknown": "Nous n’avons pas pu vérifier si les alertes Push peuvent être envoyées en ce moment, l’option est donc désactivée. Réessayez plus tard.",
+      "pushKeptNote": "Le choix Push que vous aviez fait pour ce portefeuille est conservé, et les alertes reprennent sur Push dès que l’envoi est rétabli.",
+      "pushNotSaved": "Vos autres réglages ont été enregistrés, mais Push n’a pas été activé : ce déploiement ne peut pas envoyer de rappels de paiement Push pour le moment.",
       "loanNudge": "Vous voulez un avertissement Telegram si ce prêt devient risqué ? Configurez les alertes dans les Paramètres.",
       "unlinkedChainOnly": "Dissocié pour {{network}}. Un portefeuille à compte intelligent se déconnecte réseau par réseau — si ce portefeuille est lié sur d’autres réseaux, dissociez chacun depuis ce réseau avec sa propre signature."
     },
@@ -547,6 +559,11 @@
       "liquidityChecking": "Vérification de la manière dont ces actifs sont valorisés par le protocole…",
       "liquidityCheckFailed": "Impossible de vérifier la valorisation de ces actifs, et cette vérification détermine un avertissement important — la signature reste en pause jusqu'à réussite.",
       "linkedLoanCheckFailed": "Impossible de vérifier si cette offre est une vente de position d'un prêt en cours, et cette vérification détermine une information importante — la signature reste en pause jusqu'à réussite.",
+      "refinanceRequestBanner": "Il s’agit d’une demande de refinancement du prêt #{{loanId}}. L’accepter ouvre votre prêt et, dans la même transaction, rembourse et clôture le prêt #{{loanId}}. Comme pour tout prêt, le montant que vous prêtez, déduction faite des frais de mise en place de l’emprunteur, va au portefeuille de l’emprunteur. Le remboursement au prêteur actuel de ce prêt est ensuite prélevé sur ce portefeuille, de sorte que votre prêt peut le financer en tout ou en partie, l’emprunteur couvrant toute différence. Ce qui vous est dû est fixé par les conditions et la garantie de votre nouveau prêt.",
+      "refinanceRequestChecking": "Vérification que cette demande refinance un prêt en cours — l’examen doit l’indiquer avant que vous puissiez signer.",
+      "refinanceRequestCheckFailed": "Nous n’avons pas pu vérifier si cette demande refinance un prêt en cours, ce qui change l’effet de son acceptation — la signature reste en pause jusqu’à ce que la vérification réussisse.",
+      "refinanceRequestUnavailable": "Cette demande vise à refinancer le prêt #{{loanId}}, mais elle ne peut pas être acceptée pour le moment. {{reason}} L’accepter échouerait, il n’y a donc rien à signer.",
+      "refinanceRequestUnchecked": "Cette application ne peut pas vérifier ici si la demande peut encore être acceptée : le prêt a pu être remboursé, clôturé ou modifié depuis sa publication. Si ce n’est pas le cas, l’acceptation échoue on-chain et rien n’est transféré, mais les frais de réseau de la tentative restent dus.",
       "graceChecking": "Confirmation de la fenêtre de grâce de remboursement utilisée pour juger cette opération…",
       "graceCheckFailed": "Impossible de confirmer la fenêtre de grâce de remboursement, et l'examen doit afficher la vraie — la signature reste en pause jusqu'à réussite.",
       "riskGateBlocked": "Les règles d'accès au risque du protocole bloquent cette acceptation pour votre portefeuille pour le moment — il faut un accord on-chain permanent ou un niveau d'accès que cette app ne peut pas encore collecter. Rien n'a été envoyé ni approuvé.",
@@ -785,6 +802,7 @@
       "payoffNote": "Le solde de l’ancien prêt correspond toujours au montant du prêt plus la totalité des intérêts de la durée restante — même si les intérêts de ce prêt augmentent normalement jour après jour. C’est ce à quoi le prêteur sortant a droit, de façon fixe, en cas de sortie anticipée.",
       "walletNote": "Le remboursement final est prélevé automatiquement depuis votre wallet au moment où un prêteur accepte. L’argent du nouveau prêt arrive dans la même transaction ; gardez donc environ {{topUp}} disponibles dans votre wallet (la partie intérêts plus les frais d’initialisation du nouveau prêt) tant que la demande est ouverte.",
       "shortIsSafe": "Si votre portefeuille est insuffisant lorsqu'un prêteur tente d'accepter, l'acceptation échoue simplement — rien n'est pris et votre prêt actuel continue inchangé.",
+      "noGuarantee": "Une demande de refinancement ne garantit pas qu’un prêteur l’acceptera. Tant que personne ne l’accepte, ce prêt garde sa date d’échéance et son délai de grâce ; si personne ne l’accepte à temps, le prêt peut toujours tomber en défaut comme n’importe quel autre. Soyez prêt à le rembourser vous-même si la demande n’est pas acceptée.",
       "autoMatchOff": "L’appariement automatique des demandes de refinancement est désactivé sur ce déploiement : l’apparieur d’ordres n’exécutera donc pas votre demande. Ce réglage n’empêche pas un prêteur de l’accepter directement.",
       "autoMatchPaused": "Le protocole est actuellement en pause : aucun prêteur ne peut accepter votre demande de refinancement et l’apparieur d’ordres ne peut pas l’exécuter tant que la pause n’est pas levée.",
       "autoMatchUnknown": "Nous ne pouvons pas confirmer pour le moment l’état du refinancement sur ce déploiement : la possibilité pour l’apparieur d’ordres d’exécuter votre demande, et le fait que le protocole soit en pause ou non, restent inconnus jusqu’au chargement du statut.",
@@ -847,6 +865,8 @@
       "loading": "Lecture de vos approbations permanentes…",
       "unavailable": "Impossible de lire vos approbations pour le moment — réessayez dans un instant.",
       "sourcesUnavailable": "Impossible de charger vos prêts et offres pour le moment, cette liste ne peut donc pas être complète — plutôt qu'afficher une image partielle, réessayez dans un instant.",
+      "sourcesDegraded": "Votre liste de prêts ou d’offres vient d’être lue depuis la source de secours, qui peut avoir une ou deux minutes de retard sur la chaîne, donc un jeton d’une position ouverte ou reçue très récemment peut manquer dans cette liste. Il apparaîtra une fois la source de secours à jour.",
+      "sourcesPartial": "Une partie de votre liste d’offres n’a pas pu être lue pour l’instant, donc des jetons d’offres que vous détenez peuvent manquer dans cette liste, quelle que soit leur ancienneté. Réessayez dans un instant.",
       "revoke": "Révoquer",
       "staleNote": "Impossible de rafraîchir cette liste pour le moment — les lignes affichées peuvent être légèrement obsolètes. La révocation fonctionne tout de même.",
       "revoked": "Approbation supprimée pour {{symbol}}. Si une demande ou une annonce active en avait besoin, sa carte affichera un avertissement et proposera de la restaurer."
@@ -1568,6 +1588,7 @@
       "collateralLabel": "garantie",
       "collateralNone": "aucune",
       "illiquidCollateralTag": "illiquide lors de la publication (revérifiée à l’acceptation) — si c’est le cas, remise telle quelle en cas de non-remboursement",
+      "refinanceRequestTag": "demande de refinancement : l’emprunteur souhaite transférer le prêt #{{loanId}} à un nouveau prêteur",
       "collateralAtLeast": "au moins {{amount}}",
       "collateralRange": "{{committed}} engagés (plancher de la demande {{floor}}) ; ce qu’une exécution bloque dépend de la façon dont elle est exécutée",
       "collateralRangeRemaining": "{{remaining}} toujours engagés ({{used}} consommés par des exécutions précédentes ; plancher de la demande {{floor}}) ; ce qu’une exécution bloque dépend de la façon dont elle est exécutée",
@@ -2197,6 +2218,8 @@
       "unreadableCount_many": "{{count}} actifs",
       "unreadableCount_other": "{{count}} actifs",
       "unreadableWarn": "Nous n’avons pas pu lire {{assets}} pour l’instant ({{list}}) — la liste ci-dessous peut omettre des soldes. Cela se corrige généralement au prochain rafraîchissement.",
+      "sourcesDegraded": "Votre liste de prêts ou d’offres vient d’être lue depuis la source de secours, qui peut avoir une ou deux minutes de retard sur la chaîne, donc un actif lié à une position ouverte ou reçue très récemment peut manquer ci-dessous. Il apparaîtra une fois la source de secours à jour.",
+      "sourcesPartial": "Une partie de votre liste d’offres n’a pas pu être lue pour l’instant, donc un actif lié à une offre que vous détenez peut manquer ci-dessous, quelle que soit son ancienneté. Réessayez dans un instant.",
       "noBalancesInWindow": "Aucun solde parmi les {{count}} premiers tokens vérifiés — élargissez l’analyse ci-dessous pour continuer à chercher.",
       "loading": "Lecture de votre vault…",
       "addressLabel": "Adresse du Vault :",
@@ -2407,6 +2430,8 @@
         "lenderYouLockAccept": "{{principal}} prêté à l’emprunteur, maintenant.",
         "lenderYouLockPost": "{{principal}} maintenant, jusqu’à ce que votre offre soit acceptée ou annulée.",
         "lenderCollateralLock": "Ils verrouillent {{collateral}}.",
+        "lenderCollateralCarriedOver": "Ses {{collateral}}, déjà bloqués sous le prêt #{{loanId}}, sont reportés sur votre prêt — ce n’est pas un nouveau dépôt de garantie.",
+        "lenderCollateralFreshPledge": "L’autre partie bloque de nouveaux {{collateral}} pour votre prêt ; la garantie du prêt #{{loanId}} lui revient à la clôture de ce prêt.",
         "lenderCollateralMustLock": "Ils doivent verrouiller {{collateral}}.",
         "lenderWhenEndsAccept": "Le remboursement est dû sous {{duration}} (délai de grâce : {{grace}}). Vous réclamez ensuite vos fonds.",
         "lenderWhenEndsPost": "Le remboursement est dû {{duration}} après l’acceptation par un emprunteur (délai de grâce : {{grace}}). Vous réclamez ensuite vos fonds.",

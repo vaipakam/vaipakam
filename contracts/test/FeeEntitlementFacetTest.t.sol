@@ -1423,7 +1423,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         deal(mockERC20, address(diamond), 5_000 ether);
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector),
             abi.encode(true));
         vm.mockCall(address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");

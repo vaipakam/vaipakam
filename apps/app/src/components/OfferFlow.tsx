@@ -77,11 +77,17 @@ import {
 } from '../contracts/loanLive';
 import { saleSettlementNow } from '../data/loanSalePending';
 import {
+  lenderCollateralLine,
+  readRefinanceRequestLive,
+  sameRefinanceReview,
+} from '../data/refinanceRequestReview';
+import {
   exactUnitsOrNull,
   formatBpsAsPercent,
   formatDate,
   formatDurationDays,
   formatTokenAmount,
+  formatTokenAmountExact,
   fullTermInterest,
   isTooPrecise,
 } from '../lib/format';
@@ -109,10 +115,14 @@ import {
 } from '../data/tokenSecurity';
 import {
   OfferRiskBadge,
-  offerRiskLevel,
   offerScreenableLegs,
   type OfferRiskLevel,
 } from './TokenRiskBadge';
+import {
+  MATCH_SCREEN_MAX,
+  MATCH_SCREEN_STEP,
+  pickGuidedMatches,
+} from './guidedMatches';
 import {
   makeStepper,
   plannedApprovePrompts,
@@ -229,11 +239,15 @@ function MatchOfferRow({
   offer,
   side,
   risk,
+  checking,
   onChoose,
 }: {
   offer: IndexedOffer;
   side: Side;
   risk: OfferRiskLevel | null;
+  /** #2535 — the security screen has not answered for every leg yet:
+   *  the row is listed in its place but cannot be chosen. */
+  checking: boolean;
   onChoose: () => void;
 }) {
   const lendingMeta = useTokenMeta(offer.lendingAsset);
@@ -256,6 +270,14 @@ function MatchOfferRow({
             formatBpsAsPercent(offerRateBps(offer)),
           )}{' '}
           <OfferRiskBadge level={risk} />
+          {checking ? (
+            <span
+              className="badge badge-neutral"
+              title={copy.tokenSecurity.badge.checking.title}
+            >
+              {copy.tokenSecurity.badge.checking.label}
+            </span>
+          ) : null}
         </span>
         <br />
         <span className="row-sub">
@@ -264,9 +286,21 @@ function MatchOfferRow({
             ? copy.offerFlow.receipts.youLockCollateral(collateralStr)
             : copy.offerFlow.receipts.theyLockCollateral(collateralStr)}{' '}
           · {copy.offerFlow.offerNumber(offer.offerId)}
+          {/* #2421 — a refinance request is named in the list too, only on a
+              positive tag (an unread tag is unknown, never "not one"); the
+              review reads it live before anything can be signed. */}
+          {(offer.refinanceTargetLoanId ?? 0) > 0
+            ? ` · ${copy.offers.refinanceRequestTag(String(offer.refinanceTargetLoanId))}`
+            : null}
         </span>
       </span>
-      <button type="button" className="btn btn-primary btn-sm" onClick={onChoose}>
+      <button
+        type="button"
+        className="btn btn-primary btn-sm"
+        disabled={checking}
+        title={checking ? copy.tokenSecurity.badge.checking.title : undefined}
+        onClick={onChoose}
+      >
         {copy.match.choose}
       </button>
     </div>
@@ -488,6 +522,54 @@ export function OfferFlow({ side }: { side: Side }) {
   const acceptIsLoanSale =
     mode === 'accept' && linkedLoan.data !== undefined && linkedLoan.data !== '0';
 
+  // #2421 — a borrow request tagged with a running loan is a REFINANCE:
+  // the accept also pays off and closes that loan, and its collateral is
+  // either carried over from it or a fresh pledge (the offer's recorded
+  // decision). The indexer row has the tag but not that decision, so the
+  // lender's review reads both live, and signing waits for the answer —
+  // the fresh-borrow wording would misdescribe the deal.
+  const refinanceKey = ['offerRefinanceRequest', readChain.chainId, selected?.offerId];
+  const refinanceRequest = useQuery({
+    queryKey: refinanceKey,
+    enabled:
+      mode === 'accept' && side === 'lender' && Boolean(readClient) && Boolean(selected),
+    // Codex #2668 r2 — the target loan can close or change while the review
+    // stays open, so a refinance request's standing is re-read on the sale
+    // review's cadence; submit re-reads it once more before anything is
+    // signed. An ordinary offer's answer cannot become a refinance (the tag
+    // is fixed at posting), so it is not polled.
+    staleTime: 30_000,
+    refetchInterval: (query) =>
+      query.state.data?.kind === 'refinance' ? idleAware(60_000)() : false,
+    queryFn: () =>
+      readRefinanceRequestLive(
+        readClient!,
+        readChain.diamondAddress,
+        BigInt(selected!.offerId),
+      ),
+  });
+  // Codex #2668 r3 — a failed refresh keeps the previous answer in `data`
+  // while the query is in error; that answer is no longer substantiated, so
+  // the review treats it as unknown (check-failed banner, retry, no
+  // receipt, not signable) until a refresh succeeds.
+  const refinanceSettled =
+    refinanceRequest.data !== undefined && !refinanceRequest.isError;
+  const refinanceKnown = mode !== 'accept' || side !== 'lender' || refinanceSettled;
+  const refinanceRead =
+    mode === 'accept' && side === 'lender' && refinanceSettled
+      ? refinanceRequest.data
+      : undefined;
+  const refinanceInfo = refinanceRead?.kind === 'refinance' ? refinanceRead.info : null;
+  // Codex #2668 r5 — the offer itself no longer exists (a cancel deletes
+  // it). Said as such, never read as an ordinary request.
+  const offerGoneLive = refinanceRead?.kind === 'gone';
+  // Codex #2668 r1 — the target loan moves after the request is posted: a
+  // repayment or enforcement closes it, added collateral breaks a carry-over
+  // match. When the contract's own acceptance check says no, or the offer
+  // is gone, the review says so and offers nothing to sign.
+  const refinanceBlocked =
+    offerGoneLive || refinanceInfo?.standing.kind === 'blocked';
+
   // #986 P3 — the honest buy-a-running-loan review. A sale-vehicle
   // offer's stored fields misdescribe the deal (zero collateral, a
   // term that already partly elapsed), so the review reads the LINKED
@@ -675,37 +757,46 @@ export function OfferFlow({ side }: { side: Side }) {
       });
   }, [activeOffers.data, form.lendingAsset, side, address, desiredWei]);
 
-  // #1036 badges slice — guided matching is a RECOMMENDATION surface
-  // for a naive user, so a hard-flagged offer (a leg the security
-  // screen says is dangerous) is EXCLUDED from the top 5, with an
-  // honest count of what was hidden — never a silently thinner list.
-  // Warn/unscreened offers stay listed, wearing the badge; and the
-  // book page never hides anything (browse must not lie about the
-  // market — the accept gate enforces downstream). Only the head of
-  // the candidate list is screened: a flagged offer lets the next
-  // candidate in, so a bounded headroom (top 15 for a top-5 list)
-  // keeps the batch small; past that pathological tail, unscreened
-  // candidates simply show unbadged.
+  // #1036 badges slice / #2535 — guided matching is a RECOMMENDATION
+  // surface: it offers only screened offers, leaves flagged ones out
+  // with a stated count, and holds an offer whose screen has not
+  // answered as "checking" (shown, not choosable). The rule lives in
+  // guidedMatches.ts. The screened head starts at MATCH_SCREEN_STEP and
+  // grows, bounded, when flagged offers leave it short. The grown depth
+  // belongs to ONE candidate list — a new search, a different amount that
+  // reorders it, or a book refresh starts again from the first step
+  // (Codex #2663 r1). It is stored with the list it was grown for and read
+  // through that key, so a changed list reads as MATCH_SCREEN_STEP in the
+  // same render and nothing below can act on the old list's depth (r2: a
+  // reset queued beside a deepen could be overwritten by it). Re-deepening
+  // over offers already screened costs no network: their verdicts are
+  // cached per token.
+  const screenKey = `${readChain.chainId}|${side}|${(matchCandidates ?? [])
+    .map((o) => o.offerId)
+    .join(',')}`;
+  const [grownDepth, setGrownDepth] = useState({ key: screenKey, depth: MATCH_SCREEN_STEP });
+  const screenDepth = grownDepth.key === screenKey ? grownDepth.depth : MATCH_SCREEN_STEP;
   const matchLegs = useMemo(
-    () => (matchCandidates ?? []).slice(0, 15).flatMap(offerScreenableLegs),
-    [matchCandidates],
+    () => (matchCandidates ?? []).slice(0, screenDepth).flatMap(offerScreenableLegs),
+    [matchCandidates, screenDepth],
   );
   const matchVerdicts = useBookTokenSecurity(matchLegs);
-  const { matches, hiddenFlagged } = useMemo(() => {
-    if (matchCandidates === null)
-      return { matches: null as IndexedOffer[] | null, hiddenFlagged: 0 };
-    const out: IndexedOffer[] = [];
-    let hidden = 0;
-    for (const o of matchCandidates) {
-      if (out.length === 5) break;
-      if (offerRiskLevel(o, matchVerdicts) === 'block') {
-        hidden += 1;
-        continue;
-      }
-      out.push(o);
-    }
-    return { matches: out, hiddenFlagged: hidden };
-  }, [matchCandidates, matchVerdicts]);
+  const matchPick = useMemo(
+    () =>
+      matchCandidates === null
+        ? null
+        : pickGuidedMatches(matchCandidates, matchVerdicts, screenDepth),
+    [matchCandidates, matchVerdicts, screenDepth],
+  );
+  // Render-phase adjustment: once the screened head has answered and come
+  // up short, screen the next step of THIS list. Terminates — the depth
+  // only grows, and the pick stops asking at MATCH_SCREEN_MAX.
+  if (matchPick?.deepen) {
+    setGrownDepth({
+      key: screenKey,
+      depth: Math.min(screenDepth + MATCH_SCREEN_STEP, MATCH_SCREEN_MAX),
+    });
+  }
 
   // ---- Step plumbing ----------------------------------------------------
   const stepLabels =
@@ -993,6 +1084,9 @@ export function OfferFlow({ side }: { side: Side }) {
   const preSign = useTxSimulation(simTx);
 
   const receipt = useMemo((): ReceiptData | null => {
+    // #2537 — every amount in the receipt is the EXACT figure the
+    // transaction carries (formatTokenAmountExact), never a rounded one:
+    // the consent box is ticked against these numbers.
     // The conversions below throw on inputs the completeness gates
     // can't fully exclude — never let that take down the page.
     try {
@@ -1017,9 +1111,9 @@ export function OfferFlow({ side }: { side: Side }) {
             return null;
           }
           const live = saleData.live;
-          const principalStr = `${formatTokenAmount(live.principal, lending.decimals)} ${lending.symbol}`;
-          const interestStr = `${formatTokenAmount(saleData.buyerInterest, lending.decimals)} ${lending.symbol}`;
-          const collateralStr = `${formatTokenAmount(live.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
+          const principalStr = `${formatTokenAmountExact(live.principal, lending.decimals)} ${lending.symbol}`;
+          const interestStr = `${formatTokenAmountExact(saleData.buyerInterest, lending.decimals)} ${lending.symbol}`;
+          const collateralStr = `${formatTokenAmountExact(live.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
           const dueStr = formatDate(saleData.dueAtSec);
           const illiquidSuffix = reviewIsIlliquid
             ? ` ${copy.match.illiquidWarning}`
@@ -1039,9 +1133,9 @@ export function OfferFlow({ side }: { side: Side }) {
           offerRateBps(selected),
           selected.durationDays,
         );
-        const principalStr = `${formatTokenAmount(principal, lending.decimals)} ${lending.symbol}`;
-        const interestStr = `${formatTokenAmount(interest, lending.decimals)} ${lending.symbol}`;
-        const collateralStr = `${formatTokenAmount(selected.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
+        const principalStr = `${formatTokenAmountExact(principal, lending.decimals)} ${lending.symbol}`;
+        const interestStr = `${formatTokenAmountExact(interest, lending.decimals)} ${lending.symbol}`;
+        const collateralStr = `${formatTokenAmountExact(selected.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
         const durationStr = formatDurationDays(selected.durationDays);
         const graceStr = grace.label;
         const illiquidSuffix = reviewIsIlliquid
@@ -1061,11 +1155,16 @@ export function OfferFlow({ side }: { side: Side }) {
             whenThisEnds: copy.offerFlow.receipts.borrowerWhenEndsAccept(durationStr, graceStr),
           };
         }
+        // #2421 — no lender receipt until it is known whether this is a
+        // refinance request: the collateral line differs. Nor for a request
+        // the acceptance check refuses (Codex #2668 r1): there is no deal to
+        // describe, and the banner says why.
+        if (!refinanceKnown || refinanceBlocked) return null;
         return {
           youReceive: `${copy.offerFlow.receipts.lenderYouReceive(interestStr, principalStr)} ${acceptModeNote}`,
           youLock: copy.offerFlow.receipts.lenderYouLockAccept(principalStr),
           youMayOwe: copy.offerFlow.receiptOweNothing,
-          youCanLose: `${copy.lend.defaultOutcome} ${copy.offerFlow.receipts.lenderCollateralLock(collateralStr)}${illiquidSuffix}`,
+          youCanLose: `${copy.lend.defaultOutcome} ${lenderCollateralLine(refinanceInfo, collateralStr)}${illiquidSuffix}`,
           fees: copy.fees.lenderYieldFee(yieldPct),
           whenThisEnds: copy.offerFlow.receipts.lenderWhenEndsAccept(durationStr, graceStr),
         };
@@ -1082,9 +1181,9 @@ export function OfferFlow({ side }: { side: Side }) {
       const principal = payload.amountMax;
       const rateBps = side === 'lender' ? payload.interestRateBps : payload.interestRateBpsMax;
       const interest = fullTermInterest(principal, rateBps, payload.durationDays);
-      const principalStr = `${formatTokenAmount(principal, lending.decimals)} ${lending.symbol}`;
-      const interestStr = `${formatTokenAmount(interest, lending.decimals)} ${lending.symbol}`;
-      const collateralStr = `${formatTokenAmount(payload.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
+      const principalStr = `${formatTokenAmountExact(principal, lending.decimals)} ${lending.symbol}`;
+      const interestStr = `${formatTokenAmountExact(interest, lending.decimals)} ${lending.symbol}`;
+      const collateralStr = `${formatTokenAmountExact(payload.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
       const durationStr = formatDurationDays(payload.durationDays);
       const graceStr = grace.label;
       // The interest MODE changes what an early repayment costs — the
@@ -1131,6 +1230,9 @@ export function OfferFlow({ side }: { side: Side }) {
     acceptIsLoanSale,
     saleData,
     saleReviewReady,
+    refinanceKnown,
+    refinanceBlocked,
+    refinanceInfo,
   ]);
 
   const isOwnSelectedOffer =
@@ -1265,6 +1367,16 @@ export function OfferFlow({ side }: { side: Side }) {
     `unsupported:${securityUnsupported.map((l) => l.key).join(',')}`,
     `illiquid:${reviewIsIlliquid ? '1' : '0'}`,
     `loanSale:${acceptIsLoanSale ? '1' : '0'}`,
+    // #2421 — the refinance disclosure and its collateral wording.
+    `refi:${
+      refinanceInfo
+        ? `${refinanceInfo.targetLoanId}:${refinanceInfo.carryOver ? '1' : '0'}:${refinanceInfo.standing.kind}`
+        : offerGoneLive
+          ? 'gone'
+          : refinanceKnown
+          ? '0'
+          : '?'
+    }`,
     `sale:${saleFingerprint ?? ''}`,
     // #1679 r1 F1 — these settle ASYNCHRONOUSLY. While they are pending the
     // receipt shows fallback numbers and `fees.ready`/`grace.ready` hold the
@@ -1377,6 +1489,11 @@ export function OfferFlow({ side }: { side: Side }) {
     // links never sign here.
     linkedLoanKnown &&
     (!acceptIsLoanSale || saleReviewReady) &&
+    // #2421 — a refinance request changes what accepting does; the review
+    // must know before it can be signed, and one the acceptance check
+    // refuses is never signable (Codex #2668 r1).
+    refinanceKnown &&
+    !refinanceBlocked &&
     securityGateOk &&
     // ANY disclosure on screen requires consent granted AGAINST the current
     // set of disclosures — not merely consent that is still true from before
@@ -1760,6 +1877,24 @@ export function OfferFlow({ side }: { side: Side }) {
     ) {
       void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
       throw new Error(copy.match.termsChanged);
+    }
+    // Codex #2668 r2 — the refinance disclosure and its signability were
+    // read when the review opened (and polled since); the target loan can
+    // have closed or changed in between. Re-read it on the wallet chain and
+    // refuse to sign against a review that no longer matches, putting the
+    // fresh answer in place so the review shows why.
+    if (refinanceRead) {
+      const liveRefinance = await readRefinanceRequestLive(
+        publicClient,
+        walletChain.diamondAddress,
+        BigInt(selected.offerId),
+      );
+      if (!sameRefinanceReview(refinanceRead, liveRefinance)) {
+        queryClient.setQueryData(refinanceKey, liveRefinance);
+        throw new Error(
+          liveRefinance.kind === 'gone' ? copy.match.offerGone : copy.match.termsChanged,
+        );
+      }
     }
     // Sign canonical terms; approval amounts come from the SIGNED
     // terms (canonical), not the indexer row. The REVIEWED terms are
@@ -2307,8 +2442,12 @@ export function OfferFlow({ side }: { side: Side }) {
             <p className="muted">{text.matchLede}</p>
             {activeOffers.isLoading ? (
               <p className="muted">{copy.offerFlow.lookingForMatches}</p>
-            ) : matches === null ? (
+            ) : matchPick === null ? (
               <p className="muted">{copy.match.unavailable}</p>
+            ) : matchPick.matches.length === 0 && matchPick.screening ? (
+              // #2535 — an empty list while the screen is still answering
+              // is not "no matches".
+              <p className="muted">{copy.offerFlow.lookingForMatches}</p>
             ) : (
               <>
                 {/* Rendered for EMPTY and NON-EMPTY lists alike (it
@@ -2316,30 +2455,45 @@ export function OfferFlow({ side }: { side: Side }) {
                     with a few old matches is just as misleading as a
                     stale empty one — better offers may be missing. */}
                 <MarketFreshnessNote />
-                {matches.length === 0 ? (
+                {matchPick.matches.length === 0 ? (
                   // UX-040 — the shared EmptyState (icon + heading), not
                   // bespoke muted paragraphs, so this matches every other
                   // empty surface. The withheld-flagged note rides as the
                   // body so "no matches" never omits what the safety
-                  // screen hid.
+                  // screen hid — nor that unscreened offers remain.
                   <EmptyState
                     icon={Search}
                     title={text.matchEmpty}
                     body={
-                      hiddenFlagged > 0
-                        ? copy.tokenSecurity.matchesHidden(hiddenFlagged)
-                        : undefined
+                      [
+                        matchPick.hiddenFlagged > 0
+                          ? copy.tokenSecurity.matchesHidden(matchPick.hiddenFlagged)
+                          : null,
+                        matchPick.unscreenedTail
+                          ? copy.tokenSecurity.matchesUnscreenedTail
+                          : null,
+                      ]
+                        .filter((t): t is string => t !== null)
+                        .join(' ') || undefined
+                    }
+                    action={
+                      matchPick.unscreenedTail ? (
+                        <Link to="/offers" className="btn btn-secondary">
+                          {copy.tokenSecurity.matchesOfferBookLink}
+                        </Link>
+                      ) : undefined
                     }
                   />
                 ) : (
                   <>
                     <div className="row-list">
-                      {matches.map((o) => (
+                      {matchPick.matches.map(({ offer: o, risk, checking }) => (
                         <MatchOfferRow
                           key={o.offerId}
                           offer={o}
                           side={side}
-                          risk={offerRiskLevel(o, matchVerdicts)}
+                          risk={risk}
+                          checking={checking}
                           onChoose={() => {
                             setSelected(o);
                             setMode('accept');
@@ -2351,9 +2505,17 @@ export function OfferFlow({ side }: { side: Side }) {
                         />
                       ))}
                     </div>
-                    {hiddenFlagged > 0 ? (
+                    {matchPick.hiddenFlagged > 0 ? (
                       <p className="muted" style={{ marginTop: 8 }}>
-                        {copy.tokenSecurity.matchesHidden(hiddenFlagged)}
+                        {copy.tokenSecurity.matchesHidden(matchPick.hiddenFlagged)}
+                      </p>
+                    ) : null}
+                    {matchPick.unscreenedTail ? (
+                      // The Offer Book is not in Basic mode's navigation, so
+                      // the note carries its own way there (Codex #2663 r1).
+                      <p className="muted" style={{ marginTop: 8 }}>
+                        {copy.tokenSecurity.matchesUnscreenedTail}{' '}
+                        <Link to="/offers">{copy.tokenSecurity.matchesOfferBookLink}</Link>
                       </p>
                     ) : null}
                     <p className="muted" style={{ marginTop: 8 }}>
@@ -2551,6 +2713,50 @@ export function OfferFlow({ side }: { side: Side }) {
             ) : (
               <div className="banner banner-warn" role="alert">
                 <span className="banner-body">{copy.match.saleSellerNotCovered}</span>
+              </div>
+            )
+          ) : null}
+          {offerGoneLive ? (
+            <div className="banner banner-warn" role="alert" data-testid="offer-gone">
+              <span className="banner-body">{copy.match.offerGone}</span>
+            </div>
+          ) : refinanceInfo?.standing.kind === 'blocked' ? (
+            <div
+              className="banner banner-warn"
+              role="alert"
+              data-testid="refinance-request-blocked"
+            >
+              <span className="banner-body">
+                {copy.match.refinanceRequestUnavailable(
+                  refinanceInfo.targetLoanId.toString(),
+                  refinanceInfo.standing.reason,
+                )}
+              </span>
+            </div>
+          ) : refinanceInfo ? (
+            <div className="banner banner-info" data-testid="refinance-request-banner">
+              <span className="banner-body">
+                {copy.match.refinanceRequestBanner(refinanceInfo.targetLoanId.toString())}
+                {refinanceInfo.standing.kind === 'unchecked'
+                  ? ` ${copy.match.refinanceRequestUnchecked}`
+                  : null}
+              </span>
+            </div>
+          ) : !refinanceKnown ? (
+            refinanceRequest.isError ? (
+              <div className="banner banner-warn" role="alert">
+                <span className="banner-body">{copy.match.refinanceRequestCheckFailed}</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => void refinanceRequest.refetch()}
+                >
+                  {copy.offerFlow.retry}
+                </button>
+              </div>
+            ) : (
+              <div className="banner banner-info">
+                <span className="banner-body">{copy.match.refinanceRequestChecking}</span>
               </div>
             )
           ) : null}

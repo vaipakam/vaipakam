@@ -574,10 +574,8 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // Reset renter immediately (operational — rental is over)
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultSetNFTUser.selector,
-                    loan.lender,
-                    loan.principalAsset,
-                    loan.tokenId,
+                    VaultFactoryFacet.vaultSetRentalUser.selector,
+                    loan.id,
                     address(0),
                     0
                 ),
@@ -1072,10 +1070,8 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             );
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultSetNFTUser.selector,
-                    loan.lender,
-                    loan.principalAsset,
-                    loan.tokenId,
+                    VaultFactoryFacet.vaultSetRentalUser.selector,
+                    loan.id,
                     msg.sender, // Still renter
                     newExpires
                 ),

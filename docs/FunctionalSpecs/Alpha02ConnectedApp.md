@@ -1271,6 +1271,27 @@ This holds for every money input, including amounts the user never sees again
 before signing (such as a fee ceiling), because a rounded figure would mean
 the review states one amount while the contract moves another.
 
+### Receipt amounts are exact
+
+The amounts a review receipt states are the exact figures the transaction
+carries, to the token's smallest unit: what is lent, borrowed, locked as
+collateral, or owed in interest. They are never rounded for display, up or
+down, because the user's consent is given against those numbers and a rounded
+figure would describe a different amount from the one signed. A shorter,
+rounded figure may appear on browsing surfaces (lists, cards) where nothing is
+being agreed to.
+
+The rule covers every surface where the user agrees to a figure, not only the
+offer receipt: refinance, loan sale, offset, obligation transfer, early exit,
+the trading desk's ticket and signed-fill confirmation, rentals, VPFI deposit
+and withdrawal, the Full tariff quote, the position page's receipts (including what a claim
+pays and the recorded debt stated beside it), the Claim-everything checklist,
+and the pending-step cards that ask for a top-up or state a bound. A row that
+only links to the loan page where the claim is made may round. A shortfall or
+minimum stated beside an amount input ("you need X more", "at least X") is
+exact for the same reason: a rounded minimum can sit just below the real one,
+and a user who typed it would be refused.
+
 Consent is collected against the terms actually shown. If a material term,
 warning, selected offer, selected listing, or disclosed risk changes after
 consent, consent is cleared and the user is told to review again.
@@ -1320,6 +1341,18 @@ progress.
 - Guided borrow and lend flows begin with user intent: asset, amount, duration,
   and acceptable terms.
 - Matching open offers are shown first when available.
+- Matching offers are a recommendation, so only offers the independent token
+  security check has answered for are offered as a pick. An offer the check
+  flags as dangerous is left out, and the list says how many were left out. An
+  offer whose check has not finished is shown in its place, marked as being
+  checked, and cannot be chosen until the answer arrives. Offers beyond the
+  part of the list the check has covered are never recommended unchecked: when
+  flagged offers leave the list short, more of the list is checked, up to a
+  bound; past that bound the list says that more matching offers exist and
+  links to the Offer Book, which lists every offer and marks those the check
+  warns about. The
+  link is given in place because the Offer Book is not in Basic mode's
+  navigation.
 - Posting the user's own offer is the explicit fallback.
 - The app blocks self-authored offers where accepting them would be unsafe or
   nonsensical.
@@ -1360,6 +1393,47 @@ progress.
   are loading it says so. It never shows a figure it cannot back, and never a 0%
   that only means "unknown". Rentals, offers with an NFT on either side, offers
   with no collateral, and loan-position sales state no ratio.
+- A borrow request that asks to refinance a running loan says so on its row
+  and names that loan, so a lender can tell it from an ordinary borrow request
+  before opening it. The market data records which loan a request is for, or
+  that it is not a refinance request, or that it has not been read yet; the
+  row shows the tag only when the request is known to be a refinance request,
+  and never presents an unread request as an ordinary one by stating that it
+  is not a refinance.
+- A lender's review of a refinance request says what accepting it does
+  (#2421): it names the running loan, and says that accepting opens the
+  lender's loan and, in the same transaction, pays off and closes that loan.
+  It states how that payoff is funded: the amount the accepting lender lends
+  goes to the borrower's wallet as with any loan, less the borrower's
+  loan-initiation fee, and the payoff to the running
+  loan's current lender is then drawn from that wallet, so the new loan can
+  fund part or all of it, with the borrower covering any difference. The
+  collateral is described from the request's
+  own recorded decision: either the stake already locked under the running loan
+  carries over to the new loan (not a new pledge), or the borrower pledged a
+  new batch and the old loan's collateral goes back to them when it closes. The
+  review reads this from the chain, and until it knows whether the request is a
+  refinance it says it is checking (or that the check failed, with a retry),
+  shows no lender receipt and cannot be signed. The loan a request targets
+  can change after the request is posted (it can be repaid, closed or have
+  collateral added), so the review also runs the protocol's own acceptance
+  check for the request, and confirms it is the loan's currently recorded
+  request (only that one can be taken), re-reads it while the review stays open, and reads it
+  once more at signing, refusing to sign against a review it no longer
+  matches. A refresh that fails leaves the review unknown again (check
+  failed, with a retry) rather than showing the last answer as current, and an
+  offer that no longer exists (cancelling deletes it) is shown as no longer
+  open, with nothing to sign, never as an ordinary borrow request. Each check
+  reads every fact it combines from the same block, so it never mixes a state
+  from before a change with one from after it. When that check refuses, the review says the request
+  cannot be taken right now and why, shows no lender receipt, and offers
+  nothing to sign. When the deployment has no such check, the review says it
+  cannot confirm the request is still takeable and that a stale request fails
+  on-chain, moving nothing but the attempt's network fee. A check that passes
+  does not promise success: the borrower's payoff funding and the market at
+  the moment of acceptance are checked only by the accept itself. The offer
+  list in the guided flow tags a refinance request the same way the Offer
+  Book does.
 - Each offer states its collateral as an amount, not only a token name, so a
   lender can judge an offer before opening it. When the collateral is recorded
   as illiquid, the row says that on default it is handed over as-is rather than
@@ -2469,6 +2543,25 @@ is the borrower's own money.
   would not show here — rather than implying the wallet is linked nowhere. It
   does not claim alerts still reach such a link either, since this browser cannot
   check it; it says the wallet may still be linked elsewhere.
+- Push delivery is offered only when the alert service says it can send Push
+  right now. The app asks before it shows the option, and the subscribe link
+  opens the channel the service actually posts as, never a channel named only
+  in the app's own build settings. When the service cannot send, the card says
+  Push can't be switched on right now and offers nothing; when the app could
+  not ask, it says that instead, and offers nothing either. Neither state is
+  shown as Push being on.
+- The answer covers only the sender that gives it. Today that is the service
+  sending payment reminders; the warnings when a loan gets risky come from a
+  separate sender whose Push readiness the app cannot see, so while Push is
+  offered the card says the check covers payment reminders and that those
+  warnings may not reach Push, and suggests keeping another alert channel on.
+  The caveat goes only when one answer covers every sender.
+- A new Push opt-in is stored only where it can be honoured. If the service
+  cannot send when the opt-in is saved, it refuses that save as a whole and
+  stores nothing, in a way every version of the app reads as "not saved"; the
+  current app then saves the rest again without the opt-in, keeps Push off,
+  and says why. An opt-in made earlier is kept through an outage and resumes
+  when sending is back; the card says so while sending is unavailable.
 
 ## Notifications
 
@@ -3470,7 +3563,12 @@ Its intended behaviour, as the test oracle for this surface:
   the acceptance fail, taking nothing; that posting takes multiple
   wallet confirmations; and, for a loan on a periodic interest
   schedule, that the replacement loan will not carry a payment
-  schedule. A loan already past due but inside grace shows a plain
+  schedule. The form, the review and the standing request all say that a
+  request is not a guarantee (#544): until a lender accepts it, the loan
+  keeps its due date and grace window, and if none accepts in time it can
+  still default like any other loan, so the borrower must be ready to repay
+  it themselves; the standing request card says this while it is still
+  checking the request's state, too. A loan already past due but inside grace shows a plain
   past-due notice on the form, and the quoted figures include the fee
   as of now. If the posting sequence is abandoned
   after the payoff approval was granted but before the request was
@@ -4030,7 +4128,22 @@ Its intended behaviour, as the test oracle for this surface:
   listing on the same token — whose own cards will flag it and offer
   restore. When the loan/offer data sources are unavailable the list
   says it can't be built completely rather than showing a partial
-  picture as complete.
+  picture as complete. When the wallet's loans or offers could be read
+  only from the backup source, which can lag behind the chain by a minute
+  or two, the list is still shown but says that a token from a very
+  recent position may be missing until that source catches up. It does
+  not promise the next refresh fixes it.
+  When part of the offer list could be read from neither source, the list
+  says instead that tokens from offers the wallet holds may be missing
+  whatever their age, and to try again, since that gap does not close by
+  itself. When both apply (one list lagging, part of another unread),
+  both are stated; neither is dropped in favour of the other.
+- The vault page builds its asset list partly from the wallet's own loans
+  and offers. It states the same two cases the same way: an asset behind
+  a very recent position may be missing when the lagging backup source
+  answered, and an asset behind any held offer may be missing when part
+  of the offer list could not be read at all, stating both when both
+  apply. It never presents the list as complete in either case.
 - Advanced mode surfaces keeper permissions as the protocol's
   three-switch opt-in: a master switch, per-keeper action grants,
   and a per-loan switch on each loan's page — all off by default,

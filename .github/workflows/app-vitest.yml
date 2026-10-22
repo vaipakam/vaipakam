@@ -144,7 +144,7 @@ jobs:
           # matching the config filename costs nothing and cannot miss one.
           # A companion unconditional job in ci.yml runs the same invariant
           # with no filter; this one additionally brings in the richer suite.
-          DEFI_RE='^(apps/(app|indexer|keeper|agent)/|.*wrangler[^/]*\.(jsonc|json|toml)$|packages/(lib|contracts|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
+          DEFI_RE='^(apps/(app|indexer|keeper|agent)/|.*wrangler[^/]*\.(jsonc|json|toml)$|packages/(lib|contracts|i18n|push)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
           if echo "$CHANGED" | grep -Eq "$DEFI_RE"; then
             echo "defi=true" >> "$GITHUB_OUTPUT"
           else
@@ -180,6 +180,12 @@ jobs:
       # second workflow.
       - name: Run @vaipakam/lib vitest
         run: pnpm --filter @vaipakam/lib test
+
+      # The shared Push rail (#2248) — the capability guard and the
+      # accounting answer both Workers rely on are pinned HERE, on the one
+      # unit they import, rather than in one Worker's suite.
+      - name: Run @vaipakam/push vitest
+        run: pnpm --filter @vaipakam/push test
 
       # apps/app's pure-logic unit suite (#1111) runs in the SAME gate so it
       # can't rot unrun (the #1076 lesson). Its Playwright e2e specs stay in the

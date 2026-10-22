@@ -33,7 +33,7 @@ import { useAutoRefinancePosture } from '../data/protocol';
 import { AutoMatchPostureBanner } from './AutoMatchPostureBanner';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { cancelRevokesApproval } from '../data/refinanceInterlock';
-import { formatDate, formatTokenAmount } from '../lib/format';
+import { formatDate, formatTokenAmountExact } from '../lib/format';
 
 export function RefinancePendingCard({
   loanId,
@@ -88,7 +88,7 @@ export function RefinancePendingCard({
     onSupportedChain && Boolean(walletClient) && Boolean(publicClient);
   const topUpStr =
     state && principalMeta
-      ? `${formatTokenAmount(state.topUp, principalMeta.decimals)} ${principalMeta.symbol}`
+      ? `${formatTokenAmountExact(state.topUp, principalMeta.decimals)} ${principalMeta.symbol}`
       : null;
 
   async function cancelPending() {
@@ -229,7 +229,15 @@ export function RefinancePendingCard({
       >
         <span className="banner-body">
           {state === undefined
-            ? copy.refinance.pendingChecking(offerId)
+            ? // Codex #2668 r1 — the no-guarantee warning does not wait for
+              // the check: an RPC outage could otherwise leave this card up
+              // indefinitely without the one lifecycle fact the borrower
+              // must not miss. Suppressed only once a state is KNOWN to be
+              // terminal, below.
+              <>
+                {copy.refinance.pendingChecking(offerId)}{' '}
+                {copy.refinance.noGuarantee}
+              </>
             : state.accepted
               ? copy.refinance.pendingAccepted
               : state.untakeable
@@ -256,6 +264,8 @@ export function RefinancePendingCard({
                   {state.loanActive && topUpStr ? (
                     <> {copy.refinance.walletNote(topUpStr)}</>
                   ) : null}
+                  {/* #544 — still no match guarantee while the request is open. */}
+                  {state.loanActive ? <> {copy.refinance.noGuarantee}</> : null}
                   {!state.loanActive ? (
                     <> {copy.refinance.pendingLoanClosed}</>
                   ) : null}

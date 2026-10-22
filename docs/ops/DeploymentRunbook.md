@@ -2372,8 +2372,19 @@ about the machine.
 2. **Production channel address** (do not change without rotating):
    - **`0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b`**
    - Public URL: <https://app.push.org/channels/0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b>
-   - End-user subscribe deep-link rendered on the Alerts page goes to
-     the same URL via the `VITE_PUSH_CHANNEL_ADDRESS` env var.
+   - The subscribe deep-link on the Alerts card (`/settings`) goes to
+     the channel the AGENT reports from `GET /push/status` (#2251) —
+     the channel it actually posts as. There is no app-side setting for
+     it any more; `VITE_PUSH_CHANNEL_ADDRESS` is retired.
+   - Optional, recommended: set `PUSH_CHANNEL_ADDRESS` to this address
+     as a plain var on the agent (#1456). Unset, the agent posts as the
+     signer's own address, which is this channel only while the signer
+     IS the channel owner. Set, the signer may instead be a delegate of
+     the channel (Push `addDelegate`), which is what lets a later key
+     rotation be a signer swap rather than a channel migration. The
+     keeper reads the same setting once it moves onto the shared rail
+     (`packages/push`, #2248); until then it posts as its key's own
+     address.
 3. **Channel signer privkey → worker secret.**
    ```bash
    # Shared Secrets Store, same reasoning as TG_BOT_TOKEN in §8a
@@ -2388,9 +2399,11 @@ about the machine.
    staking deposit + ~$50 of native gas — nothing else of value.
 4. **Frontend env.** Set on every frontend deploy:
    ```
-   VITE_PUSH_CHANNEL_ADDRESS=0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b
    VITE_AGENT_ORIGIN=<the agent Worker for THIS environment>
    ```
+   (`VITE_PUSH_CHANNEL_ADDRESS` is no longer read, #2251: the Alerts card
+   asks the agent whether Push can be sent and which channel to link. A
+   leftover value in `.env.local` is harmless.)
 
    **There is only ONE agent today, and every environment shares it.**
    `apps/agent/wrangler.jsonc` declares a single Worker, `vaipakam-agent`,

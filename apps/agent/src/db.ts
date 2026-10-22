@@ -357,6 +357,21 @@ function isMissingTestAlertColumn(err: unknown): boolean {
   return /no such column|has no column named/i.test(String(err));
 }
 
+/** #2251 — whether this wallet/chain already has a Push opt-in stored, so a
+ *  save that re-sends it during a rail outage is told it is KEPT rather than
+ *  refused (only a NEW opt-in is refused). */
+export async function hasStoredPushOptIn(
+  db: D1Database,
+  wallet: string,
+  chainId: number,
+): Promise<boolean> {
+  const row = await db
+    .prepare(`SELECT push_channel FROM user_thresholds WHERE wallet = ? AND chain_id = ?`)
+    .bind(wallet.toLowerCase(), chainId)
+    .first<{ push_channel: string | null }>();
+  return Boolean(row?.push_channel);
+}
+
 /** UX-012 — read the stored Telegram chat id + locale for a
  *  wallet/chain, so the test-alert endpoint can push a real message to
  *  the linked chat. Returns null when the wallet has no row or the row

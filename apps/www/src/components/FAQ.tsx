@@ -762,6 +762,7 @@ event VaultRentalUpdated(
   address indexed lender,
   address indexed nftContract,
   uint256 indexed tokenId,
+  uint256 loanId,
   address user,
   uint64  expires,
   uint256 quantity,

@@ -52,6 +52,7 @@ import {
   formatBpsAsPercent,
   formatDurationDays,
   formatTokenAmount,
+  formatTokenAmountExact,
 } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import { SimulationPreview } from './SimulationPreview';
@@ -189,7 +190,7 @@ export function EarlyExitFlow({
   const dec = principalMeta.decimals;
   const toSellerStr =
     selectedEcon !== null
-      ? `${formatTokenAmount(selectedEcon.toSeller, dec)} ${sym}`
+      ? `${formatTokenAmountExact(selectedEcon.toSeller, dec)} ${sym}`
       : null;
 
   // The reviewed payout drifts as interest accrues (and as the live
