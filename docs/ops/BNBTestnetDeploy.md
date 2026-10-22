@@ -89,10 +89,11 @@ on Base Sepolia — no chain-specific tests gate this deploy.
 bash script/deploy-chain.sh bnb-testnet --fresh
 ```
 
-Note: `--slow` IS safe HERE because the only post-broadcast wait is
-the bookkeeping write to `addresses.json` — there's no extended
-receipt-polling loop in `DeployDiamond`. Subsequent steps (§2 onward)
-must drop `--slow`.
+Broadcast mode follows the one rule in the quirk table above: steps run
+through the repo's runners (this one and §2) broadcast with the runner's
+`--slow` and 1 gwei gas, unedited; the later steps that call `forge script`
+directly pass `--legacy`. (An older note here said every step from §2 on must
+drop `--slow`. That predates #2548 and no longer applies.)
 
 The script writes `chainId`, `chainSlug`, `lzEid`, `deployBlock`,
 `diamond`, `vaultImpl`, `treasury`, `admin`, and all 30 facet
