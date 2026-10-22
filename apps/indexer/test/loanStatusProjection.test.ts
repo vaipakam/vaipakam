@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
 import { processLoanLogs, runHealLanes, settleFromLedger, settleLoanRow, sweepSettledExistence } from '../src/chainIndexer';
 import { handleLoanById } from '../src/loanRoutes';
-import { createBudget } from '../src/subrequestBudget';
+import { createBudget, meterEnv } from '../src/subrequestBudget';
 import { pad, toHex, toEventSelector } from 'viem';
 
 const LOAN_SETTLED = toEventSelector('LoanSettled(uint256)');
@@ -447,7 +447,7 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
       terminal_block: number | null;
       terminal_at: number | null;
     };
-  const budget = () => createBudget(1_000, 'test', 1_000);
+  const budget = () => createBudget('test', { external: 1_000, d1Queries: 1_000 });
   /** A chain whose block reads answer from `times` (throwing otherwise) and
    *  whose loan status is `status(id)` — Settled (3) unless told otherwise;
    *  `'missing'` answers the zero struct (the chain has no such loan). */
@@ -764,39 +764,25 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     seedLoan(h, 74, 'internal_matched');
     ledger(h, 74, 'LoanSettled', 1500, 1); // the canonical one, tried second
     ledger(h, 74, 'LoanSettled', 1505, 1); // newest, discarded
-    // A metered client: every call spends one subrequest, as in production.
+    // A metered client: every chain call spends one EXTERNAL request, as in
+    // production. D1 goes through the production meter (internal + queries).
     const metered = (b: ReturnType<typeof createBudget>) => {
       const inner = chain({ 1500: 9 }, () => 3, undefined, new Set([1505])) as unknown as Record<string, (...a: unknown[]) => unknown>;
       return new Proxy(inner, {
         get: (t, k) => (...a: unknown[]) => {
-          b.subrequests.remaining--;
+          b.external.remaining--;
           return t[k as string](...a);
         },
       });
     };
-    // D1 statements are subrequests too, as the production meter counts them.
-    const meteredEnv = (b: ReturnType<typeof createBudget>) => {
-      const d1 = h.d1 as { prepare(sql: string): unknown };
-      return {
-        DB: {
-          prepare: (sql: string) => {
-            b.subrequests.remaining--;
-            return d1.prepare(sql);
-          },
-          // A batch is ONE request, however many statements it carries.
-          batch: (s: never[]) => {
-            b.subrequests.remaining += s.length - 1;
-            return h.d1.batch(s);
-          },
-        },
-      } as unknown as Env;
-    };
-    // Two reads before the row, its six-request reservation: the first receipt
-    // fits, a second candidate would not.
-    const tight = createBudget(8, 'test', 1_000);
+    const meteredEnv = (b: ReturnType<typeof createBudget>) => meterEnv({ DB: h.d1 } as unknown as Env, b) as unknown as Env;
+    // The row's three chain reads fit, and the status read and the first
+    // (discarded) receipt spend two of them — a second candidate needs two
+    // more (its receipt and its block), which this budget no longer has.
+    const tight = createBudget('test', { external: 3, d1Queries: 1_000 });
     expect(await settleFromLedger(metered(tight) as never, DIAMOND, meteredEnv(tight), CHAIN, tight, 777n)).toEqual([]);
     expect(row(h, 74).status).toBe('internal_matched');
-    const roomy = createBudget(20, 'test', 1_000);
+    const roomy = createBudget('test', { external: 20, d1Queries: 1_000 });
     expect(await settleFromLedger(metered(roomy) as never, DIAMOND, meteredEnv(roomy), CHAIN, roomy, 777n)).toEqual([74]);
     expect(row(h, 74).terminal_block).toBe(1500);
   });
@@ -837,22 +823,33 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 80, 'internal_matched');
     ledger(h, 80, 'LoanSettled', 1300, 1);
-    // Exactly one row's cost left: no room for the pointer write after it.
-    expect(await settleFromLedger(chain({ 1300: 1 }) as never, DIAMOND, env(h), CHAIN, createBudget(5, 'test', 1_000), 777n)).toEqual([]);
+    // The pointer write is two D1 statements, so it is the QUERY meter that
+    // must still hold it after the row. The setup spends four (the rotation
+    // batch of three and the page read); a row needs its event lookup and
+    // settle write plus the pointer's two. Seven leaves three after the
+    // setup: one short, so the row does not start. Eight leaves exactly four.
+    const at = (d1Queries: number) => {
+      const b = createBudget('test', { external: 1_000, d1Queries });
+      return settleFromLedger(chain({ 1300: 1 }) as never, DIAMOND, meterEnv({ DB: h.d1 } as unknown as Env, b) as unknown as Env, CHAIN, b, 777n);
+    };
+    expect(await at(7)).toEqual([]);
     expect(row(h, 80).status).toBe('internal_matched');
-    expect(await settleFromLedger(chain({ 1300: 1 }) as never, DIAMOND, env(h), CHAIN, createBudget(6, 'test', 1_000), 777n)).toEqual([80]);
+    expect(await at(8)).toEqual([80]);
   });
 
   it('does not settle a row when its reads ran over and the live budget no longer covers the write and pointer (#2476 r10)', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 75, 'internal_matched');
     ledger(h, 75, 'LoanSettled', 1600, 1);
-    const b = createBudget(20, 'test', 1_000);
-    // A client whose status read RETRIES, spending far more than reserved.
+    const b = createBudget('test', { external: 1_000, d1Queries: 20 });
+    // While the row's reads are in flight, ANOTHER pass sharing the tick
+    // spends the queries the write and the pointer were counting on (the
+    // reads themselves are chain reads since #2221's split, and cannot eat
+    // the D1 allowance; a concurrent pass can).
     const inner = chain({ 1600: 1 }) as unknown as Record<string, (...a: unknown[]) => unknown>;
     const retrying = new Proxy(inner, {
       get: (t, k) => (...a: unknown[]) => {
-        b.subrequests.remaining -= k === 'readContract' ? 18 : 1;
+        if (k === 'readContract') b.d1Queries.remaining -= 18;
         return t[k as string](...a);
       },
     });
@@ -866,8 +863,12 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 76, 'internal_matched');
     ledger(h, 76, 'LoanSettled', 1700, 1);
-    expect(await settleFromLedger(chain({ 1700: 1 }) as never, DIAMOND, env(h), CHAIN, createBudget(2, 'test', 1_000), 777n)).toEqual([]);
-    expect(await settleFromLedger(chain({ 1700: 1 }) as never, DIAMOND, env(h), CHAIN, createBudget(1_000, 'test', 2), 777n)).toEqual([]);
+    // The setup is D1 only (the rotation batch, the page read, the rotation
+    // write an empty page can require): six statements. Five does not start.
+    expect(await settleFromLedger(chain({ 1700: 1 }) as never, DIAMOND, env(h), CHAIN, createBudget('test', { external: 1_000, d1Queries: 5 }), 777n)).toEqual([]);
+    // And with the setup covered but no chain read left, no row starts.
+    expect(await settleFromLedger(chain({ 1700: 1 }) as never, DIAMOND, env(h), CHAIN, createBudget('test', { external: 2, d1Queries: 1_000 }), 777n)).toEqual([]);
+    expect(row(h, 76).status).toBe('internal_matched');
   });
 
   it('reports the ids it already settled when a later row throws', async () => {

@@ -44,7 +44,6 @@ import {
   resolveD1Binding,
 } from '@vaipakam/lib/d1Maintenance';
 import {
-  MAX_SUBREQUESTS_PER_INVOCATION,
   createBudget,
   meterD1,
   meterEnv,
@@ -603,10 +602,7 @@ export class ChainIngestDO {
     // cursor, and #2227 r2 (`4033723744`) found that read outside the count —
     // so a pass finishing at the ceiling could issue an unannounced further
     // request, which is the failure this counter exists to see.
-    const budget = createBudget(
-      MAX_SUBREQUESTS_PER_INVOCATION,
-      'chain ingest DO alarm',
-    );
+    const budget = createBudget('chain ingest DO alarm');
     // Metered ONCE for the whole alarm, so everything downstream — the scan
     // AND the broadcast — draws on it.
     const db = meterD1(this.db, budget);
