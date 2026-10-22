@@ -2602,6 +2602,16 @@ const copySource = {
       'One thing can change this. The protocol looks for an opposing position to settle against at the moment the transaction runs, not when this page was loaded — so if one has appeared since, the loan is settled that way instead: you are repaid in the asset you lent, and possibly only in part.',
     raceFallbackFails:
       'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route cannot complete, so the attempt would fail and cost you only the network fee. The loan stays open and you can try again.',
+    // #2078 — the fallback for a lost match on liquid collateral is a
+    // sale, and the confirm now sends a quoted route with the close-out
+    // for exactly that case, so the attempt sells rather than fails. Three
+    // endings are possible behind it and each is named: the sale, the
+    // protocol's fallback when every route fails at that moment, and the
+    // old paid failure when no route could be found at confirm. The
+    // incentive sentence is the sale one, stated without the submitter's
+    // sanctions status so it is true for every wallet.
+    raceFallbackSale:
+      'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next, and here that is a sale of the collateral on an exchange. When you confirm, the app asks the exchanges for a price and sends those routes with your close-out, so a lost match ends in a sale, checked against the protocol’s price feed like any other. If every one of those routes fails at that moment, the close-out still goes through but the sale does not: the loan moves into the protocol’s fallback, where you can claim collateral instead of sale proceeds, and until you do the borrower can still repay or add collateral. If the app cannot find a route when you confirm, it sends the close-out without one, and a lost match would then fail and cost you only the network fee. A sale pays no matcher incentive; whoever submitted may instead be paid an incentive out of the sale proceeds, sized by how close the sale comes to the protocol’s price and possibly nothing, and never to a wallet the sanctions oracle has flagged.',
     raceFallbackInKind:
       'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route hands you the borrower’s collateral as it stands instead of the asset you lent. The close-out still succeeds — you would simply be recovering something different from what this card describes above.',
     raceFallbackRental:
