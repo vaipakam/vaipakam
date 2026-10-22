@@ -38,11 +38,16 @@
  * loan's id can be issued again to a real loan, which would otherwise inherit
  * the phantom's alert history and miss its first warning (#2636 r3).
  *
- * THE OPERATOR'S MARKER IS WRITTEN BY THE MOVE (#2636 r3). Both lanes that
- * prove an orphan set the `orphan` quarantine entry in the same transaction,
- * so the stale-quarantine report names every withdrawn row however it was
- * found. It is held until a person clears it: with no `loans` row, nothing
- * proves the loan ended, so the terminal release never takes it.
+ * THE OPERATOR'S RECORD IS `loan_orphans` ITSELF (#2636 r4). Every entry
+ * stays unreviewed (`reviewed_at` NULL) until a person marks it reviewed, and
+ * the stale report names the unreviewed ones on every pass
+ * (`loanOrphanReport.ts`, folded into that
+ * report's one batch). The table is archived and restored, so the finding
+ * survives a restore with it. The id's reconciliation quarantine marker is
+ * RELEASED after a landed move rather than kept: that marker withholds
+ * reminders from whatever loan bears the id, and once the published row is
+ * gone the only loan it could withhold them from is a real one issued the
+ * same id later.
  *
  * The side tables are the ones `_closedLoanSideTableStatements` clears on a
  * close-out (`prepay_listings`, `swap_to_repay_intents`), written out here
@@ -58,11 +63,30 @@
  * schema in `test/closedLoanSideTables.test.ts`.
  */
 
-/** What one move costs the invocation: two batches (the snapshot, the move),
- *  and every statement in them is a D1 query. Callers reserve this whole
- *  before starting a move, so it never runs into the ceiling half done. */
-export const ORPHAN_MOVE_SUBREQUESTS = 2;
-export const ORPHAN_MOVE_D1_QUERIES = 4 + 10;
+import type { TickBudget } from './subrequestBudget';
+import { discloseQuarantineReleases, quarantineReleaseStatement } from './loanQuarantine';
+
+/** What one move costs the invocation: three batches (the snapshot, the
+ *  move, the marker release after it), and every statement in them is a D1
+ *  query. Callers check `orphanMoveAffordable` before starting a move, so it
+ *  never runs into the ceiling half done. */
+export const ORPHAN_MOVE_SUBREQUESTS = 3;
+export const ORPHAN_MOVE_D1_QUERIES = 4 + 9 + 1;
+
+/**
+ * Whether a move may START: its whole cost, and still what the caller must
+ * do after it (`reserve`), in both meters. The one rule every lane that
+ * withdraws an orphan applies (#2636 r4).
+ */
+export function orphanMoveAffordable(
+  budget: TickBudget,
+  reserve: { subrequests: number; d1Queries: number },
+): boolean {
+  return (
+    budget.subrequests.remaining >= ORPHAN_MOVE_SUBREQUESTS + reserve.subrequests &&
+    budget.d1Queries.remaining >= ORPHAN_MOVE_D1_QUERIES + reserve.d1Queries
+  );
+}
 
 /** A column name SQLite handed back, accepted only as a plain identifier. */
 const PLAIN_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
@@ -201,19 +225,6 @@ export async function withdrawOrphanLoan(
             AND EXISTS (SELECT 1 FROM loan_orphans WHERE move_id = ?)`,
       )
       .bind(chainId, loanId, moveId),
-    // `first_seen_at` is left as it was on an existing entry: it is the
-    // operator's measure of how long the finding has stood.
-    db
-      .prepare(
-        `INSERT INTO loan_reconcile_quarantine (chain_id, loan_id, reason, first_seen_at, last_seen_at, obs)
-         SELECT ?, ?, 'orphan', ?, ?, ?
-          WHERE EXISTS (SELECT 1 FROM loan_orphans WHERE move_id = ?)
-         ON CONFLICT(chain_id, loan_id) DO UPDATE SET
-           reason = excluded.reason,
-           last_seen_at = excluded.last_seen_at,
-           obs = excluded.obs`,
-      )
-      .bind(chainId, loanId, nowSec, nowSec, moveId.slice(0, 8), moveId),
     db
       .prepare(
         `DELETE FROM loans WHERE chain_id = ? AND loan_id = ?
@@ -221,5 +232,24 @@ export async function withdrawOrphanLoan(
       )
       .bind(chainId, loanId, moveId),
   ]);
-  return (results[9]?.meta?.changes ?? 0) > 0;
+  const moved = (results[8]?.meta?.changes ?? 0) > 0;
+  if (moved) {
+    // After the move, in its own batch: the release is the one path every
+    // per-loan marker delete takes (`quarantineReleaseStatement`), and it
+    // carries no move guard. Run only once the move has landed. If it fails,
+    // the marker lingers on an id with no row, which the stale report names
+    // ("no stored loan row") for a person to clear.
+    try {
+      const released = await db.batch([quarantineReleaseStatement(db, chainId, loanId)]);
+      discloseQuarantineReleases(chainId, released, nowSec, 'examined');
+    } catch (err) {
+      console.warn(
+        `[loanOrphans] chain ${chainId}: loan ${loanId} was withdrawn but its ` +
+          `quarantine marker could not be released; the stale report will name it`,
+        err,
+      );
+    }
+  }
+  return moved;
 }
+

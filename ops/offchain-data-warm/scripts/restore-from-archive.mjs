@@ -205,7 +205,7 @@ const REQUIRED_TABLE_COLUMNS = {
   // them the record says only that something was withdrawn, not what.
   loan_orphans: [
     'id', 'move_id', 'chain_id', 'diamond', 'loan_id', 'from_status', 'observed_block',
-    'withdrawn_at', 'row_json', 'related_json',
+    'withdrawn_at', 'row_json', 'related_json', 'reviewed_at',
   ],
 };
 

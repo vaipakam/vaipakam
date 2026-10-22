@@ -56,7 +56,7 @@ import {
   type ReconcileOptions,
   type ReconcileReport,
 } from './loanReconcile';
-import { ORPHAN_MOVE_D1_QUERIES, ORPHAN_MOVE_SUBREQUESTS, withdrawOrphanLoan } from './loanOrphans';
+import { orphanMoveAffordable, withdrawOrphanLoan } from './loanOrphans';
 // #762/#766 — the terminal end-of-block states an `InternalMatchExecuted`
 // block-pinned read can land on. ONE definition, shared with the repair pass;
 // see the module for why the copy it replaced was a defect (#2190 round 3).
@@ -132,6 +132,7 @@ import {
 import {
   MAX_SUBREQUESTS_PER_INVOCATION,
   createBudget,
+  CURSOR_WRITE_RESERVE,
   createChainClient,
   meterD1,
   meterEnv,
@@ -957,6 +958,23 @@ export function isEpochDeclinedSkip(skipped: string | undefined): boolean {
  */
 export const QUARANTINE_MAINTENANCE_SUBREQUESTS = 6;
 
+/**
+ * What the reconciliation pass still does after an orphan move, and so must
+ * still be able to afford when it starts one (#2636 r4): the pointer and
+ * lap-boundary writes, the quarantine marks and releases for the rows it
+ * examined (a statement each, one batch), the quarantine maintenance above,
+ * whose D1 statements are its two probes, the release's read and delete, the
+ * stale report's four (its count and page, and the unreviewed withdrawals'
+ * count and page) and the repair's own writes, and the scan cursor.
+ */
+function reconcileAfterOrphanMoveReserve(opts: ReconcileOptions): { subrequests: number; d1Queries: number } {
+  const rows = Math.max(1, opts.maxRows ?? 5);
+  return {
+    subrequests: 2 + 1 + QUARANTINE_MAINTENANCE_SUBREQUESTS + CURSOR_WRITE_RESERVE,
+    d1Queries: 2 + 2 * rows + (2 + 2 + 4 + 1) + CURSOR_WRITE_RESERVE,
+  };
+}
+
 export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minRows: 1 };
 /**
  * THREE CAME DOWN TO TWO for the quarantine maintenance above (#2213 r29
@@ -1570,6 +1588,9 @@ export async function _runLoanReconcilePass(input: {
    */
   readThrough: bigint;
   budget: ReconcileOptions;
+  /** The invocation's live meter, which an orphan move is checked against
+   *  before it starts (#2636 r4). */
+  tickBudget: TickBudget;
 }): Promise<ReconcilePassOutcome> {
   // `head` STAYS A BLOCK NUMBER inside this function (#2211 r2
   // `4011201400`). Rebinding the name to the provenance-carrying object was
@@ -1579,7 +1600,7 @@ export async function _runLoanReconcilePass(input: {
   // that one, because `Number()` accepts anything. Reverting the name to the
   // number makes the whole class impossible rather than fixing the one site;
   // anything wanting provenance names `settled` explicitly.
-  const { env, chain, chainId, diamond, head: settled, readThrough, budget } = input;
+  const { env, chain, chainId, diamond, head: settled, readThrough, budget, tickBudget } = input;
   const head = settled.block;
   // Already reported once per chain at the entry point (#2213 r3
   // `4011960607`), which runs even when this pass is never reached.
@@ -1697,6 +1718,7 @@ export async function _runLoanReconcilePass(input: {
         chainId,
         diamond,
         head,
+        canStartOrphanMove: () => orphanMoveAffordable(tickBudget, reconcileAfterOrphanMoveReserve(budget)),
         readContract: (args) =>
           reconcileClient.readContract(args as never) as Promise<unknown>,
         metricsAbi: DIAMOND_METRICS_ABI,
@@ -2340,6 +2362,7 @@ async function runChainPass(
       head: settledHead,
       readThrough: lastBlock,
       budget: reconcileBudget,
+      tickBudget: budget,
     });
     const quietReconciledIds = quietOutcome.established ? quietOutcome.repairedLoanIds : [];
     const quietCal = await _sweepCalendarIfEstablished(
@@ -2684,6 +2707,7 @@ async function runChainPass(
     head: settledHead,
     readThrough: scanTo,
     budget: reconcileBudget,
+    tickBudget: budget,
   });
   const reconciledLoanIds = reconcileOutcome.established
     ? reconcileOutcome.repairedLoanIds
@@ -3800,6 +3824,17 @@ async function runHealLanes(
   } catch (err) {
     console.warn(`[chainIndexer] heal lanes stopped on chain ${chainId}; remaining rows wait for the next tick`, err);
   }
+  // #2636 r4 — LAST, on what the tick has left: settled rows the chain has no
+  // loan for. Its own try, and on the non-retrying client, since its reads
+  // are budgeted per row. Withdrawn ids ride the same return as settled
+  // ones, so they are reported and hinted the same way.
+  if (headSettled) {
+    try {
+      ledgerSettledLoanIds = await sweepSettledExistence(settleClient, diamond, env, chainId, budget, atBlock);
+    } catch (err) {
+      console.warn(`[chainIndexer] settled-row existence sweep stopped on chain ${chainId}; retried next tick`, err);
+    }
+  }
   return { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds };
 }
 
@@ -4383,10 +4418,7 @@ export async function settleFromLedger(
       if (Number(detail.id ?? 0) === 0) {
         // #2636 r3 — the move's whole cost (both of its batches, every
         // statement in them) and still the rotation write after it.
-        if (
-          budget.subrequests.remaining < ORPHAN_MOVE_SUBREQUESTS + 1 ||
-          budget.d1Queries.remaining < ORPHAN_MOVE_D1_QUERIES + SETTLE_HEAL_POINTER_D1_QUERIES
-        ) {
+        if (!orphanMoveAffordable(budget, { subrequests: 1, d1Queries: SETTLE_HEAL_POINTER_D1_QUERIES })) {
           reached = before;
           break;
         }
@@ -4477,6 +4509,128 @@ export async function settleFromLedger(
     );
   }
   return [...healed, ...withdrawn];
+}
+
+/** Settled rows the existence sweep reads per tick, budget permitting. */
+const SETTLED_EXISTENCE_BATCH = 5;
+/** `indexer_cursor.kind` of the settled-row existence sweep's pointer and of
+ *  its lap's high-water loan id (#2636 r4). */
+export const SETTLED_EXISTENCE_CURSOR_KIND = 'settled_existence_rotation';
+export const SETTLED_EXISTENCE_LAP_END_KIND = 'settled_existence_lap_end';
+/** The sweep's rotation write: pointer and lap end, one batch. */
+const SETTLED_EXISTENCE_POINTER_D1_QUERIES = 2;
+
+/**
+ * #2636 r4 — existence only, for rows already SETTLED.
+ *
+ * The reconciliation pass existence-checks live rows and the settlement heal
+ * ended-but-unsettled ones; a settled row is read by neither, so a phantom
+ * that was indexed as initiated AND settled from a stretch later reorganised
+ * away (possible while the scan read up to a guessed head, before #2201)
+ * stayed published for good. This rotation reads each settled row at the
+ * settled head and withdraws one the chain has no loan for, by the same move
+ * (`loanOrphans.ts`). It never writes a healthy settled row: a settlement's
+ * recorded block and time are left exactly as they are.
+ *
+ * Last of the heal lanes and small (`SETTLED_EXISTENCE_BATCH` reads), so it
+ * spends what the tick has left rather than competing with the heals that
+ * correct a status. A lap has a fixed end, as the settlement heal's does.
+ * A read that fails stops the page there; the pointer stays before that row.
+ *
+ * Returns the ids it withdrew, for the caller to report and hint.
+ */
+export async function sweepSettledExistence(
+  client: PublicClient,
+  diamond: Address,
+  env: Env,
+  chainId: number,
+  budget: TickBudget,
+  /** The pass's settled block. */
+  atBlock: bigint,
+): Promise<number[]> {
+  // The rotation read, the page read, one row's read, and the rotation write.
+  if (budget.subrequests.remaining < 4 || budget.d1Queries.remaining < 4 + 1 + SETTLED_EXISTENCE_POINTER_D1_QUERIES) return [];
+  const [pointerRes, lapEndRes, maxRes] = await env.DB.batch([
+    env.DB.prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`).bind(
+      chainId,
+      SETTLED_EXISTENCE_CURSOR_KIND,
+    ),
+    env.DB.prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`).bind(
+      chainId,
+      SETTLED_EXISTENCE_LAP_END_KIND,
+    ),
+    env.DB.prepare(
+      `SELECT MAX(loan_id) AS m FROM loans INDEXED BY idx_loans_chain_status_loan WHERE chain_id = ? AND status = 'settled'`,
+    ).bind(chainId),
+  ]);
+  const pointer = Number((pointerRes?.results?.[0] as { last_block?: number } | undefined)?.last_block ?? 0);
+  const storedLapEnd = Number((lapEndRes?.results?.[0] as { last_block?: number } | undefined)?.last_block ?? 0);
+  const lapEnd =
+    pointer > 0 && storedLapEnd > 0
+      ? storedLapEnd
+      : Number((maxRes?.results?.[0] as { m?: number | null } | undefined)?.m ?? 0);
+  const res = await env.DB.prepare(
+    `SELECT loan_id FROM loans INDEXED BY idx_loans_chain_status_loan
+      WHERE chain_id = ? AND status = 'settled' AND loan_id > ? AND loan_id <= ?
+      ORDER BY loan_id
+      LIMIT ?`,
+  )
+    .bind(chainId, pointer, lapEnd, SETTLED_EXISTENCE_BATCH)
+    .all<{ loan_id: number }>();
+  const rows = res.results ?? [];
+  const withdrawn: number[] = [];
+  let reached = pointer;
+  for (const row of rows) {
+    // The row's read, and still the rotation write after it.
+    if (budget.subrequests.remaining < 2 || budget.d1Queries.remaining < SETTLED_EXISTENCE_POINTER_D1_QUERIES) break;
+    let detail: { id?: number | bigint };
+    try {
+      detail = (await client.readContract({
+        address: diamond,
+        abi: DIAMOND_LOAN_DETAILS_ABI,
+        functionName: 'getLoanDetails',
+        args: [BigInt(row.loan_id)],
+        blockNumber: atBlock,
+      })) as { id?: number | bigint };
+    } catch (err) {
+      console.warn(`[chainIndexer] settled-row existence sweep: loan ${row.loan_id} on chain ${chainId} unread; retried next tick`, err);
+      break;
+    }
+    if (Number(detail.id ?? 0) === 0) {
+      if (!orphanMoveAffordable(budget, { subrequests: 1, d1Queries: SETTLED_EXISTENCE_POINTER_D1_QUERIES })) break;
+      try {
+        if (await withdrawOrphanLoan(env.DB, chainId, diamond, row.loan_id, 'settled', atBlock, Math.floor(Date.now() / 1000))) {
+          withdrawn.push(row.loan_id);
+        }
+      } catch (err) {
+        console.warn(`[chainIndexer] settled-row existence sweep: loan ${row.loan_id} on chain ${chainId} not withdrawn; retried next lap`, err);
+        break;
+      }
+    }
+    reached = row.loan_id;
+  }
+  const next = rows.length < SETTLED_EXISTENCE_BATCH && reached === (rows.at(-1)?.loan_id ?? pointer) ? 0 : reached;
+  if (next !== pointer && budget.subrequests.remaining >= 1 && budget.d1Queries.remaining >= SETTLED_EXISTENCE_POINTER_D1_QUERIES) {
+    try {
+      const t = Math.floor(Date.now() / 1000);
+      const upsert = `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(chain_id, kind) DO UPDATE SET last_block = excluded.last_block, updated_at = excluded.updated_at`;
+      await env.DB.batch([
+        env.DB.prepare(upsert).bind(chainId, SETTLED_EXISTENCE_CURSOR_KIND, next, t),
+        env.DB.prepare(upsert).bind(chainId, SETTLED_EXISTENCE_LAP_END_KIND, next === 0 ? 0 : lapEnd, t),
+      ]);
+    } catch (err) {
+      console.warn(`[chainIndexer] settled-row existence sweep: rotation pointer not saved on chain ${chainId}`, err);
+    }
+  }
+  if (withdrawn.length > 0) {
+    console.warn(
+      `[chainIndexer] withdrew ${withdrawn.length} SETTLED loan row(s) on chain ${chainId} that the chain has no loan for ` +
+        `at block ${atBlock}, into loan_orphans (kept whole there; restore by re-inserting row_json): ${withdrawn.join(', ')}`,
+    );
+  }
+  return withdrawn;
 }
 
 /** topic0 of `LoanSettled(uint256 indexed loanId)`, from the compiled ABI. */

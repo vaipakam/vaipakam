@@ -377,6 +377,7 @@ describe('reconcileAfterScan against a real database', () => {
         chainId: CHAIN,
         diamond: DIAMOND,
         head: 100n,
+        canStartOrphanMove: () => true,
         readContract: readTerminal as never,
         metricsAbi: [],
         loanAbi: [],
@@ -489,6 +490,7 @@ describe('reconcileAfterScan against a real database', () => {
         chainId: CHAIN,
         diamond: DIAMOND,
         head: 100n,
+        canStartOrphanMove: () => true,
         readContract: (async (args: Record<string, unknown>) =>
           args.functionName === 'getActiveLoansCount'
             ? 1n
@@ -516,7 +518,7 @@ describe('reconcileAfterScan against a real database', () => {
     expect(hasIntent(h, 22)).toBe(true);
   });
 
-  it('#2197 — withdraws a row the chain has no loan for: moved whole into loan_orphans, side tables cleared, marker kept', async () => {
+  it('#2197 — withdraws a row the chain has no loan for: moved whole into loan_orphans, side tables cleared', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedActiveLoan(h, 23);
     seedListing(h, 23);
@@ -528,6 +530,7 @@ describe('reconcileAfterScan against a real database', () => {
         chainId: CHAIN,
         diamond: DIAMOND,
         head: 100n,
+        canStartOrphanMove: () => true,
         // The zero struct: the chain has never heard of loan 23.
         readContract: (async (args: Record<string, unknown>) =>
           args.functionName === 'getActiveLoansCount'
@@ -556,6 +559,36 @@ describe('reconcileAfterScan against a real database', () => {
     expect(kept).toHaveLength(1);
     expect(kept[0]).toMatchObject({ chain_id: CHAIN, loan_id: 23, from_status: 'active', observed_block: 100 });
     expect(JSON.parse(kept[0].row_json)).toEqual(before);
+  });
+
+  it('#2636 r4 — starts no move the invocation cannot finish: the row stays published and named', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 24);
+    const report = await reconcileAfterScan(
+      {
+        db: h.d1 as never,
+        chainId: CHAIN,
+        diamond: DIAMOND,
+        head: 100n,
+        canStartOrphanMove: () => false,
+        readContract: (async (args: Record<string, unknown>) =>
+          args.functionName === 'getActiveLoansCount'
+            ? 0n
+            : { id: 0n, status: 0, principal: 0n, collateralAmount: 0n, lenderTokenId: 0n, borrowerTokenId: 0n }) as never,
+        metricsAbi: [],
+        loanAbi: [],
+        closedLoanSideTableStatements: (loanId) =>
+          _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId, true),
+        discloseSideTableBatch: () => {},
+        mutableColumns: () => ({ assignments: [], values: [] }),
+        terminalHolderStatements: async () => [],
+      },
+      { maxRows: 5, minRows: 1 },
+    );
+    expect(report.unresolvable).toEqual([24]);
+    expect(report.withdrawn).toEqual([]);
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loans WHERE loan_id = 24').get()).toEqual({ n: 1 });
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loan_orphans').get()).toEqual({ n: 0 });
   });
 });
 
@@ -636,7 +669,7 @@ describe('withdrawOrphanLoan — one guarded move (#2636 r1)', () => {
     });
   };
 
-  it('moves every published row about the loan with it, kept whole, clears its alert memory and marks it', async () => {
+  it('moves every published row about the loan with it, kept whole, clears its alert memory and releases its marker', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedActiveLoan(h, 62);
     seedRelated(h, 62);
@@ -648,6 +681,14 @@ describe('withdrawOrphanLoan — one guarded move (#2636 r1)', () => {
       .run(CHAIN);
     h.db.prepare(`INSERT INTO notify_state (wallet, chain_id, loan_id, last_band) VALUES ('0xborrow', ?, 62, 'alert')`).run(CHAIN);
     h.db.prepare(`INSERT INTO pre_grace_notify_state (wallet, chain_id, loan_id, last_sent_ts) VALUES ('0xborrow', ?, 62, 5)`).run(CHAIN);
+    // Both ids carry a quarantine marker from an earlier pass.
+    for (const id of [62, 63]) {
+      h.db
+        .prepare(
+          `INSERT INTO loan_reconcile_quarantine (chain_id, loan_id, reason, first_seen_at, last_seen_at) VALUES (?, ?, 'orphan', 1, 1)`,
+        )
+        .run(CHAIN, id);
+    }
     // An unrelated loan's rows stay.
     seedActiveLoan(h, 63);
     seedRelated(h, 63);
@@ -670,10 +711,12 @@ describe('withdrawOrphanLoan — one guarded move (#2636 r1)', () => {
     expect(related.activity_events[0]).toMatchObject({ kind: 'LoanInitiated', tx_hash: '0xaa' });
     expect(related.loan_participants[0]).toMatchObject({ wallet: '0xlend', role: 'lender' });
     expect(related.notifications[0]).toMatchObject({ dedup_key: 'k62', recipient: '0xborrow' });
-    // The operator's marker, written by the move itself (#2636 r3).
-    expect(
-      h.db.prepare('SELECT reason, obs FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = 62').get(CHAIN),
-    ).toEqual({ reason: 'orphan', obs: kept.move_id.slice(0, 8) });
+    // The operator's record is the archive entry, unreviewed (#2636 r4)…
+    expect(h.db.prepare('SELECT reviewed_at FROM loan_orphans WHERE move_id = ?').get(kept.move_id)).toEqual({ reviewed_at: null });
+    // …and the id's quarantine marker is RELEASED, so it cannot withhold
+    // reminders from a real loan later issued the same id.
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = 62').get(CHAIN)).toEqual({ n: 0 });
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loan_reconcile_quarantine WHERE chain_id = ? AND loan_id = 63').get(CHAIN)).toEqual({ n: 1 });
   });
 
   it('a related row that lands between the read and the move aborts it whole (#2636 r3)', async () => {

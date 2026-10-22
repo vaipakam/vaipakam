@@ -1031,7 +1031,9 @@ The app uses chain reads and indexed reads for different jobs.
   no surface goes on presenting a position that never existed. The withdrawal happens
   only on that proof: a reading that failed is not evidence that a loan does
   not exist, and changes nothing. It applies to every record the platform
-  publishes as a loan, running or ended alike, and it is all-or-nothing: if
+  publishes as a loan, running, ended or settled alike (settled records are
+  checked for existence only, on a slow rotation, and a real settlement is
+  never rewritten), and it is all-or-nothing: if
   the record, or the set of entries about it, changes while the withdrawal is
   under way, nothing is withdrawn and nothing attached to it is touched. The
   platform's memory of which alerts it already sent about the position goes
@@ -1042,8 +1044,11 @@ The app uses chain reads and indexed reads for different jobs.
   reproduce, since rebuilding the index from the chain cannot bring it back,
   and it survives a redeployment of the contracts, naming the deployment it
   is about;
-  and the finding is put on the operator's list of unresolved records in the
-  same write, however it was found, and stays there until a person clears it, because a position
+  and the kept record itself is the operator's finding: every withdrawal is
+  named on each pass until a person marks it reviewed, including after the
+  records are restored from backup. The position's hold on reminders is
+  lifted rather than kept, so a real loan later given the same number is
+  reminded normally, because a position
   that vanished from the index is something a person should look at. Nothing
   public says the record was withdrawn, since nothing public about it was
   ever true.

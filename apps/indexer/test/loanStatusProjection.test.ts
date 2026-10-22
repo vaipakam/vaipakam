@@ -12,7 +12,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
-import { processLoanLogs, settleFromLedger, settleLoanRow } from '../src/chainIndexer';
+import { processLoanLogs, settleFromLedger, settleLoanRow, sweepSettledExistence } from '../src/chainIndexer';
 import { handleLoanById } from '../src/loanRoutes';
 import { createBudget } from '../src/subrequestBudget';
 import { pad, toHex, toEventSelector } from 'viem';
@@ -562,6 +562,31 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     seedLoan(h, 53, 'liquidated');
     expect(await heal(h, chain({}, () => new Error('fetch failed')))).toEqual([]);
     expect(row(h, 53).status).toBe('liquidated');
+  });
+
+  it('#2636 r4 — the settled-row existence sweep withdraws a settled phantom and never touches a real settlement', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 61, 'settled'); // the chain has no loan 61
+    seedLoan(h, 62, 'settled'); // a real settlement
+    h.db
+      .prepare(`UPDATE loans SET terminal_block = 900, terminal_at = 9 WHERE chain_id = ? AND loan_id = 62`)
+      .run(CHAIN);
+    const before62 = h.db.prepare('SELECT * FROM loans WHERE chain_id = ? AND loan_id = 62').get(CHAIN);
+    const seen = { reads: [] as Array<{ id: number; block: bigint }> };
+    const sweep = (c: unknown) => sweepSettledExistence(c as never, DIAMOND, env(h), CHAIN, budget(), 777n);
+    expect(await sweep(chain({}, (id) => (id === 61 ? 'missing' : 3), seen))).toEqual([61]);
+    expect(seen.reads.map((r) => [r.id, r.block])).toEqual([[61, 777n], [62, 777n]]);
+    expect(row(h, 61)).toBeUndefined();
+    expect(h.db.prepare('SELECT from_status FROM loan_orphans WHERE loan_id = 61').get()).toEqual({ from_status: 'settled' });
+    expect(h.db.prepare('SELECT * FROM loans WHERE chain_id = ? AND loan_id = 62').get(CHAIN)).toEqual(before62);
+    // A failed read proves nothing: it stops the page, and the pointer stays before it.
+    seedLoan(h, 63, 'settled');
+    const failing = { reads: [] as Array<{ id: number; block: bigint }> };
+    expect(await sweep(chain({}, () => new Error('fetch failed'), failing))).toEqual([]);
+    expect(row(h, 63).status).toBe('settled');
+    const again = { reads: [] as Array<{ id: number; block: bigint }> };
+    await sweep(chain({}, () => 3, again));
+    expect(again.reads[0].id).toBe(62); // resumed where it stopped
   });
 
   it('#2636 r1 — the page is one bounded index walk per status, never a sort of every ended loan', () => {

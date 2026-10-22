@@ -46,12 +46,15 @@
 -- (src/diamondEpochKeep.json): every entry names the Diamond it is about,
 -- and nothing joins it to live ids.
 --
--- The move itself sets the quarantine marker (`loan_reconcile_quarantine`,
--- reason `orphan`), whichever lane found the orphan. With no `loans` row
--- nothing ever releases it, so it is held until a person clears it and is
--- named in the operator's stale report, which is where a person learns a
--- position was withdrawn. Nothing on a public surface says
--- so, because nothing on a public surface ever existed on chain.
+-- THE OPERATOR'S RECORD IS THIS TABLE (#2636 r4). `reviewed_at` stays NULL
+-- until a person marks the entry reviewed; the stale report names every
+-- unreviewed entry on every pass, and because this table is archived and
+-- restored, so does a restored database. The id's quarantine marker
+-- (`loan_reconcile_quarantine`) is RELEASED by the move, not kept: that
+-- marker withholds reminders from whatever loan bears the id, and with the
+-- published row gone the only loan it could withhold them from is a real
+-- one later issued the same id. Nothing on a public surface says a record
+-- was withdrawn, because nothing on a public surface ever existed on chain.
 --
 -- Additive: a new table; the deployed code neither reads nor writes it.
 CREATE TABLE IF NOT EXISTS loan_orphans (
@@ -79,7 +82,10 @@ CREATE TABLE IF NOT EXISTS loan_orphans (
   -- {"activity_events": [...], "loan_participants": [...],
   --  "notifications": [...]}. Each element is the row as it stood plus its
   -- `orphan_rowid`, the rowid the move deleted.
-  related_json TEXT NOT NULL
+  related_json TEXT NOT NULL,
+  -- Unix seconds a person marked this withdrawal reviewed; NULL until then.
+  -- The stale report names every entry still NULL.
+  reviewed_at INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_loan_orphans_chain_loan ON loan_orphans (chain_id, diamond, loan_id);

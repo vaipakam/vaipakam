@@ -605,6 +605,13 @@ export interface ScanReconcileContext {
   diamond: string;
   /** The SAFE head the scan resolved. Every read pins to it. */
   head: bigint;
+  /**
+   * #2636 r4 — whether the invocation can still afford a WHOLE orphan move
+   * and everything this pass does after it. Asked before each move; a no
+   * leaves the row published and named, and the next lap tries again.
+   * Required, so a new context decides rather than inheriting "always".
+   */
+  canStartOrphanMove(): boolean;
   readContract(args: Record<string, unknown>): Promise<unknown>;
   metricsAbi: unknown;
   loanAbi: unknown;
@@ -845,6 +852,7 @@ export async function reconcileAfterScan(
     async withdrawOrphan(chainId, loanId, from) {
       // The one owner of the move (`loanOrphans.ts`), shared with the
       // settlement heal, which finds terminal-status orphans the same way.
+      if (!ctx.canStartOrphanMove()) return false;
       return withdrawOrphanLoan(ctx.db, chainId, ctx.diamond, loanId, from, ctx.head, now());
     },
     async readPointer(chainId) {

@@ -1403,8 +1403,10 @@ For each table:
    > cannot recreate one: the row came from something canonical history
    > does not contain (an initiation from a block later reorganised away),
    > so the archive is the only record of what the platform published and
-   > withdrew. Nothing reads the table on any surface; it is the operator's
-   > record. If the replay re-indexes a loan that is also listed here, the
+   > withdrew. Nothing reads the table on any public surface; it is the
+   > operator's record, and the indexer's stale report names every entry not
+   > yet marked reviewed (`reviewed_at`), so a restored database keeps
+   > naming the withdrawals nobody has looked at. If the replay re-indexes a loan that is also listed here, the
    > chain has that loan after all: the `loans` row is correct, and the
    > `loan_orphans` entry is a record of the earlier withdrawal, nothing
    > more.
