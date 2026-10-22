@@ -198,7 +198,7 @@ Safe held the role root. `TIMELOCK_CANCELLER` is retired too:
 Optional knobs:
 
 ```bash
-TIMELOCK_MIN_DELAY=172800   # default 48h; a Phase-1 mainnet refuses less.
+TIMELOCK_MIN_DELAY=172800   # default 48h; any non-testnet chain refuses less.
                             # Also the permanent floor (MIN_DELAY_FLOOR).
 TIMELOCK_EXECUTOR=0x0000000000000000000000000000000000000000
                             # default open-execute; set to a Safe to gate
@@ -220,7 +220,7 @@ against each chain's RPC. It deploys `VaipakamTimelock` (an OpenZeppelin
 - `minDelay` as both the delay and the permanent floor;
 - the governance Safe as the only proposer;
 - the Pauser Safe (`PAUSER_ADDRESS`) as the independent canceller. On a
-  Phase-1 mainnet both Safes must be deployed contracts and must differ;
+  non-testnet chain both Safes must be deployed contracts and must differ;
 - `address(0)` as executor unless `TIMELOCK_EXECUTOR` is set (open
   execution, see §F.3).
 

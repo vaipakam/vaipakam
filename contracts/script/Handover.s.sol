@@ -283,15 +283,16 @@ contract Handover is Script {
 
         // The Diamond is about to be handed to this Timelock irreversibly,
         // so check its delay here rather than in the post-handover readback
-        // (Codex #2642 r4). On a Phase-1 mainnet both the current delay and
-        // the permanent floor must be at least 48h; elsewhere the floor
-        // must at least be non-zero (a zero floor is a pass-through).
+        // (Codex #2642 r4). On any production chain (every chain that is not
+        // a known testnet, r5) both the current delay and the permanent
+        // floor must be at least 48h; elsewhere the floor must at least be
+        // non-zero (a zero floor is a pass-through).
         uint256 tlDelay = ITimelockRoles(timelock).getMinDelay();
         uint256 tlFloor = ITimelockRoles(timelock).MIN_DELAY_FLOOR();
         require(tlFloor > 0, "timelock has a zero MIN_DELAY_FLOOR - redeploy it with DeployTimelock");
-        if (Deployments.isPhase1Mainnet()) {
-            require(tlDelay >= 48 hours, "timelock delay < 48h on a Phase-1 mainnet");
-            require(tlFloor >= 48 hours, "timelock MIN_DELAY_FLOOR < 48h on a Phase-1 mainnet");
+        if (Deployments.requiresProductionGovernance()) {
+            require(tlDelay >= 48 hours, "timelock delay < 48h on a production chain");
+            require(tlFloor >= 48 hours, "timelock MIN_DELAY_FLOOR < 48h on a production chain");
         }
 
         console.log("Handover plan");

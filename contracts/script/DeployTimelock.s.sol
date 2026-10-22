@@ -89,10 +89,12 @@ contract DeployTimelock is Script {
         // #1195 F4 (Pass-2 hardening) — on a Phase-1 MAINNET the Timelock must
         // enforce the ratified 48h minimum delay; the `TIMELOCK_MIN_DELAY` env
         // must not be able to floor governance to the 1h dev minimum with no
-        // gate. Testnets keep the 1h floor for iteration speed. Phase-1 mainnet
+        // gate. Known testnets keep the 1h floor for iteration speed; every other
+        // chain is gated (Deployments.requiresProductionGovernance, fail-closed,
+        // so BNB Chain is covered too). Phase-1 mainnet
         // set per ProjectDetailsREADME / TokenomicsTechSpec: Ethereum, Base,
         // Polygon, Arbitrum, Optimism.
-        bool phase1Mainnet = Deployments.isPhase1Mainnet();
+        bool phase1Mainnet = Deployments.requiresProductionGovernance();
         if (phase1Mainnet) {
             require(minDelay >= 48 hours, "DeployTimelock: mainnet min delay < 48h");
             // #938 — a mainnet timelock must have a veto party other than

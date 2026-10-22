@@ -267,14 +267,22 @@ library Deployments {
         );
     }
 
-    /// @notice Whether the current chain is a Phase-1 mainnet (Ethereum,
-    ///         Base, Polygon, Arbitrum, Optimism — ProjectDetailsREADME /
-    ///         TokenomicsTechSpec §10). The one list the governance scripts
-    ///         use for their mainnet-only gates (48h Timelock delay, Safe
-    ///         bytecode, mandatory canceller).
-    function isPhase1Mainnet() internal view returns (bool) {
+    /// @notice Whether the governance scripts' production gates (48h
+    ///         Timelock delay and floor, Safes with bytecode, a mandatory
+    ///         canceller) apply on the current chain. Fail-closed: every
+    ///         chain that is NOT a known testnet or local chain is gated, so a
+    ///         mainnet the deploy scripts support (BNB Chain included) cannot
+    ///         slip past by being missing from a list of mainnets.
+    function requiresProductionGovernance() internal view returns (bool) {
         uint256 cid = block.chainid;
-        return cid == 1 || cid == 8453 || cid == 137 || cid == 42161 || cid == 10;
+        bool knownTestnet = cid == 31337     // anvil
+            || cid == 84532                  // Base Sepolia
+            || cid == 11155111               // Ethereum Sepolia
+            || cid == 421614                 // Arbitrum Sepolia
+            || cid == 11155420               // Optimism Sepolia
+            || cid == 80002                  // Polygon Amoy
+            || cid == 97;                    // BNB testnet
+        return !knownTestnet;
     }
 
     /// Legacy env-var prefix for the active chain — used as the

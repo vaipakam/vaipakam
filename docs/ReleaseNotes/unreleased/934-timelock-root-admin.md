@@ -44,8 +44,8 @@ Giving a role to a new key after handover, for example a replacement keeper or
 watcher key, is now a Timelock operation and waits out the delay; taking a role
 away from a compromised key stays immediate through the emergency revoker. And
 on a Diamond refreshed in place rather than freshly deployed, nobody holds the
-emergency revoker role until the root admin grants it, because the role is
-handed out at initialisation and handover, which do not re-run on a refresh.
+emergency revoker role until the root admin grants it, because only the
+handover hands the role out, and a refresh does not re-run the handover.
 
 The emergency revoker role is never granted at initialisation. Only the
 handover gives it out, straight to the governance Safe, so no handover path can

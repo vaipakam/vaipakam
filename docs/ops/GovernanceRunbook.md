@@ -77,7 +77,8 @@ under `.timelock`. It deploys `VaipakamTimelock`, which:
 - opens execution to anyone by default (`TIMELOCK_EXECUTOR` unset);
 - defaults to a 48h delay, which is also the permanent floor: the delay
   can be raised later through the Timelock but never lowered below its
-  deploy-time value. A Phase-1 mainnet refuses less than 48h.
+  deploy-time value. Every chain that is not a known testnet (the Phase-1
+  mainnets and BNB Chain alike) refuses less than 48h.
 
 ### 2–4. Hand the Diamond and the cross-chain contracts to governance
 
@@ -225,7 +226,7 @@ ac.hasRole(EMERGENCY_REVOKER_ROLE, deployerEOA) == false
 // Timelock (#938)
 timelock.hasRole(CANCELLER_ROLE, pauserSafe)    == true    // independent veto
 timelock.hasRole(DEFAULT_ADMIN_ROLE, deployerEOA) == false  // self-administered
-timelock.MIN_DELAY_FLOOR()                      >= 172800  // Phase-1 mainnet
+timelock.MIN_DELAY_FLOOR()                      >= 172800  // any non-testnet chain
 
 // VPFIToken (canonical only)
 Ownable2Step(vpfiToken).owner()                 == timelock

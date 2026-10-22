@@ -26,9 +26,13 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
  *         canceller, can still cancel such an operation, so two cancellers
  *         overlapping during a rotation keep their veto over each other's
  *         removal. The cost is stated rather
- *         than hidden: a captured proposer can remove the canceller, but
- *         only through one full public delay before its own operation can
- *         even be queued, so the veto becomes a warning of two delays.
+ *         than hidden: a captured proposer can queue the canceller's
+ *         removal and its own operation together. Both stay public for one
+ *         full delay, and the canceller keeps its veto over the second one
+ *         until the removal executes, so it must actually cancel it in that
+ *         window. If it does not, both run after one delay. Only an
+ *         operation queued AFTER the removal has run is beyond the veto,
+ *         and that one waits a second full delay.
  *
  *         One OZ behaviour is kept and stated here rather than changed:
  *         an operation has no expiry. Once ready it stays executable by
