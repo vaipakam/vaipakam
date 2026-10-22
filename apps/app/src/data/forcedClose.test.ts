@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canSubmitFromApp,
   canSubmitWithoutRoute,
+  confirmRouteNeed,
   decideForcedClose,
   forcedCloseWithoutMatch,
   resolveForcedCloseActive,
@@ -357,6 +358,47 @@ describe('canSubmitFromApp', () => {
       'not-applicable',
     ] as const) {
       expect(canSubmitFromApp(s, 'available')).toBe(false);
+    }
+  });
+});
+
+describe('confirmRouteNeed — the try-list a confirm sends (#2463, #2078)', () => {
+  it('requires a route where the close-out is a sale', () => {
+    expect(confirmRouteNeed('ready-needs-route', 'ready-needs-route')).toBe('required');
+  });
+
+  it('attaches a route behind a match whose loss would be a sale', () => {
+    // The fallback is DERIVED from the inputs, not restated: the same
+    // liquid, non-collapsed loan with its candidate removed is a sale.
+    const withMatch = { ...base, internalMatchCandidate: true };
+    expect(decideForcedClose(withMatch)).toBe('ready-internal-match');
+    expect(
+      confirmRouteNeed(decideForcedClose(withMatch), forcedCloseWithoutMatch(withMatch)),
+    ).toBe('behind-match');
+  });
+
+  it('sends the empty list behind a match whose loss never reaches the swap branch', () => {
+    // Illiquid collateral with consent, an NFT and a collapsed LTV all
+    // fall through to the in-kind branch, which reads no adapter list.
+    for (const perturb of [
+      { collateralIlliquid: true },
+      { collateralIsNft: true },
+      { ltvCollapsed: true },
+    ]) {
+      const withMatch = { ...base, ...perturb, internalMatchCandidate: true };
+      expect(decideForcedClose(withMatch)).toBe('ready-internal-match');
+      expect(
+        confirmRouteNeed(decideForcedClose(withMatch), forcedCloseWithoutMatch(withMatch)),
+      ).toBe('none');
+    }
+    // A loss that would be refused anyway gains nothing from a route.
+    expect(confirmRouteNeed('ready-internal-match', 'blocked-no-consent')).toBe('none');
+    expect(confirmRouteNeed('ready-internal-match', 'unknown')).toBe('none');
+  });
+
+  it('sends the empty list on every other state', () => {
+    for (const s of ['ready-in-kind', 'ready-rental', 'not-yet', 'unknown'] as const) {
+      expect(confirmRouteNeed(s, 'ready-needs-route')).toBe('none');
     }
   });
 });

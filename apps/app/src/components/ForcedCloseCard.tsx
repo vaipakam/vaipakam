@@ -64,6 +64,7 @@ import {
 } from '../data/forcedCloseHold';
 import {
   canSubmitFromApp,
+  confirmRouteNeed,
   shouldRenderForcedClose,
   type ForcedCloseReadiness,
   type RouteAvailability,
@@ -1036,31 +1037,41 @@ export function ForcedCloseCard({
     setError(null);
     setBusy(true);
     try {
-      // The empty try-list is correct for every submittable state except
-      // `ready-needs-route`, and for different reasons. `ready-in-kind` — NFT rentals, illiquid
-      // collateral, >110% LTV collapses — is routed to in-kind
-      // disposition without a swap adapter ever being consulted.
-      // `ready-internal-match` never reaches the swap branch either:
-      // `attemptInternalMatchAutoDispatch` runs first and returns.
-      // A needs-route close gets a quoted list instead, built below once
-      // the interlock has passed — an empty one there reverts
-      // `NoEnabledSwapRoute`.
-      // The sale interlock FIRST, because it is the one the chain will
-      // not enforce for us: `triggerDefault` terminalizes the loan
-      // regardless of an accepted sale awaiting completion, so the
-      // simulation below would happily approve the very transaction
-      // that strands the buyer's principal.
+      // The empty try-list is correct where the swap branch can never be
+      // reached. `ready-in-kind` — NFT rentals, illiquid collateral, >110%
+      // LTV collapses — is routed to in-kind disposition without a swap
+      // adapter ever being consulted. A needs-route close gets a quoted
+      // list instead, built below once the interlock has passed — an
+      // empty one there reverts `NoEnabledSwapRoute`.
+      //
+      // `ready-internal-match` reaches the swap branch exactly when it
+      // loses the match (#2078): `attemptInternalMatchAutoDispatch` runs
+      // first and returns only if the opposing position is still there,
+      // and a loan whose own fallback would be a sale then goes on to the
+      // try-list. That race is intrinsic — the candidate is another
+      // position anyone can act on — so the list is how it is answered,
+      // not a fresher read. The keeper's default pass already quotes on
+      // this route for the same reason.
+      //
+      // The sale-hold check first. On the current contracts a sale's
+      // acceptance completes it in the same transaction and is refused
+      // from the loan's maturity on, while this close-out is possible only
+      // after the grace period, so the two cannot meet (#2078); the check
+      // is the rule this card shares with the keeper (`@vaipakam/lib/
+      // saleHold`), and it costs a read.
       const saleBlock = await preSubmitBlock();
       if (saleBlock) {
         setError(saleBlock);
         return;
       }
-      // The sale route, where one is needed (#2463). Every other
-      // submittable state sends the empty list, for the reasons above.
+      // The sale route, where one is needed (#2463), or where a lost match
+      // would need one (#2078). Every other submittable state sends the
+      // empty list, for the reasons above.
       let adapterCalls: readonly AdapterCall[] = [];
       /** The collateral amount the route was quoted for, on a sale. */
       let quotedAmount: bigint | null = null;
-      if (readiness === 'ready-needs-route') {
+      const routeNeed = confirmRouteNeed(readiness, matchFallback);
+      if (routeNeed !== 'none') {
         setFindingRoute(true);
         let found;
         try {
@@ -1069,12 +1080,19 @@ export function ForcedCloseCard({
           setFindingRoute(false);
         }
         if ('message' in found) {
-          setError(found.message);
-          return;
+          // Behind a match the route is only the answer to losing it, so
+          // its absence does not stop the match being sent: the card says
+          // a lost match then fails, costing the network fee
+          // (`raceFallbackSale`).
+          if (routeNeed === 'required') {
+            setError(found.message);
+            return;
+          }
+        } else {
+          adapterCalls = found.calls;
+          quotedAmount = found.quotedAmount;
+          setRouteShort(found.missingAnswers);
         }
-        adapterCalls = found.calls;
-        quotedAmount = found.quotedAmount;
-        setRouteShort(found.missingAnswers);
       }
       // A LIVE re-check, immediately before sending (round 28 P2). The
       // readiness above is a 30-second poll that the open confirmation
@@ -1098,7 +1116,19 @@ export function ForcedCloseCard({
       // The card promised a sale; a close-out that would not be one is not
       // sent on that promise. A node that cannot preview leaves the
       // disclosure on the card as the whole of what is known.
-      if (readiness === 'ready-needs-route' && publicClient && address && routeDiamond) {
+      //
+      // Behind a match (#2078) the same preview runs on the attached
+      // route, and only `fallback` refuses: the match is already gone and
+      // every route fails, and a route already known to fail is not sent,
+      // here as on a sale (the keeper's default pass applies the same
+      // rule). `other` is the match itself, and `sale` is the lost match
+      // the card's race sentence names, so both are sent.
+      if (
+        (routeNeed === 'required' || adapterCalls.length > 0) &&
+        publicClient &&
+        address &&
+        routeDiamond
+      ) {
         const preview = await previewCloseOut({
           client: publicClient,
           diamond: routeDiamond,
@@ -1110,7 +1140,7 @@ export function ForcedCloseCard({
           setError(copy.forcedClose.routeWouldFallBack);
           return;
         }
-        if (preview === 'other') {
+        if (preview === 'other' && routeNeed === 'required') {
           setError(copy.forcedClose.routeEndingChanged);
           return;
         }
@@ -1128,25 +1158,22 @@ export function ForcedCloseCard({
       // PINNED TO ONE BLOCK (round 11), so they describe a single state of
       // the chain. Started together was not enough: either read could come
       // back first, and a sale accepted or collateral added in the gap
-      // would then pass as a pair no block ever held. Two facts the chain
-      // will not check for us:
+      // would then pass as a pair no block ever held. Two facts:
       //
-      //  - An accepted sale of this lender position. `triggerDefault` does
-      //    not inspect sale linkage (#2078), so closing out after a buyer
-      //    accepted strands the buyer's principal. Everything above awaits
-      //    the network — quotes, preview, simulation — and none of it looks
-      //    at sale linkage.
+      //  - The sale hold of this lender position, again. The chain already
+      //    keeps a sale and this close-out apart (#2078, see the first
+      //    check above); this is the shared rule's last read.
       //  - The collateral the quotes were made for. `triggerDefault` sells
       //    the loan's LIVE collateral, but an aggregator's calldata is for
-      //    the quoted amount; after a top-up the adapter can sell only the
-      //    old amount, hand the rest back and still report a sale, leaving
-      //    the remainder in neither party's claim (#2472).
+      //    the quoted amount. Since #2472 the chain refuses an attempt that
+      //    sells less than it was offered and tries the next route, so a
+      //    route quoted before a top-up ends in the fallback rather than a
+      //    sale; refusing here says so before anything is spent.
       //
       // Judged only once both are in, so no network await sits between
       // either read and the write. What stays uncovered is the blocks
       // between this one and inclusion, and the wallet prompt: no read from
-      // the app can close those, and the on-chain guards that would are
-      // #2078 and #2472.
+      // the app can close those.
       let gateBlock: bigint | undefined;
       if (publicClient) {
         try {
@@ -1310,10 +1337,14 @@ export function ForcedCloseCard({
       ? copy.forcedClose.raceFallbackInKind
       : matchFallback === 'ready-rental'
         ? copy.forcedClose.raceFallbackRental
-        : matchFallback === 'ready-needs-route' ||
-            matchFallback === 'blocked-no-consent'
-          ? copy.forcedClose.raceFallbackFails
-          : copy.forcedClose.raceFallbackUnknown;
+        : // #2078 — a sale fallback now travels with the match (`closeOut`
+          // attaches a quoted route), so losing the race sells instead of
+          // failing; the sentence also covers no route being found.
+          matchFallback === 'ready-needs-route'
+          ? copy.forcedClose.raceFallbackSale
+          : matchFallback === 'blocked-no-consent'
+            ? copy.forcedClose.raceFallbackFails
+            : copy.forcedClose.raceFallbackUnknown;
 
   /** ONE EXHAUSTIVE TABLE, because choosing the set by hand is the bug.
    *

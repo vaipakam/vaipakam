@@ -415,11 +415,14 @@ function inKindIfConsented(
  *  `ready-in-kind`, `ready-internal-match` and `ready-rental`. The
  *  internal match is NOT an in-kind close — the protocol settles against
  *  an opposing position and pays in the lent asset — but it shares the
- *  property that matters here: `triggerDefault(loanId, [])` succeeds,
- *  because the match is dispatched before the swap branch is ever
- *  reached. `ready-needs-route` is not in this set: an empty list there
- *  reverts `NoEnabledSwapRoute`. Whether it can be submitted WITH a route
- *  is {@link canSubmitFromApp}'s question. */
+ *  property that matters here: `triggerDefault(loanId, [])` succeeds
+ *  while the match holds, because the match is dispatched before the swap
+ *  branch is ever reached. (The confirm still attaches a route behind a
+ *  match whose loss would need one — {@link confirmRouteNeed} — but that
+ *  route is not what makes the match submittable.) `ready-needs-route` is
+ *  not in this set: an empty list there reverts `NoEnabledSwapRoute`.
+ *  Whether it can be submitted WITH a route is {@link canSubmitFromApp}'s
+ *  question. */
 export function canSubmitWithoutRoute(readiness: ForcedCloseReadiness): boolean {
   return (
     readiness === 'ready-in-kind' ||
@@ -436,6 +439,35 @@ export function canSubmitWithoutRoute(readiness: ForcedCloseReadiness): boolean 
  *  three-valued for the reason every input to {@link decideForcedClose}
  *  is: an unread list is neither a button nor a refusal. */
 export type RouteAvailability = 'available' | 'none' | 'unknown';
+
+/** What the confirm does about a sale route (#2463, #2078).
+ *
+ *  - `required` — `ready-needs-route`: the close-out IS a sale, and an
+ *    empty try-list reverts `NoEnabledSwapRoute`. No route, no send.
+ *  - `behind-match` — `ready-internal-match` whose own fallback is a sale.
+ *    The match is dispatched first and the list is never read while it
+ *    holds, but the opposing position is one anyone can act on, so the
+ *    match can be gone by the time the transaction runs; the contract
+ *    then falls through to the swap branch. The route travels with the
+ *    match as the answer to losing it, and the match is still sent
+ *    without one when none can be found.
+ *  - `none` — every other state: the swap branch is unreachable, so the
+ *    list is empty.
+ *
+ *  Keyed on the derived fallback ({@link forcedCloseWithoutMatch}), not
+ *  on a second reading of the contract's branch order. */
+export type ConfirmRouteNeed = 'required' | 'behind-match' | 'none';
+
+export function confirmRouteNeed(
+  readiness: ForcedCloseReadiness,
+  matchFallback: ForcedCloseReadiness,
+): ConfirmRouteNeed {
+  if (readiness === 'ready-needs-route') return 'required';
+  if (readiness === 'ready-internal-match' && matchFallback === 'ready-needs-route') {
+    return 'behind-match';
+  }
+  return 'none';
+}
 
 /** Whether the card may offer its submit button.
  *

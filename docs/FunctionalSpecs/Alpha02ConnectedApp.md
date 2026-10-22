@@ -1883,6 +1883,20 @@ is the borrower's own money.
   asset, is a false statement about what they recover. The surface states the
   route it would actually fall to, and where it cannot read enough to know,
   says that rather than choosing the likeliest.
+- Where losing the opposing position would leave a sale, the close-out carries
+  that sale with it (#2078). The race is intrinsic — the opposing position is
+  one anyone can act on, so no fresher read removes it — and the protocol tries
+  the settlement first and reaches the sale only when the settlement is gone.
+  So the confirmation asks the exchanges for a price exactly as it does for a
+  sale and sends those routes with the settlement: a lost settlement then ends
+  in a sale, or in the protocol's fallback when every route fails at that
+  moment, rather than in a refusal the lender paid for. Not finding a price
+  does not withhold the settlement itself; the close-out is then sent without
+  a route, and the surface says in advance that a lost settlement would then
+  fail for the network fee alone. A route the chain already shows would fail
+  into the fallback is not sent, as on a sale. Because the ending may be a
+  sale, the surface says that a sale pays no matcher incentive and may instead
+  pay its submitter the sale incentive, under that incentive's own conditions.
 - That fallback is the surface's own routing decision asked again with the
   opposing position absent — never a second, hand-written account of the order
   the protocol tries things in. One description of that order is a
@@ -2071,13 +2085,14 @@ is the borrower's own money.
 - Forced close-out is not offered while a completed sale of the lender's position
   is awaiting its final step, nor while the app has not yet established
   whether one is — an unanswered question about a pending sale withholds
-  the action rather than permitting it, because the protocol does not
-  check this itself and nothing downstream would catch the mistake. The
-  check is repeated against live state immediately before the action is
-  sent, since a sale can be accepted inside the window a cached answer
-  covers. The buyer's funds have already moved and that
-  completion requires the loan to remain open, so closing it out here would end
-  the loan and strand the recovery permanently.
+  the action rather than permitting it. The check is repeated against live
+  state immediately before the action is sent. A buyer's funds must never be
+  stranded by a close-out ending the loan their purchase depends on. The
+  protocol keeps the two apart itself: a sale's acceptance completes it in
+  the same transaction, and is refused from the loan's maturity on, while a
+  close-out is possible only once the grace period has passed (#2078). The
+  surface's check is the rule it shares with the protocol's own keeper, kept
+  as a second line rather than as the only one.
 - Forced close-out remains available to a lender who has not accepted pending
   changes to the Terms. Withholding it would place paperwork between a lender and
   collateral owed to them by a counterparty already in breach.
