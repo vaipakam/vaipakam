@@ -1,24 +1,55 @@
 /**
- * The invocation's outbound-request allowance, counted rather than asserted
- * (#2221).
+ * The invocation's request allowances, counted rather than asserted (#2221).
  *
- * A Cloudflare Worker invocation is bounded at 50 outbound subrequests on the
- * tier this repository sizes against, and A BINDING CALL IS ONE OF THEM.
- * Going over does not degrade a chain pass — it aborts before the scan cursor
- * is recorded, so the next tick re-reads the same range and the chain never
- * advances. A frozen chain is the failure this module exists to make
- * impossible.
+ * A Cloudflare Worker invocation on the tier this repository sizes against
+ * has THREE request ceilings, and they are not the same size:
+ *
+ *   - **External subrequests: 50.** Requests that leave Cloudflare — the
+ *     chain RPC reads and the OpenSea POST.
+ *   - **Requests to Cloudflare's own services: 1,000.** D1, the Secrets Store
+ *     and Durable Objects.
+ *   - **D1 queries: 50**, per D1's own limits table, which counts every
+ *     statement inside a batch.
+ *
+ * Going over the external or the query ceiling is the failure this module
+ * exists to prevent: the platform may end the invocation there, before the
+ * scan cursor is recorded, so the next tick re-reads the same range.
+ *
+ * ── WHY THREE METERS, AND WHY THE SPLIT CAME LATE (#2221, 2026-10-22) ──
+ *
+ * The first version (#2227) charged every D1 call and every Secrets Store
+ * read against the 50, on a reading of Cloudflare's limits page that did not
+ * yet separate the two classes. The page now does: "Subrequests per
+ * invocation: 50" on Free, and on its own row "Subrequests to internal
+ * services: 1,000". Production agreed with the page before anyone read it
+ * again. Over 2026-10-15..22 nearly every ingest alarm exited with the
+ * single 50-request meter exactly full, and about a hundred crossed it — one
+ * reached 106 counted requests and 94 D1 statements — and still reached their
+ * own exit line, with no "too many subrequests" error anywhere in the
+ * Worker's logs for that week. A meter that reads "over" on invocations the platform
+ * did not stop is measuring the wrong ceiling; and because every heal lane
+ * stops at that meter, it was refusing chain reads to make room for database
+ * calls that had a ceiling twenty times larger of their own.
+ *
+ * WHAT IS STILL NOT SETTLED, said rather than implied. D1's table still
+ * prints "50 (Free)" for queries per invocation, and that same production
+ * window shows 94 statements going through without an error. This module
+ * keeps the documented 50 as the query ceiling — the conservative reading —
+ * and reports both figures on every exit, so the next re-tune is again made
+ * from what was observed.
  *
  * ── WHAT IS COUNTED, AND WHERE ──
  *
  * Two rules, which between them have no gap:
  *
- *   1. **Bindings are counted at the binding.** D1 goes out over a binding,
- *      not over `fetch`, so `meterD1` wraps the handle itself. Secrets Store
- *      reads are counted the same way, at `readSecret`.
+ *   1. **Bindings are counted at the binding**, on the internal meter. D1
+ *      goes out over a binding, not over `fetch`, so `meterD1` wraps the
+ *      handle itself. Secrets Store reads are counted the same way, at
+ *      `readSecret`.
  *   2. **HTTP is counted at egress.** Everything else a Worker sends leaves
  *      through `fetch`, so `meterFetch` wraps the function that sends it —
- *      not the objects that happen to call it.
+ *      not the objects that happen to call it. A Durable Object stub's
+ *      `fetch` is metered by the same primitive and charged as internal.
  *
  * Rule 2 is the correction #2227 r1 forced, and the distinction is not
  * pedantic. The first version of this module wrapped a viem client's METHODS
@@ -56,10 +87,13 @@
  *
  * Charged, each one request:
  *   - `.run()`, `.all()`, `.first()`, `.raw()` on a prepared statement
- *   - `.batch([...])`, once, whatever the array length
- *   - `.exec(...)`
+ *     (internal, and one D1 query)
+ *   - `.batch([...])`, once, whatever the array length (internal, and one D1
+ *     query per statement)
+ *   - `.exec(...)` (internal, and one D1 query per statement)
  *   - one `fetch` — each ATTEMPT, so a retried RPC read costs what it cost
- *   - one Secrets Store read
+ *     (external; internal for a Durable Object stub)
+ *   - one Secrets Store read (internal)
  *
  * Not charged: `prepare()` and `bind()`, which build a statement locally and
  * send nothing.
@@ -97,47 +131,48 @@ export interface Meter {
  * What the invocation has left. One object, threaded, mutated in place — so no
  * caller has to remember to report its spending upward.
  *
- * TWO METERS, because the platform enforces two ceilings and one number cannot
- * be honest about both (#2227 r4 `4034041832`). A `batch()` of nine statements
- * is ONE subrequest and NINE D1 queries. Counting it as one under-reports the
- * query ceiling — which on the free tier is also 50, so a lane batching freely
- * can be killed with the counter reading comfortable. Counting it as nine
- * over-reports the subrequest ceiling and would refuse work that fits. Both
- * are true at once, so both are kept, and neither is asked to stand in for the
- * other.
+ * THREE METERS, because the platform enforces three ceilings and one number
+ * cannot be honest about all of them. A `batch()` of nine statements is ONE
+ * internal request and NINE D1 queries (#2227 r4 `4034041832`); an RPC read is
+ * one external request and no query. Counting any of them on another's meter
+ * makes that meter wrong in one direction or the other, so each is kept and
+ * none is asked to stand in for another.
  */
 export interface TickBudget {
   /** For the log line, so an operator knows WHICH invocation overspent. */
   readonly label: string;
-  /** Requests that leave the Worker: `fetch`, and every binding call. */
-  readonly subrequests: Meter;
+  /** Requests that leave Cloudflare: the RPC reads, the OpenSea POST. */
+  readonly external: Meter;
+  /** Requests to Cloudflare's own services: D1 round trips, Secrets Store
+   *  reads, Durable Object stubs. */
+  readonly internal: Meter;
   /** SQL statements submitted to D1, batched or not. */
   readonly d1Queries: Meter;
 }
 
 /**
- * The tier ceilings this lane sizes against — both REAL limits, not
- * self-imposed ones, which is why nothing here may quietly exceed either.
+ * The tier ceilings this lane sizes against — all three REAL limits, not
+ * self-imposed ones, which is why nothing here may quietly exceed any of them.
  *
- * Cloudflare documents "Subrequests per invocation: 50" (Free) and counts "any
- * request a Worker makes using the Fetch API or to Cloudflare services like
- * R2, KV, or D1", with "each subrequest in a redirect chain" counting too. D1
- * separately documents "Queries per Worker invocation: 1000 (Workers Paid) /
- * 50 (Free)" and says the per-query limits "apply to each individual statement
- * contained within a batch statement".
+ * Cloudflare's Workers limits page, Free column: "Subrequests per invocation:
+ * 50" and "Subrequests to internal services: 1,000". D1's limits page:
+ * "Queries per Worker invocation: 1000 (Workers Paid) / 50 (Free)", applying
+ * "to each individual statement contained within a batch statement".
  *
  * Sized to the FREE tier deliberately. A paid deployment has more room than
  * this counter believes, which costs a tick some work it could have done;
  * believing the paid figure on a free deployment freezes a chain. The
  * direction of the error is chosen, not inherited.
  */
-export const MAX_SUBREQUESTS_PER_INVOCATION = 50;
+export const MAX_EXTERNAL_SUBREQUESTS_PER_INVOCATION = 50;
+export const MAX_INTERNAL_SUBREQUESTS_PER_INVOCATION = 1_000;
 export const MAX_D1_QUERIES_PER_INVOCATION = 50;
 
 /**
- * Held back so a pass can always record where it got to.
+ * Held back so a pass can always record where it got to: the cursor write,
+ * one D1 statement.
  *
- * A pass that spends its last request on work and then cannot write its cursor
+ * A pass that spends its last query on work and then cannot write its cursor
  * has done the work AND frozen the chain — strictly worse than doing less work
  * and advancing. The agent lane learned this as `CURSOR_WRITE_RESERVE` in
  * #2213 r32 (`4017648029`); the same rule holds here for the same reason.
@@ -145,20 +180,35 @@ export const MAX_D1_QUERIES_PER_INVOCATION = 50;
 export const CURSOR_WRITE_RESERVE = 1;
 
 export function createBudget(
-  limit: number = MAX_SUBREQUESTS_PER_INVOCATION,
   label = 'invocation',
-  queryLimit: number = MAX_D1_QUERIES_PER_INVOCATION,
+  limits: { external?: number; internal?: number; d1Queries?: number } = {},
 ): TickBudget {
+  const meter = (what: string, limit: number): Meter => ({ what, limit, remaining: limit, announced: false });
   return {
     label,
-    subrequests: { what: 'subrequest', limit, remaining: limit, announced: false },
-    d1Queries: {
-      what: 'D1 query',
-      limit: queryLimit,
-      remaining: queryLimit,
-      announced: false,
-    },
+    external: meter('external subrequest', limits.external ?? MAX_EXTERNAL_SUBREQUESTS_PER_INVOCATION),
+    internal: meter('internal-service request', limits.internal ?? MAX_INTERNAL_SUBREQUESTS_PER_INVOCATION),
+    d1Queries: meter('D1 query', limits.d1Queries ?? MAX_D1_QUERIES_PER_INVOCATION),
   };
+}
+
+/**
+ * What one unit of work costs, on the two meters a unit can come near.
+ *
+ * NO INTERNAL FIGURE, and that is a bound rather than an omission. Every
+ * internal request is a D1 round trip (at least one D1 query each, so never
+ * more than `d1Queries` allows), a Secrets Store read (a dozen at most, at the
+ * top of a tick) or a Durable Object ping (one per configured chain). Those
+ * add up to a little over the 50-query ceiling, against an internal ceiling of
+ * 1,000: a unit that fits the query meter cannot reach the internal one. The
+ * internal meter is still counted and reported, so the day that bound stops
+ * holding is visible in the log rather than argued.
+ */
+export interface Cost {
+  /** Chain reads and other requests that leave Cloudflare. */
+  readonly external: number;
+  /** D1 statements, each statement of a batch counted. */
+  readonly d1Queries: number;
 }
 
 /**
@@ -168,23 +218,21 @@ export function createBudget(
  * already spent the requests that got it there, and on this lane a half-done
  * reconciliation is what leaves rows in the state #2212 exists to remember.
  *
- * `reserve` is what must still be affordable AFTER the work — the cursor write,
- * normally — so the caller expresses "I need n, and I must still be able to
- * record progress" in one question rather than two that can drift apart.
- *
- * SUBREQUESTS, because that is the ceiling a unit of work is sized in here.
- * A caller whose work is D1-statement-heavy asks about that meter directly.
+ * `cost` is the unit's own requests AND whatever must still be affordable after
+ * it (the cursor write, a rotation pointer), stated by the caller in one
+ * object so the two cannot be asked about separately and drift apart.
  */
-export function canAfford(
-  budget: TickBudget,
-  cost: number,
-  reserve: number = CURSOR_WRITE_RESERVE,
-): boolean {
-  return budget.subrequests.remaining >= cost + reserve;
+export function affords(budget: TickBudget, cost: Cost): boolean {
+  return budget.external.remaining >= cost.external && budget.d1Queries.remaining >= cost.d1Queries;
+}
+
+/** Two costs as one: the unit, and what must still fit after it. */
+export function plus(a: Cost, b: Cost): Cost {
+  return { external: a.external + b.external, d1Queries: a.d1Queries + b.d1Queries };
 }
 
 /**
- * Spend a subrequest, and say whether it was affordable.
+ * Spend requests on one meter, and say whether they were affordable.
  *
  * DELIBERATELY NOT A THROW. This lane's callers are a scan, a reconciliation
  * pass and a reminder sweep, and an exception in any of them unwinds past the
@@ -192,16 +240,17 @@ export function canAfford(
  * prevent it. The counter goes negative, the fact is reported, and the caller
  * decides.
  */
-export function spend(budget: TickBudget, cost = 1): boolean {
-  return draw(budget, budget.subrequests, cost);
+export function spendExternal(budget: TickBudget, cost = 1): boolean {
+  return draw(budget, budget.external, cost);
+}
+
+export function spendInternal(budget: TickBudget, cost = 1): boolean {
+  return draw(budget, budget.internal, cost);
 }
 
 /**
- * Spend D1 QUERIES — the second ceiling, which a `batch()` draws on by its
- * length while costing only one subrequest.
- *
- * Separate from `spend` rather than folded into it because the ceilings are
- * separate. A single number would have to pick one to be wrong about.
+ * Spend D1 QUERIES — the ceiling a `batch()` draws on by its length while
+ * costing only one internal request.
  */
 export function spendD1Queries(budget: TickBudget, count: number): boolean {
   return draw(budget, budget.d1Queries, count);
@@ -231,19 +280,24 @@ function draw(budget: TickBudget, meter: Meter, cost: number): boolean {
   return meter.remaining >= 0;
 }
 
-/** Has this invocation exceeded EITHER ceiling? */
+/** Has this invocation exceeded ANY ceiling? */
 export function overspent(budget: TickBudget): boolean {
-  return budget.subrequests.remaining < 0 || budget.d1Queries.remaining < 0;
+  return budget.external.remaining < 0 || budget.internal.remaining < 0 || budget.d1Queries.remaining < 0;
 }
 
-/** How many subrequests this invocation has issued so far. */
-export function spent(budget: TickBudget): number {
-  return budget.subrequests.limit - budget.subrequests.remaining;
+function used(meter: Meter): number {
+  return meter.limit - meter.remaining;
 }
 
-/** How many D1 statements this invocation has submitted so far. */
-export function spentD1Queries(budget: TickBudget): number {
-  return budget.d1Queries.limit - budget.d1Queries.remaining;
+/** What this invocation has spent so far, on every meter. */
+export interface Spend {
+  readonly external: number;
+  readonly internal: number;
+  readonly d1Queries: number;
+}
+
+export function spent(budget: TickBudget): Spend {
+  return { external: used(budget.external), internal: used(budget.internal), d1Queries: used(budget.d1Queries) };
 }
 
 /**
@@ -255,23 +309,30 @@ export function spentD1Queries(budget: TickBudget): number {
  * this module exists for. `at` names the exit, because the same counter is
  * legitimately read at more than one moment on one invocation.
  *
- * BOTH meters are in the line. A figure that reported subrequests alone would
- * read as comfortable on an invocation about to be killed for its query count.
+ * EVERY meter is in the line. A figure that reported one alone would read as
+ * comfortable on an invocation about to be stopped on another.
  *
- * The key is `invocationSpent`, not `spent`: on the cron path several passes
- * share one counter, so a figure printed beside a chain id is the TICK's total
- * and not that chain's share. A per-pass share would have to be a delta, and
- * deltas are not attributable while the passes run concurrently.
+ * The figures are the INVOCATION's, not a pass's: on the cron path several
+ * passes share one counter, so a figure printed beside a chain id is the
+ * TICK's total and not that chain's share. A per-pass share would have to be
+ * a delta, and deltas are not attributable while the passes run concurrently.
+ *
+ * The keys changed in #2221's ceiling split (`invocationSpent` / `limit` were
+ * one figure for every request, which is what that split retired). Nothing in
+ * this repository reads them; a saved log query that did needs the new names.
  */
 export function reportSpend(budget: TickBudget, at: string): void {
+  const s = spent(budget);
   // eslint-disable-next-line no-console
   console.log(
     `[subrequests] ${JSON.stringify({
       scope: budget.label,
       at,
-      invocationSpent: spent(budget),
-      limit: budget.subrequests.limit,
-      d1QueriesSpent: spentD1Queries(budget),
+      externalSpent: s.external,
+      externalLimit: budget.external.limit,
+      internalSpent: s.internal,
+      internalLimit: budget.internal.limit,
+      d1QueriesSpent: s.d1Queries,
       d1QueryLimit: budget.d1Queries.limit,
       over: overspent(budget),
     })}`,
@@ -335,8 +396,8 @@ function wrapStatement<T extends object>(stmt: T, budget: TickBudget): T {
 
       if (TERMINALS.includes(prop as Terminal)) {
         return (...args: unknown[]) => {
-          // One statement, sent on its own: one subrequest AND one query.
-          spend(budget);
+          // One statement, sent on its own: one internal request AND one query.
+          spendInternal(budget);
           spendD1Queries(budget, 1);
           return (value as (...a: unknown[]) => unknown).apply(target, args);
         };
@@ -370,8 +431,8 @@ export function meterD1<T extends object>(db: T, budget: TickBudget): T {
           );
       }
 
-      // ONE subrequest for the whole array — it is one round trip — and as
-      // many D1 QUERIES as it carries statements. Cloudflare's own limits say
+      // ONE internal request for the whole array — it is one round trip —
+      // and as many D1 QUERIES as it carries statements. Cloudflare's own limits say
       // both: a batch is one request, and the per-query limits "apply to each
       // individual statement contained within a batch statement" (#2227 r4
       // `4034041832`). Charging one of each would let a batching lane reach
@@ -379,7 +440,7 @@ export function meterD1<T extends object>(db: T, budget: TickBudget): T {
       // the length to BOTH would refuse work that fits.
       if (prop === 'batch') {
         return (...args: unknown[]) => {
-          spend(budget);
+          spendInternal(budget);
           const statements = args[0];
           spendD1Queries(budget, Array.isArray(statements) ? statements.length : 1);
           return (value as (...a: unknown[]) => unknown).apply(target, args);
@@ -391,7 +452,7 @@ export function meterD1<T extends object>(db: T, budget: TickBudget): T {
       // actually submitted rather than assumed to be one.
       if (prop === 'exec') {
         return (...args: unknown[]) => {
-          spend(budget);
+          spendInternal(budget);
           spendD1Queries(budget, countExecStatements(args[0]));
           return (value as (...a: unknown[]) => unknown).apply(target, args);
         };
@@ -430,7 +491,9 @@ function countExecStatements(sql: unknown): number {
  * the caller needs to know nothing about the budget.
  *
  * `base` exists so a non-global sender (a DO stub's `fetch`) is metered by the
- * same primitive rather than by a second mechanism that can drift from it.
+ * same primitive rather than by a second mechanism that can drift from it, and
+ * `meter` says which ceiling it draws on: a DO stub is one of Cloudflare's own
+ * services, so its caller passes `'internal'`.
  *
  * NOT a swap of `globalThis.fetch`, which would catch even more and would be
  * wrong: a Worker isolate serves concurrent invocations, so a global swap
@@ -440,6 +503,7 @@ function countExecStatements(sql: unknown): number {
 export function meterFetch(
   budget: TickBudget,
   base: typeof fetch = fetch,
+  meter: 'external' | 'internal' = 'external',
 ): typeof fetch {
   return (async (
     input: Parameters<typeof fetch>[0],
@@ -479,7 +543,8 @@ export function meterFetch(
     // destination so that fix is one log line away, and this is a deliberate
     // behaviour change rather than a gap: see the PR.
     const response = await (() => {
-      spend(budget);
+      if (meter === 'internal') spendInternal(budget);
+      else spendExternal(budget);
       return base(input, {
         ...((init ?? {}) as RequestInit),
         redirect: 'manual',

@@ -10,7 +10,8 @@
  * the ops/hf-watcher monolith that's NOT the HF watcher loop
  * (apps/keeper) or the chain-event scan + read API (apps/indexer).
  *
- * `scheduled()` (cron — every minute):
+ * `scheduled()` (cron — one every-minute trigger, acting every
+ * `AGENT_TICK_CADENCE_MINUTES`; see the note at its top, #2236):
  *   - `runPeriodicPreNotify`     — push borrowers (priority) and
  *                                  lenders (courtesy) before the
  *                                  next interest-payment checkpoint.
@@ -128,13 +129,39 @@ import {
   verifySignedLinkRequest,
 } from './linkAuth';
 import { chainVerifyGate } from './walletSigVerify';
+import { isTickDue } from '@vaipakam/lib/cronCadence';
+import { AGENT_TICK_CADENCE_MINUTES } from './tickCadence';
 
 export default {
   async scheduled(
-    _controller: ScheduledController,
+    controller: ScheduledController,
     env: WorkerEnv,
     ctx: ExecutionContext,
   ): Promise<void> {
+    // #2236 — THE TICK RUNS EVERY FIVE MINUTES, on the one every-minute
+    // schedule this Worker owns (the free plan's cron triggers are an account
+    // budget; see `@vaipakam/lib/cronCadence`). A minute that is not due
+    // returns here having done nothing.
+    //
+    // Why, from the evidence rather than the theory: this Worker runs on the
+    // free plan's 10 ms CPU allowance, and it has been stopped for CPU in two
+    // episodes (2026-09-19/20, and 2026-10-15/16 with 762 stopped invocations;
+    // `cpuTimeP50` of the stopped ones pinned at 10,000 µs). Its SUCCESSFUL ticks spend a
+    // median of about 25 ms on the same plan, and the kills arrive in whole
+    // hours of nearly every tick, alternating with whole hours of none — a
+    // pattern a fixed per-invocation ceiling would not produce, and one an
+    // allowance measured over a window would. Which it is cannot be read from
+    // the account's analytics. What does not depend on the answer: the work
+    // is a reminder sweep whose window is DAYS wide (`DEFAULT_PRE_NOTIFY_DAYS`)
+    // and two retention prunes, so running it every minute bought nothing a
+    // five-minute cadence does not, at five times the CPU. What it costs is
+    // stated: a reminder lap takes five times as many minutes (#2230 tracks
+    // the condition under which a lap's length would matter), and an expired
+    // Telegram link code is deleted up to five minutes later — consuming one
+    // already checks its expiry, so a late delete is never a late accept.
+    if (!isTickDue(controller.scheduledTime, AGENT_TICK_CADENCE_MINUTES)) {
+      return;
+    }
     // #2239 — decline the whole tick when this build has no D1 binding.
     // Every pass below reads or writes the database, so one line here beats a
     // separate failure from each `waitUntil` continuation.

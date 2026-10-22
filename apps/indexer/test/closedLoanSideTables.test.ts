@@ -33,7 +33,7 @@ import {
   _loanSideTableStatements,
   _verifiedHolderStatements,
   processLoanLogs,
-  QUARANTINE_MAINTENANCE_SUBREQUESTS,
+  QUARANTINE_MAINTENANCE_D1_QUERIES,
   RECONCILE_BUDGET_OWN_INVOCATION,
   RECONCILE_BUDGET_SHARED_TICK,
 } from '../src/chainIndexer';
@@ -209,30 +209,18 @@ describe('ending a listing or an intent is NOT a close', () => {
 });
 
 /**
- * The repair pass's subrequest budget, which is a property of the INVOCATION
- * rather than of the pass — so it is the caller's to set, and the numbers
- * are asserted here rather than left in a comment.
+ * The repair pass's budget, which is a property of the INVOCATION rather than
+ * of the pass — so it is the caller's to set, and the numbers are asserted
+ * here rather than left in a comment.
  *
- * Free-tier Workers cap at 50 subrequests per invocation. On the DO path —
- * which `CHAIN_INGEST_VIA_DO: "true"` makes the deployed one — the scan runs
- * inside the Durable Object's own invocation, so the ~12 headroom beside its
- * own ~38 is the repair's to use.
- *
- * The legacy inline path is NOT a tighter version of the same sum, and these
- * cases must not be read as asserting that it fits. That invocation carries
- * the scan (~38), the backing snapshot (~4) and the OpenSea republish sweep
- * (up to 35 — 5 rows x 7 calls each), which is ~77 against a cap of 50
- * before this pass exists at all (#2194). The tight budget is the minimum
- * non-zero cost on a path that is already over, not a fit.
- *
- * The pass spends `1 + maxRows` at worst: one `getActiveLoansCount` plus one
- * `getLoanDetails` per row examined. That is the number these cases pin.
+ * Since #2221's ceiling split the pass is sized on the meter it actually
+ * presses on: D1 statements. Its chain reads (`1 + maxRows * 3` at worst —
+ * the count, a `getLoanDetails` per row, and two `ownerOf` reads for a
+ * repaired row) are external requests, and the old sums that added them to
+ * D1 calls against one 50 are retired with the single meter.
  */
 describe('reconcile budget', () => {
   it('costs the shared legacy invocation the minimum that still turns', () => {
-    // Deliberately NOT phrased as "fits" — see the header: that invocation
-    // is already over the cap without this pass. What is asserted is that
-    // the pass takes the least it can while still doing anything.
     const worst = 1 + (RECONCILE_BUDGET_SHARED_TICK.maxRows ?? 0) * 3;
     expect(worst).toBeLessThanOrEqual(4);
     // And it still turns: a budget of zero rows would make the rotation a
@@ -240,43 +228,16 @@ describe('reconcile budget', () => {
     expect(RECONCILE_BUDGET_SHARED_TICK.minRows).toBeGreaterThanOrEqual(1);
   });
 
-  /** The free-tier ceiling this repository sizes every invocation against. */
-  const WORKER_SUBREQUEST_CAP = 50;
-  /** What the event scan itself spends in a busy pass, per the lane's notes. */
-  const SCAN_SUBREQUESTS = 38;
-
-  it('fits the DO invocation, holder verification AND quarantine included', () => {
-    // Three subrequests per row in the worst case, not one: the chain read
-    // that decides the repair, plus the two `ownerOf` reads that decide who
-    // the notice goes to. The 5→3 trim exists for this sum (#2190 r5).
-    const worst = 1 + (RECONCILE_BUDGET_OWN_INVOCATION.maxRows ?? 0) * 3;
-    expect(worst).toBeLessThanOrEqual(12);
-    // AND THE WHOLE INVOCATION, which is what the cap is actually about
-    // (#2213 r29 `4016866252`). The bound above was satisfied by the 3→2 trim
-    // without ever mentioning the reason for it — a check that keeps passing
-    // while it has stopped watching the thing that moved. The sum an operator
-    // cares about is the invocation's, so that is what is asserted.
-    expect(SCAN_SUBREQUESTS + worst + QUARANTINE_MAINTENANCE_SUBREQUESTS).toBeLessThanOrEqual(
-      WORKER_SUBREQUEST_CAP,
-    );
-    // THIS TEST NO LONGER ASSERTS THAT THE INVOCATION FITS, because it does
-    // not, and asserting it did was wrong three rounds running (#2213 r29
-    // said 50 and it was 51; r30 said 48 and it is at least 57, once the
-    // reconciliation pass's own nine uncounted D1 calls are included — r31
-    // `4017540301`). A test that keeps being re-tuned to match a number
-    // somebody else corrected is not checking anything; it is recording the
-    // last correction.
-    //
-    // What it pins instead is the part this file can actually substantiate:
-    // that THIS pass's own contribution stays at the floor. If someone raises
-    // `maxRows` again, that is a decision to spend more of a budget already
-    // known to be over, and it should fail here.
+  it('holds the DO invocation to one row, sized on the query meter it presses on', () => {
+    // The measured reason (see `RECONCILE_BUDGET_OWN_INVOCATION`): alarms exit
+    // around 36 of 50 D1 statements, and a repaired row costs about nine more.
+    // Raising this is a decision to re-read that figure first, and it should
+    // fail here until someone has.
     expect(RECONCILE_BUDGET_OWN_INVOCATION.maxRows).toBe(1);
-    // And the components stay visible, so #2221's counter has a starting
-    // point rather than an archaeology exercise.
-    expect(SCAN_SUBREQUESTS + worst + QUARANTINE_MAINTENANCE_SUBREQUESTS).toBeLessThanOrEqual(
-      WORKER_SUBREQUEST_CAP,
-    );
+    // Quarantine maintenance is D1 only, and asks the shared probe ONCE per
+    // pass however many lanes read it (#2221): 1 probe + 2 release + 4 stale
+    // report + 1 repair write.
+    expect(QUARANTINE_MAINTENANCE_D1_QUERIES).toBe(8);
   });
 
   it('never lets the shared-tick budget exceed the own-invocation one', () => {

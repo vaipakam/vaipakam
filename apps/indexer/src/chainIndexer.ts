@@ -69,7 +69,7 @@ import {
   reportStaleQuarantine,
   settledRows,
 } from './loanQuarantine';
-import { createQuarantineAvailability } from './loanQuarantine';
+import { _resetQuarantineAvailability, quarantineAvailability } from './loanQuarantine';
 import {
   verifyRpcChainIdentity as verifyRpcIdentityShared,
   type RpcIdentityVerdict,
@@ -130,7 +130,6 @@ import {
   type CalendarSweepResult,
 } from './calendarNotifications';
 import {
-  MAX_SUBREQUESTS_PER_INVOCATION,
   createBudget,
   CURSOR_WRITE_RESERVE,
   createChainClient,
@@ -138,6 +137,9 @@ import {
   meterEnv,
   reportSpend,
   spent,
+  affords,
+  type Cost,
+  type Spend,
   type TickBudget,
 } from './subrequestBudget';
 import { schemaDeclineNotice, schemaGate } from './schemaGate';
@@ -409,8 +411,8 @@ export interface ChainIndexerResult {
   scannedFrom: bigint;
   scannedTo: bigint;
   /**
-   * Outbound requests THE INVOCATION had issued when this pass returned,
-   * MEASURED (#2221).
+   * Requests THE INVOCATION had issued when this pass returned, on each of
+   * its three meters, MEASURED (#2221).
    *
    * The invocation is what the platform's ceiling applies to, and on the cron
    * path several passes share one tick — so the honest figure is the tick's,
@@ -422,7 +424,7 @@ export interface ChainIndexerResult {
    * reporting (#2227 r1 `4033546273`) — the early returns below do not each
    * remember to carry it.
    */
-  invocationSubrequestsSpent?: number;
+  invocationSpend?: Spend;
   newOffers: number;
   statusUpdates: number;
   detailRefreshes: number;
@@ -506,10 +508,7 @@ export interface ChainIndexerResult {
  */
 export async function runChainIndexer(
   rawEnv: Env,
-  budget: TickBudget = createBudget(
-    MAX_SUBREQUESTS_PER_INVOCATION,
-    'cron tick',
-  ),
+  budget: TickBudget = createBudget('cron tick'),
 ): Promise<ChainIndexerResult[]> {
   // The round-robin pointer's own read and write are requests too, and they
   // come out of the same tick's allowance as the chain pass they schedule.
@@ -565,7 +564,7 @@ export async function runChainIndexer(
     results.push({
       ...emptyResult('chain-error'),
       chainId: chain.id,
-      invocationSubrequestsSpent: spent(budget),
+      invocationSpend: spent(budget),
     });
   }
 
@@ -600,18 +599,25 @@ export async function runChainIndexer(
  * to rows whose `posted_at` is at least `SWEEP_MIN_AGE_S` old (so
  * the inline event-ingest publish gets a chance to land first).
  *
- * Subrequest budget: this sweep shares ONE tick's allowance with the scan and
- * the other cron passes, which is why it takes the invocation's counter rather
- * than opening its own. The per-row figure this note used to assert (~6) is no
- * longer stated here: it is the class of claim #2221 exists to stop making,
- * and the counter now reports what a batch actually costs.
+ * BUDGET (#2194): this sweep shares ONE tick's allowance with the scan and the
+ * other cron passes, which is why it takes the invocation's counter rather
+ * than opening its own — and it ASKS before each row. A row is seven external
+ * requests (the transaction receipt, its block, the prepay context, the
+ * executor's Seaport, the counter, the order hash, then the OpenSea POST) and
+ * one D1 write. Its client does not retry, so seven is a bound rather than a
+ * normal figure; a row that fails is simply retried next tick, which is what
+ * this sweep is for. The cron entry point runs it AFTER ingest has finished
+ * (`index.ts`), so on the legacy inline path it takes what the scan left
+ * rather than racing the scan for it — the condition #2194 recorded, where
+ * the sweep's 35 and the scan's ~38 were drawn concurrently from one 50.
  */
+/** One sweep row: six chain reads and the OpenSea POST, then the marker write.
+ *  A bound, because the sweep's client does not retry. */
+const SWEEP_ROW_COST: Cost = { external: 7, d1Queries: 1 };
+
 export async function sweepUnpublishedListings(
   rawEnv: Env,
-  budget: TickBudget = createBudget(
-    MAX_SUBREQUESTS_PER_INVOCATION,
-    'listing sweep',
-  ),
+  budget: TickBudget = createBudget('listing sweep'),
 ): Promise<void> {
   // Metered once, shadowing, for the reason the chain pass does it — and
   // idempotently, so handing this an already-metered env (which the cron entry
@@ -637,6 +643,7 @@ export async function sweepUnpublishedListings(
   // `auction_end_time IS NULL` branch covers pre-Block-B rows
   // (migration 0018 added the column nullable).
   const nowSec = Math.floor(Date.now() / 1000);
+  if (!affords(budget, { external: 0, d1Queries: 1 })) return;
   const rows = await env.DB.prepare(
     `SELECT chain_id, loan_id, order_hash, ask_price, conduit_key,
             salt, executor, tx_hash, fee_legs_json,
@@ -674,7 +681,14 @@ export async function sweepUnpublishedListings(
     // salt / executor — skip them. The proper migration window for
     // those is the original-tx redrive, which is out of scope here.
     if (!row.conduit_key || !row.salt || !row.executor) continue;
-    const client = createChainClient(chain.rpc, env.fetchFn);
+    if (!affords(budget, SWEEP_ROW_COST)) {
+      console.warn(
+        `[chainIndexer] listing sweep stopped at loan ${row.loan_id} on chain ${row.chain_id}: ` +
+          `this invocation cannot afford another row; the rest wait for the next tick`,
+      );
+      break;
+    }
+    const client = createChainClient(chain.rpc, env.fetchFn, { retryCount: 0 });
     // T-086 Round-5 Block A (#313) — decode the recorded fee
     // legs from D1 back into the shape the JS reconstruction
     // needs. Rows from before this migration have NULL
@@ -903,134 +917,73 @@ export function isEpochDeclinedSkip(skipped: string | undefined): boolean {
  * position. The rotation still reaches every row; it takes more turns.
  */
 /**
- * WHAT QUARANTINE MAINTENANCE COSTS A PASS, stated as a number because the
- * reconcile allowance below is now sized around it (#2213 r29 `4016866252`).
+ * WHAT QUARANTINE MAINTENANCE COSTS A PASS, in D1 statements — it reads no
+ * chain, so it costs nothing on the external meter (#2213 r29 `4016866252`;
+ * restated for the ceiling split, #2221).
  *
- * This PR added D1 work to every pass and did not put it in anybody's
- * arithmetic — the same defect r27 `4016129218` found in the agent's lane,
- * arriving here by the other door. Worst case per pass, with the r28
- * pass-scoped probe already counted:
- *
- * - 1 — the write side's `sqlite_master` probe, once per pass however many
- *       close-outs
- * - 1 — the CALENDAR sweep's own probe. It runs in this same invocation, via
- *       `_sweepCalendarIfEstablished`, and holds a SEPARATE cache: the two
- *       lanes read the same fact and take opposite readings of `'unknown'`,
- *       so they were built as independent probes. The write side's answer
- *       cannot satisfy the calendar side's cache, so a cold pass pays twice
- *       (#2213 r30 `4017166962`)
+ * - 1 — the `sqlite_master` probe. ONE for the whole invocation's pass, shared
+ *       by the write side and the calendar sweep (`loanQuarantine.ts`'s
+ *       `quarantineAvailability`). Until #2221 each lane held its own cache
+ *       and a cold pass paid twice (#2213 r30 `4017166962`); the two lanes
+ *       read the same fact, and the probe's three-valued answer lets each
+ *       take its own reading of `'unknown'` from the one question.
  * - 2 — `releaseTerminalQuarantine`, worst case: a bounded read of the ids it
- *       is about to release, then the release itself. ONE when nothing is
- *       terminal, which is most passes, because the read is what decides.
- *       It was a single `DELETE … RETURNING` until #2231 r8 `4036084552`
- *       pointed out that this bounded only the log — D1 was still asked to
- *       return every deleted id, and the Worker to materialise them all, on
- *       a sweep that can cover thousands. A `LIMIT` the database honours
- *       costs one statement and removes a linear response
- * - 1 — the stale report: its count and its bounded listing, in ONE
- *       `batch()`. Two statements, one round trip — and a transaction, which
- *       is why they were folded together (#2231 r11 `4036569628`): read
- *       separately, the exact total could be taken before an operator's
- *       guarded clear and the page after it, so the report would describe
- *       overflow entries that no longer existed. The snapshot was the
- *       requirement; costing one subrequest instead of two came with it.
- *       CONSTANT WHATEVER THE DATA SAYS, and the constancy is the point
- *       rather than the number
- *       (#2231 r6 `4035682768`, r7 `4035821168`). It briefly became 3, when
- *       a chain holding more rows than one page fits paid for a roll call of
- *       the remainder — a cost that VARIED with the data, under a ceiling
- *       whose overrun aborts the pass before the scan cursor is written, so
- *       the pass paying the extra was by definition the one holding the most
- *       rows. It then briefly became 1, by folding the count into the
- *       listing with a window function; that is reverted because D1
- *       documents no version and nothing here has run one against it, and
- *       this is the one statement whose failure would make every suppression
- *       invisible. A constant cost settles that dependency whatever the
- *       number is
- * - 1 — the repair's own quarantine writes, when a repair happened
+ *       is about to release, then the release itself (#2231 r8 `4036084552`:
+ *       a `LIMIT` the database honours, instead of a `DELETE … RETURNING`
+ *       that made D1 return every deleted id).
+ * - 4 — the stale report: its count and its bounded listing, and the
+ *       unreviewed withdrawals' count and listing, each pair in ONE `batch()`
+ *       so the count and the page describe the same snapshot (#2231 r11
+ *       `4036569628`). CONSTANT WHATEVER THE DATA SAYS, which is the point
+ *       (#2231 r6 `4035682768`, r7 `4035821168`): a cost that grew with the
+ *       rows held would fall hardest on the pass holding the most.
+ * - 1 — the repair's own quarantine writes, when a repair happened.
  *
  * The close-out statements themselves are folded into batches that already
  * existed, so they add nothing.
- *
- * The second entry is the one r29 missed, and missing it is instructive: r29
- * counted the probe it had just changed rather than every probe the
- * invocation makes. One probe per LANE, not one per pass — which is only
- * visible if you go looking for callers rather than reading the code you
- * edited. Sharing one answer between the lanes would remove the entry
- * entirely and is noted on #2221.
  */
-export const QUARANTINE_MAINTENANCE_SUBREQUESTS = 6;
+export const QUARANTINE_MAINTENANCE_D1_QUERIES = 1 + 2 + 4 + 1;
 
 /**
  * What the reconciliation pass still does after an orphan move, and so must
  * still be able to afford when it starts one (#2636 r4): the pointer and
  * lap-boundary writes, the quarantine marks and releases for the rows it
  * examined (a statement each, one batch), the quarantine maintenance above,
- * whose D1 statements are its two probes, the release's read and delete, the
+ * whose D1 statements are its one probe, the release's read and delete, the
  * stale report's four (its count and page, and the unreviewed withdrawals'
  * count and page) and the repair's own writes, and the scan cursor.
  */
-function reconcileAfterOrphanMoveReserve(opts: ReconcileOptions): { subrequests: number; d1Queries: number } {
+function reconcileAfterOrphanMoveReserve(opts: ReconcileOptions): Cost {
   const rows = Math.max(1, opts.maxRows ?? 5);
   return {
-    subrequests: 2 + 1 + QUARANTINE_MAINTENANCE_SUBREQUESTS + CURSOR_WRITE_RESERVE,
-    d1Queries: 2 + 2 * rows + (2 + 2 + 4 + 1) + CURSOR_WRITE_RESERVE,
+    // All of it is D1: nothing after an orphan move reads the chain.
+    external: 0,
+    d1Queries: 2 + 2 * rows + QUARANTINE_MAINTENANCE_D1_QUERIES + CURSOR_WRITE_RESERVE,
   };
 }
 
 export const RECONCILE_BUDGET_SHARED_TICK: ReconcileOptions = { maxRows: 1, minRows: 1 };
 /**
- * THREE CAME DOWN TO TWO for the quarantine maintenance above (#2213 r29
- * `4016866252`), and it is the same trade the note above records, made again
- * for the same reason.
+ * ONE ROW, and now for a measured reason rather than an asserted one (#2221).
  *
- * The DO invocation's arithmetic, worst case: the scan's own ~38, plus
- * `1 + maxRows * 3` here, plus `QUARANTINE_MAINTENANCE_SUBREQUESTS`. At three
- * rows that was 38 + 10 + 5 = 53, over the 50 this repository targets — and
- * going over does not merely drop a repair, it aborts the pass before the
- * scan cursor is recorded, which is the frozen chain this whole PR keeps
- * working to avoid.
+ * The history, briefly, because a reader may remember the old note: this was
+ * five, then three, then two, then one, each cut made against a worst-case sum
+ * that review then showed was wrong (#2213 r29–r31). The sums were wrong
+ * because nothing counted; the counter (#2227) now does, on every exit.
  *
- * THE SUM IS NOT ESTABLISHED, AND THIS NOTE NO LONGER PRETENDS IT IS.
+ * What the counter shows (ingest alarms, 2026-10-15..22): the D1 query meter
+ * is the one this pass presses on. Alarms exit with a median of about 36 of
+ * the 50 D1 statements spent, and a repaired row costs the reconciliation
+ * pass roughly nine more (pointer, lap boundary, maximum id, row selection,
+ * party lookup, repair batch, cursor writes). One repaired row takes a
+ * typical alarm to about 45; two would take it past 50. The chain reads (`1 + maxRows * 3`) were the
+ * figure the old notes argued about, and they were never the binding cost —
+ * they only looked it while D1 calls were charged to the 50-request external
+ * meter, which #2221's ceiling split corrected.
  *
- * Three consecutive review rounds each corrected a worst-case figure stated
- * here, and each correction was found by someone else looking rather than by
- * anything in the code: r29 said 50 and it was 51 (the calendar lane's own
- * probe, r30 `4017166962`); r30 said 48 and it is at least 57 (nine
- * uncounted D1 calls inside the reconciliation pass itself, r31
- * `4017540301`). A fourth number asserted the same way would be worth
- * exactly as much as the first three.
- *
- * So what is claimed here is only what can be substantiated:
- *
- * - The scan is about 38, this pass contributes `1 + maxRows * 3` chain
- *   reads, and quarantine maintenance is 6.
- * - The reconciliation pass makes at least nine further D1 calls per
- *   repaired row that NOBODY counts — pointer, lap boundary, maximum id, row
- *   selection, party lookup, repair batch, cursor writes. They were believed
- *   free; `loanReconcile.ts` carried that belief in a comment until r31, and
- *   this PR is what disproved it.
- * - Therefore the invocation's true worst case is ABOVE 50 and its exact
- *   value is unknown. Going over aborts the pass before the scan cursor is
- *   recorded, which is a frozen chain.
- *
- * ONE ROW is what this constant can do about that, and it is a mitigation
- * rather than a fix: it takes the pass from three repaired rows to one,
- * removing roughly two thirds of the uncounted reconciliation cost as well
- * as six chain reads. The risk predates this PR — those D1 calls were always
- * made and never counted — and this PR is what made it visible, so leaving
- * the allowance where it was would be worse.
- *
- * It now equals the shared-tick budget, which is itself the signal: the
- * constant whose name means "the roomy one" has been squeezed until it is
- * the tight one, and there is nothing left to give here.
- *
- * #2221 is the fix — an explicit counter, as the agent's lane got in r27 —
- * and it is a blocker for this lane rather than a tidy-up. Do not add
- * another request to this path, or another number to this note, before it
- * lands.
- *
- * The rotation still reaches every row; it takes more turns.
+ * So the allowance stays at one row, the rotation still reaches every row
+ * (it takes more turns), and raising it is a decision to read the alarm's
+ * `d1QueriesSpent` again first, not to re-argue a sum.
  */
 export const RECONCILE_BUDGET_OWN_INVOCATION: ReconcileOptions = { maxRows: 1, minRows: 1 };
 
@@ -1496,7 +1449,7 @@ export async function _reportQuarantineForChain(env: Env, chainId: number): Prom
   // naming a table that might not exist fails the whole batch, and that batch
   // advances the chain cursor. The reminder SWEEP takes the opposite reading
   // of 'unknown' for the opposite reason — see the probe's own doc.
-  const reportAvailability = await quarantineAvailableForWrites(env.DB as never);
+  const reportAvailability = await quarantineAvailability()(env.DB as never);
   if (reportAvailability === 'unknown') {
     // SAID, not returned silently (#2213 r14 `4013761194`). This reporter is
     // the ONLY surface that names long-held rows, and the rows it names are
@@ -1543,7 +1496,7 @@ export async function _reportQuarantineForChain(env: Env, chainId: number): Prom
       env.DB,
       chainId,
       Math.floor(Date.now() / 1000),
-      quarantineAvailableForWrites.guardColumn() === true,
+      quarantineAvailability().guardColumn() === true,
     );
   } catch (err) {
     // The marks are unaffected: this is the read that NAMES long-held rows.
@@ -1692,7 +1645,7 @@ export async function _runLoanReconcilePass(input: {
   // Asked once per pass, before any repair builds its batch: every repair's
   // close-out statements are gated on the same answer, so a pass cannot half
   // include the release (#2213 r2 `4011776381`).
-  const closeOutAvailability = await quarantineAvailableForWrites(env.DB as never);
+  const closeOutAvailability = await quarantineAvailability()(env.DB as never);
   const quarantineAvailable = closeOutAvailability === 'present';
   // A NON-RETRYING client, deliberately its own (#2190 r2 `4005986337`).
   // The scan's client takes viem's default `retryCount: 3`, so each of this
@@ -1871,7 +1824,7 @@ export async function _runLoanReconcilePass(input: {
     // ONLY on `absent`. `unknown` still attempts, because this is a
     // fail-open withholding mechanism and a probe that could not answer is not
     // evidence the table is missing.
-    const writeAvailability = await quarantineAvailableForWrites(env.DB as never);
+    const writeAvailability = await quarantineAvailability()(env.DB as never);
     if (writeAvailability !== 'absent') {
       try {
         const writes = quarantineStatements(
@@ -1879,7 +1832,7 @@ export async function _runLoanReconcilePass(input: {
           chainId,
           report,
           nowSec,
-          quarantineAvailableForWrites.guardColumn() === true,
+          quarantineAvailability().guardColumn() === true,
         );
         if (writes.length > 0) {
           const outcome = await env.DB.batch(writes);
@@ -2038,16 +1991,13 @@ export async function _runLoanReconcilePass(input: {
  *
  * What it cannot cover is the platform killing the invocation mid-request —
  * nothing downstream runs then, which is exactly why the CEILING is announced
- * at `spend()` rather than here.
+ * at the meter (`spendExternal` and its siblings) rather than here.
  */
 export async function runChainIndexerForChain(
   rawEnv: Env,
   chain: ChainConfig,
   reconcileBudget: ReconcileOptions = RECONCILE_BUDGET_SHARED_TICK,
-  budget: TickBudget = createBudget(
-    MAX_SUBREQUESTS_PER_INVOCATION,
-    `chain ${chain.id} pass`,
-  ),
+  budget: TickBudget = createBudget(`chain ${chain.id} pass`),
 ): Promise<ChainIndexerResult> {
   try {
     // THE SCHEMA GATE, ahead of every D1 write the pass makes (see
@@ -2063,7 +2013,7 @@ export async function runChainIndexerForChain(
       return {
         ...emptyResult(schema.state === 'pending' ? 'schema-pending' : 'schema-unknown'),
         chainId: chain.id,
-        invocationSubrequestsSpent: spent(budget),
+        invocationSpend: spent(budget),
       };
     }
     // DEPLOYMENT EPOCH (#1566, Codex #2545 r1–r4) — after the schema gate (the
@@ -2088,7 +2038,7 @@ export async function runChainIndexerForChain(
       return {
         ...emptyResult('epoch-not-adopted'),
         chainId: chain.id,
-        invocationSubrequestsSpent: spent(budget),
+        invocationSpend: spent(budget),
       };
     }
     // A reset just deleted client-visible rows (offers, loans, activity,
@@ -2105,11 +2055,11 @@ export async function runChainIndexerForChain(
         ...emptyResult('epoch-reset'),
         epochReset: true,
         chainId: chain.id,
-        invocationSubrequestsSpent: spent(budget),
+        invocationSpend: spent(budget),
       };
     }
     const result = await runChainPass(rawEnv, chain, reconcileBudget, budget);
-    return { ...result, invocationSubrequestsSpent: spent(budget) };
+    return { ...result, invocationSpend: spent(budget) };
   } finally {
     // The NORMAL figure, on every tick. A number that is only logged when it
     // is already too late tells an operator nothing about the headroom they
@@ -2148,8 +2098,8 @@ async function runChainPass(
   const chainId = chain.id;
   const diamond = chain.diamond as Address;
   // THE PASS BOUNDARY for the quarantine-table probe (#2213 r28
-  // `4016565774`). Every close-out in this pass now shares one answer, so a
-  // backfill full of terminal events costs one `sqlite_master` read rather
+  // `4016565774`). Every close-out in this pass, and the calendar sweep
+  // (#2221), share one answer, so a backfill full of terminal events costs one `sqlite_master` read rather
   // than one per event — which during the deploy-before-migration window
   // (#2214) could spend the invocation's whole subrequest allowance on
   // identical probes and abort before the cursor advanced, freezing the very
@@ -2157,7 +2107,7 @@ async function runChainPass(
   // pass, rather than threaded through the fifteen close-out call sites: the
   // rule is one rule and belongs in one place, and threading it is how the
   // fourteenth site gets missed.
-  quarantineAvailableForWrites.beginPass();
+  quarantineAvailability().beginPass();
   // Each chain has its own deployBlock; resolved via getChainConfigs
   // → deployments.json. We re-look it up here because ChainConfig
   // intentionally exposes only the runtime essentials.
@@ -2886,8 +2836,9 @@ async function runChainPass(
   // The over-ceiling warning that used to sit at this point could not fire in
   // the case it was written for: the platform kills the invocation AT the
   // request that passes the ceiling, so this line is downstream of the event
-  // it was meant to announce. It now happens in `spend()`, before the
-  // offending request is issued. The ordinary figure is reported by the
+  // it was meant to announce. It now happens in the meter that crosses
+  // (`spendExternal` and its siblings), before the offending request is
+  // issued. The ordinary figure is reported by the
   // wrapper, on every exit including a throw.
   return {
     scannedFrom: scanFrom,
@@ -3861,7 +3812,7 @@ export async function runHealLanes(
     // them: the ledger heal above may have committed rows whose report rides
     // this function's return, and a query past the ceiling could end the
     // invocation before it. Skipped work just runs next tick.
-    if (budget.subrequests.remaining >= 2 && budget.d1Queries.remaining >= 2) {
+    if (affords(budget, { external: 0, d1Queries: 2 })) {
       await reverifyInitPrincipal(env, chainId);
       await reverifyInitTerms(env, chainId);
     }
@@ -3871,20 +3822,22 @@ export async function runHealLanes(
   return { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds };
 }
 
-/** Subrequests one `refreshOfferDetails` normally spends — the details
- *  read, the position-NFT `ownerOf` read, the row UPDATE — of which one is
- *  a D1 query. A NORMAL figure for a soft stop, not a bound: a retried read
- *  costs more. Correctness comes from where the lanes run (see `runChainPass`). */
-const OFFER_DETAIL_REFRESH_COST = 3;
+/** What one `refreshOfferDetails` normally spends: the details read and the
+ *  position-NFT `ownerOf` read on the chain, and the row UPDATE in D1. A
+ *  NORMAL figure for a soft stop, not a bound: a retried read costs more.
+ *  Correctness comes from where the lanes run (see `runChainPass`). */
+const OFFER_DETAIL_REFRESH_COST: Cost = { external: 2, d1Queries: 1 };
 /** The same for one `refreshStubLoans` row: the read and the UPDATE. */
-const LOAN_DETAIL_REFRESH_COST = 2;
+const LOAN_DETAIL_REFRESH_COST: Cost = { external: 1, d1Queries: 1 };
+/** A stub lane's own selection: one D1 read, no chain read. */
+const STUB_SELECTION_COST: Cost = { external: 0, d1Queries: 1 };
 
-/** Whether a heal row is worth STARTING: both meters still hold its normal
+/** Whether a heal row is worth STARTING: the meters still hold its normal
  *  cost. A soft stop that avoids walking into the platform ceiling on a long
  *  backlog; the heal lanes are placed so that overshooting it loses nothing
  *  but the row. */
-function healRowAffordable(budget: TickBudget, subrequests: number): boolean {
-  return budget.subrequests.remaining >= subrequests && budget.d1Queries.remaining >= 1;
+function healRowAffordable(budget: TickBudget, cost: Cost): boolean {
+  return affords(budget, cost);
 }
 
 /**
@@ -3909,7 +3862,7 @@ export async function refreshStubOffers(
    *  (#2382 r5). See `refreshOfferDetails`. */
   atBlock: bigint,
 ): Promise<number> {
-  if (!healRowAffordable(budget, 1)) return 0;
+  if (!healRowAffordable(budget, STUB_SELECTION_COST)) return 0;
   // Targeted refresh: only rows actually flagged as stub. Every row
   // INSERTed via the inline-success path lands with `is_stub = 0`, and
   // `refreshOfferDetails` flips the flag back to 0 once it writes
@@ -4245,9 +4198,10 @@ export async function settleLoanRow(
 
 /** Rows `settleFromLedger` takes per tick; the rest wait for the next. */
 const SETTLE_HEAL_BATCH = 20;
-/** Per healed row: the canonical status read, the event lookup, its receipt,
- *  the block read, the write. */
-const SETTLE_HEAL_COST = 5;
+/** Chain reads per healed row: the canonical status read, the event's
+ *  receipt, the block read. (Its event lookup and settle write are D1, in
+ *  `SETTLE_HEAL_D1_QUERIES`.) */
+const SETTLE_HEAL_EXTERNAL = 3;
 /** D1 queries the rotation write at the end of a tick costs: the pointer
  *  and the lap's high-water mark, one batch (one subrequest). */
 const SETTLE_HEAL_POINTER_D1_QUERIES = 2;
@@ -4258,10 +4212,7 @@ const SETTLE_HEAL_D1_QUERIES = 2 + SETTLE_HEAL_POINTER_D1_QUERIES;
 /** Whether a heal row may START: its own reads and writes, and still the
  *  rotation-pointer write after it, in both meters. */
 function settleRowAffordable(budget: TickBudget): boolean {
-  return (
-    budget.subrequests.remaining >= SETTLE_HEAL_COST + 1 &&
-    budget.d1Queries.remaining >= SETTLE_HEAL_D1_QUERIES
-  );
+  return affords(budget, { external: SETTLE_HEAL_EXTERNAL, d1Queries: SETTLE_HEAL_D1_QUERIES });
 }
 /** `indexer_cursor.kind` of the heal's rotation pointer (a loan id). */
 export const SETTLE_HEAL_CURSOR_KIND = 'settle_heal_rotation';
@@ -4354,7 +4305,7 @@ export async function settleFromLedger(
   // #2476 r10 — the setup itself: the rotation read (pointer, lap end and the
   // chain's highest loan id, one batch), the page read, and the rotation
   // write an empty page can require.
-  if (budget.subrequests.remaining < 3 || budget.d1Queries.remaining < 4 + SETTLE_HEAL_POINTER_D1_QUERIES) return [];
+  if (!affords(budget, { external: 0, d1Queries: 4 + SETTLE_HEAL_POINTER_D1_QUERIES })) return [];
   const [pointerRes, lapEndRes, maxRes] = await env.DB.batch([
     env.DB.prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`).bind(
       chainId,
@@ -4451,7 +4402,7 @@ export async function settleFromLedger(
       if (Number(detail.id ?? 0) === 0) {
         // #2636 r3 — the move's whole cost (both of its batches, every
         // statement in them) and still the rotation write after it.
-        if (!orphanMoveAffordable(budget, { subrequests: 1, d1Queries: SETTLE_HEAL_POINTER_D1_QUERIES })) {
+        if (!orphanMoveAffordable(budget, { external: 0, d1Queries: SETTLE_HEAL_POINTER_D1_QUERIES })) {
           reached = before;
           break;
         }
@@ -4483,7 +4434,7 @@ export async function settleFromLedger(
       // normal figure, not a bound (the client retries a failed read), so if
       // the reads ran over, stop here: the row stays unsettled, the pointer
       // stays before it, and the next lap does it with room to report it.
-      if (budget.subrequests.remaining < 2 || budget.d1Queries.remaining < 1 + SETTLE_HEAL_POINTER_D1_QUERIES) {
+      if (!affords(budget, { external: 0, d1Queries: 1 + SETTLE_HEAL_POINTER_D1_QUERIES })) {
         reached = before;
         break;
       }
@@ -4504,8 +4455,7 @@ export async function settleFromLedger(
   // skipped write only repeats a page next tick.
   if (
     next !== pointer &&
-    budget.subrequests.remaining >= 1 &&
-    budget.d1Queries.remaining >= SETTLE_HEAL_POINTER_D1_QUERIES
+    affords(budget, { external: 0, d1Queries: SETTLE_HEAL_POINTER_D1_QUERIES })
   ) {
     // #2476 r7 — a failed pointer write must not lose the ids above: those
     // rows are settled and will never be selected again, so this return is
@@ -4581,8 +4531,9 @@ export async function sweepSettledExistence(
   /** The pass's settled block. */
   atBlock: bigint,
 ): Promise<number[]> {
-  // The rotation read, the page read, one row's read, and the rotation write.
-  if (budget.subrequests.remaining < 4 || budget.d1Queries.remaining < 4 + 1 + SETTLED_EXISTENCE_POINTER_D1_QUERIES) return [];
+  // The rotation read, the page read, one row's read (the only chain read),
+  // and the rotation write.
+  if (!affords(budget, { external: 1, d1Queries: 4 + 1 + SETTLED_EXISTENCE_POINTER_D1_QUERIES })) return [];
   const [pointerRes, lapEndRes, maxRes] = await env.DB.batch([
     env.DB.prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`).bind(
       chainId,
@@ -4615,7 +4566,7 @@ export async function sweepSettledExistence(
   let reached = pointer;
   for (const row of rows) {
     // The row's read, and still the rotation write after it.
-    if (budget.subrequests.remaining < 2 || budget.d1Queries.remaining < SETTLED_EXISTENCE_POINTER_D1_QUERIES) break;
+    if (!affords(budget, { external: 1, d1Queries: SETTLED_EXISTENCE_POINTER_D1_QUERIES })) break;
     let detail: { id?: number | bigint };
     try {
       detail = (await client.readContract({
@@ -4630,7 +4581,7 @@ export async function sweepSettledExistence(
       break;
     }
     if (Number(detail.id ?? 0) === 0) {
-      if (!orphanMoveAffordable(budget, { subrequests: 1, d1Queries: SETTLED_EXISTENCE_POINTER_D1_QUERIES })) break;
+      if (!orphanMoveAffordable(budget, { external: 0, d1Queries: SETTLED_EXISTENCE_POINTER_D1_QUERIES })) break;
       try {
         if (await withdrawOrphanLoan(env.DB, chainId, diamond, row.loan_id, 'settled', atBlock, Math.floor(Date.now() / 1000))) {
           withdrawn.push(row.loan_id);
@@ -4643,7 +4594,7 @@ export async function sweepSettledExistence(
     reached = row.loan_id;
   }
   const next = rows.length < SETTLED_EXISTENCE_BATCH && reached === (rows.at(-1)?.loan_id ?? pointer) ? 0 : reached;
-  if (next !== pointer && budget.subrequests.remaining >= 1 && budget.d1Queries.remaining >= SETTLED_EXISTENCE_POINTER_D1_QUERIES) {
+  if (next !== pointer && affords(budget, { external: 0, d1Queries: SETTLED_EXISTENCE_POINTER_D1_QUERIES })) {
     try {
       const t = Math.floor(Date.now() / 1000);
       const upsert = `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
@@ -4709,8 +4660,8 @@ async function canonicalSettlementBlock(
   const loanTopic = pad(toHex(BigInt(loanId)), { size: 32 }).toLowerCase();
   let first = true;
   for (const c of candidates.results ?? []) {
-    // receipt + block read + settle write + pointer write
-    if (!first && budget.subrequests.remaining < 4) return null;
+    // receipt + block read on the chain, settle write + pointer write in D1
+    if (!first && !affords(budget, { external: 2, d1Queries: 1 + SETTLE_HEAL_POINTER_D1_QUERIES })) return null;
     first = false;
     let receipt;
     try {
@@ -4817,7 +4768,7 @@ async function refreshStubLoans(
 ): Promise<number> {
   let healed = 0;
   // The same soft stop as `refreshStubOffers`, and run last for the same reason.
-  if (!healRowAffordable(budget, 1)) return 0;
+  if (!healRowAffordable(budget, STUB_SELECTION_COST)) return 0;
   const stale = await env.DB.prepare(
     `SELECT loan_id FROM loans
      WHERE chain_id = ? AND is_stub = 1
@@ -7299,26 +7250,11 @@ export function _loanSideTableStatements(
 }
 
 /**
- * One probe for the WRITE side, matching the one the reminder lanes hold.
- *
- * Separate instance rather than a shared module-level cache: each is a cache
- * of "this database has the table", and they are asked at different moments.
- * Caching only a TRUE means they converge as soon as the migration lands.
- */
-let quarantineAvailableForWrites = createQuarantineAvailability();
-
-/**
- * Test seam — the probe latches on a TRUE and is otherwise unobservable.
- *
- * The calendar lane has carried `_resetQuarantineTableProbe` for its own
- * probe since it grew one; this module needed the same and did not have it
- * (#2213 r19). Without it a suite is order-dependent in the worst direction:
- * one earlier case answering "the table is there" latches `present` for the
- * whole file, so a later case that means to exercise the ABSENT path silently
- * exercises the present one and passes for the wrong reason.
+ * Test seam — kept under its old name for the suites that call it; it resets
+ * the ONE probe both lanes now share (`loanQuarantine.ts`, #2221).
  */
 export function _resetQuarantineWriteProbe(): void {
-  quarantineAvailableForWrites = createQuarantineAvailability();
+  _resetQuarantineAvailability();
 }
 
 async function _clearClosedLoanSideTables(
@@ -7326,7 +7262,7 @@ async function _clearClosedLoanSideTables(
   chainId: number,
   loanId: number,
 ): Promise<void> {
-  const availability = await quarantineAvailableForWrites(env.DB as never);
+  const availability = await quarantineAvailability()(env.DB as never);
   const outcome = await env.DB.batch(
     _closedLoanSideTableStatements(env, chainId, loanId, availability === 'present'),
   );

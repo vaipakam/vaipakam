@@ -10,7 +10,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { effectiveCollateralMax, markBorrowerFillsUnread, refreshStubOffers } from '../src/chainIndexer';
-import { createBudget, meterEnv, spend } from '../src/subrequestBudget';
+import { createBudget, meterEnv, spendExternal } from '../src/subrequestBudget';
 import { handleOfferById } from '../src/offerRoutes';
 import type { Env } from '../src/env';
 import { createSqliteD1 } from './helpers/sqliteD1';
@@ -106,14 +106,14 @@ describe('offer API — collateral range', () => {
 });
 
 describe('the range backfill lane (#2382 r1/r2)', () => {
-  /** A chain client whose every read costs what a full refresh can: the
-   *  details read, the ownerOf read and the UPDATE (3), then fails — so the
-   *  lane's spending, not the row's content, is what is measured. */
+  /** A chain client whose every read costs what a full refresh's chain reads
+   *  can: the details read and the ownerOf read (2 external), then fails — so
+   *  the lane's spending, not the row's content, is what is measured. */
   const costlyClient = (budget: ReturnType<typeof createBudget>, reads: number[]) =>
     ({
       async readContract({ args }: { args: [bigint] }) {
         reads.push(Number(args[0]));
-        spend(budget, 3);
+        spendExternal(budget, 2);
         throw new Error('read refused');
       },
     }) as never;
@@ -121,8 +121,8 @@ describe('the range backfill lane (#2382 r1/r2)', () => {
   it('stops starting rows once a row no longer fits either meter (a soft stop)', async () => {
     const h = createSqliteD1(migrations());
     for (let i = 1; i <= 20; i++) seed(h, { offer_id: String(i) });
-    // Subrequests: 10 − 1 (the selection) = 9 → three rows at 3 each.
-    const budget = createBudget(10, 'test', 1_000);
+    // External: 9 → four rows at 2 chain reads each (the selection is D1).
+    const budget = createBudget('test', { external: 9, d1Queries: 1_000 });
     const reads: number[] = [];
     await refreshStubOffers(
       costlyClient(budget, reads),
@@ -132,10 +132,10 @@ describe('the range backfill lane (#2382 r1/r2)', () => {
       budget,
       AT,
     );
-    expect(reads.length).toBe(3);
+    expect(reads.length).toBe(4);
     // D1 queries are a second ceiling (#2382 r2): with none left after the
     // selection, no row starts however many subrequests remain.
-    const tight = createBudget(1_000, 'test', 1);
+    const tight = createBudget('test', { external: 1_000, d1Queries: 1 });
     const none: number[] = [];
     await refreshStubOffers(
       costlyClient(tight, none),
@@ -156,7 +156,7 @@ describe('the range backfill lane (#2382 r1/r2)', () => {
     seed(h, { offer_id: '2', status: 'fullyFilled', collateral_range_stale: 0 });
     // Marked and terminal (a match marked it, then closed it).
     seed(h, { offer_id: '3', status: 'fullyFilled', collateral_amount_max: null, collateral_amount_filled: null, collateral_range_stale: 1 });
-    const budget = createBudget(1_000, 'test', 1_000);
+    const budget = createBudget('test', { external: 1_000, d1Queries: 1_000 });
     const reads: number[] = [];
     await refreshStubOffers(
       costlyClient(budget, reads),
@@ -184,7 +184,7 @@ describe('a match marks the borrower offer’s fills unread (#2382 r2)', () => {
       { offer_id: 2, f: '0' },
     ]);
     // …and the refresh lane picks the marked row up.
-    const budget = createBudget(1_000, 'test', 1_000);
+    const budget = createBudget('test', { external: 1_000, d1Queries: 1_000 });
     const reads: number[] = [];
     await refreshStubOffers(
       ({
@@ -206,9 +206,9 @@ describe('a match marks the borrower offer’s fills unread (#2382 r2)', () => {
     const h = createSqliteD1(migrations());
     const ids = Array.from({ length: 150 }, (_, i) => i + 1);
     for (const i of ids) seed(h, { offer_id: String(i), collateral_amount_filled: '0' });
-    const budget = createBudget(1_000, 'test', 1_000);
+    const budget = createBudget('test', { external: 1_000, d1Queries: 1_000 });
     await markBorrowerFillsUnread(meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env, 84532, ids);
-    expect(budget.subrequests.limit - budget.subrequests.remaining).toBe(1);
+    expect(budget.internal.limit - budget.internal.remaining).toBe(1);
     const n = h.db.prepare('SELECT COUNT(*) AS n FROM offers WHERE collateral_amount_filled IS NULL').get() as { n: number };
     expect(n.n).toBe(150);
   });
@@ -318,7 +318,7 @@ describe('a range backfill keeps the offer’s recorded holder (#2382 r3)', () =
       },
     }) as never;
   const run = async (h: ReturnType<typeof createSqliteD1>, owner: () => string) => {
-    const budget = createBudget(1_000, 'test', 1_000);
+    const budget = createBudget('test', { external: 1_000, d1Queries: 1_000 });
     await refreshStubOffers(client(owner), '0x0' as never, 84532,
       meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env, budget, AT);
     return h.db.prepare('SELECT creator_current_owner AS o, collateral_amount_max AS m FROM offers').get() as {
@@ -357,7 +357,7 @@ describe('a range backfill keeps the offer’s recorded holder (#2382 r3)', () =
 
 describe('a completed read clears the marker (#2382 r4/r6)', () => {
   const read = async (h: ReturnType<typeof createSqliteD1>, answer: () => unknown) => {
-    const budget = createBudget(1_000, 'test', 1_000);
+    const budget = createBudget('test', { external: 1_000, d1Queries: 1_000 });
     const seen: number[] = [];
     await refreshStubOffers(
       ({
@@ -404,7 +404,7 @@ describe('heal reads are pinned to the settled scan block (#2382 r5)', () => {
     const h = createSqliteD1(migrations());
     seed(h, { creator_current_owner: '0x00000000000000000000000000000000000000d0' });
     const blocks: Array<[string, unknown]> = [];
-    const budget = createBudget(1_000, 'test', 1_000);
+    const budget = createBudget('test', { external: 1_000, d1Queries: 1_000 });
     await refreshStubOffers(
       ({
         async readContract({ functionName, blockNumber }: { functionName: string; blockNumber?: bigint }) {

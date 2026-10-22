@@ -1629,6 +1629,7 @@ Watcher and notification support:
 - the operations Worker should extend its scheduled loan-monitoring lane to pre-notify both borrower and lender before the next periodic-interest checkpoint
 - `preNotifyDays` is a shared bounded knob for maturity reminders and periodic-interest checkpoint reminders; default 3 days, allowed range 1 to 14 days
 - checkpoint notification de-duplication should be keyed to the exact checkpoint timestamp so retries do not spam users
+- the reminder lane need not run every minute: its lead time is days wide, so it runs on a cadence of a few minutes, sized so the lane stays inside the hosting plan's processing allowance rather than being stopped by it. A slower cadence lengthens a full pass over the loans, and that is acceptable only while a full pass still completes well inside the lead time
 
 ### Claiming Funds/Assets
 

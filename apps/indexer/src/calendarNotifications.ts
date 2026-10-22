@@ -173,7 +173,7 @@ const SWEEP_LIMIT = 2000;
  *  rediscover is one that will be missed again (#2190 r5). */
 export { DERIVED_LOG_INDEX as CRON_LOG_INDEX } from './notifications';
 import { DERIVED_LOG_INDEX } from './notifications';
-import { createQuarantineAvailability, quarantineExclusionSql } from './loanQuarantine';
+import { _resetQuarantineAvailability, quarantineAvailability, quarantineExclusionSql } from './loanQuarantine';
 
 /** The slice of a `loans` row the calendar planner needs. */
 export interface CalendarLoanRow {
@@ -337,11 +337,12 @@ export const EMPTY_SWEEP: CalendarSweepResult = { inserted: 0, loanIds: [] };
  * callers; see `loanQuarantine.ts` for why a probe rather than a caught
  * error, and why only a TRUE is cached.
  */
-let quarantineTableExists = createQuarantineAvailability();
+// The probe itself is the one the whole chain pass shares
+// (`quarantineAvailability`, #2221).
 
-/** Test seam: the probe caches across calls, which would leak between cases. */
+/** Test seam: resets the shared probe, which caches across calls. */
 export function _resetQuarantineTableProbe(): void {
-  quarantineTableExists = createQuarantineAvailability();
+  _resetQuarantineAvailability();
 }
 
 export function calendarWindowSql(graceCase: string, withQuarantine = true): string {
@@ -522,12 +523,11 @@ export async function sweepCalendarNotifications(
     // look-back otherwise keeps selecting) would starve the emitting
     // tail. Every selected row is now pre-maturity or inside its own
     // grace — a LIMIT hit only ever defers rows that WOULD emit.
-    // One probe for this sweep, and the scope is opened explicitly (#2213 r28
-    // `4016565774`). This lane asks once either way; the call is here so both
-    // lanes draw the boundary the same way rather than one relying on asking
-    // only once by accident.
-    quarantineTableExists.beginPass();
-    const availability = await quarantineTableExists(db);
+    // The SHARED probe (#2221): the chain pass opened the pass boundary before
+    // this sweep runs, so a write-side close-out earlier in the pass has
+    // already paid for the answer and this reads it. Not reopened here — that
+    // would throw the paid-for answer away and ask again.
+    const availability = await quarantineAvailability()(db);
     if (availability === 'unknown') {
       // DEFER THE WHOLE SWEEP (#2213 r13 `4013570995`). This is the one place
       // where "could not ask" must not be read as "not there": the sweep is
