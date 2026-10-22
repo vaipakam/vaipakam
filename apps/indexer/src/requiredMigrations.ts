@@ -4,18 +4,11 @@
  * `d1_migrations`, and the deploy wrapper (scripts/deploy-shared-d1.mjs)
  * refuses to publish until they are.
  *
- * The whole set, not only the newest: a migration that fills a gap in the
- * numbering sorts BELOW the newest, so a newest-only check would pass a
- * database that never applied it (#2409 r1).
- *
- * The list itself is `requiredMigrations.json` — JSON, so it has no comments
- * and no syntax a checker could misread (#2409 r3: a TS array let a
- * commented-out filename pass a text-matching check). A Worker bundle cannot
- * read its own migrations directory, hence a committed list;
- * `scripts/check-schema-gate.mjs` (part of `typecheck`) fails CI unless it
- * equals the `migrations/` directory exactly. Full filenames, which is what
- * wrangler records in `d1_migrations.name`.
+ * The list is the shared database's, so it lives in the shared package
+ * (`packages/lib/src/sharedD1Migrations.json`, #2410) where the keeper and the
+ * agent read the same one. `scripts/check-schema-gate.mjs` (part of this
+ * Worker's `typecheck`) fails CI unless it equals this Worker's `migrations/`
+ * directory exactly, so adding a migration here without listing it is a red
+ * check, not a gate that lets new code run ahead of its schema.
  */
-import list from './requiredMigrations.json';
-
-export const REQUIRED_D1_MIGRATIONS: readonly string[] = list;
+export { SHARED_D1_MIGRATIONS as REQUIRED_D1_MIGRATIONS } from '@vaipakam/lib/d1SchemaGate';

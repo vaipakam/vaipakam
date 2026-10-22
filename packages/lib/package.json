@@ -85,6 +85,10 @@
       "types": "./src/d1Maintenance.ts",
       "default": "./src/d1Maintenance.ts"
     },
+    "./d1SchemaGate": {
+      "types": "./src/d1SchemaGate.ts",
+      "default": "./src/d1SchemaGate.ts"
+    },
     "./swapRoutes": {
       "types": "./src/swapRoutes.ts",
       "default": "./src/swapRoutes.ts"

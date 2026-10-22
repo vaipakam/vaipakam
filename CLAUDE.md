@@ -850,7 +850,7 @@ migration do to a keeper-private table.
 additive** (#2214 / #2409). Only the indexer — the schema's owner — APPLIES
 migrations: its `deploy` (`apps/indexer/scripts/deploy-shared-d1.mjs apply`)
 applies non-interactively, VERIFIES in the database that every migration in
-`apps/indexer/src/requiredMigrations.json` is recorded, then publishes. The
+`packages/lib/src/sharedD1Migrations.json` is recorded, then publishes. The
 keeper's and agent's `deploy` (`… verify`) only verify, read-only, waiting a
 bounded time for the indexer to apply, and refuse to publish onto an older
 schema — three appliers raced on one merge and left partial releases. The
@@ -859,14 +859,17 @@ touches the database). **Migrations land while the old Workers are still
 serving, so each one must be compatible with the deployed code** — additive
 (expand/contract); a dropped/renamed column or a tightened constraint needs a
 coordinated two-step release. Workers Builds also auto-deploys on merge with a
-dashboard command the repo cannot pin, so the indexer carries a schema gate
-(`src/schemaGate.ts`): scheduled work declines, by name, until EVERY migration
-in the build is recorded, and resumes by itself once it is. **A new migration
-must be listed in `requiredMigrations.json`** — `check-schema-gate.mjs` in
-`typecheck` fails otherwise. The gate covers SCHEDULED work only: every HTTP
+dashboard command the repo cannot pin, so every scheduled runner of the shared
+database carries one schema gate (`@vaipakam/lib/d1SchemaGate`, #2410): the
+indexer's cron and chain passes, the agent's cron and the keeper machine's
+tick decline, by name, until EVERY migration in the build is recorded, and
+resume by itself once it is (the keeper Worker's `scheduled` handler declines
+every invocation anyway). **A new migration must be listed in
+`packages/lib/src/sharedD1Migrations.json`** — `check-schema-gate.mjs` in the
+indexer's `typecheck` fails otherwise. The gate covers SCHEDULED work only: every HTTP
 handler — reads and the POST writes (signed offers, prepay match-source, the
-chain-event webhook) — must tolerate the previous schema. Keeper and agent
-have no runtime gate yet (#2410).
+chain-event webhook), and every agent route — must tolerate the previous
+schema.
 
 **A fresh Diamond on a chain is a new indexer EPOCH, and the indexer owns
 it** (#1566, Codex #2545 r1). `indexer_deployment` records, per chain, the

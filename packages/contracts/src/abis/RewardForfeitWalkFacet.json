@@ -1493,6 +1493,11 @@
   },
   {
     "type": "error",
+    "name": "ExpectedSourceListUnusable",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "FeeEntitlementChargeFailed",
     "inputs": []
   },

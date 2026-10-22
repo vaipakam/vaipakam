@@ -1,4 +1,4 @@
-## Thread — EIP-7702 wallets get the vault reward default (PR #<n>)
+## Thread — EIP-7702 wallets get the vault reward default (PR #2639)
 
 A reward claim from a person's own wallet lands in their vault by default, where it counts toward their fee-discount tier straight away; a claim from a contract gets a plain wallet transfer instead, as integrations expect. The test for "a person's own wallet" was "the address has no code". A wallet that has upgraded to a smart account under EIP-7702 carries a 23-byte delegation marker as its code, so it was treated as a contract and its rewards skipped the vault. The 2026-10-21 reward rehearsal found this on Base Sepolia, where the dev wallets are delegated; the same wallets on Arbitrum Sepolia are not, so the same person got a different venue on each chain.
 
