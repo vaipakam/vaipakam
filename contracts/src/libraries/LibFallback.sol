@@ -6,6 +6,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title LibFallback
@@ -18,92 +19,133 @@ import {OracleFacet} from "../facets/OracleFacet.sol";
  *         diamond's fallback to hit the correct facet.
  */
 library LibFallback {
+    /// @notice The oracle exchange rate between a loan's collateral and
+    ///         principal assets, held as an exact fraction so each caller
+    ///         chooses its own rounding: collateral units = principal units
+    ///         × `num` / `den`, and principal units = collateral units ×
+    ///         `den` / `num`. Both legs' token and feed decimals are folded
+    ///         in, so the fraction converts raw token units directly.
+    struct Rate {
+        uint256 num;
+        uint256 den;
+    }
+
+    /// @dev The rate at the current oracle, read through the ordinary price
+    ///      reader: a missing, stale or divergent feed on either leg reverts
+    ///      with that reader's own error. For paths that cannot proceed
+    ///      without a price (a swap's expected output, the sizing of a sale).
+    function oracleRate(
+        address diamond,
+        address collateralAsset,
+        address principalAsset
+    ) internal view returns (Rate memory) {
+        (uint256 colPrice, uint8 colFeedDec) = OracleFacet(diamond)
+            .getAssetPrice(collateralAsset);
+        (uint256 prinPrice, uint8 prinFeedDec) = OracleFacet(diamond)
+            .getAssetPrice(principalAsset);
+        return _rate(collateralAsset, principalAsset, colPrice, colFeedDec, prinPrice, prinFeedDec);
+    }
+
+    /// @dev The rate at the current oracle without reverting. `priced` is
+    ///      false when either leg has no fresh quorum price or reads zero
+    ///      (`OracleFacet.tryGetAssetPrice`), and is the ONLY availability
+    ///      signal: a priced rate can still convert a small amount to zero
+    ///      units, and that zero is a real figure, never "unavailable"
+    ///      (#1281 item 027). `r` is zero when `priced` is false.
+    function tryOracleRate(
+        address diamond,
+        address collateralAsset,
+        address principalAsset
+    ) internal view returns (bool priced, Rate memory r) {
+        (bool colOk, uint256 colPrice, uint8 colFeedDec) = OracleFacet(diamond)
+            .tryGetAssetPrice(collateralAsset);
+        (bool prinOk, uint256 prinPrice, uint8 prinFeedDec) = OracleFacet(diamond)
+            .tryGetAssetPrice(principalAsset);
+        if (!colOk || !prinOk || colPrice == 0 || prinPrice == 0) return (false, r);
+        return (true, _rate(collateralAsset, principalAsset, colPrice, colFeedDec, prinPrice, prinFeedDec));
+    }
+
+    /// @dev Collateral units for `principalAmount` at `r`. Pass `Ceil` for the
+    ///      collateral NEEDED to cover an amount owed (it never falls short of
+    ///      the amount at this rate), `Floor` for the collateral an amount is
+    ///      WORTH.
+    function toCollateral(Rate memory r, uint256 principalAmount, Math.Rounding rounding)
+        internal
+        pure
+        returns (uint256)
+    {
+        uint256 scaled = principalAmount * r.num;
+        return rounding == Math.Rounding.Ceil ? Math.ceilDiv(scaled, r.den) : scaled / r.den;
+    }
+
+    /// @dev Principal-asset value of `collateralAmount` at `r`, rounded down.
+    function toPrincipal(Rate memory r, uint256 collateralAmount) internal pure returns (uint256) {
+        return (collateralAmount * r.den) / r.num;
+    }
+
     /// @dev Oracle-derived expected swap output in principal-asset token
     ///      units. Assumes both assets are liquid (caller must verify).
-    ///      getAssetPrice reverts on missing/stale feeds.
+    ///      Reverts on a missing or stale feed ({oracleRate}).
     function expectedSwapOutput(
         address diamond,
         address collateralAsset,
         address principalAsset,
         uint256 collateralAmount
     ) internal view returns (uint256) {
-        (uint256 colPrice, uint8 colFeedDec) = OracleFacet(diamond)
-            .getAssetPrice(collateralAsset);
-        (uint256 prinPrice, uint8 prinFeedDec) = OracleFacet(diamond)
-            .getAssetPrice(principalAsset);
-        if (prinPrice == 0) return 0;
-
-        uint8 colTokenDec = IERC20Metadata(collateralAsset).decimals();
-        uint8 prinTokenDec = IERC20Metadata(principalAsset).decimals();
-
-        // expected = collateralAmount * colPrice / 10^colFeedDec / 10^colTokenDec
-        //          * 10^prinTokenDec * 10^prinFeedDec / prinPrice
-        // Rearranged to preserve precision:
-        return
-            (collateralAmount * colPrice * (10 ** prinTokenDec) *
-                (10 ** prinFeedDec)) /
-            (prinPrice * (10 ** colTokenDec) * (10 ** colFeedDec));
+        Rate memory r = oracleRate(diamond, collateralAsset, principalAsset);
+        // The ordinary reader refuses a non-positive price, so a zero principal
+        // price cannot reach here on a live oracle; kept as the original guard.
+        if (r.num == 0) return 0;
+        return toPrincipal(r, collateralAmount);
     }
 
-    /// @dev Inverse of `expectedSwapOutput` — converts a principal-asset
-    ///      amount into collateral-asset units. Both sides must be liquid.
-    ///
-    ///      Phase 2 of AutonomousLtvAndOracleFallback.md design — switched
-    ///      from `getAssetPrice` (which reverts on stale / missing feeds)
-    ///      to `tryGetAssetPrice` (returns `ok=false` on failure) so the
-    ///      caller can detect oracle-quorum unavailability and route to
-    ///      the full-collateral fallback instead of having the whole
-    ///      liquidation revert. Sentinel return when oracle fails is `0`
-    ///      — the surrounding {computeFallbackEntitlements} surfaces
-    ///      this via its `oracleAvailable` flag, and
-    ///      {FallbackCustodyFacet.enterFallback} switches branches
-    ///      accordingly.
+    /// @dev Collateral units for `principalAmount` at the current oracle,
+    ///      without reverting ({tryOracleRate}): `priced` is false when either
+    ///      leg is unavailable, so a caller can route to the oracle-unavailable
+    ///      branch instead of having the whole liquidation revert. `rounding`
+    ///      as in {toCollateral}.
     function collateralEquivalent(
         address diamond,
         uint256 principalAmount,
         address collateralAsset,
-        address principalAsset
-    ) internal view returns (uint256) {
-        (bool colOk, uint256 colPrice, uint8 colFeedDec) = OracleFacet(diamond)
-            .tryGetAssetPrice(collateralAsset);
-        (bool prinOk, uint256 prinPrice, uint8 prinFeedDec) = OracleFacet(diamond)
-            .tryGetAssetPrice(principalAsset);
-        if (!colOk || !prinOk) return 0;
-        if (colPrice == 0 || prinPrice == 0) return 0;
-        uint8 colTokenDec = IERC20Metadata(collateralAsset).decimals();
-        uint8 prinTokenDec = IERC20Metadata(principalAsset).decimals();
-        return
-            (principalAmount * prinPrice * (10 ** colTokenDec) *
-                (10 ** colFeedDec)) /
-            (colPrice * (10 ** prinTokenDec) * (10 ** prinFeedDec));
+        address principalAsset,
+        Math.Rounding rounding
+    ) internal view returns (bool priced, uint256 collateralAmount) {
+        Rate memory r;
+        (priced, r) = tryOracleRate(diamond, collateralAsset, principalAsset);
+        if (priced) collateralAmount = toCollateral(r, principalAmount, rounding);
     }
 
     /// @notice The principal-asset VALUE of `collateralAmount` at the current
-    ///         oracle (the inverse of {collateralEquivalent}).
-    /// @dev Returns 0 if either leg's oracle is unavailable (mirrors
-    ///      {collateralEquivalent}), so callers can treat 0 as "can't value ⇒
-    ///      refuse". Used by the #399 backstop Role-B par-guard to check the
-    ///      lender slice's value directly (`value >= lenderPrincipalDue`) rather
-    ///      than round the required collateral down — the latter would let a
-    ///      low-decimal slice be accepted up to one base unit of value below par.
+    ///         oracle (the inverse of {collateralEquivalent}), rounded down.
+    /// @dev `priced` is false if either leg's oracle is unavailable, so a
+    ///      caller refuses on `!priced` rather than on a zero value. Used by
+    ///      the #399 backstop Role-B par-guard to check the lender slice's
+    ///      value directly (`value >= lenderPrincipalDue`).
     function principalEquivalent(
         address diamond,
         uint256 collateralAmount,
         address collateralAsset,
         address principalAsset
-    ) internal view returns (uint256) {
-        (bool colOk, uint256 colPrice, uint8 colFeedDec) = OracleFacet(diamond)
-            .tryGetAssetPrice(collateralAsset);
-        (bool prinOk, uint256 prinPrice, uint8 prinFeedDec) = OracleFacet(diamond)
-            .tryGetAssetPrice(principalAsset);
-        if (!colOk || !prinOk) return 0;
-        if (colPrice == 0 || prinPrice == 0) return 0;
+    ) internal view returns (bool priced, uint256 principalValue) {
+        Rate memory r;
+        (priced, r) = tryOracleRate(diamond, collateralAsset, principalAsset);
+        if (priced) principalValue = toPrincipal(r, collateralAmount);
+    }
+
+    /// @dev The fraction from two positive prices and both tokens' decimals.
+    function _rate(
+        address collateralAsset,
+        address principalAsset,
+        uint256 colPrice,
+        uint8 colFeedDec,
+        uint256 prinPrice,
+        uint8 prinFeedDec
+    ) private view returns (Rate memory r) {
         uint8 colTokenDec = IERC20Metadata(collateralAsset).decimals();
         uint8 prinTokenDec = IERC20Metadata(principalAsset).decimals();
-        return
-            (collateralAmount * colPrice * (10 ** prinTokenDec) *
-                (10 ** prinFeedDec)) /
-            (prinPrice * (10 ** colTokenDec) * (10 ** colFeedDec));
+        r.num = prinPrice * (10 ** colTokenDec) * (10 ** colFeedDec);
+        r.den = colPrice * (10 ** prinTokenDec) * (10 ** prinFeedDec);
     }
 
     /// @dev README §7 three-way split: lender gets collateral equivalent of
@@ -115,21 +157,17 @@ library LibFallback {
     ///      insufficient to cover the lender entitlement, the lender receives
     ///      the full remaining collateral and the other two are zeroed out.
     ///
-    ///      Phase 2 of AutonomousLtvAndOracleFallback.md — added the
-    ///      `oracleAvailable` return so callers can distinguish the
-    ///      oracle-priced fair-value-equivalent split (this function's
-    ///      classic behaviour, now reachable only when both legs have a
-    ///      fresh oracle-quorum reading via `tryGetAssetPrice`) from the
-    ///      full-collateral-to-lender fallback (when oracle quorum is
-    ///      stale or missing). On oracle failure, `collateralEquivalent`
-    ///      returns 0 → `lenderCol` is 0 → the existing
-    ///      `collateralAmount <= lenderCol` branch lands lender = full
-    ///      collateral, others = 0, *but* the caller no longer has a way
-    ///      to distinguish "oracle worked and lender's entitlement
-    ///      exceeded collateral" from "oracle failed". The
-    ///      `oracleAvailable` flag disambiguates: callers emit a
-    ///      different event and the audit-package can trace which path
-    ///      ran on each fallback.
+    ///      Rounding is lender first: the lender slice is the collateral
+    ///      NEEDED to cover `lenderPrincipalDue`, rounded up, so at the entry
+    ///      price it is never worth less than the due; the treasury slice is
+    ///      rounded down, and the borrower takes the remainder.
+    ///
+    ///      `oracleAvailable` comes from the price reads themselves
+    ///      ({tryOracleRate}), one reading for both slices. When either leg
+    ///      has no fresh quorum price the split is the full-collateral-to-
+    ///      lender branch and the flag is false, so callers emit the
+    ///      oracle-unavailable event. A priced split is never read as an
+    ///      oracle failure, however small its slices (#1281 item 027).
     function computeFallbackEntitlements(
         address diamond,
         LibVaipakam.Loan storage loan,
@@ -175,44 +213,28 @@ library LibFallback {
         lenderPrincipalDue = loan.principal + accrued + principalBonus;
         treasuryPrincipalDue = (loan.principal * treasuryBps) / LibVaipakam.BASIS_POINTS;
 
-        uint256 lenderCol = collateralEquivalent(
+        (bool priced, Rate memory r) = tryOracleRate(
             diamond,
-            lenderPrincipalDue,
             loan.collateralAsset,
             loan.principalAsset
         );
-        uint256 treasuryCol = collateralEquivalent(
-            diamond,
-            treasuryPrincipalDue,
-            loan.collateralAsset,
-            loan.principalAsset
-        );
-
-        // Oracle-availability gate: `collateralEquivalent` returns 0 ONLY
-        // when at least one leg's oracle is unavailable (verified via
-        // `tryGetAssetPrice`). A zero lenderPrincipalDue should never
-        // happen (principal > 0 always for a fallback-eligible loan),
-        // so a zero `lenderCol` is a reliable oracle-failure signal.
-        // When oracle fails, drive the full-collateral-to-lender branch
-        // and signal it via the `oracleAvailable` flag.
-        oracleAvailable = lenderCol > 0;
-        if (!oracleAvailable) {
-            // Full collateral to lender; treasury + borrower zeroed.
-            // Same numbers as the existing "collateral insufficient"
-            // branch below, but reached because we can't price anything,
-            // not because the lender's claim is large.
-            lenderCollateral = loan.collateralAmount;
-            treasuryCollateral = 0;
-            borrowerCollateral = 0;
+        oracleAvailable = priced;
+        if (!priced) {
+            // Full collateral to lender; treasury + borrower zeroed. Same
+            // numbers as the "collateral insufficient" branch below, but
+            // reached because nothing can be priced, not because the
+            // lender's claim is large.
             return (
-                lenderCollateral,
-                treasuryCollateral,
-                borrowerCollateral,
+                loan.collateralAmount,
+                0,
+                0,
                 lenderPrincipalDue,
                 treasuryPrincipalDue,
                 false
             );
         }
+        uint256 lenderCol = toCollateral(r, lenderPrincipalDue, Math.Rounding.Ceil);
+        uint256 treasuryCol = toCollateral(r, treasuryPrincipalDue, Math.Rounding.Floor);
 
         if (loan.collateralAmount <= lenderCol) {
             lenderCollateral = loan.collateralAmount;

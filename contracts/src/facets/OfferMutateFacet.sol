@@ -170,7 +170,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // below would return the new values.
         uint256 oldAmount = offer.amount;
         uint256 oldAmountMax = offer.amountMax;
-        _assertAmountInvariants(newAmount, newAmountMax, offer.amountFilled);
+        _assertAmountInvariants(offer.assetType, newAmount, newAmountMax, offer.amountFilled);
         // Codex round-3 P2 — re-validate the T-034 cadence threshold
         // against the NEW amount. createOffer rejects (amount, cadence)
         // pairs that violate the principal-vs-threshold rule; modify
@@ -325,6 +325,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 revert AmountMutationUnsupportedForShape();
             }
             _assertAmountInvariants(
+                offer.assetType,
                 params.amount,
                 params.amountMax,
                 offer.amountFilled
@@ -528,6 +529,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     /// @dev Reuses the OfferCreateFacet revert types so the modify
     ///      surface and the create surface speak the same revert ABI.
     function _assertAmountInvariants(
+        LibVaipakam.AssetType assetType,
         uint256 newAmount,
         uint256 newAmountMax,
         uint256 alreadyFilled
@@ -535,6 +537,11 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (newAmount == 0) revert OfferCreateFacet.AmountMustBePositive();
         if (newAmountMax == 0) revert OfferCreateFacet.AmountMaxMustBePositive();
         if (newAmountMax < newAmount) revert OfferCreateFacet.InvalidAmountRange();
+        // #1281 item 021 — an NFT rental stays single-value on amount (its
+        // daily fee), exactly as `createOffer` requires.
+        if (assetType != LibVaipakam.AssetType.ERC20 && newAmountMax != newAmount) {
+            revert OfferCreateFacet.RentalAmountRangeNotAllowed();
+        }
         // Modify-specific bound: the new ceiling cannot fall below the
         // portion already committed to live loans. Without this, a
         // creator could shrink amountMax to amountFilled-1 and the

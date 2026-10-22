@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Vm} from "forge-std/Vm.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {CustodyInvariantBase} from "./invariants/CustodyInvariantBase.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -674,8 +675,9 @@ contract FallbackCustodyTest is CustodyInvariantBase {
     /// @notice F13 + F13c. A partial match at a ratio where flooring the three
     ///         slices independently would lose units: the row and the lien
     ///         each drop by exactly the consumed amount, the rescaled
-    ///         snapshot totals the row with the borrower absorbing the floor
-    ///         remainder, and the leg is two named moves whose matcher part is
+    ///         snapshot totals the row with the lender slice rounded up and
+    ///         the borrower absorbing the remainder, and the leg is two named
+    ///         moves whose matcher part is
     ///         exactly the incentive.
     /// @dev    The consumed amount is chosen in-test from the live snapshot so
     ///         the independent floors provably lose at least one unit. Kills:
@@ -717,7 +719,7 @@ contract FallbackCustodyTest is CustodyInvariantBase {
         assertEq(_fcBal(weth, address(diamond)), diamond0, "the Diamond is never a waypoint");
         (uint256 l2, uint256 t2, uint256 b2) = _fcSlices(a);
         assertEq(l2 + t2 + b2, n, "the snapshot total equals the row: no unit owned by nobody");
-        assertEq(l2, (lc * n) / o, "the lender slice is floored");
+        assertEq(l2, Math.ceilDiv(lc * n, o), "the lender slice rounds up (lender first, #1281)");
         assertEq(t2, (tc * n) / o, "the treasury slice is floored");
         assertEq(b2, n - l2 - t2, "the borrower slice absorbs the remainder");
 

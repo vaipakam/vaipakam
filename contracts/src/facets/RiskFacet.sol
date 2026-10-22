@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
@@ -297,8 +298,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
     /// @notice Oracle quorum unavailable for one or both legs at
     ///         settlement time — `LibFallback.collateralEquivalent`
-    ///         returned 0, meaning `tryGetAssetPrice` failed for the
-    ///         principal or collateral asset. The discount math
+    ///         reported the pair unpriced, meaning `tryGetAssetPrice`
+    ///         failed for the principal or collateral asset. The discount math
     ///         requires both legs priced. The liquidator can retry
     ///         once the oracle clears, or fall back to
     ///         {triggerLiquidation} which has its own oracle-stale
@@ -1604,14 +1605,18 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // value. `collateralEquivalent` uses `tryGetAssetPrice` (no
         // revert on stale) so we can fail-soft here with a precise
         // `OracleStaleForDiscount` revert rather than bubbling a
-        // generic oracle-feed error.
-        uint256 collForDebt = LibFallback.collateralEquivalent(
+        // generic oracle-feed error. Availability is its `priced` flag,
+        // never a zero result (#1281 item 027). Rounded down: the
+        // liquidator has paid the lender `totalDebt` in full, so the
+        // rounding unit stays with the borrower's surplus.
+        (bool priced, uint256 collForDebt) = LibFallback.collateralEquivalent(
             address(this),
             totalDebt,
             loan.collateralAsset,
-            loan.principalAsset
+            loan.principalAsset,
+            Math.Rounding.Floor
         );
-        if (collForDebt == 0) {
+        if (!priced) {
             revert OracleStaleForDiscount(loan.principalAsset, loan.collateralAsset);
         }
         uint256 collateralSeized = (collForDebt *

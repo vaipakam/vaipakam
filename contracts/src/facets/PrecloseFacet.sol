@@ -753,7 +753,11 @@ contract PrecloseFacet is
         // is a transfer-of-obligation, not a fresh fill, so principal
         // doesn't get re-derived as a midpoint. With auto-collapse
         // (`amountMax == 0` → treated as `amount`) legacy offers fall
-        // through unchanged.
+        // through unchanged. An NFT-rental offer is single-value by the
+        // create/edit invariant (`RentalAmountRangeNotAllowed`, #1281 item
+        // 021), so for a rental this check is exact: the daily fee the offer
+        // prepaid (`offer.amount`, used for `newPrepay` in step 5b) equals the
+        // fee the loan keeps running on (`loan.principal`).
         uint256 effAmountMax = offer.amountMax == 0
             ? offer.amount
             : offer.amountMax;
