@@ -24,7 +24,8 @@ export function LoanRow({
    *  the Claim action, as the Claims page does, instead of a bare chip. */
   claim?: ClaimableLoan;
 }) {
-  const payout = useClaimPayoutText(claim);
+  // #2662 — a browsing row that points at the claim, not the claim itself.
+  const payout = useClaimPayoutText(claim, 'rounded');
   const isRental = loan.assetType !== AssetType.ERC20;
   const principalMeta = useTokenMeta(isRental ? undefined : loan.lendingAsset);
   const timeView = loanStateView(loan);
