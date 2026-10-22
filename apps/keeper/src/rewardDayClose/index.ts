@@ -17,6 +17,7 @@
 //   clock       reward-clock alignment, the precondition of every close and
 //               every finalization
 //   sender      simulate-then-send within the run's budget
+//   feeCeiling  the most one send pays as its CCIP fee, per chain (#2627)
 //   close       step 1: close each day (both roles)
 //   mirror      a mirror's reads of Base, and when its closes are safe
 //   wire        whether the report channel to Base would accept a report,

@@ -44,6 +44,7 @@ import { closeDays } from './close';
 import { ABI, LOOKBACK_DAYS, PASS_ALERT_WINDOW_MS, ROLE_CANONICAL, ROLE_MIRROR } from './constants';
 import type { ChainRun, DayCloseDeps, PeerReader } from './deps';
 import { shortErr } from './errors';
+import { feeCeiling } from './feeCeiling';
 import { dayFact, known, type PerDay } from './fact';
 import type { RunFindings } from './findings';
 import { runMirror } from './mirror';
@@ -71,6 +72,7 @@ export async function runRewardDayClose(env: Env, tick: PassTick): Promise<void>
           served: chains.map((x) => x.id),
           sendDeadline,
           runDeadline: tick.deadlineMs,
+          feeCeiling: feeCeiling(env.REWARD_DAY_CLOSE_MAX_FEE_WEI, chain.id),
         });
       } catch (err) {
         console.error(`[keeper] rewardDayClose chain=${chain.id} failed: ${shortErr(err)}`);

@@ -5,6 +5,7 @@
 
 import type { Address, PublicClient } from 'viem';
 import type { KeeperContext } from '../keeper';
+import type { FeeCeiling } from './feeCeiling';
 import type { Peers } from './peers';
 
 /** A read-only view of ANOTHER chain this keeper serves. */
@@ -28,6 +29,9 @@ export interface DayCloseDeps {
   peer: (chainId: number) => PeerReader | null;
   sendDeadline: number;
   runDeadline: number;
+  /** The most one send may pay as its CCIP fee on this chain (#2627), or why
+   *  that cannot be read, which holds every paid send. */
+  feeCeiling: FeeCeiling;
 }
 
 /** The chain a run is working: its id, its Diamond, and its injected deps. */
