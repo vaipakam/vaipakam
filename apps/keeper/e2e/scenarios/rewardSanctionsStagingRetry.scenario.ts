@@ -16,28 +16,43 @@
  * deliveries on one day; this scenario takes the domain path, which a single
  * canonical chain reaches with one long loan.)
  *
- * The story: the admin arms the share-of-pool walk from day 1 (the domain is
- * that walk's; the shared fixture leaves it unarmed, the testnets have it
- * armed). A lender earns 34 days of interaction reward on one loan (days 1–34;
- * the repay lands on day 34), the loan is repaid, and the lender claims. The claim opens a domain; a third
- * party reserves it. The overlay's owner then flags the lender, and the third
- * party's first resolution page holds. What it proves:
+ * The story: the admin arms the share-of-pool walk from day 1. The domain is
+ * that walk's, and the arming is SYNTHETIC: the shared fixture leaves the D*
+ * cutover unarmed, and so does every current deployment
+ * (TokenomicsTechSpec: "while `D*` is unarmed — every current deploy"), so
+ * this tests the planned armed state rather than reproducing a testnet's
+ * configuration. A lender earns 34 days of interaction reward on one loan
+ * (days 1–34; the repay lands on day 34), the loan is repaid, and the lender
+ * claims. The claim opens a domain; a third party reserves it. The overlay's
+ * owner then flags the lender, and the third party's first resolution page
+ * holds. What it proves:
  *
- *   1. The held domain is visible to the keeper through the indexer's rows
- *      (`StagingDomainOpened` with no `StagingDomainCleared`) and through its
- *      screen; the pass starts and keeps the owner's evidence chain, and while
- *      the decision is Hold it sends nothing else — the held page is not
- *      retried into a revert, and no "staging stuck" alert is raised.
- *   2. In the run that finds the chain Confirmed, the keeper resolves the
- *      domain itself (`resolveDomainPage`, its own transaction): the days,
- *      all earned before the flag, are SET APART for the owner
- *      (`RewardSanctionsHeldApart`, equal to `getSanctionsHeldReward`), the
- *      domain is cleared (`StagingDomainCleared`), and the staging
- *      encumbrance is released.
+ *   1. The held domain is a discovery source in its own right: after
+ *      indexing, the keeper's staging query (`listOpenStagingOwners`, over
+ *      `StagingDomainOpened` with no `StagingDomainCleared`) names the owner.
+ *      The pass has two other sources that can name the same owner here (the
+ *      open evidence chains and the loan-party screen), so this scenario
+ *      checks the staging query directly rather than inferring it from the
+ *      pass's behaviour, and it does not claim which source started the
+ *      chain. While the decision is Hold the keeper sends only observations
+ *      (`recordRewardSanctionsEvidence`): the held page is not retried into
+ *      a revert, and no "staging stuck" alert is raised.
+ *   2. From the run that finds the chain Confirmed, the keeper resolves the
+ *      domain itself, one `resolveDomainPage` per pass (each walks at most
+ *      eight days, `DOMAIN_PAGE_DAYS`), so a domain of more than 30 days
+ *      clears over several later passes, not in the confirming run. No keeper
+ *      resolution page is sent before Confirmed. Once cleared
+ *      (`StagingDomainCleared`, the keeper's own transaction) the staging
+ *      encumbrance is released, and the days, all earned before the flag,
+ *      are SET APART for the owner (`RewardSanctionsHeldApart`, equal to
+ *      `getSanctionsHeldReward`). None is forfeited: no ForfeitedReward
+ *      recycle credit, no `StagingClaimantForfeited`, and
+ *      `rewardSanctionsDayForfeited` is false for every day of the domain.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { toFunctionSelector, type Hex } from 'viem';
 import { runRewardSanctionsHold } from '../../src/rewardSanctionsHold';
+import { listOpenStagingOwners } from '../../src/db';
 import { OVERLAY_ABI, openScenario, type ScenarioChain } from '../harness/chain';
 import { keeperEnvFor, tickNow, type KeeperHarness } from '../harness/keeperEnv';
 import type { Env } from '../../src/env';
@@ -58,6 +73,10 @@ const DOMAIN_RESOLVING = 3;
 const LENDER_SIDE = 0;
 /** The screen's observation entry — the only call the keeper may send while held. */
 const OBSERVE_SELECTOR = toFunctionSelector('recordRewardSanctionsEvidence(address)');
+/** The domain resolution page, permissionless. */
+const RESOLVE_DOMAIN_SELECTOR = toFunctionSelector('resolveDomainPage(bytes32)');
+/** `LibVpfiRecycle.RecycleSource.ForfeitedReward`. */
+const FORFEITED_REWARD = 0;
 /** Days from the accept (day 0) to the repay: the entry then covers days
  *  1–34, more than one 30-day chunk. */
 const ACCRUED_DAYS = 33;
@@ -140,9 +159,10 @@ describe('rewardSanctionsHold and a claim held mid-resolution', () => {
   let encumberedBefore = 0n;
 
   it('a long claim opens a domain, and its first resolution page holds once the claimant is flagged', async () => {
-    // The domain path is the ARMED (share-of-pool) walk's; the shared fixture
-    // leaves the D* cutover unarmed, so this scenario arms it from day 1 —
-    // before the loan opens — as the deployed testnets are.
+    // The domain path is the ARMED (share-of-pool) walk's. The shared fixture
+    // and every current deployment leave the D* cutover unarmed, so this arms
+    // it from day 1, before the loan opens: the planned armed state, not a
+    // testnet's configuration.
     expect(await sc.rewardDay()).toBe(0);
     await sc.diamondWrite('admin', 'setGovernorCommitArmedFromDay', [1n]);
     const loan = await openLoan(sc, {
@@ -196,12 +216,21 @@ describe('rewardSanctionsHold and a claim held mid-resolution', () => {
     expect(after.liveRecords).toBeGreaterThan(0);
     expect(await sc.diamondEvents('StagingDomainCleared', startBlock)).toHaveLength(0);
     expect(await sc.diamondEvents('RewardSanctionsHeldApart', startBlock)).toHaveLength(0);
+
+    // The staging rows on their own name the owner: the keeper's staging
+    // query over the indexer's projection, independent of the evidence chain
+    // and the screen, which could also name them.
+    await k.indexer!.index();
+    expect(await listOpenStagingOwners(k.env.DB, sc.chain.id, 0)).toContain(lender().toLowerCase());
   });
 
   it('the keeper only observes while the owner is held, then resolves the domain once confirmed', async () => {
-    const dk = (await domain(lender())).key;
-    let confirmedSeen = false;
+    const dom = await domain(lender());
+    const dk = dom.key;
+    let confirmedStep = -1;
+    let clearedStep = -1;
     let heldObservations = 0;
+    let keeperPages = 0;
     let cleared: `0x${string}` | null = null;
     const fromBlock = heldBlock;
     // Bounded: the three-day confirmation window plus two days of slack.
@@ -217,23 +246,37 @@ describe('rewardSanctionsHold and a claim held mid-resolution', () => {
       // eslint-disable-next-line no-await-in-loop
       const ev = (await sc.diamondEvents('StagingDomainCleared', before + 1n))
         .filter((e) => String(e.args.domainKey).toLowerCase() === dk.toLowerCase());
-      if (ev.length > 0) cleared = ev[0].transactionHash;
+      if (ev.length > 0) {
+        cleared = ev[0].transactionHash;
+        clearedStep = step;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const calls = await keeperCalls(before);
+      const pages = calls.filter((c) => c === RESOLVE_DOMAIN_SELECTOR).length;
+      // No keeper resolution page while the owner is still held: a pass that
+      // sent one must leave the chain Confirmed.
+      // eslint-disable-next-line no-await-in-loop
+      if (pages > 0) expect(await decision(lender())).toBe(CONFIRMED);
+      keeperPages += pages;
       if (!wasConfirmed && cleared === null) {
         // While held: the domain stands, and every keeper transaction is an
         // observation (never a resolution page that the screen would refuse).
         // eslint-disable-next-line no-await-in-loop
         expect((await domain(lender())).phase).toBe(DOMAIN_RESOLVING);
-        // eslint-disable-next-line no-await-in-loop
-        const calls = await keeperCalls(before);
         expect(calls.every((c) => c === OBSERVE_SELECTOR)).toBe(true);
         heldObservations += calls.length;
       }
       // eslint-disable-next-line no-await-in-loop
-      if ((await decision(lender())) === CONFIRMED) confirmedSeen = true;
+      if (confirmedStep < 0 && (await decision(lender())) === CONFIRMED) confirmedStep = step;
     }
     expect(heldObservations).toBeGreaterThan(0);
-    expect(confirmedSeen).toBe(true);
+    expect(confirmedStep).toBeGreaterThanOrEqual(0);
     expect(cleared).not.toBeNull();
+    // Clearance converges over the passes after confirmation, a page each: a
+    // domain of more than 30 days needs more than one eight-day page.
+    expect(clearedStep).toBeGreaterThan(confirmedStep);
+    expect(keeperPages).toBeGreaterThan(1);
+    console.log(`[keeper-e2e] staging retry: confirmed at pass ${confirmedStep}, cleared at pass ${clearedStep}, ${keeperPages} keeper pages`);
     // The keeper resolved it, with its own transaction.
     const tx = await sc.pub.getTransaction({ hash: cleared! });
     expect(tx.from.toLowerCase()).toBe(sc.address('keeper').toLowerCase());
@@ -251,6 +294,19 @@ describe('rewardSanctionsHold and a claim held mid-resolution', () => {
     expect(heldApart).toBeGreaterThan(0n);
     const [held] = await sc.read<readonly [bigint, bigint]>('getSanctionsHeldReward', [lender()]);
     expect(held).toBe(heldApart);
+
+    // None forfeited, checked against signals other than the held amount: no
+    // ForfeitedReward recycle credit and no staged forfeit since the hold, and
+    // no day of the domain marked forfeited.
+    const forfeitCredits = (await sc.diamondEvents('VpfiRecycled', fromBlock))
+      .concat(await sc.diamondEvents('VpfiRecycledPreLaunch', fromBlock))
+      .filter((e) => Number(e.args.source) === FORFEITED_REWARD);
+    expect(forfeitCredits).toHaveLength(0);
+    expect(await sc.diamondEvents('StagingClaimantForfeited', fromBlock)).toHaveLength(0);
+    for (let day = dom.firstDay; day <= dom.lastDay; day++) {
+      // eslint-disable-next-line no-await-in-loop
+      expect(await sc.read<boolean>('rewardSanctionsDayForfeited', [lender(), BigInt(day)])).toBe(false);
+    }
 
     // No fault alert across the run: the held page was never a stuck page.
     expect(sink.posts.filter((p) => /staging/i.test(p) && !/settle/i.test(p))).toEqual([]);
