@@ -367,7 +367,9 @@
   //     on any deploy whose notifications are meant to be followed.
   //   - REWARD_REMIT_LOOKBACK_DAYS (default 45), REWARD_REMIT_LANE_CAP
   //     (wei, default 50000e18 = the on-chain lane default; see #918),
-  //     REWARD_COMMIT_LOOKBACK_DAYS (default 14) — knobs for (a)'s passes,
+  //     REWARD_COMMIT_LOOKBACK_DAYS (default 14), REWARD_DAY_CLOSE_MAX_FEE_WEI
+  //     (per-chain CCIP fee ceiling per send, default 0.002 native; #2627)
+  //     — knobs for (a)'s passes,
   //     but plain vars themselves.
   //
   //     CONFIG-OWNED (declared below, therefore NOT preserved — every deploy

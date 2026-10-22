@@ -6,7 +6,8 @@
 // from one key). The sender holds the run's one record of what was refused
 // and what landed, keyed `step:day`: its own calls write it, and so does a
 // step that declines a call for a reason the contract would not see (a
-// report shape Base would refuse).
+// report shape Base would refuse). It is also where the fee ceiling holds:
+// every paid send passes through `call`, so no step can pay past it.
 
 import type { Hex, TransactionReceipt } from 'viem';
 import { PastRunDeadline } from '../batchRead';
@@ -74,6 +75,22 @@ export class Sender {
   async call(step: string, day: number, functionName: string, args: readonly unknown[], value: bigint): Promise<CallResult> {
     this.receipt = null;
     if (this.stopped) return 'skipped';
+    const key = `${step}:${day}`;
+    // The fee ceiling (#2627) is checked before anything else is read: a send
+    // that would pay more than it, or a ceiling that cannot be read, goes
+    // nowhere, and the day stays owed.
+    if (value > 0n) {
+      const cap = this.deps.feeCeiling;
+      if ('unread' in cap) {
+        this.noteUnread(key, cap.unread);
+        return 'skipped';
+      }
+      if (value > cap.wei) {
+        const why = `its quoted CCIP fee of ${value} wei is above this keeper's ceiling of ${cap.wei} wei on this chain (${cap.from}), so nothing was paid or sent; it goes out once the quote is at or under the ceiling, or the ceiling is raised`;
+        this.refused.set(key, why);
+        return why;
+      }
+    }
     if (this.sends >= MAX_SENDS_PER_RUN) return this.stop('send-budget');
     if (Date.now() >= this.deps.sendDeadline) return this.stop('deadline');
     if (this.ctx === undefined) this.ctx = this.deps.context();
@@ -96,7 +113,6 @@ export class Sender {
       if (pending !== null) return this.stop(pending, `a transaction of its own is still unmined on this chain (${pending}), so it sent nothing behind it`);
       this.pendingChecked = true;
     }
-    const key = `${step}:${day}`;
     try {
       await ctx.client.simulateContract({ address: ctx.diamond, abi: ABI, functionName, args, value, account: ctx.wallet.account! });
     } catch (err) {

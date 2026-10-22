@@ -309,6 +309,13 @@ contract OfferCreateFacet is
     /// on a Lender offer. The lender's `collateralAmount` already
     /// expresses their derived requirement; a max wouldn't add meaning.
     error LenderCollateralRangeNotAllowed();
+    /// #1281 item 021 — an NFT-rental offer (`assetType` ERC721 / ERC1155)
+    /// must stay single-value on amount: `amount != amountMax` is refused.
+    /// A rental's `amount` is its DAILY FEE, and every rental path prices
+    /// the prepayment from `amount` (create, accept, cancel, edit, the
+    /// obligation handover) while the loan runs on the matched or accepted
+    /// fee, so a range lets the two differ and leaves the prepayment short.
+    error RentalAmountRangeNotAllowed();
     // ── Canonical Limit-Order Phase 2 errors (#183) — strict
     //    non-zero invariants replacing the dropped auto-collapse.
     /// `params.amount == 0`. Every offer must have a positive minimum.
@@ -1652,6 +1659,10 @@ contract OfferCreateFacet is
         if (params.amount == 0) revert AmountMustBePositive();
         if (params.amountMax == 0) revert AmountMaxMustBePositive();
         if (params.amountMax < params.amount) revert InvalidAmountRange();
+        if (
+            params.assetType != LibVaipakam.AssetType.ERC20 &&
+            params.amountMax != params.amount
+        ) revert RentalAmountRangeNotAllowed();
         // #183 — the rate invariant deliberately ALLOWS zero on both
         // ends (`interestRateBps = interestRateBpsMax = 0`). This is a
         // legitimate shape: NFT rental offers don't carry an APR (the

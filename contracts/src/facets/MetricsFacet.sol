@@ -441,8 +441,8 @@ contract MetricsFacet {
     ///           (a) is not `loanId` itself,
     ///           (b) is in a matchable status (`Active` or `FallbackPending`),
     ///           (c) has a fresh oracle reading on its `collateralAsset`
-    ///               (mirror of the gate `LibFallback.collateralEquivalent`
-    ///               uses — `tryGetAssetPrice` returns `ok=true` with a
+    ///               (mirror of the gate `LibFallback.tryOracleRate`
+    ///               applies — `tryGetAssetPrice` returns `ok=true` with a
     ///               non-zero price; quorum disagreement surfaces here
     ///               as `ok=false`).
     ///

@@ -54,6 +54,7 @@ const report = (over: Partial<ReconcileReport> = {}): ReconcileReport => ({
   unread: [],
   writeFailed: [],
   unresolvable: [],
+  withdrawn: [],
   unknownStatus: [],
   superseded: [],
   nextPointer: 0,
@@ -105,6 +106,16 @@ describe('what counts as unsettled', () => {
       { loanId: 99, reason: 'orphan' },
       { loanId: 21, reason: 'unknown-status' },
     ]);
+  });
+});
+
+describe('a withdrawn orphan (#2636 r4)', () => {
+  it('holds an orphan still published, and releases one the pass withdrew', () => {
+    const r = report({ examined: [98, 99], unresolvable: [98, 99], withdrawn: [98] });
+    expect(unsettledRows(r)).toEqual([{ loanId: 99, reason: 'orphan' }]);
+    // Its row is gone; a marker would only withhold reminders from a real
+    // loan later issued the same id.
+    expect(settledRows(r)).toEqual([98]);
   });
 });
 
@@ -781,6 +792,55 @@ describe('telling the operator about a row that stays', () => {
     const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     expect(said).toContain('loan 99');
     expect(said).toContain('no stored loan row for this id');
+    warn.mockRestore();
+  });
+
+  it('#2636 r4 — names every unreviewed withdrawal, with no marker held, until a person marks it reviewed', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const orphan = (move: string, loanId: number, reviewed: number | null) =>
+      h.db
+        .prepare(
+          `INSERT INTO loan_orphans (move_id, chain_id, diamond, loan_id, from_status, observed_block, withdrawn_at, row_json, related_json, reviewed_at)
+           VALUES (?, ?, '0xd1a', ?, 'settled', 700, ?, '{}', '{}', ?)`,
+        )
+        .run(move, CHAIN, loanId, NOW, reviewed);
+    orphan('m-open', 41, null);
+    orphan('m-done', 42, NOW);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + 3600, true);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain('1 loan record(s)');
+    expect(said).toContain('loan 41');
+    expect(said).not.toContain('loan 42');
+    // The printed acknowledgement executes, and touches only its own entry.
+    const cmd = /UPDATE loan_orphans SET reviewed_at = <unix seconds> WHERE move_id = 'm-open' AND reviewed_at IS NULL/.exec(said)?.[0];
+    expect(cmd).toBeDefined();
+    h.db.prepare(cmd!.replace('<unix seconds>', String(NOW + 7200))).run();
+    warn.mockClear();
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + 7200, true);
+    expect(warn.mock.calls.map((c) => c.join(' ')).join('\n')).not.toContain('loan_orphans');
+    warn.mockRestore();
+  });
+
+  it('#2636 r5 — the review command quotes the id as a literal, so it can only ever match its own entry', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    for (const [move, id] of [["x' OR 1=1 --", 51], ['m-other', 52]] as const) {
+      h.db
+        .prepare(
+          `INSERT INTO loan_orphans (move_id, chain_id, diamond, loan_id, from_status, observed_block, withdrawn_at, row_json, related_json)
+           VALUES (?, ?, '0xd1a', ?, 'active', 700, ?, '{}', '{}')`,
+        )
+        .run(move, CHAIN, id, NOW);
+    }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + 3600, true);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    const cmd = /UPDATE loan_orphans SET reviewed_at = <unix seconds> WHERE move_id = '(?:[^']|'')*' AND reviewed_at IS NULL/.exec(said)?.[0];
+    expect(cmd).toBeDefined();
+    h.db.prepare(cmd!.replace('<unix seconds>', String(NOW + 7200))).run();
+    expect(h.db.prepare('SELECT loan_id FROM loan_orphans WHERE reviewed_at IS NULL').all()).toEqual([{ loan_id: 52 }]);
     warn.mockRestore();
   });
 

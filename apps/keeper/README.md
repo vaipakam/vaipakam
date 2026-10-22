@@ -84,10 +84,11 @@ by `keep_vars: true` because this config declares no value for any of them:
 | `REWARD_REMIT_LOOKBACK_DAYS` | Recent-day window the remit pass re-scans for un-remitted budget each tick (default `45`). |
 | `REWARD_REMIT_LANE_CAP` | Per-send VPFI ceiling (wei) — the `perRemittanceCap` + greedy batch bound. Must be ≤ the provisioned reward-budget CCIP lane bucket and ≥ the largest single-day slice (#918). Default `50000e18` (matches the on-chain lane default). |
 | `REWARD_COMMIT_LOOKBACK_DAYS` | Recent-day window the commitment pass re-scans for un-reported armed days each tick (default `14`). |
+| `REWARD_DAY_CLOSE_MAX_FEE_WEI` | The most one day-close send pays as its CCIP fee (#2627): comma-separated `<chainId>=<wei>` entries, plus an optional `*=<wei>` for every chain not named. Unset, `2000000000000000` wei (0.002 of the native token) on every chain. A quote above the ceiling is not paid: the call is reported refused, naming the quote and the ceiling, and the day stays owed until the quote falls or the ceiling is raised. A malformed value pays nothing on any chain and is said by the held-steps alert. Calls that pay no fee (`finalizeDay`, `advanceInterestFrontiers`, Base's own `closeDay`) are not affected. |
 | `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` | Liquidation tuning (see `src/env.ts`) — all optional, sensible defaults. |
 | `FRONTEND_ORIGIN` | Connected-app origin for notification deep links. **Optional but without a usable default** — unset, the consumers fall back to the empty string and a "View this loan" link renders as the relative `/loans/{id}`, which is not clickable from Telegram or Push. Set it (e.g. `https://app.vaipakam.com`) on any deploy whose notifications are meant to be followed. |
 
-The first three tune the passes the arming flags gate, but are not themselves
+The first four tune the passes the arming flags gate, but are not themselves
 secrets — they sat in the secrets table above until #2223, where the
 `wrangler secret put` instruction would have provisioned them as unreadable
 values for no benefit.

@@ -34,6 +34,7 @@ import {
 } from '../src/rewardDayClose';
 import { ccipSelectorOf } from '@vaipakam/contracts/ccip-selectors';
 import { retireUnworkedAlerts } from '../src/rewardDayClose/alerts';
+import { DEFAULT_MAX_FEE_WEI, feeCeiling, type FeeCeiling } from '../src/rewardDayClose/feeCeiling';
 import { DayStore } from '../src/rewardDayClose/store';
 import type { Env } from '../src/env';
 import type { KeeperContext } from '../src/keeper';
@@ -47,6 +48,8 @@ const GRACE = 4 * 3600;
 const LANE_FEE = 123n;
 const BROADCAST_FEE = 456n;
 const BROADCAST_TO_FEE = 78n;
+/** The ceiling a run gets with REWARD_DAY_CLOSE_MAX_FEE_WEI unset. */
+const DEFAULT_CAP = feeCeiling(undefined, 0);
 const T0 = Date.UTC(2026, 9, 23, 0, 10, 0);
 /** Each chain's reward messenger and its CCIP transport, as the fakes are
  *  wired by default: every report channel link reads as wired. */
@@ -563,7 +566,7 @@ describe('a run', () => {
   });
 
   const peers = (id: number): PeerReader | null => (id === BASE ? base.peer() : id === MIRROR ? mirror.peer() : null);
-  const run = (c: FakeDiamond) =>
+  const run = (c: FakeDiamond, cap: FeeCeiling = DEFAULT_CAP) =>
     dayCloseOnce(env, c.chainId, c.diamond, {
       client: c.client(),
       readClient: c.client(),
@@ -571,6 +574,7 @@ describe('a run', () => {
       peer: peers,
       served: [BASE, MIRROR],
       sendDeadline: Number.POSITIVE_INFINITY,
+      feeCeiling: cap,
       runDeadline: Number.POSITIVE_INFINITY,
     });
   const alerts = (re: RegExp) => warned.filter((w) => re.test(w));
@@ -668,6 +672,7 @@ describe('a run', () => {
         context: () => mirror.ctx(),
         peer: moved,
         sendDeadline: Number.POSITIVE_INFINITY,
+        feeCeiling: DEFAULT_CAP,
         runDeadline: Number.POSITIVE_INFINITY,
       });
     await runMoved();
@@ -697,6 +702,7 @@ describe('a run', () => {
       context: () => mirror.ctx(),
       peer: (id) => (id === BASE ? null : peers(id)), // Base no longer served
       sendDeadline: Number.POSITIVE_INFINITY,
+      feeCeiling: DEFAULT_CAP,
       runDeadline: Number.POSITIVE_INFINITY,
     });
     expect(mirror.sent.map((s) => s.day)).toEqual([0, 1, 2]);
@@ -797,6 +803,7 @@ describe('a run', () => {
       context: () => null,
       peer: peers,
       sendDeadline: Number.POSITIVE_INFINITY,
+      feeCeiling: DEFAULT_CAP,
       runDeadline: Number.POSITIVE_INFINITY,
     });
     expect(mirror.sent).toEqual([]);
@@ -858,6 +865,38 @@ describe('a run', () => {
       { fn: 'broadcastGlobal', day: 0, value: BROADCAST_FEE },
     ]);
     expect(warned).toEqual([]);
+  });
+
+  it('a mirror pays no report fee above its ceiling, says the quote and the ceiling, keeps the day owed, and sends once the ceiling allows', async () => {
+    const tight: FeeCeiling = { wei: LANE_FEE - 1n, from: 'a test ceiling' };
+    await run(mirror, tight);
+    expect(mirror.sent, 'nothing paid or sent').toEqual([]);
+    expect(alerts(new RegExp(`closing the day \\(closeDay\\) for reward day 0 is refused \\(its quoted CCIP fee of ${LANE_FEE} wei is above this keeper's ceiling of ${LANE_FEE - 1n} wei on this chain \\(a test ceiling\\)`))).toHaveLength(1);
+    expect(owed(), 'every day stays owed').toEqual([0, 1, 2]);
+    await run(mirror, { wei: LANE_FEE, from: 'a test ceiling' });
+    expect(mirror.sent.map((x) => x.value), 'a quote at the ceiling is paid').toEqual([LANE_FEE, LANE_FEE, LANE_FEE]);
+  });
+
+  it('Base finalizes a day whose broadcast fee is above the ceiling, and holds only the broadcast', async () => {
+    base.today = 1;
+    base.reported.set(0, new Set([MIRROR]));
+    base.firstAt.set(0, NOW - 60);
+    await run(base, { wei: BROADCAST_FEE - 1n, from: 'a test ceiling' });
+    expect(base.sent, 'the calls that pay nothing go on').toEqual([
+      { fn: 'closeDay', day: 0, value: 0n },
+      { fn: 'finalizeDay', day: 0, value: 0n },
+    ]);
+    expect(alerts(new RegExp(`for reward day 0 is refused \\(its quoted CCIP fee of ${BROADCAST_FEE} wei is above this keeper's ceiling of ${BROADCAST_FEE - 1n} wei`))).toHaveLength(1);
+    await run(base);
+    expect(base.sent.slice(2), 'sent once the ceiling allows').toEqual([{ fn: 'broadcastGlobal', day: 0, value: BROADCAST_FEE }]);
+  });
+
+  it('pays nothing while the ceiling cannot be read, and says why', async () => {
+    const bad = feeCeiling('84532=1e15', MIRROR);
+    await run(mirror, bad);
+    expect(mirror.sent).toEqual([]);
+    expect(alerts(/did not try closing the day \(closeDay\) this run for day 0 \(this keeper's fee ceiling, REWARD_DAY_CLOSE_MAX_FEE_WEI being malformed \("84532=1e15" is not <chainId>=<wei> or \*=<wei>\) could not be read\)/)).toHaveLength(1);
+    expect(owed()).toEqual([0, 1, 2]);
   });
 
   it('Base waits for a missing mirror inside grace, warns near its end naming what the mirror shows, then finalizes at grace with a notice', async () => {
@@ -1307,6 +1346,7 @@ describe('a run', () => {
         context: () => base.ctx(),
         peer: peers3,
         sendDeadline: Number.POSITIVE_INFINITY,
+        feeCeiling: DEFAULT_CAP,
         runDeadline: Number.POSITIVE_INFINITY,
       });
     await run3();
@@ -1378,6 +1418,7 @@ describe('a run', () => {
       context: () => base.ctx(),
       peer: (id) => (id === MIRROR ? null : peers(id)),
       sendDeadline: Number.POSITIVE_INFINITY,
+      feeCeiling: DEFAULT_CAP,
       runDeadline: Number.POSITIVE_INFINITY,
     });
     expect(logged.some((l) => /closed: dayclose-broadcast:84532:0x00000000000000000000000000000000000000b1:canonical:0 \(the day was sent to chain\(s\) 421614, which this keeper no longer serves/.test(l)), 'closed, and why').toBe(true);
@@ -1509,6 +1550,7 @@ describe('a run', () => {
       context: () => base.ctx(),
       peer: (id) => (id === BASE ? base.peer() : null), // the mirror is no longer served
       sendDeadline: Number.POSITIVE_INFINITY,
+      feeCeiling: DEFAULT_CAP,
       runDeadline: Number.POSITIVE_INFINITY,
     });
     expect(base.sent.map((s) => s.fn), 'still no finalization').not.toContain('finalizeDay');
@@ -1532,6 +1574,7 @@ describe('a run', () => {
       context: () => mirror.ctx(),
       peer: () => null, // this keeper does not serve Base
       sendDeadline: Number.POSITIVE_INFINITY,
+      feeCeiling: DEFAULT_CAP,
       runDeadline: Number.POSITIVE_INFINITY,
     });
     expect(mirror.sent, 'unknown is not "not finalized"').toEqual([]);
@@ -1693,6 +1736,7 @@ describe('a run', () => {
         context: () => mirror.ctx(),
         peer: peers,
         sendDeadline: Number.POSITIVE_INFINITY,
+        feeCeiling: DEFAULT_CAP,
         runDeadline: Date.now(), // the run's alert time is spent by the time it gets there
       });
     await late();
@@ -1766,6 +1810,7 @@ describe('a run', () => {
       context: () => null, // no signing key: the first send stops the run
       peer: peers,
       sendDeadline: Number.POSITIVE_INFINITY,
+      feeCeiling: DEFAULT_CAP,
       runDeadline: Number.POSITIVE_INFINITY,
     });
     expect(openKeys(), 'not cleared on a run that sent nothing').toEqual([`dayclose-selfmissing:${BASE}:0x00000000000000000000000000000000000000b1:canonical:all`]);
@@ -1905,6 +1950,7 @@ describe('a run', () => {
       context: () => base.ctx(),
       peer: peers,
       sendDeadline: Number.POSITIVE_INFINITY,
+      feeCeiling: DEFAULT_CAP,
       runDeadline: 0, // the alert window is already spent
     });
     expect(logged.some((l) => /notice: reward day 0: finalized without chain\(s\) 421614/.test(l)), 'journaled at once').toBe(true);
@@ -1930,6 +1976,7 @@ describe('a run', () => {
         context: () => base.ctx(),
         peer: peers,
         sendDeadline: Number.POSITIVE_INFINITY,
+        feeCeiling: DEFAULT_CAP,
         runDeadline: 0, // nothing can be posted
       });
     await spent();
@@ -1972,6 +2019,7 @@ describe('a run', () => {
       context: () => mirror.ctx(),
       peer: (id) => (id === BASE ? null : peers(id)),
       sendDeadline: Number.POSITIVE_INFINITY,
+      feeCeiling: DEFAULT_CAP,
       runDeadline: Number.POSITIVE_INFINITY,
     });
     expect(mirror.sent).toEqual([]);
@@ -1993,6 +2041,7 @@ describe('a run', () => {
         context: () => base.ctx(),
         peer,
         sendDeadline: Number.POSITIVE_INFINITY,
+        feeCeiling: DEFAULT_CAP,
         runDeadline: Number.POSITIVE_INFINITY,
       });
     await runWith(peers); // chain 97 is not served: its clock has never been read
@@ -2022,6 +2071,7 @@ describe('a run', () => {
         context: () => mirror.ctx(),
         peer: (id) => (id === BASE ? null : peers(id)),
         sendDeadline: Number.POSITIVE_INFINITY,
+        feeCeiling: DEFAULT_CAP,
         runDeadline: Number.POSITIVE_INFINITY,
       });
     later(60);
@@ -2130,5 +2180,29 @@ describe('a run', () => {
     await run(mirror);
     expect(logged.some((l) => /closed: dayclose-clockmoved:421614:0x00000000000000000000000000000000000000c1:mirror@84532\/0x00000000000000000000000000000000000000b1:all \(this pass no longer raises this alert\)/.test(l))).toBe(true);
     expect(openKeys()).not.toContain(`dayclose-clockmoved:${MIRROR}:0x00000000000000000000000000000000000000c1:mirror@84532/0x00000000000000000000000000000000000000b1:all`);
+  });
+});
+
+describe('rewardDayClose fee ceiling (#2627)', () => {
+  it('is the default when the variable is unset or empty', () => {
+    for (const raw of [undefined, '', '  ']) expect(feeCeiling(raw, 84532)).toEqual({ wei: DEFAULT_MAX_FEE_WEI, from: 'the default, REWARD_DAY_CLOSE_MAX_FEE_WEI being unset' });
+    expect(DEFAULT_MAX_FEE_WEI).toBe(2_000_000_000_000_000n);
+  });
+
+  it("takes the chain's own entry over *, * over the default", () => {
+    const raw = ' 84532 = 500 , *=900,97=0';
+    expect(feeCeiling(raw, 84532)).toEqual({ wei: 500n, from: "REWARD_DAY_CLOSE_MAX_FEE_WEI, this chain's entry" });
+    expect(feeCeiling(raw, 97), 'zero pays nothing').toEqual({ wei: 0n, from: "REWARD_DAY_CLOSE_MAX_FEE_WEI, this chain's entry" });
+    expect(feeCeiling(raw, 421614)).toEqual({ wei: 900n, from: 'REWARD_DAY_CLOSE_MAX_FEE_WEI, its * entry' });
+    expect(feeCeiling('84532=500', 421614)).toEqual({ wei: DEFAULT_MAX_FEE_WEI, from: 'the default, REWARD_DAY_CLOSE_MAX_FEE_WEI naming neither this chain nor *' });
+    expect(feeCeiling('084532=7', 84532), 'a chain id is a number').toEqual({ wei: 7n, from: "REWARD_DAY_CLOSE_MAX_FEE_WEI, this chain's entry" });
+  });
+
+  it('is unknown, never a default, when any entry is malformed or repeated', () => {
+    for (const raw of ['500', '84532=', '=5', '84532=1e15', '84532=-1', '84532=0x10', '84532=1.5', 'base=5', '84532=5,', '84532=5,84532=6', '*=1,*=2', '84532=5,084532=6']) {
+      const c = feeCeiling(raw, 84532);
+      expect('unread' in c, raw).toBe(true);
+    }
+    expect(feeCeiling('84532=5,84532=6', 1)).toEqual({ unread: "this keeper's fee ceiling, REWARD_DAY_CLOSE_MAX_FEE_WEI being malformed (chain 84532 is named twice)" });
   });
 });

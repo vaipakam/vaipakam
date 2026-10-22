@@ -822,6 +822,22 @@ reporting is still a real gap.
 
 ## An unsubstantiable loan record is reported, but not withdrawn from publication (#2190 r8)
 
+**RESOLVED (#2197, PR #2636).** The platform now withdraws such a record,
+whatever status it is published under (live, ended or settled). On a proven
+nonexistent read at the settled head, the row moves out of `loans` into
+`loan_orphans`, kept whole for an operator's restore with the block the proof
+was read at. Its activity, history and notifications move with it, and its
+side tables and alert memory are cleared, all in one transaction. Every
+surface that lists or counts loans then stops publishing it with no
+per-surface filter. The durable finding is the `loan_orphans` entry itself:
+the stale report names every entry until a person marks it reviewed
+(`reviewed_at`), and that holds across an archive restore. The id's
+reconciliation quarantine marker is released rather than kept, because it
+would withhold reminders from a real loan later given the same id. The
+keeper's private HF-band state for the id is a known follow-up (#2638). The spec was not changed to match the code; the code moved to the
+spec, and `Alpha02ConnectedApp.md` now also states the withdrawal. The entry
+below is kept as the record of the divergence.
+
 Recorded here rather than by softening
 [`Alpha02ConnectedApp.md`](Alpha02ConnectedApp.md), per this doc set's rule
 that the spec states **intent** and that resolving a divergence by editing the
@@ -905,8 +921,17 @@ from a capable source and a source that lacks the capability are
 indistinguishable at that moment, so an asserted cause would send an operator
 to replace something that works.
 
-**The scan half remains open and #2201 stays open with it.** The entry above
-is right that the fix must cover both consumers; what stopped the scan being
+**SCAN HALF RESOLVED (#2201).** A tick whose settled read does not answer
+now holds the scan: it reads nothing, keeps the cursor, and says which chain
+is held and the provider's own reason, every tick. That is the
+correctness-over-liveness choice the paragraph below says must be made
+deliberately rather than inherited from a `catch`, and
+`Alpha02ConnectedApp.md` now states it. The paragraph below is kept as the
+record of why it was deferred, and the owner made that liveness call explicitly
+(owner decision 2026-10-22: pause the scan and say so).
+
+**Historical, superseded by the paragraph above: why the scan half was first
+left open.** The entry above is right that the fix must cover both consumers; what stopped the scan being
 covered in the same change is that its remedy is a real trade rather than a
 strictly-better refusal. The correction declining costs nothing that was
 working — no correction is the status quo ante. A scan declining to advance

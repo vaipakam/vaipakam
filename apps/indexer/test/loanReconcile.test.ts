@@ -73,6 +73,8 @@ function fakeDeps(
    *  reason: a fake that cleared separately could not represent the
    *  all-or-nothing property the batch gives. */
   const sideTablesCleared: number[] = [];
+  /** Rows moved out of the index by the orphan withdrawal (#2197). */
+  const withdrawn: FakeRow[] = [];
   /** Loan ids whose repair write should throw. */
   const writeFails = new Set<number>();
   /** Make the post-loop cursor write throw. */
@@ -141,6 +143,15 @@ function fakeDeps(
     async terminalHolderStatements() {
       return [];
     },
+    async withdrawOrphan(_c, loanId, from) {
+      calls.writes += 1;
+      if (writeFails.has(loanId)) throw new Error(`D1 unavailable for ${loanId}`);
+      sideTablesCleared.push(loanId);
+      const i = rows.findIndex((r) => r.loan_id === loanId && r.status === from);
+      if (i < 0) return false;
+      withdrawn.push(...rows.splice(i, 1));
+      return true;
+    },
     async readPointer() {
       return pointer;
     },
@@ -154,6 +165,7 @@ function fakeDeps(
     calls,
     rows,
     sideTablesCleared,
+    withdrawn,
     writeFails,
     failPointerWrite() { pointerWriteFails = true; },
     get pointer() { return pointer; },
@@ -590,6 +602,34 @@ describe('what the chain says that is neither running nor ended', () => {
     // NOT `unread`: the read succeeded, so retrying changes nothing and
     // burying it in the retry bucket would hide a row that needs a person.
     expect(r.unread).toEqual([]);
+    // #2197 — and it is no longer published: withdrawn, side tables with it.
+    expect(r.withdrawn).toEqual([8]);
+    expect(rows).toEqual([]);
+    expect(f.withdrawn.map((x) => x.loan_id)).toEqual([8]);
+    expect(f.sideTablesCleared).toEqual([8]);
+  });
+
+  it('#2197 — a withdrawal that did not land leaves the row published, and the rotation returns to it', async () => {
+    const rows: ReconcileRow[] = [{ loan_id: 8, status: 'active' }];
+    const f = fakeDeps(rows, { 8: 0 }, 0);
+    f.deps.readChainLoan = async () => {
+      throw new NonexistentLoanError(8);
+    };
+    f.writeFails.add(8);
+    const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    expect(r.unresolvable).toEqual([8]);
+    expect(r.withdrawn).toEqual([]);
+    expect(rows[0].status).toBe('active');
+    // Not a repair write failure: the orphan finding is the record.
+    expect(r.writeFailed).toEqual([]);
+  });
+
+  it('#2197 — a read that FAILED never withdraws anything', async () => {
+    const rows: ReconcileRow[] = [{ loan_id: 8, status: 'active' }];
+    const f = fakeDeps(rows, { 8: new Error('timeout') }, 0);
+    const r = await reconcileChainLoans(CHAIN, f.deps, { maxRows: 5 });
+    expect(r.unread).toEqual([8]);
+    expect(r.withdrawn).toEqual([]);
     expect(rows[0].status).toBe('active');
   });
 

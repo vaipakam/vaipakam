@@ -86,9 +86,11 @@ describe('verifyRpcChainIdentity', () => {
 });
 
 describe('isRetryableScanSkip (shared with the ingest DO)', () => {
-  it('rpc-error and rpc-chain-mismatch are retryable failures; caught-up and undefined are not', () => {
+  it('rpc-error, rpc-chain-mismatch and a settled-head hold are retryable failures; caught-up and undefined are not', () => {
     expect(isRetryableScanSkip('rpc-error')).toBe(true);
     expect(isRetryableScanSkip('rpc-chain-mismatch')).toBe(true);
+    // #2636 r7 — a held tick is retried in the alarm loop like an RPC error.
+    expect(isRetryableScanSkip('settled-head-unavailable')).toBe(true);
     expect(isRetryableScanSkip('caught-up')).toBe(false);
     expect(isRetryableScanSkip(undefined)).toBe(false);
   });

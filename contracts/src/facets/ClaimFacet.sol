@@ -461,8 +461,11 @@ contract ClaimFacet is
         // FallbackPending with `snap.active` still true. There is nothing for the
         // backstop to buy — return WITHOUT spending absorb cash (reverting here
         // would roll back that objective rescue); the lender finalizes via the
-        // normal claim, which pays the `heldForLender`.
-        if (snap.lenderCollateral == 0) return;
+        // normal claim, which pays the `heldForLender`. The same holds when the
+        // rescale leaves the due itself at zero (a dust remainder): a purchase
+        // for no cash would take the lender's slice and pay nothing, so the
+        // lender keeps it in kind instead (lender first, #1281).
+        if (snap.lenderCollateral == 0 || snap.lenderPrincipalDue == 0) return;
 
         // Require an OBJECTIVE retry to have actually been attempted (this call or
         // a prior `claimAsLenderWithRetry`) before any backstop cash is spent — the
@@ -560,13 +563,15 @@ contract ClaimFacet is
         // treasury's cash must buy what arrived, not what was sent) directly
         // (not the rounded-down required-collateral, which could accept a
         // low-decimal slice up to one base unit of value below par).
-        // `sliceValue == 0` ⇒ oracle unavailable ⇒ refuse. Tolerate only 1
-        // PRINCIPAL wei (sub-economic) for the snapshot's integer-division
-        // rounding, so a solvent absorb isn't spuriously rejected while an
-        // underwater slice still reverts. The revert unwinds the whole absorb,
-        // the disposal above included.
-        uint256 sliceValue = LibFallback.principalEquivalent(address(this), absorbed, c, p);
-        if (sliceValue == 0 || sliceValue + 1 < due) {
+        // An unpriced pair refuses (`priced` is the availability signal,
+        // never a zero value — #1281 item 027). The comparison is exact: the
+        // lender slice is the collateral NEEDED to cover the due, rounded up
+        // at entry and at every rescale, so at an unchanged price a solvent
+        // slice is worth at least `due` and no rounding tolerance is owed.
+        // The revert unwinds the whole absorb, the disposal above included.
+        (bool priced, uint256 sliceValue) =
+            LibFallback.principalEquivalent(address(this), absorbed, c, p);
+        if (!priced || sliceValue < due) {
             revert BackstopUndercollateralized();
         }
         // Track the warehoused collateral so `sweepBackstopAbsorbCollateral`

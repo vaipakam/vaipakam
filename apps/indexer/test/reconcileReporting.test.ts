@@ -56,6 +56,7 @@ const report = (over: Partial<ReconcileReport> = {}): ReconcileReport => ({
   unread: [],
   writeFailed: [],
   unresolvable: [],
+  withdrawn: [],
   unknownStatus: [],
   superseded: [],
   nextPointer: 0,
@@ -118,6 +119,14 @@ describe('what the pass says out loud', () => {
     expect(out.toLowerCase()).toContain('orphan');
   });
 
+  it('#2197 — says which orphans were withdrawn and which are still published', () => {
+    const out = captured(report({ unresolvable: [98, 99], withdrawn: [98] }));
+    expect(out).toMatch(/withdrawn from publication into loan_orphans: 98\b/);
+    expect(out).toMatch(/STILL PUBLISHED[^\n]*99/);
+    const all = captured(report({ unresolvable: [99], withdrawn: [99] }));
+    expect(all).not.toContain('STILL PUBLISHED');
+  });
+
   it('names a status this build cannot project, with the number', () => {
     // Refusing to guess is right; refusing SILENTLY is how a newly added
     // terminal leaves rows published as open while every check looks healthy.
@@ -136,11 +145,25 @@ describe('what the pass says out loud', () => {
     expect(captured(report({ ...mismatch, wrappedLap: true }))).toContain('NOT a missed terminal');
   });
 
+  it('#2636 r3 — a lap that withdrew an orphan does not claim it repaired nothing', () => {
+    const out = captured(
+      report({ agreed: false, chainActive: 6, indexedActive: 7, wrappedLap: true, unresolvable: [5], withdrawn: [5] }),
+    );
+    expect(out).not.toContain('NOT a missed terminal');
+    expect(out).not.toContain('UNDETERMINED');
+  });
+
   it('refuses to rule anything out when the lap failed to establish it', () => {
     // The three ways to learn nothing about a row, each of which must defeat the
     // confident verdict — a conclusion drawn from an absence of evidence is
     // the defect here, not the disagreement itself.
-    for (const gap of [{ unread: [5] }, { writeFailed: [5] }, { unknownStatus: [{ loanId: 5, status: 9 }] }]) {
+    for (const gap of [
+      { unread: [5] },
+      { writeFailed: [5] },
+      { unknownStatus: [{ loanId: 5, status: 9 }] },
+      // #2636 r3 — an orphan still published is an overcount, not a missed terminal.
+      { unresolvable: [5] },
+    ]) {
       const out = captured(
         report({ agreed: false, chainActive: 6, indexedActive: 7, wrappedLap: true, ...gap }),
       );

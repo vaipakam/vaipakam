@@ -262,6 +262,19 @@ The app uses chain reads and indexed reads for different jobs.
   source has been told something false. A chain in that state keeps
   whatever records it already had — nothing is corrected, nothing is
   damaged — until the settled read succeeds.
+- **The same holds for the reading itself, not only the correction.** The
+  index reads forward from where it last stopped and never goes back over
+  what it has read, so a stretch read on a guess and then reorganised away
+  leaves its records wrong for good. When no settled point can be read, the
+  index does not read forward at all on that turn: it keeps its place, keeps
+  serving what it has, and says which chain is held and the reason its
+  source gave. This is a deliberate choice of correctness over liveness —
+  a source that never answers the settled question never has that chain
+  indexed, and says so on every turn, and the index's reported age grows —
+  rather than indexing on a guess that can never be revisited. The
+  corrections that read the chain wait on the same terms: on such a turn no
+  record is filled in or corrected from a chain reading, because a correction
+  is never revisited either.
 - Whenever the live set was not checked against the chain on a turn, the
   reminders derived from that set wait for a turn that checked. Due-date
   and grace reminders are read off the records the platform holds, they are
@@ -1010,6 +1023,72 @@ The app uses chain reads and indexed reads for different jobs.
   from "running", so the platform tests that the position exists at all
   before believing it, and reports the ones it cannot substantiate instead
   of counting them as open forever.
+- **Such a record is withdrawn from publication, not only reported.** Once
+  the chain, read at its settled point, says it has no such loan, the record
+  leaves every surface that lists or counts loans — together with its
+  activity entries, its place in wallets' loan history, its notifications,
+  and anything the platform was offering to act on for it — in one write, so
+  no surface goes on presenting a position that never existed. The withdrawal happens
+  only on that proof: a reading that failed is not evidence that a loan does
+  not exist, and changes nothing. It applies to every record the platform
+  publishes as a loan, running, ended or settled alike (settled records are
+  checked for existence only, on a slow rotation, and a real settlement is
+  never rewritten), and it is all-or-nothing: if
+  the record, or the set of entries about it, changes while the withdrawal is
+  under way, nothing is withdrawn and nothing attached to it is touched. The
+  platform's memory of which alerts it already sent about the position goes
+  with it, so a real loan later given the same number is warned from scratch. The record is kept whole, out of
+  publication, with the settled point the proof was read at, so a person can
+  put it back if the existence test itself was at fault. That kept record is
+  backed up with the platform's other records that the chain cannot
+  reproduce, since rebuilding the index from the chain cannot bring it back,
+  and it survives a redeployment of the contracts, naming the deployment it
+  is about;
+  and the kept record itself is the operator's finding: every withdrawal is
+  named on each pass until a person marks it reviewed, including after the
+  records are restored from backup. The position's hold on reminders is
+  lifted rather than kept, so a real loan later given the same number is
+  reminded normally, because a position
+  that vanished from the index is something a person should look at. Nothing
+  public says the record was withdrawn, since nothing public about it was
+  ever true.
+- **A record that shows an ending, where the chain says the loan has since
+  been fully settled, is brought up to settled even when the settlement's own
+  announcement was missed.** Every ended-but-unsettled record is checked
+  against the chain on a continuing rotation (each pass over the records
+  finishes at the newest one it started with, so a steady stream of new
+  endings cannot keep older ones from being checked), and is moved to settled only
+  when the chain, read at its settled point, says so — never to any other
+  ending, since the chain cannot say how a loan ended more precisely than the
+  record already does. The settlement's block and time are recorded only
+  when the announcement that carries them is found and confirmed against the
+  chain; otherwise they stay unknown. A record left reading "ended, not
+  settled" would otherwise present claims as outstanding on a loan whose
+  claims are all made.
+- **A corrected position's verified holders enter its participation
+  history.** The history of who has held a position is written as transfers
+  are announced, and the stretch that lost an ending can also have lost a
+  transfer. So when a correction reads the current holder of either side
+  from the chain, that holder is recorded as a participant if the history
+  has no entry for them on that side — with the chain time of the settled
+  point they were confirmed at, since the moment they acquired the position
+  is not known. A holder already in the history is left as recorded, and a
+  side the chain did not name records nothing.
+- **A corrected position's history shows that it ended, as something the
+  platform observed rather than something it saw announced.** The activity
+  history is a record of the chain's announcements, and a corrected position's
+  ending was never announced to the platform, so no announcement is invented
+  for it. Instead the history carries a separate entry, marked as found by
+  checking the chain: it says the position was in its ended state by a given
+  settled point of the chain (and that point's time, when known). It does not
+  say when the position ended, which event ended it, who acted, or in which
+  transaction — none of those was seen. The entry sits in the history in the
+  order of the point at which it was observed, and stays there after the
+  position later settles. Positions corrected before this entry existed carry
+  no such entry, because the point at which they were observed was not kept,
+  and none is made up for them. Where the history cannot say whether such
+  entries exist (for example while the platform's records are being upgraded),
+  it says that it does not know rather than presenting the history as complete.
 - A lifecycle state the platform does not recognise is reported, never
   passed over. Refusing to guess at an unfamiliar state is right; doing so
   silently is how a newly introduced ENDING would leave records published
@@ -1134,6 +1213,14 @@ The app uses chain reads and indexed reads for different jobs.
   pending-fallback loan). The push rail also reports its own freshness (how
   recently ingestion advanced, and how often it is expected to), so the app
   can tell a healthy-but-quiet rail from a stalled one instead of guessing.
+- A live-update signal is not lost because the platform stopped between
+  recording a change and announcing it. Some changes cannot be found again
+  once recorded (a correction made by checking the chain, a withdrawn record,
+  a reminder, and every announcement already read past), so the intent to
+  announce is noted before the work starts and cleared only once the
+  announcement is out. A turn that finds a note left standing announces that
+  everything may have changed, naming no particular loans or offers, since
+  what the lost turn changed is not known.
 - Governance-tunable display configuration (fees, buffers, feature flags)
   may be served from the indexer's config snapshot, which follows
   governance changes within moments; the chain remains the fallback when

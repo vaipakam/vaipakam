@@ -6,6 +6,7 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibOwedAtInternalMatch} from "../libraries/LibOwedAtInternalMatch.sol";
@@ -791,7 +792,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
 
     /// @dev EC-003 Phase 1 — reverts `InternalMatchAssetUnpriceable` when
     ///      the oracle stack can't return a fresh price for `asset`.
-    ///      Mirrors the gate `LibFallback.collateralEquivalent` uses for
+    ///      Mirrors the gate `LibFallback.tryOracleRate` applies for
     ///      the at-fallback equivalent-value path: `tryGetAssetPrice` must
     ///      return `ok=true` and the price must be non-zero. The
     ///      `getAssetPrice` view this delegates to runs the full Soft
@@ -1247,16 +1248,21 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
             if (oldCollat == 0 || newCollat >= oldCollat) return;
 
             // K5 — rescale to the surviving row with the BORROWER slice
-            // absorbing the floor remainder, so the snapshot total equals the
+            // absorbing the rounding remainder, so the snapshot total equals the
             // row EXACTLY: the custody discriminator (`snapshot total ==
             // row`, `LibFallbackCustody.isLegacy`) stays false and no unit is
             // left attributed to no slice. Flooring all three slices
             // independently (the pre-slice-2 code) left up to 2 units per
-            // match owned by nobody. The subtraction cannot underflow:
-            // lender + treasury slices summed to at most `oldCollat` before,
-            // so their floored rescales sum to at most `newCollat`.
+            // match owned by nobody. Lender first (#1281): the lender slice
+            // rescales rounded UP, as it was sized at entry, so it still
+            // covers the rescaled (rounded-down) due at an unchanged price;
+            // the treasury slice rounds down. The subtraction cannot
+            // underflow: lender + treasury summed to at most `oldCollat`
+            // before, and a rounded-up share plus a rounded-down share of
+            // shares summing to at most `newCollat` is an integer below
+            // `newCollat + 1`.
             LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loan.id];
-            snap.lenderCollateral = (snap.lenderCollateral * newCollat) / oldCollat;
+            snap.lenderCollateral = Math.ceilDiv(snap.lenderCollateral * newCollat, oldCollat);
             snap.treasuryCollateral = (snap.treasuryCollateral * newCollat) / oldCollat;
             snap.borrowerCollateral =
                 newCollat - snap.lenderCollateral - snap.treasuryCollateral;

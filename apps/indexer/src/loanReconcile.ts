@@ -1,3 +1,4 @@
+import { withdrawOrphanLoan } from './loanOrphans';
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
 
 /**
@@ -284,6 +285,12 @@ export interface ReconcileReport {
   /** Loan ids the chain says do not exist. Never retried — the read
    *  succeeded — and never counted as running. */
   unresolvable: number[];
+  /** The subset of `unresolvable` whose row this pass WITHDREW from
+   *  publication — moved out of `loans` into `loan_orphans` (#2197). An
+   *  `unresolvable` id missing from here is still published (its move did
+   *  not land, or another writer changed the row first) and the rotation
+   *  returns to it. */
+  withdrawn: number[];
   /** Loans whose on-chain status this build does not recognise. */
   unknownStatus: { loanId: number; status: number }[];
   /** Loan ids whose repair the compare-and-set declined because another
@@ -328,6 +335,11 @@ export interface ReconcileDeps {
    *  can never be retried: the row stops being live, so nothing selects it
    *  again. */
   writeRepair(chainId: number, loanId: number, repair: LoanRepair): Promise<boolean>;
+  /** #2197 — ONE transaction: move a row the chain has no loan for out of
+   *  `loans` into `loan_orphans`, and clear its side tables. A
+   *  compare-and-set on the status the rotation read (`from`); returns
+   *  whether the row was moved. */
+  withdrawOrphan(chainId: number, loanId: number, from: string): Promise<boolean>;
   readPointer(chainId: number): Promise<number>;
   writePointer(chainId: number, value: number): Promise<void>;
 }
@@ -444,6 +456,7 @@ export async function reconcileChainLoans(
     unread: [],
     writeFailed: [],
     unresolvable: [],
+    withdrawn: [],
     unknownStatus: [],
     superseded: [],
     nextPointer: rows.length > 0 ? rows[rows.length - 1].loan_id : 0,
@@ -462,6 +475,19 @@ export async function reconcileChainLoans(
         // burying it in the retry bucket would hide a row that needs a
         // person (#2190 r6 `4006071749`).
         report.unresolvable.push(row.loan_id);
+        // #2197 — and a record the chain has no loan for is not a running
+        // loan, so it is withdrawn from publication rather than only named.
+        // On a PROVEN nonexistent read only: this branch is reached by the
+        // zero struct at the settled head, never by a read that failed
+        // (that is `unread`, below). A move that did not land leaves the row
+        // live, and the rotation tries again next lap.
+        try {
+          if (await deps.withdrawOrphan(chainId, row.loan_id, row.status)) {
+            report.withdrawn.push(row.loan_id);
+          }
+        } catch {
+          // Reported by the caller as "named but still published".
+        }
         continue;
       }
       // A read that did not happen is not evidence about the loan. The
@@ -579,6 +605,16 @@ export interface ScanReconcileContext {
   diamond: string;
   /** The SAFE head the scan resolved. Every read pins to it. */
   head: bigint;
+  /** #2195 — the head block's chain time, recorded with a repair as when it
+   *  was OBSERVED (never as when the loan ended); null when not known. */
+  headAt: number | null;
+  /**
+   * #2636 r4 — whether the invocation can still afford a WHOLE orphan move
+   * and everything this pass does after it. Asked before each move; a no
+   * leaves the row published and named, and the next lap tries again.
+   * Required, so a new context decides rather than inheriting "always".
+   */
+  canStartOrphanMove(): boolean;
   readContract(args: Record<string, unknown>): Promise<unknown>;
   metricsAbi: unknown;
   loanAbi: unknown;
@@ -774,11 +810,27 @@ export async function reconcileAfterScan(
         .prepare(
           `UPDATE loans
               SET status = ?, ${repair.mutable.assignments.join(', ')},
-                  terminal_block = NULL, terminal_at = NULL, terminal_by_repair = 1, updated_at = ?
+                  terminal_block = NULL, terminal_at = NULL, terminal_by_repair = 1,
+                  repair_observed_status = ?, repair_observed_block = ?, repair_observed_at = ?,
+                  updated_at = ?
             WHERE chain_id = ? AND loan_id = ?
               AND status IN ('active', 'fallback_pending')`,
         )
-        .bind(repair.status, ...repair.mutable.values, at, chainId, loanId);
+        .bind(
+          repair.status,
+          ...repair.mutable.values,
+          // #2195 — what this repair OBSERVED, in the same compare-and-set as
+          // the status, so it is recorded exactly when the repair is: the
+          // status, the settled block the read was pinned to, and that
+          // block's time. The Activity feed serves it as an observation; it
+          // is not a terminal block or time (those stay NULL above).
+          repair.status,
+          Number(ctx.head),
+          ctx.headAt,
+          at,
+          chainId,
+          loanId,
+        );
       // The inbox rows go in the SAME batch. Written afterwards they could
       // be lost for good: the repair takes the row out of the live set the
       // rotation selects from, so nothing would ever come back to write
@@ -815,6 +867,12 @@ export async function reconcileAfterScan(
       // header: what licenses clearing the side tables is the chain having
       // reported the loan ended, which this pass read for itself.
       return (results[0]?.meta?.changes ?? 0) > 0;
+    },
+    async withdrawOrphan(chainId, loanId, from) {
+      // The one owner of the move (`loanOrphans.ts`), shared with the
+      // settlement heal, which finds terminal-status orphans the same way.
+      if (!ctx.canStartOrphanMove()) return false;
+      return withdrawOrphanLoan(ctx.db, chainId, ctx.diamond, loanId, from, ctx.head, now());
     },
     async readPointer(chainId) {
       const row = await ctx.db

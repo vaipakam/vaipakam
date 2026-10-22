@@ -12,6 +12,7 @@ import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -566,19 +567,24 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // scenario. If the loan's remaining collateral is smaller, sell
         // the entire collateral balance — the lender absorbs the
         // slippage on top. Settler still gets paid the slippage-driven
-        // bonus on whatever proceeds came in.
+        // bonus on whatever proceeds came in. The cover is the collateral
+        // NEEDED for the shortfall, rounded up, so a small shortfall is
+        // never sized to nothing. The sale cannot proceed without a price,
+        // so the rate comes from the ordinary reader (a missing or stale
+        // feed reverts with its own error before anything moves), and the
+        // same reading quotes the sale below.
         uint256 maxSlippageBps = LibVaipakam.cfgMaxLiquidationSlippageBps();
-        uint256 collateralEquivalent = LibFallback.collateralEquivalent(
+        LibFallback.Rate memory rate = LibFallback.oracleRate(
             address(this),
-            shortfall,
             loan.collateralAsset,
             loan.principalAsset
         );
+        uint256 cover = LibFallback.toCollateral(rate, shortfall, Math.Rounding.Ceil);
         // Add the slippage cap as an over-sell buffer (e.g. 6% extra
         // collateral so net proceeds clear `shortfall` after worst-
         // case slippage). Numeric over-flow safe — collateral amounts
         // are bounded.
-        uint256 toSell = (collateralEquivalent *
+        uint256 toSell = (cover *
             (LibVaipakam.BASIS_POINTS + maxSlippageBps)) /
             LibVaipakam.BASIS_POINTS;
         if (toSell > loan.collateralAmount) {
@@ -614,12 +620,7 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             bytes4(0)
         );
 
-        uint256 expectedProceeds = LibFallback.expectedSwapOutput(
-            address(this),
-            loan.collateralAsset,
-            loan.principalAsset,
-            sliceReceived
-        );
+        uint256 expectedProceeds = LibFallback.toPrincipal(rate, sliceReceived);
         uint256 minOutput = (expectedProceeds *
             (LibVaipakam.BASIS_POINTS - maxSlippageBps)) /
             LibVaipakam.BASIS_POINTS;

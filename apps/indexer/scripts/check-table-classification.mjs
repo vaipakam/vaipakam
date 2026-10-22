@@ -118,6 +118,13 @@ const CLASSIFICATION = {
       'cleared with notifications so band rows re-derive (#1450 r33)',
   },
   swap_to_repay_intents: { class: 'replay-derived', reason: 'chainIndexer-only writes (#1450 r32)' },
+  loan_orphans: {
+    class: 'born-off-chain',
+    reason:
+      'loan rows proven absent on chain, moved out of `loans` with the whole row kept (#2197); ' +
+      'a block-zero replay cannot recreate them (their initiation is not in canonical history), ' +
+      'so the archive is the only copy of what was withdrawn (#2636 r1)',
+  },
   loan_reconcile_quarantine: {
     class: 'replay-derived',
     reason:

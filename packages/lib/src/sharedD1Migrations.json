@@ -61,5 +61,7 @@
   "0061_market_summary_rebuild_legacy_signed.sql",
   "0062_recycle_backing_custody.sql",
   "0063_indexer_deployment.sql",
-  "0064_retire_shared_keeper_tables.sql"
+  "0064_retire_shared_keeper_tables.sql",
+  "0065_loan_orphans.sql",
+  "0066_loan_repair_observation.sql"
 ]

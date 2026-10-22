@@ -7,7 +7,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
-import {ISeaportZone, ZoneParameters, ReceivedItem, ItemType} from "./ISeaportZone.sol";
+import {ISeaportZone, ZoneParameters, ReceivedItem, SpentItem, ItemType} from "./ISeaportZone.sol";
 import {IVaipakamPrepayCallbacks} from "./IVaipakamPrepayCallbacks.sol";
 import {IVaipakamPrepayContext} from "./IVaipakamPrepayContext.sol";
 import {IVaipakamSanctionsView} from "./IVaipakamSanctionsView.sol";
@@ -410,6 +410,11 @@ contract CollateralListingExecutor is
     /// @notice #825-r3 (P1) — a fill recipient (current borrower holder or a
     ///         recorded fee-leg recipient) is sanctions-flagged at fill time.
     error SanctionedListingRecipient(address recipient);
+    /// @notice #1279 — a buyer of the collateral is barred by the Diamond's
+    ///         sanctions screen at fill time: the account filling the listing
+    ///         (Seaport's `fulfiller`), or the account an ERC-721 collateral
+    ///         reached in the fill.
+    error SanctionedListingBuyer(address buyer);
     error WrongTreasuryRecipient(bytes32 orderHash);
     error WrongConsiderationItemType(uint256 idx, ItemType expected, ItemType actual);
     error WrongConsiderationToken(uint256 idx, address expected, address actual);
@@ -1378,6 +1383,8 @@ contract CollateralListingExecutor is
         // doc's reason, that `Seaport.validate()` pre-registration skips
         // {authorizeOrder}, does not hold for Seaport 1.6; see that hook.)
         uint256 loanId = _checkOrderPreconditions(params);
+        // #1279 — the collateral has moved by now; screen where it landed.
+        _assertCollateralHolderNotBarred(params);
 
         // #2440 — refuse the fill unless the lender leg reached the lender in
         // full: the settlement below closes the loan as repaid on it.
@@ -1445,6 +1452,8 @@ contract CollateralListingExecutor is
     ///      the diamond side (round-3.2 against Codex P1 #4).
     function _finalizeOfferSale(ZoneParameters calldata params) private {
         _checkOfferOrderPreconditions(params);
+        // #1279 — the collateral has moved by now; screen where it landed.
+        _assertCollateralHolderNotBarred(params);
         // #2440 — refuse the fill unless the Diamond received the proceeds leg
         // in full: the callbacks below credit and split exactly that figure,
         // and would otherwise draw the difference from what the Diamond holds
@@ -1514,6 +1523,8 @@ contract CollateralListingExecutor is
         // address (round-3 against Raja P1 #3 + Codex round-2 P1 #4).
         IVaipakamPrepayCallbacks(vaipakamDiamond)
             .assertOfferFillNotSanctioned(ctx.offerId, ctx.borrowerWallet);
+        // #1279 — the buyer is a Tier-1 party too: screen the fulfiller.
+        _assertBuyerNotBarred(params);
         // #825-r4 (P1) — that callback screens the borrower wallet, but the
         // offer-branch (parallel-sale) order ALSO carries fee legs paid directly
         // by Seaport on fill; re-screen each recorded fee-leg recipient live, so
@@ -1687,6 +1698,8 @@ contract CollateralListingExecutor is
         // directly, plus the recorded fee legs; treasury is the protocol (no
         // screen). (#821 covers the diamond-side close-out deposits on the
         // non-fill paths.)
+        // #1279 — the buyer is a Tier-1 party too: screen the fulfiller.
+        _assertBuyerNotBarred(params);
         if (_recipientBarred(pctx.lenderNftOwner)) {
             revert SanctionedListingRecipient(pctx.lenderNftOwner);
         }
@@ -1977,6 +1990,55 @@ contract CollateralListingExecutor is
     ///         not gas-critical.
     function _recipientBarred(address who) private view returns (bool) {
         return IVaipakamSanctionsView(vaipakamDiamond).isRecipientBarred(who);
+    }
+
+    /// @notice #1279 — the BUYER screens. A buyer is a Tier-1 party (it pays
+    ///         for the collateral and receives it), so it gets the same
+    ///         registry-aware bar as every other party this zone screens
+    ///         ({_recipientBarred}), not the fail-open oracle read. Seaport
+    ///         tells the zone two things about the buyer, and each is
+    ///         screened where it is known:
+    ///         - {_assertBuyerNotBarred}: the `fulfiller`, the caller of the
+    ///           fill. It pays the whole consideration in a single-order or an
+    ///           available-orders fill. Runs inside both precondition stacks,
+    ///           so from `authorizeOrder` and again from `validateOrder`.
+    ///         - {_assertCollateralHolderNotBarred}: for ERC-721 collateral,
+    ///           the account holding the token once the fill's transfers are
+    ///           done, read from the token. This covers an NFT `recipient` the
+    ///           fulfiller names that is not itself, and a `matchOrders` call
+    ///           someone else assembles, where the counter-order's
+    ///           consideration sends the NFT to its bidder. Runs from
+    ///           `validateOrder` only: Seaport 1.6 calls it after every
+    ///           transfer of the call.
+    ///
+    ///         What stays outside, stated rather than implied. Seaport passes
+    ///         the zone no offer-item destination and no counter-order
+    ///         offerer, so: (1) the recipient of ERC-1155 collateral that is
+    ///         not the fulfiller (an ERC-1155 token has no owner to read), and
+    ///         (2) the paying bidder of a `matchOrders` call someone else
+    ///         assembles, where the matcher is the fulfiller and the NFT goes
+    ///         to an unflagged account. The holder read also trusts the
+    ///         collateral token's own `ownerOf`, and names the holder at the
+    ///         end of the call: an account the NFT passes through inside the
+    ///         same `matchOrders` call is not seen. The Diamond's own atomic
+    ///         match (`NFTPrepayListingAtomicFacet.matchOpenSeaOffer`) is the
+    ///         product's match path and screens its bidder before it calls
+    ///         Seaport; there the fulfiller is the Diamond, which these
+    ///         screens pass.
+    function _assertBuyerNotBarred(ZoneParameters calldata params) private view {
+        if (_recipientBarred(params.fulfiller)) revert SanctionedListingBuyer(params.fulfiller);
+    }
+
+    /// @dev See {_assertBuyerNotBarred}. Called after the precondition stack,
+    ///      which pins `offer` to the one collateral item. A holder equal to
+    ///      the fulfiller was screened there and is not read again.
+    function _assertCollateralHolderNotBarred(ZoneParameters calldata params) private view {
+        SpentItem calldata item = params.offer[0];
+        if (item.itemType != ItemType.ERC721) return;
+        address holder = IERC721(item.token).ownerOf(item.identifier);
+        if (holder != params.fulfiller && _recipientBarred(holder)) {
+            revert SanctionedListingBuyer(holder);
+        }
     }
 
     /// @notice Verify a consideration leg matches the loan's lending-asset
