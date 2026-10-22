@@ -211,6 +211,7 @@ contract Handover is Script {
         // first leg; the Timelock accepts later. A target not owned by ADMIN
         // is skipped with a notice — the gate then refuses until it is moved.
         for (uint256 i; i < c.targets.length; ++i) {
+            if (c.targets[i].addr == address(0)) continue; // warned in _preflight
             _transferCrossChainOwnership(c.adminKey, c.targets[i].addr, c.targets[i].label, c.timelock);
         }
 
@@ -273,6 +274,19 @@ contract Handover is Script {
                 b != c.governanceSafe && b != c.pauserSafe && b != c.timelock && b != c.diamond,
                 string.concat(botEnv[i], " must be a bot key, not a Safe, the Timelock or the Diamond")
             );
+        }
+
+        // ── The artifact names every contract this chain must hand over ─
+        // A required contract missing from addresses.json would otherwise
+        // drop out of the handover and stay on the admin key (#944 r1). On a
+        // production chain that is a refusal; a testnet rehearsal may lack
+        // part of the stack, so there it is printed and the gate reports it.
+        for (uint256 i; i < c.targets.length; ++i) {
+            if (c.targets[i].addr != address(0)) continue;
+            if (Deployments.requiresProductionGovernance()) {
+                revert(string.concat("addresses.json has no ", c.targets[i].label, " - every production chain must hand it over"));
+            }
+            console.log(string.concat("WARNING: addresses.json has no ", c.targets[i].label, "; nothing to hand over for it"));
         }
 
         // The Timelock's independent veto (#938) must be the Pauser Safe
@@ -400,6 +414,7 @@ contract Handover is Script {
             vm.toString(abi.encodePacked(bytes4(keccak256("acceptOwnership()"))))
         );
         for (uint256 i; i < c.targets.length; ++i) {
+            if (c.targets[i].addr == address(0)) continue;
             console.log(string.concat("    target: ", c.targets[i].label, " @"), c.targets[i].addr);
         }
         if (cctRotated) {

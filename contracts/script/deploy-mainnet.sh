@@ -1654,9 +1654,12 @@ EOF
 
 phase_handover_gate() {
   _assert_rpc_chain
+  # The local marker is advisory here: this phase only reads, and the chain,
+  # not a file, decides whether the handover happened. A handover run
+  # outside this wrapper, or one that died after broadcasting but before
+  # writing its marker, must still be checkable (Codex #2660 r1).
   if ! phase_already_done "handover"; then
-    echo "Refusing --phase handover-gate: --phase handover has not run for $CHAIN_SLUG." >&2
-    exit 1
+    echo "NOTE: no local handover marker for $CHAIN_SLUG; checking the chain anyway." >&2
   fi
 
   echo "═══════════════════════════════════════════════════════════════"

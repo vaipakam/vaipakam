@@ -305,13 +305,17 @@ instead rebuilds the complete holder set of every role, on the Diamond and
 on the Timelock, from the `RoleGranted` / `RoleRevoked` events since the
 artifact's `deployBlock`, confirms each holder with `hasRole`, and fails on
 any holder the plan does not name. It refuses an incomplete log range: the
-Diamond's first role event must be the deployer's root grant, the
-Timelock's must be its own, and a holder the events show but `hasRole`
-denies (or the reverse) fails as a broken range rather than passing. It
-also checks every role's admin is the root, the Chainlink pool's pending
-owner by the log rule above, each `guardian()`, and the CCT administrator
-(an unset `CCIP_TOKEN_ADMIN_REGISTRY` fails on production chains and is
-reported as not checked on testnets). The plan it checks against is
+range must contain each contract's construction (the Diamond's owner set
+from the zero address, the Timelock's delay set from zero), because a first
+root grant alone proves nothing (the handover's own grant to the Timelock is
+one), and every (role, account) pair the events name must agree with
+`hasRole` in both directions. It also checks every role's admin is the
+root, the Chainlink pool's pending owner by the log rule above, a readable
+`guardian()` equal to the Pauser Safe on every `GuardianPausable` target,
+and the CCT administrator. A contract the chain must carry but
+`addresses.json` lacks, an unset `CCIP_TOKEN_ADMIN_REGISTRY`, or a missing
+VPFI token fails on production chains and is reported as not checked on
+testnets. The plan it checks against is
 `script/lib/HandoverPlan.sol`, the same file `Handover.s.sol` reads, so the
 ceremony and the gate cannot drift apart.
 

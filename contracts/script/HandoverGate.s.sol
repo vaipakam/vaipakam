@@ -29,16 +29,22 @@ import {HandoverPlan} from "./lib/HandoverPlan.sol";
  *          artifact's `deployBlock`. AccessControl cannot be enumerated, so
  *          a check that only asks `hasRole` of the addresses it already
  *          knows cannot see a third key someone granted root to. The events
- *          can. Each rebuilt holder is then confirmed with `hasRole`, and
- *          the history must open with the deploy's own first grant, so a
- *          wrong `deployBlock` or a truncated log range fails the gate
- *          instead of reading as "no other holders".
+ *          can. Every (role, account) pair the events ever named is then
+ *          compared with `hasRole` in BOTH directions, and the range must
+ *          contain each contract's CONSTRUCTION — the Diamond's ownership
+ *          set from the zero address, the Timelock's delay set from zero —
+ *          so a late `deployBlock` or a truncated log range fails the gate
+ *          instead of reading as "no other holders". (A first root grant is
+ *          not proof: the handover's own grant to the Timelock is one.)
  *        - The Diamond's ERC-173 owner and every role's admin role.
  *        - The Timelock's delay and permanent floor.
  *        - Every two-step-owned target in `HandoverPlan.read`: owner, no
  *          outstanding transfer (from `pendingOwner()`, or from the
  *          ownership events for CHAINLINK's two-step shape, which hides its
- *          pending owner), and the guardian where the contract has one.
+ *          pending owner), and `guardian()` on every `GuardianPausable`
+ *          one. A contract the chain must carry but the artifact lacks
+ *          fails on a production chain and is reported as not checked on a
+ *          testnet — never read as nothing to check.
  *        - The VPFI CCT administrator on the CCIP `TokenAdminRegistry`.
  *
  *      Until #944 the documented exit gate was `DeployerZeroRolesTest`,
@@ -85,6 +91,7 @@ contract HandoverGate is Script {
     struct LogEntry {
         address emitter;
         bytes32[] topics;
+        bytes data;
         uint256 order;
     }
 
@@ -92,9 +99,13 @@ contract HandoverGate is Script {
     bytes32 internal constant ROLE_REVOKED = keccak256("RoleRevoked(bytes32,address,address)");
     bytes32 internal constant OWNERSHIP_REQUESTED = keccak256("OwnershipTransferRequested(address,address)");
     bytes32 internal constant OWNERSHIP_TRANSFERRED = keccak256("OwnershipTransferred(address,address)");
+    /// @dev OpenZeppelin `TimelockController`; `(0, minDelay)` only in its constructor.
+    bytes32 internal constant MIN_DELAY_CHANGE = keccak256("MinDelayChange(uint256,uint256)");
 
     string[] private _failures;
     string[] private _unchecked;
+    /// @dev The chain class of the current `evaluate`, for `_notCheckable`.
+    bool private _production;
 
     // ── Entry point ─────────────────────────────────────────────────────
 
@@ -108,7 +119,9 @@ contract HandoverGate is Script {
         emitters[1] = inp.timelock;
         uint256 n = 2;
         for (uint256 i; i < inp.targets.length; ++i) {
-            if (inp.targets[i].kind == HandoverPlan.OwnableKind.Chainlink) emitters[n++] = inp.targets[i].addr;
+            if (inp.targets[i].kind == HandoverPlan.OwnableKind.Chainlink && inp.targets[i].addr != address(0)) {
+                emitters[n++] = inp.targets[i].addr;
+            }
         }
         LogEntry[] memory logs = _fetchLogs(emitters, n, fromBlock, head);
         console.log("HandoverGate: read %s role/ownership events, blocks %s..%s", logs.length, fromBlock, head);
@@ -123,9 +136,11 @@ contract HandoverGate is Script {
     // ── The check ───────────────────────────────────────────────────────
 
     /// @notice Every deviation of the live chain from the handover plan.
-    /// @param  logs The Diamond's and the Timelock's role events, and the
-    ///         ownership events of every CHAINLINK-shaped target, in chain
-    ///         order, from the Diamond's deploy block on.
+    /// @param  logs The Diamond's and the Timelock's role events and their
+    ///         construction events (the Diamond's `OwnershipTransferred`, the
+    ///         Timelock's `MinDelayChange`), and the ownership events of every
+    ///         CHAINLINK-shaped target, in chain order, from the Diamond's
+    ///         deploy block on.
     /// @return failures Each deviation, as one line. Empty means the gate passes.
     /// @return notChecked Each authority the gate could NOT check on this
     ///         chain (only ever non-empty off a production chain; on one,
@@ -136,6 +151,7 @@ contract HandoverGate is Script {
     {
         delete _failures;
         delete _unchecked;
+        _production = inp.production;
 
         _checkDiamond(inp, logs);
         _checkTimelock(inp, logs);
@@ -154,11 +170,19 @@ contract HandoverGate is Script {
         }
 
         (bytes32[] memory roles, address[][] memory expected) = _diamondPlan(inp);
+        // Completeness: the range must contain the Diamond's construction,
+        // the only place its owner is set from the zero address (#906 forbids
+        // ownership ever returning to zero). Then no role event can predate
+        // the range, and its first root grant is the deploy's bootstrap.
+        bool born = _diamondConstructed(logs, inp.diamond);
         (bool anchored, address bootstrap) = _historyAnchor(logs, inp.diamond, HandoverPlan.DEFAULT_ADMIN_ROLE);
-        if (!anchored) {
+        anchored = anchored && born;
+        if (!born) {
             _fail(
-                "Diamond role history does not open with the deploy's DEFAULT_ADMIN_ROLE grant - deployBlock is wrong or the log range is incomplete; holder sets below are unproven"
+                "Diamond history in range does not reach its construction (no OwnershipTransferred from the zero address) - deployBlock is late or the log range is incomplete; holder sets below are unproven"
             );
+        } else if (!anchored) {
+            _fail("Diamond role history does not open with a DEFAULT_ADMIN_ROLE grant - holder sets below are unproven");
         } else {
             console.log("  Diamond bootstrap key (first root grant):", bootstrap);
         }
@@ -199,10 +223,11 @@ contract HandoverGate is Script {
         roles[3] = HandoverPlan.EXECUTOR_ROLE;
         expected[3] = _one(inp.executor);
 
-        (bool anchored,) = _historyAnchor(logs, inp.timelock, HandoverPlan.DEFAULT_ADMIN_ROLE);
-        if (!anchored) {
+        // Completeness, as for the Diamond: the constructor is the only place
+        // the delay changes from zero (the floor, checked below, is > 0).
+        if (!_timelockConstructed(logs, inp.timelock)) {
             _fail(
-                "Timelock role history does not open with its self-administration grant - the Timelock predates deployBlock or the log range is incomplete; holder sets below are unproven"
+                "Timelock history in range does not reach its construction (no MinDelayChange from zero) - the Timelock predates deployBlock or the log range is incomplete; holder sets below are unproven"
             );
         }
         _checkHolderSets("Timelock", inp.timelock, logs, roles, expected);
@@ -220,6 +245,12 @@ contract HandoverGate is Script {
     function _checkTargets(Inputs memory inp, LogEntry[] memory logs) internal {
         for (uint256 i; i < inp.targets.length; ++i) {
             HandoverPlan.Target memory t = inp.targets[i];
+            if (t.addr == address(0)) {
+                // HandoverPlan lists a required slot with no address when the
+                // artifact lacks it. Absent is not authority-free.
+                _notCheckable(string.concat(t.label, " is missing from addresses.json, so who owns it is unknown"));
+                continue;
+            }
             (bool ok, bytes memory ret) = t.addr.staticcall(abi.encodeWithSignature("owner()"));
             if (!ok || ret.length < 32) {
                 _fail(string.concat(t.label, ": owner() unreadable at ", vm.toString(t.addr)));
@@ -248,26 +279,38 @@ contract HandoverGate is Script {
                 );
             }
 
-            // The guardian, where the contract has one, is the Pauser Safe.
-            // `VpfiPoolRateGovernor` has none: its ownership is checked above
-            // all the same.
-            (ok, ret) = t.addr.staticcall(abi.encodeWithSignature("guardian()"));
-            if (ok && ret.length >= 32) {
-                address guardian = abi.decode(ret, (address));
-                if (guardian != inp.pauserSafe) {
-                    _fail(string.concat(t.label, ": guardian() is ", vm.toString(guardian), ", not the Pauser Safe"));
+            // Every GuardianPausable contract's guardian is the Pauser Safe,
+            // and an unreadable getter there is a failure, not a skip: the
+            // artifact names the wrong contract or its implementation lost
+            // the fast pause. The rate governor, the CCIP pool and the
+            // canonical token carry no guardian; ownership above covers them.
+            if (t.guardian) {
+                (ok, ret) = t.addr.staticcall(abi.encodeWithSignature("guardian()"));
+                if (!ok || ret.length < 32) {
+                    _fail(string.concat(t.label, ": guardian() unreadable - it must be GuardianPausable"));
+                } else {
+                    address guardian = abi.decode(ret, (address));
+                    if (guardian != inp.pauserSafe) {
+                        _fail(string.concat(t.label, ": guardian() is ", vm.toString(guardian), ", not the Pauser Safe"));
+                    }
                 }
             }
         }
     }
 
     function _checkCct(Inputs memory inp) internal {
-        if (inp.vpfiToken == address(0)) return; // no VPFI on this chain's artifact
+        if (inp.vpfiToken == address(0)) {
+            // Every chain carries VPFI (the token on Base, the mirror
+            // elsewhere); an artifact without it is incomplete, not tokenless.
+            _notCheckable(
+                "VPFI CCT administrator NOT CHECKED: addresses.json records no VPFI token for this chain, so whoever administers its CCIP pool is unknown"
+            );
+            return;
+        }
         if (inp.cctRegistry == address(0)) {
-            string memory what =
-                "VPFI CCT administrator NOT CHECKED: CCIP_TOKEN_ADMIN_REGISTRY is unset, so whoever administers the token's CCIP pool is unknown";
-            if (inp.production) _fail(what);
-            else _unchecked.push(what);
+            _notCheckable(
+                "VPFI CCT administrator NOT CHECKED: CCIP_TOKEN_ADMIN_REGISTRY is unset, so whoever administers the token's CCIP pool is unknown"
+            );
             return;
         }
         (bool ok, bytes memory ret) =
@@ -327,21 +370,25 @@ contract HandoverGate is Script {
         IAccessControlRead ac = IAccessControlRead(emitter);
 
         for (uint256 p; p < np; ++p) {
-            if (!held[p]) continue;
-            (bool known, uint256 r) = _indexOf(roles, pr[p]);
             string memory label = _labelFor(pr[p]);
+            // Every pair the events ever named is compared with the chain in
+            // BOTH directions: a pair whose last event was a revoke but which
+            // still holds the role is a live holder the replay would miss.
+            bool live = ac.hasRole(pr[p], pa[p]);
+            if (live != held[p]) {
+                _fail(
+                    string.concat(
+                        who, " events say ", vm.toString(pa[p]), held[p] ? " holds " : " does not hold ", label,
+                        " but hasRole says ", live ? "yes" : "no", " - the log range is incomplete"
+                    )
+                );
+            }
+            if (!held[p] && !live) continue;
+            (bool known, uint256 r) = _indexOf(roles, pr[p]);
             if (!known) {
                 _fail(string.concat(who, " role ", label, " (not in the plan) is held by ", vm.toString(pa[p])));
             } else if (!_contains(expected[r], pa[p])) {
                 _fail(string.concat(who, " ", label, " is held by ", vm.toString(pa[p]), ", which the plan does not name"));
-            }
-            if (!ac.hasRole(pr[p], pa[p])) {
-                _fail(
-                    string.concat(
-                        who, " events say ", vm.toString(pa[p]), " holds ", label,
-                        " but hasRole says no - the log range is incomplete"
-                    )
-                );
             }
         }
         for (uint256 r; r < roles.length; ++r) {
@@ -408,6 +455,36 @@ contract HandoverGate is Script {
         return (false, address(0));
     }
 
+    /// @dev Whether `logs` contain the Diamond's construction: its ERC-173
+    ///      owner set from the zero address. Only the constructor does that,
+    ///      since ownership can never be transferred to zero (#906).
+    function _diamondConstructed(LogEntry[] memory logs, address diamond) internal pure returns (bool) {
+        for (uint256 i; i < logs.length; ++i) {
+            LogEntry memory l = logs[i];
+            if (
+                l.emitter == diamond && l.topics.length >= 3 && l.topics[0] == OWNERSHIP_TRANSFERRED
+                    && l.topics[1] == bytes32(0)
+            ) return true;
+        }
+        return false;
+    }
+
+    /// @dev Whether `logs` contain the Timelock's construction:
+    ///      `MinDelayChange(0, minDelay)`, emitted by OpenZeppelin's
+    ///      constructor. A later `updateDelay` reports the previous delay,
+    ///      which is never zero once the floor is (checked separately).
+    function _timelockConstructed(LogEntry[] memory logs, address timelock) internal pure returns (bool) {
+        for (uint256 i; i < logs.length; ++i) {
+            LogEntry memory l = logs[i];
+            if (l.emitter != timelock || l.topics.length == 0 || l.topics[0] != MIN_DELAY_CHANGE) continue;
+            if (l.data.length >= 64) {
+                (uint256 oldDuration,) = abi.decode(l.data, (uint256, uint256));
+                if (oldDuration == 0) return true;
+            }
+        }
+        return false;
+    }
+
     /// @dev CHAINLINK's two-step ownership keeps its pending owner private,
     ///      so it is read from the events (GovernanceRunbook step 6): the
     ///      LAST `OwnershipTransferRequested` is settled when it names zero
@@ -472,9 +549,9 @@ contract HandoverGate is Script {
         inp.production = Deployments.requiresProductionGovernance();
     }
 
-    /// @dev Role events for the first two emitters (Diamond, Timelock) and
-    ///      ownership events for the rest, `chunk` blocks per call, merged
-    ///      into chain order.
+    /// @dev The Diamond's and the Timelock's role and construction events and
+    ///      every CHAINLINK target's ownership events, `chunk` blocks per
+    ///      call, merged into chain order.
     function _fetchLogs(address[] memory emitters, uint256 count, uint256 fromBlock, uint256 head)
         internal
         returns (LogEntry[] memory merged)
@@ -483,10 +560,15 @@ contract HandoverGate is Script {
         require(chunk > 0, "HANDOVER_GATE_LOG_CHUNK must be > 0");
         LogEntry[] memory acc = new LogEntry[](0);
         for (uint256 e; e < count; ++e) {
-            bytes32[2] memory sigs = e < 2
-                ? [ROLE_GRANTED, ROLE_REVOKED]
-                : [OWNERSHIP_REQUESTED, OWNERSHIP_TRANSFERRED];
-            for (uint256 s; s < 2; ++s) {
+            // Diamond: role events + its ownership (the construction anchor).
+            // Timelock: role events + MinDelayChange (its anchor). A CHAINLINK
+            // target: its two ownership events.
+            bytes32[3] memory sigs;
+            if (e == 0) sigs = [ROLE_GRANTED, ROLE_REVOKED, OWNERSHIP_TRANSFERRED];
+            else if (e == 1) sigs = [ROLE_GRANTED, ROLE_REVOKED, MIN_DELAY_CHANGE];
+            else sigs = [OWNERSHIP_REQUESTED, OWNERSHIP_TRANSFERRED, bytes32(0)];
+            for (uint256 s; s < 3; ++s) {
+                if (sigs[s] == bytes32(0)) continue;
                 bytes32[] memory topics = new bytes32[](1);
                 topics[0] = sigs[s];
                 for (uint256 b = fromBlock; b <= head; b += chunk) {
@@ -508,6 +590,7 @@ contract HandoverGate is Script {
             out[acc.length + i] = LogEntry({
                 emitter: got[i].emitter,
                 topics: got[i].topics,
+                data: got[i].data,
                 order: (uint256(got[i].blockNumber) << 128) | got[i].logIndex
             });
         }
@@ -557,6 +640,13 @@ contract HandoverGate is Script {
 
     function _fail(string memory what) internal {
         _failures.push(what);
+    }
+
+    /// @dev Something the gate cannot check on this chain: a failure on a
+    ///      production chain, reported as not checked on a testnet.
+    function _notCheckable(string memory what) internal {
+        if (_production) _fail(what);
+        else _unchecked.push(what);
     }
 
     function _one(address a) internal pure returns (address[] memory r) {

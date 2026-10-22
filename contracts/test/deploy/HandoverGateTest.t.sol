@@ -189,7 +189,114 @@ contract HandoverGateTest is Test {
             ++cut;
         }
         (string[] memory failures,) = gate.evaluate(inp, _toEntries(raw, cut + 1));
-        _assertContains(failures, "Diamond role history does not open with the deploy's DEFAULT_ADMIN_ROLE grant");
+        _assertContains(failures, "Diamond history in range does not reach its construction");
+    }
+
+    /// @notice A `deployBlock` set just before the handover: the first
+    ///         Diamond event left is the handover's OWN root grant to the
+    ///         Timelock, which looks like an anchor and is not. A root holder
+    ///         granted earlier would be invisible, so the gate must refuse.
+    function test_LateDeployBlock_Fails() public {
+        Twist memory t = _none();
+        t.extraRootHolder = true;
+        HandoverGate.Inputs memory inp = _build(t);
+        Vm.Log[] memory raw = vm.getRecordedLogs();
+        bytes32 granted = keccak256("RoleGranted(bytes32,address,address)");
+        bytes32 toTimelock = bytes32(uint256(uint160(address(timelock))));
+        uint256 cut;
+        while (
+            raw[cut].emitter != address(diamond) || raw[cut].topics[0] != granted || raw[cut].topics[1] != bytes32(0)
+                || raw[cut].topics[2] != toTimelock
+        ) {
+            ++cut;
+        }
+        (string[] memory failures,) = gate.evaluate(inp, _toEntries(raw, cut));
+        // Nothing in this range names the stranger, and hasRole is asked
+        // only of named accounts: the construction anchor is the one thing
+        // between this range and a pass.
+        _assertContains(failures, "Diamond history in range does not reach its construction");
+    }
+
+    /// @notice The replay ends on a revoke but the chain says the account
+    ///         still holds the role: a live holder the replay alone would
+    ///         drop. Every observed pair is compared in both directions.
+    function test_RevokedInEventsButStillHeld_Fails() public {
+        HandoverGate.Inputs memory inp = _build(_none());
+        HandoverGate.LogEntry[] memory got = _logs();
+        HandoverGate.LogEntry[] memory logs = new HandoverGate.LogEntry[](got.length + 1);
+        for (uint256 i; i < got.length; ++i) {
+            logs[i] = got[i];
+        }
+        bytes32[] memory topics = new bytes32[](4);
+        topics[0] = keccak256("RoleRevoked(bytes32,address,address)");
+        topics[1] = LibAccessControl.KEEPER_ROLE;
+        topics[2] = bytes32(uint256(uint160(keeperBot)));
+        topics[3] = bytes32(uint256(uint160(address(timelock))));
+        logs[got.length] =
+            HandoverGate.LogEntry({emitter: address(diamond), topics: topics, data: "", order: type(uint256).max});
+        (string[] memory failures,) = gate.evaluate(inp, logs);
+        _assertMentions(failures, "does not hold KEEPER_ROLE but hasRole says yes", keeperBot);
+    }
+
+    /// @notice A GuardianPausable target whose `guardian()` cannot be read
+    ///         (the wrong contract, or an implementation without the fast
+    ///         pause) fails rather than being skipped.
+    function test_UnreadableGuardian_Fails() public {
+        HandoverGate.Inputs memory inp = _build(_none());
+        inp.targets[2].guardian = true; // the rate governor has no guardian()
+        (string[] memory failures,) = gate.evaluate(inp, _logs());
+        _assertContains(failures, "vpfiPoolRateGovernor: guardian() unreadable");
+    }
+
+    /// @notice A contract the chain must carry, missing from the artifact:
+    ///         not checked on a testnet, a failure on production. Never read
+    ///         as nothing to hand over.
+    function test_MissingRequiredTarget_UncheckedThenFailsOnProduction() public {
+        HandoverGate.Inputs memory inp = _build(_none());
+        HandoverGate.LogEntry[] memory logs = _logs();
+        HandoverPlan.Target[] memory t = new HandoverPlan.Target[](inp.targets.length + 1);
+        for (uint256 i; i < inp.targets.length; ++i) {
+            t[i] = inp.targets[i];
+        }
+        t[inp.targets.length] =
+            HandoverPlan.Target("vpfiReturnSender", address(0), HandoverPlan.OwnableKind.OpenZeppelin, true, true);
+        inp.targets = t;
+
+        (string[] memory failures, string[] memory notChecked) = gate.evaluate(inp, logs);
+        _assertNoFailures(failures);
+        _assertContains(notChecked, "vpfiReturnSender is missing from addresses.json");
+
+        inp.production = true;
+        (failures,) = gate.evaluate(inp, logs);
+        _assertContains(failures, "vpfiReturnSender is missing from addresses.json");
+    }
+
+    function test_MissingVpfiToken_UncheckedThenFailsOnProduction() public {
+        HandoverGate.Inputs memory inp = _build(_none());
+        HandoverGate.LogEntry[] memory logs = _logs();
+        inp.vpfiToken = address(0);
+        (string[] memory failures, string[] memory notChecked) = gate.evaluate(inp, logs);
+        _assertNoFailures(failures);
+        _assertContains(notChecked, "records no VPFI token");
+
+        inp.production = true;
+        (failures,) = gate.evaluate(inp, logs);
+        _assertContains(failures, "records no VPFI token");
+    }
+
+    /// @notice The plan lists every contract a chain role must carry, even
+    ///         when the artifact lacks it, so an incomplete artifact cannot
+    ///         shrink the handover or the gate.
+    function test_PlanListsRequiredSlotsOnAnEmptyArtifact() public {
+        vm.chainId(421614); // a mirror
+        HandoverPlan.Target[] memory m = HandoverPlan.read("{}");
+        assertEq(m.length, 7, "mirror: 4 shared + mirror token, reward receiver, return sender");
+        for (uint256 i; i < m.length; ++i) {
+            assertTrue(m[i].required && m[i].addr == address(0), "every listed slot is a required gap");
+        }
+        vm.chainId(84532); // canonical
+        HandoverPlan.Target[] memory c = HandoverPlan.read("{}");
+        assertEq(c.length, 7, "canonical: 4 shared + buyback receiver, return receiver, token");
     }
 
     /// @notice Unset CCIP registry: the CCT administrator is reported as not
@@ -308,10 +415,12 @@ contract HandoverGateTest is Test {
 
     function _targets() internal view returns (HandoverPlan.Target[] memory t) {
         t = new HandoverPlan.Target[](4);
-        t[0] = HandoverPlan.Target("ccipMessenger", address(messenger), HandoverPlan.OwnableKind.OpenZeppelin);
-        t[1] = HandoverPlan.Target("vpfiTokenPool", address(tokenPool), HandoverPlan.OwnableKind.Chainlink);
-        t[2] = HandoverPlan.Target("vpfiPoolRateGovernor", address(rateGovernor), HandoverPlan.OwnableKind.OpenZeppelin);
-        t[3] = HandoverPlan.Target("vpfiToken", address(vpfiToken), HandoverPlan.OwnableKind.OpenZeppelin);
+        t[0] = HandoverPlan.Target("ccipMessenger", address(messenger), HandoverPlan.OwnableKind.OpenZeppelin, true, true);
+        t[1] = HandoverPlan.Target("vpfiTokenPool", address(tokenPool), HandoverPlan.OwnableKind.Chainlink, true, false);
+        t[2] = HandoverPlan.Target(
+            "vpfiPoolRateGovernor", address(rateGovernor), HandoverPlan.OwnableKind.OpenZeppelin, true, false
+        );
+        t[3] = HandoverPlan.Target("vpfiToken", address(vpfiToken), HandoverPlan.OwnableKind.OpenZeppelin, true, false);
     }
 
     function _accept(address target, bytes memory data) internal {
@@ -335,7 +444,8 @@ contract HandoverGateTest is Test {
     {
         out = new HandoverGate.LogEntry[](raw.length - drop);
         for (uint256 i = drop; i < raw.length; ++i) {
-            out[i - drop] = HandoverGate.LogEntry({emitter: raw[i].emitter, topics: raw[i].topics, order: i});
+            out[i - drop] =
+                HandoverGate.LogEntry({emitter: raw[i].emitter, topics: raw[i].topics, data: raw[i].data, order: i});
         }
     }
 

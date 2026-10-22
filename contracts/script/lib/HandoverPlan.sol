@@ -18,8 +18,9 @@ import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
  *
  *      Two-step targets are read from the chain's `addresses.json`. Per the
  *      omit-keys policy, canonical and mirror keys are mutually exclusive on
- *      one chain; a key absent from the artifact is a contract not deployed
- *      here and is left out of the list.
+ *      one chain. A key the chain's role does not call for is left out when
+ *      absent; a key it DOES call for stays in the list with a zero address,
+ *      so an incomplete artifact is a finding rather than a smaller plan.
  */
 library HandoverPlan {
     address private constant VM_ADDR = address(uint160(uint256(keccak256("hevm cheat code"))));
@@ -85,10 +86,19 @@ library HandoverPlan {
         Chainlink
     }
 
+    /// @notice One two-step-owned contract in the plan.
+    /// @dev `addr` is zero only for a `required` slot the artifact does not
+    ///      record. A missing required contract is never read as "nothing to
+    ///      hand over": the handover refuses it on a production chain and the
+    ///      gate fails it there (reports it as not checked on a testnet).
+    ///      `guardian` marks a `GuardianPausable` contract, whose
+    ///      `guardian()` must be readable and must be the Pauser Safe.
     struct Target {
         string label;
         address addr;
         OwnableKind kind;
+        bool required;
+        bool guardian;
     }
 
     /// @notice Whether the current chain carries canonical VPFI (Base or
@@ -104,33 +114,63 @@ library HandoverPlan {
         return isCanonical() ? readOptional(json, "vpfiToken") : readOptional(json, "vpfiMirror");
     }
 
-    /// @notice Every two-step-owned contract recorded in `json`.
+    /// @notice Every two-step-owned contract the plan covers on this chain.
+    /// @dev Which contracts a chain MUST carry follows `DeployCrosschain`:
+    ///      the messenger, the VPFI pool, its rate governor and the reward
+    ///      messenger everywhere; on canonical Base the token, the buyback
+    ///      receiver and the vpfi-return receiver; on a mirror the mirror
+    ///      token, the reward remittance receiver and the vpfi-return sender.
+    ///      Those are listed even when the artifact lacks them (zero
+    ///      address). A contract recorded for the OTHER chain role is still
+    ///      listed, not required, so it is handed over rather than ignored.
+    ///      The guardian flags follow which contracts inherit
+    ///      `GuardianPausable`: the CCIP pool, the rate governor and the
+    ///      canonical token do not.
     function read(string memory json) internal view returns (Target[] memory targets) {
+        bool canonical = isCanonical();
         Target[] memory all = new Target[](10);
         uint256 n;
-        n = _push(all, n, "ccipMessenger", readOptional(json, "ccipMessenger"), OwnableKind.OpenZeppelin);
-        n = _push(all, n, "vpfiTokenPool", readOptional(json, "vpfiTokenPool"), OwnableKind.Chainlink);
-        n = _push(all, n, "vpfiPoolRateGovernor", readOptional(json, "vpfiPoolRateGovernor"), OwnableKind.OpenZeppelin);
+        n = _slot(all, n, "ccipMessenger", readOptional(json, "ccipMessenger"), OwnableKind.OpenZeppelin, true, true);
+        n = _slot(all, n, "vpfiTokenPool", readOptional(json, "vpfiTokenPool"), OwnableKind.Chainlink, true, false);
+        n = _slot(
+            all, n, "vpfiPoolRateGovernor", readOptional(json, "vpfiPoolRateGovernor"), OwnableKind.OpenZeppelin, true, false
+        );
         // Pre-#272 artifacts stored the reward messenger under the
         // LayerZero-era key `rewardOApp`; without the fallback the messenger
         // would drop out of both the handover and the gate on such an
         // artifact.
         address rewardMessenger = readOptional(json, "rewardMessenger");
         if (rewardMessenger == address(0)) rewardMessenger = readOptional(json, "rewardOApp");
-        n = _push(all, n, "rewardMessenger", rewardMessenger, OwnableKind.OpenZeppelin);
-        n = _push(all, n, "vpfiMirror", readOptional(json, "vpfiMirror"), OwnableKind.OpenZeppelin);
-        n = _push(
-            all, n, "buybackRemittanceReceiver", readOptional(json, "buybackRemittanceReceiver"), OwnableKind.OpenZeppelin
+        n = _slot(all, n, "rewardMessenger", rewardMessenger, OwnableKind.OpenZeppelin, true, true);
+        n = _slot(all, n, "vpfiMirror", readOptional(json, "vpfiMirror"), OwnableKind.OpenZeppelin, !canonical, true);
+        n = _slot(
+            all,
+            n,
+            "buybackRemittanceReceiver",
+            readOptional(json, "buybackRemittanceReceiver"),
+            OwnableKind.OpenZeppelin,
+            canonical,
+            true
         );
-        n = _push(
-            all, n, "rewardRemittanceReceiver", readOptional(json, "rewardRemittanceReceiver"), OwnableKind.OpenZeppelin
+        n = _slot(
+            all,
+            n,
+            "rewardRemittanceReceiver",
+            readOptional(json, "rewardRemittanceReceiver"),
+            OwnableKind.OpenZeppelin,
+            !canonical,
+            true
         );
-        n = _push(all, n, "vpfiReturnSender", readOptional(json, "vpfiReturnSender"), OwnableKind.OpenZeppelin);
-        n = _push(all, n, "vpfiReturnReceiver", readOptional(json, "vpfiReturnReceiver"), OwnableKind.OpenZeppelin);
+        n = _slot(
+            all, n, "vpfiReturnSender", readOptional(json, "vpfiReturnSender"), OwnableKind.OpenZeppelin, !canonical, true
+        );
+        n = _slot(
+            all, n, "vpfiReturnReceiver", readOptional(json, "vpfiReturnReceiver"), OwnableKind.OpenZeppelin, canonical, true
+        );
         // Canonical VPFI only: on a mirror the local ERC-20 IS `vpfiMirror`,
         // already listed above.
-        if (isCanonical()) {
-            n = _push(all, n, "vpfiToken", readOptional(json, "vpfiToken"), OwnableKind.OpenZeppelin);
+        if (canonical) {
+            n = _slot(all, n, "vpfiToken", readOptional(json, "vpfiToken"), OwnableKind.OpenZeppelin, true, false);
         }
         targets = new Target[](n);
         for (uint256 i; i < n; ++i) {
@@ -147,13 +187,17 @@ library HandoverPlan {
         }
     }
 
-    function _push(Target[] memory all, uint256 n, string memory label, address addr, OwnableKind kind)
-        private
-        pure
-        returns (uint256)
-    {
-        if (addr == address(0)) return n;
-        all[n] = Target({label: label, addr: addr, kind: kind});
+    function _slot(
+        Target[] memory all,
+        uint256 n,
+        string memory label,
+        address addr,
+        OwnableKind kind,
+        bool required,
+        bool guardian
+    ) private pure returns (uint256) {
+        if (addr == address(0) && !required) return n;
+        all[n] = Target({label: label, addr: addr, kind: kind, required: required, guardian: guardian});
         return n + 1;
     }
 }
