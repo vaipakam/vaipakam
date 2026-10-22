@@ -1,4 +1,4 @@
-## Thread — The rooted wire is the only reward-budget wire (PR #<n>)
+## Thread — The rooted wire is the only reward-budget wire (PR #2669)
 
 A mirror's remittance receiver now refuses every reward-budget payload older
 than the rooted (d6) wire: the bare day list, the list with a receipt, and the
