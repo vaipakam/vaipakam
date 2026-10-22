@@ -560,9 +560,16 @@ contract GovernorDayPoolTest is SetupTest {
         // Base local: 350 on day 4. ARB: 350 accepted for day 4 via its
         // day-close report (cumulative backs it).
         _mut().setRecycledCreditedByDayRaw(4, 350 ether);
+        messenger.deliverChainReport(CHAIN_BASE, 4, 10e18, 5e18);
         messenger.deliverChainReportRecycled(
             CHAIN_ARB, 4, 1e18, 0, 350 ether, 350 ether
         );
+        // #2618 — a mirror's recycled credit for a day is attributed only
+        // when that day FINALIZES with the mirror counted (finalization is
+        // the one writer of the day's mirror credit), so day 4 is finalized
+        // before day 5 averages over it.
+        _mut().setChainDayCommitmentCompleteRaw(4, CHAIN_ARB, true);
+        _agg().finalizeDay(4);
 
         _finalize(5);
 
