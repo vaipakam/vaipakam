@@ -13,7 +13,6 @@
 
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { chunkD1InList, maxD1InListWidth } from '@vaipakam/lib/d1Binds';
-import { encodeAbiParameters, keccak256, type Hex } from 'viem';
 import type { KeeperD1 } from './env';
 import { assertGuardedWriteLanded, epochWriteGuard } from './epochFence';
 
@@ -701,17 +700,13 @@ export async function markReconciledDayConsumed(
 
 // ─── #1944 / transport epochs — the delivery-proof pass's discovery read ─────
 
-/** One budget delivery a mirror recorded, joined to its day-list event. */
+/** One budget delivery a mirror recorded, joined to its delivery event. Every
+ *  budget delivery is rooted (d6): its list is rebuilt from Base. */
 export interface BudgetDeliveryRow {
   /** The packet's ingress stamp (`IngressPacketRecorded.packetHash`). */
   packetHash: string;
-  /** Base's remittance id (0 for a manual / legacy delivery). */
+  /** Base's remittance id. */
   remitId: string;
-  /** The FLAT day list from `RewardBudgetReceived` (decimal strings), or null
-   *  for a rooted (d6) delivery, whose list is rebuilt from Base. */
-  flatDayIds: string[] | null;
-  /** True for a rooted (d6) delivery (`RewardBudgetRootReceived`). */
-  rooted: boolean;
   block_at: number;
   /** The packet's block, for the pass's done frontier (#2497 r4). */
   block: number;
@@ -722,19 +717,14 @@ const PACKET_KIND_BUDGET = 1;
 
 /**
  * EVERY budget delivery recorded on the ACTIVE Diamond of `chainId`, oldest
- * first, each packet paired with the event that carries its day list — the
- * flat list itself, or the rooted wire's marker.
+ * first, each packet paired with the rooted delivery event that carries its
+ * commitment.
  *
  * PAIRING IS VERIFIED, never inferred (#2497 r3, root fix). The packet's own
- * stamp event names it AND its commitment: `IngressPacketDayListRecorded
- * (packetHash, dayListHash)` for a flat list, `IngressPacketDayListRooted
- * (packetHash, dayListRoot)` for a rooted one. A delivery event in the same
- * transaction belongs to the packet only when it carries THAT commitment: its
- * `dayListRoot` equals the stamped root, or `keccak256(abi.encode(dayIds))`
- * equals the stamped hash — the contract's own formula
- * (`LibRewardCustody.stampPacketDayList`). Two zero-id deliveries in one
- * transaction can no longer swap lists, and a packet with no verified match is
- * left out (a pre-3a packet with no commitment is not provable anyway).
+ * stamp event names it AND its commitment: `IngressPacketDayListRooted
+ * (packetHash, dayListRoot)`. A delivery event in the same transaction belongs
+ * to the packet only when its `dayListRoot` equals the stamped root, and a
+ * packet with no verified match is left out.
  *
  * No age and no count bound on what is WORK (Codex #2489 r1): a delivery is
  * work until the chain shows it whole. The READ is bounded instead (#2497 r8):
@@ -769,8 +759,7 @@ async function budgetEvents(db: D1Database, chainId: number, from: number, throu
       `SELECT kind, tx_hash, args_json, block_at, block_number
          FROM activity_events
         WHERE chain_id = ?1 AND block_number >= ?2 AND block_number <= ?3
-          AND kind IN ('IngressPacketRecorded', 'IngressPacketDayListRecorded', 'IngressPacketDayListRooted',
-                       'RewardBudgetReceived', 'RewardBudgetRootReceived')
+          AND kind IN ('IngressPacketRecorded', 'IngressPacketDayListRooted', 'RewardBudgetRootReceived')
         ORDER BY block_number ASC, log_index ASC
         LIMIT ?4`,
     )
@@ -796,13 +785,11 @@ function pairBudgetDeliveries(eventRows: readonly BudgetEventRow[]): BudgetDeliv
     }
   }
   const lower = (v: unknown) => (typeof v === 'string' ? v.toLowerCase() : '');
-  const flatStamp = new Map<string, string>(); // packetHash -> dayListHash
   const rootStamp = new Map<string, string>(); // packetHash -> dayListRoot
   const deliveriesByTx = new Map<string, Ev[]>();
   for (const e of evs) {
-    if (e.kind === 'IngressPacketDayListRecorded') flatStamp.set(lower(e.args.packetHash), lower(e.args.dayListHash));
-    else if (e.kind === 'IngressPacketDayListRooted') rootStamp.set(lower(e.args.packetHash), lower(e.args.dayListRoot));
-    else if (e.kind === 'RewardBudgetReceived' || e.kind === 'RewardBudgetRootReceived') {
+    if (e.kind === 'IngressPacketDayListRooted') rootStamp.set(lower(e.args.packetHash), lower(e.args.dayListRoot));
+    else if (e.kind === 'RewardBudgetRootReceived') {
       const list = deliveriesByTx.get(e.tx) ?? [];
       list.push(e);
       deliveriesByTx.set(e.tx, list);
@@ -813,46 +800,18 @@ function pairBudgetDeliveries(eventRows: readonly BudgetEventRow[]): BudgetDeliv
     if (p.kind !== 'IngressPacketRecorded' || Number(p.args.kind) !== PACKET_KIND_BUDGET) continue;
     const packetHash = lower(p.args.packetHash);
     if (!/^0x[0-9a-f]{64}$/.test(packetHash)) continue;
-    const candidates = deliveriesByTx.get(p.tx) ?? [];
     const root = rootStamp.get(packetHash);
-    const hash = flatStamp.get(packetHash);
-    let matched: { flat: string[] | null; rooted: boolean } | null = null;
-    if (root !== undefined) {
-      if (candidates.some((d) => d.kind === 'RewardBudgetRootReceived' && lower(d.args.dayListRoot) === root)) {
-        matched = { flat: null, rooted: true };
-      }
-    } else if (hash !== undefined) {
-      for (const d of candidates) {
-        if (d.kind !== 'RewardBudgetReceived' || !Array.isArray(d.args.dayIds)) continue;
-        const ids = (d.args.dayIds as unknown[]).map((x) => String(x));
-        let ok = false;
-        try {
-          ok = flatDayListHash(ids) === hash;
-        } catch {
-          ok = false;
-        }
-        if (ok) {
-          matched = { flat: ids, rooted: false };
-          break;
-        }
-      }
-    }
-    if (matched === null) continue;
+    if (root === undefined) continue;
+    const candidates = deliveriesByTx.get(p.tx) ?? [];
+    if (!candidates.some((d) => lower(d.args.dayListRoot) === root)) continue;
     out.push({
       packetHash: p.args.packetHash as string,
       remitId: String(p.args.remitId ?? '0'),
-      flatDayIds: matched.flat,
-      rooted: matched.rooted,
       block_at: p.block_at,
       block: p.block,
     });
   }
   return out;
-}
-
-/** The contract's flat day-list commitment: `keccak256(abi.encode(uint256[]))`. */
-export function flatDayListHash(dayIds: readonly string[]): string {
-  return keccak256(encodeAbiParameters([{ type: 'uint256[]' }], [dayIds.map((d) => BigInt(d))])).toLowerCase() as Hex;
 }
 
 /** EVERY remit id the canonical chain RELEASED, oldest first, from the
