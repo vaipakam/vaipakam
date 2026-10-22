@@ -485,33 +485,32 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
    *  returns: a withdrawal landing between that read and the pass's writes. */
   function afterHolderRead(h: Harness, fn: () => void): Pick<Env, 'DB' | 'KEEPER_DB'> {
     const shared = h.shared.d1 as {
-      prepare(sql: string): { bind(...a: unknown[]): { all(): Promise<unknown> } };
+      prepare(sql: string): { bind(...a: unknown[]): object };
       batch(s: unknown[]): Promise<unknown>;
     };
+    const holderReads = new WeakSet<object>();
     let fired = false;
     const DB = {
       prepare(sql: string) {
         const stmt = shared.prepare(sql);
-        if (!/FROM loans/.test(sql) || !/orphan_seq/.test(sql)) return stmt;
+        if (!/JOIN loans/.test(sql) || !/orphan_seq/.test(sql)) return stmt;
         return {
           ...stmt,
           bind: (...a: unknown[]) => {
             const bound = stmt.bind(...a);
-            return {
-              ...bound,
-              all: async () => {
-                const out = await bound.all();
-                if (!fired) {
-                  fired = true;
-                  fn();
-                }
-                return out;
-              },
-            };
+            holderReads.add(bound);
+            return bound;
           },
         };
       },
-      batch: (s: unknown[]) => shared.batch(s),
+      batch: async (stmts: object[]) => {
+        const out = await shared.batch(stmts);
+        if (!fired && stmts.some((x) => holderReads.has(x))) {
+          fired = true;
+          fn();
+        }
+        return out;
+      },
     };
     return { ...h.dbs, DB } as unknown as Pick<Env, 'DB' | 'KEEPER_DB'>;
   }
@@ -545,6 +544,55 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
     // the older one came before it, the newer one names another Diamond.
     await recordHfBandNotifications(dbs, CHAIN, DIAMOND, [{ id: 51n, hf: hf(1_400) }], NOW);
     expect(notifRows(h).map((r) => [r.loan_id, r.kind])).toEqual([[51, 'hf_warn']]);
+  });
+
+  /** Both bindings, recording the most binds any one statement was given. */
+  function countingBinds(h: Harness): { dbs: Pick<Env, 'DB' | 'KEEPER_DB'>; max: () => number } {
+    let max = 0;
+    const wrap = (d1: unknown) => {
+      const inner = d1 as { prepare(sql: string): { bind(...a: unknown[]): unknown }; batch(s: unknown[]): unknown };
+      return {
+        prepare(sql: string) {
+          const stmt = inner.prepare(sql);
+          return {
+            ...stmt,
+            bind: (...a: unknown[]) => {
+              max = Math.max(max, a.length);
+              return stmt.bind(...a);
+            },
+          };
+        },
+        batch: (st: unknown[]) => inner.batch(st),
+      };
+    };
+    return {
+      dbs: { DB: wrap(h.shared.d1), KEEPER_DB: wrap(h.keeper.d1) } as unknown as Pick<Env, 'DB' | 'KEEPER_DB'>,
+      max: () => max,
+    };
+  }
+
+  it("binds a fixed number of parameters per statement however wide the pass is (Codex #2655 r5)", async () => {
+    const h = harness();
+    // Wider than one JSON chunk, past where the per-row binds of the old
+    // inserts (about 358 rows) and the prune's two IN-list families (about
+    // 2,463 markers) would have overflowed D1's invocation budget.
+    const N = 2_600;
+    const readings = [];
+    for (let id = 1; id <= N; id++) {
+      seedLoan(h, id);
+      readings.push({ id: BigInt(id), hf: hf(1_400) });
+    }
+    withdraw(h, 7, NOW - 600);
+    seedLoan(h, 7);
+    const c = countingBinds(h);
+    await recordHfBandNotifications(c.dbs, CHAIN, DIAMOND, readings, NOW);
+    expect(notifRows(h)).toHaveLength(N);
+    expect(stateRows(h)).toHaveLength(N);
+    // The next pass prunes all of them back: every loan has ended.
+    h.shared.db.prepare(`UPDATE loans SET status = 'repaid' WHERE chain_id = ?`).run(CHAIN);
+    await recordHfBandNotifications(c.dbs, CHAIN, DIAMOND, [], NOW + 60);
+    expect(stateRows(h)).toEqual([]);
+    expect(c.max()).toBeLessThanOrEqual(10);
   });
 
   it('matches the Diamond whatever case the caller spells it in (#2638)', async () => {

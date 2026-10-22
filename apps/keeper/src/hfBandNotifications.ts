@@ -59,7 +59,6 @@
  * day-bucket dedup key absorbs the repeat.
  */
 
-import { chunkD1InList } from '@vaipakam/lib/d1Binds';
 import type { Env } from './env';
 import { assertEpochsHold, epochWriteGuard } from './epochFence';
 
@@ -111,17 +110,33 @@ export function classifyBand(hfMilli: number): HfBand {
   return 'healthy';
 }
 
-// The IN()-list width this file used to carry as a local `const IN_CHUNK = 90`
-// is gone (#2234). Three files had independently arrived at 90, each
-// re-deriving D1's 100-parameter cap in its own comment, and two other call
-// sites had never chunked at all — which is how `getRemitAckAttempts` came to
-// pass up to 200 binds. `chunkD1InList` subtracts the statement's own fixed
-// binds from the cap and hands back the complete bind array per chunk, so
-// there is no width to keep in step with a `WHERE` clause here.
-/** Notification INSERT chunk — 9 binds per row, 500 × 9 = 4500 stays
- *  under D1's ~5000-binding invocation cap (same bound the indexer's
- *  insertNotificationRows uses). */
-const INSERT_CHUNK = 500;
+/**
+ * Every statement in this module that takes a list takes it as ONE bound JSON
+ * parameter, read with `json_each`, the shape the indexer's
+ * `insertNotificationRows` uses (#2479). A statement's bind count is then fixed
+ * by its text, whatever the list's length, so neither D1's 100-parameter cap
+ * per statement (`@vaipakam/lib/d1Binds`) nor its per-invocation bind budget
+ * can be reached by a busy pass, and a guard added to a statement later cannot
+ * push it over either (Codex #2655 r5: the per-row binds the fences added had
+ * done exactly that, at about 358 rows in one batch, and the prune's two
+ * IN-list families at about 2,463 markers). A failure there would have been a
+ * stall, not a skip: the pass fails open, commits nothing, and meets the same
+ * list on every later tick.
+ *
+ * The chunk bounds the size of that one parameter, not a bind count: a few
+ * dozen bytes an id or row, well inside D1's 2 MB value ceiling. All chunks of
+ * a step go in one `batch()`, so a step is one subrequest.
+ */
+const JSON_LIST_CHUNK = 500;
+
+/** `items` as JSON arrays of at most `JSON_LIST_CHUNK` entries each. */
+function jsonChunks(items: readonly unknown[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < items.length; i += JSON_LIST_CHUNK) {
+    out.push(JSON.stringify(items.slice(i, i + JSON_LIST_CHUNK)));
+  }
+  return out;
+}
 
 export interface HfReading {
   id: bigint;
@@ -243,19 +258,23 @@ export async function recordHfBandNotifications(
     // the edge (Codex #1300 r2): a borrower transfer inside the SAME
     // band must still notify the new holder.
     const prev = new Map<number, { band: HfBand; recipient: string }>();
-    for (const c of chunkD1InList(
-      observed.map((o) => o.loanId),
-      { before: [chainId] },
-    )) {
-      const res = await keeper
-        .prepare(
-          `SELECT loan_id, last_band, last_recipient FROM hf_band_state
-            WHERE chain_id = ? AND loan_id IN (${c.placeholders})`,
-        )
-        .bind(...c.binds)
-        .all<{ loan_id: number; last_band: HfBand; last_recipient: string }>();
-      for (const row of res.results ?? []) {
-        prev.set(row.loan_id, { band: row.last_band, recipient: row.last_recipient });
+    const prevChunks = jsonChunks(observed.map((o) => o.loanId));
+    if (prevChunks.length > 0) {
+      const parts = await keeper.batch<{ loan_id: number; last_band: HfBand; last_recipient: string }>(
+        prevChunks.map((ids) =>
+          keeper
+            .prepare(
+              `SELECT s.loan_id, s.last_band, s.last_recipient
+                 FROM json_each(?) j
+                 JOIN hf_band_state s ON s.chain_id = ? AND s.loan_id = j.value`,
+            )
+            .bind(ids, chainId),
+        ),
+      );
+      for (const part of parts) {
+        for (const row of part.results ?? []) {
+          prev.set(row.loan_id, { band: row.last_band, recipient: row.last_recipient });
+        }
       }
     }
 
@@ -278,28 +297,31 @@ export async function recordHfBandNotifications(
     // the record's own AUTOINCREMENT ids, never this machine's clock against
     // the indexer's (Codex #2655 r1). See `pruneTerminalBandState`.
     const holderByLoan = new Map<number, { recipient: string; orphanSeq: number }>();
-    for (const c of chunkD1InList(
-      inBand.map((o) => o.loanId),
-      { before: [chainId] },
-    )) {
-      const res = await db
-        .prepare(
-          `SELECT loan_id, borrower, borrower_current_owner,
-                  (SELECT COALESCE(MAX(id), 0) FROM loan_orphans) AS orphan_seq
-             FROM loans
-            WHERE chain_id = ? AND loan_id IN (${c.placeholders})`,
-        )
-        .bind(...c.binds)
-        .all<{
-          loan_id: number;
-          borrower: string | null;
-          borrower_current_owner: string | null;
-          orphan_seq: number;
-        }>();
-      for (const row of res.results ?? []) {
-        const who = (row.borrower_current_owner ?? row.borrower ?? '').toLowerCase();
-        if (who && who !== ZERO_ADDR) {
-          holderByLoan.set(row.loan_id, { recipient: who, orphanSeq: Number(row.orphan_seq ?? 0) });
+    const holderChunks = jsonChunks(inBand.map((o) => o.loanId));
+    if (holderChunks.length > 0) {
+      const parts = await db.batch<{
+        loan_id: number;
+        borrower: string | null;
+        borrower_current_owner: string | null;
+        orphan_seq: number;
+      }>(
+        holderChunks.map((ids) =>
+          db
+            .prepare(
+              `SELECT l.loan_id, l.borrower, l.borrower_current_owner,
+                      (SELECT COALESCE(MAX(id), 0) FROM loan_orphans) AS orphan_seq
+                 FROM json_each(?) j
+                 JOIN loans l ON l.chain_id = ? AND l.loan_id = j.value`,
+            )
+            .bind(ids, chainId),
+        ),
+      );
+      for (const part of parts) {
+        for (const row of part.results ?? []) {
+          const who = (row.borrower_current_owner ?? row.borrower ?? '').toLowerCase();
+          if (who && who !== ZERO_ADDR) {
+            holderByLoan.set(row.loan_id, { recipient: who, orphanSeq: Number(row.orphan_seq ?? 0) });
+          }
         }
       }
     }
@@ -381,35 +403,27 @@ export async function recordHfBandNotifications(
     const guard = epochWriteGuard(chainId);
     const diamondKey = diamond.toLowerCase();
     let inserted = 0;
-    for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
-      const batch = rows.slice(i, i + INSERT_CHUNK).map((r) =>
-        db
-          .prepare(
-            `INSERT OR IGNORE INTO notifications
-               (chain_id, recipient, kind, loan_id, event_kind,
-                block_number, log_index, created_at, dedup_key)
-             SELECT ?, ?, ?, ?, NULL, ?, ?, ?, ?
-              WHERE ${guard.where}
-                AND NOT EXISTS (SELECT 1 FROM loan_orphans
-                                 WHERE chain_id = ? AND diamond = ? AND loan_id = ? AND id > ?)`,
-          )
-          .bind(
-            chainId,
-            r.recipient,
-            r.kind,
-            r.loanId,
-            headBlock,
-            CRON_LOG_INDEX,
-            nowSec,
-            r.dedupKey,
-            ...guard.binds,
-            chainId,
-            diamondKey,
-            r.loanId,
-            r.orphanSeq,
-          ),
+    const rowChunks = jsonChunks(rows.map((r) => [r.recipient, r.kind, r.loanId, r.dedupKey, r.orphanSeq]));
+    if (rowChunks.length > 0) {
+      const results = await db.batch(
+        rowChunks.map((tuples) =>
+          db
+            .prepare(
+              `INSERT OR IGNORE INTO notifications
+                 (chain_id, recipient, kind, loan_id, event_kind,
+                  block_number, log_index, created_at, dedup_key)
+               SELECT ?, json_extract(j.value, '$[0]'), json_extract(j.value, '$[1]'),
+                      json_extract(j.value, '$[2]'), NULL, ?, ?, ?, json_extract(j.value, '$[3]')
+                 FROM json_each(?) j
+                WHERE ${guard.where}
+                  AND NOT EXISTS (SELECT 1 FROM loan_orphans o
+                                   WHERE o.chain_id = ? AND o.diamond = ?
+                                     AND o.loan_id = json_extract(j.value, '$[2]')
+                                     AND o.id > json_extract(j.value, '$[4]'))`,
+            )
+            .bind(chainId, headBlock, CRON_LOG_INDEX, nowSec, tuples, ...guard.binds, chainId, diamondKey),
+        ),
       );
-      const results = await db.batch(batch);
       for (const res of results) {
         inserted += (res as { meta?: { changes?: number } }).meta?.changes ?? 0;
       }
@@ -420,32 +434,42 @@ export async function recordHfBandNotifications(
     // loans never reached `commits`, so they retry next tick.
     // Recoveries to healthy DELETE the row — absence means healthy,
     // keeping the table proportional to the at-risk book.
-    let stateWrites = 0;
-    for (let i = 0; i < commits.length; i += INSERT_CHUNK) {
-      const batch = commits.slice(i, i + INSERT_CHUNK).map((o) =>
-        o.band === 'healthy'
-          ? keeper
-              .prepare(
-                `DELETE FROM hf_band_state WHERE chain_id = ? AND loan_id = ?`,
-              )
-              .bind(chainId, o.loanId)
-          : keeper
-              .prepare(
-                `INSERT INTO hf_band_state
-                   (chain_id, loan_id, last_band, last_hf_milli, last_recipient, updated_at, orphan_seq)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT (chain_id, loan_id) DO UPDATE SET
-                   last_band = excluded.last_band,
-                   last_hf_milli = excluded.last_hf_milli,
-                   last_recipient = excluded.last_recipient,
-                   updated_at = excluded.updated_at,
-                   orphan_seq = excluded.orphan_seq`,
-              )
-              .bind(chainId, o.loanId, o.band, o.milli, o.recipient, nowSec, o.orphanSeq),
-      );
-      await keeper.batch(batch);
-      stateWrites += batch.length;
-    }
+    const healed = commits.filter((o) => o.band === 'healthy').map((o) => o.loanId);
+    const banded = commits
+      .filter((o) => o.band !== 'healthy')
+      .map((o) => [o.loanId, o.band, o.milli, o.recipient, o.orphanSeq]);
+    const stateStatements = [
+      ...jsonChunks(healed).map((ids) =>
+        keeper
+          .prepare(
+            `DELETE FROM hf_band_state
+              WHERE chain_id = ? AND loan_id IN (SELECT value FROM json_each(?))`,
+          )
+          .bind(chainId, ids),
+      ),
+      // `WHERE true`: an upsert's SELECT needs a WHERE before ON CONFLICT, or
+      // SQLite parses the ON as a join constraint.
+      ...jsonChunks(banded).map((tuples) =>
+        keeper
+          .prepare(
+            `INSERT INTO hf_band_state
+               (chain_id, loan_id, last_band, last_hf_milli, last_recipient, updated_at, orphan_seq)
+             SELECT ?, json_extract(value, '$[0]'), json_extract(value, '$[1]'),
+                    json_extract(value, '$[2]'), json_extract(value, '$[3]'), ?,
+                    json_extract(value, '$[4]')
+               FROM json_each(?) WHERE true
+             ON CONFLICT (chain_id, loan_id) DO UPDATE SET
+               last_band = excluded.last_band,
+               last_hf_milli = excluded.last_hf_milli,
+               last_recipient = excluded.last_recipient,
+               updated_at = excluded.updated_at,
+               orphan_seq = excluded.orphan_seq`,
+          )
+          .bind(chainId, nowSec, tuples),
+      ),
+    ];
+    if (stateStatements.length > 0) await keeper.batch(stateStatements);
+    const stateWrites = commits.length;
 
     return { inserted, stateWrites };
   } catch (err) {
@@ -507,9 +531,10 @@ export async function recordHfBandNotifications(
  *
  * Bounded the way the old join was — the state table holds only at-risk
  * loans — and cheap in the subrequests this Worker counts: one read when
- * nothing is banded, and each multi-chunk step below goes out as ONE
- * `batch()`, however many chunks it carries (both shared reads in the same
- * one).
+ * nothing is banded, then one `batch()` of shared reads and one of writes,
+ * however many markers there are. Each statement binds its id list as one
+ * JSON parameter (see `JSON_LIST_CHUNK`), so the marker count never reaches a
+ * bind limit.
  */
 async function pruneTerminalBandState(
   db: D1Database,
@@ -523,46 +548,39 @@ async function pruneTerminalBandState(
     .all<{ loan_id: number; orphan_seq: number | null }>();
   const markers = state.results ?? [];
   if (markers.length === 0) return;
-  const banded = markers.map((r) => r.loan_id);
-  const chunks = chunkD1InList(banded, { before: [chainId] });
-  const orphanChunks = chunkD1InList(banded, { before: [chainId, diamond.toLowerCase()] });
+  // Each statement reads, for its chunk of marker ids, the loan's status, its
+  // latest withdrawal under this Diamond (an id withdrawn, reissued and
+  // withdrawn again is judged against the last move) and the newest
+  // withdrawal of all: one statement, so one snapshot, per chunk.
+  const parts = await db.batch<{ loan_id: number; status: string | null; seq: number | null; baseline: number }>(
+    jsonChunks(markers.map((r) => r.loan_id)).map((ids) =>
+      db
+        .prepare(
+          `SELECT j.value AS loan_id,
+                  (SELECT status FROM loans WHERE chain_id = ? AND loan_id = j.value) AS status,
+                  (SELECT MAX(id) FROM loan_orphans
+                    WHERE chain_id = ? AND diamond = ? AND loan_id = j.value) AS seq,
+                  (SELECT COALESCE(MAX(id), 0) FROM loan_orphans) AS baseline
+             FROM json_each(?) j`,
+        )
+        .bind(chainId, chainId, diamond.toLowerCase(), ids),
+    ),
+  );
   // Markers written before `orphan_seq` existed (keeper migration 0006).
   const legacy = markers.filter((r) => r.orphan_seq === null).map((r) => r.loan_id);
-
-  const reads = [
-    // FIRST, so it is read before the rows below: the baseline a legacy marker
-    // that survives this prune is stamped with. A withdrawal recorded after
-    // this read carries a higher id, so it still drops the marker later.
-    db.prepare(`SELECT NULL AS loan_id, NULL AS status, COALESCE(MAX(id), 0) AS seq FROM loan_orphans`),
-    ...chunks.map((c) =>
-      db
-        .prepare(
-          `SELECT loan_id, status, NULL AS seq FROM loans
-            WHERE chain_id = ? AND loan_id IN (${c.placeholders})`,
-        )
-        .bind(...c.binds),
-    ),
-    // The LATEST withdrawal of each id under this Diamond: an id withdrawn,
-    // reissued and withdrawn again is judged against the last move.
-    ...orphanChunks.map((c) =>
-      db
-        .prepare(
-          `SELECT loan_id, NULL AS status, MAX(id) AS seq FROM loan_orphans
-            WHERE chain_id = ? AND diamond = ? AND loan_id IN (${c.placeholders})
-            GROUP BY loan_id`,
-        )
-        .bind(...c.binds),
-    ),
-  ];
-  const [baselinePart, ...rest] = await db.batch<{ loan_id: number | null; status: string | null; seq: number | null }>(reads);
-  const baseline = baselinePart?.results?.[0]?.seq ?? 0;
+  // The baseline a legacy marker that survives this prune is stamped with: the
+  // OLDEST any chunk read, so it is no newer than the snapshot its loan row was
+  // judged in. A withdrawal recorded after it carries a higher id, so it still
+  // drops the marker later — and erring older only ever drops a pre-upgrade
+  // marker that a later withdrawal made doubtful anyway.
+  let baseline = Number.POSITIVE_INFINITY;
   const status = new Map<number, string>();
   const withdrawnSeq = new Map<number, number>();
-  for (const part of rest) {
+  for (const part of parts) {
     for (const r of part.results ?? []) {
-      if (r.loan_id === null) continue;
+      baseline = Math.min(baseline, Number(r.baseline));
       if (r.status !== null) status.set(r.loan_id, r.status);
-      else if (r.seq !== null) withdrawnSeq.set(r.loan_id, r.seq);
+      if (r.seq !== null) withdrawnSeq.set(r.loan_id, r.seq);
     }
   }
   const stale = new Set<number>();
@@ -589,27 +607,24 @@ async function pruneTerminalBandState(
   // Stamp the legacy markers this prune keeps, once, so every later prune
   // judges them by the record's order like any other marker.
   const baselined = legacy.filter((id) => !stale.has(id));
-  if (baselined.length > 0) {
-    await keeper.batch(
-      chunkD1InList(baselined, { before: [baseline, chainId] }).map((c) =>
-        keeper
-          .prepare(
-            `UPDATE hf_band_state SET orphan_seq = ?
-              WHERE chain_id = ? AND orphan_seq IS NULL AND loan_id IN (${c.placeholders})`,
-          )
-          .bind(...c.binds),
-      ),
-    );
-  }
-  if (stale.size === 0) return;
-
-  await keeper.batch(
-    chunkD1InList([...stale], { before: [chainId] }).map((c) =>
+  const writes = [
+    ...jsonChunks(baselined).map((ids) =>
       keeper
         .prepare(
-          `DELETE FROM hf_band_state WHERE chain_id = ? AND loan_id IN (${c.placeholders})`,
+          `UPDATE hf_band_state SET orphan_seq = ?
+            WHERE chain_id = ? AND orphan_seq IS NULL
+              AND loan_id IN (SELECT value FROM json_each(?))`,
         )
-        .bind(...c.binds),
+        .bind(baseline, chainId, ids),
     ),
-  );
+    ...jsonChunks([...stale]).map((ids) =>
+      keeper
+        .prepare(
+          `DELETE FROM hf_band_state
+            WHERE chain_id = ? AND loan_id IN (SELECT value FROM json_each(?))`,
+        )
+        .bind(chainId, ids),
+    ),
+  ];
+  if (writes.length > 0) await keeper.batch(writes);
 }
