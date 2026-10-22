@@ -87,7 +87,7 @@ function insert(
 }
 
 async function stats(h: SqliteD1): Promise<Record<string, number>> {
-  const env = { DB: h.d1 } as unknown as Env;
+  const env = { DB: h.d1, RPC_BASE_SEPOLIA: 'http://127.0.0.1:9' } as unknown as Env;
   const res = await handleOffersStats(
     new Request(`https://x/offers/stats?chainId=${CHAIN_ID}`),
     env,

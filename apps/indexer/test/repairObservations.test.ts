@@ -65,6 +65,7 @@ type Page = {
 const page = async (h: SqliteD1, query: string): Promise<Page> => {
   const res = await handleActivity(new Request(`https://x/activity?chainId=${CHAIN}&repairObservations=1&${query}`), {
     DB: h.d1,
+    RPC_BASE_SEPOLIA: 'http://127.0.0.1:9',
   } as unknown as Env);
   expect(res.status).toBe(200);
   return (await res.json()) as Page;
@@ -131,6 +132,7 @@ describe('/activity serves a repaired loan’s ending as an observation, never a
     seedEvent(h, 600, 0, 8);
     const res = await handleActivity(new Request(`https://x/activity?chainId=${CHAIN}&limit=2`), {
       DB: h.d1,
+      RPC_BASE_SEPOLIA: 'http://127.0.0.1:9',
     } as unknown as Env);
     const body = (await res.json()) as Record<string, unknown>;
     // Both events, no slot given to an entry the reader would not render.

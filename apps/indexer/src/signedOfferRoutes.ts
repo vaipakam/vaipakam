@@ -31,6 +31,7 @@ import { type Address, type Hex } from 'viem';
 import { createPublicClient, http } from 'viem';
 import { type Env, getChainConfigs, type ChainConfig } from './env';
 import { DIAMOND_SIGNED_OFFER_ABI } from './diamondAbi';
+import { chainNotServed, requestedChainId } from './servedChain';
 import {
   refreshOneMarketSummary,
   seedMarketSweepCursorIfAbsent,
@@ -73,12 +74,6 @@ function chainConfig(env: Env, chainId: number): ChainConfig | undefined {
   } catch {
     return undefined;
   }
-}
-
-function parseChainId(raw: string | null): number | null {
-  if (!raw) return null;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 // ── Strict order validation ─────────────────────────────────────────
@@ -888,10 +883,9 @@ export async function handleSignedOffersGet(
   env: Env,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
-  if (!chainConfigured(env, chainId)) {
-    return jsonResponse({ error: 'chain-not-configured' }, 503);
-  }
+  const chainId = requestedChainId(url);
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
 
   // Market scope — the parseMarketFilter idiom (lowercased addresses, 400 on
   // malformed, tenor bounded by the 4385 governance ceiling) but with all
@@ -996,10 +990,6 @@ export async function handleSignedOffersGet(
     console.error('[signedOfferRoutes] book read failed', err);
     return jsonResponse({ error: 'book-failed' }, 500);
   }
-}
-
-function chainConfigured(env: Env, chainId: number): boolean {
-  return chainConfig(env, chainId) !== undefined;
 }
 
 /** Preflight echo for /signed-offers — open CORS, GET + POST (this surface

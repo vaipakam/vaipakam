@@ -59,7 +59,7 @@ const seed = (h: ReturnType<typeof createSqliteD1>, extra: Record<string, string
 const fetchOffer = async (h: ReturnType<typeof createSqliteD1>) => {
   const res = await handleOfferById(
     new Request('https://x/offers/7?chainId=84532'),
-    { DB: h.d1 } as unknown as Env,
+    { DB: h.d1, RPC_BASE_SEPOLIA: 'http://127.0.0.1:9' } as unknown as Env,
     '7',
   );
   expect(res.status).toBe(200);
