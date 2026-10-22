@@ -1,4 +1,4 @@
-## Thread — Sanctions screen on the buyer of listed collateral (PR #<n>)
+## Thread — Sanctions screen on the buyer of listed collateral (PR #2646)
 
 A collateral sale through the marketplace now screens the buyer, not only
 the sale's recipients. Before, the fill re-checked the borrower, the live
