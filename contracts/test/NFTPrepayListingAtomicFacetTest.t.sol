@@ -14,6 +14,8 @@ import {MockListingExecutorRecorder} from "./mocks/MockListingExecutorRecorder.s
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {MockSeaport} from "./mocks/MockSeaport.sol";
 import {MockConduitController} from "./mocks/MockConduitController.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {
     OrderComponents,
     OfferItem,
@@ -417,6 +419,51 @@ contract NFTPrepayListingAtomicFacetTest is SetupTest {
             transfereeVault,
             "collateral moved into the current holder's vault"
         );
+    }
+
+    // ─── #1279 — the bidder is the buyer ───────────────────────────────
+
+    /// @notice #1279 — a flagged bidder cannot buy the collateral through the
+    ///         Diamond's atomic match: refused before Seaport is called.
+    function test_matchOpenSeaOffer_revertsWhenBidderSanctioned() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        MockSanctionsList list = _wireSanctionsList();
+        list.setFlagged(bidder, true);
+
+        BidderOrder memory bo = _validBidderOrder();
+        bo.components.offer[0].startAmount = 150 ether;
+        bo.components.offer[0].endAmount = 150 ether;
+        bytes32 realHash = mockSeaport.getOrderHash(bo.components);
+
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, bidder)
+        );
+        _callMatch(bo, realHash);
+        assertEq(mockSeaport.matchAdvancedOrdersCallCount(), 0, "no settlement");
+    }
+
+    /// @notice #1279 — with the screen live, an unflagged bidder still
+    ///         settles (the screen keys on the bidder, nothing else).
+    function test_matchOpenSeaOffer_cleanBidderSettles() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        MockSanctionsList list = _wireSanctionsList();
+        list.setFlagged(makeAddr("someoneElse"), true);
+
+        BidderOrder memory bo = _validBidderOrder();
+        bo.components.offer[0].startAmount = 150 ether;
+        bo.components.offer[0].endAmount = 150 ether;
+        bytes32 realHash = mockSeaport.getOrderHash(bo.components);
+
+        vm.prank(borrowerHolder);
+        _callMatch(bo, realHash);
+        assertEq(mockSeaport.matchAdvancedOrdersCallCount(), 1, "settlement reached");
+    }
+
+    function _wireSanctionsList() internal returns (MockSanctionsList list) {
+        list = new MockSanctionsList();
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(list));
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────

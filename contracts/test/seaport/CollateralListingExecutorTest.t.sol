@@ -7,6 +7,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {CollateralListingExecutor} from "../../src/seaport/CollateralListingExecutor.sol";
 import {
     FeeLeg,
@@ -27,6 +28,21 @@ import {IVaipakamPrepayCallbacks} from "../../src/seaport/IVaipakamPrepayCallbac
 import {ISeaportOrderHash, ISeaportCancel} from "../../src/seaport/ISeaportOrderHash.sol";
 
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+
+/// @notice #1279 — the collateral as a real ERC-721, so the zone's
+///         post-transfer holder read sees an owner. The fill harness moves no
+///         NFT, so a test places the token where the fill would have.
+contract ListingCollateral721 is ERC721 {
+    constructor() ERC721("Collateral", "COL") {}
+
+    function mint(address to, uint256 id) external {
+        _mint(to, id);
+    }
+
+    function move(address to, uint256 id) external {
+        _transfer(ownerOf(id), to, id);
+    }
+}
 
 /// @notice Mock diamond implementing the two interfaces the executor
 ///         calls into. Test can configure the returned `PrepayContext`
@@ -183,8 +199,12 @@ contract CollateralListingExecutorTest is Test {
         // #2440 — a real token: the zone reads each protocol leg recipient's
         // balance in both hooks.
         principalAsset = address(new ERC20Mock("Principal", "PRN", 18));
-        collateralAsset = makeAddr("collateralAsset");
         buyer = makeAddr("buyer");
+        // #1279 — the zone reads the ERC-721 collateral's holder at
+        // `validateOrder`; in a single-order fill the buyer holds it by then.
+        ListingCollateral721 collateral = new ListingCollateral721();
+        collateral.mint(buyer, TEST_COLLATERAL_TOKEN_ID);
+        collateralAsset = address(collateral);
 
         diamond = new MockVaipakamDiamond();
 
@@ -615,6 +635,147 @@ contract CollateralListingExecutorTest is Test {
             )
         );
         executor.authorizeOrder(p);
+    }
+
+    /// @notice #1279 (P1) — the BUYER (Seaport's `fulfiller`) is screened at
+    ///         fill time on the loan-keyed branch: a flagged buyer cannot take
+    ///         the collateral, from either zone hook.
+    function test_authorizeOrder_revertsWhenBuyerSanctioned_loanKeyed() public {
+        _setDefaultContext();
+        _recordValidOrder();
+        diamond.setSanctioned(buyer, true);
+
+        ZoneParameters memory p = _validZoneParams();
+        vm.prank(seaport);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.SanctionedListingBuyer.selector, buyer
+            )
+        );
+        executor.authorizeOrder(p);
+
+        vm.prank(seaport);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.SanctionedListingBuyer.selector, buyer
+            )
+        );
+        executor.validateOrder(p);
+    }
+
+    /// @notice #1279 (P1) — same screen on the offer-keyed (parallel-sale,
+    ///         pre-loan) branch, from both zone hooks.
+    function test_authorizeOrder_revertsWhenBuyerSanctioned_offerKeyed() public {
+        bytes32 h = keccak256("offer-order-sanctioned-buyer");
+        _recordOfferOrderAs(h, TEST_OFFER_ID);
+        diamond.setSanctioned(buyer, true);
+
+        ZoneParameters memory p = _validOfferZoneParams(h);
+        vm.prank(seaport);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.SanctionedListingBuyer.selector, buyer
+            )
+        );
+        executor.authorizeOrder(p);
+
+        vm.prank(seaport);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.SanctionedListingBuyer.selector, buyer
+            )
+        );
+        executor.validateOrder(p);
+        assertFalse(diamond.recordProceedsCalled());
+    }
+
+    /// @notice #1279 — a clean buyer is unaffected (the unflagged path still
+    ///         fills); the screen keys on the fulfiller, not on any recipient.
+    function test_fill_offerKeyed_cleanBuyerFills() public {
+        bytes32 h = keccak256("offer-order-clean-buyer");
+        _recordOfferOrderAs(h, TEST_OFFER_ID);
+        diamond.setSanctioned(makeAddr("someoneElse"), true);
+        ZoneParameters memory p = _validOfferZoneParams(h);
+        _fillOne(p, _amountsOf(p));
+        assertTrue(diamond.markConsumedCalled());
+    }
+
+    /// @notice #1279 — the fulfiller names another account as the NFT's
+    ///         recipient, and that account is flagged: the fill is refused at
+    ///         `validateOrder`, after the transfer, on the loan-keyed branch.
+    function test_fill_loanKeyed_flaggedNftRecipient_refused() public {
+        _recordValidOrder();
+        address giftee = makeAddr("giftee");
+        ListingCollateral721(collateralAsset).move(giftee, TEST_COLLATERAL_TOKEN_ID);
+        diamond.setSanctioned(giftee, true);
+
+        ZoneParameters memory p = _validZoneParams();
+        // Before the transfer the zone cannot see the recipient: the
+        // authorize hook passes (the fulfiller is clean).
+        vm.prank(seaport);
+        executor.authorizeOrder(p);
+
+        _etchFillHarness();
+        ZoneParameters[] memory orders = new ZoneParameters[](1);
+        orders[0] = p;
+        uint256[][] memory d = new uint256[][](1);
+        d[0] = _amountsOf(p);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.SanctionedListingBuyer.selector, giftee
+            )
+        );
+        SeaportFillHarness(seaport).fill(executor, orders, d);
+        assertFalse(diamond.finalizeCalled());
+    }
+
+    /// @notice #1279 — same post-transfer screen on the offer-keyed branch.
+    function test_fill_offerKeyed_flaggedNftRecipient_refused() public {
+        bytes32 h = keccak256("offer-order-flagged-giftee");
+        _recordOfferOrderAs(h, TEST_OFFER_ID);
+        address giftee = makeAddr("giftee");
+        ListingCollateral721(collateralAsset).move(giftee, TEST_COLLATERAL_TOKEN_ID);
+        diamond.setSanctioned(giftee, true);
+
+        ZoneParameters memory p = _validOfferZoneParams(h);
+        _etchFillHarness();
+        ZoneParameters[] memory orders = new ZoneParameters[](1);
+        orders[0] = p;
+        uint256[][] memory d = new uint256[][](1);
+        d[0] = _amountsOf(p);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.SanctionedListingBuyer.selector, giftee
+            )
+        );
+        SeaportFillHarness(seaport).fill(executor, orders, d);
+        assertFalse(diamond.recordProceedsCalled());
+    }
+
+    /// @notice #1279 — an unflagged account other than the fulfiller may
+    ///         receive the NFT (a gift purchase still fills).
+    function test_fill_loanKeyed_cleanNftRecipient_fills() public {
+        _recordValidOrder();
+        ListingCollateral721(collateralAsset).move(makeAddr("giftee"), TEST_COLLATERAL_TOKEN_ID);
+        ZoneParameters memory p = _validZoneParams();
+        _fillOne(p, _amountsOf(p));
+        assertTrue(diamond.finalizeCalled());
+    }
+
+    /// @notice #1279 — ERC-1155 collateral has no owner to read, so the zone
+    ///         screens the fulfiller only and does not call the token. Pinned
+    ///         so the stated residual stays the actual behaviour.
+    function test_fill_offerKeyed_erc1155_screensFulfillerOnly() public {
+        bytes32 h = keccak256("offer-order-1155");
+        // A code-less address as the token: any call to it would revert.
+        address noCode = makeAddr("erc1155NoCode");
+        _recordOfferOrderAs1155(h, TEST_OFFER_ID, noCode);
+        ZoneParameters memory p = _validOfferZoneParams(h);
+        p.offer[0].itemType = ItemType.ERC1155;
+        p.offer[0].token = noCode;
+        p.offer[0].amount = 1;
+        _fillOne(p, _amountsOf(p));
+        assertTrue(diamond.markConsumedCalled());
     }
 
     /// @notice #825-r4 (P1) — fill-time re-screen of the live LENDER recipient
@@ -1109,6 +1270,26 @@ contract CollateralListingExecutorTest is Test {
         c.borrowerWallet = borrowerHolder;
         c.collateralAsset = collateralAsset;
         c.collateralAssetType = uint8(LibVaipakam.AssetType.ERC721);
+        c.collateralTokenId = TEST_COLLATERAL_TOKEN_ID;
+        c.collateralQuantity = 1;
+        vm.prank(address(diamond));
+        executor.recordOfferOrder(orderHash, c, _emptyFeeLegs());
+    }
+
+    /// @dev #1279 — an offer-keyed order on ERC-1155 collateral at `token`.
+    function _recordOfferOrderAs1155(bytes32 orderHash, uint96 offerId, address token) internal {
+        OfferContext memory c;
+        c.offerId = offerId;
+        c.conduit = conduit;
+        c.startTime = uint64(block.timestamp);
+        c.askPrice = TEST_OFFER_ASK;
+        c.endTime = uint64(block.timestamp + 1 days);
+        c.principalAsset = principalAsset;
+        c.mode = PREPAY_MODE_FIXED_PRICE;
+        c.borrowerVault = makeAddr("mockBorrowerVault");
+        c.borrowerWallet = borrowerHolder;
+        c.collateralAsset = token;
+        c.collateralAssetType = uint8(LibVaipakam.AssetType.ERC1155);
         c.collateralTokenId = TEST_COLLATERAL_TOKEN_ID;
         c.collateralQuantity = 1;
         vm.prank(address(diamond));

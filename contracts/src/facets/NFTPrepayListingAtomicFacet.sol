@@ -265,6 +265,13 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         // Returns bidderFeeTotal so we can compute effectiveAsk below.
         uint256 bidderFeeTotal = _assertBidderShape(loan, bidder.components);
 
+        // #1279 (P1) — the bidder is the buyer: it pays and (shape check
+        // above: consideration[0]'s recipient is the bidder) receives the
+        // collateral NFT. Seaport's zone sees only the Diamond as fulfiller on
+        // this path, so the bidder is screened here, with the same
+        // registry-aware bar the zone applies to every party it can see.
+        LibVaipakam.assertRecipientNotBarred(bidder.components.offerer);
+
         // ── §17.7 counter-order construction inputs ──────────────────
         IVaipakamPrepayContext.PrepayContext memory pctx =
             IVaipakamPrepayContext(address(this)).getPrepayContext(loanId, block.timestamp);
