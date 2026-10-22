@@ -182,6 +182,7 @@
       "matchesHidden_many": "{{count}} matching offers are hidden because an independent security check flagged one of their tokens as dangerous.",
       "matchesHidden_other": "{{count}} matching offers are hidden because an independent security check flagged one of their tokens as dangerous.",
       "matchesUnscreenedTail": "More matching offers exist beyond the ones checked here. They are not recommended without a security check; the Offer Book lists them all, each with its own badge.",
+      "matchesOfferBookLink": "Open the Offer Book",
       "reputationListedTop": "Market listing found: {{name}}{{symbolSuffix}}, ranked #{{rank}} by market size. Check that this matches the token you meant.",
       "reputationListedDeep": "Market listing found: {{name}}{{symbolSuffix}} — outside the top 200 by market size. Smaller tokens move harder and disappear faster; double-check the project.",
       "reputationUnlisted": "No market listing found for this address — the wider market doesn’t know this token. That alone doesn’t make it bad, but verify the contract address with the project before dealing in it."
@@ -871,6 +872,7 @@
       "unavailable": "We couldn’t read your approvals right now — please try again in a moment.",
       "sourcesUnavailable": "We couldn’t load your loans and offers just now, so this list can’t be built completely — rather than show a partial picture, try again in a moment.",
       "sourcesDegraded": "Your loans and offers were read from the backup source just now, so a token from a position opened or received in the last few minutes may be missing from this list. It fills in on the next refresh.",
+      "sourcesPartial": "Part of your offer list could not be read just now, so tokens from offers you hold may be missing from this list, however old those offers are. Try again in a moment.",
       "revoke": "Revoke",
       "staleNote": "We couldn’t refresh this list just now — the rows shown may be slightly stale. Revoking still works.",
       "revoked": "Approval removed for {{symbol}}. If a live request or listing needed it, its card will warn and offer a restore."
@@ -2312,6 +2314,7 @@
       "unreadableCount_other": "{{count}} assets",
       "unreadableWarn": "We couldn’t read {{assets}} just now ({{list}}) — the list below may be missing balances. This usually clears on the next refresh.",
       "sourcesDegraded": "Your loans and offers were read from the backup source just now, so an asset behind a position opened or received in the last few minutes may be missing below. It fills in on the next refresh.",
+      "sourcesPartial": "Part of your offer list could not be read just now, so an asset behind an offer you hold may be missing below, however old that offer is. Try again in a moment.",
       "noBalancesInWindow": "No balances among the first {{count}} tokens checked — widen the scan below to keep looking.",
       "loading": "Reading your vault…",
       "addressLabel": "Vault address:",

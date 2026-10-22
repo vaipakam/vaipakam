@@ -270,6 +270,7 @@ const copySource = {
     // list; past it, offers are not recommended unchecked.
     matchesUnscreenedTail:
       'More matching offers exist beyond the ones checked here. They are not recommended without a security check; the Offer Book lists them all, each with its own badge.',
+    matchesOfferBookLink: 'Open the Offer Book',
     // CoinGecko reputation soft-signal (#1036 fallback layer) — only
     // on networks with market data; never a block, never a gate.
     reputationListedTop: tmpl(
@@ -1769,6 +1770,10 @@ const copySource = {
     // the rows shown are real, a just-changed position's token may not be.
     sourcesDegraded:
       'Your loans and offers were read from the backup source just now, so a token from a position opened or received in the last few minutes may be missing from this list. It fills in on the next refresh.',
+    // #2536 — a part of the offer list neither source could read (held
+    // offers on an older deployment, with the backup source down too).
+    sourcesPartial:
+      'Part of your offer list could not be read just now, so tokens from offers you hold may be missing from this list, however old those offers are. Try again in a moment.',
     revoke: 'Revoke',
     staleNote:
       'We couldn’t refresh this list just now — the rows shown may be slightly stale. Revoking still works.',
@@ -4987,6 +4992,8 @@ const copySource = {
     // of those lists was read from the slower backup source.
     sourcesDegraded:
       'Your loans and offers were read from the backup source just now, so an asset behind a position opened or received in the last few minutes may be missing below. It fills in on the next refresh.',
+    sourcesPartial:
+      'Part of your offer list could not be read just now, so an asset behind an offer you hold may be missing below, however old that offer is. Try again in a moment.',
     noBalancesInWindow: tmpl(
       'No balances among the first {{count}} tokens checked — widen the scan below to keep looking.',
       ['count'],

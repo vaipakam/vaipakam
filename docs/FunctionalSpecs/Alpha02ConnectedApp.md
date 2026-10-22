@@ -1338,7 +1338,9 @@ progress.
   part of the list the check has covered are never recommended unchecked: when
   flagged offers leave the list short, more of the list is checked, up to a
   bound; past that bound the list says that more matching offers exist and
-  points to the Offer Book, which shows every offer with its own badge.
+  links to the Offer Book, which shows every offer with its own badge. The
+  link is given in place because the Offer Book is not in Basic mode's
+  navigation.
 - Posting the user's own offer is the explicit fallback.
 - The app blocks self-authored offers where accepting them would be unsafe or
   nonsensical.
@@ -4060,10 +4062,16 @@ Its intended behaviour, as the test oracle for this surface:
   only from the backup source, which can lag behind the chain by a few
   minutes, the list is still shown but says that a token from a
   position opened or received in the last few minutes may be missing.
+  When part of the offer list could be read from neither source, the list
+  says instead that tokens from offers the wallet holds may be missing
+  whatever their age, and to try again, since that gap does not close by
+  itself.
 - The vault page builds its asset list partly from the wallet's own loans
-  and offers. When those could be read only from the lagging backup
-  source, the page says that an asset behind a very recent position may
-  be missing, rather than presenting the list as complete.
+  and offers. It states the same two cases the same way: an asset behind
+  a very recent position may be missing when the lagging backup source
+  answered, and an asset behind any held offer may be missing when part
+  of the offer list could not be read at all. It never presents the list
+  as complete in either case.
 - Advanced mode surfaces keeper permissions as the protocol's
   three-switch opt-in: a master switch, per-keeper action grants,
   and a per-loan switch on each loan's page — all off by default,

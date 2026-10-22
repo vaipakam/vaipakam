@@ -28,9 +28,11 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { revokeAllowance } from '../contracts/erc20';
 import {
   fetchAllPages,
-  rowSetComplete,
+  rowSetState,
   useMyLoansFull,
   useMyOffersFull,
+  weakestRowSetState,
+  type RowSetState,
 } from '../data/hooks';
 import { fetchOffersByCreator, type IndexedOffer } from '../data/indexer';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
@@ -80,12 +82,12 @@ export function ApprovalsCard() {
   // wallet touches. Data-source unavailability means the list may be
   // INCOMPLETE — said in the UI, never silently. Two states: BOTH lists
   // failed (`complete` false — nothing to build from, the card says so
-  // instead of listing), or a list answered from its lagging fallback
-  // only (`sourcesDegraded` — the rows still show, with a note that a
-  // token from a just-changed position may be missing, #2536).
+  // instead of listing), or a list that is not the whole set
+  // (`sourceState` lagging or partial — the rows still show, with a note
+  // saying which tokens may be missing, #2536).
   const loanData = loans.data;
   const offerData = offers.data;
-  const { tokens, complete, sourcesDegraded } = useMemo(() => {
+  const { tokens, complete, sourceState } = useMemo(() => {
     const set = new Set<string>();
     const add = (addr: string | undefined, isErc20: boolean) => {
       if (!addr || !isErc20) return;
@@ -104,10 +106,10 @@ export function ApprovalsCard() {
     return {
       tokens: [...set].sort() as `0x${string}`[],
       complete: loanData != null && offerData != null,
-      sourcesDegraded:
-        loanData != null &&
-        offerData != null &&
-        !(rowSetComplete(loanData) && rowSetComplete(offerData)),
+      sourceState:
+        loanData != null && offerData != null
+          ? weakestRowSetState(rowSetState(loanData), rowSetState(offerData))
+          : null,
     };
   }, [loanData, offerData]);
 
@@ -249,15 +251,11 @@ export function ApprovalsCard() {
         // note says which tokens it could not cover (#2536).
         <>
           <p className="muted">{copy.approvals.none}</p>
-          {sourcesDegraded ? (
-            <p className="muted">{copy.approvals.sourcesDegraded}</p>
-          ) : null}
+          <SourceStateNote state={sourceState} />
         </>
       ) : (
         <div className="stack" style={{ gap: 8 }}>
-          {sourcesDegraded ? (
-            <p className="muted">{copy.approvals.sourcesDegraded}</p>
-          ) : null}
+          <SourceStateNote state={sourceState} />
           {approvals.isError ? (
             // Retained data on a failed background refetch — revoke
             // must stay reachable; flag staleness instead of hiding.
@@ -311,4 +309,12 @@ export function ApprovalsCard() {
       ) : null}
     </section>
   );
+}
+
+/** #2536 — what the token list cannot cover, when the position lists
+ *  behind it are not the wallet's whole set. */
+function SourceStateNote({ state }: { state: RowSetState | null }) {
+  if (state === 'lagging') return <p className="muted">{copy.approvals.sourcesDegraded}</p>;
+  if (state === 'partial') return <p className="muted">{copy.approvals.sourcesPartial}</p>;
+  return null;
 }

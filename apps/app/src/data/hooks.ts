@@ -222,20 +222,36 @@ export interface MyRows<T> {
   indexerOk: boolean;
 }
 
-/** #2536 — whether `rows` is the wallet's WHOLE current set, as opposed
- *  to a lagging copy. Membership is the chain leg's call (see the merge
- *  rule above): when it answered, `rows` is exactly what the wallet is
- *  in this block. When it did not, `rows` is the indexed fallback, which
- *  can be missing anything opened or received inside the ingest lag — so
- *  a consumer that derives something from the SET of positions (the
- *  token list behind Approvals or the Vault) must say so rather than
- *  present that set as complete. `chainOk` already demands the held-offer
- *  leg (heldLegOk), so a legacy deploy whose held leg is indexer-only
- *  reads as incomplete here too. The indexer leg is not part of this
- *  answer: when the chain answered it adds no row, only per-row detail
- *  (Positions flags that separately). */
-export function rowSetComplete(data: MyRows<unknown>): boolean {
-  return data.chainOk;
+/** #2536 — how much of the wallet's current set `rows` is, for a
+ *  consumer that derives something from the SET of positions (the token
+ *  list behind Approvals or the Vault) and must not present it as whole
+ *  when it is not.
+ *
+ *  - `complete` — the chain leg answered (`chainOk`, which already demands
+ *    the held-offer leg on a legacy deploy). Membership is the chain's
+ *    call (see the merge rule above), so `rows` is exactly what the
+ *    wallet is in this block. The indexer leg adds no row then, only
+ *    per-row detail (Positions flags that separately).
+ *  - `lagging` — the chain leg did not answer and the indexed fallback
+ *    did. Every position is there except anything opened or received
+ *    inside the ingest lag, which fills in once the next read lands.
+ *  - `partial` — a leg answered by NEITHER source: a legacy deploy whose
+ *    held-offer leg is indexer-only, with the indexer down too. Offers
+ *    held through a transfer are missing whatever their age, and nothing
+ *    fills them in until a source comes back. */
+export type RowSetState = 'complete' | 'lagging' | 'partial';
+
+export function rowSetState(data: MyRows<unknown>): RowSetState {
+  if (data.chainOk) return 'complete';
+  return data.indexerOk ? 'lagging' : 'partial';
+}
+
+/** The weaker of several lists' states — what a surface built from all
+ *  of them may claim. */
+export function weakestRowSetState(...states: RowSetState[]): RowSetState {
+  if (states.includes('partial')) return 'partial';
+  if (states.includes('lagging')) return 'lagging';
+  return 'complete';
 }
 
 /** Loans variant of {@link MyRows}: also carries the loan ids the
@@ -337,7 +353,7 @@ export function useMyLoansFull() {
  *  participation filter needs the indexer leg. Anything that derives a
  *  list from the SET of rows and could present it as complete (the
  *  Vault, Approvals) uses the FULL variant too, with
- *  {@link rowSetComplete} (#2536). */
+ *  {@link rowSetState} (#2536). */
 export function useMyLoans() {
   const full = useMyLoansFull();
   return {

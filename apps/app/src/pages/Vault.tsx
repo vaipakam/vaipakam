@@ -83,11 +83,15 @@ export function Vault() {
             </p>
           </section>
 
-          {vault.depsDegraded ? (
-            // #2536 — the asset list is built from the wallet's positions;
-            // one of those lists came from its lagging source only.
+          {vault.depsState === 'lagging' || vault.depsState === 'partial' ? (
+            // #2536 — the asset list is built from the wallet's positions,
+            // and one of those lists is not the whole set.
             <div className="banner banner-warn" role="status">
-              <span className="banner-body">{copy.vault.sourcesDegraded}</span>
+              <span className="banner-body">
+                {vault.depsState === 'lagging'
+                  ? copy.vault.sourcesDegraded
+                  : copy.vault.sourcesPartial}
+              </span>
             </div>
           ) : null}
           {vault.data.unreadable.length > 0 ? (

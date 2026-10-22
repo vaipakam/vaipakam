@@ -703,11 +703,15 @@ export function OfferFlow({ side }: { side: Side }) {
   // with a stated count, and holds an offer whose screen has not
   // answered as "checking" (shown, not choosable). The rule lives in
   // guidedMatches.ts. The screened head starts at MATCH_SCREEN_STEP and
-  // grows, bounded, when flagged offers leave it short. Reset when the
-  // candidate set itself changes (chain, side, asset) — render-phase,
-  // like the scan windows elsewhere.
+  // grows, bounded, when flagged offers leave it short. Reset whenever
+  // the candidate LIST changes — a new search, a different amount that
+  // reorders it, or a book refresh (Codex #2663 r1) — render-phase, like
+  // the scan windows elsewhere. Re-deepening over offers already screened
+  // costs no network: their verdicts are cached per token.
   const [screenDepth, setScreenDepth] = useState(MATCH_SCREEN_STEP);
-  const screenKey = `${readChain.chainId}|${side}|${form.lendingAsset.toLowerCase()}`;
+  const screenKey = `${readChain.chainId}|${side}|${(matchCandidates ?? [])
+    .map((o) => o.offerId)
+    .join(',')}`;
   const [prevScreenKey, setPrevScreenKey] = useState(screenKey);
   if (prevScreenKey !== screenKey) {
     setPrevScreenKey(screenKey);
@@ -2369,6 +2373,13 @@ export function OfferFlow({ side }: { side: Side }) {
                         .filter((t): t is string => t !== null)
                         .join(' ') || undefined
                     }
+                    action={
+                      matchPick.unscreenedTail ? (
+                        <Link to="/offers" className="btn btn-secondary">
+                          {copy.tokenSecurity.matchesOfferBookLink}
+                        </Link>
+                      ) : undefined
+                    }
                   />
                 ) : (
                   <>
@@ -2397,8 +2408,11 @@ export function OfferFlow({ side }: { side: Side }) {
                       </p>
                     ) : null}
                     {matchPick.unscreenedTail ? (
+                      // The Offer Book is not in Basic mode's navigation, so
+                      // the note carries its own way there (Codex #2663 r1).
                       <p className="muted" style={{ marginTop: 8 }}>
-                        {copy.tokenSecurity.matchesUnscreenedTail}
+                        {copy.tokenSecurity.matchesUnscreenedTail}{' '}
+                        <Link to="/offers">{copy.tokenSecurity.matchesOfferBookLink}</Link>
                       </p>
                     ) : null}
                     <p className="muted" style={{ marginTop: 8 }}>

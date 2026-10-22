@@ -20,7 +20,13 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { getCanonicalAssetsForChain } from '@vaipakam/lib';
 import { useActiveChain } from '../chain/useActiveChain';
 import { AssetType } from '../lib/types';
-import { rowSetComplete, useMyLoansFull, useMyOffersFull } from './hooks';
+import {
+  rowSetState,
+  useMyLoansFull,
+  useMyOffersFull,
+  weakestRowSetState,
+  type RowSetState,
+} from './hooks';
 import { signalAware } from '../chain/railHealth';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -59,13 +65,14 @@ export function useVaultAssets(scanWindow: number) {
     !depsUnavailable &&
     (loans.data === undefined || offers.data === undefined) &&
     Boolean(address);
-  // #2536 — both lists answered, but at least one from its lagging
-  // fallback only: an asset backing a just-opened position may be
-  // missing from the scan. The page says so instead of looking whole.
-  const depsDegraded =
-    loans.data != null &&
-    offers.data != null &&
-    !(rowSetComplete(loans.data) && rowSetComplete(offers.data));
+  // #2536 — both lists answered, but at least one is not the wallet's
+  // whole set (lagging fallback, or a leg neither source could read):
+  // an asset behind a missing position may be absent from the scan. The
+  // page says which, instead of looking whole.
+  const depsState: RowSetState | null =
+    loans.data != null && offers.data != null
+      ? weakestRowSetState(rowSetState(loans.data), rowSetState(offers.data))
+      : null;
 
   // Candidate ERC-20 set: canonical + every ERC-20 leg we know about.
   const candidates = new Set<string>(
@@ -203,5 +210,5 @@ export function useVaultAssets(scanWindow: number) {
     },
   });
 
-  return { ...query, depsUnavailable, depsLoading, depsDegraded };
+  return { ...query, depsUnavailable, depsLoading, depsState };
 }
