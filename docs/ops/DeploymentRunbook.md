@@ -1965,7 +1965,7 @@ pointed at.
 | `vaipakam.com` | `vaipakam-www` | `apps/www` | Marketing + docs, wallet-free. Apex, not `www`. |
 | `agent.vaipakam.com` | `vaipakam-agent` | `apps/agent` | Origin-gated API. A bare `GET /` answering **403 `Forbidden` is correct, not an outage** — `apps/agent/src/index.ts:258` rejects any request whose `Origin` is not in `FRONTEND_ORIGIN`, and a curl sends none. **To actually health-check it, send an allowed Origin**: `curl -H 'origin: https://vaipakam.com' https://agent.vaipakam.com/nope` should return **404**, the Worker's own fallback. 403 with an allowed Origin means that origin is missing from `FRONTEND_ORIGIN`; 403 *without* one proves nothing. (#1971 — filed on the belief this was an outage, closed as designed behaviour.) |
 | `indexer.vaipakam.com` | `vaipakam-indexer` | `apps/indexer` | |
-| — (no hostname) | `vaipakam-keeper` | `apps/keeper` | Cron-only and deliberately unbound — **and currently UNSCHEDULED**: `apps/keeper/wrangler.jsonc:269` commits `"crons": []` under #1896, so no pass runs at all. Quiet keeper metrics are not evidence of health until that hold lifts. |
+| — (no hostname) | `vaipakam-keeper` | `apps/keeper` | Deliberately unbound, and runs **no keeper passes**: since #2504 the keeper runs on the always-on machine ([`KeeperMachine.md`](KeeperMachine.md)), and from #2569 this Worker's `scheduled` handler declines every invocation. It stays deployed only as the private database's migration applier. Its metrics say nothing about keeper health; read `journalctl -u vaipakam-keeper` on the machine. |
 | — (no hostname) | `vaipakam-offchain-data-archive` / `-warm` | `ops/` | Scheduled ops Workers. |
 | `defi.vaipakam.com` | `vaipakam-defi` | *(source deleted #1854)* | Retire per the cutover note below. |
 | `alpha02.vaipakam.com` | `vaipakam-alpha02` | *(source deleted #1854)* | Retire per the cutover note below. |
@@ -2298,25 +2298,21 @@ the deploy-script pre-flight will refuse to proceed otherwise.
 
 ## 8. Off-chain alert watcher (one-time, not per-chain)
 
-The HF alert watcher at `apps/keeper/` runs as a Cloudflare Worker
-and is shared across every supported chain — it polls each Diamond on
-a cron and dispatches per-user threshold notifications via
+The HF alert watcher at `apps/keeper/` runs on the keeper's always-on
+machine ([`KeeperMachine.md`](KeeperMachine.md)), not as a Cloudflare
+Worker. It is shared across every supported chain — it polls each Diamond
+on every tick and dispatches per-user threshold notifications via
 Telegram + Push Protocol. This section is one-time setup and does
 **not** repeat per-chain deploy.
 
-> **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
-> `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
-> was terminated for exceeding CPU on ~100% of invocations. **Do the
-> setup in 8a and 8b anyway** — the bot, the channel and the secrets are
-> all still needed, and they stay latched for when the schedule returns.
-> What cannot pass is **8c**: with no cron there is no tick, so the smoke
-> test has nothing to observe and must be recorded as deferred rather
-> than waited on or quietly skipped. The `cf-keeper` phase in
-> `contracts/script/deploy-{testnet,mainnet}.sh` will still report
-> success — it deploys and checks an RPC secret, and does not inspect the
-> schedule — so its green result does not contradict this hold. Restore
-> the schedule only via the sequence kept beside the empty list in
-> `apps/keeper/wrangler.jsonc`, which disarms `KEEPER_ENABLED` first.
+The bot token and the channel key below are needed in TWO places. The
+agent binds them from the account-level Secrets Store; the keeper does
+not read the store, and takes `TG_BOT_TOKEN` and `PUSH_CHANNEL_PK` from
+its env file, `/etc/vaipakam/keeper.env` (KeeperMachine §4), which it
+reads when it starts. The `cf-keeper` phase in
+`contracts/script/deploy-{testnet,mainnet}.sh` deploys the keeper
+Worker and checks an RPC secret there; its green result says nothing
+about the machine.
 
 ### 8a. Telegram bot
 
@@ -2324,10 +2320,10 @@ Telegram + Push Protocol. This section is one-time setup and does
    Use the handle `@VaipakamBot` for production. BotFather hands back
    the bot's API token on creation — this is the only time it appears
    in plaintext.
-2. Create the token in the shared Secrets Store — both the keeper and
-   the agent (which owns `/tg/webhook`) bind `TG_BOT_TOKEN` from it, so
-   a per-Worker `wrangler secret put` would leave the agent
-   unprovisioned:
+2. Create the token in the shared Secrets Store — the agent (which owns
+   `/tg/webhook`) binds `TG_BOT_TOKEN` from it, so a per-Worker
+   `wrangler secret put` would leave the agent unprovisioned. Then put
+   the same token in the keeper machine's env file (above):
    ```bash
    npx wrangler secrets-store secret create 1e66429d0fa24aa38a27bc05b7bcf63e \
        --name TG_BOT_TOKEN --scopes workers --remote
@@ -2371,8 +2367,9 @@ Telegram + Push Protocol. This section is one-time setup and does
 3. **Channel signer privkey → worker secret.**
    ```bash
    # Shared Secrets Store, same reasoning as TG_BOT_TOKEN in §8a
-   # (keeper AND agent bind it; wrangler prompts for the value —
-   # paste the 0x-prefixed 64-hex key):
+   # (the agent binds it; wrangler prompts for the value —
+   # paste the 0x-prefixed 64-hex key). The keeper machine takes the
+   # same key in its env file instead (see the top of §8):
    npx wrangler secrets-store secret create 1e66429d0fa24aa38a27bc05b7bcf63e \
        --name PUSH_CHANNEL_PK --scopes workers --remote
    ```
@@ -2439,24 +2436,40 @@ Telegram + Push Protocol. This section is one-time setup and does
 
 ### 8c. Smoke test the watcher
 
-> **⚠ HOLD — #1896.** This test cannot pass while the keeper is
-> unscheduled: step 4 below waits for a cron tick that will never fire.
-> Record it as deferred in the deploy log and resume it when the schedule
-> is restored. Do not substitute a shorter wait or read the quiet tail as
-> a pass.
+The keeper reads its env file only when it starts. If it was already
+running when §8a and §8b put `TG_BOT_TOKEN` and `PUSH_CHANNEL_PK` in
+that file, apply the change first by KeeperMachine §6 ("Apply an
+env-file change"), or this test exercises the old or unset values. A
+keeper first started after both were written (§5 there) needs nothing.
+
+The keeper must be running on its machine (KeeperMachine §5); the
+watcher pass does not check `KEEPER_ENABLED`, so a disarmed keeper
+still sends these alerts. A stopped one sends nothing, so do not read a
+quiet journal as a pass.
 
 ```bash
-cd apps/keeper
-npx wrangler tail        # tail logs in another terminal
+# On the keeper machine, in another terminal:
+journalctl -u vaipakam-keeper -f
 
 # From a test wallet:
 #   1. Subscribe to the Push channel at the URL in 8b.2
-#   2. /alerts → Save thresholds, Link Telegram, Enable Push rail
-#   3. Lower one threshold below the connected wallet's HF
-#   4. Wait for the next cron tick (HELD — see above; the canonical
-#      schedule is per-minute, not 5-minute, and is currently empty)
-# Expect: log lines for `tg send` + Push API success on band crossings.
+#   2. /settings (the alerts card) → Save thresholds, Link Telegram,
+#      Enable Push rail. There is no /alerts route.
+#   3. With all thresholds below the HF of one of the wallet's open
+#      loans, wait for a tick: that records the loan as healthy
+#   4. RAISE the warn threshold above that HF. A loan enters a band
+#      when its HF is at or below the threshold, and the watcher
+#      alerts only on a move to a worse band, so lowering a threshold
+#      below the HF is a recovery and sends nothing
+#   5. Wait for the next tick (the keeper ticks every UTC minute)
+# Expect: the Telegram message arriving in the linked chat, and a
+# `[push] sent channel=…` line, on that move into the warn band.
 ```
+
+A Telegram send that succeeds logs nothing: the keeper logs only
+failures, as `Telegram sendMessage failed: …`. So the message arriving
+is the Telegram confirmation, and a failure line is the evidence
+against it.
 
 A `[push] send failed …` line means either `PUSH_CHANNEL_PK` is
 wrong format or the channel hasn't cleared the post-stake delay

@@ -404,7 +404,7 @@ every fresh deploy. To enable per chain after audit sign-off:
 | 2 | Confirm `getTierLiquidationLtvBps()` returns `(9000, 8500, 8000)` post-deploy. | Per-tier liquidation thresholds replaced the retired per-asset `liqThresholdBps` in PR2; verify the defaults stuck. |
 | 3 | Ensure keeper-bot deploy (`vaipakam-keeper-bot`) is live on this chain with the `internalMatcher` detector running. | The kill-switch alone enables the path; without a bot, no matches fire. |
 | 4 | Governance Safe schedules `timelock.schedule(diamond, 0, setInternalMatchEnabled(true), 0, salt, 48h)`. | Same 48h-gated flow as every other tunable post-handover. |
-| 5 | 48h later: Safe executes. `InternalMatchEnabledSet(true)` event emits. | Bots' next tick picks it up and starts matching eligible pairs. **#1896: `apps/keeper`'s matcher will NOT — it is unscheduled (`"crons": []`), so its next tick never comes.** The separate `vaipakam-keeper-bot` deployment from step 3 is unaffected and is what makes this step's expectation hold; if it is not running, enablement produces no matches at all and step 6 will read as a failed rollout rather than a stopped bot. |
+| 5 | 48h later: Safe executes. `InternalMatchEnabledSet(true)` event emits. | Bots' next tick picks it up and starts matching eligible pairs. `apps/keeper`'s own matcher picks it up only while that keeper is running on its machine and armed (`KEEPER_ENABLED`; see [`KeeperMachine.md`](KeeperMachine.md) §5). The separate `vaipakam-keeper-bot` deployment from step 3 does not depend on it; if neither is running, enablement produces no matches at all and step 6 will read as a failed rollout rather than a stopped bot. |
 | 6 | Monitor `InternalMatchExecuted` event volume + matcher wallet balances for one week. | Validate the match rate is non-zero and the priority window is producing the expected 1% saving per leg. |
 | 7 | Optional follow-up: tune the priority window or incentive via `timelock.schedule(setInternalMatchConfig(window, incentive))`. | Only after a week of baseline data. Stay inside the `[0,500]` window cap + `[0,300]` incentive cap. |
 
@@ -1472,54 +1472,45 @@ finalization, and a rehearsed Diamond can carry a stale non-zero
 describes the posture; this is where it gets checked, because Step 6 may be
 deferred past `D*`.
 
-> **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
-> `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
-> was terminated for exceeding CPU on ~100% of invocations. **Do not
-> restore the schedule or arm `KEEPER_ENABLED` as part of this procedure**
-> until #1896's CPU work has landed. With no schedule, no pass runs, so a
-> quiet `wrangler tail` here proves nothing — it is the expected state,
-> not a passing check. Re-enable only via the sequence kept beside the
-> empty list in `apps/keeper/wrangler.jsonc`.
-
 **3g. Set and CONFIRM the master flags NOW, before the arm — they are not a
 step 5 item.**
 
-> **⚠ #1896 AMENDMENT TO 3g — do not follow this step as written while the
-> keeper is unscheduled.** The hold above says not to arm `KEEPER_ENABLED`;
-> this step as written says to set it now and confirm it by watching a cron
-> cycle. Both cannot hold, and unamended the step either latches the
-> unreadable master secret to `true` — destroying the guaranteed-disarmed
-> posture the re-enable sequence depends on — or simply cannot be completed,
-> because with `"crons": []` the confirming cycle never comes.
+> **Where these flags live.** The keeper runs on the always-on machine
+> ([`KeeperMachine.md`](KeeperMachine.md)), not as a Worker, so the flags
+> below are lines in `/etc/vaipakam/keeper.env`, which the keeper reads only
+> when it starts: set them there, then `sudo systemctl try-restart
+> vaipakam-keeper` (KeeperMachine §6, "Apply an env-file change", which
+> leaves a stopped keeper stopped and says how to confirm the change took). The confirming cycle is read from `journalctl -u
+> vaipakam-keeper`. How to start, stop and arm the keeper is KeeperMachine §5
+> and §6, and this step does not restate it.
 >
-> While the hold is in force:
 > - **`REWARD_COMMIT_ENABLED` / `REWARD_REMIT_ENABLED`** — set and record them
->   as this step describes. They are reward flags and latch correctly for when
->   the schedule returns. Their `wrangler tail` confirmation is **deferred**,
->   not skipped: no pass runs to log a start.
-> - **`KEEPER_ENABLED`** — do **not** set it here. It is not a reward flag and
->   the ceremony must not be what arms it. Leave it to the re-enable sequence
->   in `apps/keeper/wrangler.jsonc`, which sets it to `false` explicitly first
->   and arms it only after a live unarmed tick has been observed.
-> - Record both deferrals in the ceremony log, so `D*` is not treated as
->   fully confirmed on evidence that could not have been produced.
+>   as this step describes, one at a time, each validated on its own cadence
+>   (KeeperMachine §5 step 3).
+> - **`KEEPER_ENABLED`** — if it is not already `true`, do **not** set it
+>   here. It is not a reward flag and the ceremony must not be what arms it.
+>   Arming it is the owner's decision under KeeperMachine §5 step 2, after the
+>   disarmed validation in §5 step 1. While it stays off, the reward flags can
+>   still be confirmed: each gated pass prints ONE `skipped:` line listing
+>   every blocker, so a line naming only `KEEPER_ENABLED` shows the reward
+>   flag itself resolved as set.
+> - Record in the ceremony log which confirmations came from a pass that ran
+>   and which from a skip line, so `D*` is not treated as confirmed on
+>   evidence it does not carry.
 >
-> The "do NOT switch off flags that are already running" note below still
-> applies unchanged, and matters more here: this hold is a reason not to ARM
-> `KEEPER_ENABLED`, never a licence to turn off a flag that is currently
-> funding live mirror claims.
-
 **`KEEPER_ENABLED` is not a reward flag**: turning it on resumes
 the matcher, the liquidator, the liquidity-confidence pass and the rest of the
 keeper's jobs on every resolved chain. If it is currently off — on a fresh
 deployment, or because of an incident — validate ALL of those passes before
 flipping it, not only the reward ones. This ceremony must not be the thing that
 silently restarts an unrelated subsystem. `KEEPER_ENABLED`, `REWARD_COMMIT_ENABLED`, `REWARD_REMIT_ENABLED`.
-These are secrets, and **secrets cannot be read back** — the API returns names
-only, so an unset, mis-cased or malformed value is indistinguishable from a
-correct one until a pass actually runs. One `wrangler tail` cycle is the
-confirmation: watch each gated pass log its start. Discovering a bad flag after
-the arm means discovering it when `D*` can no longer be moved.
+The env file is **not** proof of what the keeper holds: the running process
+holds what it read at its last start, and an unset, mis-cased or malformed
+value looks fine to a reader of the file until a pass actually resolves it.
+One journal cycle is the confirmation: watch each gated pass log
+`[keeper] <pass> start`, or a `skipped:` line naming exactly the blocker you
+expect. Discovering a bad flag after the arm means discovering it when `D*` can
+no longer be moved.
 
 **Do NOT switch off flags that are already running.** If this deployment is on
 Gate B's active-mirror branch, `REWARD_REMIT_ENABLED` and `KEEPER_ENABLED` may

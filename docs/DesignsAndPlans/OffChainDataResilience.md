@@ -292,17 +292,20 @@ doc is a particularly bad place for such a count: it is read for
 planning, months after it was written, by someone deciding whether a new
 Worker fits.
 
-Two design points do survive independently of the count, and they are
-what this section is actually for:
+One design point survives independently of the count, and it is what
+this section is actually for:
 
-- **`apps/keeper`'s empty `"crons": []` is a reservation.** Its re-enable
-  procedure begins by confirming a free trigger, so spending that one
-  leaves the keeper stopped at the account cap.
 - **`ops/mesh-watcher` needs a trigger on its first deploy** (§4.5),
   which is a cost to plan for rather than a slot already set aside.
 
-Whether both currently fit is a question for the account, and #1977 is
-where the answer is being worked out.
+This section also said `apps/keeper`'s empty `"crons": []` was a
+reservation, held for a Worker re-enable. That is retired: the keeper
+runs on an always-on machine (`docs/ops/KeeperMachine.md`, #2504), its
+Worker's `scheduled` handler declines every invocation (#2569), and it
+holds no trigger or reservation (#2570).
+
+Whether the mesh-watcher fits is a question for the account, and #1977
+is where the answer is being worked out.
 
 This Worker is designed for a single cron on that basis rather than
 because the account is already full. Folding the healthcheck into the

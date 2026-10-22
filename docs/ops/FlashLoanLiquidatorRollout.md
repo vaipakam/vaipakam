@@ -6,53 +6,38 @@ discount-path liquidation on a new chain. Phase 3 of
 
 The contracts + keeper-bot wiring shipped 2026-05-14 (commits
 `a63d5ef`, `ee8a773`, `43e5b8f`). What remains is the per-chain
-deploy + Worker-config flow this runbook documents. Repeat once per
+deploy + keeper-config flow this runbook documents. Repeat once per
 target chain (testnet → mainnet, lowest-TVL first).
 
 All commands run from `contracts/` unless noted otherwise.
 
-> **⚠ DOCUMENT-WIDE HOLD — #1896: THERE IS NO NEXT TICK.**
-> The keeper commits `"crons": []` because the Worker was terminated for
-> exceeding CPU on ~100% of invocations. **Every "on next tick" / "the keeper
-> picks it up" statement in this runbook is suspended**, including the ones
-> that offer reassurance — most importantly the repeated promise that deleting
-> a flag or a `liquidator:` line leaves the *legacy* partial / split / atomic
-> branches running. Those branches do not run either. Our bot performs no
-> liquidation at all right now.
+> **Where the keeper runs.** Since #2504 the keeper runs as one long-lived
+> process on an always-on machine, not as a Cloudflare Worker, and from #2569
+> the Worker's `scheduled` handler declines every invocation. So every keeper
+> setting this runbook names is a line in the machine's env file,
+> `/etc/vaipakam/keeper.env`, which the keeper reads only when it starts: a
+> change takes effect after `sudo systemctl try-restart vaipakam-keeper`, not on
+> the next tick of a process that is already running. `try-restart` leaves a
+> keeper that was stopped on purpose stopped; how to confirm the change took
+> is [`KeeperMachine.md`](KeeperMachine.md) §6, "Apply an env-file change". Its log is
+> `journalctl -u vaipakam-keeper`. How to start, stop and arm the keeper is
+> stated in one place, [`KeeperMachine.md`](KeeperMachine.md) §5 ("Start
+> disarmed, validate, then arm") and §6 ("Stop, roll back, move hosts"); this
+> runbook links there rather than restating it.
 >
-> Config changes here are still worth making: they latch correctly for when
-> the schedule returns. What they are not is a *response*. With our bot
-> stopped, the **§3 global protocol pause is the only immediate on-chain stop**
-> for the discounted path **on a chain whose admin handover has completed**.
-> Note specifically that `AdminFacet.pauseAsset` is
-> **not** — it blocks new exposure only, and liquidation is deliberately
-> exempt so existing positions can always be closed out, so it leaves
-> `triggerLiquidationDiscounted` fully callable by external liquidators. The
-> `discountPathEnabled` kill-switch does bind those callers, but post-handover
-> it carries the Timelock's 48h delay, making it the eventual targeted control
-> rather than the immediate one.
->
-> **PRE-handover, reach for the targeted switch instead, not the global
-> pause.** On a chain where admin has not yet been handed to the Timelock,
-> `ConfigFacet.setDiscountPathEnabled(false)` is a direct `ADMIN_ROLE` call
-> with no delay, and it disables the discounted path immediately and *only*
-> that path. Escalating to the global pause there would stop unrelated
-> protocol activity for no gain. `IncidentRunbook.md` §3.5 draws the same
-> distinction; the unqualified "only immediate" wording here contradicted it.
-> Full tier breakdown under this hold in
-> [`IncidentRunbook.md`](IncidentRunbook.md) §3.5.
->
-> Treat our own liquidation coverage as manual until the **five-point**
-> stand-down check in [`IncidentRunbook.md`](IncidentRunbook.md) §3.5 passes:
-> schedule read back, expected chain set resolved, a liquidator pass with no
-> `passIsArmed` skip, a `scan complete` line for every expected chain, and
-> and then a LATER tick reporting `atRisk=0` on every one of them. A restored
-> cron alone is not enough —
-> the pass stays inert while `KEEPER_ENABLED` is false, a tick can log `done`
-> having scanned nothing, and a swept chain can still leave underwater loans
-> untouched. `submitted` counts BROADCASTS, not confirmations, so equality on a
-> single tick does not mean the liquidations landed — the later zero-risk scan
-> is what settles it.
+> Every "on next tick" statement below means the next tick of a keeper that
+> is running on the machine and armed. The liquidator pass, including the
+> legacy partial / split / atomic branches this runbook falls back to, returns
+> at once while `KEEPER_ENABLED` is not `true`, and a disarmed tick can still
+> log `liquidator done`. Treat our own liquidation coverage as manual after
+> any start, restart, arming or host move until the **five-point** stand-down
+> check in [`IncidentRunbook.md`](IncidentRunbook.md) §3.5 passes: the keeper
+> running and holding the lease, the expected chain set resolved, a liquidator
+> pass with no `skipped:` line, a `scan complete` line for every expected
+> chain, and then a LATER tick reporting `atRisk=0` on every one of them.
+> `submitted` counts BROADCASTS, not confirmations, so equality on a single
+> tick does not mean the liquidations landed; the later zero-risk scan is what
+> settles it.
 
 ---
 
@@ -89,7 +74,8 @@ in `contracts/.env.example` at lines 312–323; copy to `.env`:
 ```bash
 # The EOA the keeper bot will sign txs from.
 # CRITICAL: this MUST be the public address derived from the
-# KEEPER_PRIVATE_KEY secret in the Cloudflare Worker (apps/keeper).
+# KEEPER_PRIVATE_KEY the keeper signs with (the machine's env file,
+# docs/ops/KeeperMachine.md §4).
 # If they don't match, the deployed FlashLoanLiquidator will reject
 # every liquidateViaAaveV3 call with `NotOwner`.
 KEEPER_BOT_OWNER=0x...
@@ -103,18 +89,39 @@ BASE_BALANCER_V2_VAULT=0xBA12222222228d8Ba445958a75a0704d566BF2C8
 ```
 
 **Sanity check before Step 2** — derive the public address from
-the keeper Worker's `KEEPER_PRIVATE_KEY` secret and confirm it
+the keeper's `KEEPER_PRIVATE_KEY` and confirm it
 matches `KEEPER_BOT_OWNER` *exactly*. The mismatch case is the
 #1 silent-failure mode of this rollout.
 
+The key that counts is the one in the machine's env file
+(`/etc/vaipakam/keeper.env`, [`KeeperMachine.md`](KeeperMachine.md)
+§4), not a developer's local `.dev.vars`, which may hold a different
+key or none. The machine carries no tool that turns a key into an
+address (it has Node, but no Foundry and no keccak), so do it in two
+steps that never move or print the key.
+
+On a workstation with Foundry, from the record you provisioned the
+machine from (its password-manager entry):
+
 ```bash
-# One-liner: derive the address from the private key without
-# exposing the key (reads from .env, prints just the address).
-# Use cast or any keystore tool the operator prefers.
-cast wallet address --private-key $(grep ^KEEPER_PRIVATE_KEY \
-  ../apps/keeper/.dev.vars 2>/dev/null | cut -d= -f2-)
-# Compare against $KEEPER_BOT_OWNER. They MUST be identical.
+# Prompts for the key without echoing it, prints only the address.
+cast wallet address --interactive
+# Fingerprint of the same key, to compare with the machine's.
+read -rs K && printf %s "$K" | sha256sum && unset K
 ```
+
+On the keeper machine:
+
+```bash
+# Fingerprint of the key the keeper signs with; prints only a hash.
+sudo sed -n 's/^KEEPER_PRIVATE_KEY=//p' /etc/vaipakam/keeper.env \
+  | tr -d '\n' | sha256sum
+```
+
+The two fingerprints must match (paste the key in the same form, with
+or without `0x`, as the env file holds it). Only then does the address
+`cast` printed belong to the keeper, and it MUST equal
+`KEEPER_BOT_OWNER` exactly.
 
 ---
 
@@ -225,77 +232,98 @@ one file makes the cross-cutting concern reviewable in one
 place. It's also a tactical override surface — to disable the
 flash-loan path on a chain without redeploying anything, just
 delete the `liquidator` line (the chain falls back to legacy
-partial/split/atomic immediately on next tick — **not while #1896
-holds: there is no next tick and the legacy branches do not run
-either**; see the document-wide hold above).
+partial/split/atomic on the first tick that runs the new code;
+those branches act only while the keeper is armed, see the note at
+the top of this runbook).
 
-Commit + redeploy the keeper Worker so it picks up the new
-config:
+Commit the change and merge it to `main`. A merge to `main` is the
+keeper's deploy: the machine's update timer deploys the branch's
+latest commit within about five minutes and restarts the keeper onto
+it ([`KeeperMachine.md`](KeeperMachine.md) §1). While deploys are
+paused on the machine (§6 there), a merge does not reach it.
 
 ```bash
 git add apps/keeper/src/flashLoanProviders.ts
 git commit -m "apps/keeper: populate Base FlashLoanLiquidator address"
-pnpm --filter @vaipakam/keeper run deploy
 ```
 
-> **`run deploy`, not `exec wrangler deploy`** (#1896). The package script
-> carries `--keep-vars`; going straight to wrangler bypasses it and deletes
-> every var not in `wrangler.jsonc` — which is exactly the dashboard-managed
-> `HF_SCALE` / `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` tuning this rollout is
-> about to depend on. **And note before you run it:** the keeper is currently
-> unscheduled (`"crons": []`, #1896), so this deploy updates the script and
-> bindings but starts nothing. That is fine and expected here — the rollout's
-> config and flags stay latched — but do not read a quiet `wrangler tail`
-> afterwards as evidence the branch works. See the hold in §5.
+Confirm the machine took it AND that the keeper is running it. A
+switched `current` link alone proves neither: the restart is queued
+until the current tick ends. On the machine (widen `--since` if the
+merge was longer ago than that):
+
+```bash
+# 1. The update deployed the merged commit and queued a restart.
+journalctl -u vaipakam-keeper-update --since "-30 min" | grep 'deployed '
+#    Expect: "deployed <merged commit>; a running keeper restarts onto it
+#    after its current tick". The other wording, "byte-identical ... so no
+#    restart", means the bundle did not change, so the address is NOT in it.
+# 2. The keeper started after that line, on that release.
+journalctl -u vaipakam-keeper --since "-30 min" | grep '\[keeper-host\] started pid='
+systemctl show -p ActiveEnterTimestamp --value vaipakam-keeper
+cat /opt/vaipakam-keeper/current/SOURCE_COMMIT
+```
+
+The `started pid=` line and `ActiveEnterTimestamp` must both be later
+than the `deployed` line, and `SOURCE_COMMIT` must be the merged
+commit. No keeper Worker deploy is
+involved. The Worker's `run deploy` still exists, but only as the
+private database's migration applier, and its `scheduled` handler
+runs nothing.
 
 ---
 
-## 5. Flip the runtime env flag in the keeper Worker
-
-> **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
-> `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
-> was terminated for exceeding CPU on ~100% of invocations. **Do not
-> restore the schedule or arm `KEEPER_ENABLED` as part of this procedure**
-> until #1896's CPU work has landed. With no schedule, no pass runs, so a
-> quiet `wrangler tail` here proves nothing — it is the expected state,
-> not a passing check. Re-enable only via the sequence kept beside the
-> empty list in `apps/keeper/wrangler.jsonc`. Setting the two flags below
-> is still correct — they are the rollout's own preconditions and stay
-> latched for when the schedule returns.
+## 5. Flip the runtime env flag in the keeper
 
 Two things must be true at runtime for the flash-loan branch to
 fire:
 
 - The on-chain kill-switch `discountPathEnabled` is `true`
   (precondition #2).
-- The keeper Worker's `DISCOUNT_PATH_ENABLED_<chainId>` env flag
-  is literally the string `"true"`.
+- The keeper's `DISCOUNT_PATH_ENABLED_<chainId>` setting is
+  literally the string `"true"`.
 
 The second is the bot's belt-and-suspenders: even if governance
 flipped the on-chain flag prematurely, the bot still won't try
-the discount path until you tell it to. Set it via Cloudflare:
+the discount path until you tell it to.
 
-```bash
-echo true | pnpm --filter @vaipakam/keeper exec wrangler secret put DISCOUNT_PATH_ENABLED_8453
-```
+> **⚠ Known gap (#2633): the keeper does not read this setting
+> today, so do not set it yet.** The pass looks the flag up on the
+> keeper's resolved settings, and `resolveEnv` in
+> `apps/keeper/src/env.ts` copies a fixed list of names into those
+> settings. `DISCOUNT_PATH_ENABLED_<chainId>` is not on that list, so
+> the lookup finds nothing on either host and the flash-loan branch
+> stays off whatever the env file says. That is the safe direction.
+>
+> **Leave the line out of the env file until the #2633 fix is
+> deployed on the machine.** A line set now would do nothing today and
+> then switch the branch on by itself at the first restart after the
+> fix lands. The machine deploys `main` and restarts the keeper on its
+> own, so that could happen with nobody watching the §6 checks. Once
+> the fix is deployed, set the line as below and do §6 straight away.
+> Until then, do not read the absence of `submitted-flashloan` lines
+> in §6 as an unprofitable market.
 
-(Or via the Cloudflare dashboard → Workers → keeper → Settings →
-Variables → Secrets. Store it as a **secret**, not a `vars.`
-entry — secrets can be rotated without redeploying.)
+Once #2633's fix is on the machine, set it in
+`/etc/vaipakam/keeper.env` as the line
+`DISCOUNT_PATH_ENABLED_8453=true` and apply it by
+[`KeeperMachine.md`](KeeperMachine.md) §6, "Apply an env-file
+change" (`sudo systemctl try-restart vaipakam-keeper`, then a tick
+that began after the restart). Then do §6 below at once.
 
 **Why a separate keeper-side flag rather than reading the
 on-chain flag every tick**: cost. An on-chain read every tick ×
 every chain × every loan would burn thousands of RPC calls per
-day. The keeper-side flag is "snap to off in 30 seconds" — just
-delete the secret in Cloudflare, the Worker reads `undefined` on
-next tick and the discount branch skips.
+day. Turning the keeper-side flag off is a local edit: remove the
+line (or leave it empty) and restart the keeper, and the discount
+branch skips from the first tick after the restart.
 
 ---
 
 ## 6. Watch the logs + verify
 
 ```bash
-pnpm --filter @vaipakam/keeper exec wrangler tail --format pretty
+journalctl -u vaipakam-keeper -f
 ```
 
 Log entries to expect (in priority order — happy first, then
@@ -370,7 +398,7 @@ mainnet target set. Sequencing:
 ### Every `liquidateViaAaveV3` reverts with `NotOwner`
 
 The `KEEPER_BOT_OWNER` env var you used at deploy-time doesn't
-match the keeper Worker's `KEEPER_PRIVATE_KEY` derived address.
+match the address derived from the keeper's `KEEPER_PRIVATE_KEY`.
 Step 1's mismatch — no on-chain damage done, just redeploy:
 
 ```bash
@@ -391,10 +419,11 @@ You flipped the keeper-side flag (Step 5) before governance
 flipped the on-chain flag (precondition #2). The keeper happily
 submits txs that the diamond rejects.
 
-```bash
-# Snap-off in 30 seconds — delete the keeper-side secret:
-pnpm --filter @vaipakam/keeper exec wrangler secret delete DISCOUNT_PATH_ENABLED_8453
-```
+Snap it off on the machine: remove the `DISCOUNT_PATH_ENABLED_8453`
+line from `/etc/vaipakam/keeper.env` (or leave it empty) and run
+`sudo systemctl try-restart vaipakam-keeper`. The restart waits for the
+tick in flight, so it takes as long as that tick does, not a fixed
+30 seconds.
 
 Wait for governance to land `setDiscountPathEnabled(true)`,
 verify with:
@@ -418,28 +447,35 @@ will show one of:
   (price moved past slippage tolerance between quote and
   submit). Also healthy.
 
-No action needed **once the keeper is scheduled again**. The legacy
+No action needed while the keeper is running and armed. The legacy
 partial/split/atomic branches in the keeper run on the next tick — the
-loan still gets liquidated, just via the atomic path instead. **While
-#1896 holds there is no next tick**, so the loan is not liquidated by us
-at all; it depends on external liquidators. See the document-wide hold.
+loan still gets liquidated, just via the atomic path instead. If the
+keeper is stopped or disarmed (`KEEPER_ENABLED` not `true`), there is no
+fallback from us: the loan depends on external liquidators. See the note
+at the top of this runbook.
 
 ### Profitable trades available but bot logs nothing
 
 Probably the `liquidator` slot in `flashLoanProviders.ts`
-wasn't populated (Step 4 skipped) or the keeper Worker wasn't
-redeployed after editing it. Verify:
+wasn't populated (Step 4 skipped), or the machine has not deployed
+the commit that populated it, or the keeper-side flag is not reaching
+the pass (see the known gap in Step 5, which on its own produces
+exactly this symptom). Verify on the machine:
 
 ```bash
-# Confirm the secret is set.
-pnpm --filter @vaipakam/keeper exec wrangler secret list \
-  | grep DISCOUNT_PATH_ENABLED
+# Confirm the flag is set to exactly `true` (prints set / not-set only).
+# The keeper arms only on the string `true`: `1`, `True` or a trailing
+# space leave the path off. Write it unquoted, as this check expects.
+sudo grep -qx 'DISCOUNT_PATH_ENABLED_8453=true' /etc/vaipakam/keeper.env \
+  && echo set || echo not-set
 
-# Confirm the code has the address. Build the worker locally and
-# inspect the bundle:
-pnpm --filter @vaipakam/keeper exec wrangler deploy --dry-run --outdir /tmp/keeper-bundle
-grep -o '0x[0-9a-fA-F]\{40\}' /tmp/keeper-bundle/*.js | sort -u | head
-# The FlashLoanLiquidator address should appear in the bundle.
+# Confirm the running release carries the address. Search for the
+# deployed FlashLoanLiquidator address itself, case-insensitively; a
+# list of every address in the bundle is too long to read reliably.
+cat /opt/vaipakam-keeper/current/SOURCE_COMMIT
+grep -qi '<FlashLoanLiquidator address>' \
+  /opt/vaipakam-keeper/current/keeper-host.mjs && echo present || echo absent
+# Then confirm the keeper restarted onto that release (Step 4's checks).
 ```
 
 ### Bot submits flash-loan txs but every one fails with `OracleStaleForDiscount`
@@ -461,19 +497,21 @@ healthy on the chain for those assets.
 To disable the flash-loan branch on a chain INSTANTLY, in
 order of preference (least to most disruptive):
 
-1. **Delete the keeper-side env flag** — 30-second op, no
-   redeploy, no governance:
-   ```bash
-   pnpm --filter @vaipakam/keeper exec wrangler secret delete DISCOUNT_PATH_ENABLED_8453
-   ```
-   Worker reads `undefined` on next tick → discount branch
-   skips → legacy partial/split/atomic still runs. **Not while #1896
-   holds** — no tick, and the legacy branches are stopped too, so this
-   is already the posture rather than a change to it.
+1. **Remove the keeper-side env flag** — a local edit on the
+   machine, no deploy, no governance: delete the
+   `DISCOUNT_PATH_ENABLED_8453` line from `/etc/vaipakam/keeper.env`
+   (or leave it empty), then `sudo systemctl try-restart vaipakam-keeper`.
+   From the first tick after the restart the discount branch skips,
+   and legacy partial/split/atomic still runs while the keeper is
+   armed. The restart waits for the tick in flight
+   ([`KeeperMachine.md`](KeeperMachine.md) §6). Until the Step 5 known
+   gap is fixed, this changes nothing, because the keeper never reads
+   the flag: the branch is already off.
 
 2. **Delete the `liquidator` line in `flashLoanProviders.ts`**
-   + redeploy Worker — slower (needs git commit + wrangler
-   deploy) but doesn't depend on the Cloudflare API.
+   and merge — slower (needs a merge to `main`, then the machine's
+   update timer, up to about five minutes, and deploys must not be
+   paused) but needs no shell on the machine.
 
 3. **Flip the on-chain kill-switch** —
    `ConfigFacet.setDiscountPathEnabled(false)`. Disables for
@@ -484,6 +522,20 @@ order of preference (least to most disruptive):
 
 Order matters: items 1 and 2 affect only our bot. Item 3 affects
 the whole open market and should only fire on a real incident.
+
+**To stop external callers of the discounted path now**, the levers
+differ before and after the admin handover. **Pre-handover**,
+`ConfigFacet.setDiscountPathEnabled(false)` is a direct `ADMIN_ROLE`
+call with no delay: it disables the discounted path immediately and
+only that path, so reach for it rather than the global pause.
+**Post-handover** it carries the Timelock's 48h delay, which makes it
+the eventual targeted control; the immediate on-chain stop is then the
+global protocol pause in [`IncidentRunbook.md`](IncidentRunbook.md) §3.
+`AdminFacet.pauseAsset` is **not** a lever here: it blocks new exposure
+only, liquidation is deliberately exempt so existing positions can
+always be closed out, and `triggerLiquidationDiscounted` stays fully
+callable by external liquidators. Full tier breakdown in
+[`IncidentRunbook.md`](IncidentRunbook.md) §3.5.
 
 ---
 
