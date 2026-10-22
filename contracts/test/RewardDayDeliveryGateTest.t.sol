@@ -786,7 +786,10 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         bytes32 h = _liveOf(2 * h1, _one(1), 61, keccak256("gate-pre-dstar"));
         // The legacy window half is live-paid: the claim weighs it against
         // LIVE backing, which an activated custody's budget delivery never
-        // credits (it feeds its epoch). Live funding stands it in here.
+        // credits (it feeds its epoch). Live funding stands it in here. The
+        // window counter itself is a fixture: no production path writes one
+        // (real loans accrue through reward entries), so this cell pins the
+        // gate's two rungs, not a live funding route.
         _liveFunding(2 * h1);
         assertTrue(_gd(1).awaitsLender, "fixture: no D*, yet the unarmed day owes fresh and waits");
 
