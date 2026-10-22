@@ -1580,6 +1580,7 @@ considers it finished.
   - The 5% buffer from the prepayment is returned to the borrower.
   - The accumulated rental fees (minus treasury fee) are made available for the lender to claim.
 - Late fees apply if the NFT 'rental closure' (user status revocation) is delayed beyond the agreed duration.
+- Rent is never billed past the agreed term. A rental closed after its maturity, inside the grace period, owes at most its remaining prepaid rental days (the whole remaining prepayment); the time past maturity is charged only as the late fee, drawn from the buffer. A borrower who closes inside grace can therefore always settle, whether or not the daily deductions ran, and every path that settles a rental's accrued rent (repayment, and handing the rental over to a replacement borrower) counts the owed days by this one rule.
 
 ### Late Fees
 
