@@ -359,17 +359,20 @@ contract MeshCommitRetirementTest is SetupTest {
         _agg().setChainDailyAttributionCap(CHAIN_ARB, 10 ether);
         assertEq(_agg().getChainDailyAttributionCap(CHAIN_ARB), 10 ether);
         _reportArbWithDayCredit(5, 40 ether, 40 ether, 0, 0); // "all 40 is today's"
+        _agg().forceFinalizeDay(5); // #2645 — attribution happens at finalization
         (uint256 c5, bool a5) = _agg().getChainDailyRecycledCredit(5, CHAIN_ARB);
         assertTrue(a5);
         assertEq(c5, 10 ether, "capped: one day takes at most the ceiling");
         assertEq(_agg().getChainAttributionBacklog(CHAIN_ARB), 30 ether, "what the ceiling trimmed is carried by Base");
         for (uint256 d = 6; d <= 8; ++d) {
             _reportArbWithDayCredit(d, 40 ether, 0, 0, 0); // honest later days: no new credit
+            _agg().forceFinalizeDay(d); // #2645 — attribution happens at finalization
             (uint256 cd, ) = _agg().getChainDailyRecycledCredit(d, CHAIN_ARB);
             assertEq(cd, 10 ether, "the withheld credit drips at the ceiling");
             assertEq(_agg().getChainAttributionBacklog(CHAIN_ARB), (8 - d) * 10 ether, "the backlog falls by the drip");
         }
         _reportArbWithDayCredit(9, 40 ether, 0, 0, 0);
+        _agg().forceFinalizeDay(9); // #2645 — attribution happens at finalization
         (uint256 c9, bool a9) = _agg().getChainDailyRecycledCredit(9, CHAIN_ARB);
         assertTrue(a9);
         assertEq(c9, 0, "headroom exhausted: 10 + 10 + 10 + 10 = 40, nothing lost, nothing invented");
@@ -379,6 +382,7 @@ contract MeshCommitRetirementTest is SetupTest {
         // The uncapped control, on a fresh chain state.
         setUp();
         _reportArbWithDayCredit(5, 40 ether, 40 ether, 0, 0);
+        _agg().forceFinalizeDay(5); // #2645 — attribution happens at finalization
         (uint256 u5, ) = _agg().getChainDailyRecycledCredit(5, CHAIN_ARB);
         assertEq(u5, 40 ether, "uncapped: the pre-#2047 rule, the mirror's day figure within its headroom");
     }
@@ -395,10 +399,12 @@ contract MeshCommitRetirementTest is SetupTest {
         _agg().setChainDailyAttributionCap(CHAIN_ARB, 10 ether);
         uint256 huge = type(uint256).max - 1 ether;
         _reportArbWithDayCredit(5, huge, huge, 0, 0);
+        _agg().forceFinalizeDay(5); // #2645 — attribution happens at finalization
         (uint256 c5, ) = _agg().getChainDailyRecycledCredit(5, CHAIN_ARB);
         assertEq(c5, 10 ether, "the ceiling takes one day's worth");
         assertEq(_agg().getChainAttributionBacklog(CHAIN_ARB), huge - 10 ether, "fixture: a backlog past half the word");
         _reportArbWithDayCredit(6, huge, huge, 0, 0);
+        _agg().forceFinalizeDay(6); // #2645 — attribution happens at finalization
         (uint256 c6, bool a6) = _agg().getChainDailyRecycledCredit(6, CHAIN_ARB);
         assertTrue(a6, "the next day's report landed");
         assertEq(c6, 10 ether, "and drips at the ceiling");

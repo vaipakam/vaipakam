@@ -2105,8 +2105,10 @@ immediately before finalization. Otherwise the post-arm ceremony can run out of
 usable days against an immutable `D*`.
 
 **That ordering is best-effort and does not make the pause a gate for the
-candidate day.** The moment the last required report lands, `reportCount >=
-nExpected` makes `finalizeDay` permissionless — so between that block and the
+candidate day.** The moment the last listed chain's report lands (coverage is
+judged chain by chain over the expected-source list, #2613; the raw report
+count also counts off-list chains and proves nothing), `finalizeDay` becomes
+permissionless — so between that block and the
 guardian's separate pause transaction being mined, anyone can finalize and
 broadcast, both from one helper contract. On a property-enforcing mesh the cost
 is a claim outage and a spent day rather than a loss, but the window is real and

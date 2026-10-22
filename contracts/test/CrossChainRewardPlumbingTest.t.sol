@@ -7,6 +7,7 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardBroadcastFacet} from "../src/facets/RewardBroadcastFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -14,6 +15,7 @@ import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibRewardDayReport} from "../src/libraries/LibRewardDayReport.sol";
 
 /// @notice Codex #1413 r3 — a stand-in for a PRE-#1222 mirror messenger:
 ///         only the legacy four-argument send surface exists. Proves the
@@ -377,10 +379,202 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverChainReport(CHAIN_OP, 1, 10e18, 5e18);
     }
 
-    function testOnChainReportRevertsOnUnknownChainId() public {
+    /// @dev #2618 — an authenticated report from a chain off the expected
+    ///      list is stored and announced, not refused: it starts no grace
+    ///      window and its day figures count only if the chain is listed when
+    ///      the day finalizes.
+    function testOffListReportIsStoredNotCounted() public {
         _configureCanonical();
-        vm.expectRevert(SourceChainIdNotExpected.selector);
+        vm.expectEmit(true, true, false, false, address(diamond));
+        emit LibRewardDayReport.ChainReportStoredOffList(CHAIN_UNKNOWN, 1);
         messenger.deliverChainReport(CHAIN_UNKNOWN, 1, 10e18, 5e18);
+        assertTrue(_agg().isChainReported(1, CHAIN_UNKNOWN), "stored");
+        assertEq(_agg().getDailyFirstReportAt(1), 0, "an off-list report starts no grace window");
+        (bool ready, uint8 reason) = _agg().isDayReadyToFinalize(1);
+        assertFalse(ready);
+        assertEq(reason, 2, "no listed chain has reported");
+
+        messenger.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        messenger.deliverChainReport(CHAIN_ARB, 1, 2e18, 2e18);
+        messenger.deliverChainReport(CHAIN_OP, 1, 3e18, 3e18);
+        _agg().finalizeDay(1);
+        (, uint256 lender, uint256 borrower) = _agg().getDailyGlobalInterest(1);
+        assertEq(lender, 6e18, "only the listed chains are summed");
+        assertEq(borrower, 6e18);
+    }
+
+    /// @dev #2618 — a chain taken off the list by mistake and listed again
+    ///      before the day finalizes counts, with no re-execution of anything.
+    function testOffListReportCountsOnceRelistedBeforeFinalization() public {
+        _configureCanonical();
+        messenger.deliverChainReport(CHAIN_UNKNOWN, 1, 10e18, 5e18);
+        uint32[] memory chainIds = new uint32[](2);
+        chainIds[0] = CHAIN_BASE;
+        chainIds[1] = CHAIN_UNKNOWN;
+        _agg().setExpectedSourceChainIds(chainIds);
+        messenger.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        (bool ready, ) = _agg().isDayReadyToFinalize(1);
+        assertTrue(ready, "every listed chain has reported");
+        _agg().finalizeDay(1);
+        (, uint256 lender, ) = _agg().getDailyGlobalInterest(1);
+        assertEq(lender, 11e18, "the relisted chain's stored figures count");
+    }
+
+    /// @dev #2645 — an off-list report's recycled DAY credit is a day figure
+    ///      too: its cumulative applies on arrival, but the day credit is
+    ///      attributed only when the day finalizes counting the chain. So a
+    ///      chain the day did not count never sizes the day's recycled budget.
+    function testOffListRecycledDayCreditIsNotAttributed() public {
+        _configureCanonical();
+        messenger.deliverChainReportRecycled(CHAIN_UNKNOWN, 1, 10e18, 5e18, 100e18, 40e18);
+        (uint256 reported, , , uint256 attributed) = _agg().getChainRecycledLedger(CHAIN_UNKNOWN);
+        assertEq(reported, 100e18, "the chain-wide cumulative applies on arrival");
+        assertEq(attributed, 0, "the day credit waits for the finalization");
+        _agg().forceFinalizeDay(1);
+        (uint256 credit, bool accepted) = _agg().getChainDailyRecycledCredit(1, CHAIN_UNKNOWN);
+        assertFalse(accepted, "the day did not count the chain");
+        assertEq(credit, 0);
+        (, , , attributed) = _agg().getChainRecycledLedger(CHAIN_UNKNOWN);
+        assertEq(attributed, 0, "and its credit stays in its headroom");
+        (, , , , , uint256 absorbedMirror) = InteractionRewardsLensFacet(address(diamond)).getRecycleDayMetrics(1);
+        assertEq(absorbedMirror, 0, "nothing reaches the day's absorption");
+    }
+
+    /// @dev #2645 — relisted before the day finalizes, the same report's day
+    ///      credit is attributed at the finalization that counts it.
+    function testRelistedRecycledDayCreditIsAttributedAtFinalization() public {
+        _configureCanonical();
+        messenger.deliverChainReportRecycled(CHAIN_UNKNOWN, 1, 10e18, 5e18, 100e18, 40e18);
+        uint32[] memory chainIds = new uint32[](2);
+        chainIds[0] = CHAIN_BASE;
+        chainIds[1] = CHAIN_UNKNOWN;
+        _agg().setExpectedSourceChainIds(chainIds);
+        messenger.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        _agg().finalizeDay(1);
+        (uint256 credit, bool accepted) = _agg().getChainDailyRecycledCredit(1, CHAIN_UNKNOWN);
+        assertTrue(accepted);
+        assertEq(credit, 40e18, "attributed when the day counted the chain");
+        (, , , , , uint256 absorbedMirror) = InteractionRewardsLensFacet(address(diamond)).getRecycleDayMetrics(1);
+        assertEq(absorbedMirror, 40e18);
+    }
+
+    /// @dev #2613 — coverage is judged chain by chain: an off-list report does
+    ///      not stand in for a listed chain that has not reported.
+    function testOffListReportDoesNotCompleteCoverage() public {
+        _configureCanonical();
+        uint32[] memory chainIds = new uint32[](2);
+        chainIds[0] = CHAIN_BASE;
+        chainIds[1] = CHAIN_ARB;
+        _agg().setExpectedSourceChainIds(chainIds);
+        messenger.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        messenger.deliverChainReport(CHAIN_OP, 1, 1e18, 1e18); // off the list
+        assertEq(_agg().getChainDailyReportCount(1), 2, "two reports received");
+        (bool ready, uint8 reason) = _agg().isDayReadyToFinalize(1);
+        assertFalse(ready, "Arbitrum, which is listed, has not reported");
+        assertEq(reason, 3);
+        vm.expectRevert(DayNotReadyToFinalize.selector);
+        _agg().finalizeDay(1);
+    }
+
+    /// @dev #2621 — the setter refuses a list that is empty or leaves Base
+    ///      out, so neither can be stored from here on.
+    function testSetExpectedSourceChainIdsRefusesAListWithoutBase() public {
+        _configureCanonical();
+        uint32[] memory chainIds = new uint32[](1);
+        chainIds[0] = CHAIN_ARB;
+        vm.expectRevert(ExpectedSourceListUnusable.selector);
+        _agg().setExpectedSourceChainIds(chainIds);
+        vm.expectRevert(ExpectedSourceListUnusable.selector);
+        _agg().setExpectedSourceChainIds(new uint32[](0));
+        assertEq(_agg().getExpectedSourceChainIds().length, 3, "the stored list is unchanged");
+    }
+
+    /// @dev #2613 — no permissionless finalization against a list that is
+    ///      empty or leaves Base out (one stored before the setter refused
+    ///      them); the admin override is not refused.
+    function testFinalizeRefusesAListWithoutBase() public {
+        _configureCanonical();
+        uint32[] memory chainIds = new uint32[](1);
+        chainIds[0] = CHAIN_ARB;
+        _mut().setExpectedSourceChainIdsRaw(chainIds);
+        messenger.deliverChainReport(CHAIN_ARB, 1, 1e18, 1e18);
+        (bool ready, uint8 reason) = _agg().isDayReadyToFinalize(1);
+        assertFalse(ready);
+        assertEq(reason, 4, "the list leaves Base out");
+        vm.expectRevert(ExpectedSourceListUnusable.selector);
+        _agg().finalizeDay(1);
+        vm.warp(block.timestamp + 4 hours + 1);
+        vm.expectRevert(ExpectedSourceListUnusable.selector);
+        _agg().finalizeDay(1);
+
+        _mut().setExpectedSourceChainIdsRaw(new uint32[](0));
+        (, reason) = _agg().isDayReadyToFinalize(1);
+        assertEq(reason, 4, "an empty list");
+
+        _agg().forceFinalizeDay(1);
+        (bool finalized, , ) = _agg().getDailyGlobalInterest(1);
+        assertTrue(finalized, "the admin override still closes the day");
+    }
+
+    /// @dev #2619 / #2626 — the finalization records what it counted: which
+    ///      listed chains were zeroed, and which reports were included. A
+    ///      later list edit does not change either, and a report from a chain
+    ///      off the list at finalization lands without being included.
+    function testFinalizationRecordsZeroedChainsAndInclusion() public {
+        _configureCanonical();
+        uint32[] memory chainIds = new uint32[](2);
+        chainIds[0] = CHAIN_BASE;
+        chainIds[1] = CHAIN_ARB;
+        _agg().setExpectedSourceChainIds(chainIds);
+        messenger.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        messenger.deliverChainReport(CHAIN_OP, 1, 7e18, 7e18); // off the list
+
+        (bool recorded, uint32[] memory zeroed) = _agg().getDayZeroedChains(1);
+        assertFalse(recorded, "nothing recorded before finalization");
+        assertEq(zeroed.length, 0);
+        assertFalse(_agg().isChainIncluded(1, CHAIN_BASE), "nothing included before finalization");
+
+        vm.warp(block.timestamp + 4 hours + 1);
+        _agg().finalizeDay(1);
+
+        (recorded, zeroed) = _agg().getDayZeroedChains(1);
+        assertTrue(recorded, "the finalization wrote its record");
+        assertEq(zeroed.length, 1, "one listed chain missed the day");
+        assertEq(zeroed[0], CHAIN_ARB);
+        assertTrue(_agg().isChainIncluded(1, CHAIN_BASE), "Base counted");
+        assertFalse(_agg().isChainIncluded(1, CHAIN_ARB), "the zeroed chain is not included");
+        assertTrue(_agg().isChainReported(1, CHAIN_OP), "the off-list report landed");
+        assertFalse(_agg().isChainIncluded(1, CHAIN_OP), "and was not counted");
+
+        // A later list edit leaves the day's record as it was.
+        uint32[] memory wider = new uint32[](3);
+        wider[0] = CHAIN_BASE;
+        wider[1] = CHAIN_ARB;
+        wider[2] = CHAIN_OP;
+        _agg().setExpectedSourceChainIds(wider);
+        (recorded, zeroed) = _agg().getDayZeroedChains(1);
+        assertTrue(recorded);
+        assertEq(zeroed.length, 1, "the record does not follow the list");
+        assertEq(zeroed[0], CHAIN_ARB);
+        assertFalse(_agg().isChainIncluded(1, CHAIN_OP), "nor does inclusion");
+    }
+
+    /// @dev #2645 r2 — a day every listed chain reported is RECORDED with an
+    ///      empty zeroed set, so a reader can tell it from a day finalized by a
+    ///      Diamond that kept no record.
+    function testFullyReportedDayIsRecordedWithNoZeroedChains() public {
+        _configureCanonical();
+        uint32[] memory chainIds = new uint32[](2);
+        chainIds[0] = CHAIN_BASE;
+        chainIds[1] = CHAIN_ARB;
+        _agg().setExpectedSourceChainIds(chainIds);
+        messenger.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        messenger.deliverChainReport(CHAIN_ARB, 1, 2e18, 2e18);
+        _agg().finalizeDay(1);
+
+        (bool recorded, uint32[] memory zeroed) = _agg().getDayZeroedChains(1);
+        assertTrue(recorded, "the finalization recorded the day");
+        assertEq(zeroed.length, 0, "and zeroed no chain");
     }
 
     function testOnChainReportRevertsOnDuplicate() public {
@@ -1007,6 +1201,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         // Day 1 — honest report: forDay 40 backed by a 100 cumulative.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 40e18);
+        _agg().forceFinalizeDay(1); // #2645 — attribution happens at finalization
         (uint256 reported, , uint256 avail, uint256 attributed) =
             _agg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 100e18, "availability cumulative");
@@ -1021,6 +1216,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         // backing exists (150 reported − 40 attributed) → clamped, so Ā can
         // never be fed credit the availability ledger does not back.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 2, 1e18, 0, 150e18, 120e18);
+        _agg().forceFinalizeDay(2); // #2645 — attribution happens at finalization
         (credit, accepted) = _agg().getChainDailyRecycledCredit(2, CHAIN_ARB);
         assertTrue(accepted);
         assertEq(credit, 110e18, "day credit clamped to unattributed backing");
@@ -1036,9 +1232,12 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _configureCanonical();
 
         messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 10e18);
+
+        _agg().forceFinalizeDay(1); // #2645 — attribution happens at finalization
         // A buggy mirror reports a DECREASED cumulative for day 2; its
         // honest 10 for-day still fits the ratcheted backing.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 2, 1e18, 0, 80e18, 10e18);
+        _agg().forceFinalizeDay(2); // #2645 — attribution happens at finalization
 
         (uint256 reported, , , uint256 attributed) =
             _agg().getChainRecycledLedger(CHAIN_ARB);
@@ -1047,6 +1246,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         // Day 3 heals the cumulative; its full for-day is backed.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 3, 1e18, 0, 130e18, 50e18);
+        _agg().forceFinalizeDay(3); // #2645 — attribution happens at finalization
         (uint256 credit, ) = _agg().getChainDailyRecycledCredit(3, CHAIN_ARB);
         assertEq(credit, 50e18, "headroom measured from the ratcheted total");
         (reported, , , attributed) = _agg().getChainRecycledLedger(CHAIN_ARB);
@@ -1063,11 +1263,14 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         // Day 1 in order; day 2's CCIP delivery is delayed; day 3 lands.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 20e18);
+        _agg().forceFinalizeDay(1); // #2645 — attribution happens at finalization
         messenger.deliverChainReportRecycled(CHAIN_ARB, 3, 1e18, 0, 180e18, 30e18);
+        _agg().forceFinalizeDay(3); // #2645 — attribution happens at finalization
 
         // Day 2 arrives late (day 2 is not finalized). Its honest figures:
         // cumulative 150, forDay 50 — exactly the 100→150 delta.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 2, 1e18, 0, 150e18, 50e18);
+        _agg().forceFinalizeDay(2); // #2645 — attribution happens at finalization
 
         (uint256 credit, bool accepted) =
             _agg().getChainDailyRecycledCredit(2, CHAIN_ARB);
@@ -1087,9 +1290,12 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _configureCanonical();
 
         messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 20e18);
+
+        _agg().forceFinalizeDay(1); // #2645 — attribution happens at finalization
         // Day 0 arrives late: cumulative 60 at its close, all 60 credited
         // in the day-0 bucket.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 0, 1e18, 0, 60e18, 60e18);
+        _agg().forceFinalizeDay(0); // #2645 — attribution happens at finalization
 
         (uint256 credit, bool accepted) =
             _agg().getChainDailyRecycledCredit(0, CHAIN_ARB);
@@ -1114,8 +1320,10 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         // Day 3 credited 100; quiet day 2 is closed LATE, so its report
         // carries the live cumulative (100) with a zero day-2 bucket.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 2, 1e18, 0, 100e18, 0);
+        _agg().forceFinalizeDay(2); // #2645 — attribution happens at finalization
         // Day 3's own report then claims its 100.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 3, 1e18, 0, 100e18, 100e18);
+        _agg().forceFinalizeDay(3); // #2645 — attribution happens at finalization
 
         (uint256 credit, bool accepted) =
             _agg().getChainDailyRecycledCredit(3, CHAIN_ARB);
@@ -1134,10 +1342,14 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _configureCanonical();
 
         messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 10e18);
+
+        _agg().forceFinalizeDay(1); // #2645 — attribution happens at finalization
         // Day 4 jumps ahead (days 2-3 never reported yet).
         messenger.deliverChainReportRecycled(CHAIN_ARB, 4, 1e18, 0, 200e18, 20e18);
+        _agg().forceFinalizeDay(4); // #2645 — attribution happens at finalization
         // Day 3 arrives late — its 30 is still backed by unattributed total.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 3, 1e18, 0, 180e18, 30e18);
+        _agg().forceFinalizeDay(3); // #2645 — attribution happens at finalization
 
         (uint256 credit, bool accepted) =
             _agg().getChainDailyRecycledCredit(3, CHAIN_ARB);
@@ -1155,7 +1367,10 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _configureCanonical();
 
         messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 10e18);
+
+        _agg().forceFinalizeDay(1); // #2645 — attribution happens at finalization
         messenger.deliverChainReport(CHAIN_ARB, 2, 1e18, 0); // legacy shape
+        _agg().forceFinalizeDay(2); // #2645 — attribution happens at finalization
 
         (uint256 reported, , , uint256 attributed) =
             _agg().getChainRecycledLedger(CHAIN_ARB);
@@ -1310,6 +1525,8 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         vm.warp(block.timestamp + 2 days + 1);
 
         _rep().closeDay(1);
+
+        _agg().forceFinalizeDay(1); // #2645 — attribution happens at finalization
 
         (uint256 reported, , uint256 avail, uint256 attributed) =
             _agg().getChainRecycledLedger(CHAIN_BASE);

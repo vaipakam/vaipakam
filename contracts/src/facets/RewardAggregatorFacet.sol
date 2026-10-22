@@ -5,6 +5,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibMeshFunding} from "../libraries/LibMeshFunding.sol";
+import {LibRewardDayReport} from "../libraries/LibRewardDayReport.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -32,11 +33,14 @@ import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
  *           Chainlink CCIP.
  *        2. On arrival, the Base messenger calls {onChainReportReceived}
  *           which records the pair under the source chainId, increments
- *           `chainDailyReportCount[D]`, and stamps `dailyFirstReportAt[D]`.
- *        3. Once every expected chainId has reported OR
- *           `rewardGraceSeconds` has elapsed since `dailyFirstReportAt[D]`,
- *           anyone may call {finalizeDay}. The finalizer sums reported
- *           chainIds, writes the `dailyGlobal*InterestNumeraire18[D]` pair,
+ *           `chainDailyReportCount[D]`, and — for a chain on the
+ *           expected-source list — stamps `dailyFirstReportAt[D]`. A report
+ *           from a chain off the list is stored too and counts only if the
+ *           chain is listed when `D` finalizes (#2618, `LibRewardDayReport`).
+ *        3. Once every listed chain has reported OR `rewardGraceSeconds`
+ *           has elapsed since `dailyFirstReportAt[D]`, on a list that is
+ *           non-empty and includes Base, anyone may call {finalizeDay}. The
+ *           finalizer sums the listed reported chainIds, writes the `dailyGlobal*InterestNumeraire18[D]` pair,
  *           mirrors the pair into `knownGlobal*InterestNumeraire18[D]` for
  *           Base's own claim consumers, flips `dailyGlobalFinalized[D]`,
  *           and emits {DailyGlobalInterestFinalized}.
@@ -45,9 +49,11 @@ import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
  *           messenger. Split out so finalization stays cheap and broadcast
  *           fees can be replayed if a cross-chain leg fails.
  *
- *      Late reports (same `D`, landing after finalization) are rejected
- *      with `ReportAfterFinalization` so downstream claim math cannot
- *      shift under finalized consumers. Governance may credit the
+ *      Late reports (same `D`, landing after finalization) never change the
+ *      day: the B4 report's day figures are dropped while what it says about
+ *      the chain still applies, and an older report shape is rejected with
+ *      `ReportAfterFinalization`, so downstream claim math cannot shift
+ *      under finalized consumers. Governance may credit the
  *      missed chain out of the Insurance pool but must not reopen `D`.
  */
 contract RewardAggregatorFacet is
@@ -56,12 +62,6 @@ contract RewardAggregatorFacet is
     DiamondPausable,
     IVaipakamErrors
 {
-    /// @notice Default grace window — kept in sync with the reporter so
-    ///         `finalizeDay` and `onRewardBroadcastReceived` agree.
-    ///         4 hours for Phase 1; admin may tune via the reporter's
-    ///         `setRewardGraceSeconds`.
-    uint64 internal constant DEFAULT_REWARD_GRACE_SECONDS = 4 hours;
-
     /// @notice Emitted when a mirror's day-`D` report lands on the Base
     ///         aggregator. Useful for monitoring (per-chain coverage)
     ///         and for replaying missed broadcasts after a LZ outage.
@@ -69,8 +69,11 @@ contract RewardAggregatorFacet is
     /// @param sourceChainId             chainId of the mirror that reported.
     /// @param lenderNumeraire18           Reported lender USD-18 for that chain.
     /// @param borrowerNumeraire18         Reported borrower USD-18 for that chain.
-    /// @param reportCount           Running count of expected chainIds
-    ///                              reported for `dayId` (incl. this one).
+    /// @param reportCount           Running count of every chain's report
+    ///                              Base holds for `dayId` (incl. this one),
+    ///                              listed or not (#2618). NOT a coverage
+    ///                              measure: coverage is judged per listed
+    ///                              chain ({isDayReadyToFinalize}).
     /// @custom:event-category informational/reward-transport
     event ChainReportAggregated(
         uint256 indexed dayId,
@@ -303,10 +306,11 @@ contract RewardAggregatorFacet is
         uint64 custodyEra
     ) external onlyRewardMessenger onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // Only an expected chain's report speaks for its era — checked here, ahead
-        // of the write, because the late path below returns before the ingest's
-        // own check runs.
-        if (!_isExpectedChainId(s, sourceChainId)) revert SourceChainIdNotExpected();
+        // #2618 — every report the messenger authenticated speaks for its own
+        // chain, listed or not: the expected-source list decides only whose
+        // DAY figures a finalization sums (`LibRewardDayReport`), so it gates
+        // nothing here. A detached chain's last report therefore still lands
+        // its era and its ratchets, on time or late.
         if (custodyEra > s.chainCustodyEraReported[sourceChainId]) {
             s.chainCustodyEraReported[sourceChainId] = custodyEra;
             emit ChainCustodyEraReported(sourceChainId, custodyEra);
@@ -419,7 +423,7 @@ contract RewardAggregatorFacet is
         // participated in the finalized denominator, and `remitIneligible`
         // proves it was expected-and-zeroed at an armed finalize.
         if (
-            !_isExpectedChainId(s, sourceChainId)
+            !LibRewardDayReport.isExpectedSource(s, sourceChainId)
                 && !s.chainDailyIncluded[dayId][sourceChainId]
                 && !c.remitIneligible
         ) {
@@ -452,7 +456,8 @@ contract RewardAggregatorFacet is
     ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
-        if (!_isExpectedChainId(s, sourceChainId)) revert SourceChainIdNotExpected();
+        // #2618 — no membership check: an off-list chain's day figures are
+        // stored and counted only if it is listed when the day finalizes.
         if (s.dailyGlobalFinalized[dayId]) revert ReportAfterFinalization();
         if (s.chainDailyReported[dayId][sourceChainId]) {
             revert ChainDayAlreadyReported();
@@ -460,8 +465,9 @@ contract RewardAggregatorFacet is
 
         s.chainDailyLenderInterestNumeraire18[dayId][sourceChainId] = lenderNumeraire18;
         s.chainDailyBorrowerInterestNumeraire18[dayId][sourceChainId] = borrowerNumeraire18;
-        // #1222 M3 B1 — advance Base's per-chain recycled ledger (monotonic
-        // availability + clamped day attribution) from the mirror's report.
+        // #1222 M3 B1 — advance Base's per-chain recycled ledger from the
+        // mirror's report: the availability cumulative now, the day credit
+        // held until finalization attributes it to a chain it counts (#2645).
         LibVpfiRecycle.recordChainRecycled(
             s, sourceChainId, dayId, recycledCumulative18, recycledForDay18
         );
@@ -476,15 +482,7 @@ contract RewardAggregatorFacet is
             commitRetiredCumulative18,
             commitReleasedCumulative18
         );
-        s.chainDailyReported[dayId][sourceChainId] = true;
-        uint32 count;
-        unchecked {
-            count = s.chainDailyReportCount[dayId] + 1;
-        }
-        s.chainDailyReportCount[dayId] = count;
-        if (s.dailyFirstReportAt[dayId] == 0) {
-            s.dailyFirstReportAt[dayId] = uint64(block.timestamp);
-        }
+        uint32 count = LibRewardDayReport.markReported(s, dayId, sourceChainId);
 
         emit ChainReportAggregated(
             dayId,
@@ -522,12 +520,16 @@ contract RewardAggregatorFacet is
         uint256 dayId
     ) external nonReentrant whenNotPaused onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.dailyGlobalFinalized[dayId]) revert DayAlreadyFinalized();
-
-        uint256 nExpected = s.expectedSourceChainIds.length;
-        uint32 reportCount = s.chainDailyReportCount[dayId];
-
-        bool fullCoverage = reportCount >= nExpected && nExpected != 0;
+        // #2618 / #2613 — one judgement, shared with {isDayReadyToFinalize}:
+        // coverage chain by chain over the expected-source list, grace from
+        // the first LISTED report, and no finalization against a list that is
+        // empty or leaves this chain out (either zeroes real interest for good).
+        (bool ready, uint8 reason) = LibRewardDayReport.readiness(s, dayId);
+        if (!ready) {
+            if (reason == LibRewardDayReport.FINALIZED) revert DayAlreadyFinalized();
+            if (reason == LibRewardDayReport.LIST_UNUSABLE) revert ExpectedSourceListUnusable();
+            revert DayNotReadyToFinalize();
+        }
         // #1222 M3 B2-d1 — finalization does NOT wait for mirror commitment
         // reports (supersedes the B2-c readiness input). A mirror's day-`D`
         // liability is priced from the day-`D` per-side caps + funding stamp,
@@ -541,16 +543,6 @@ contract RewardAggregatorFacet is
         // report delays, never zeroes), and a chain whose INTEREST report was
         // zeroed out of the denominator is marked
         // remit-ineligible-pending-reconciliation in {_finalizeAndWrite}.
-        bool graceElapsed;
-        uint64 firstAt = s.dailyFirstReportAt[dayId];
-        if (firstAt != 0) {
-            uint64 grace = s.rewardGraceSeconds == 0
-                ? DEFAULT_REWARD_GRACE_SECONDS
-                : s.rewardGraceSeconds;
-            graceElapsed = block.timestamp >= uint256(firstAt) + uint256(grace);
-        }
-        if (!(fullCoverage || graceElapsed)) revert DayNotReadyToFinalize();
-
         _finalizeAndWrite(s, dayId, /* forced */ false);
     }
 
@@ -627,6 +619,11 @@ contract RewardAggregatorFacet is
         bool markIneligible = s.governorCommitArmedFromDay != 0
             && dayId >= s.governorCommitArmedFromDay;
         uint32 selfId = uint32(block.chainid);
+        // #2645 — the day's mirror recycled credit (Ā's mirror half), summed
+        // over exactly the chains this finalization counts and ASSIGNED once
+        // below. This loop is the one writer: whatever an earlier code path
+        // left in the slot is replaced, never added to.
+        uint256 mirrorCredit;
 
         for (uint256 i; i < nExpected; ) {
             uint32 chainId = expected[i];
@@ -636,10 +633,19 @@ contract RewardAggregatorFacet is
                 // #776 — snapshot that this chain's numerator IS part of the
                 // finalized denominator, so its reward-budget slice is coherent.
                 s.chainDailyIncluded[dayId][chainId] = true;
+                // #2645 — and only now attribute its recycled day credit, so
+                // the day's budget is sized from exactly the chains it counts.
+                LibVpfiRecycle.attributeChainDayRecycled(s, chainId, dayId);
+                if (chainId != selfId) {
+                    mirrorCredit += s.chainDailyRecycledCredit[dayId][chainId];
+                }
                 unchecked {
                     ++participating;
                 }
             } else {
+                // #2619 — record the zeroed set as the finalization saw it, so
+                // a later list edit cannot change what readers are told.
+                s.dayFinalizationRecord[dayId].zeroed.push(chainId);
                 emit ChainContributionZeroed(dayId, chainId, forced);
                 if (markIneligible && chainId != selfId) {
                     s.chainDayCommitments[dayId][chainId].remitIneligible = true;
@@ -663,6 +669,8 @@ contract RewardAggregatorFacet is
 
         s.dailyGlobalLenderInterestNumeraire18[dayId] = globalLender;
         s.dailyGlobalBorrowerInterestNumeraire18[dayId] = globalBorrower;
+        s.dayMirrorRecycledCredit[dayId] = mirrorCredit;
+        s.dayFinalizationRecord[dayId].recorded = true;
         s.dailyGlobalFinalized[dayId] = true;
 
         // Base is also a consumer — mirror the finalized pair into the
@@ -1235,9 +1243,12 @@ contract RewardAggregatorFacet is
     ///         {ConfigFacet} alongside {getChainRecycledLedger}.
     /// @return credit   VPFI wei attributed (0 when unaccepted or clamped
     ///                  away).
-    /// @return accepted True once the chain's report for the day was
-    ///                  processed (distinguishes a genuine zero credit from
-    ///                  "no report yet").
+    /// @return accepted True once the day's finalization attributed the
+    ///                  chain's report (#2645: attribution waits for the
+    ///                  finalization and is made only for a chain it counts).
+    ///                  False before then, and for good for a report the day
+    ///                  did not count; {isChainReported} says whether one
+    ///                  landed.
     function getChainDailyRecycledCredit(uint256 dayId, uint32 chainId)
         external
         view
@@ -1313,10 +1324,11 @@ contract RewardAggregatorFacet is
         uint256 credited;
         // #1222 M3 B2-a — Ā's feed under the mesh: Base's own raw local
         // series (first-party, unclamped — exactly the pre-mesh feed) PLUS
-        // the per-day MIRROR credit accumulator, which is written once at
-        // report ACCEPTANCE (clamped, Base excluded) so the fold is O(1)
-        // per day and a later `expectedSourceChainIds` edit can never
-        // rewrite an already-accepted day (Codex #1414 r1).
+        // the per-day MIRROR credit, which the day's finalization writes
+        // once (#2645: the sum of the clamped credit of the mirrors it
+        // counted, Base excluded) so the fold is O(1) per day and a later
+        // `expectedSourceChainIds` edit can never rewrite a finalized day
+        // (Codex #1414 r1).
         for (uint256 i; i < w; ) {
             if (dayId >= i) {
                 uint256 d = dayId - i;
@@ -1886,6 +1898,10 @@ contract RewardAggregatorFacet is
         uint32[] calldata chainIds
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #2621 — a list that is empty, or leaves `Base` out, would finalize
+        // every day without `Base`'s own interest, irreversibly. Refused here;
+        // `finalizeDay` refuses one too, for a list stored before this check.
+        if (chainIds.length == 0 || !_listsSelf(chainIds)) revert ExpectedSourceListUnusable();
         uint256 len = s.expectedSourceChainIds.length;
         // Pop existing, then push new — `delete s.expectedSourceChainIds`
         // does not recursively clear dynamic arrays in Diamond storage
@@ -1922,6 +1938,18 @@ contract RewardAggregatorFacet is
             }
         }
         emit ExpectedSourceChainIdsUpdated(chainIds);
+    }
+
+    /// @dev Whether `chainIds` carries this chain's own id.
+    function _listsSelf(uint32[] calldata chainIds) private view returns (bool) {
+        uint32 selfId = uint32(block.chainid);
+        for (uint256 i; i < chainIds.length; ) {
+            if (chainIds[i] == selfId) return true;
+            unchecked {
+                ++i;
+            }
+        }
+        return false;
     }
 
     /**
@@ -1975,6 +2003,40 @@ contract RewardAggregatorFacet is
             LibVaipakam.storageSlot().chainDailyReported[dayId][sourceChainId];
     }
 
+    /// @notice #2626 — whether `sourceChainId`'s report for `dayId` was
+    ///         counted into that day's global total. True only for a chain
+    ///         that was on the expected-source list when the day finalized
+    ///         and had reported by then. A report can land (`isChainReported`)
+    ///         and still not count: the chain was off the list at
+    ///         finalization (#2618), or it arrived after it. False for every
+    ///         chain while the day is not finalized.
+    function isChainIncluded(
+        uint256 dayId,
+        uint32 sourceChainId
+    ) external view returns (bool) {
+        return LibVaipakam.storageSlot().chainDailyIncluded[dayId][sourceChainId];
+    }
+
+    /// @notice #2619 — the chains whose interest counts as zero for `dayId`:
+    ///         those on the expected-source list when the day finalized that
+    ///         had not reported, in list order. Recorded at finalization, so a
+    ///         later edit of the list does not change it.
+    /// @return recorded True once the day's finalization wrote this record.
+    ///                  False while the day is not finalized, and for a day
+    ///                  finalized by a Diamond that predates the record, whose
+    ///                  zeroed set this view does not know (its
+    ///                  `ChainContributionZeroed` events still state it).
+    /// @return zeroed   The zeroed chains; empty for a recorded day every
+    ///                  listed chain reported, and whenever `recorded` is
+    ///                  false.
+    function getDayZeroedChains(
+        uint256 dayId
+    ) external view returns (bool recorded, uint32[] memory zeroed) {
+        LibVaipakam.DayFinalizationRecord storage r =
+            LibVaipakam.storageSlot().dayFinalizationRecord[dayId];
+        return (r.recorded, r.zeroed);
+    }
+
     /// @notice Mirror-specific `(lender, borrower)` pair for `dayId`.
     function getChainReport(
         uint256 dayId,
@@ -1987,7 +2049,9 @@ contract RewardAggregatorFacet is
         );
     }
 
-    /// @notice Running count of expected chainIds that have reported for `dayId`.
+    /// @notice How many chains' reports for `dayId` Base holds, listed or not.
+    ///         NOT a coverage measure: coverage is judged chain by chain over
+    ///         the expected-source list ({isDayReadyToFinalize}, #2613).
     function getChainDailyReportCount(
         uint256 dayId
     ) external view returns (uint32) {
@@ -2029,56 +2093,24 @@ contract RewardAggregatorFacet is
         return LibVaipakam.storageSlot().expectedSourceChainIds;
     }
 
-    /// @notice Whether `finalizeDay(dayId)` can be called now.
-    /// @return ready     True iff coverage or grace condition is met AND
-    ///                   the day is not already finalized.
+    /// @notice Whether `finalizeDay(dayId)` can be called now — the same
+    ///         judgement {finalizeDay} applies (`LibRewardDayReport`).
+    /// @return ready     True iff every listed chain has reported, or the
+    ///                   grace window since the first LISTED report has
+    ///                   elapsed, on a usable list, and the day is not
+    ///                   already finalized.
     /// @return reason    Zero when `ready`; otherwise an encoded status:
     ///                   1 = already finalized,
-    ///                   2 = no reports yet,
-    ///                   3 = waiting for more reports or grace.
+    ///                   2 = no listed chain has reported yet (grace not started),
+    ///                   3 = waiting for more listed reports or grace,
+    ///                   4 = the expected-source list is empty or leaves this
+    ///                       chain out, so no day is finalized against it.
     function isDayReadyToFinalize(
         uint256 dayId
     ) external view returns (bool ready, uint8 reason) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.dailyGlobalFinalized[dayId]) return (false, 1);
-
-        uint32 nExpected = uint32(s.expectedSourceChainIds.length);
-        uint32 count = s.chainDailyReportCount[dayId];
-        uint64 firstAt = s.dailyFirstReportAt[dayId];
-
-        if (count == 0) return (false, 2);
-
-        // #1222 M3 B2-d1 — readiness mirrors {finalizeDay} exactly, which has
-        // NO commitment input (the day-`D` report is only computable from the
-        // caps + stamp this finalize produces — see the comment there).
-        bool fullCoverage = count >= nExpected && nExpected != 0;
-        if (fullCoverage) return (true, 0);
-
-        uint64 grace = s.rewardGraceSeconds == 0
-            ? DEFAULT_REWARD_GRACE_SECONDS
-            : s.rewardGraceSeconds;
-        if (block.timestamp >= uint256(firstAt) + uint256(grace)) {
-            return (true, 0);
-        }
-        return (false, 3);
-    }
-
-    // ─── Internals ──────────────────────────────────────────────────────────
-
-    /// @dev Linear scan over `expectedSourceChainIds` — the list is tiny
-    ///      (≤ ~5 Phase-1 chains), and a set-style bitmap would burn
-    ///      storage slots for a membership we only check on ingress.
-    function _isExpectedChainId(
-        LibVaipakam.Storage storage s,
-        uint32 chainId
-    ) internal view returns (bool) {
-        uint32[] storage list = s.expectedSourceChainIds;
-        for (uint256 i; i < list.length; ) {
-            if (list[i] == chainId) return true;
-            unchecked {
-                ++i;
-            }
-        }
-        return false;
+        // #1222 M3 B2-d1 — readiness has NO commitment input (the day-`D`
+        // report is only computable from the caps + stamp the finalize
+        // produces — see {finalizeDay}).
+        return LibRewardDayReport.readiness(LibVaipakam.storageSlot(), dayId);
     }
 }

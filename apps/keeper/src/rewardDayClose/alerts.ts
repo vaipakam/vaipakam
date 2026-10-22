@@ -174,6 +174,12 @@ const KINDS: readonly AlertKind[] = [
       if (f.mirror === null) return GONE;
       if (x === undefined || !x.known) return UNJUDGED;
       if (!x.value) return GONE;
+      if (f.mirror.landedNotCounted.has(Number(subject))) {
+        return HOLDS(
+          `${tag}: Base finalized reward day ${subject} without counting this chain's report, although the report had landed: this chain was not on Base's expected-source list when the day finalized. Its interest counts as zero for that day; the chain-wide figures the report carried still applied.`,
+          true,
+        );
+      }
       return HOLDS(
         `${tag}: Base finalized reward day ${subject} without this chain's report, so this chain's interest counts as zero for that day. The report is still sent (or was): Base drops its day figures but applies the chain-wide figures it carries.`,
         true,
@@ -291,7 +297,7 @@ const KINDS: readonly AlertKind[] = [
       if (!m.notExpectedOnBase.known) return UNJUDGED;
       if (!m.notExpectedOnBase.value) return GONE;
       return HOLDS(
-        `${tag}: this chain is not on Base's expected-source list, so Base refuses every report it sends (SourceChainIdNotExpected): its interest counts toward no day, and the chain-wide figures each report carries (its custody era, and its recycled-availability and commitment ratchets) do not reach Base, so commitments this chain has retired stay outstanding there. The pass still closes each day here. CCIP records each refused report as a failed message, which can be executed again by hand once the chain is back on the list. If this chain is being detached, keep it on the list until its last report has landed (#2618).`,
+        `${tag}: this chain is not on Base's expected-source list, so its interest counts toward no day Base finalizes while it stays off. What else follows depends on Base's build, which this keeper does not read. A Base built with #2618 still takes each report: the chain-wide figures it carries (its custody era, and its recycled-availability and commitment ratchets) apply, and its day figures are stored and count if the chain is listed again before that day finalizes. A Base built before #2618 refuses every report (SourceChainIdNotExpected), so those chain-wide figures do not reach it either and commitments this chain has retired stay outstanding there; CCIP records each refused report as a failed message, which can be executed again by hand once the chain is back on the list, and a chain being detached should stay listed until its last report has landed. The pass still closes each day here.`,
       );
     },
   },

@@ -1653,7 +1653,10 @@ contract MeshThreeChainE2ETest is Test {
         );
 
         // Both days still attribute their own credit — accepting them out of
-        // order must not lose the older day's per-day figure.
+        // order must not lose the older day's per-day figure. Attribution is
+        // made when each day finalizes, counting the chain (#2645).
+        _agg().forceFinalizeDay(4);
+        _agg().forceFinalizeDay(5);
         (uint256 c4, bool a4) = _agg().getChainDailyRecycledCredit(4, uint32(ARB));
         (uint256 c5, bool a5) = _agg().getChainDailyRecycledCredit(5, uint32(ARB));
         assertTrue(a4 && a5, "both days accepted");

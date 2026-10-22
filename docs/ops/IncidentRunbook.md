@@ -46,12 +46,12 @@ Query `RewardAggregatorFacet` on Base:
 ```solidity
 getDailyFirstReportAt(dayId)          // first report arrival
 getExpectedSourceEids()               // list of expected chains
-getChainDailyReportCount(dayId)       // how many have landed
+getChainDailyReportCount(dayId)       // how many have landed, off-list chains included: NOT coverage
 isDayReadyToFinalize(dayId)           // (ready, reason) — reason: 1=finalized, 2=no reports, 3=waiting
 ```
 
 ### Diagnose
-For each `expectedEid`:
+For each `expectedEid` (coverage is per listed chain; the count above can match while one is missing):
 - `isChainReported(dayId, eid)` → which chain hasn't sent?
 - Check the Chainlink CCIP explorer for the missing chain's `VaipakamRewardMessenger`: is the outbound message in-flight, failed, manually executable, or never sent?
 

@@ -248,6 +248,9 @@ contract RecycleTransparencyMetricsTest is SetupTest {
             250 ether // of which, attributable to this day
         );
 
+        // #2645 — the mirror's day credit is attributed when the day finalizes.
+        _agg().forceFinalizeDay(day);
+
         (, , , , uint256 local, uint256 mirror) =
             _lens().getRecycleDayMetrics(day);
         assertEq(local, 700 ether, "local absorption term");
