@@ -308,10 +308,11 @@
       "pushEnabled": "此钱包的 Push 投递已开启。",
       "pushButton": "打开 Push 频道",
       "pushChecking": "正在检查当前是否可以发送 Push 提醒…",
-      "pushUnavailable": "此部署目前无法发送 Push 提醒，因此该选项已关闭。",
+      "pushUnavailable": "目前无法开启 Push：此部署暂时无法通过 Push 发送还款提醒。",
+      "pushScopeAgent": "此检查仅涵盖还款提醒。贷款变得有风险时的警告是单独发送的，本页面无法确认这些警告能送达 Push——请为它们保留另一个提醒渠道。",
       "pushUnknown": "我们暂时无法确认是否可以发送 Push 提醒，因此该选项已关闭。请稍后再试。",
       "pushKeptNote": "你之前为此钱包做出的 Push 选择会被保留，发送恢复后提醒会重新通过 Push 送达。",
-      "pushNotSaved": "你的其他设置已保存，但 Push 没有开启：此部署目前无法发送 Push 提醒。",
+      "pushNotSaved": "您的其他设置已保存，但 Push 未开启：此部署目前无法通过 Push 发送还款提醒。",
       "loanNudge": "想在此贷款变得有风险时收到 Telegram 警告？请在设置中配置提醒。",
       "unlinkedChainOnly": "已为 {{network}} 解除关联。智能账户钱包按网络断开连接——如果此钱包在其他网络上也已关联，请分别在相应网络上用其各自的签名解除关联。"
     },

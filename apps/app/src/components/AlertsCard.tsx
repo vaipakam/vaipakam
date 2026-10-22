@@ -147,11 +147,11 @@ export function AlertsCard() {
         bandsChanged: opts?.bandsChanged,
         signMessage: (message) => signMessageAsync({ message }),
       });
-      // #2251 — the agent stores a Push opt-in only where it can send. When
-      // THIS save was the one switching Push on and the agent refused it,
-      // Push stays off here too, and the card re-reads the rail's status.
-      // An opt-in made earlier is kept as it is: the agent keeps it stored.
-      const refusedEnable = push === 'unavailable' && !prefs.pushEnabled;
+      // #2251 — the agent stores a NEW Push opt-in only where it can send,
+      // and keeps one already stored. `unavailable` therefore means Push is
+      // not stored for this wallet (the rest of the save landed): it shows
+      // off here too, and the card re-reads the rail's status.
+      const refusedEnable = push === 'unavailable';
       const saved = refusedEnable ? { ...next, pushEnabled: false } : next;
       storeAlertPrefs(chainId, address, saved);
       setPrefs(saved);
@@ -465,6 +465,15 @@ export function AlertsCard() {
                 >
                   {copy.alerts.pushButton}
                 </a>
+                {/* Codex #2665 r1 — the answer covers the agent's rail only
+                    (payment reminders); the risky-loan warnings come from
+                    the keeper, which this check cannot see. Said, not
+                    implied, until a combined answer exists. */}
+                {pushStatus.data.scope === 'agent' ? (
+                  <p className="muted" style={{ margin: 0, flexBasis: '100%' }}>
+                    {copy.alerts.pushScopeAgent}
+                  </p>
+                ) : null}
               </div>
             ) : (
               // Not offered unless the agent says the rail can send: an

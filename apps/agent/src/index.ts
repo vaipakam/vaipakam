@@ -125,6 +125,7 @@ import {
   sweepExpiredLinks,
   unlinkTelegram,
   unlinkTelegramOnChain,
+  hasStoredPushOptIn,
   upsertThresholds,
 } from './db';
 import { extractLinkCode, sendMessage, type TelegramUpdate } from './telegram';
@@ -571,12 +572,27 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
       );
     }
   }
-  // #2251 — a Push opt-in is stored only where this deployment's rail can
-  // honour it; see `decidePushOptIn` for what is dropped and what survives.
-  const { write, push } = decidePushOptIn(
+  // #2251 — a NEW Push opt-in is accepted only where this deployment's rail
+  // can honour it; see `decidePushOptIn` for what is refused and what is kept.
+  const decision = await decidePushOptIn(
     parsed,
     pushRailStatus(pushRailConfigOf(env)),
+    () => hasStoredPushOptIn(env.DB, parsed.wallet, parsed.chain_id),
   );
+  if ('refused' in decision) {
+    // Non-2xx on purpose: every client, including a bundle from before this
+    // change, reads it as "not saved". Nothing in this save was stored.
+    return json(
+      {
+        error: 'push-unavailable',
+        reason: 'Push alerts cannot be sent from this deployment right now; nothing was saved',
+        push: 'unavailable',
+      },
+      409,
+      corsOrigin,
+    );
+  }
+  const { write, push } = decision;
   // If the threshold settings ever start to drive on-chain actions,
   // extend the signed-payload requirement to every write so
   // msg.sender parity is cryptographic.
@@ -604,7 +620,7 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
       ok: true,
       // What happened to the Push opt-in this save carried, if any. Absent
       // from older agents, which the app reads as "stored" — the behaviour
-      // those agents had.
+      // those agents had. A refused NEW opt-in never reaches here (409 above).
       push,
     },
     200,

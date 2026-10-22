@@ -60,22 +60,34 @@ describe('GET /push/status', () => {
 
 describe('what a settings save does with a Push opt-in', () => {
   const save = { wallet: '0x1DAefA360ED370285f003Fa2d92DB75628088282', push_channel: 'subscribed' };
+  const never = async (): Promise<boolean> => {
+    throw new Error('the stored opt-in is read only when it can matter');
+  };
 
-  it('stores it when the rail can send', () => {
-    expect(decidePushOptIn(save, { usable: true })).toEqual({ write: save, push: 'stored' });
+  it('stores it when the rail can send', async () => {
+    expect(await decidePushOptIn(save, { usable: true }, never)).toEqual({
+      write: save,
+      push: 'stored',
+    });
   });
 
-  it('drops ONLY the push field when the rail cannot send, and says so', () => {
-    const { write, push } = decidePushOptIn(save, { usable: false });
-    expect(push).toBe('unavailable');
-    // The rest of the save stands; a null push field leaves a STORED opt-in
-    // in place (the write keeps a stored channel when the field is absent).
-    expect(write).toEqual({ ...save, push_channel: null });
+  // Codex #2665 r1 — a 2xx here would read as "stored" to an app bundle from
+  // before this change, so a NEW opt-in the rail cannot honour refuses the
+  // whole save (the handler answers 409 and stores nothing).
+  it('refuses the whole save for a NEW opt-in the rail cannot send', async () => {
+    expect(await decidePushOptIn(save, { usable: false }, async () => false)).toEqual({
+      refused: true,
+    });
   });
 
-  it('reports nothing about Push for a save that carried no opt-in', () => {
+  it('keeps an opt-in ALREADY stored, so a client holding it can still save other settings', async () => {
+    const out = await decidePushOptIn(save, { usable: false }, async () => true);
+    expect(out).toEqual({ write: { ...save, push_channel: null }, push: 'kept' });
+  });
+
+  it('reports nothing about Push for a save that carried no opt-in', async () => {
     const plain = { ...save, push_channel: null };
-    expect(decidePushOptIn(plain, { usable: false })).toEqual({
+    expect(await decidePushOptIn(plain, { usable: false }, never)).toEqual({
       write: plain,
       push: 'not-requested',
     });

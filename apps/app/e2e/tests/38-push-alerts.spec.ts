@@ -9,13 +9,15 @@
  *
  *  Asserted contract:
  *  1. AVAILABLE: the opt-in is offered, the subscribe link opens the channel
- *     the AGENT names (not a build-time address), and enabling sends the
- *     opt-in and reads "Push delivery is on".
+ *     the AGENT names (not a build-time address), the card says the check
+ *     covers payment reminders only (the answer's scope is the agent's rail),
+ *     and enabling sends the opt-in and reads "Push delivery is on".
  *  2. UNAVAILABLE: no opt-in and no link; the card says Push can't be sent
  *     from this deployment.
  *  3. REFUSED AT SAVE: the status said available, the agent refused the
- *     opt-in when it was saved — Push stays off, the card says why, and it
- *     re-reads the status.
+ *     opt-in when it was saved (a 409 that stores nothing) — the app sends
+ *     the save again without the opt-in, Push stays off, the card says why,
+ *     and it re-reads the status.
  *  4. UNKNOWN: the status could not be read — stated, and nothing offered.
  */
 import http from 'node:http';
@@ -36,8 +38,9 @@ let appServer: ChildProcess | undefined;
 let agentStub: http.Server | undefined;
 /** What `GET /push/status` answers. */
 let statusMode: 'available' | 'unavailable' | 'error' = 'available';
-/** What `PUT /thresholds` says it did with a Push opt-in. */
-let putPush: 'stored' | 'unavailable' = 'stored';
+/** What `PUT /thresholds` does with a NEW Push opt-in: store it, or refuse
+ *  the whole save with the agent's 409. */
+let putPush: 'stored' | 'refuse' = 'stored';
 const puts: Record<string, unknown>[] = [];
 
 test.beforeAll(async () => {
@@ -75,7 +78,11 @@ test.beforeAll(async () => {
         const parsed = JSON.parse(body) as Record<string, unknown>;
         puts.push(parsed);
         const requested = typeof parsed.push_channel === 'string';
-        json(200, { ok: true, push: requested ? putPush : 'not-requested' });
+        if (requested && putPush === 'refuse') {
+          json(409, { error: 'push-unavailable', push: 'unavailable' });
+          return;
+        }
+        json(200, { ok: true, push: requested ? 'stored' : 'not-requested' });
       });
       return;
     }
@@ -160,6 +167,10 @@ test('an available rail is offered, and its link opens the channel the agent nam
   await openAlerts(page);
 
   const link = page.getByRole('link', { name: /open the push channel/i });
+  // The answer covers the agent's rail only, and the card says so.
+  await expect(page.getByText(/this check covers payment reminders/i)).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(link).toHaveAttribute(
     'href',
     `https://app.push.org/channels/${AGENT_CHANNEL}`,
@@ -177,7 +188,7 @@ test('an unavailable rail is stated, with nothing offered', async ({ launchWalle
   const { page } = await launchWallet('lender');
   await openAlerts(page);
   await expect(
-    page.getByText(/push alerts can.t be sent from this deployment right now/i),
+    page.getByText(/push can.t be switched on right now/i),
   ).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('button', { name: /enable push delivery/i })).toHaveCount(0);
   await expect(page.getByRole('link', { name: /open the push channel/i })).toHaveCount(0);
@@ -189,20 +200,25 @@ test('an opt-in the agent refuses at save stays off, and the card says why', asy
   // The status said available; by the time the opt-in was saved the rail
   // could not send. The agent stored the rest of the save and said so.
   statusMode = 'available';
-  putPush = 'unavailable';
+  putPush = 'refuse';
   const { page } = await launchWallet('lender');
   await openAlerts(page);
   const enable = page.getByRole('button', { name: /enable push delivery/i });
   await expect(enable).toBeVisible({ timeout: 15_000 });
   statusMode = 'unavailable';
+  const before = puts.length;
   await enable.click();
   await expect(page.getByText(/push wasn.t switched on/i)).toBeVisible({
     timeout: 15_000,
   });
+  // The refused save was sent again WITHOUT the opt-in, so the rest landed.
+  const sent = puts.slice(before);
+  expect(sent[0]?.push_channel).toBe('subscribed');
+  expect(sent.some((p) => p.push_channel === undefined)).toBe(true);
   await expect(page.getByText('Push delivery is on for this wallet.')).toHaveCount(0);
   // The card re-read the status and now states the outage.
   await expect(
-    page.getByText(/push alerts can.t be sent from this deployment right now/i),
+    page.getByText(/push can.t be switched on right now/i),
   ).toBeVisible({ timeout: 15_000 });
 });
 

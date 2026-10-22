@@ -49,27 +49,44 @@ export function handlePushStatus(
   });
 }
 
-/** What a settings save did with the Push opt-in it carried (#2251). */
-export type PushOptInOutcome = 'not-requested' | 'stored' | 'unavailable';
+/** What a settings save did with the Push opt-in it carried (#2251):
+ *  `stored` — written; `kept` — the rail cannot send now, but an opt-in made
+ *  earlier is already stored and stays (it resumes when the rail is back);
+ *  `not-requested` — the save carried none. */
+export type PushOptInOutcome = 'not-requested' | 'stored' | 'kept';
+
+/** The save is refused as a whole: it asked to switch Push ON and the rail
+ *  cannot send. */
+export interface PushOptInRefused {
+  refused: true;
+}
 
 /**
- * Decide what a `PUT /thresholds` write stores for Push (#2251).
+ * Decide what a `PUT /thresholds` write does with Push (#2251).
  *
- * An opt-in is stored only where it can be honoured: when the rail cannot
- * issue a request, the push field is dropped from the write and the outcome
- * says `unavailable`, so the app never reports Push as on for a rail that
- * sends nothing. Only that field is dropped. A client holding an earlier
- * opt-in sends the field on every save, so refusing the whole save would stop
- * it changing anything else during an outage. An opt-in ALREADY stored is not
- * touched — the write keeps a stored channel when the field is absent — so it
- * survives the outage and resumes when the rail is back.
+ * A NEW opt-in is accepted only where the rail can honour it. When it cannot,
+ * the WHOLE save is refused with a non-2xx status and nothing is stored, so a
+ * client of any age reads it as a failure: an app bundle from before this
+ * change treats every 2xx as a stored opt-in and would otherwise report
+ * "Push delivery is on" for a rail that sends nothing (Codex #2665 r1). The
+ * current app retries the save without the opt-in, so its other settings
+ * still land, and says why Push stayed off.
+ *
+ * An opt-in ALREADY stored is not a new one: a client holding it sends the
+ * field on every save, and refusing those would stop it changing anything
+ * else during an outage. The field is dropped from the write (the stored
+ * value is kept by the upsert's COALESCE) and the outcome says `kept`.
+ * `alreadyStored` is read only when it can matter — the caller asks for it
+ * when an opt-in arrives while the rail cannot send.
  */
-export function decidePushOptIn<T extends { push_channel?: string | null }>(
+export async function decidePushOptIn<T extends { push_channel?: string | null }>(
   parsed: T,
   rail: { usable: boolean },
-): { write: T; push: PushOptInOutcome } {
+  alreadyStored: () => Promise<boolean>,
+): Promise<{ write: T; push: PushOptInOutcome } | PushOptInRefused> {
   const requested = parsed.push_channel !== null && parsed.push_channel !== undefined;
   if (!requested) return { write: parsed, push: 'not-requested' };
   if (rail.usable) return { write: parsed, push: 'stored' };
-  return { write: { ...parsed, push_channel: null }, push: 'unavailable' };
+  if (await alreadyStored()) return { write: { ...parsed, push_channel: null }, push: 'kept' };
+  return { refused: true };
 }

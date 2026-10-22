@@ -14,12 +14,28 @@ describe('parsePushStatus', () => {
       kind: 'available',
       channel: CHANNEL,
       channelUrl: `https://app.push.org/channels/${CHANNEL}`,
+      scope: 'agent',
     });
   });
 
   it('reads an unavailable rail, whatever the reason', () => {
-    expect(parsePushStatus({ available: false, reason: 'signer-unset' })).toEqual({
+    expect(parsePushStatus({ available: false, reason: 'signer-unset', scope: 'agent' })).toEqual({
       kind: 'unavailable',
+      scope: 'agent',
+    });
+  });
+
+  // Codex #2665 r1 — the answer covers ONE sender's rail; whose is kept, and
+  // an answer that does not say is not used.
+  it('keeps whose rail the answer covers, and refuses an unscoped answer', () => {
+    expect(parsePushStatus({ available: true, channel: CHANNEL, scope: 'service' })).toMatchObject({
+      kind: 'available',
+      scope: 'service',
+    });
+    expect(parsePushStatus({ available: true, channel: CHANNEL })).toEqual({ kind: 'unknown' });
+    expect(parsePushStatus({ available: false, reason: 'signer-unset' })).toEqual({ kind: 'unknown' });
+    expect(parsePushStatus({ available: true, channel: CHANNEL, scope: 'keeper' })).toEqual({
+      kind: 'unknown',
     });
   });
 
@@ -28,6 +44,11 @@ describe('parsePushStatus', () => {
     expect(parsePushStatus({})).toEqual({ kind: 'unknown' });
     expect(parsePushStatus({ available: true })).toEqual({ kind: 'unknown' });
     expect(parsePushStatus({ available: true, channel: '0x1234' })).toEqual({ kind: 'unknown' });
-    expect(parsePushStatus({ available: 'yes', channel: CHANNEL })).toEqual({ kind: 'unknown' });
+    expect(parsePushStatus({ available: 'yes', channel: CHANNEL, scope: 'agent' })).toEqual({
+      kind: 'unknown',
+    });
+    expect(parsePushStatus({ available: true, channel: '0x1234', scope: 'agent' })).toEqual({
+      kind: 'unknown',
+    });
   });
 });

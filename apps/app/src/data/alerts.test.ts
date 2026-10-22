@@ -191,6 +191,61 @@ describe('saveAlertPrefs wire shape (#2000)', () => {
   });
 });
 
+describe('saveAlertPrefs and a refused Push opt-in (#2251)', () => {
+  const WALLET = '0x1DAefA360ED370285f003Fa2d92DB75628088282' as const;
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  function stubAgent(first: { status: number; body: unknown }) {
+    vi.stubEnv('VITE_AGENT_ORIGIN', 'https://agent.test');
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        const answer = bodies.length === 1 ? first : { status: 200, body: { ok: true } };
+        return new Response(JSON.stringify(answer.body), { status: answer.status });
+      }),
+    );
+    return bodies;
+  }
+
+  // Codex #2665 r1 — the agent refuses a NEW opt-in it cannot honour with a
+  // 409 that stores nothing (an older bundle reads that as a failure). This
+  // client says Push is off and sends the same save again WITHOUT the
+  // opt-in, so everything else in it still lands.
+  it('reports the refusal and repeats the save without the opt-in', async () => {
+    const bodies = stubAgent({
+      status: 409,
+      body: { error: 'push-unavailable', push: 'unavailable' },
+    });
+    const out = await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, pushEnabled: true }, {
+      dueDateChanged: true,
+    });
+    expect(out).toBe('unavailable');
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]!.push_channel).toBe('subscribed');
+    expect(bodies[1]!.push_channel).toBeUndefined();
+    expect(bodies[1]!.notify_maturity_approaching).toBe(true);
+  });
+
+  it('reads an opt-in the agent kept or stored as stored', async () => {
+    stubAgent({ status: 200, body: { ok: true, push: 'kept' } });
+    expect(
+      await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, pushEnabled: true }),
+    ).toBe('stored');
+  });
+
+  it('still fails on any other 409', async () => {
+    stubAgent({ status: 409, body: { error: 'something-else' } });
+    await expect(
+      saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, pushEnabled: true }),
+    ).rejects.toThrow(/409/);
+  });
+});
+
 describe('unlinkTelegram scope (#2013 r4)', () => {
   // A smart account's chain-verified signature buys a chain-scoped
   // clear; an ordinary key's buys the wallet-wide one. The service

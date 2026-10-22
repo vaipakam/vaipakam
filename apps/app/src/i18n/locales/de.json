@@ -308,10 +308,11 @@
       "pushEnabled": "Push-Zustellung ist für diese Wallet aktiv.",
       "pushButton": "Push-Kanal öffnen",
       "pushChecking": "Es wird geprüft, ob Push-Benachrichtigungen gerade gesendet werden können…",
-      "pushUnavailable": "Von dieser Bereitstellung können gerade keine Push-Benachrichtigungen gesendet werden, daher ist die Option ausgeschaltet.",
+      "pushUnavailable": "Push kann gerade nicht eingeschaltet werden: Diese Bereitstellung kann im Moment keine Push-Zahlungserinnerungen senden.",
+      "pushScopeAgent": "Diese Prüfung gilt für Zahlungserinnerungen. Warnungen, wenn ein Kredit riskant wird, werden separat gesendet, und diese Seite kann nicht bestätigen, dass sie Push erreichen — lass dafür einen anderen Benachrichtigungskanal eingeschaltet.",
       "pushUnknown": "Wir konnten nicht prüfen, ob Push-Benachrichtigungen gerade gesendet werden können, daher ist die Option ausgeschaltet. Bitte versuche es später erneut.",
       "pushKeptNote": "Deine frühere Push-Auswahl für diese Wallet bleibt erhalten, und die Benachrichtigungen kommen wieder per Push, sobald das Senden wieder möglich ist.",
-      "pushNotSaved": "Deine anderen Einstellungen wurden gespeichert, aber Push wurde nicht eingeschaltet: Von dieser Bereitstellung können gerade keine Push-Benachrichtigungen gesendet werden.",
+      "pushNotSaved": "Deine anderen Einstellungen wurden gespeichert, aber Push wurde nicht eingeschaltet: Diese Bereitstellung kann gerade keine Push-Zahlungserinnerungen senden.",
       "loanNudge": "Möchten Sie eine Telegram-Warnung, wenn dieser Kredit riskant wird? Richten Sie Benachrichtigungen in den Einstellungen ein.",
       "unlinkedChainOnly": "Für {{network}} getrennt. Eine Smart-Account-Wallet wird pro Netzwerk getrennt — ist diese Wallet auf anderen Netzwerken verknüpft, trennen Sie jede dort mit ihrer eigenen Signatur."
     },

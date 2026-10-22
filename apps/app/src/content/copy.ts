@@ -720,13 +720,17 @@ const copySource = {
     // can send; every other state is stated rather than hidden.
     pushChecking: 'Checking whether Push alerts can be sent right now…',
     pushUnavailable:
-      'Push alerts can’t be sent from this deployment right now, so the option is switched off.',
+      'Push can’t be switched on right now: this deployment can’t send Push payment reminders at the moment.',
+    // Codex #2665 r1 — the readiness answer covers the payment-reminder
+    // sender only; the risky-loan warnings have their own sender.
+    pushScopeAgent:
+      'This check covers payment reminders. Warnings when a loan gets risky are sent separately, and this page can’t confirm those reach Push — keep another alert channel on for them.',
     pushUnknown:
       'We couldn’t check whether Push alerts can be sent right now, so the option is switched off. Please try again later.',
     pushKeptNote:
       'The Push choice you made earlier for this wallet is kept, and alerts resume on Push once sending is back.',
     pushNotSaved:
-      'Your other settings were saved, but Push wasn’t switched on: Push alerts can’t be sent from this deployment right now.',
+      'Your other settings were saved, but Push wasn’t switched on: this deployment can’t send Push payment reminders right now.',
     loanNudge: 'Want a Telegram warning if this loan gets risky? Set up alerts in Settings.',
   },
   notifications: {

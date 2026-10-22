@@ -308,10 +308,11 @@
       "pushEnabled": "La entrega Push está activa para esta billetera.",
       "pushButton": "Abrir el canal Push",
       "pushChecking": "Comprobando si ahora se pueden enviar alertas Push…",
-      "pushUnavailable": "Ahora mismo no se pueden enviar alertas Push desde este despliegue, así que la opción está desactivada.",
+      "pushUnavailable": "Push no se puede activar ahora: esta implementación no puede enviar recordatorios de pago por Push en este momento.",
+      "pushScopeAgent": "Esta comprobación cubre los recordatorios de pago. Los avisos cuando un préstamo se vuelve arriesgado se envían por separado, y esta página no puede confirmar que lleguen a Push — mantén otro canal de alertas activado para ellos.",
       "pushUnknown": "No pudimos comprobar si ahora se pueden enviar alertas Push, así que la opción está desactivada. Vuelve a intentarlo más tarde.",
       "pushKeptNote": "La opción de Push que elegiste antes para esta cartera se conserva, y las alertas vuelven a llegar por Push cuando el envío se restablezca.",
-      "pushNotSaved": "Tus demás ajustes se guardaron, pero Push no se activó: ahora mismo no se pueden enviar alertas Push desde este despliegue.",
+      "pushNotSaved": "Tus demás ajustes se guardaron, pero Push no se activó: esta implementación no puede enviar recordatorios de pago por Push ahora mismo.",
       "loanNudge": "¿Quieres un aviso de Telegram si este préstamo se vuelve riesgoso? Configura alertas en Configuración.",
       "unlinkedChainOnly": "Desvinculado para {{network}}. Un monedero de cuenta inteligente se desconecta por red — si este monedero está vinculado en otras redes, desvincule cada una desde allí con su propia firma."
     },
