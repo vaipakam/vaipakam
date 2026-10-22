@@ -1,4 +1,4 @@
-## Thread — Retire the keeper "unscheduled" hold banners from the runbooks (#2570)
+## Thread — Retire the keeper "unscheduled" hold banners from the runbooks (PR #2634)
 
 Several operator runbooks still carried the old warning that the keeper was
 unscheduled, that "there is no next tick", and that it could be re-enabled only
