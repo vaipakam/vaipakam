@@ -9,7 +9,7 @@
 
 import type { Abi, Address, PublicClient } from 'viem';
 import { boundedRead, PastRunDeadline } from '../batchRead';
-import { ABI, B4_REPORTER_SELECTOR, CLOSE_DAY_SELECTOR, LOUPE_ABI, MESSENGER_ABI, READ_CHUNK, REASON_FINALIZED } from './constants';
+import { ABI, B4_REPORTER_SELECTOR, CLOSE_DAY_SELECTOR, LOUPE_ABI, MESSENGER_ABI, NO_SELECTOR, READ_CHUNK, REASON_FINALIZED } from './constants';
 import type { ChainRun, PeerReader } from './deps';
 import { classify, revertName, shortErr } from './errors';
 import { known, unknown, type Fact, type PerDay } from './fact';
@@ -24,6 +24,18 @@ export async function readOne<T>(client: PublicClient, address: Address, abi: Ab
     console.error(`[keeper] rewardDayClose ${label} unread: ${shortErr(err)}`);
     return unknown(shortErr(err));
   }
+}
+
+/** One batched read of a view an older Diamond may not route: its value;
+ *  `null` when the Diamond ANSWERED that it routes no such function
+ *  (`FunctionDoesNotExist`), which is the one definitive sign the build keeps
+ *  no such record; otherwise unknown. A failed read is never taken for an
+ *  older build: that would turn a transient RPC error into a fallback the
+ *  caller records for good (#2645 r1). */
+export function routedOrAbsent<T>(r: { status: string; result?: unknown; error?: unknown } | undefined, what: string): Fact<T> | null {
+  if (r?.status === 'success') return known(r.result as T);
+  if (r !== undefined && revertName(r.error) === NO_SELECTOR) return null;
+  return unknown(`${what} unread${r?.error === undefined ? '' : ` (${shortErr(r.error)})`}`);
 }
 
 /** `contracts` read in aggregates of {@link READ_CHUNK}, results in order. A
@@ -75,14 +87,15 @@ export async function readReported(c: ChainRun, days: readonly number[], expecte
 
 /** What a mirror reads of one day on Base: whether Base has finalized it,
  *  whether Base could finalize it now, whether it holds this chain's report,
- *  and whether it included that report in the finalized day (#2626; a Base
- *  built before that record has no such read). Each read stands alone: a
- *  failed one must not hide another. */
+ *  and whether it included that report in the finalized day (#2626). `included`
+ *  is `null` only on a Base that answered it keeps no such record (built
+ *  before #2626); a failed read of it is unknown, like every other. Each read
+ *  stands alone: a failed one must not hide another. */
 export interface BaseDay {
   finalized: Fact<boolean>;
   ready: Fact<boolean>;
   counted: Fact<boolean>;
-  included: Fact<boolean>;
+  included: Fact<boolean> | null;
 }
 
 export async function readBaseDays(base: PeerReader, days: readonly number[], self: number, deadline: number): Promise<Map<number, BaseDay>> {
@@ -107,10 +120,7 @@ export async function readBaseDays(base: PeerReader, days: readonly number[], se
       finalized: r === null ? unknown('readiness on Base unread') : known(Number(r[1]) === REASON_FINALIZED),
       ready: r === null ? unknown('readiness on Base unread') : known(r[0] === true),
       counted: counted?.status === 'success' ? known(counted.result === true) : unknown("Base's record of this chain's report unread"),
-      included:
-        included?.status === 'success'
-          ? known(included.result === true)
-          : unknown("whether Base included this chain's landed report in the finalized day (Base's record of it is unread: a Base built before #2626 keeps none, or the read failed)"),
+      included: routedOrAbsent<boolean>(included, "Base's record of whether it included this chain's report"),
     });
   });
   return out;

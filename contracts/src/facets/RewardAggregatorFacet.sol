@@ -462,8 +462,9 @@ contract RewardAggregatorFacet is
 
         s.chainDailyLenderInterestNumeraire18[dayId][sourceChainId] = lenderNumeraire18;
         s.chainDailyBorrowerInterestNumeraire18[dayId][sourceChainId] = borrowerNumeraire18;
-        // #1222 M3 B1 — advance Base's per-chain recycled ledger (monotonic
-        // availability + clamped day attribution) from the mirror's report.
+        // #1222 M3 B1 — advance Base's per-chain recycled ledger from the
+        // mirror's report: the availability cumulative now, the day credit
+        // held until finalization attributes it to a chain it counts (#2645).
         LibVpfiRecycle.recordChainRecycled(
             s, sourceChainId, dayId, recycledCumulative18, recycledForDay18
         );
@@ -624,6 +625,9 @@ contract RewardAggregatorFacet is
                 // #776 — snapshot that this chain's numerator IS part of the
                 // finalized denominator, so its reward-budget slice is coherent.
                 s.chainDailyIncluded[dayId][chainId] = true;
+                // #2645 — and only now attribute its recycled day credit, so
+                // the day's budget is sized from exactly the chains it counts.
+                LibVpfiRecycle.attributeChainDayRecycled(s, chainId, dayId);
                 unchecked {
                     ++participating;
                 }
@@ -1226,9 +1230,12 @@ contract RewardAggregatorFacet is
     ///         {ConfigFacet} alongside {getChainRecycledLedger}.
     /// @return credit   VPFI wei attributed (0 when unaccepted or clamped
     ///                  away).
-    /// @return accepted True once the chain's report for the day was
-    ///                  processed (distinguishes a genuine zero credit from
-    ///                  "no report yet").
+    /// @return accepted True once the day's finalization attributed the
+    ///                  chain's report (#2645: attribution waits for the
+    ///                  finalization and is made only for a chain it counts).
+    ///                  False before then, and for good for a report the day
+    ///                  did not count; {isChainReported} says whether one
+    ///                  landed.
     function getChainDailyRecycledCredit(uint256 dayId, uint32 chainId)
         external
         view

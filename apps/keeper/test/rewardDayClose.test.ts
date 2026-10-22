@@ -251,6 +251,8 @@ class FakeDiamond {
   /** A Base built with #2619 / #2626: it keeps the finalization's record of
    *  the chains it zeroed and of the reports it included. */
   dayRecord = false;
+  /** Its record reads fail transiently (it is still routed). */
+  dayRecordUnread = false;
   zeroedRecord = new Map<number, number[]>();
   included = new Map<number, Set<number>>();
   /** Where the loupe says `getInterestFrontiers` is routed: with `closeDay`
@@ -376,9 +378,11 @@ class FakeDiamond {
         return read;
       }
       case 'getDayZeroedChains':
+        if (this.dayRecordUnread) throw new Error('rpc down');
         if (!this.dayRecord) throw revert('FunctionDoesNotExist');
         return this.zeroedRecord.get(d) ?? [];
       case 'isChainIncluded':
+        if (this.dayRecordUnread) throw new Error('rpc down');
         if (!this.dayRecord) throw revert('FunctionDoesNotExist');
         return this.included.get(d)?.has(Number(args![1])) ?? false;
       case 'isChainReported':
@@ -857,6 +861,23 @@ describe('a run', () => {
     expect(alerts(/Base finalized reward day 0 without counting this chain's report, although the report had landed/)).toHaveLength(1);
     expect(alerts(/reward day 1 without/), 'a counted report is never said excluded').toEqual([]);
     expect(owed(), 'both finalized days are final').toEqual([2]);
+  });
+
+  it('keeps a landed day owed while Base keeps the inclusion record but it is unread, and says the exclusion once it is read', async () => {
+    base.dayRecord = true;
+    await run(mirror);
+    base.reported.set(0, new Set([MIRROR]));
+    base.finalized.add(0); // landed, but the chain was off the list: not included
+    base.dayRecordUnread = true;
+    later(60);
+    await run(mirror);
+    expect(owed(), 'never settled on an unread inclusion record').toContain(0);
+    expect(alerts(/reward day 0 without counting/)).toEqual([]);
+    base.dayRecordUnread = false;
+    later(60);
+    await run(mirror);
+    expect(alerts(/Base finalized reward day 0 without counting this chain's report, although the report had landed/)).toHaveLength(1);
+    expect(owed()).not.toContain(0);
   });
 
   it('does nothing on day 0, with the clock stopped, or while paused', async () => {
@@ -1927,6 +1948,23 @@ describe('a run', () => {
     await run(base);
     expect(logged.filter((l) => /notice: reward day 0: finalized without chain\(s\) 421614; their interest counts as zero for the day$/.test(l)), 'from the record, with no caveat').toHaveLength(1);
     expect(logged.filter((l) => /finalized without chain\(s\) 97/.test(l)), 'never the replacement').toEqual([]);
+  });
+
+  it("leaves a zeroed day for the next run when Base keeps the record but it is unread, never judging it against the list", async () => {
+    base.dayRecord = true;
+    base.dayRecordUnread = true;
+    base.today = 1;
+    base.reported.set(0, new Set([BASE]));
+    base.firstAt.set(0, NOW - 60);
+    base.finalizeByOther(0); // zeroes the mirror
+    base.expected = [BASE, OTHER]; // and the list is replaced before this keeper runs
+    await run(base);
+    expect(logged.filter((l) => /notice: reward day 0/.test(l)), 'nothing recorded from the list as it stands').toEqual([]);
+    base.dayRecordUnread = false;
+    later(60);
+    await run(base);
+    expect(logged.filter((l) => /notice: reward day 0: finalized without chain\(s\) 421614; their interest counts as zero for the day$/.test(l)), 'from the record once read').toHaveLength(1);
+    expect(logged.filter((l) => /finalized without chain\(s\) 97/.test(l))).toEqual([]);
   });
 
   it('judges a zeroed day against the expected-source list read in the same snapshot as the day, leaving it for the next run when the list changed between', async () => {

@@ -8167,6 +8167,14 @@ library LibVaipakam {
         ///      with `chainDailyIncluded` it is the finalization's own account
         ///      of what it summed. Appended — append-only.
         mapping(uint256 => uint32[]) dayZeroedSourceChainIds;
+        /// @dev #2645 — per `[dayId][chainId]`, the recycled day credit the
+        ///      chain's report CLAIMED (its `recycledForDay18`), held from
+        ///      the report's arrival until the day finalizes. Attribution
+        ///      (`LibVpfiRecycle.attributeChainDayRecycled`) reads it then, and
+        ///      only for a chain the finalization counts, so a report the day
+        ///      did not count never sizes the day's recycled budget. Written by
+        ///      `LibVpfiRecycle.recordChainRecycled`. Appended — append-only.
+        mapping(uint256 => mapping(uint32 => uint256)) chainDailyRecycledReported;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

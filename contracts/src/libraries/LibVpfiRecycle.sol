@@ -1745,10 +1745,14 @@ library LibVpfiRecycle {
     /// @param  forDayReported      The chain's claimed credit total for
     ///                             `dayId` (its `recycledCreditedByDay`).
     /// @param  dayCreditAccepted   The clamped credit actually attributed to
-    ///                             `dayId` (0 when clamped away or when the
-    ///                             attribution baseline was unavailable —
-    ///                             availability still self-heals via
-    ///                             `cumulative`).
+    ///                             `dayId`. Attribution happens when `dayId`
+    ///                             FINALIZES, for a chain the finalization
+    ///                             counted (#2645), so a report emits this event
+    ///                             twice: on arrival with 0 (the cumulative
+    ///                             advance) and at finalization with the credit.
+    ///                             A report the day does not count, or one that
+    ///                             lands after it finalized, emits only the
+    ///                             first. Sum the field; never count events.
     /// @custom:event-category informational/reward-transport
     event ChainRecycledReported(
         uint32 indexed sourceChainId,
@@ -1761,9 +1765,16 @@ library LibVpfiRecycle {
     /**
      * @notice #1222 M3 B1 — record a chain's day-close recycled report into
      *         Base's per-chain ledger: the AVAILABILITY cumulative and the
-     *         clamped per-day `Ā` attribution. Called by the reporter (Base's
-     *         own local close) and the aggregator ingress (a mirror report),
-     *         so both paths write identically.
+     *         report's claimed day figure, held for attribution. Called by the
+     *         reporter (Base's own local close) and the aggregator ingress (a
+     *         mirror report), so both paths write identically.
+     *
+     *         #2645 — the per-day `Ā` ATTRIBUTION is a DAY figure, so it waits
+     *         for the day's finalization and is made only for a chain that
+     *         finalization counts ({attributeChainDayRecycled}). Attributing at
+     *         arrival let a report the day never counted (its chain off the
+     *         expected-source list at finalization) size the day's funded
+     *         recycled budget all the same.
      * @dev    Two ledgers per report:
      *
      *         AVAILABILITY — `chainReportedRecycled[c]` only ever advances
@@ -1795,11 +1806,15 @@ library LibVpfiRecycle {
      *         sizes budgets, and B2's `min(target, availRecycled)` funding
      *         re-bounds everything against the availability ledger.
      *
-     *         Truly-late days never reach here at all — the ingress rejects
-     *         reports for finalized days. Idempotent per `(dayId, chain)`
-     *         via the acceptance marker — upstream duplicate guards make a
-     *         second call unreachable today, but the marker keeps the
-     *         ledger safe under any future re-delivery path.
+     *         Truly-late days are never attributed: the ingress takes only
+     *         the cumulative from a report for a finalized day, and the
+     *         finalization that attributes runs once per day. Idempotent per
+     *         `(dayId, chain)` via the acceptance marker — upstream guards
+     *         make a second attribution unreachable today, but the marker
+     *         keeps the ledger safe under any future path. The clamp reads
+     *         the cumulative on record at finalization, which can only be at
+     *         least the one this report carried, so an honest chain's day is
+     *         attributed exactly as before.
      */
     function recordChainRecycled(
         LibVaipakam.Storage storage s,
@@ -1808,11 +1823,20 @@ library LibVpfiRecycle {
         uint256 cumulative,
         uint256 forDayReported
     ) internal {
-        uint256 reported = recordChainRecycledCumulative(s, sourceChainId, cumulative);
+        recordChainRecycledCumulative(s, sourceChainId, cumulative);
+        s.chainDailyRecycledReported[dayId][sourceChainId] = forDayReported;
+        emit ChainRecycledReported(sourceChainId, dayId, cumulative, forDayReported, 0);
+    }
 
-        // DAY ATTRIBUTION — once per (day, chain).
+    /// @notice #2645 — attribute `sourceChainId`'s held day figure to `dayId`.
+    ///         Called by the finalization, once per chain it COUNTS, and by
+    ///         nothing else: the day credit of a report the day did not count
+    ///         is never attributed, and stays in the chain's headroom.
+    function attributeChainDayRecycled(LibVaipakam.Storage storage s, uint32 sourceChainId, uint256 dayId) internal {
         if (s.chainRecycledDayAccepted[dayId][sourceChainId]) return;
 
+        uint256 reported = s.chainReportedRecycled[sourceChainId];
+        uint256 forDayReported = s.chainDailyRecycledReported[dayId][sourceChainId];
         uint256 attributed = s.chainAttributedRecycled[sourceChainId];
         uint256 accepted;
         if (reported > attributed) {
@@ -1858,7 +1882,7 @@ library LibVpfiRecycle {
         }
 
         emit ChainRecycledReported(
-            sourceChainId, dayId, cumulative, forDayReported, accepted
+            sourceChainId, dayId, reported, forDayReported, accepted
         );
     }
 
