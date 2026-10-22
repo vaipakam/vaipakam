@@ -4067,13 +4067,14 @@ Its intended behaviour, as the test oracle for this surface:
   When part of the offer list could be read from neither source, the list
   says instead that tokens from offers the wallet holds may be missing
   whatever their age, and to try again, since that gap does not close by
-  itself.
+  itself. When both apply (one list lagging, part of another unread),
+  both are stated; neither is dropped in favour of the other.
 - The vault page builds its asset list partly from the wallet's own loans
   and offers. It states the same two cases the same way: an asset behind
   a very recent position may be missing when the lagging backup source
   answered, and an asset behind any held offer may be missing when part
-  of the offer list could not be read at all. It never presents the list
-  as complete in either case.
+  of the offer list could not be read at all, stating both when both
+  apply. It never presents the list as complete in either case.
 - Advanced mode surfaces keeper permissions as the protocol's
   three-switch opt-in: a master switch, per-keeper action grants,
   and a per-loan switch on each loan's page — all off by default,

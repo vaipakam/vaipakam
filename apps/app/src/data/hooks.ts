@@ -252,12 +252,15 @@ export function rowSetState(data: MyRows<unknown>): RowSetState {
   return data.rowSet;
 }
 
-/** The weaker of several lists' states — what a surface built from all
- *  of them may claim. */
-export function weakestRowSetState(...states: RowSetState[]): RowSetState {
-  if (states.includes('partial')) return 'partial';
-  if (states.includes('lagging')) return 'lagging';
-  return 'complete';
+/** Every limitation that applies across several lists (Codex #2663 r3).
+ *  NOT the weakest one: a lagging loan list and a partial offer list are
+ *  two different gaps, and a surface built from both must state both —
+ *  collapsing to `partial` would silently drop the recent-loan caveat.
+ *  Ordered lagging, then partial; empty when every list is complete. */
+export function rowSetCaveats(
+  ...states: RowSetState[]
+): Exclude<RowSetState, 'complete'>[] {
+  return (['lagging', 'partial'] as const).filter((c) => states.includes(c));
 }
 
 /** Loans variant of {@link MyRows}: also carries the loan ids the
