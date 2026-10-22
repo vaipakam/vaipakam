@@ -276,7 +276,7 @@ describe('the heal lanes run LAST in the pass (#2382 r2/r6)', () => {
   });
 
   it('the caught-up tail heals too, pinned to the cursor (#2382 r6)', () => {
-    const quiet = pass.slice(at(pass, 'if (scanFrom > head || heldOnGuess) {'), at(pass, 'INSERT INTO indexer_cursor'));
+    const quiet = pass.slice(at(pass, 'if (scanFrom > head) {'), at(pass, 'INSERT INTO indexer_cursor'));
     const call = at(quiet, 'await runHealLanes(');
     expect(call).toBeGreaterThan(at(quiet, 'await stampNotifiedWatermark('));
     expect(quiet.slice(call, quiet.indexOf(');', call))).toContain('lastBlock');

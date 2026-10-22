@@ -129,12 +129,13 @@ describe('a pass with no settled head holds the scan (#2201)', () => {
     expect(r.headBlock).toBeUndefined();
     expect(r.scannedTo).toBe(BigInt(cursor));
     expect(methods).not.toContain('eth_getLogs');
-    // No heal read a loan from the chain either: what it wrote would never be
-    // re-read. (The protocol-config refresh may read, pinned to the cursor, a
-    // block an earlier settled pass already scanned, and it re-reads on its
-    // own schedule; it is not a heal.)
+    // #2636 r6 — and nothing at all is read from the chain past the head
+    // lookup: no heal (what it wrote would never be re-read), and no
+    // protocol-config refresh (its `updated_at` would advertise stale
+    // settings as current).
     const loanDetails = toFunctionSelector('getLoanDetails(uint256)');
     expect(methods.filter((m) => m.startsWith('eth_call') && m.includes(loanDetails))).toEqual([]);
+    expect(methods.filter((m) => m.startsWith('eth_call'))).toEqual([]);
     expect(h.db.prepare('SELECT is_stub FROM loans WHERE chain_id = ? AND loan_id = 7').get(BASE)).toEqual({ is_stub: 1 });
     expect(
       h.db.prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = 'diamond'`).get(BASE),

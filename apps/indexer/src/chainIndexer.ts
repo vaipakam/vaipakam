@@ -2224,9 +2224,9 @@ async function runChainPass(
   // `lastBlock + 1`, exactly as the paragraph above says, so a block
   // scanned on a guess and then reorganised out is never revisited and its
   // rows stay wrong for good. So a tick whose settled read did not answer
-  // HOLDS: it scans nothing, leaves the cursor where it is, and takes the
-  // caught-up branch below for the clock-driven work, which reads D1 only
-  // up to the cursor. That is the correctness-over-liveness choice, made
+  // HOLDS: it scans nothing, leaves the cursor where it is, and does only
+  // the clock-driven work in its own branch below, reading nothing from the
+  // chain and refreshing no freshness stamp. That is the correctness-over-liveness choice, made
   // here rather than inherited from a `catch`: a provider that never
   // answers `safe` never indexes that chain, and says so every tick (and
   // the cursor's age on `/health/ingest` grows), rather than indexing it on
@@ -2260,7 +2260,30 @@ async function runChainPass(
         `(latest - ${SAFE_FALLBACK_BUFFER})`,
     );
   }
-  if (scanFrom > head || heldOnGuess) {
+  // #2636 r6 — A HELD TICK DOES ONLY CLOCK WORK, in its own branch rather
+  // than as a guarded pass through the caught-up one. Every other step there
+  // either reads the chain or stamps something a reader takes as "current"
+  // (the notified watermark, the ingest time, the protocol-config snapshot's
+  // `updated_at`), and guarding them one at a time is how each new one would
+  // be missed. Here nothing is read from the chain and nothing claims
+  // freshness: the stored records, and every stamp of their currency, stand
+  // where the last settled tick left them and age, which is what a reader
+  // must see. The one step kept is the market-summary sweep, which removes
+  // markets whose only order expired BY CLOCK.
+  if (heldOnGuess) {
+    await sweepMarketSummaries(env, chainId, Math.floor(Date.now() / 1000));
+    return {
+      ...emptyResult('settled-head-unavailable'),
+      chainId,
+      scannedFrom: scanFrom,
+      scannedTo: scanFrom - 1n,
+      // No settled head was learned, so none is reported: the ingest DO
+      // re-arms at once for a backlog measured against `headBlock`, and a
+      // guessed head would spin it on a provider that is not answering.
+      headBlock: undefined,
+    };
+  }
+  if (scanFrom > head) {
     // #1415 second guard: a head MATERIALLY below our own cursor is
     // never healthy on these chains (the safe-tag reorg horizon is far
     // smaller) — likelier a lagging replica or a mis-pointed RPC that
@@ -2380,17 +2403,16 @@ async function runChainPass(
     // recorded-before moment. While the scan is held the chain moves on and
     // the records do not, so neither may be refreshed; both stand where the
     // last settled tick left them and age, which is what a reader must see.
-    if (!heldOnGuess) {
-      // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
-      // valid "notifications complete through lastBlock" point too — once any
-      // gap a failed insert left below it has been replayed (#2489 r3).
-      await stampNotifiedWatermark(env, chainId, lastBlock, null, false);
-      // #1349 M5 (loop closure) — every block up to `head` is ingested
-      // when `lastBlock >= head`, so the head's time is a true
-      // recorded-before moment, even when the head regressed below the cursor.
-      if (lastBlock >= head) {
-        await _stampIngestedBeforeTime(env, chainId, settledHead.timestamp);
-      }
+    // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
+    // valid "notifications complete through lastBlock" point too — once any
+    // gap a failed insert left below it has been replayed (#2489 r3). (A
+    // held tick never reaches here: see the branch above.)
+    await stampNotifiedWatermark(env, chainId, lastBlock, null, false);
+    // #1349 M5 (loop closure) — every block up to `head` is ingested
+    // when `lastBlock >= head`, so the head's time is a true
+    // recorded-before moment, even when the head regressed below the cursor.
+    if (lastBlock >= head) {
+      await _stampIngestedBeforeTime(env, chainId, settledHead.timestamp);
     }
     // #2382 r6 — a caught-up tick heals too, or a backlog the scanning ticks
     // did not finish (or a soft-stopped heal) would wait for the next new
@@ -2450,12 +2472,8 @@ async function runChainPass(
               [...quietCal.loanIds, ...quietReconciledIds, ...quietHeal.ledgerSettledLoanIds],
             )
           : undefined,
-      // A held tick learned no settled head, so it reports none: the ingest
-      // DO re-arms at once for a backlog measured against `headBlock`, and a
-      // guessed head above a lagging cursor would spin it on a provider that
-      // is not answering. The next scheduled tick retries.
-      headBlock: heldOnGuess ? undefined : head,
-      skipped: heldOnGuess ? 'settled-head-unavailable' : 'caught-up',
+      headBlock: head,
+      skipped: 'caught-up',
     };
   }
   const scanTo =

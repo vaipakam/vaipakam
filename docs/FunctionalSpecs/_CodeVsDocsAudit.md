@@ -822,13 +822,19 @@ reporting is still a real gap.
 
 ## An unsubstantiable loan record is reported, but not withdrawn from publication (#2190 r8)
 
-**RESOLVED (#2197).** The pass now withdraws such a record: on a proven
-nonexistent read at the settled head it moves the row out of `loans` into
-`loan_orphans` (kept whole for an operator's restore, with the block the proof
-was read at) and clears its side tables in the same transaction, so every
-surface that lists or counts loans stops publishing it with no per-surface
-filter. The quarantine finding is kept, so the operator's stale report goes on
-naming it. The spec was not changed to match the code; the code moved to the
+**RESOLVED (#2197, PR #2636).** The platform now withdraws such a record,
+whatever status it is published under (live, ended or settled). On a proven
+nonexistent read at the settled head, the row moves out of `loans` into
+`loan_orphans`, kept whole for an operator's restore with the block the proof
+was read at. Its activity, history and notifications move with it, and its
+side tables and alert memory are cleared, all in one transaction. Every
+surface that lists or counts loans then stops publishing it with no
+per-surface filter. The durable finding is the `loan_orphans` entry itself:
+the stale report names every entry until a person marks it reviewed
+(`reviewed_at`), and that holds across an archive restore. The id's
+reconciliation quarantine marker is released rather than kept, because it
+would withhold reminders from a real loan later given the same id. The
+keeper's private HF-band state for the id is a known follow-up (#2638). The spec was not changed to match the code; the code moved to the
 spec, and `Alpha02ConnectedApp.md` now also states the withdrawal. The entry
 below is kept as the record of the divergence.
 

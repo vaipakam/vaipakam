@@ -246,6 +246,49 @@ const TRUSTED_COLUMN_SHAPES = {
   loan_orphans: { move_id: UUID_SHAPE },
 };
 
+// Whole-row checks the writer's own invariants allow, run before any SQL is
+// emitted (#2636 r6). A `loan_orphans` entry is only worth restoring if its
+// payloads can put the withdrawal back: `row_json` is the `loans` row as it
+// stood, so it must be that loan's row with the status the entry says it was
+// withdrawn from, and `related_json` holds exactly the three related tables
+// (src/loanOrphans.ts), each row about the same loan and carrying the rowid
+// the move deleted. Returns a problem string, or null.
+const LOAN_ORPHAN_RELATED_TABLES = ['activity_events', 'loan_participants', 'notifications'];
+function loanOrphanRowProblem(row) {
+  let loan;
+  let related;
+  try {
+    loan = JSON.parse(row.row_json);
+    related = JSON.parse(row.related_json);
+  } catch {
+    return 'row_json or related_json is not JSON';
+  }
+  const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  if (!isObject(loan)) return 'row_json is not an object';
+  if (loan.chain_id !== row.chain_id || loan.loan_id !== row.loan_id) {
+    return 'row_json describes a different chain or loan than the entry';
+  }
+  if (loan.status !== row.from_status) return 'row_json status differs from from_status';
+  if (!isObject(related)) return 'related_json is not an object';
+  const keys = Object.keys(related).sort();
+  if (JSON.stringify(keys) !== JSON.stringify([...LOAN_ORPHAN_RELATED_TABLES].sort())) {
+    return `related_json must hold exactly ${LOAN_ORPHAN_RELATED_TABLES.join(', ')}`;
+  }
+  for (const t of LOAN_ORPHAN_RELATED_TABLES) {
+    if (!Array.isArray(related[t])) return `related_json.${t} is not an array`;
+    for (const r of related[t]) {
+      if (!isObject(r) || !Number.isInteger(r.orphan_rowid)) return `related_json.${t} has a row without its orphan_rowid`;
+      if (r.chain_id !== row.chain_id || r.loan_id !== row.loan_id) {
+        return `related_json.${t} has a row about a different chain or loan`;
+      }
+    }
+  }
+  return null;
+}
+const TRUSTED_ROW_CHECKS = {
+  loan_orphans: loanOrphanRowProblem,
+};
+
 // The archived legal-hold tables whose rows carry `legal_doc_ref`
 // (the R2 bucket key — `diagErasure.ts`: "the bucket key becomes the
 // hold's legal_doc_ref").
@@ -405,6 +448,8 @@ export function tableToSql(table) {
         fail(`table ${name} row ${i}: column ${col} is not the shape the writer produces — refusing to restore it`);
       }
     }
+    const problem = TRUSTED_ROW_CHECKS[name]?.(row);
+    if (problem) fail(`table ${name} row ${i}: ${problem} — refusing to restore it`);
     const values = columns.map((c) => sqlLiteral(row[c], `table ${name} row ${i} column ${c}`));
     lines.push(`INSERT INTO "${name}" (${colList}) VALUES (${values.join(', ')});`);
   }
