@@ -131,6 +131,28 @@ export async function clearAttempts(storage: LoopStateStorage): Promise<void> {
   }
 }
 
+/**
+ * #2196 — the write-ahead broadcast marker, opened before a pass and closed
+ * once its push is handed off (see the alarm). Returns whether an EARLIER
+ * pass left the marker standing, i.e. whether its push may have been lost.
+ *
+ * Cost, stated: two DO storage rows per alarm (this put and the close's
+ * delete), about 1,700 a day across three chains at the five-minute cadence
+ * plus webhook-driven passes, against the Workers Free allowance of 100,000.
+ * Not write-guarded like `recordTrigger`: the marker's whole value is that it
+ * is on disk BEFORE the pass commits anything.
+ */
+export async function openBroadcastWindow(storage: LoopStateStorage): Promise<boolean> {
+  const recover = (await storage.get<boolean>('pendingBroadcast')) ?? false;
+  await storage.put({ pendingBroadcast: true });
+  return recover;
+}
+
+/** The pass's push, and any recovery it carried, are out. */
+export async function closeBroadcastWindow(storage: LoopStateStorage): Promise<void> {
+  await storage.delete('pendingBroadcast');
+}
+
 /** LoopStateStorage plus the alarm slot — what the re-arm helper needs. */
 export interface AlarmStorage extends LoopStateStorage {
   setAlarm(scheduledTime: number): Promise<void>;
@@ -403,15 +425,25 @@ type MissingInvalidationKey = Exclude<InvalidationKey, (typeof ALL_INVALIDATION_
 const _everyInvalidationKeyListed: MissingInvalidationKey extends never ? true : never = true;
 void _everyInvalidationKeyListed;
 
-/** Coarse "refetch everything" set used to recover a push that was lost when a
- *  prior post-write scan threw (its counts never reached `broadcast()`). The
- *  client's nudge is global, so this just guarantees a refetch. */
-const RECOVERY_KEYS: InvalidationKey[] = [
-  'offer.changed',
-  'loan.updated',
-  'ownership.changed',
-  'activity.appended',
-];
+/**
+ * The keys an `invalidate` frame carries, and whether hints may ride it.
+ *
+ * `recoverPending` = an earlier pass's push may have been lost (its alarm
+ * threw, or its isolate died after committing — #2196's write-ahead marker).
+ * What that pass changed is not known, so the frame carries EVERY key, not a
+ * subset a lost change might fall outside (#2196: the old recovery set left
+ * out `loan.created` and `notification.created`, and was sent only when this
+ * pass had no keys of its own, so a busy next pass dropped the recovery).
+ * Hints are withheld then: no id list minted now can claim completeness for
+ * the lost pass.
+ */
+export function invalidationFrameKeys(
+  result: ChainIndexerResult,
+  recoverPending: boolean,
+): { keys: InvalidationKey[]; hintable: boolean } {
+  if (recoverPending) return { keys: [...ALL_INVALIDATION_KEYS], hintable: false };
+  return { keys: invalidationKeysFromResult(result), hintable: true };
+}
 
 export class ChainIngestDO {
   /**
@@ -602,6 +634,7 @@ export class ChainIngestDO {
       let retryableFailure = false;
       let schemaDeclined = false;
       let epochReset = false;
+      let recoverPending = false;
       try {
         // The Secrets Store reads at the top of the alarm are counted too —
         // the scan is not the only thing that spends here.
@@ -619,6 +652,18 @@ export class ChainIngestDO {
         // rotation turns faster here than on the legacy inline path. That
         // difference is a property of the deployment's ingest config, not a
         // hidden tuning knob.
+        //
+        // #2196 — WRITE-AHEAD BROADCAST MARKER. A pass commits writes no later
+        // pass can rediscover (a reconciliation repair, a settlement heal, an
+        // orphan withdrawal, a calendar reminder, and every scanned event once
+        // the cursor has moved), and its push is sent only after it returns.
+        // An isolate that dies in between left no trace of the lost push: the
+        // catch below never runs. So the marker is written BEFORE the pass and
+        // cleared only after the broadcast is handed off; one left standing
+        // means some pass's push may be lost, and the next one recovers it.
+        // The previous alarm's marker is read first, so this alarm's own
+        // write-ahead is not mistaken for it.
+        recoverPending = await openBroadcastWindow(this.state.storage);
         const result = await runChainIndexerForChain(
           resolved,
           chain,
@@ -647,12 +692,8 @@ export class ChainIngestDO {
         // attempt wrote D1 then threw before returning (P3), its counts were
         // lost and this idempotent retry yields zero — so a pending flag forces
         // a recovery broadcast even when this pass's counts are empty.
-        const pendingBroadcast =
-          (await this.state.storage.get<boolean>('pendingBroadcast')) ?? false;
-        await this.broadcast(chainId, result, db, pendingBroadcast);
-        if (pendingBroadcast) {
-          await this.state.storage.delete('pendingBroadcast');
-        }
+        await this.broadcast(chainId, result, db, recoverPending);
+        await closeBroadcastWindow(this.state.storage);
       } catch (err) {
         // Retry (bounded) on failure; the event re-processes next iteration /
         // next cron tick (handlers are re-scan-idempotent, #760). A throw may
@@ -813,12 +854,7 @@ export class ChainIngestDO {
     if (sockets.length === 0) return;
 
     const frames: PushFrame[] = [];
-    let keys = invalidationKeysFromResult(result);
-    if (keys.length === 0 && recoverPending) {
-      // A prior post-write failure lost its counts — fan out the coarse
-      // "refetch everything" set so no change stays unannounced.
-      keys = RECOVERY_KEYS;
-    }
+    const { keys, hintable } = invalidationFrameKeys(result, recoverPending);
     if (keys.length > 0) {
       frames.push({
         t: 'invalidate',
@@ -829,9 +865,7 @@ export class ChainIngestDO {
         // recovery fan-out exists precisely because a prior pass LOST
         // its counts — no id list minted now can claim completeness
         // for it, so it stays coarse (hint-less).
-        ...(keys === RECOVERY_KEYS || !result.hints
-          ? {}
-          : { hints: result.hints }),
+        ...(!hintable || !result.hints ? {} : { hints: result.hints }),
       });
     }
     // RPC read-diet PR 0 — follow every SUCCESSFUL scan with a cursor
