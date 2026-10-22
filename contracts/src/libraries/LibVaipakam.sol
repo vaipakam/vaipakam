@@ -2581,7 +2581,8 @@ library LibVaipakam {
      * @notice RL-1 (VpfiRecyclingLoopClosureDesign §6) — delivery venue for a
      *         claimed interaction reward.
      * @dev `Default` resolves at claim time by caller shape: a direct
-     *      EOA-style claim (`msg.sender.code.length == 0`) delivers to the
+     *      EOA-style claim (`LibAccountShape.isEoaStyle`: no code, or only an
+     *      EIP-7702 delegation designator, #2617) delivers to the
      *      claimant's per-user VAULT (the loop-closing default — the reward
      *      immediately counts toward tracked balance + fee-tier standing),
      *      while a contract caller gets the raw WALLET transfer every live

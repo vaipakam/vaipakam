@@ -6,6 +6,7 @@ import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibRewardSanctions} from "../libraries/LibRewardSanctions.sol";
+import {LibAccountShape} from "../libraries/LibAccountShape.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -90,7 +91,8 @@ contract RewardClaimFacet is
      *
      *      Pausable + reentrancy-guarded. Emits {InteractionRewardsClaimed}.
      *
-     *      RL-1 delivery default: a direct EOA-style claim delivers the
+     *      RL-1 delivery default: a direct EOA-style claim (an EIP-7702
+     *      delegated EOA included, #2617) delivers the
      *      payout into the claimant's per-user VAULT (closing the reward
      *      loop — see {claimInteractionRewardsTo}); a contract caller gets
      *      the raw wallet transfer every pre-RL-1 integration observed.
@@ -136,7 +138,8 @@ contract RewardClaimFacet is
      *         - `Wallet`: raw `safeTransfer` to `msg.sender` (the pre-RL-1
      *           behaviour; the EOA opt-out and the integration default).
      *         - `Default`: resolves by caller shape — EOA-style → `Vault`,
-     *           contract caller → `Wallet`.
+     *           contract caller → `Wallet`. An EIP-7702 delegated EOA is
+     *           EOA-style (`LibAccountShape`, #2617).
      *
      *         Delivery is best-effort and NEVER reduces claim availability:
      *         if the vault credit cannot complete (no vault yet, mandatory
@@ -701,7 +704,8 @@ contract RewardClaimFacet is
 
     /**
      * @dev RL-1 payout delivery to `user`. Resolves `Default` by the
-     *      claimant's shape (an EOA-style claimant — `user.code.length == 0` — joins the
+     *      claimant's shape (an EOA-style claimant — `LibAccountShape.isEoaStyle`:
+     *      no code, or only an EIP-7702 delegation designator — joins the
      *      loop by default; a contract caller keeps the raw transfer every
      *      pre-RL-1 integration observed), then attempts the Diamond-funded
      *      vault credit for `Vault` deliveries.
@@ -796,11 +800,12 @@ contract RewardClaimFacet is
     }
 
     /// @dev The RL-1 venue rule: `Vault`, or `Default` for an EOA-style
-    ///      claimant (`user.code.length == 0`); a contract caller keeps the raw
-    ///      transfer every pre-RL-1 integration observed.
+    ///      claimant (`LibAccountShape.isEoaStyle`: no code, or only an
+    ///      EIP-7702 delegation designator, #2617); a contract caller keeps the
+    ///      raw transfer every pre-RL-1 integration observed.
     function _toVault(address user, LibVaipakam.RewardDelivery deliverTo) private view returns (bool) {
         return deliverTo == LibVaipakam.RewardDelivery.Vault
-            || (deliverTo == LibVaipakam.RewardDelivery.Default && user.code.length == 0);
+            || (deliverTo == LibVaipakam.RewardDelivery.Default && LibAccountShape.isEoaStyle(user));
     }
 
     /// @dev Deliver `amount` the Diamond holds to `user`: the revert-isolated
