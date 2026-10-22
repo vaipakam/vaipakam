@@ -747,7 +747,7 @@ describe('raiseAlerts — one digest per chain, however many owners (#2565)', ()
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       const text = bodies[0];
       expect(text.length).toBeLessThanOrEqual(4096);
-      expect(text).toMatch(new RegExp(`^\\[chain ${CHAIN}\\] reward sanctions hold: 1501 conditions hold this run:`));
+      expect(text).toMatch(new RegExp(`^\\[chain ${CHAIN}\\] reward sanctions hold: 1501 conditions to report this run:`));
       // The chain-wide line leads; the per-owner lines follow, grouped.
       expect(text.split('\n')[1]).toMatch(/^observations — 2 due observation\(s\) did NOT land/);
       expect(text).toMatch(/…and \d+ more \(\d+ observe deadline at risk, 500 held overdue, 500 held with no chain\), each named in the keeper journal\./);

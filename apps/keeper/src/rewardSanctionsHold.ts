@@ -1644,7 +1644,7 @@ export async function raiseAlerts(
   }
   await sendOpsAlertDigest(
     env,
-    (n) => `[chain ${chainId}] reward sanctions hold: ${n} condition${n === 1 ? '' : 's'} hold this run:`,
+    (n) => `[chain ${chainId}] reward sanctions hold: ${n} condition${n === 1 ? '' : 's'} to report this run:`,
     entries,
     `Each line repeats every ${ALERT_REPEAT_SEC / 3600}h while it holds, and stops once a fresh read shows it gone.`,
     ALERT_REPEAT_SEC,
