@@ -2447,7 +2447,8 @@ journalctl -u vaipakam-keeper -f
 
 # From a test wallet:
 #   1. Subscribe to the Push channel at the URL in 8b.2
-#   2. /alerts → Save thresholds, Link Telegram, Enable Push rail
+#   2. /settings (the alerts card) → Save thresholds, Link Telegram,
+#      Enable Push rail. There is no /alerts route.
 #   3. With all thresholds below the HF of one of the wallet's open
 #      loans, wait for a tick: that records the loan as healthy
 #   4. RAISE the warn threshold above that HF. A loan enters a band

@@ -28,6 +28,15 @@ restart the one keeper machine, which also serves the live testnets. The
 watcher smoke test now raises a threshold above a loan's health factor, the
 direction that sends an alert.
 
+The staging plan and the staging-state checklist no longer tell operators to
+arm the keeper, or give it its signing key and RPCs, on the keeper Worker.
+Those settings are lines in the keeper machine's env file, and a Worker secret
+arms nothing. The flash-loan rollout now checks the contract owner against the
+key the machine actually signs with, confirms the keeper restarted onto the
+release that carries the new address, and checks that the discount flag is
+literally `true`. The alert-key incident section now searches the keeper
+machine's journal as well as the agent's logs.
+
 The cron-slot inventory no longer holds a trigger in reserve for the keeper
 Worker, because that Worker will not be scheduled again. The inventory itself
 (docs/ops/CloudflareCronSlots.md) is the one place that states the account's

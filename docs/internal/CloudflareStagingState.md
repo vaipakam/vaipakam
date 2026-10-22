@@ -105,9 +105,13 @@ Workers default URLs (for direct reachability before custom-domain SSL is fully 
 
 ## Pending — operator action
 
-- [ ] Set `KEEPER_PRIVATE_KEY` on `vaipakam-keeper` (encrypted secret) — wallet pays gas for
-      auto-liq + daily oracle snapshot
-- [ ] Set `RPC_*` per chain on `vaipakam-indexer` and `vaipakam-keeper`
+- [ ] Set `KEEPER_PRIVATE_KEY` and each served chain's `RPC_*` in the keeper
+      machine's env file, `/etc/vaipakam/keeper.env` (`docs/ops/KeeperMachine.md`
+      §4) — the wallet pays gas for auto-liq + the daily oracle snapshot. The
+      keeper passes read the machine's copies, not the `vaipakam-keeper` Worker's.
+      The Worker still declares those Secrets Store bindings, which its deploy
+      validates, so the shared store entries must exist too.
+- [ ] Set `RPC_*` per chain on `vaipakam-indexer`
 - [ ] Set `TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`, aggregator API keys on `vaipakam-agent`
 - [ ] The keeper's arming flags no longer belong on `vaipakam-keeper`: the keeper
       runs on the always-on machine, and `KEEPER_ENABLED` is a line in its env file,

@@ -790,21 +790,30 @@ identity), so rotation is time-sensitive.
 
 - **Channel address:** `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b`
 - **Public URL:** <https://app.push.org/channels/0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b>
-- **Signer secret:** `PUSH_CHANNEL_PK` (Cloudflare Worker, encrypted)
+- **Signer secret:** `PUSH_CHANNEL_PK`, held in two places: the agent
+  Worker's account-level Secrets Store entry, and the keeper machine's env
+  file (`/etc/vaipakam/keeper.env`, [`KeeperMachine.md`](KeeperMachine.md)
+  §4). Both sign as this channel, so both are sources to search and both
+  must be rotated.
 - **Frontend env:** `VITE_PUSH_CHANNEL_ADDRESS`
 
 ### Symptom
 - Subscribers report Vaipakam notifications they did not opt into,
   containing phishing copy, off-protocol links, or messages that
   contradict known protocol state.
-- Wrangler tail shows successful `Push API` send calls our cron
-  didn't initiate.
+- Successful `Push API` sends that none of our schedules initiated, in
+  either sender's log: `wrangler tail` for the agent, `journalctl -u
+  vaipakam-keeper` on the keeper machine.
 - Telegram inbound webhook traffic looks scripted (high-frequency
   `/start <code>` posts from new chat IDs).
 
 ### Detect
-- Search wrangler logs for unexpected **`[push] sent`** lines outside the
-  cron schedule — that is the success line, and it is the one that matters
+- Search BOTH senders' logs: the agent's (`wrangler tail`, or its Workers
+  logs in the dashboard) and the keeper's (`journalctl -u vaipakam-keeper`
+  on the keeper machine, which runs the HF-band watcher and sends Push and
+  Telegram alerts with the same two secrets). Searching one leaves the
+  other sender unexamined. In each, look for unexpected
+  **`[push] sent`** lines outside its schedule — that is the success line, and it is the one that matters
   here. `[push] send` does NOT match it: the only line containing that exact
   string is `[push] send failed`, so the documented term used to return every
   failure and not one unexpected send, which is precisely inverted for this

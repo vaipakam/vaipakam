@@ -93,14 +93,35 @@ the keeper's `KEEPER_PRIVATE_KEY` and confirm it
 matches `KEEPER_BOT_OWNER` *exactly*. The mismatch case is the
 #1 silent-failure mode of this rollout.
 
+The key that counts is the one in the machine's env file
+(`/etc/vaipakam/keeper.env`, [`KeeperMachine.md`](KeeperMachine.md)
+§4), not a developer's local `.dev.vars`, which may hold a different
+key or none. The machine carries no tool that turns a key into an
+address (it has Node, but no Foundry and no keccak), so do it in two
+steps that never move or print the key.
+
+On a workstation with Foundry, from the record you provisioned the
+machine from (its password-manager entry):
+
 ```bash
-# One-liner: derive the address from the private key without
-# exposing the key (reads from .env, prints just the address).
-# Use cast or any keystore tool the operator prefers.
-cast wallet address --private-key $(grep ^KEEPER_PRIVATE_KEY \
-  ../apps/keeper/.dev.vars 2>/dev/null | cut -d= -f2-)
-# Compare against $KEEPER_BOT_OWNER. They MUST be identical.
+# Prompts for the key without echoing it, prints only the address.
+cast wallet address --interactive
+# Fingerprint of the same key, to compare with the machine's.
+read -rs K && printf %s "$K" | sha256sum && unset K
 ```
+
+On the keeper machine:
+
+```bash
+# Fingerprint of the key the keeper signs with; prints only a hash.
+sudo sed -n 's/^KEEPER_PRIVATE_KEY=//p' /etc/vaipakam/keeper.env \
+  | tr -d '\n' | sha256sum
+```
+
+The two fingerprints must match (paste the key in the same form, with
+or without `0x`, as the env file holds it). Only then does the address
+`cast` printed belong to the keeper, and it MUST equal
+`KEEPER_BOT_OWNER` exactly.
 
 ---
 
@@ -226,8 +247,26 @@ git add apps/keeper/src/flashLoanProviders.ts
 git commit -m "apps/keeper: populate Base FlashLoanLiquidator address"
 ```
 
-Confirm the machine took it: `readlink /opt/vaipakam-keeper/current`
-names the merged commit's release. No keeper Worker deploy is
+Confirm the machine took it AND that the keeper is running it. A
+switched `current` link alone proves neither: the restart is queued
+until the current tick ends. On the machine (widen `--since` if the
+merge was longer ago than that):
+
+```bash
+# 1. The update deployed the merged commit and queued a restart.
+journalctl -u vaipakam-keeper-update --since "-30 min" | grep 'deployed '
+#    Expect: "deployed <merged commit>; a running keeper restarts onto it
+#    after its current tick". The other wording, "byte-identical ... so no
+#    restart", means the bundle did not change, so the address is NOT in it.
+# 2. The keeper started after that line, on that release.
+journalctl -u vaipakam-keeper --since "-30 min" | grep '\[keeper-host\] started pid='
+systemctl show -p ActiveEnterTimestamp --value vaipakam-keeper
+cat /opt/vaipakam-keeper/current/SOURCE_COMMIT
+```
+
+The `started pid=` line and `ActiveEnterTimestamp` must both be later
+than the `deployed` line, and `SOURCE_COMMIT` must be the merged
+commit. No keeper Worker deploy is
 involved. The Worker's `run deploy` still exists, but only as the
 private database's migration applier, and its `scheduled` handler
 runs nothing.
@@ -424,13 +463,19 @@ the pass (see the known gap in Step 5, which on its own produces
 exactly this symptom). Verify on the machine:
 
 ```bash
-# Confirm the flag line is present (prints the name only, not the value).
-sudo grep -o '^DISCOUNT_PATH_ENABLED_[0-9]*' /etc/vaipakam/keeper.env
+# Confirm the flag is set to exactly `true` (prints set / not-set only).
+# The keeper arms only on the string `true`: `1`, `True` or a trailing
+# space leave the path off. Write it unquoted, as this check expects.
+sudo grep -qx 'DISCOUNT_PATH_ENABLED_8453=true' /etc/vaipakam/keeper.env \
+  && echo set || echo not-set
 
-# Confirm the running release carries the address:
-readlink /opt/vaipakam-keeper/current
-grep -o '0x[0-9a-fA-F]\{40\}' /opt/vaipakam-keeper/current/keeper-host.mjs | sort -u | head
-# The FlashLoanLiquidator address should appear in the bundle.
+# Confirm the running release carries the address. Search for the
+# deployed FlashLoanLiquidator address itself, case-insensitively; a
+# list of every address in the bundle is too long to read reliably.
+cat /opt/vaipakam-keeper/current/SOURCE_COMMIT
+grep -qi '<FlashLoanLiquidator address>' \
+  /opt/vaipakam-keeper/current/keeper-host.mjs && echo present || echo absent
+# Then confirm the keeper restarted onto that release (Step 4's checks).
 ```
 
 ### Bot submits flash-loan txs but every one fails with `OracleStaleForDiscount`

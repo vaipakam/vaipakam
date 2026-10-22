@@ -39,7 +39,7 @@ unaffected.
 | **vaipakam-app** | `app.vaipakam.com` | The connected app — wallet connect, the intent-first Home at root (NOT a dashboard), Offer Book, loan flows, Claim Center, the VPFI fee-discount vault at `/vpfi` (deposits and withdrawals for fee tiers only — the app exposes no purchase surface of any kind), plus the wallet-free NFT verifier at `/nft`. NOTE (#1959): `/analytics` and `/protocol-console` ARE now served here — both were ported from the retired `apps/defi` Worker and the marketing site links them here. Test them against this Worker; the earlier instruction not to has been superseded. `/nft-verifier` was the legacy path for the verifier; here it is `/nft`. | No |
 | **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*` (open-CORS reads). **Also writes**: three POST endpoints that write D1, HMAC-authenticated inbound Alchemy webhooks, and authenticated outbound publication of **borrower-authorised, on-chain-bound** Seaport listings to OpenSea (posted with an empty `0x` signature; the vault's ERC-1271 check validates against a hash bound on-chain). | No on-chain key |
 | **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). Also **deletes** diagnostics + support records on a schedule and **publishes** listings via `/opensea/listing`. | **No on-chain transaction key** — but holds `PUSH_CHANNEL_PK`, a real Ethereum key used to sign notifications, whose EOA owns the channel's 50 PUSH stake and gas |
-| **vaipakam-keeper** | (no public domain — internal Worker; **runs no keeper passes** — since #2504 the duties listed here run on the always-on machine, `docs/ops/KeeperMachine.md`, and from #2569 this Worker's `scheduled` handler declines every invocation; it stays deployed as the private database's migration applier) | Active write-to-chain — HF watcher + autonomous liquidation (incl. flash-loan liquidation via a non-Diamond contract), daily oracle snapshot, offer/intent matcher (SHIPPED, not currently executing — see the schedule note in this row's Domain cell), auto-lifecycle extend/roll, keeper-tier writes, commitment batch + report, remit ack, reward-budget remit. See the signing inventory below — and treat it as a floor. | **YES** — sole holder of an ON-CHAIN TRANSACTION key. Not "the only signing key": the agent row above holds `PUSH_CHANNEL_PK`, a real Ethereum key. The qualifier is what makes this inventory usable for threat modelling |
+| **vaipakam-keeper** | (no public domain — internal Worker; **runs no keeper passes** — since #2504 the duties listed here run on the always-on machine, `docs/ops/KeeperMachine.md`, and from #2569 this Worker's `scheduled` handler declines every invocation; it stays deployed as the private database's migration applier) | Active write-to-chain — HF watcher + autonomous liquidation (incl. flash-loan liquidation via a non-Diamond contract), daily oracle snapshot, offer/intent matcher (runs every minute on the machine while the keeper is armed, `apps/keeper/src/passSchedule.ts`), auto-lifecycle extend/roll, keeper-tier writes, commitment batch + report, remit ack, reward-budget remit. See the signing inventory below — and treat it as a floor. | **YES** — sole holder of an ON-CHAIN TRANSACTION key. Not "the only signing key": the agent row above holds `PUSH_CHANNEL_PK`, a real Ethereum key. The qualifier is what makes this inventory usable for threat modelling |
 
 The split was **designed** around a read/index vs write/act axis. What it
 actually achieves is narrower than that, and narrower than the "strict
@@ -444,7 +444,10 @@ NO secrets — the frontend bundle is static.
   snapshot pass internally pre-checks the 00:00–00:09 UTC
   window + a D1 last-day guard, so most ticks exit
   immediately.
-- **Secrets:**
+- **Secrets:** the passes read these from the keeper machine's env file
+  (`docs/ops/KeeperMachine.md` §4), not from the Worker. The Worker still
+  declares them, so the list below is also what its deploy validates
+  (§4.5(b)).
   ```
   KEEPER_PRIVATE_KEY  — single signing key, gas-funded on every
                         chain with an RPC_* set
@@ -482,10 +485,9 @@ NO secrets — the frontend bundle is static.
   a relative `/loans/123` that resolves nowhere from a Telegram or Push
   client.
 
-  `KEEPER_ENABLED` used to be listed here as a var. It is **not** one —
-  it is a per-Worker `secret_text`, provisioned `false` at step 4 and
-  flipped to `true` at step 8. See §4.5(b) for the mechanism and why the
-  distinction matters.
+  `KEEPER_ENABLED` used to be listed here as a var, and later as a
+  per-Worker secret. It is neither now: it is a line in the keeper
+  machine's env file, like every other arming flag. See §4.5(b).
 
 ### 4.5 How to actually provision the secrets above — two mechanisms
 
@@ -525,43 +527,29 @@ from the owning Worker's directory:
 ```bash
 ( cd apps/agent  && wrangler secret put TG_OPS_BOT_TOKEN )
 ( cd apps/agent  && wrangler secret put TG_OPS_CHAT_ID )
-( cd apps/keeper && wrangler secret put KEEPER_ENABLED )   # prompts; enter: false
 ```
-
-> **Enter `false` here — not `true`.** Step 5 deploys the keeper and
-> activates its cron, so a keeper armed at step 4 starts liquidating
-> before step 7's validation window, which that step assumes is running
-> with `KEEPER_ENABLED=false`. The value is deliberately set now and
-> flipped later: step 8 is where it becomes `true`, by re-running the
-> same command and entering `true`.
 
 - `TG_OPS_BOT_TOKEN` / `TG_OPS_CHAT_ID` (agent) — non-blocking for the
   rollout: while unset, support-ticket ops-notify skips and tickets
   still land in D1.
-- **`KEEPER_ENABLED` (keeper) — blocking for step 8, provisioned
-  `false` at step 4.** Step 8 arms the keeper by re-running the command
-  above and entering `true`; there is no other mechanism to do so.
-  Because it is a secret rather than a var, its value cannot be read
-  back from the API or dashboard, so a missed `secret put` is
-  indistinguishable from a deliberate "off" — the keeper stays dark and
-  step 9's observation window looks quiet while nothing is running
-  (#1475).
-- `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` (keeper) — same
-  mechanism, optional. Both were **absent** on the live Worker as of the
-  2026-07-30 readback, which leaves THREE scheduled passes dark rather than
-  two — `rewardBudgetRemit` and `remitAck` both gate on
-  `REWARD_REMIT_ENABLED`, `commitmentReport` on `REWARD_COMMIT_ENABLED`. Set
-  them only if the rollout intends to arm those passes, and only after the
-  keeper EOA is authorized on-chain.
-- `GRACE_DEFAULT_ENABLED` (keeper, #2483) — same mechanism, optional, and
-  it ships **unset**, which keeps `graceDefault` dark: a fourth scheduled
-  pass. That pass submits the permissionless `triggerDefault` for loans
-  past their grace period, which sells or transfers the borrower's
-  collateral, so arming it is an explicit owner decision for the
-  deployment in question — never a default step of this rollout. When it
-  is decided: `( cd apps/keeper && wrangler secret put GRACE_DEFAULT_ENABLED )`,
-  entering `true`. It needs no on-chain role. While it is unset, nothing
-  closes a past-grace loan automatically on that deployment.
+- **The keeper's arming flags are not Worker secrets any more.**
+  `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
+  `GRACE_DEFAULT_ENABLED` and the other per-pass flags are lines in the
+  always-on machine's env file, `/etc/vaipakam/keeper.env`, because the
+  keeper runs there (`docs/ops/KeeperMachine.md`, #2504) and the
+  Worker's `scheduled` handler declines every invocation (#2569). A
+  `wrangler secret put` of any of them arms nothing. Setting, validating
+  and arming them is KeeperMachine §4–§5, and a change is applied by §6
+  there; this plan does not repeat either. The same holds for the
+  keeper's own `KEEPER_PRIVATE_KEY`, `RPC_*`, `TG_BOT_TOKEN`,
+  `PUSH_CHANNEL_PK` and aggregator keys: the passes read the machine's
+  copies. The keeper Worker still DECLARES those Secrets Store bindings,
+  and wrangler validates them at deploy, so the shared store entries of
+  (a) must exist for its deploy (the private database's migration
+  applier) to succeed; no keeper pass reads them. Which passes are
+  armed, including the past-grace `graceDefault`, which sells or
+  transfers a borrower's collateral, stays an owner decision for the
+  deployment in question.
 
 > **`apps/keeper/wrangler.jsonc`'s comment on the three reward/master flags is now correct**
 > (#2223, closing #1465). It described them as "operator-managed vars
@@ -579,8 +567,10 @@ from the owning Worker's directory:
 > arming state is reviewable — was answered **no**: a committed var arms or
 > disarms the keeper from any clean checkout, and a var of the same name
 > **replaces** the remote secret rather than sitting beside it (wrangler's
-> own collision warning), so the commit would destroy the binding this plan
-> provisions at step 4.
+> own collision warning), so the commit would have destroyed that binding.
+> Since #2504 the question is moot: the flags are lines in the keeper
+> machine's env file, as the bullet above says, and nothing on the Worker
+> arms the keeper.
 
 ## 5. Wrangler config layout
 
@@ -617,7 +607,7 @@ Stage 3 PR5.
 | 4 | Operator | Provision **every declared binding on all three Workers** — §4.2 (indexer) + §4.3 (agent) + §4.4 (keeper), by the two mechanisms in §4.5. Do not skip the indexer: wrangler validates Secrets Store bindings at deploy, so a missing `ALCHEMY_WEBHOOK_SIGNING_KEY_*` fails step 5 rather than degrading. (NOT BLOCKAID; that proxy does not exist, #1651) |
 | 5 | Operator | **`pnpm --filter @vaipakam/indexer run deploy`** for `apps/indexer` (it applies D1 migrations first since #2214/#2409; this row said bare `wrangler deploy`, which skips them), and the packaged scripts **`pnpm --filter @vaipakam/agent run deploy`** and **`pnpm --filter @vaipakam/keeper run deploy`** for the other two (#1896) — the packaged scripts are canonical and carry `--keep-vars`. **Since #1995 a bare `wrangler deploy` is no longer destructive here**: all five var-carrying Workers declare `"keep_vars": true`, which wrangler reads on both the `deploy` and `versions upload` paths, so dashboard-managed values survive every spelling of a deploy. That covers the keeper's `FRONTEND_ORIGIN` and optional `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` tuning from §4.4, and the agent's `RECIPIENT_VALIDATING_TOKENS` / `OPENSEA_OFFERS_MAX_PAGES`, which `apps/agent/src/env.ts` reads and its config does not declare. The trade is that a deploy can no longer *remove* a var — deleting one is a dashboard action. This activates crons + binds `indexer.vaipakam.com`. **The keeper Worker has no cron to activate, by design:** `apps/keeper/wrangler.jsonc` commits `"crons": []`, the keeper runs on the always-on machine (`docs/ops/KeeperMachine.md`, #2504), and the Worker's `scheduled` handler declines every invocation (#2569). Deploying it is still correct, because its deploy is the private database's migration applier. Do not "fix" the empty list here. |
 | 6 | Operator | Update `apps/app/.env.local` with `VITE_INDEXER_ORIGIN` + `VITE_AGENT_ORIGIN`; then `cd apps/app && pnpm run deploy` — **not** `pnpm build && wrangler deploy`. The packaged script sets `REQUIRE_INDEXER_ORIGIN=1`, which turns a missing or misspelled `VITE_INDEXER_ORIGIN` into a hard failure; a bare build only warns and will publish a configuration-empty Worker (no offer book, push rail or config snapshot). That is not hypothetical — it happened during #1854. |
-| 7 | Both | Smoke-test the app deployment end-to-end — its emitted `workers.dev` URL from step 6. `app.vaipakam.com` IS bound now, but the `workers.dev` URL remains the right target here: a deploy publishes there first and the custom domain can lag or sit on an older version, so testing the domain risks smoke-testing a different build than step 6 produced (#1854) — against `agent.vaipakam.com` + `indexer.vaipakam.com`, with `KEEPER_ENABLED=false` (no autonomous liquidation). **The keeper is not part of this smoke test, and this step does not touch it.** It runs on the always-on machine (`docs/ops/KeeperMachine.md`), and that machine is the keeper of the deployment this plan built: its env file names `vaipakam-warm`, the staging database of §3, and there is no second keeper host. Stopping or restarting it here would stop the only keeper serving the live testnets. So the window is not write-free: `runDailyOracleSnapshot` signs on `KEEPER_PRIVATE_KEY` alone and broadcasts whatever `KEEPER_ENABLED` says (#1466). If a write-free window is ever needed, that is the owner's decision, carried out by KeeperMachine §6. There is no keeper trigger to remove or restore in the Cloudflare dashboard. |
+| 7 | Both | Smoke-test the app deployment end-to-end — its emitted `workers.dev` URL from step 6. `app.vaipakam.com` IS bound now, but the `workers.dev` URL remains the right target here: a deploy publishes there first and the custom domain can lag or sit on an older version, so testing the domain risks smoke-testing a different build than step 6 produced (#1854) — against `agent.vaipakam.com` + `indexer.vaipakam.com`. **The keeper is not part of this smoke test, and this step does not touch it.** It runs on the always-on machine (`docs/ops/KeeperMachine.md`), and that machine is the keeper of the deployment this plan built: its env file names `vaipakam-warm`, the staging database of §3, and there is no second keeper host. Stopping or restarting it here would stop the only keeper serving the live testnets. So the window is not write-free: `runDailyOracleSnapshot` signs on `KEEPER_PRIVATE_KEY` alone and broadcasts whatever `KEEPER_ENABLED` says (#1466). If a write-free window is ever needed, that is the owner's decision, carried out by KeeperMachine §6. There is no keeper trigger to remove or restore in the Cloudflare dashboard. |
 | 8 | Operator | **No action: the keeper was started and armed on its machine by `docs/ops/KeeperMachine.md` §5 ("Start disarmed, validate, then arm"), which is the one place that states how.** This row used to start it, which on the one machine would mean restarting the live testnets' keeper. Confirm it is running (`systemctl is-active vaipakam-keeper`) rather than starting it. Any further arming is the owner's decision, by that procedure: a line in the machine's env file applied by KeeperMachine §6, not a `wrangler secret put`. The keeper Worker's schedule is not read back here because it stays empty by design (§2 there; `node .github/scripts/check-cron-slots.mjs --live` confirms the account agrees). |
 | 9 | Both | Run for N days observing for divergence vs prod. |
 | 10 | Both | **SUPERSEDED — already done, and not the way this row describes.** It named `vaipakam-labs`, a service that no longer exists (renamed `vaipakam-www`), and would bind BOTH hosts as Worker Custom Domains. Only the apex is bound that way (verified 2026-08-27: `vaipakam.com` → `vaipakam-www`); `www.vaipakam.com` is a **Bulk Redirect** to the apex, so binding it to the Worker would REPLACE that redirect and give the site two indexable origins — the opposite of the apex-canonical setup. `vaipakam-hf-watcher` is decommissioned and `api.vaipakam.com` no longer resolves. Retained as the record of what step 10 was; do not execute it. |
@@ -640,10 +630,10 @@ Stage 3 PR5.
    so growth is bounded. If quota tightens, lower retention
    on the staging instance further.
 
-4. **`KEEPER_ENABLED`** — set on `vaipakam-keeper` with initial value
-   `"false"`. Flip to `"true"` only after §6 step 7's validation window
-   passes. It is a per-Worker `secret_text`, **not** a var — an earlier
-   revision of this section said otherwise. See §4.5(b).
+4. **`KEEPER_ENABLED`** — not set on `vaipakam-keeper` at all. It is a
+   line in the keeper machine's env file, and arming it is
+   `docs/ops/KeeperMachine.md` §5. Earlier revisions of this item called
+   it a var and then a per-Worker `secret_text`. See §4.5(b).
 
 ## 8. Effort
 
