@@ -101,7 +101,6 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
 
     /// @dev {RewardRemittanceLensFacet.getPacketDeliveryProof}, named.
     struct GatePacket {
-        bytes32 dayListHash;
         bytes32 dayListRoot;
         uint32 chunkCount;
         uint256 chunksIndexed;
@@ -204,7 +203,6 @@ abstract contract RewardDayDeliveryGateBase is SetupTest, IVaipakamErrors {
 
     function _gp(bytes32 h) internal view returns (GatePacket memory v) {
         (
-            v.dayListHash,
             v.dayListRoot,
             v.chunkCount,
             v.chunksIndexed,

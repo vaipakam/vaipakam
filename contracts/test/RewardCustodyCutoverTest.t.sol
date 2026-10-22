@@ -1123,7 +1123,10 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(sr.held, 5e18, "one packet's worth in the row");
         assertEq(sr.packetHash, _packetHash(idQ), "bound to that packet");
         assertEq(_rlens().getIngressPacket(_packetHash(idQ)).unclassified, 5e18, "whose figure is the record's");
-        assertEq(_unclassified(), 5e18, "the row holds exactly the quarantine");
+        // The row also holds the first delivery's epoch: on an activated
+        // custody a rooted budget delivery lands whole in the unclassified
+        // row. Nothing from either refused packet reached it.
+        assertEq(_unclassified(), 3e18 + 5e18, "the row holds the one epoch and the quarantine, exactly");
     }
 
     /// A quarantined compensation lands in the row on an activated

@@ -577,7 +577,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         bytes32 h = _epochOf(10e18, _one(1), 1, keccak256("e1"));
         _claim();
         (, uint256 balance, uint256 admitted, , , ) = _epoch().getTransportBatch(h);
-        (uint256 parked, , , , uint256 debited) = _epoch().getTransportRemainder(h);
+        (uint256 parked, , , uint256 debited) = _epoch().getTransportRemainder(h);
         (uint256 lf, uint256 lr) = _legs(h);
         assertEq(balance + parked + debited + lf + lr, admitted, "admitted == balance + parked + debited + legs");
     }

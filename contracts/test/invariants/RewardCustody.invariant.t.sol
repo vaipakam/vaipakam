@@ -228,7 +228,7 @@ contract RewardCustodyInvariant is SetupTest {
             bytes32 h = handler.packetAt(i);
             (bytes32 packetHash, uint256 balance, uint256 admitted, , , ) = ep.getTransportBatch(h);
             if (packetHash == bytes32(0)) continue; // defensive: every handler delivery opens one
-            (uint256 parked, , , , uint256 debited) = ep.getTransportRemainder(h);
+            (uint256 parked, , , uint256 debited) = ep.getTransportRemainder(h);
             (uint256 legFresh, uint256 legRecycled) = ep.getTransportBatchLegs(h);
             // 3b-ii-A2 (#2305) — the identity gains the staged terms.
             (uint256 stagedFresh, uint256 stagedRecycled, ) = ep.getTransportBatchStaged(h);
@@ -425,7 +425,7 @@ contract RewardCustodyInvariant is SetupTest {
 
         handler.releaseEpoch(0);
         assertGt(handler.released(), 0, "the handler released an epoch");
-        (, , , bool acknowledged, ) = ep.getTransportRemainder(h);
+        (, , bool acknowledged, ) = ep.getTransportRemainder(h);
         assertTrue(acknowledged, "and the acknowledgment is recorded");
 
         for (uint256 seed = 1; seed <= 32 && handler.classified() == 0; ++seed) {
@@ -434,7 +434,7 @@ contract RewardCustodyInvariant is SetupTest {
         assertGt(handler.classified(), 0, "a classification was applied against the released epoch");
 
         (, uint256 balance, uint256 admitted, , , ) = ep.getTransportBatch(h);
-        (uint256 parked, , , , uint256 debited) = ep.getTransportRemainder(h);
+        (uint256 parked, , , uint256 debited) = ep.getTransportRemainder(h);
         assertGt(debited, 0, "and it DEBITED the remainder - the seam is reached");
         assertLt(balance + parked, admitted, "which the old two-term identity would have called a loss");
         assertEq(balance + parked + debited, admitted, "the epoch conserves with the exit named");
@@ -632,27 +632,40 @@ contract RewardCustodyHandler is Test {
         uint256 amount = bound(seed, 2, 10_000e18);
         uint256 fresh = bound(uint256(keccak256(abi.encode(seed, "fresh"))), 0, amount);
         _mint(diamond, amount);
-        uint256[] memory days_ = _dayOne();
-        bytes32[] memory leaves = RemitWire.d6Chunks(days_);
-        try RewardIngressFacet(diamond).onRewardBudgetReceivedD6(
-            address(vpfi),
-            amount,
-            RemitWire.d6Root(leaves),
-            days_.length,
-            leaves.length,
-            8453,
-            ++nextRemit,
-            address(0xBA5E),
-            amount - fresh,
-            fresh,
-            bytes32(0),
-            0
-        ) {
+        // A low-level call over calldata built in its own frame: the twelve
+        // arguments of a `try` expression put this frame one slot past the
+        // viaIR stack budget.
+        (bool ok, ) = diamond.call(_d6Calldata(amount, fresh, ++nextRemit));
+        if (ok) {
             ++epochsAdmitted;
             packetHashes.push(keccak256(abi.encode(uint256(8453), ++seqStamped, "seq")));
-        } catch {
+        } else {
             refusals++;
         }
+    }
+
+    /// The d6 ingress calldata for a whole-split delivery of `amount` over the
+    /// handler's one day, from Base, with no transport id (the per-source
+    /// sequence stamps it) in the live era.
+    function _d6Calldata(uint256 amount, uint256 fresh, uint256 remitId) internal view returns (bytes memory) {
+        bytes32[] memory leaves = RemitWire.d6Chunks(_dayOne());
+        return abi.encodeCall(
+            RewardIngressFacet.onRewardBudgetReceivedD6,
+            (
+                address(vpfi),
+                amount,
+                RemitWire.d6Root(leaves),
+                1,
+                leaves.length,
+                8453,
+                remitId,
+                address(0xBA5E),
+                amount - fresh,
+                fresh,
+                bytes32(0),
+                0
+            )
+        );
     }
 
     /// The one day every handler delivery lists.
