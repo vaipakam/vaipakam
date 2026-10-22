@@ -210,8 +210,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///      pool depth + freshness gate for everything else. `distrusted`
     ///      is non-zero only on an Illiquid verdict that a distrusted price
     ///      produced (see {checkLiquidityOnActiveNetwork}), and names the
-    ///      asset whose price it was: `asset` itself, or a quote asset it
-    ///      has a pool with. Every missing price, feed or pool reports zero.
+    ///      asset whose price it was: `asset` itself, or a quote asset over
+    ///      which a route would have cleared the floor but for that price
+    ///      ({_distrustedQuoteThatClears}). Every missing price, feed or
+    ///      pool reports zero.
     function _classifyLiquidity(address asset)
         internal
         view
@@ -224,6 +226,23 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         address ethFeed = s.ethNumeraireFeed;
         if (weth == address(0) || ethFeed == address(0)) {
             return (LibVaipakam.LiquidityStatus.Illiquid, address(0));
+        }
+
+        // #666 — the asset's own price gates EVERY branch, WETH's included:
+        // a distrusted price (the quorum, or the Pyth cross-check of the ETH
+        // reference) is named so the settlement read refuses, and a missing
+        // one is Illiquid like any unpriced asset. Before #666 WETH skipped
+        // this gate and read Liquid on ETH/USD freshness alone, so a
+        // distrusted WETH price never reached the refusal the classifier
+        // owes, and an unavailable one sent the default into price reads
+        // that revert instead of the missing-price rule every other asset
+        // follows.
+        (PriceStatus priceStatus, , ) = getAssetPriceStatus(asset);
+        if (priceStatus != PriceStatus.Priced) {
+            return (
+                LibVaipakam.LiquidityStatus.Illiquid,
+                priceStatus == PriceStatus.Divergent ? asset : address(0)
+            );
         }
 
         // WETH itself: no asset/WETH pool (circular); Liquid iff ETH/USD
@@ -261,14 +280,8 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         // PAA quote × any configured V3 / V2 venue × any fee tier
         // ≤ 0.3%) still clears the floor at the configured slippage.
         // Zero per-asset governance config — pool discovery is
-        // on-chain via `factory.getPool` / `factory.getPair`.
-        (PriceStatus priceStatus, , ) = getAssetPriceStatus(asset);
-        if (priceStatus != PriceStatus.Priced) {
-            return (
-                LibVaipakam.LiquidityStatus.Illiquid,
-                priceStatus == PriceStatus.Divergent ? asset : address(0)
-            );
-        }
+        // on-chain via `factory.getPool` / `factory.getPair`. The asset's
+        // own price was gated above.
 
         // ETH/USD freshness — kept as a soft pre-flight: the
         // route-search itself rechecks each quote-asset's oracle via
@@ -297,10 +310,11 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///      §4.4 step 3 full upgrade — replaces the previous
     ///      {_v3DepthLiquid} depth-at-tick metric.
     ///
-    ///      `distrustedQuote` (#666): a quote asset the search skipped
-    ///      because it has a pool with `asset` and a distrusted price, so a
-    ///      failed search is not evidence the asset is illiquid
-    ///      ({_routeOverQuote}). Zero when there was none.
+    ///      `distrustedQuote` (#666): when no trusted route clears, a quote
+    ///      asset whose price is distrusted and over which a route would
+    ///      have cleared on everything checkable without that price
+    ///      ({_distrustedQuoteThatClears}). The failed search is then not
+    ///      evidence the asset is illiquid. Zero when there is none.
     function _passesFloorSlippage(address asset, LibVaipakam.Storage storage s)
         private
         view
@@ -313,7 +327,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             scaleA: 10 ** (uint256(dA) + uint256(_tryTokenDecimals(asset))),
             band: LibVaipakam.cfgTwapConsistencyBps(),
             twapWindow: uint32(LibVaipakam.cfgTwapWindowSec()),
-            distrustedQuote: address(0)
+            quoteUnvalued: false
         });
         // Probe only the floor size; the other slots are 0 so
         // `_accumulatePoolImpacts` skips them via its
@@ -337,7 +351,55 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
                 _routeOverQuote(asset, q, s, ctx, sizes, best);
             }
         }
-        return (best[0] <= LibVaipakam.cfgLiquiditySlippageBps(), ctx.distrustedQuote);
+        if (best[0] <= LibVaipakam.cfgLiquiditySlippageBps()) return (true, address(0));
+        return (false, _distrustedQuoteThatClears(asset, s, ctx, sizes, paa));
+    }
+
+    /// @dev #666 — after the trusted search has FAILED, the quote asset (if
+    ///      any) whose price is distrusted and over which a route would
+    ///      have cleared the floor on everything the search can check
+    ///      without that price. Asked only here, where the answer can
+    ///      change the verdict: a quote that is merely unavailable, or
+    ///      distrusted with no route that clears, leaves the asset
+    ///      Illiquid.
+    ///
+    ///      The probe runs the same pool reads, depth test and TWAP check
+    ///      as the trusted search ({_foldRoutes}) and leaves out the one
+    ///      check that needs the quote's price, the value-balance guard.
+    ///      So an empty pool, or one too shallow to take the floor at the
+    ///      configured slippage, cannot turn an Illiquid verdict into a
+    ///      refusal; only a route with the depth the trusted search
+    ///      demands can. The probe's result never counts toward a Liquid
+    ///      verdict or a tier. What it cannot exclude is depth placed at
+    ///      a price away from the market, since that is what the missing
+    ///      guard checks; such a pool can only delay a close-out while the
+    ///      quote stays distrusted, never move collateral.
+    function _distrustedQuoteThatClears(
+        address asset,
+        LibVaipakam.Storage storage s,
+        _TierCtx memory ctx,
+        uint256[4] memory sizes,
+        address[] memory paa
+    ) private view returns (address) {
+        // `ctx` is finished with for the trusted search; from here every
+        // fold skips the value-balance guard.
+        ctx.quoteUnvalued = true;
+        uint256 slipBound = LibVaipakam.cfgLiquiditySlippageBps();
+        for (uint256 qi; qi < paa.length; ++qi) {
+            address q = paa[qi];
+            if (q == address(0) || q == asset) continue;
+            (PriceStatus stQ, , ) = getAssetPriceStatus(q);
+            if (stQ != PriceStatus.Divergent) continue;
+            uint256[4] memory unvalued = [
+                type(uint256).max,
+                type(uint256).max,
+                type(uint256).max,
+                type(uint256).max
+            ];
+            _foldRoutes(asset, q, s, ctx, 0, 0, sizes, unvalued);
+            if (unvalued[0] <= slipBound) return q;
+        }
+        return address(0);
     }
 
     /// @dev V3-style depth probe — the same code path applied against
@@ -1712,16 +1774,18 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///      `scaleA` = `10**(feedDecimals + tokenDecimals)` so a
     ///      PAD↔base-unit conversion is one `mulDiv`; `band` =
     ///      `twapConsistencyBps`; `twapWindow` = `twapWindowSec`.
-    ///      `distrustedQuote` is an OUTPUT the search sets (#666): a quote
-    ///      asset skipped because its price is distrusted while it has a
-    ///      pool with the asset (see {_routeOverQuote}); zero when none.
+    ///      `quoteUnvalued` (#666): the quote's price is distrusted, so its
+    ///      leg has no value and the value-balance guard is skipped; depth
+    ///      and the TWAP check still run. Set only by
+    ///      {_distrustedQuoteThatClears}, whose result never counts toward
+    ///      a Liquid verdict or a tier.
     // forge-lint: disable-next-line(pascal-case-struct)
     struct _TierCtx {
         uint256 pA;
         uint256 scaleA;
         uint256 band;
         uint32 twapWindow;
-        address distrustedQuote;
+        bool quoteUnvalued;
     }
 
     /// @dev For one resolved Uni-V3-clone pool, fold its best-route
@@ -1756,8 +1820,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         // Guard 1 — the two legs' Chainlink-priced values must be
         // balanced within `band` bps (⇔ the pool's spot price agrees
         // with the trusted feed): `legValueRatio = feedMid / poolMid`,
-        // so balanced legs ⇔ poolMid ≈ feedMid.
-        {
+        // so balanced legs ⇔ poolMid ≈ feedMid. Skipped when the quote's
+        // price is distrusted (`ctx.quoteUnvalued`, #666): there is no
+        // trusted value to balance against.
+        if (!ctx.quoteUnvalued) {
             uint256 vAsset = Math.mulDiv(reserveAsset, ctx.pA * 1e6, ctx.scaleA); // PAD × 1e6
             uint256 vQ = Math.mulDiv(reserveQ, pQ * 1e6, scaleQ); // PAD × 1e6
             if (vAsset == 0 || vQ == 0) return;
@@ -1792,16 +1858,11 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     }
 
     /// @dev Route the `asset/q` pair over every configured Uni-V3-clone
-    ///      factory at every fee tier ≤ 0.3%, folding each found pool's
-    ///      contribution into `best`. Skips `q` entirely when its
-    ///      price is unavailable (can't value its leg). When the price is
-    ///      DISTRUSTED instead ({PriceStatus.Divergent}) and `asset` has a
-    ///      pool with `q`, the skip is recorded in `ctx.distrustedQuote`
-    ///      (#666): that route might have cleared, so a search that fails
-    ///      without it has not shown the asset is illiquid. A distrusted
-    ///      quote with no pool changes nothing, so one bad quote asset
-    ///      cannot refuse the close-out of an asset that never traded
-    ///      against it.
+    ///      and V2-fork venue ({_foldRoutes}), folding each found pool's
+    ///      contribution into `best`. Skips `q` entirely unless its price
+    ///      reads as Priced: an unavailable quote cannot value its leg, and
+    ///      a distrusted one (#666) is weighed separately, only when the
+    ///      trusted search has failed ({_distrustedQuoteThatClears}).
     function _routeOverQuote(
         address asset,
         address q,
@@ -1811,13 +1872,25 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         uint256[4] memory best
     ) private view {
         (PriceStatus stQ, uint256 pQ, uint8 dQ) = getAssetPriceStatus(q);
-        if (stQ != PriceStatus.Priced || pQ == 0) {
-            if (stQ == PriceStatus.Divergent && _hasPoolWith(asset, q, s)) {
-                ctx.distrustedQuote = q;
-            }
-            return;
-        }
+        if (stQ != PriceStatus.Priced || pQ == 0) return;
         uint256 scaleQ = 10 ** (uint256(dQ) + uint256(_tryTokenDecimals(q)));
+        _foldRoutes(asset, q, s, ctx, pQ, scaleQ, sizes, best);
+    }
+
+    /// @dev The pool walk {_routeOverQuote} and {_distrustedQuoteThatClears}
+    ///      share: every configured Uni-V3-clone factory at every fee tier
+    ///      ≤ 0.3%, then every configured V2 fork. `pQ`/`scaleQ` value the
+    ///      quote leg; both are zero, and unread, when `ctx.quoteUnvalued`.
+    function _foldRoutes(
+        address asset,
+        address q,
+        LibVaipakam.Storage storage s,
+        _TierCtx memory ctx,
+        uint256 pQ,
+        uint256 scaleQ,
+        uint256[4] memory sizes,
+        uint256[4] memory best
+    ) private view {
         bool assetIsToken0 = asset < q;
         // V3 leg: 3 factories × 4 fee tiers via `getPool(t0, t1, fee)`.
         {
@@ -1859,48 +1932,6 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         }
     }
 
-    /// @dev #666 — whether {_routeOverQuote} would have found any pool for
-    ///      `asset/q`: the same V3 factories and fee tiers, and the same V2
-    ///      `getPair` lookups, without pricing anything. Runs only for a
-    ///      quote whose price is distrusted, so its cost lands on that rare
-    ///      read and never on a normal classification. A pool counts if it
-    ///      exists at all; whether it would have cleared the floor cannot be
-    ///      known without the price this read refuses to trust.
-    function _hasPoolWith(address asset, address q, LibVaipakam.Storage storage s)
-        private
-        view
-        returns (bool)
-    {
-        (address token0, address token1) = asset < q ? (asset, q) : (q, asset);
-        uint24[4] memory feeTiers = _le03FeeTiers();
-        address[6] memory factories = [
-            s.uniswapV3Factory,
-            s.pancakeswapV3Factory,
-            s.sushiswapV3Factory,
-            s.uniswapV2Factory,
-            s.sushiswapV2Factory,
-            s.pancakeswapV2Factory
-        ];
-        for (uint256 fi; fi < 6; ++fi) {
-            if (factories[fi] == address(0)) continue;
-            if (fi < 3) {
-                for (uint256 ti; ti < 4; ++ti) {
-                    if (_tryGetPool(factories[fi], token0, token1, feeTiers[ti]) != address(0)) {
-                        return true;
-                    }
-                }
-            } else {
-                (bool ok, bytes memory data) = factories[fi].staticcall(
-                    abi.encodeWithSignature("getPair(address,address)", asset, q)
-                );
-                if (ok && data.length >= 32 && abi.decode(data, (address)) != address(0)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
     /// @dev V2 sibling of {_accumulatePoolImpacts}. `getPair` is
     ///      bidirectional in canonical V2 (and every V2 fork tracked by
     ///      Vaipakam — Sushi/Pancake), so we can pass `(asset, quote)`
@@ -1935,8 +1966,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         (uint256 r0, uint256 r1, ) = abi.decode(rdata, (uint256, uint256, uint256));
         if (r0 == 0 || r1 == 0) return;
         (uint256 reserveAsset, uint256 reserveQ) = assetIsToken0 ? (r0, r1) : (r1, r0);
-        // Value-balance guard (spot ≈ feed) — identical to the V3 path.
-        {
+        // Value-balance guard (spot ≈ feed) — identical to the V3 path,
+        // and skipped the same way for a distrusted quote (#666).
+        if (!ctx.quoteUnvalued) {
             uint256 vAsset = Math.mulDiv(reserveAsset, ctx.pA * 1e6, ctx.scaleA);
             uint256 vQ = Math.mulDiv(reserveQ, pQ * 1e6, scaleQ);
             if (vAsset == 0 || vQ == 0) return;
@@ -1973,7 +2005,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             scaleA: 10 ** (uint256(dA) + uint256(_tryTokenDecimals(asset))),
             band: LibVaipakam.cfgTwapConsistencyBps(),
             twapWindow: uint32(LibVaipakam.cfgTwapWindowSec()),
-            distrustedQuote: address(0)
+            quoteUnvalued: false
         });
         uint256[4] memory sizes = [
             LibVaipakam.cfgFloorSizePad(),

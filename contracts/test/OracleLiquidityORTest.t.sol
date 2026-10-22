@@ -459,4 +459,62 @@ contract OracleLiquidityORTest is Test {
         _priceFails(mockWeth, OracleFacet.StalePriceData.selector);
         assertEq(uint256(_activeNetwork()), uint256(LibVaipakam.LiquidityStatus.Illiquid));
     }
+
+    /// @notice An EMPTY pool against a distrusted quote does not refuse
+    ///         (Codex #2652 r1). Anyone can create one, and it could never
+    ///         have cleared the floor, so the Illiquid verdict stands.
+    function testActiveNetwork_quoteDistrustedWithEmptyPool_staysIlliquid() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, 0);
+        _priceFails(mockWeth, OracleFacet.OraclePriceDivergence.selector);
+        assertEq(
+            uint256(_activeNetwork()),
+            uint256(LibVaipakam.LiquidityStatus.Illiquid),
+            "an empty pool is no route, whatever the quote's price"
+        );
+    }
+
+    /// @notice A pool too shallow to take the floor does not refuse
+    ///         either: its depth fails without the quote's price.
+    function testActiveNetwork_quoteDistrustedWithShallowPool_staysIlliquid() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, LIQUIDITY_FAILING);
+        _priceFails(mockWeth, OracleFacet.OraclePriceDivergence.selector);
+        assertEq(
+            uint256(_activeNetwork()),
+            uint256(LibVaipakam.LiquidityStatus.Illiquid),
+            "a pool too thin for the floor could not have changed the verdict"
+        );
+    }
+
+    /// @notice WETH as the collateral (Codex #2652 r1): its own price gates
+    ///         the classifier like every other asset's. A distrusted WETH
+    ///         price refuses; before #666's gate was hoisted, the WETH branch
+    ///         read Liquid on ETH/USD freshness alone.
+    function testActiveNetwork_wethPriceDistrusted_refuses() public {
+        _priceFails(mockWeth, OracleFacet.OraclePriceDivergence.selector);
+        assertEq(
+            uint256(OracleFacet(address(diamond)).checkLiquidity(mockWeth)),
+            uint256(LibVaipakam.LiquidityStatus.Illiquid),
+            "checkLiquidity reads a distrusted WETH as illiquid"
+        );
+        vm.expectRevert(OracleFacet.OraclePriceDivergence.selector);
+        OracleFacet(address(diamond)).checkLiquidityOnActiveNetwork(mockWeth);
+    }
+
+    /// @notice A missing WETH price is Illiquid, the rule every unpriced
+    ///         asset follows.
+    function testActiveNetwork_wethPriceMissing_isIlliquid() public {
+        _priceFails(mockWeth, OracleFacet.StalePriceData.selector);
+        assertEq(
+            uint256(OracleFacet(address(diamond)).checkLiquidityOnActiveNetwork(mockWeth)),
+            uint256(LibVaipakam.LiquidityStatus.Illiquid)
+        );
+    }
+
+    /// @notice A priced WETH with a fresh ETH/USD feed stays Liquid.
+    function testActiveNetwork_wethPriced_isLiquid() public view {
+        assertEq(
+            uint256(OracleFacet(address(diamond)).checkLiquidityOnActiveNetwork(mockWeth)),
+            uint256(LibVaipakam.LiquidityStatus.Liquid)
+        );
+    }
 }
