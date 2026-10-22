@@ -6,6 +6,7 @@ import {LibRewardCustody} from "./LibRewardCustody.sol";
 import {LibInteractionRewards} from "./LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {LibRewardSanctions} from "./LibRewardSanctions.sol";
+import {LibAccountShape} from "./LibAccountShape.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -785,8 +786,10 @@ library LibRewardStaging {
             LibVaipakam.StagingDomain storage dom = s.stagingDomains[r.domainKey];
             venue = dom.venueSet ? dom.venue : LibVaipakam.RewardDelivery.Default;
         }
+        // The RL-1 rule, as a direct claim resolves it: `Default` is the vault
+        // for an EOA, a 7702-delegated one included (#2617).
         bool toVault = venue == LibVaipakam.RewardDelivery.Vault
-            || (venue == LibVaipakam.RewardDelivery.Default && user.code.length == 0);
+            || (venue == LibVaipakam.RewardDelivery.Default && LibAccountShape.isEoaStyle(user));
         setApart = setApart || venue == LibVaipakam.RewardDelivery.SanctionsHeld;
         bool vaulted;
         if (forfeit) {

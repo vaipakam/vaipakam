@@ -271,6 +271,67 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
         assertEq(_tracked(address(w)), expected, "tracked counter recorded");
     }
 
+    // ─── EIP-7702 delegated EOAs (#2617) ─────────────────────────────────────
+
+    /// @dev The 23-byte EIP-7702 delegation designator `0xef0100 ‖ delegate`.
+    function _designator(address delegate) internal pure returns (bytes memory) {
+        return abi.encodePacked(bytes3(0xef0100), delegate);
+    }
+
+    function testEip7702DelegatedEoaDefaultsToVault() public {
+        address vault = _vaultFacet().getOrCreateUserVault(alice);
+        uint256 expected = _seedClaimable(alice);
+        vm.etch(alice, _designator(address(0xDE1E6A7E)));
+        assertEq(alice.code.length, 23, "alice carries a delegation designator");
+
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        assertEq(paid, expected, "full amount paid");
+        assertEq(vpfi.balanceOf(vault), expected, "a delegated EOA is still an EOA: its vault");
+        assertEq(vpfi.balanceOf(alice), 0, "no raw transfer");
+        assertEq(_tracked(alice), expected, "tracked counter recorded");
+    }
+
+    function testEip7702DelegatedEoaWalletOptOutStillHonoured() public {
+        address vault = _vaultFacet().getOrCreateUserVault(alice);
+        uint256 expected = _seedClaimable(alice);
+        vm.etch(alice, _designator(address(0xDE1E6A7E)));
+
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
+            LibVaipakam.RewardDelivery.Wallet
+        );
+
+        assertEq(paid, expected, "full amount paid");
+        assertEq(vpfi.balanceOf(alice), expected, "explicit wallet opt-out");
+        assertEq(vpfi.balanceOf(vault), 0, "vault untouched");
+    }
+
+    /// @dev Only the exact designator reads as an EOA: the same 23 bytes with
+    ///      a different prefix, or the prefix on longer code, is a contract and
+    ///      keeps the raw wallet transfer.
+    function testWrongPrefix23ByteCodeStaysContract() public {
+        _assertContractShaped(abi.encodePacked(bytes3(0xef0101), address(0xDE1E6A7E)));
+    }
+
+    function testDesignatorPrefixOnLongerCodeStaysContract() public {
+        _assertContractShaped(abi.encodePacked(bytes3(0xef0100), address(0xDE1E6A7E), bytes1(0x00)));
+    }
+
+    function _assertContractShaped(bytes memory code) internal {
+        address vault = _vaultFacet().getOrCreateUserVault(alice);
+        uint256 expected = _seedClaimable(alice);
+        vm.etch(alice, code);
+
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        assertEq(paid, expected, "full amount paid");
+        assertEq(vpfi.balanceOf(alice), expected, "a contract keeps the raw transfer");
+        assertEq(vpfi.balanceOf(vault), 0, "vault untouched");
+    }
+
     // ─── Atomicity of the fallback ───────────────────────────────────────────
 
     function testForcedRollupFailureRollsBackVaultSideAndPaysWalletOnce() public {

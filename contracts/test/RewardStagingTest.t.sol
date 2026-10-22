@@ -1785,6 +1785,27 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(vpfi.balanceOf(vault), vaultBefore, "not to the vault the default would have chosen");
     }
 
+    function test_ADefaultClaim_From7702DelegatedEoa_SettlesToTheVault() public {
+        // #2617 - alice's account carries only an EIP-7702 delegation
+        // designator: still her own EOA, so a DEFAULT claim's staged day
+        // settles into her vault, exactly as a code-free EOA's does.
+        _scene();
+        _wideDay(true);
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(alice);
+        vm.etch(alice, abi.encodePacked(bytes3(0xef0100), address(0xDE1E6A7E)));
+        assertEq(_claim(), 0);
+        _staging().prepareStagedDay(_key());
+        _staging().prepareStagedDay(_key());
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key());
+        uint256 walletBefore = vpfi.balanceOf(alice);
+        uint256 vaultBefore = vpfi.balanceOf(vault);
+        _settle().resolveStagedDayPage(_key());
+        assertTrue(_settle().resolveStagedDayPage(_key()));
+        assertEq(vpfi.balanceOf(vault) - vaultBefore, NEED, "the delegated EOA's default is its vault");
+        assertEq(vpfi.balanceOf(alice), walletBefore, "not a raw wallet transfer");
+    }
+
     function test_ADefaultClaim_BindsNoVenue() public {
         _stagedScene();
         assertFalse(_rec().venueSet, "a default claim leaves the venue to the record's payout");
