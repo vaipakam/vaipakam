@@ -51,7 +51,8 @@ The cron below reads this file, so any deploy must update it atomically with the
 
 | Check | Call | Expected |
 |---|---|---|
-| Governance multisig holds `DEFAULT_ADMIN_ROLE` | `hasRole(0x00, GOV_MULTISIG)` | true |
+| Timelock holds `DEFAULT_ADMIN_ROLE` and is the Diamond owner (D1, #934) | `hasRole(0x00, TIMELOCK)`, `owner()` | true, `TIMELOCK` |
+| Governance multisig holds `EMERGENCY_REVOKER_ROLE` and nothing else | `hasRole(EMERGENCY_REVOKER_ROLE, GOV_MULTISIG)`; every other role | true; all false |
 | Timelock holds `ADMIN_ROLE` | `hasRole(ADMIN_ROLE, TIMELOCK)` | true |
 | Timelock holds `ORACLE_ADMIN_ROLE` / `RISK_ADMIN_ROLE` / `KYC_ADMIN_ROLE` / `VAULT_ADMIN_ROLE` | `hasRole(...)` per role | true |
 | Pauser multisig holds `PAUSER_ROLE` | `hasRole(PAUSER_ROLE, PAUSER_MULTISIG)` | true |

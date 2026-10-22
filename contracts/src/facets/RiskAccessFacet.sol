@@ -274,8 +274,8 @@ contract RiskAccessFacet is DiamondAccessControl {
     ///         stale falls back to the safest tier with ZERO per-user writes (see
     ///         `LibRiskAccess`).
     /// @dev    Held by `PAUSER_ROLE` — the OFF-TIMELOCK operational guardian role,
-    ///         deliberately NOT one of the roles `TransferAdminToTimelock` migrates
-    ///         to the 48h timelock (`ADMIN/ORACLE/RISK/VAULT_ADMIN`). `RISK_ADMIN_ROLE`
+    ///         deliberately NOT one of the roles `Handover.s.sol` moves to the
+    ///         48h timelock (`ADMIN/UNPAUSER/KYC/ORACLE/RISK/VAULT_ADMIN`). `RISK_ADMIN_ROLE`
     ///         can't be used: it IS migrated to the timelock, so a reveal queued
     ///         through it would expose the secret for the delay (Codex #736 r7). The
     ///         publisher's power is BOUNDED — it can only reveal what `ADMIN` already

@@ -253,12 +253,24 @@ const copySource = {
         title:
           'A token in this offer could not be checked by the independent security screen. Treat it with extra care.',
       },
+      // #2535 — guided matching only: a recommended offer whose screen
+      // has not answered yet. It cannot be chosen until it has.
+      checking: {
+        label: 'Checking',
+        title:
+          'The independent security check on this offer’s tokens has not finished yet. You can choose it once it has.',
+      },
     },
     matchesHidden: tmpl(
       '{{count}} matching offers are hidden because an independent security check flagged one of their tokens as dangerous.',
       ['count'],
       { one: '1 matching offer is hidden because an independent security check flagged one of its tokens as dangerous.' },
     ),
+    // #2535 — the security check covers a bounded head of the candidate
+    // list; past it, offers are not recommended unchecked.
+    matchesUnscreenedTail:
+      'More matching offers exist beyond the ones checked here. They are not recommended without a security check. The Offer Book lists them all and marks those the security check warns about.',
+    matchesOfferBookLink: 'Open the Offer Book',
     // CoinGecko reputation soft-signal (#1036 fallback layer) — only
     // on networks with market data; never a block, never a gate.
     reputationListedTop: tmpl(
@@ -1754,6 +1766,14 @@ const copySource = {
       'We couldn’t read your approvals right now — please try again in a moment.',
     sourcesUnavailable:
       'We couldn’t load your loans and offers just now, so this list can’t be built completely — rather than show a partial picture, try again in a moment.',
+    // #2536 — the lists answered, but from the slower backup source:
+    // the rows shown are real, a just-changed position's token may not be.
+    sourcesDegraded:
+      'Your loan or offer list was read from the backup source just now, which can trail the chain by a minute or two, so a token from a position opened or received very recently may be missing from this list. It appears once the backup source catches up.',
+    // #2536 — a part of the offer list neither source could read (held
+    // offers on an older deployment, with the backup source down too).
+    sourcesPartial:
+      'Part of your offer list could not be read just now, so tokens from offers you hold may be missing from this list, however old those offers are. Try again in a moment.',
     revoke: 'Revoke',
     staleNote:
       'We couldn’t refresh this list just now — the rows shown may be slightly stale. Revoking still works.',
@@ -3789,6 +3809,13 @@ const copySource = {
     // #2378 r2 — the flag is the offer's creation-time record; acceptance
     // checks liquidity again and the loan follows THAT result.
     illiquidCollateralTag: 'illiquid when posted (checked again at acceptance) — if so, handed over as-is if not repaid',
+    // #2528 — a borrow request tagged with the running loan it asks to
+    // refinance. Shown only on a positive tag: an unread tag is unknown, and
+    // absence is never presented as "not a refinance request".
+    refinanceRequestTag: tmpl(
+      'refinance request: the borrower wants to move loan #{{loanId}} to a new lender',
+      ['loanId'],
+    ),
     collateralAtLeast: tmpl('at least {{amount}}', ['amount']),
     // #2382 — a borrow request's collateral, once the indexer has read its
     // range. TERMS ONLY (r4): what the request commits now and its floor —
@@ -4961,6 +4988,12 @@ const copySource = {
       'We couldn’t read {{assets}} just now ({{list}}) — the list below may be missing balances. This usually clears on the next refresh.',
       ['assets', 'list'],
     ),
+    // #2536 — the asset list comes from the wallet's positions, and one
+    // of those lists was read from the slower backup source.
+    sourcesDegraded:
+      'Your loan or offer list was read from the backup source just now, which can trail the chain by a minute or two, so an asset behind a position opened or received very recently may be missing below. It appears once the backup source catches up.',
+    sourcesPartial:
+      'Part of your offer list could not be read just now, so an asset behind an offer you hold may be missing below, however old that offer is. Try again in a moment.',
     noBalancesInWindow: tmpl(
       'No balances among the first {{count}} tokens checked — widen the scan below to keep looking.',
       ['count'],

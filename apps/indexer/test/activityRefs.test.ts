@@ -39,10 +39,9 @@ describe('pluckActivityRefs — loan-scoped status events (#1782)', () => {
     expect(refs.loanId).toBe(7);
   });
 
-  it('still returns all-null for a genuinely unmapped event', () => {
-    // Guards the assertion above from passing for the wrong reason: if the
-    // default branch ever started guessing a loanId, the first test would pass
-    // with no `case` at all.
+  it('returns all-null for an event the compiled ABI does not have', () => {
+    // References are read by the event's own ABI shape (#1794), so a name the
+    // ABI does not know has nothing to read from, whatever the bag holds.
     expect(
       pluckActivityRefs('SomeEventNobodyMapped', { loanId: 99n }),
     ).toEqual({ actor: null, loanId: null, offerId: null });
@@ -76,5 +75,67 @@ describe('pluckActivityRefs — fee-tier exclusion (#2342)', () => {
         excludedVpfi: 0n,
       }),
     ).toEqual({ actor: null, loanId: 11, offerId: null });
+  });
+});
+
+describe('pluckActivityRefs — references read from the ABI by one rule (#1794)', () => {
+  it('files an event that never had a case under its loan', () => {
+    // CollateralAdded was one of the 45 events stored with loan_id NULL.
+    const refs = pluckActivityRefs('CollateralAdded', {
+      loanId: 31n,
+      borrower: '0x0000000000000000000000000000000000000B0b',
+      amountAdded: 5n,
+      newCollateralAmount: 10n,
+      newHf: 2n,
+      newLtv: 1n,
+    });
+    expect(refs.loanId).toBe(31);
+    expect(refs.offerId).toBeNull();
+  });
+
+  it('files a refinance under the loan it closes, per the recorded choice', () => {
+    const refs = pluckActivityRefs('LoanRefinanced', {
+      oldLoanId: 3n,
+      newLoanId: 4n,
+    });
+    expect(refs.loanId).toBe(3);
+  });
+
+  it('files a slice match under the standing counterparty offer, per the recorded choice', () => {
+    const refs = pluckActivityRefs('IntentMatched', {
+      sliceOfferId: 70n,
+      counterpartyOfferId: 12n,
+      loanId: 9n,
+    });
+    expect(refs).toMatchObject({ loanId: 9, offerId: 12 });
+  });
+
+  it('leaves a companion payload unscoped, including a loan named inside its terms', () => {
+    const refs = pluckActivityRefs('OfferCreatedDetails', {
+      offerId: 5n,
+      fields: { refinanceTargetLoanId: 8n },
+    });
+    expect(refs).toMatchObject({ loanId: null, offerId: null });
+  });
+
+  it('reads id 0 as "none", never as a loan 0', () => {
+    // A treasury conversion's swap attempts carry the loanId sentinel 0.
+    expect(pluckActivityRefs('SwapAdapterAttempted', { loanId: 0n, adapterIdx: 1n }).loanId).toBeNull();
+  });
+
+  it('leaves an event whose loanId input can hold an offer id unscoped', () => {
+    expect(
+      pluckActivityRefs('SanctionedProceedsLocked', {
+        loanId: 4n,
+        recipient: '0x0000000000000000000000000000000000000B0b',
+        asset: '0x0000000000000000000000000000000000000C0c',
+        amount: 1n,
+      }).loanId,
+    ).toBeNull();
+  });
+
+  it('reads NULL rather than a number when the decoded value is not an id', () => {
+    expect(pluckActivityRefs('CollateralAdded', { loanId: 'not-a-number' }).loanId).toBeNull();
+    expect(pluckActivityRefs('CollateralAdded', {}).loanId).toBeNull();
   });
 });

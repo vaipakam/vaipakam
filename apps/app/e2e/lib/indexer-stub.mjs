@@ -180,6 +180,9 @@ async function mapOffer(id, chainNowSec) {
     fillMode: n(o.fillMode),
     isSaleVehicle: n(o.offerType) === 1 && n(linkedLoanId) !== 0,
     isOffsetVehicle: n(o.offerType) === 0 && n(linkedLoanId) !== 0,
+    // #2528 — the worker's `refinance_target_loan_id` (migration 0068), read
+    // live off the same struct: the loan a refinance request is for, 0 if none.
+    refinanceTargetLoanId: n(o.refinanceTargetLoanId),
   };
 }
 

@@ -169,6 +169,10 @@
         "unchecked": {
           "label": "미검사",
           "title": "이 오퍼의 토큰은 독립 보안 검사로 확인할 수 없었습니다. 각별히 주의해서 다루세요."
+        },
+        "checking": {
+          "label": "확인 중",
+          "title": "이 오퍼 토큰에 대한 독립 보안 검사가 아직 끝나지 않았습니다. 검사가 끝나면 선택할 수 있습니다."
         }
       },
       "matchesHidden_zero": "independent security check가 tokens 중 하나를 dangerous로 flag해 {{count}} matching offers가 hidden되었습니다.",
@@ -177,6 +181,8 @@
       "matchesHidden_few": "independent security check가 tokens 중 하나를 dangerous로 flag해 {{count}} matching offers가 hidden되었습니다.",
       "matchesHidden_many": "independent security check가 tokens 중 하나를 dangerous로 flag해 {{count}} matching offers가 hidden되었습니다.",
       "matchesHidden_other": "independent security check가 tokens 중 하나를 dangerous로 flag해 {{count}} matching offers가 hidden되었습니다.",
+      "matchesUnscreenedTail": "여기서 확인한 것 외에도 조건에 맞는 오퍼가 더 있습니다. 보안 검사 없이 추천하지는 않습니다. 오퍼 북은 모든 오퍼를 보여 주며 보안 검사가 경고한 오퍼를 표시합니다.",
+      "matchesOfferBookLink": "오퍼 북 열기",
       "reputationListedTop": "market listing 발견: {{name}}{{symbolSuffix}}, market size rank #{{rank}}. 의도한 token과 맞는지 확인하세요.",
       "reputationListedDeep": "market listing 발견: {{name}}{{symbolSuffix}} — market size top 200 밖입니다. 작은 tokens는 이동이 어렵고 더 빨리 사라질 수 있으니 project를 다시 확인하세요.",
       "reputationUnlisted": "이 주소에 대한 시장 등록 정보를 찾을 수 없습니다 — 넓은 시장에서는 이 토큰을 알지 못합니다. 그것만으로 나쁜 토큰이라는 뜻은 아니지만, 거래하기 전에 프로젝트 측과 컨트랙트 주소를 확인하세요."
@@ -847,6 +853,8 @@
       "loading": "회원님의 상시 승인을 읽는 중…",
       "unavailable": "지금은 회원님의 승인을 읽지 못했습니다 — 잠시 후 다시 시도해 주세요.",
       "sourcesUnavailable": "지금 회원님의 대출과 오퍼를 불러오지 못해 이 목록을 완전하게 구성할 수 없습니다 — 불완전한 그림을 보여드리기보다는 잠시 후 다시 시도해 주세요.",
+      "sourcesDegraded": "대출 또는 오퍼 목록을 방금 백업 데이터 소스에서 읽어 왔습니다. 이 소스는 체인보다 1~2분 늦을 수 있어, 아주 최근에 열거나 받은 포지션의 토큰이 이 목록에 빠져 있을 수 있습니다. 백업 소스가 따라잡으면 나타납니다.",
+      "sourcesPartial": "지금은 오퍼 목록의 일부를 읽지 못해, 보유한 오퍼의 토큰이 오래된 것이라도 이 목록에서 빠져 있을 수 있습니다. 잠시 후 다시 시도해 주세요.",
       "revoke": "해제",
       "staleNote": "지금 이 목록을 새로 고치지 못했습니다 — 표시된 항목이 다소 오래된 것일 수 있습니다. 해제는 여전히 작동합니다.",
       "revoked": "{{symbol}} approval이 제거되었습니다. live request 또는 listing에 필요했다면 해당 card가 경고하고 restore를 제공합니다."
@@ -1568,6 +1576,7 @@
       "collateralLabel": "담보",
       "collateralNone": "없음",
       "illiquidCollateralTag": "등록 시 비유동(수락 시 다시 확인) — 그렇다면 상환되지 않을 때 그대로 넘겨집니다",
+      "refinanceRequestTag": "리파이낸스 요청: 차입자가 대출 #{{loanId}}을(를) 새 대출자에게 옮기려고 합니다",
       "collateralAtLeast": "최소 {{amount}}",
       "collateralRange": "{{committed}} 약정 (요청 하한 {{floor}}). 체결이 잠그는 금액은 체결 방식에 따라 다릅니다",
       "collateralRangeRemaining": "{{remaining}} 계속 약정됨 (이전 체결에서 {{used}} 소진, 요청 하한 {{floor}}). 체결이 잠그는 금액은 체결 방식에 따라 다릅니다",
@@ -2197,6 +2206,8 @@
       "unreadableCount_many": "{{count}} assets",
       "unreadableCount_other": "{{count}} assets",
       "unreadableWarn": "지금 {{assets}}를 읽을 수 없었습니다({{list}}). 아래 list에 balances가 빠졌을 수 있습니다. 보통 다음 refresh에서 해결됩니다.",
+      "sourcesDegraded": "대출 또는 오퍼 목록을 방금 백업 데이터 소스에서 읽어 왔습니다. 이 소스는 체인보다 1~2분 늦을 수 있어, 아주 최근에 열거나 받은 포지션의 자산이 아래에 빠져 있을 수 있습니다. 백업 소스가 따라잡으면 나타납니다.",
+      "sourcesPartial": "지금은 오퍼 목록의 일부를 읽지 못해, 보유한 오퍼의 자산이 오래된 것이라도 아래에서 빠져 있을 수 있습니다. 잠시 후 다시 시도해 주세요.",
       "noBalancesInWindow": "처음 확인한 {{count}} tokens 중 balance가 없습니다. 계속 찾으려면 아래 scan을 넓히세요.",
       "loading": "Vault 읽는 중…",
       "addressLabel": "Vault 주소:",

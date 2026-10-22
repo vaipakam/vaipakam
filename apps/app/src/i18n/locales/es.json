@@ -169,6 +169,10 @@
         "unchecked": {
           "label": "Sin revisar",
           "title": "Un token de esta oferta no pudo ser revisado por el filtro de seguridad independiente. Trátalo con cuidado adicional."
+        },
+        "checking": {
+          "label": "Revisando",
+          "title": "La revisión de seguridad independiente de los tokens de esta oferta aún no ha terminado. Podrás elegirla cuando termine."
         }
       },
       "matchesHidden_zero": "{{count}} ofertas coincidentes están ocultas porque una revisión de seguridad independiente marcó uno de sus tokens como peligroso.",
@@ -177,6 +181,8 @@
       "matchesHidden_few": "{{count}} ofertas coincidentes están ocultas porque una revisión de seguridad independiente marcó uno de sus tokens como peligroso.",
       "matchesHidden_many": "{{count}} ofertas coincidentes están ocultas porque una revisión de seguridad independiente marcó uno de sus tokens como peligroso.",
       "matchesHidden_other": "{{count}} ofertas coincidentes están ocultas porque una revisión de seguridad independiente marcó uno de sus tokens como peligroso.",
+      "matchesUnscreenedTail": "Hay más ofertas coincidentes además de las revisadas aquí. No se recomiendan sin una revisión de seguridad. El Libro de ofertas las muestra todas y marca las que la revisión de seguridad señala.",
+      "matchesOfferBookLink": "Abrir el Libro de ofertas",
       "reputationListedTop": "Listado de mercado encontrado: {{name}}{{symbolSuffix}}, puesto #{{rank}} por tamaño de mercado. Verifica que coincida con el token que querías.",
       "reputationListedDeep": "Listado de mercado encontrado: {{name}}{{symbolSuffix}} — fuera del top 200 por tamaño de mercado. Los tokens más pequeños se mueven con más dificultad y desaparecen más rápido; revisa el proyecto.",
       "reputationUnlisted": "No se encontró listado de mercado para esta dirección — el mercado más amplio no conoce este token. Eso por sí solo no lo hace malo, pero verifica la dirección del contrato con el proyecto antes de operar con él."
@@ -847,6 +853,8 @@
       "loading": "Leyendo tus aprobaciones permanentes…",
       "unavailable": "No pudimos leer tus aprobaciones ahora mismo — inténtalo de nuevo en un momento.",
       "sourcesUnavailable": "No pudimos cargar tus préstamos y ofertas ahora mismo, así que esta lista no puede construirse completa — en lugar de mostrar una imagen parcial, inténtalo de nuevo en un momento.",
+      "sourcesDegraded": "Tu lista de préstamos u ofertas se leyó ahora mismo desde la fuente de respaldo, que puede ir uno o dos minutos por detrás de la cadena, así que puede faltar en esta lista un token de una posición abierta o recibida muy recientemente. Aparecerá cuando la fuente de respaldo se ponga al día.",
+      "sourcesPartial": "No se pudo leer parte de tu lista de ofertas ahora mismo, así que pueden faltar en esta lista tokens de ofertas que tienes, sin importar su antigüedad. Inténtalo de nuevo en un momento.",
       "revoke": "Revocar",
       "staleNote": "No pudimos actualizar esta lista ahora mismo — las filas mostradas pueden estar algo desactualizadas. Revocar sigue funcionando.",
       "revoked": "Aprobación eliminada para {{symbol}}. Si una solicitud o listado activo la necesitaba, su tarjeta avisará y ofrecerá restaurarla."
@@ -1568,6 +1576,7 @@
       "collateralLabel": "garantía",
       "collateralNone": "ninguna",
       "illiquidCollateralTag": "ilíquida al publicarse (se vuelve a comprobar al aceptar) — si lo es, se entrega tal cual si no se devuelve",
+      "refinanceRequestTag": "solicitud de refinanciación: el prestatario quiere trasladar el préstamo #{{loanId}} a un nuevo prestamista",
       "collateralAtLeast": "al menos {{amount}}",
       "collateralRange": "{{committed}} comprometido (mínimo de la solicitud {{floor}}); cuánto bloquea una ejecución depende de cómo se ejecute",
       "collateralRangeRemaining": "{{remaining}} aún comprometido ({{used}} consumido por ejecuciones anteriores; mínimo de la solicitud {{floor}}); cuánto bloquea una ejecución depende de cómo se ejecute",
@@ -2197,6 +2206,8 @@
       "unreadableCount_many": "{{count}} activos",
       "unreadableCount_other": "{{count}} activos",
       "unreadableWarn": "No pudimos leer {{assets}} ahora ({{list}}) — la lista de abajo puede omitir saldos. Esto suele corregirse en el siguiente refresco.",
+      "sourcesDegraded": "Tu lista de préstamos u ofertas se leyó ahora mismo desde la fuente de respaldo, que puede ir uno o dos minutos por detrás de la cadena, así que puede faltar abajo un activo de una posición abierta o recibida muy recientemente. Aparecerá cuando la fuente de respaldo se ponga al día.",
+      "sourcesPartial": "No se pudo leer parte de tu lista de ofertas ahora mismo, así que puede faltar abajo un activo de una oferta que tienes, sin importar su antigüedad. Inténtalo de nuevo en un momento.",
       "noBalancesInWindow": "Sin saldos entre los primeros {{count}} tokens revisados — amplía el escaneo abajo para seguir buscando.",
       "loading": "Leyendo tu vault…",
       "addressLabel": "Dirección del Vault:",

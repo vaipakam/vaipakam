@@ -83,6 +83,15 @@ export function Vault() {
             </p>
           </section>
 
+          {vault.depsCaveats.map((c) => (
+            // #2536 — the asset list is built from the wallet's positions;
+            // one note per gap in those lists, both when both apply.
+            <div key={c} className="banner banner-warn" role="status">
+              <span className="banner-body">
+                {c === 'lagging' ? copy.vault.sourcesDegraded : copy.vault.sourcesPartial}
+              </span>
+            </div>
+          ))}
           {vault.data.unreadable.length > 0 ? (
             // A token whose reads failed this scan may hold REAL locked
             // funds — never let the list look complete without it.

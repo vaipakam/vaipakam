@@ -31,12 +31,20 @@
  *     the documented shape — a probe that cannot read the facts is not a
  *     healthy answer.
  *
- * WHAT IT DOES NOT JUDGE: chains outside the watched list (the route also
- * reports chains no longer scanned, whose cursor stands still forever), and
+ * WHICH CHAINS ARE WATCHED (#2498): the set the indexer reports it is
+ * CONFIGURED to scan (`configured.chains` — a deployment artifact and an RPC
+ * binding present), minus INGEST_IDLE_CHAINS, the explicit opt-out for a
+ * chain that is configured but intentionally idle. This script keeps no list
+ * of its own, so activating or restoring a chain in the indexer puts it under
+ * watch with no workflow edit. An answer that does not report the set, or
+ * that leaves nothing to watch, fails rather than passing on nothing.
+ *
+ * WHAT IT DOES NOT JUDGE: chains outside the watched set (the route also
+ * reports cursors of chains no longer scanned, which stand still forever), and
  * whether the data ingested is correct — only that ingest is moving.
  *
  *   INDEXER_ORIGIN=https://indexer.vaipakam.com \
- *   INGEST_CHAINS=84532,421614 INGEST_STALE_SECONDS=900 \
+ *   INGEST_IDLE_CHAINS= INGEST_STALE_SECONDS=900 \
  *     node .github/scripts/check-ingest-health.mjs
  *   node .github/scripts/check-ingest-health.mjs --selftest
  */
@@ -45,13 +53,13 @@
  * The verdict on one `/health/ingest` answer. Pure, so the selftest pins it.
  *
  * @param {unknown} body the parsed response
- * @param {{ chains: number[], staleSeconds: number }} opts
+ * @param {{ idle: number[], staleSeconds: number }} opts
  * @returns {{ key: string, text: string }[]} problems, empty when healthy. The
  *   `key` is STABLE across runs while the condition is unchanged (no ages or
  *   timestamps in it), so the workflow can tell a continuing stall from a
  *   changed one; `text` is what the operator reads.
  */
-export function judgeIngestHealth(body, { chains, staleSeconds }) {
+export function judgeIngestHealth(body, { idle, staleSeconds }) {
   const problems = [];
   const add = (key, text) => problems.push({ key, text });
   if (!body || typeof body !== 'object' || !Array.isArray(body.chains) || !body.schema || !isCount(body.checkedAt)) {
@@ -77,7 +85,13 @@ export function judgeIngestHealth(body, { chains, staleSeconds }) {
   } else if (schema.state !== 'current') {
     add('gate-state', `schema gate state "${String(schema.state).replace(/[^0-9A-Za-z_-]/g, '?').slice(0, 40)}" is not one this probe knows`);
   }
-  for (const id of chains) {
+  const chains = watchedChains(body, idle);
+  if (chains === null) {
+    add('configured-unreported', 'the route did not report the chains it is configured to scan, so which chains to watch is not known');
+  } else if (chains.length === 0) {
+    add('watch-nothing', 'no configured chain is left to watch (all are opted out, or none is configured) — a probe watching nothing is not a healthy answer');
+  }
+  for (const id of chains ?? []) {
     const c = body.chains.find((x) => x && x.chainId === id);
     if (!c) {
       // Absent says only that no cursor is recorded NOW: a never-scanned chain
@@ -105,15 +119,24 @@ function isCount(v) {
   return typeof v === 'number' && Number.isFinite(v) && v >= 0;
 }
 
-/** Parse the watched chain list; refuses an empty or malformed one rather
- *  than watching nothing and passing. */
-export function parseChains(raw) {
+/** The chains to judge: the configured set the route reports, minus the
+ *  opted-out ones. Null when the route reports no well-formed set. */
+export function watchedChains(body, idle) {
+  const set = body?.configured?.chains;
+  if (!Array.isArray(set) || !set.every((id) => Number.isInteger(id) && id > 0)) return null;
+  return set.filter((id) => !idle.includes(id));
+}
+
+/** Parse INGEST_IDLE_CHAINS — the explicit opt-out. Empty is the normal case
+ *  (watch every configured chain); a malformed value is refused rather than
+ *  read as "opt out of nothing". */
+export function parseIdleChains(raw) {
   const ids = String(raw ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-  if (ids.length === 0 || !ids.every((s) => /^\d+$/.test(s))) {
-    throw new Error(`INGEST_CHAINS must be a comma-separated list of chain ids, got "${raw ?? ''}"`);
+  if (!ids.every((s) => /^\d+$/.test(s))) {
+    throw new Error(`INGEST_IDLE_CHAINS must be a comma-separated list of chain ids, got "${raw ?? ''}"`);
   }
   return ids.map(Number);
 }
@@ -122,10 +145,11 @@ function selftest() {
   const ok = (cond, what) => {
     if (!cond) throw new Error(`selftest: ${what}`);
   };
-  const opts = { chains: [84532, 421614], staleSeconds: 900 };
+  const opts = { idle: [], staleSeconds: 900 };
   const healthy = {
     checkedAt: 1000,
     schema: { state: 'current' },
+    configured: { chains: [84532, 421614], basis: 'x' },
     chains: [
       { chainId: 97, lastBlock: 1, scannedAt: 0, ageSeconds: 999_999 }, // not watched
       { chainId: 421614, lastBlock: 5, scannedAt: 920, ageSeconds: 80 },
@@ -159,14 +183,29 @@ function selftest() {
   );
   const both = { ...stale, schema: { state: 'pending', missing: ['0059_x.sql'] } };
   ok(judgeIngestHealth(both, opts).map((p) => p.key).join(',') !== s.map((p) => p.key).join(','), 'a changed condition changes the keys');
+  // #2498 — the watched set is the indexer's configured set.
+  const added = { ...healthy, configured: { chains: [84532, 421614, 97], basis: 'x' } };
+  ok(judgeIngestHealth(added, opts).some((p) => p.key === 'stale:97'), 'a chain the indexer starts scanning is watched with no list edit');
+  ok(judgeIngestHealth(added, { ...opts, idle: [97] }).length === 0, 'an opted-out idle chain is not judged');
+  const { configured: _c, ...unreported } = healthy;
+  ok(judgeIngestHealth(unreported, opts).some((p) => p.key === 'configured-unreported'), 'an answer without the configured set fails');
+  ok(
+    judgeIngestHealth({ ...healthy, configured: { chains: ['84532'] } }, opts).some((p) => p.key === 'configured-unreported'),
+    'a malformed configured set fails',
+  );
+  ok(
+    judgeIngestHealth(healthy, { ...opts, idle: [84532, 421614] }).some((p) => p.key === 'watch-nothing'),
+    'opting every chain out fails, never "watch nothing" and pass',
+  );
+  ok(JSON.stringify(parseIdleChains('')) === '[]', 'an empty opt-out list parses as none');
+  ok(JSON.stringify(parseIdleChains('97, 11155111')) === '[97,11155111]', 'the opt-out list parses');
   let threw = false;
   try {
-    parseChains('');
+    parseIdleChains('97,abc');
   } catch {
     threw = true;
   }
-  ok(threw, 'an empty chain list is refused, never "watch nothing"');
-  ok(JSON.stringify(parseChains('84532, 421614')) === '[84532,421614]', 'the chain list parses');
+  ok(threw, 'a malformed opt-out list is refused');
   console.log('check-ingest-health selftest: OK');
 }
 
@@ -174,7 +213,7 @@ async function main() {
   if (process.argv.includes('--selftest')) return selftest();
   const origin = process.env.INDEXER_ORIGIN;
   if (!origin) throw new Error('INDEXER_ORIGIN is required');
-  const chains = parseChains(process.env.INGEST_CHAINS);
+  const idle = parseIdleChains(process.env.INGEST_IDLE_CHAINS);
   const staleSeconds = Number(process.env.INGEST_STALE_SECONDS ?? 900);
   if (!Number.isFinite(staleSeconds) || staleSeconds <= 0) throw new Error('INGEST_STALE_SECONDS must be a positive number');
   const url = new URL('/health/ingest', origin);
@@ -193,7 +232,7 @@ async function main() {
       } catch {
         body = null;
       }
-      problems = judgeIngestHealth(body, { chains, staleSeconds });
+      problems = judgeIngestHealth(body, { idle, staleSeconds });
     }
   } catch (err) {
     problems = [{ key: 'unreachable', text: `${url} unreachable: ${String(err.message).replace(/[\r\n]+/g, ' ').slice(0, 200)}` }];
@@ -201,9 +240,11 @@ async function main() {
   // Diagnostic print only — guarded so a malformed answer (`chains` not an
   // array) keeps its verdict instead of throwing past it (#2482 r6).
   if (Array.isArray(body?.chains)) {
+    const watched = watchedChains(body, idle) ?? [];
+    console.log(`watching: ${watched.join(', ') || '(none)'}${idle.length ? ` — opted out: ${idle.join(', ')}` : ''}`);
     for (const c of body.chains) {
-      const watched = chains.includes(c.chainId) ? '' : ' (not watched)';
-      console.log(`chain ${c.chainId}: block ${c.lastBlock}, ${c.ageSeconds}s ago${watched}`);
+      const note = watched.includes(c.chainId) ? '' : ' (not watched)';
+      console.log(`chain ${c.chainId}: block ${c.lastBlock}, ${c.ageSeconds}s ago${note}`);
     }
     console.log(`schema gate: ${body.schema?.state}`);
   }

@@ -17,6 +17,13 @@
  *  - `chains`: one entry per scanned chain — the last block the diamond
  *    cursor reached and when (unix seconds), with the age computed here so
  *    the prober's clock does not enter the arithmetic.
+ *  - `configured`: the chains this deployment is configured to scan — a
+ *    deployment artifact and an RPC binding present (#2498). The prober
+ *    watches this set instead of keeping its own list, so activating or
+ *    restoring a chain here puts it under watch with no workflow edit. It
+ *    is read from the bindings without resolving a secret, and says so:
+ *    a configured chain whose secret fails to resolve stays in the set,
+ *    because its standing cursor is the stall the prober exists to see.
  *
  * It does NOT decide what "stale" means. The cursor advances only after a
  * scan completes and only forward (chainIndexer.ts), so its age is the
@@ -73,11 +80,22 @@ export interface ChainIngestState {
   ageSeconds: number | null;
 }
 
+/** The chains this deployment is configured to scan (#2498). */
+export interface ConfiguredScanSet {
+  chains: number[];
+  /** What membership means, stated so a reader does not take it for more. */
+  basis: string;
+}
+
+export const CONFIGURED_SCAN_BASIS =
+  'a deployment artifact and an RPC binding are present; secret values are not resolved by this route';
+
 export interface IngestHealth {
   /** When this answer was computed (unix seconds). */
   checkedAt: number;
   schema: SchemaCheck;
   chains: ChainIngestState[];
+  configured: ConfiguredScanSet;
 }
 
 /**
@@ -86,6 +104,7 @@ export interface IngestHealth {
  */
 export async function readIngestHealth(
   db: D1Like,
+  configuredChains: number[],
   gate: { check(db: D1Like): Promise<SchemaCheck> } = schemaGate,
   nowSec: number = Math.floor(Date.now() / 1000),
 ): Promise<IngestHealth> {
@@ -158,7 +177,12 @@ export async function readIngestHealth(
             adoptedBlind: (r.adopted_blind ?? 0) !== 0,
           },
   }));
-  return { checkedAt: nowSec, schema, chains };
+  return {
+    checkedAt: nowSec,
+    schema,
+    chains,
+    configured: { chains: configuredChains, basis: CONFIGURED_SCAN_BASIS },
+  };
 }
 
 const HEADERS = {
@@ -172,9 +196,9 @@ const HEADERS = {
  * never a 200 with an empty chain list, which a prober would read as
  * "nothing to be stale".
  */
-export async function handleIngestHealth(db: D1Like): Promise<Response> {
+export async function handleIngestHealth(db: D1Like, configuredChains: number[]): Promise<Response> {
   try {
-    return new Response(JSON.stringify(await readIngestHealth(db)), { status: 200, headers: HEADERS });
+    return new Response(JSON.stringify(await readIngestHealth(db, configuredChains)), { status: 200, headers: HEADERS });
   } catch (err) {
     console.error(`[indexer] /health/ingest read failed: ${(err as Error).message}`);
     return new Response(JSON.stringify({ error: 'ingest state could not be read' }), {

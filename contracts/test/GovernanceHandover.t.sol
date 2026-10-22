@@ -25,9 +25,9 @@ import {GuardianPausable} from "../src/crosschain/GuardianPausable.sol";
 /**
  * @title GovernanceHandoverTest
  * @notice End-to-end integration test for the Safe + Timelock + Guardian
- *         handover. Simulates the logical steps the deploy scripts take
- *         (grant ops roles → transfer admin to the timelock → hand the
- *         cross-chain contracts to the timelock → Safe-scheduled
+ *         handover. Simulates the logical steps `Handover.s.sol` takes
+ *         (Diamond roles + ownership to the timelock and the two Safes →
+ *         hand the cross-chain contracts to the timelock → Safe-scheduled
  *         acceptOwnership) against a self-contained minimal Diamond +
  *         cross-chain-contract harness, then asserts every invariant in
  *         `docs/GovernanceRunbook.md`'s readback verification section.
@@ -41,7 +41,6 @@ contract GovernanceHandoverTest is Test {
     address internal deployer = makeAddr("deployer");
     address internal governanceSafe = makeAddr("governanceSafe");
     address internal guardianSafe = makeAddr("guardianSafe");
-    address internal kycOpsSafe = makeAddr("kycOpsSafe");
     address internal attacker = makeAddr("attacker");
 
     // ─── Contracts ──────────────────────────────────────────────────────────
@@ -106,66 +105,40 @@ contract GovernanceHandoverTest is Test {
 
     // ─── Migration simulation (mirrors the three deploy scripts) ────────────
 
-    function _runGrantOpsRoles() internal {
-        vm.startPrank(deployer);
-        AccessControlFacet ac = AccessControlFacet(address(diamond));
-        if (!ac.hasRole(LibAccessControl.PAUSER_ROLE, guardianSafe)) {
-            ac.grantRole(LibAccessControl.PAUSER_ROLE, guardianSafe);
-        }
-        if (!ac.hasRole(LibAccessControl.KYC_ADMIN_ROLE, kycOpsSafe)) {
-            ac.grantRole(LibAccessControl.KYC_ADMIN_ROLE, kycOpsSafe);
-        }
-        vm.stopPrank();
-    }
-
-    function _runTransferAdminToTimelock() internal {
+    /// @dev Mirrors `Handover.s.sol` step 3, the only Diamond handover
+    ///      (#936 retired `GrantOpsRoles` + `TransferAdminToTimelock`):
+    ///      root admin to the Timelock first, the revoke-only lever to the
+    ///      governance Safe, the six delayed roles to the Timelock, PAUSER to
+    ///      the Pauser Safe, ownership to the Timelock, then the deployer
+    ///      renounces with DEFAULT_ADMIN_ROLE last.
+    function _runDiamondHandover() internal {
         vm.startPrank(deployer);
         AccessControlFacet ac = AccessControlFacet(address(diamond));
 
-        // Timelock-gated roles: slow governance surfaces that move TO the
-        // timelock. Includes UNPAUSER_ROLE per the asymmetric
-        // pause split — pause stays on the fast-key Pauser Safe, unpause
-        // goes to the Timelock so a compromised Pauser cannot un-do its
-        // own mistaken pause without the review-window delay.
+        ac.grantRole(LibAccessControl.DEFAULT_ADMIN_ROLE, address(timelock));
+        ac.grantRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, governanceSafe);
+        // UNPAUSER_ROLE goes to the Timelock per the asymmetric pause
+        // split: pause stays on the fast-key Pauser Safe, unpause waits
+        // out the review window.
         bytes32[6] memory timelockRoles = [
-            LibAccessControl.DEFAULT_ADMIN_ROLE,
             LibAccessControl.ADMIN_ROLE,
             LibAccessControl.UNPAUSER_ROLE,
+            LibAccessControl.KYC_ADMIN_ROLE,
             LibAccessControl.ORACLE_ADMIN_ROLE,
             LibAccessControl.RISK_ADMIN_ROLE,
             LibAccessControl.VAULT_ADMIN_ROLE
         ];
         for (uint256 i; i < timelockRoles.length; ++i) {
-            if (!ac.hasRole(timelockRoles[i], address(timelock))) {
-                ac.grantRole(timelockRoles[i], address(timelock));
-            }
+            ac.grantRole(timelockRoles[i], address(timelock));
         }
-
+        ac.grantRole(LibAccessControl.PAUSER_ROLE, guardianSafe);
         IERC173(address(diamond)).transferOwnership(address(timelock));
 
-        // Ops roles: don't migrate to timelock, but MUST still be renounced
-        // off the deployer EOA — otherwise a hot deploy wallet retains
-        // PAUSER + KYC_ADMIN post-handover. Relies on _runGrantOpsRoles
-        // having already seeded guardian / kycOps as holders so the
-        // renounce doesn't strand the role.
-        bytes32[2] memory opsRoles = [
-            LibAccessControl.PAUSER_ROLE,
-            LibAccessControl.KYC_ADMIN_ROLE
-        ];
-        for (uint256 i; i < opsRoles.length; ++i) {
-            if (ac.hasRole(opsRoles[i], deployer)) {
-                ac.renounceRole(opsRoles[i], deployer);
-            }
-        }
-
-        // Then timelock-role renounces, DEFAULT_ADMIN last so any revert
-        // above leaves the deployer able to retry.
+        ac.renounceRole(LibAccessControl.PAUSER_ROLE, deployer);
         for (uint256 i = timelockRoles.length; i > 0; --i) {
-            bytes32 role = timelockRoles[i - 1];
-            if (ac.hasRole(role, deployer)) {
-                ac.renounceRole(role, deployer);
-            }
+            ac.renounceRole(timelockRoles[i - 1], deployer);
         }
+        ac.renounceRole(LibAccessControl.DEFAULT_ADMIN_ROLE, deployer);
         vm.stopPrank();
     }
 
@@ -220,8 +193,7 @@ contract GovernanceHandoverTest is Test {
     }
 
     function _runFullHandover() internal {
-        _runGrantOpsRoles();
-        _runTransferAdminToTimelock();
+        _runDiamondHandover();
         _runMigrateOAppGovernance();
         _runSafeScheduledAcceptOwnership(address(oappA));
         _runSafeScheduledAcceptOwnership(address(oappB));
@@ -246,6 +218,8 @@ contract GovernanceHandoverTest is Test {
         assertTrue(ac.hasRole(LibAccessControl.ORACLE_ADMIN_ROLE, address(timelock)));
         assertTrue(ac.hasRole(LibAccessControl.RISK_ADMIN_ROLE, address(timelock)));
         assertTrue(ac.hasRole(LibAccessControl.VAULT_ADMIN_ROLE, address(timelock)));
+        assertTrue(ac.hasRole(LibAccessControl.UNPAUSER_ROLE, address(timelock)));
+        assertTrue(ac.hasRole(LibAccessControl.KYC_ADMIN_ROLE, address(timelock)));
     }
 
     function test_Diamond_DeployerHasNoResidualAdminRole() public {
@@ -258,6 +232,8 @@ contract GovernanceHandoverTest is Test {
         assertFalse(ac.hasRole(LibAccessControl.VAULT_ADMIN_ROLE, deployer));
         assertFalse(ac.hasRole(LibAccessControl.PAUSER_ROLE, deployer));
         assertFalse(ac.hasRole(LibAccessControl.KYC_ADMIN_ROLE, deployer));
+        assertFalse(ac.hasRole(LibAccessControl.UNPAUSER_ROLE, deployer));
+        assertFalse(ac.hasRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, deployer));
     }
 
     function test_Diamond_GuardianHoldsPauserRole() public {
@@ -269,10 +245,15 @@ contract GovernanceHandoverTest is Test {
         assertFalse(ac.hasRole(LibAccessControl.ADMIN_ROLE, guardianSafe));
     }
 
-    function test_Diamond_KycOpsHoldsKycAdminRole() public {
+    function test_Diamond_SafeHoldsOnlyTheEmergencyRevoker() public {
         _runFullHandover();
         AccessControlFacet ac = AccessControlFacet(address(diamond));
-        assertTrue(ac.hasRole(LibAccessControl.KYC_ADMIN_ROLE, kycOpsSafe));
+        assertTrue(ac.hasRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, governanceSafe));
+        assertFalse(ac.hasRole(LibAccessControl.DEFAULT_ADMIN_ROLE, governanceSafe));
+        assertFalse(ac.hasRole(LibAccessControl.ADMIN_ROLE, governanceSafe));
+        // Nothing the handover does leaves the revoker on the deployer: it
+        // is never granted at init (#934).
+        assertFalse(ac.hasRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, deployer));
     }
 
     function test_OApp_OwnerIsTimelock() public {
@@ -318,8 +299,7 @@ contract GovernanceHandoverTest is Test {
     ///         Without this the pendingOwner assertions above could pass
     ///         vacuously on a harness that never creates a pending owner at all.
     function test_PendingOwner_IsNonZeroBeforeAccept() public {
-        _runGrantOpsRoles();
-        _runTransferAdminToTimelock();
+        _runDiamondHandover();
         _runMigrateOAppGovernance();
         // Deliberately NOT running the accepts.
         assertEq(rateGovernor.pendingOwner(), address(timelock), "pending must be set");
@@ -463,8 +443,7 @@ contract GovernanceHandoverTest is Test {
     ///         known to be capable of failing rather than passing on a registry
     ///         that was never transferred.
     function test_CctAdministrator_IsPendingBeforeAccept() public {
-        _runGrantOpsRoles();
-        _runTransferAdminToTimelock();
+        _runDiamondHandover();
         _runMigrateOAppGovernance();
         TokenAdminRegistryStub.TokenConfig memory cfg = cctRegistry.getTokenConfig(address(vpfiToken));
         assertEq(cfg.administrator, deployer, "administrator still deployer");
@@ -538,16 +517,6 @@ contract GovernanceHandoverTest is Test {
         vm.expectRevert();
         vpfiToken.transferOwnership(attacker);
         vm.stopPrank();
-    }
-
-    // ─── Idempotency — running scripts twice must not break state ──────────
-
-    function test_Idempotent_GrantOpsRoles() public {
-        _runGrantOpsRoles();
-        _runGrantOpsRoles();
-        AccessControlFacet ac = AccessControlFacet(address(diamond));
-        assertTrue(ac.hasRole(LibAccessControl.PAUSER_ROLE, guardianSafe));
-        assertTrue(ac.hasRole(LibAccessControl.KYC_ADMIN_ROLE, kycOpsSafe));
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────────

@@ -207,7 +207,14 @@ contract DiamondLoupeFacetTest is Test {
 
     // ─── OwnershipFacet.transferOwnership() ──────────────────────────────────
 
+    /// @dev #906 — ownership only moves to a DEFAULT_ADMIN_ROLE holder, so
+    ///      every success path grants the role first.
+    function _makeRootAdmin(address who) internal {
+        AccessControlFacet(address(diamond)).grantRole(LibAccessControl.DEFAULT_ADMIN_ROLE, who);
+    }
+
     function testTransferOwnershipSuccess() public {
+        _makeRootAdmin(newOwner);
         OwnershipFacet(address(diamond)).transferOwnership(newOwner);
         assertEq(OwnershipFacet(address(diamond)).owner(), newOwner);
     }
@@ -218,9 +225,51 @@ contract DiamondLoupeFacetTest is Test {
         OwnershipFacet(address(diamond)).transferOwnership(newOwner);
     }
 
+    /// #906 — `transferOwnership(address(0))` used to brick `diamondCut` and
+    /// every owner-gated setter for good.
+    function testTransferOwnershipRevertsZero() public {
+        vm.expectRevert(OwnershipFacet.OwnershipTransferToZero.selector);
+        OwnershipFacet(address(diamond)).transferOwnership(address(0));
+        assertEq(OwnershipFacet(address(diamond)).owner(), owner);
+    }
+
+    /// #906 — moving ownership to an address that is not the role root would
+    /// split the Diamond's two authorities across two addresses.
+    function testTransferOwnershipRevertsWhenTargetNotRootAdmin() public {
+        vm.expectRevert(abi.encodeWithSelector(OwnershipFacet.NewOwnerNotRootAdmin.selector, newOwner));
+        OwnershipFacet(address(diamond)).transferOwnership(newOwner);
+        // ADMIN_ROLE alone is not enough.
+        AccessControlFacet(address(diamond)).grantRole(LibAccessControl.ADMIN_ROLE, newOwner);
+        vm.expectRevert(abi.encodeWithSelector(OwnershipFacet.NewOwnerNotRootAdmin.selector, newOwner));
+        OwnershipFacet(address(diamond)).transferOwnership(newOwner);
+    }
+
+    /// #906 — the owner can never lose DEFAULT_ADMIN_ROLE, by renounce or by
+    /// another root admin's revoke; after ownership moves, the old owner can.
+    function testOwnerCannotLoseRootAdminUntilOwnershipMoves() public {
+        _makeRootAdmin(newOwner);
+
+        vm.expectRevert(abi.encodeWithSelector(LibAccessControl.CannotRemoveOwnerRootAdmin.selector, owner));
+        AccessControlFacet(address(diamond)).renounceRole(LibAccessControl.DEFAULT_ADMIN_ROLE, owner);
+
+        vm.prank(newOwner);
+        vm.expectRevert(abi.encodeWithSelector(LibAccessControl.CannotRemoveOwnerRootAdmin.selector, owner));
+        AccessControlFacet(address(diamond)).revokeRole(LibAccessControl.DEFAULT_ADMIN_ROLE, owner);
+
+        OwnershipFacet(address(diamond)).transferOwnership(newOwner);
+        AccessControlFacet(address(diamond)).renounceRole(LibAccessControl.DEFAULT_ADMIN_ROLE, owner);
+        assertFalse(AccessControlFacet(address(diamond)).hasRole(LibAccessControl.DEFAULT_ADMIN_ROLE, owner));
+
+        // The new owner is now pinned the same way.
+        vm.prank(newOwner);
+        vm.expectRevert(abi.encodeWithSelector(LibAccessControl.CannotRemoveOwnerRootAdmin.selector, newOwner));
+        AccessControlFacet(address(diamond)).renounceRole(LibAccessControl.DEFAULT_ADMIN_ROLE, newOwner);
+    }
+
     function testTransferOwnershipNewOwnerCanAct() public {
         // Grant ADMIN_ROLE to newOwner before transferring ownership
         AccessControlFacet(address(diamond)).grantRole(LibAccessControl.ADMIN_ROLE, newOwner);
+        _makeRootAdmin(newOwner);
         OwnershipFacet(address(diamond)).transferOwnership(newOwner);
 
         // newOwner can now set treasury (has ADMIN_ROLE)
@@ -229,6 +278,7 @@ contract DiamondLoupeFacetTest is Test {
     }
 
     function testOldOwnerCannotActAfterTransfer() public {
+        _makeRootAdmin(newOwner);
         OwnershipFacet(address(diamond)).transferOwnership(newOwner);
 
         // Old owner revokes their own ADMIN_ROLE (they still have DEFAULT_ADMIN_ROLE which is the admin for ADMIN_ROLE)

@@ -26,7 +26,7 @@
  * read from the companion in the same transaction and matched BY ID — so in a
  * multicall each row gets its own offer's or loan's value, never a neighbour's.
  * The companions stay unscoped on the loan/offer timeline (see
- * `DELIBERATELY_NOT_SCOPED`): the value reaches the primary row without making
+ * `notScoped` in `activityRefsPolicy.json`): the value reaches the primary row without making
  * a second timeline entry.
  */
 

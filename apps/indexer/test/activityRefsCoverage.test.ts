@@ -36,6 +36,7 @@ import {
   DELIBERATELY_NOT_SCOPED,
   INTENDED_REFERENCE_ALIAS,
   REF_FIELDS,
+  exemptionAliasDrift,
 } from '../scripts/lib/activity-refs-surface.mjs';
 import { expectedIds, layoutsOf, plantedId, surface, synthesizeArgs } from './helpers/activityRefsSynth';
 
@@ -121,7 +122,9 @@ describe('activity-refs coverage — executed against the real mapper', () => {
           continue;
         }
         if (isMapped && isAllowlisted) {
-          staleNowMapped.push(`${allowKey} — now mapped in pluckActivityRefs; remove this entry`);
+          staleNowMapped.push(
+            `${allowKey} — exempted in activityRefsPolicy.json but the mapper fills it anyway`,
+          );
           continue;
         }
         if (isMapped) {
@@ -134,7 +137,8 @@ describe('activity-refs coverage — executed against the real mapper', () => {
             if (!Object.hasOwn(INTENDED_REFERENCE_ALIAS, allowKey)) {
               gaps.push(
                 `${allowKey} — mapped from one of ${aliasPaths.join(', ')}, but no intended ` +
-                  'alias is recorded; add an INTENDED_REFERENCE_ALIAS entry with the policy',
+                  'alias is recorded; add an `intendedAlias` entry, with its reason, to ' +
+                  'src/activityRefsPolicy.json',
               );
             } else {
               const intended = INTENDED_REFERENCE_ALIAS[allowKey];
@@ -156,9 +160,9 @@ describe('activity-refs coverage — executed against the real mapper', () => {
             ? `${allowKey} — its only ${field} is \`${arrayPath}\`, an ARRAY of ids; one activity ` +
                 'row carries one id, so which element it should be is a decision, not a lookup. ' +
                 `Allowlist '${allowKey}' with a reason saying which, or reshape the event.`
-            : `${allowKey} — stores NULL, so /activity?${field}=N and the timeline cannot find the row. ` +
-                'Add a case to pluckActivityRefs(), or allowlist with a reason in ' +
-                'scripts/lib/activity-refs-surface.mjs.',
+            : `${allowKey} — stores NULL, so /activity?${field}=N cannot find the row. With ` +
+                'several candidate inputs, record the choice under `intendedAlias` in ' +
+                'src/activityRefsPolicy.json; a companion payload goes under `notScoped`, with a reason.',
         );
       }
     }
@@ -246,7 +250,24 @@ describe('activity-refs coverage — executed against the real mapper', () => {
     expect(bad).toEqual([]);
   });
 
-  it('never invents references for an unmapped event (the default branch stays all-null)', () => {
+  it('binds each exemption to the inputs it was granted for (#1807)', () => {
+    expect(exemptionAliasDrift(surface)).toEqual([]);
+  });
+
+  it('reports an exemption whose event changed its reference inputs (#1807)', () => {
+    // The F6 case from #1807: the event still carries the column, so the entry
+    // looks live, but under different inputs than the reason was written for.
+    const [key] = Object.keys(DELIBERATELY_NOT_SCOPED);
+    const [event, field] = key.split('.');
+    const aliasNames = new Map(surface.aliasNames);
+    aliasNames.set(event, new Map([[field, new Set(['renamedLoanId', 'otherLoanId'])]]));
+    const drift = exemptionAliasDrift({ ...surface, aliasNames });
+    expect(drift).toHaveLength(1);
+    expect(drift[0]).toContain(key);
+    expect(drift[0]).toContain('renamedLoanId');
+  });
+
+  it('never invents references for an event the ABI does not have', () => {
     expect(pluckActivityRefs('SomeEventNobodyMapped', { loanId: 42n })).toEqual({
       actor: null,
       loanId: null,

@@ -464,7 +464,7 @@ fi
 # (after Diamond + Timelock have already landed on-chain). Catching it
 # in pre-flight saves the faucet-ETH burn from a partial deploy.
 for v in DEPLOYER_PRIVATE_KEY ADMIN_PRIVATE_KEY ADMIN_ADDRESS TREASURY_ADDRESS \
-         TIMELOCK_PROPOSER; do
+         TIMELOCK_PROPOSER PAUSER_ADDRESS; do
   if [ -z "${!v:-}" ]; then
     echo "Error: \$$v required in .env but not set." >&2
     exit 1

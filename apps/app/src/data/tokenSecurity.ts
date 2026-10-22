@@ -456,6 +456,12 @@ export function useBookTokenSecurity(
     staleTime: 10 * 60_000,
     gcTime: 30 * 60_000,
     retry: 1,
+    // A changed leg set is a NEW key. Without this, every leg's verdict
+    // vanished while the new batch loaded, so a guided match already
+    // screened would flip back to "checking" when the head grew (#2535).
+    // Verdicts are keyed per leg, so the previous record answers only
+    // for legs it actually screened; a new leg still reads as pending.
+    placeholderData: (prev) => prev,
     queryFn: async () => {
       const out: Record<string, TokenSecurityVerdict> = {};
       const missingByChain = new Map<number, string[]>();

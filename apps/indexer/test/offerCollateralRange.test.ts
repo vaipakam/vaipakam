@@ -59,7 +59,7 @@ const seed = (h: ReturnType<typeof createSqliteD1>, extra: Record<string, string
 const fetchOffer = async (h: ReturnType<typeof createSqliteD1>) => {
   const res = await handleOfferById(
     new Request('https://x/offers/7?chainId=84532'),
-    { DB: h.d1 } as unknown as Env,
+    { DB: h.d1, RPC_BASE_SEPOLIA: 'http://127.0.0.1:9' } as unknown as Env,
     '7',
   );
   expect(res.status).toBe(200);
@@ -173,8 +173,9 @@ describe('the range backfill lane (#2382 r1/r2)', () => {
 describe('a match marks the borrower offer’s fills unread (#2382 r2)', () => {
   it('nulls only the named offers’ fills, which re-queues them for the refresh lane', async () => {
     const h = createSqliteD1(migrations());
-    seed(h, { offer_id: '1', collateral_amount_max: '400', collateral_amount_filled: '0', collateral_range_stale: 0 });
-    seed(h, { offer_id: '2', collateral_amount_max: '400', collateral_amount_filled: '0', collateral_range_stale: 0 });
+    // Refinance tag already read (#2528), so only the fill marker can queue a row.
+    seed(h, { offer_id: '1', collateral_amount_max: '400', collateral_amount_filled: '0', collateral_range_stale: 0, refinance_target_loan_id: 0 });
+    seed(h, { offer_id: '2', collateral_amount_max: '400', collateral_amount_filled: '0', collateral_range_stale: 0, refinance_target_loan_id: 0 });
     await markBorrowerFillsUnread({ DB: h.d1 } as unknown as Env, 84532, [1]);
     const rows = h.db
       .prepare('SELECT offer_id, collateral_amount_filled AS f FROM offers ORDER BY offer_id')
@@ -285,7 +286,9 @@ describe('the heal lanes run LAST in the pass (#2382 r2/r6)', () => {
   it('a new row is inserted marked for the pinned healer, its range unread (#2382 r6)', () => {
     const p = fn('async function processOfferLogs(');
     expect(p).toContain('is_stub, collateral_range_stale,');
-    expect(p).toMatch(/\?, 0, 1, \?, \?, \?, \?, \?, \?\)`/);
+    // The seven binds after the two literals: created_at, expires_at,
+    // fill_mode, refinance_target_loan_id (#2528) and the three seen/updated stamps.
+    expect(p).toMatch(/\?, 0, 1, \?, \?, \?, \?, \?, \?, \?\)`/);
   });
 
   it('has the match handler mark the borrower offer rather than read it', () => {

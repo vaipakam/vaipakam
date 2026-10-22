@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 /**
  * @title  VaipakamTimelock
@@ -12,6 +13,33 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
  *         "what's queued for execution" without an event-replay
  *         dependency. AnalyticalGettersDesign §3.3 (decision D7
  *         resolved here: the standalone-contract option).
+ *
+ *         Hardened per #938: the delay can never be lowered below the
+ *         one it was deployed with, an independent canceller can veto a
+ *         queued operation, and the contract is always self-administered.
+ *
+ *         One veto is withheld from a canceller: it cannot cancel a queued
+ *         single-call operation that revokes CANCELLER_ROLE from ITSELF.
+ *         Without this, a captured canceller could cancel every operation,
+ *         including the one removing it, and freeze the timelock (and with
+ *         it the Diamond's root) for good. A proposer, or any OTHER
+ *         canceller, can still cancel such an operation, so two cancellers
+ *         overlapping during a rotation keep their veto over each other's
+ *         removal. The cost is stated rather
+ *         than hidden: a captured proposer can queue the canceller's
+ *         removal and its own operation together. Both stay public for one
+ *         full delay, and the canceller keeps its veto over the second one
+ *         until the removal executes, so it must actually cancel it in that
+ *         window. If it does not, both run after one delay. Only an
+ *         operation queued AFTER the removal has run is beyond the veto,
+ *         and that one waits a second full delay.
+ *
+ *         One OZ behaviour is kept and stated here rather than changed:
+ *         an operation has no expiry. Once ready it stays executable by
+ *         any executor (anyone, with the open executor) until it is run
+ *         or cancelled. A scheduled-then-forgotten operation is therefore
+ *         a standing authorisation — cancel what will not be run, and
+ *         watch {getPendingProposals} for stale entries.
  *
  * @dev Every public scheduling / cancellation / execution path is
  *      overridden to push or swap-pop a `bytes32 activeProposalIds`
@@ -61,18 +89,76 @@ contract VaipakamTimelock is TimelockController {
     ///         O(1) swap-pop removal.
     mapping(bytes32 => uint256) private _activeIdIndexPlus1;
 
+    /// @notice The lowest delay {updateDelay} may ever set: the delay this
+    ///         timelock was deployed with (#938). Raising the delay stays a
+    ///         normal queued operation; lowering it below the deploy-time
+    ///         figure is refused outright, so one scheduled operation can
+    ///         never turn the timelock into a pass-through.
+    uint256 public immutable MIN_DELAY_FLOOR;
+
+    /// @dev {updateDelay} asked for less than {MIN_DELAY_FLOOR}.
+    error DelayBelowFloor(uint256 requested, uint256 floor);
+
+    /// @notice For each queued single-call operation that revokes
+    ///         CANCELLER_ROLE on this timelock, the account it removes. That
+    ///         account may not cancel it unless it is also a proposer (see
+    ///         the contract notice). Cleared when the operation is executed
+    ///         or cancelled.
+    mapping(bytes32 => address) private _cancellerRemovalTarget;
+
+    /// @dev The caller tried to cancel the operation that removes its own
+    ///      CANCELLER_ROLE, without holding PROPOSER_ROLE.
+    error CancellerRemovalNotCancellable(bytes32 id);
+
+    /// @dev A zero address in the `cancellers` list: it would grant the
+    ///      veto to nobody while the deploy log read as if a canceller
+    ///      existed.
+    error ZeroCanceller();
+
+    /**
+     * @param minDelay   Initial minimum delay, and permanently the floor for
+     *                   {updateDelay} ({MIN_DELAY_FLOOR}).
+     * @param proposers  Proposers. OZ also makes each a canceller.
+     * @param executors  Executors; `address(0)` means anyone may execute a
+     *                   ready operation.
+     * @param cancellers Additional cancellers that are NOT proposers
+     *                   (#938) — an independent party that can veto a
+     *                   queued operation during its delay window. Without
+     *                   one, a malicious operation's only defence is that
+     *                   someone notices and exits. May be empty (testnets);
+     *                   the mainnet deploy requires one.
+     * @dev The OZ `admin` argument is fixed to `address(0)`: the timelock
+     *      administers itself, so changing proposers, cancellers or the
+     *      delay goes through its own queue. A non-zero admin could
+     *      re-wire every role with no delay, so it is not offered.
+     */
     constructor(
         uint256 minDelay,
         address[] memory proposers,
         address[] memory executors,
-        address admin
-    ) TimelockController(minDelay, proposers, executors, admin) {}
+        address[] memory cancellers
+    ) TimelockController(minDelay, proposers, executors, address(0)) {
+        MIN_DELAY_FLOOR = minDelay;
+        for (uint256 i = 0; i < cancellers.length; ++i) {
+            if (cancellers[i] == address(0)) revert ZeroCanceller();
+            _grantRole(CANCELLER_ROLE, cancellers[i]);
+        }
+    }
+
+    /// @inheritdoc TimelockController
+    /// @dev Adds the {MIN_DELAY_FLOOR} check (#938). OZ's own rule — only
+    ///      the timelock itself may call it — is kept by `super`.
+    function updateDelay(uint256 newDelay) public virtual override {
+        if (newDelay < MIN_DELAY_FLOOR) revert DelayBelowFloor(newDelay, MIN_DELAY_FLOOR);
+        super.updateDelay(newDelay);
+    }
 
     // ─── Override hooks ──────────────────────────────────────────────────
 
     /// @inheritdoc TimelockController
     /// @dev Single-call schedule path. Adds the resulting id to the
-    ///      active list after the base's checks + emit.
+    ///      active list after the base's checks + emit, and records the
+    ///      account removed when it revokes CANCELLER_ROLE on this timelock.
     function schedule(
         address target,
         uint256 value,
@@ -84,11 +170,16 @@ contract VaipakamTimelock is TimelockController {
         super.schedule(target, value, data, predecessor, salt, delay);
         bytes32 id = hashOperation(target, value, data, predecessor, salt);
         _addActive(id);
+        address removed = _cancellerRemoved(target, value, data);
+        if (removed != address(0)) _cancellerRemovalTarget[id] = removed;
     }
 
     /// @inheritdoc TimelockController
     /// @dev Multi-call schedule path. Same hook; the batch id covers
-    ///      the whole call list.
+    ///      the whole call list. A batch is never marked as a canceller
+    ///      removal, so it stays cancellable by any canceller, including the
+    ///      one it removes: remove a
+    ///      canceller with a single-call {schedule}.
     function scheduleBatch(
         address[] calldata targets,
         uint256[] calldata values,
@@ -103,7 +194,16 @@ contract VaipakamTimelock is TimelockController {
     }
 
     /// @inheritdoc TimelockController
+    /// @dev The canceller an operation removes cannot cancel it unless it
+    ///      is also a proposer; everyone else keeps OZ's CANCELLER_ROLE rule.
     function cancel(bytes32 id) public virtual override {
+        address removed = _cancellerRemovalTarget[id];
+        if (removed != address(0)) {
+            if (_msgSender() == removed && !hasRole(PROPOSER_ROLE, removed)) {
+                revert CancellerRemovalNotCancellable(id);
+            }
+            delete _cancellerRemovalTarget[id];
+        }
         super.cancel(id);
         _removeActive(id);
     }
@@ -117,7 +217,9 @@ contract VaipakamTimelock is TimelockController {
         bytes32 salt
     ) public payable virtual override {
         super.execute(target, value, payload, predecessor, salt);
-        _removeActive(hashOperation(target, value, payload, predecessor, salt));
+        bytes32 id = hashOperation(target, value, payload, predecessor, salt);
+        _removeActive(id);
+        delete _cancellerRemovalTarget[id];
     }
 
     /// @inheritdoc TimelockController
@@ -130,6 +232,28 @@ contract VaipakamTimelock is TimelockController {
     ) public payable virtual override {
         super.executeBatch(targets, values, payloads, predecessor, salt);
         _removeActive(hashOperationBatch(targets, values, payloads, predecessor, salt));
+    }
+
+    /// @dev The account removed when the call is
+    ///      `revokeRole(CANCELLER_ROLE, account)` on this timelock, else
+    ///      `address(0)`. Exact-length calldata only, so a padded encoding is
+    ///      not recognised (it would still revoke, and would simply remain
+    ///      cancellable by the canceller it removes).
+    function _cancellerRemoved(address target, uint256 value, bytes calldata data)
+        private
+        view
+        returns (address)
+    {
+        if (target != address(this) || value != 0 || data.length != 68) return address(0);
+        if (bytes4(data[:4]) != IAccessControl.revokeRole.selector) return address(0);
+        (bytes32 role, address account) = abi.decode(data[4:], (bytes32, address));
+        return role == CANCELLER_ROLE ? account : address(0);
+    }
+
+    /// @notice The canceller queued operation `id` removes, which therefore
+    ///         cannot cancel it; `address(0)` when `id` removes no canceller.
+    function cancellerRemovalTarget(bytes32 id) external view returns (address) {
+        return _cancellerRemovalTarget[id];
     }
 
     // ─── Public read surface ─────────────────────────────────────────────

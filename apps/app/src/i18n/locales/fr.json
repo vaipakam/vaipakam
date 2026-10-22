@@ -169,6 +169,10 @@
         "unchecked": {
           "label": "Non vérifié",
           "title": "Un token de cette offre n'a pas pu être vérifié par le filtre de sécurité indépendant. Traitez-le avec une prudence supplémentaire."
+        },
+        "checking": {
+          "label": "Vérification",
+          "title": "La vérification de sécurité indépendante des jetons de cette offre n’est pas encore terminée. Vous pourrez la choisir une fois terminée."
         }
       },
       "matchesHidden_zero": "{{count}} offres correspondantes sont masquées parce qu’un contrôle de sécurité indépendant a signalé l’un de leurs tokens comme dangereux.",
@@ -177,6 +181,8 @@
       "matchesHidden_few": "{{count}} offres correspondantes sont masquées parce qu’un contrôle de sécurité indépendant a signalé l’un de leurs tokens comme dangereux.",
       "matchesHidden_many": "{{count}} offres correspondantes sont masquées parce qu’un contrôle de sécurité indépendant a signalé l’un de leurs tokens comme dangereux.",
       "matchesHidden_other": "{{count}} offres correspondantes sont masquées parce qu’un contrôle de sécurité indépendant a signalé l’un de leurs tokens comme dangereux.",
+      "matchesUnscreenedTail": "D’autres offres correspondantes existent au-delà de celles vérifiées ici. Elles ne sont pas recommandées sans vérification de sécurité. Le carnet d’offres les liste toutes et signale celles sur lesquelles la vérification de sécurité émet une alerte.",
+      "matchesOfferBookLink": "Ouvrir le carnet d’offres",
       "reputationListedTop": "Cotation de marché trouvée : {{name}}{{symbolSuffix}}, classé n°{{rank}} par taille de marché. Vérifiez que cela correspond au token voulu.",
       "reputationListedDeep": "Cotation de marché trouvée : {{name}}{{symbolSuffix}} — hors du top 200 par taille de marché. Les petits tokens bougent plus difficilement et disparaissent plus vite ; revérifiez le projet.",
       "reputationUnlisted": "Aucune cotation de marché trouvée pour cette adresse — le marché au sens large ne connaît pas ce token. Cela ne le rend pas mauvais en soi, mais vérifiez l'adresse du contrat auprès du projet avant de l'utiliser."
@@ -847,6 +853,8 @@
       "loading": "Lecture de vos approbations permanentes…",
       "unavailable": "Impossible de lire vos approbations pour le moment — réessayez dans un instant.",
       "sourcesUnavailable": "Impossible de charger vos prêts et offres pour le moment, cette liste ne peut donc pas être complète — plutôt qu'afficher une image partielle, réessayez dans un instant.",
+      "sourcesDegraded": "Votre liste de prêts ou d’offres vient d’être lue depuis la source de secours, qui peut avoir une ou deux minutes de retard sur la chaîne, donc un jeton d’une position ouverte ou reçue très récemment peut manquer dans cette liste. Il apparaîtra une fois la source de secours à jour.",
+      "sourcesPartial": "Une partie de votre liste d’offres n’a pas pu être lue pour l’instant, donc des jetons d’offres que vous détenez peuvent manquer dans cette liste, quelle que soit leur ancienneté. Réessayez dans un instant.",
       "revoke": "Révoquer",
       "staleNote": "Impossible de rafraîchir cette liste pour le moment — les lignes affichées peuvent être légèrement obsolètes. La révocation fonctionne tout de même.",
       "revoked": "Approbation supprimée pour {{symbol}}. Si une demande ou une annonce active en avait besoin, sa carte affichera un avertissement et proposera de la restaurer."
@@ -1568,6 +1576,7 @@
       "collateralLabel": "garantie",
       "collateralNone": "aucune",
       "illiquidCollateralTag": "illiquide lors de la publication (revérifiée à l’acceptation) — si c’est le cas, remise telle quelle en cas de non-remboursement",
+      "refinanceRequestTag": "demande de refinancement : l’emprunteur souhaite transférer le prêt #{{loanId}} à un nouveau prêteur",
       "collateralAtLeast": "au moins {{amount}}",
       "collateralRange": "{{committed}} engagés (plancher de la demande {{floor}}) ; ce qu’une exécution bloque dépend de la façon dont elle est exécutée",
       "collateralRangeRemaining": "{{remaining}} toujours engagés ({{used}} consommés par des exécutions précédentes ; plancher de la demande {{floor}}) ; ce qu’une exécution bloque dépend de la façon dont elle est exécutée",
@@ -2197,6 +2206,8 @@
       "unreadableCount_many": "{{count}} actifs",
       "unreadableCount_other": "{{count}} actifs",
       "unreadableWarn": "Nous n’avons pas pu lire {{assets}} pour l’instant ({{list}}) — la liste ci-dessous peut omettre des soldes. Cela se corrige généralement au prochain rafraîchissement.",
+      "sourcesDegraded": "Votre liste de prêts ou d’offres vient d’être lue depuis la source de secours, qui peut avoir une ou deux minutes de retard sur la chaîne, donc un actif lié à une position ouverte ou reçue très récemment peut manquer ci-dessous. Il apparaîtra une fois la source de secours à jour.",
+      "sourcesPartial": "Une partie de votre liste d’offres n’a pas pu être lue pour l’instant, donc un actif lié à une offre que vous détenez peut manquer ci-dessous, quelle que soit son ancienneté. Réessayez dans un instant.",
       "noBalancesInWindow": "Aucun solde parmi les {{count}} premiers tokens vérifiés — élargissez l’analyse ci-dessous pour continuer à chercher.",
       "loading": "Lecture de votre vault…",
       "addressLabel": "Adresse du Vault :",

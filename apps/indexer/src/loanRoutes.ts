@@ -13,7 +13,8 @@
  *                                        offerId / kind.
  */
 
-import { type Env, getChainConfigs } from './env';
+import { type Env } from './env';
+import { chainDeployed, chainNotServed, parseChainId, requestedChainId } from './servedChain';
 import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
 import {
   type RepairObservationRow,
@@ -53,31 +54,6 @@ function jsonResponse(
       ...extraHeaders,
     },
   });
-}
-
-/**
- * #749 — whether THIS worker actually INDEXES `chainId`. Gated on
- * `getChainConfigs(env)` membership, NOT just `getDeployment`: the scanner only
- * runs for a chain that has BOTH a deployment artifact AND an RPC secret bound
- * (so a deployed-but-disabled chain, an RPC/Secrets-Store outage, or a stray
- * local 31337 artifact is correctly excluded — Codex #768). A chain this worker
- * doesn't index returns a `chain-not-configured` 503 (not a cacheable empty 200,
- * which the frontend's indexer-first → on-chain-fallback wrapper would cache as
- * "no loans" and never fall back from). `env` here is the RESOLVED env (the
- * route dispatcher calls `resolveEnv` at the boundary), so the RPC bindings are
- * populated. These routes are otherwise PURE D1 — the authoritative
- * live-ownership read is the FRONTEND's on-chain fallback
- * (`MetricsFacet.getUserPositionLoans` via the user's own RPC), so the indexer
- * never spends operator RPC quota here; it just serves the projection, which the
- * ERC721 Transfer / LoanSold / LoanSaleCompleted / LoanObligationTransferred /
- * claim-burn handlers in chainIndexer.ts keep authoritative.
- */
-function chainConfigured(env: Env, chainId: number): boolean {
-  try {
-    return getChainConfigs(env).some((c) => c.id === chainId);
-  } catch {
-    return false;
-  }
 }
 
 interface LoanRow {
@@ -246,9 +222,11 @@ function activityToJson(row: ActivityRow): Record<string, unknown> {
 /** GET /loans/active?chainId=8453&limit=50&before=<loan_id> */
 export async function handleLoansActive(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const limit = parseLimit(url.searchParams.get('limit'));
   const before = parseBefore(url.searchParams.get('before'));
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     const stmt = before
       ? env.DB.prepare(
@@ -285,11 +263,13 @@ export async function handleLoanById(
   loanIdRaw: string,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const loanId = Number.parseInt(loanIdRaw, 10);
   if (!Number.isFinite(loanId) || loanId < 0) {
     return jsonResponse({ error: 'bad-loan-id' }, 400);
   }
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     const row = await env.DB.prepare(
       `SELECT * FROM loans WHERE chain_id = ? AND loan_id = ?`,
@@ -423,7 +403,7 @@ export async function handleLoansByParticipant(
   side: 'lender' | 'borrower',
 ): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const limit = parseLimit(url.searchParams.get('limit'));
   const before = parseBefore(url.searchParams.get('before'));
   const addr = addrRaw.toLowerCase();
@@ -432,9 +412,8 @@ export async function handleLoansByParticipant(
   }
   // Fail closed when this chain isn't indexed here, so the frontend's
   // indexer-first → on-chain-fallback wrapper actually falls back (#749).
-  if (!chainConfigured(env, chainId)) {
-    return jsonResponse({ error: 'chain-not-configured' }, 503);
-  }
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   // Column is selected from the validated `side` enum — a hardcoded literal,
   // never caller input, so this is not a dynamic-SQL injection surface.
   const ownerCol =
@@ -489,16 +468,15 @@ export async function handleLoansByCurrentHolder(
   addrRaw: string,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const limit = parseLimit(url.searchParams.get('limit'));
   const before = parseBefore(url.searchParams.get('before'));
   const addr = addrRaw.toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(addr)) {
     return jsonResponse({ error: 'bad-address' }, 400);
   }
-  if (!chainConfigured(env, chainId)) {
-    return jsonResponse({ error: 'chain-not-configured' }, 503);
-  }
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     const stmt = before
       ? env.DB.prepare(
@@ -536,7 +514,7 @@ export async function handleLoansByCurrentHolder(
  *  page starts at the head of the ledger. */
 export async function handleActivity(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const limit = parseLimit(url.searchParams.get('limit'));
   const actor = url.searchParams.get('actor');
   const loanIdRaw = url.searchParams.get('loanId');
@@ -578,6 +556,8 @@ export async function handleActivity(req: Request, env: Env): Promise<Response> 
     where.push('(block_number, log_index) < (?, ?)');
     binds.push(before.block, before.logIndex);
   }
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     const sql = `SELECT * FROM activity_events
                  WHERE ${where.join(' AND ')}
@@ -667,15 +647,14 @@ export async function handleClaimables(
   addrRaw: string,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const addr = addrRaw.toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(addr)) {
     return jsonResponse({ error: 'bad-address' }, 400);
   }
   // Fail closed when this chain isn't indexed here so the frontend falls back.
-  if (!chainConfigured(env, chainId)) {
-    return jsonResponse({ error: 'chain-not-configured' }, 503);
-  }
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     // #749 — PURE D1: the wallet's OWN terminal loans, filtered on the
     // indexer-maintained `*_current_owner` columns (kept authoritative by the
@@ -900,14 +879,13 @@ export async function handleClaimCandidates(
   addrRaw: string,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const addr = addrRaw.toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(addr)) {
     return jsonResponse({ error: 'bad-address' }, 400);
   }
-  if (!chainConfigured(env, chainId)) {
-    return jsonResponse({ error: 'chain-not-configured' }, 503);
-  }
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     const rows = (
       await env.DB.prepare(
@@ -1003,26 +981,108 @@ const KNOWN_LOAN_STATUSES = new Set([
 
 export async function handleLoansStats(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
-    // Counts per status.
-    const counts = await env.DB.prepare(
-      // SALE VEHICLES ARE NOT BORROWER POSITIONS (#2069 review round 8).
-      // Selling a lender position emits a temporary bookkeeping loan,
-      // which migration 0029 flags precisely so it stays out of anything
-      // a person reads — and `getLoans`, the activity feed and the
-      // claimables query all already filter it. This one did not, so
-      // every secondary sale raised the count as though a new loan had
-      // originated. Invisible while this was an internal aggregate;
-      // not once the public dashboard prints it as the deployment's
-      // loan total. (`loans` carries no `is_offset_vehicle` column —
-      // that flag exists on `offers` only.)
-      `SELECT status, COUNT(*) as n FROM loans
-        WHERE chain_id = ? AND is_sale_vehicle = 0
-        GROUP BY status`,
-    )
-      .bind(chainId)
-      .all<{ status: string; n: number }>();
+    // ONE SNAPSHOT (#2080). Every figure in this response — the status
+    // counts, the asset split, the volume rows AND the ingest cursor it
+    // cites as provenance — comes from one D1 batch, which D1 runs as a
+    // single transaction. They used to be four separate reads, so an
+    // ingest committing between them returned pre-ingest counters under a
+    // post-ingest cursor: "current through block N" beside counts that did
+    // not include block N. The batch makes the response consistent by
+    // construction rather than by read order, and keeps the counters
+    // consistent with each other too (the asset split cannot outrun
+    // `active`).
+    const [counts, assetTypeBreakdown, volumeRows, cursorRows] = await env.DB.batch([
+      // Counts per status.
+      env.DB.prepare(
+        // SALE VEHICLES ARE NOT BORROWER POSITIONS (#2069 review round 8).
+        // Selling a lender position emits a temporary bookkeeping loan,
+        // which migration 0029 flags precisely so it stays out of anything
+        // a person reads — and `getLoans`, the activity feed and the
+        // claimables query all already filter it. This one did not, so
+        // every secondary sale raised the count as though a new loan had
+        // originated. Invisible while this was an internal aggregate;
+        // not once the public dashboard prints it as the deployment's
+        // loan total. (`loans` carries no `is_offset_vehicle` column —
+        // that flag exists on `offers` only.)
+        `SELECT status, COUNT(*) as n FROM loans
+          WHERE chain_id = ? AND is_sale_vehicle = 0
+          GROUP BY status`,
+      )
+        .bind(chainId),
+      // Asset-type breakdown for the active set (ERC-20 vs NFT rental).
+      env.DB.prepare(
+        // Same exclusion as the status counters above. Without it the
+         // ERC-20 / NFT active subtotals could EXCEED the `active` count
+         // beside them while a sale vehicle is open — two figures on one
+         // card disagreeing, which is worse than either being wrong alone.
+        // EXCLUDE ROWS WITH NO ASSET METADATA — which is NOT the same set
+        // as `is_stub = 1`.
+        //
+        // Two different paths set that flag. Fallback B (no
+        // `LoanInitiatedDetails`, canonical read-back failed) inserts
+        // `asset_type = 0` regardless of what the loan is, so counting
+        // those published every such NFT rental as an active ERC-20 loan.
+        // The companion-event path ALSO sets `is_stub = 1`, but only
+        // because the two position token IDs are missing — it writes the
+        // REAL `assetType` from the event. Keying on the flag therefore
+        // dropped correctly classified loans from both subtotals while
+        // healing was merely delayed, which is its own inaccuracy.
+        //
+        // `lending_asset` is the discriminator: fallback B writes the
+        // literal `'0x'` placeholder, the companion path writes the actual
+        // address. So this asks the question that matters — do we know
+        // what this loan is? — rather than a flag that answers a
+        // different one.
+        //
+        // TWO SENTINELS, not one (round 61 P2). `'0x'` is what fallback B
+        // writes today; rows predating it carry the COLUMN DEFAULT,
+        // `0x0000…0000` (migrations/0005:52), and migration 0009 marks
+        // those as stubs without normalising the value. Excluding only
+        // `'0x'` let such a row through with its default `asset_type = 0`
+        // and published it as an ERC-20 loan — a false classification, not
+        // a gap. Worse, it was a SILENT one: the subtotals then reconcile
+        // against `active`, so the unclassified remainder reads zero and
+        // the transparency page's contradiction notice never fires. A
+        // misfiled row that makes the arithmetic look right is exactly what
+        // that notice exists to expose.
+        //
+        // The `active` count above still includes both kinds, so the
+        // subtotals may sum to less than `active` while metadata-less rows
+        // await healing. That direction is the honest one: undercounting a
+        // type is an admitted gap, misfiling it is a false statement.
+        `SELECT asset_type, COUNT(*) as n
+         FROM loans
+         WHERE chain_id = ? AND is_sale_vehicle = 0
+           AND lending_asset NOT IN ('0x', '0x0000000000000000000000000000000000000000')
+           AND status = 'active'
+         GROUP BY asset_type`,
+      )
+        .bind(chainId),
+      env.DB.prepare(
+        // And again for lifetime volume and average APR: a secondary sale
+        // is not an origination, so counting its bookkeeping row inflates
+        // volume and drags the rate average toward a number nobody agreed
+        // to. Every aggregate in this handler now excludes vehicles —
+        // the previous commit fixed one query and left these two, which
+        // is the third time this exact omission has been found.
+        `SELECT lending_asset, principal, interest_rate_bps
+         FROM loans WHERE chain_id = ? AND is_sale_vehicle = 0`,
+      )
+        .bind(chainId),
+      env.DB.prepare(
+        `SELECT last_block, updated_at FROM indexer_cursor
+         WHERE chain_id = ? AND kind = 'diamond'`,
+      )
+        .bind(chainId),
+    ]);
+    const cursor = (cursorRows.results?.[0] ?? null) as {
+      last_block: number;
+      updated_at: number;
+    } | null;
     const tally: Record<string, number> = {
       active: 0,
       repaid: 0,
@@ -1034,62 +1094,12 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
       fallback_pending: 0,
       internal_matched: 0,
     };
-    for (const row of counts.results ?? []) {
+    for (const row of (counts.results ?? []) as { status: string; n: number }[]) {
       tally[row.status] = row.n;
     }
-    // Asset-type breakdown for the active set (ERC-20 vs NFT rental).
-    const assetTypeBreakdown = await env.DB.prepare(
-      // Same exclusion as the status counters above. Without it the
-       // ERC-20 / NFT active subtotals could EXCEED the `active` count
-       // beside them while a sale vehicle is open — two figures on one
-       // card disagreeing, which is worse than either being wrong alone.
-      // EXCLUDE ROWS WITH NO ASSET METADATA — which is NOT the same set
-      // as `is_stub = 1`.
-      //
-      // Two different paths set that flag. Fallback B (no
-      // `LoanInitiatedDetails`, canonical read-back failed) inserts
-      // `asset_type = 0` regardless of what the loan is, so counting
-      // those published every such NFT rental as an active ERC-20 loan.
-      // The companion-event path ALSO sets `is_stub = 1`, but only
-      // because the two position token IDs are missing — it writes the
-      // REAL `assetType` from the event. Keying on the flag therefore
-      // dropped correctly classified loans from both subtotals while
-      // healing was merely delayed, which is its own inaccuracy.
-      //
-      // `lending_asset` is the discriminator: fallback B writes the
-      // literal `'0x'` placeholder, the companion path writes the actual
-      // address. So this asks the question that matters — do we know
-      // what this loan is? — rather than a flag that answers a
-      // different one.
-      //
-      // TWO SENTINELS, not one (round 61 P2). `'0x'` is what fallback B
-      // writes today; rows predating it carry the COLUMN DEFAULT,
-      // `0x0000…0000` (migrations/0005:52), and migration 0009 marks
-      // those as stubs without normalising the value. Excluding only
-      // `'0x'` let such a row through with its default `asset_type = 0`
-      // and published it as an ERC-20 loan — a false classification, not
-      // a gap. Worse, it was a SILENT one: the subtotals then reconcile
-      // against `active`, so the unclassified remainder reads zero and
-      // the transparency page's contradiction notice never fires. A
-      // misfiled row that makes the arithmetic look right is exactly what
-      // that notice exists to expose.
-      //
-      // The `active` count above still includes both kinds, so the
-      // subtotals may sum to less than `active` while metadata-less rows
-      // await healing. That direction is the honest one: undercounting a
-      // type is an admitted gap, misfiling it is a false statement.
-      `SELECT asset_type, COUNT(*) as n
-       FROM loans
-       WHERE chain_id = ? AND is_sale_vehicle = 0
-         AND lending_asset NOT IN ('0x', '0x0000000000000000000000000000000000000000')
-         AND status = 'active'
-       GROUP BY asset_type`,
-    )
-      .bind(chainId)
-      .all<{ asset_type: number; n: number }>();
     let erc20ActiveLoans = 0;
     let nftRentalsActive = 0;
-    for (const row of assetTypeBreakdown.results ?? []) {
+    for (const row of (assetTypeBreakdown.results ?? []) as { asset_type: number; n: number }[]) {
       // 0 = ERC-20, others = NFT-side variants. Matches the frontend
       // `AssetType.ERC20 = 0` enum convention.
       if (row.asset_type === 0) erc20ActiveLoans += row.n;
@@ -1106,23 +1116,11 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
     // thousands at most for the foreseeable future. If that grows
     // past memory pressure we can add a precomputed
     // `volume_by_asset` materialised view.
-    const volumeRows = await env.DB.prepare(
-      // And again for lifetime volume and average APR: a secondary sale
-      // is not an origination, so counting its bookkeeping row inflates
-      // volume and drags the rate average toward a number nobody agreed
-      // to. Every aggregate in this handler now excludes vehicles —
-      // the previous commit fixed one query and left these two, which
-      // is the third time this exact omission has been found.
-      `SELECT lending_asset, principal, interest_rate_bps
-       FROM loans WHERE chain_id = ? AND is_sale_vehicle = 0`,
-    )
-      .bind(chainId)
-      .all<{ lending_asset: string; principal: string; interest_rate_bps: number }>();
     const volumeByAsset: Record<string, bigint> = {};
     const loansByAsset: Record<string, number> = {};
     let aprSum = 0;
     let aprCount = 0;
-    for (const row of volumeRows.results ?? []) {
+    for (const row of (volumeRows.results ?? []) as { lending_asset: string; principal: string; interest_rate_bps: number }[]) {
       // Drop rows with unset / malformed `lending_asset` (legacy
       // testnet bookkeeping wrote `0x` for some NFT-rental loans
       // before the indexer normalised the column). Keeps the per-
@@ -1150,12 +1148,6 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
       volumeByAssetSerialized[k] = v.toString();
     }
     const averageInterestRateBps = aprCount > 0 ? aprSum / aprCount : null;
-    const cursor = await env.DB.prepare(
-      `SELECT last_block, updated_at FROM indexer_cursor
-       WHERE chain_id = ? AND kind = 'diamond'`,
-    )
-      .bind(chainId)
-      .first<{ last_block: number; updated_at: number }>();
     return jsonResponse({
       chainId,
       active: tally.active,
@@ -1234,7 +1226,7 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
  */
 export async function handleLoansRecent(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const limit = parseLimit(url.searchParams.get('limit'));
   const before = parseBefore(url.searchParams.get('before'));
   // Rate Desk (#1129) — optional market scoping (lendingAsset /
@@ -1250,6 +1242,8 @@ export async function handleLoansRecent(req: Request, env: Env): Promise<Respons
     return jsonResponse({ error: 'bad-market-filter' }, 400);
   }
   const excludeSaleVehicles = url.searchParams.get('excludeSaleVehicles') === '1';
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     const conds: string[] = ['chain_id = ?'];
     const binds: (number | string)[] = [chainId];
@@ -1331,7 +1325,7 @@ export async function handleLoansTimeseries(
   env: Env,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const rangeRaw = (url.searchParams.get('range') || '30d').trim();
   // 'All' uses the same 365-day cap as the frontend's previous
   // implementation; not strictly "all-time" but matches expectations
@@ -1348,6 +1342,8 @@ export async function handleLoansTimeseries(
   const bucketSec = rangeRaw === '24h' ? 3600 : 86400;
   const nowSec = Math.floor(Date.now() / 1000);
   const fromSec = nowSec - days * 86400;
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     // Pull only the columns the bucketing needs. ERC-20-only filter
     // (`asset_type = 0`) matches the frontend's exclusion of NFT
@@ -1492,7 +1488,7 @@ export async function handleLoansRateCandles(
   env: Env,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const market = parseMarketFilter(url);
   if (market === 'bad') {
     return jsonResponse({ error: 'bad-market-filter' }, 400);
@@ -1528,9 +1524,8 @@ export async function handleLoansRateCandles(
   // an honest zero-fill market. Same #749 posture as the participant /
   // current-holder routes — a 503 keeps the frontend's tri-state on
   // "unavailable", never a false empty.
-  if (!chainConfigured(env, chainId)) {
-    return jsonResponse({ error: 'chain-not-configured' }, 503);
-  }
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     const conds = [
       'chain_id = ?',
@@ -1631,7 +1626,7 @@ export async function handleLoansByHistoricalParticipant(
   env: Env,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const limit = parseLimit(url.searchParams.get('limit'));
   const before = parseParticipationCursor(url.searchParams.get('before'));
   const walletRaw = url.searchParams.get('wallet');
@@ -1673,9 +1668,8 @@ export async function handleLoansByHistoricalParticipant(
   // Fail closed when this chain isn't indexed here, so the frontend's
   // indexer-first → on-chain-fallback wrapper actually falls back (#749) —
   // same posture as the sibling wallet routes.
-  if (!chainConfigured(env, chainId)) {
-    return jsonResponse({ error: 'chain-not-configured' }, 503);
-  }
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     if (fieldsRaw === 'ids') {
       // Ids-only mode — index-served DISTINCT over the wallet's own
@@ -1875,6 +1869,13 @@ export async function handleLoanPrepayMatchSource(
   const chainId = parseChainId(url.searchParams.get('chainId'));
   if (chainId === null) {
     return jsonResponse({ error: 'bad-chain-id' }, 400);
+  }
+  // A match source for a chain the protocol is not deployed on is invalid
+  // input (#1140). Deliberately NOT the served-chain guard (Codex #2653 r2):
+  // this write is fired once, best-effort, and needs only D1, so a transient
+  // RPC-secret failure must not discard it. See `chainDeployed`.
+  if (!chainDeployed(chainId)) {
+    return jsonResponse({ error: 'unknown-chain' }, 400);
   }
 
   let body: unknown;
@@ -2123,14 +2124,13 @@ export async function handleNotifications(
   addrRaw: string,
 ): Promise<Response> {
   const url = new URL(req.url);
-  const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
+  const chainId = requestedChainId(url);
   const addr = addrRaw.toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(addr)) {
     return jsonResponse({ error: 'bad-address' }, 400);
   }
-  if (!chainConfigured(env, chainId)) {
-    return jsonResponse({ error: 'chain-not-configured' }, 503);
-  }
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   const limit = parseLimit(url.searchParams.get('limit'));
   const beforeRaw = url.searchParams.get('before');
 
@@ -2174,12 +2174,6 @@ export async function handleNotifications(
     console.error('[loanRoutes] notifications failed', err);
     return jsonResponse({ error: 'notifications-failed' }, 500);
   }
-}
-
-function parseChainId(raw: string | null): number | null {
-  if (!raw) return null;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 function parseLimit(raw: string | null): number {

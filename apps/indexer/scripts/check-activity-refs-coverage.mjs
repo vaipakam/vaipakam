@@ -38,6 +38,17 @@
  * so there is no shape catalogue left to evade. Do not re-grow AST analysis
  * here; extend the execution tests instead.
  *
+ * WHAT THIS GUARDS, AND WHAT IT DOES NOT (#1811, decided 2026-10-22). It
+ * catches ACCIDENTAL drift: a new event whose reference the rule cannot read,
+ * a policy entry that went stale, a mapping that stops reaching its column.
+ * That is the failure it was built for — the May-2026 "every loan stuck
+ * active" indexer that silently missed events. It does not defend against an
+ * author deliberately constructing code to get past it; no lint can, and the
+ * attempt to (rounds 40–69 of #1797) never converged. Since #1794 there is
+ * also very little left to bypass: references are no longer written per event
+ * but read from the ABI by one function, which the execution suite runs for
+ * every compiled event.
+ *
  * Run: `node apps/indexer/scripts/check-activity-refs-coverage.mjs`
  *      (or `pnpm --filter @vaipakam/indexer check-activity-refs-coverage`)
  */
@@ -45,6 +56,7 @@ import {
   DELIBERATELY_NOT_SCOPED,
   REF_FIELDS,
   deriveActivityRefsSurface,
+  exemptionAliasDrift,
 } from './lib/activity-refs-surface.mjs';
 
 let surface;
@@ -80,7 +92,10 @@ for (const key of Object.keys(DELIBERATELY_NOT_SCOPED)) {
   }
 }
 
-if (relevantAbiConflicts.length || dead.length) {
+// ── Exemptions whose recorded inputs no longer match the ABI (#1807) ──────
+const drifted = exemptionAliasDrift(surface);
+
+if (relevantAbiConflicts.length || dead.length || drifted.length) {
   if (relevantAbiConflicts.length) {
     console.error('\n✖ activity-refs coverage: ABI problems this check cannot reason around:\n');
     for (const c of relevantAbiConflicts) console.error(`    ${c.message}`);
@@ -88,6 +103,10 @@ if (relevantAbiConflicts.length || dead.length) {
   if (dead.length) {
     console.error('\n✖ activity-refs coverage: stale allowlist entries:\n');
     for (const d of dead) console.error(`    ${d}`);
+  }
+  if (drifted.length) {
+    console.error('\n✖ activity-refs coverage: exemptions granted for inputs the event no longer has:\n');
+    for (const d of drifted) console.error(`    ${d}`);
   }
   console.error('');
   process.exit(1);
@@ -114,12 +133,9 @@ for (const [event, fields] of carries) {
     if (Object.hasOwn(DELIBERATELY_NOT_SCOPED, `${event}.${field}`)) allowlisted += 1;
   }
 }
-const todo = Object.values(DELIBERATELY_NOT_SCOPED).filter((r) =>
-  r.startsWith('TODO(#1794)'),
-).length;
 console.log(
   `✓ activity-refs surface OK — ${carries.size} event(s) carry a reference across ` +
-    `${pairs} event/field pair(s); ${allowlisted} allowlisted (${todo} of those are ` +
-    'TODO(#1794) gaps awaiting mapping). Mapping and ledger behavior are enforced by ' +
-    'execution in test/activityRefsCoverage.test.ts + test/activityLedger.test.ts.',
+    `${pairs} event/field pair(s); ${allowlisted} deliberately not scoped. References are ` +
+    'read from the ABI by src/activityRefs.ts under src/activityRefsPolicy.json; that is ' +
+    'enforced by execution in test/activityRefsCoverage.test.ts + test/activityLedger.test.ts.',
 );
