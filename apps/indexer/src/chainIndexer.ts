@@ -4355,7 +4355,7 @@ export async function settleFromLedger(
           reached = before;
           break;
         }
-        if (await withdrawOrphanLoan(env.DB, chainId, row.loan_id, row.status, atBlock, Math.floor(Date.now() / 1000))) {
+        if (await withdrawOrphanLoan(env.DB, chainId, diamond, row.loan_id, row.status, atBlock, Math.floor(Date.now() / 1000))) {
           withdrawn.push(row.loan_id);
         }
         continue;

@@ -560,17 +560,21 @@ describe('reconcileAfterScan against a real database', () => {
 });
 
 describe('withdrawOrphanLoan — one guarded move (#2636 r1)', () => {
-  it('a writer that changes the row before the batch leaves EVERYTHING in place, side tables included', async () => {
+  it('a writer that changes the row before the batch leaves EVERYTHING in place, even within the same second', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedActiveLoan(h, 61);
     seedListing(h, 61);
     seedIntent(h, 61);
-    // The scan touches the row between the move's read and its batch.
+    // The scan touches the row between the move's read batch and its write
+    // batch, in the same second: `updated_at` unchanged, a value changed.
+    let batches = 0;
     const raced = new Proxy(h.d1, {
       get(target, prop, recv) {
         if (prop === 'batch') {
           return async (stmts: unknown[]) => {
-            h.db.prepare('UPDATE loans SET updated_at = updated_at + 1 WHERE chain_id = ? AND loan_id = ?').run(CHAIN, 61);
+            if (batches++ === 1) {
+              h.db.prepare(`UPDATE loans SET principal = '999' WHERE chain_id = ? AND loan_id = ?`).run(CHAIN, 61);
+            }
             return (target as unknown as { batch: (s: unknown[]) => Promise<unknown> }).batch(stmts);
           };
         }
@@ -578,21 +582,87 @@ describe('withdrawOrphanLoan — one guarded move (#2636 r1)', () => {
         return typeof v === 'function' ? v.bind(target) : v;
       },
     });
-    expect(await withdrawOrphanLoan(raced as never, CHAIN, 61, 'active', 100n, 1)).toBe(false);
+    expect(await withdrawOrphanLoan(raced as never, CHAIN, DIAMOND, 61, 'active', 100n, 1)).toBe(false);
     expect(h.db.prepare('SELECT COUNT(*) AS n FROM loans WHERE loan_id = 61').get()).toEqual({ n: 1 });
     expect(h.db.prepare('SELECT COUNT(*) AS n FROM loan_orphans').get()).toEqual({ n: 0 });
     expect(hasListing(h, 61)).toBe(true);
     expect(hasIntent(h, 61)).toBe(true);
   });
 
-  it('clears the same side tables a close-out clears', () => {
+  it('clears every side table a close-out clears', () => {
     const tables = (src: string) =>
       [...src.matchAll(/DELETE FROM (\w+)/g)].map((m) => m[1]).filter((t) => t !== 'loans').sort();
     const orphan = readFileSync(new URL('../src/loanOrphans.ts', import.meta.url), 'utf8');
     const indexer = readFileSync(new URL('../src/chainIndexer.ts', import.meta.url), 'utf8');
     const start = indexer.indexOf('export function _loanSideTableStatements(');
     const closeOut = indexer.slice(start, indexer.indexOf('\n}\n', start));
-    expect(tables(orphan)).toEqual(tables(closeOut));
-    expect(tables(orphan).length).toBeGreaterThan(0);
+    expect(tables(closeOut).length).toBeGreaterThan(0);
+    for (const t of tables(closeOut)) expect(tables(orphan)).toContain(t);
+  });
+
+  it('moves every published row about the loan with it, kept whole, and leaves a later one alone', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 62);
+    h.db
+      .prepare(
+        `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, loan_id, args_json, block_at)
+         VALUES (?, 10, 0, '0xaa', 'LoanInitiated', 62, '{}', 1)`,
+      )
+      .run(CHAIN);
+    h.db
+      .prepare(`INSERT INTO loan_participants (chain_id, loan_id, wallet, role, from_at) VALUES (?, 62, '0xlend', 'lender', 1)`)
+      .run(CHAIN);
+    h.db
+      .prepare(
+        `INSERT INTO notifications (chain_id, recipient, kind, loan_id, created_at, dedup_key)
+         VALUES (?, '0xborrow', 'loan_started', 62, 1, 'k62')`,
+      )
+      .run(CHAIN);
+    // An unrelated loan's rows stay.
+    seedActiveLoan(h, 63);
+    h.db
+      .prepare(`INSERT INTO loan_participants (chain_id, loan_id, wallet, role, from_at) VALUES (?, 63, '0xlend', 'lender', 1)`)
+      .run(CHAIN);
+    // A ledger row that lands between the read batch and the write batch is
+    // not one the move kept, so it is not one the move deletes.
+    let batches = 0;
+    const late = new Proxy(h.d1, {
+      get(target, prop, recv) {
+        if (prop === 'batch') {
+          return async (stmts: unknown[]) => {
+            if (batches++ === 1) {
+              h.db
+                .prepare(
+                  `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, loan_id, args_json, block_at)
+                   VALUES (?, 11, 0, '0xbb', 'LoanRepaid', 62, '{}', 2)`,
+                )
+                .run(CHAIN);
+            }
+            return (target as unknown as { batch: (s: unknown[]) => Promise<unknown> }).batch(stmts);
+          };
+        }
+        const v = Reflect.get(target, prop, recv);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+    expect(await withdrawOrphanLoan(late as never, CHAIN, DIAMOND, 62, 'active', 100n, 1)).toBe(true);
+    const count = (t: string, id: number) =>
+      (h.db.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE chain_id = ? AND loan_id = ?`).get(CHAIN, id) as { n: number }).n;
+    expect(count('loans', 62)).toBe(0);
+    expect(count('loan_participants', 62)).toBe(0);
+    expect(count('notifications', 62)).toBe(0);
+    expect(count('activity_events', 62)).toBe(1); // only the late one
+    expect(count('loans', 63)).toBe(1);
+    expect(count('loan_participants', 63)).toBe(1);
+    const kept = h.db.prepare('SELECT diamond, related_json FROM loan_orphans WHERE loan_id = 62').get() as {
+      diamond: string;
+      related_json: string;
+    };
+    expect(kept.diamond).toBe(String(DIAMOND).toLowerCase());
+    const related = JSON.parse(kept.related_json);
+    expect(related.activity_events).toHaveLength(1);
+    expect(related.activity_events[0]).toMatchObject({ kind: 'LoanInitiated', tx_hash: '0xaa' });
+    expect(related.loan_participants[0]).toMatchObject({ wallet: '0xlend', role: 'lender' });
+    expect(related.notifications[0]).toMatchObject({ dedup_key: 'k62', recipient: '0xborrow' });
   });
 });

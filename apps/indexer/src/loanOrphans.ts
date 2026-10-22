@@ -10,16 +10,25 @@
  * both must make the same move, so the move lives here and neither carries
  * its own copy.
  *
- * THE MOVE is one D1 batch (one transaction): archive the row whole into
- * `loan_orphans` (migration 0065 says why whole, and how an operator puts it
- * back), clear the loan's side tables, then delete it from `loans`. Every
- * statement carries the SAME compare-and-set — the status the caller read
- * and the `updated_at` of the copy being kept — and the deletes from the
- * side tables and from `loans` run while the row still exists, so a writer
- * that touched the row between the read below and the batch turns every
- * statement into a no-op: nothing archived that was not deleted, nothing
- * deleted whose kept copy is stale, and no side-table row of a loan that
- * stays live disposed of (#2636 r1).
+ * WHAT MOVES. Everything the platform publishes about the loan: the `loans`
+ * row, its ledger entries (`activity_events`), its participation history
+ * (`loan_participants`) and its inbox notifications — each archived whole
+ * into `loan_orphans` and deleted, so no surface (the loan pages, a wallet's
+ * history and Activity filter, the bell) goes on presenting a position the
+ * chain never had (#2636 r2). Its side tables are cleared too; they are
+ * commitments to act, not records, and are not kept. Migration 0065 says how
+ * an operator puts a move back.
+ *
+ * ONE TRANSACTION, ONE COMPARE-AND-SET. The move is a single D1 batch. Its
+ * first statement archives the loan row only if the row still equals, column
+ * for column, the copy read below, and stamps the archive row with a fresh
+ * `move_id`; every later statement acts only if THAT archive row exists. So a
+ * writer that changed anything about the loan row between the read and the
+ * batch leaves the whole move a no-op: nothing archived, nothing deleted.
+ * Whole-row equality rather than `updated_at` (#2636 r2): writers stamp whole
+ * seconds, so two writes in one second share a stamp. A related row is
+ * deleted only by the rowid that was archived, so one that arrives after the
+ * read is left alone rather than deleted unkept.
  *
  * The side tables are the ones `_closedLoanSideTableStatements` clears on a
  * close-out (`prepay_listings`, `swap_to_repay_intents`), written out here
@@ -31,15 +40,22 @@
  * where the reconciliation pass set one it is the operator's standing record
  * that a row was withdrawn.
  *
- * Every statement is a literal (no interpolation) so the #1149
- * SQL-vs-schema guard checks each against the migrated schema.
+ * Every statement but the archive insert is a literal, so the #1149
+ * SQL-vs-schema guard checks it against the migrated schema. The archive
+ * insert's guard is built from the loan row's own column names (refused
+ * unless each is a plain identifier) and is exercised against the real
+ * schema in `test/closedLoanSideTables.test.ts`.
  */
 
+/** A column name SQLite handed back, accepted only as a plain identifier. */
+const PLAIN_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
+
 /**
- * Move `loanId` on `chainId` out of `loans` into `loan_orphans`, if it still
- * carries status `from`. Returns whether the move landed: false when the row
- * is gone or no longer `from`, or another writer changed it in between (all
- * statements then no-ops, and the caller's next lap decides again).
+ * Move `loanId` on `chainId` out of publication into `loan_orphans`, if its
+ * row still carries status `from`. Returns whether the move landed: false
+ * when the row is gone, no longer `from`, or changed by another writer in
+ * between (the whole batch is then a no-op, and the caller's next lap
+ * decides again).
  *
  * The caller must already have PROVEN the loan nonexistent at
  * `observedBlock` (a successful read answering the zero struct at a settled
@@ -48,6 +64,8 @@
 export async function withdrawOrphanLoan(
   db: D1Database,
   chainId: number,
+  /** The Diamond the existence read was made against. */
+  diamond: string,
   loanId: number,
   from: string,
   /** The settled block the existence read was pinned to: the evidence. */
@@ -55,37 +73,94 @@ export async function withdrawOrphanLoan(
   /** Wall clock of the move, seconds. When the platform acted. */
   nowSec: number,
 ): Promise<boolean> {
-  // The row as it stands, to keep. Read first because D1 cannot serialise a
-  // whole row inside a statement without naming every column.
-  const row = await db
-    .prepare(`SELECT * FROM loans WHERE chain_id = ? AND loan_id = ? AND status = ?`)
-    .bind(chainId, loanId, from)
-    .first<Record<string, unknown> & { updated_at: number }>();
+  // What is kept, read first because D1 cannot serialise a whole row inside
+  // a statement without naming every column. One batch, so one snapshot.
+  const [loanRes, activityRes, participantRes, notificationRes] = await db.batch([
+    db.prepare(`SELECT * FROM loans WHERE chain_id = ? AND loan_id = ? AND status = ?`).bind(chainId, loanId, from),
+    db
+      .prepare(`SELECT rowid AS orphan_rowid, * FROM activity_events WHERE chain_id = ? AND loan_id = ?`)
+      .bind(chainId, loanId),
+    db
+      .prepare(`SELECT rowid AS orphan_rowid, * FROM loan_participants WHERE chain_id = ? AND loan_id = ?`)
+      .bind(chainId, loanId),
+    db
+      .prepare(`SELECT rowid AS orphan_rowid, * FROM notifications WHERE chain_id = ? AND loan_id = ?`)
+      .bind(chainId, loanId),
+  ]);
+  const row = (loanRes?.results?.[0] ?? null) as Record<string, unknown> | null;
   if (!row) return false;
-  const guard = [chainId, loanId, from, row.updated_at] as const;
+  const columns = Object.keys(row);
+  if (columns.length === 0 || !columns.every((c) => PLAIN_IDENTIFIER.test(c))) {
+    throw new Error(`loan ${loanId} on chain ${chainId}: unexpected column names; orphan move refused`);
+  }
+  const related = {
+    activity_events: (activityRes?.results ?? []) as Array<{ orphan_rowid: number }>,
+    loan_participants: (participantRes?.results ?? []) as Array<{ orphan_rowid: number }>,
+    notifications: (notificationRes?.results ?? []) as Array<{ orphan_rowid: number }>,
+  };
+  const rowids = (rows: Array<{ orphan_rowid: number }>) => JSON.stringify(rows.map((r) => r.orphan_rowid));
+  const moveId = crypto.randomUUID();
+  // `IS`, not `=`, so a NULL column compares equal to a NULL it was read as.
+  const sameRow = columns.map((c) => `"${c}" IS ?`).join(' AND ');
   const results = await db.batch([
     db
       .prepare(
-        `INSERT INTO loan_orphans (chain_id, loan_id, from_status, observed_block, withdrawn_at, row_json)
-         SELECT ?, ?, ?, ?, ?, ?
-          WHERE EXISTS (SELECT 1 FROM loans WHERE chain_id = ? AND loan_id = ? AND status = ? AND updated_at = ?)`,
+        `INSERT INTO loan_orphans
+           (move_id, chain_id, diamond, loan_id, from_status, observed_block, withdrawn_at, row_json, related_json)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE EXISTS (SELECT 1 FROM loans WHERE ${sameRow})`,
       )
-      .bind(chainId, loanId, from, Number(observedBlock), nowSec, JSON.stringify(row), ...guard),
+      .bind(
+        moveId,
+        chainId,
+        diamond.toLowerCase(),
+        loanId,
+        from,
+        Number(observedBlock),
+        nowSec,
+        JSON.stringify(row),
+        JSON.stringify(related),
+        ...columns.map((c) => row[c] as never),
+      ),
     db
       .prepare(
         `DELETE FROM prepay_listings WHERE chain_id = ? AND loan_id = ?
-            AND EXISTS (SELECT 1 FROM loans WHERE chain_id = ? AND loan_id = ? AND status = ? AND updated_at = ?)`,
+            AND EXISTS (SELECT 1 FROM loan_orphans WHERE move_id = ?)`,
       )
-      .bind(chainId, loanId, ...guard),
+      .bind(chainId, loanId, moveId),
     db
       .prepare(
         `DELETE FROM swap_to_repay_intents WHERE chain_id = ? AND loan_id = ?
-            AND EXISTS (SELECT 1 FROM loans WHERE chain_id = ? AND loan_id = ? AND status = ? AND updated_at = ?)`,
+            AND EXISTS (SELECT 1 FROM loan_orphans WHERE move_id = ?)`,
       )
-      .bind(chainId, loanId, ...guard),
+      .bind(chainId, loanId, moveId),
     db
-      .prepare(`DELETE FROM loans WHERE chain_id = ? AND loan_id = ? AND status = ? AND updated_at = ?`)
-      .bind(...guard),
+      .prepare(
+        `DELETE FROM activity_events WHERE chain_id = ? AND loan_id = ?
+            AND rowid IN (SELECT value FROM json_each(?))
+            AND EXISTS (SELECT 1 FROM loan_orphans WHERE move_id = ?)`,
+      )
+      .bind(chainId, loanId, rowids(related.activity_events), moveId),
+    db
+      .prepare(
+        `DELETE FROM loan_participants WHERE chain_id = ? AND loan_id = ?
+            AND rowid IN (SELECT value FROM json_each(?))
+            AND EXISTS (SELECT 1 FROM loan_orphans WHERE move_id = ?)`,
+      )
+      .bind(chainId, loanId, rowids(related.loan_participants), moveId),
+    db
+      .prepare(
+        `DELETE FROM notifications WHERE chain_id = ? AND loan_id = ?
+            AND rowid IN (SELECT value FROM json_each(?))
+            AND EXISTS (SELECT 1 FROM loan_orphans WHERE move_id = ?)`,
+      )
+      .bind(chainId, loanId, rowids(related.notifications), moveId),
+    db
+      .prepare(
+        `DELETE FROM loans WHERE chain_id = ? AND loan_id = ?
+            AND EXISTS (SELECT 1 FROM loan_orphans WHERE move_id = ?)`,
+      )
+      .bind(chainId, loanId, moveId),
   ]);
-  return (results[3]?.meta?.changes ?? 0) > 0;
+  return (results[6]?.meta?.changes ?? 0) > 0;
 }

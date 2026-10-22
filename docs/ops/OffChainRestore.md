@@ -1397,7 +1397,9 @@ For each table:
 
    > **`loan_orphans` is restored, not replayed** (#2197, #2636). It holds
    > `loans` rows the indexer proved the chain has no loan for, each moved
-   > out of publication with the whole row kept in `row_json`. The replay
+   > out of publication with the whole row kept in `row_json` and the
+   > loan's ledger, participation and notification rows kept in
+   > `related_json`. The replay
    > cannot recreate one: the row came from something canonical history
    > does not contain (an initiation from a block later reorganised away),
    > so the archive is the only record of what the platform published and

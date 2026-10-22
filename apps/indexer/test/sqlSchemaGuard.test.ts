@@ -165,7 +165,15 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // `deploymentEpoch.test.ts`, which seeds every chain-scoped table for two
     // chains and asserts, per table, that the redeployed chain's rows are
     // gone and the other chain's remain.
-    expect(skipped.length).toBeLessThanOrEqual(20);
+    // Raised 20 → 21 for #2197 (#2636 r2): the orphan move's archive insert
+    // is guarded by the WHOLE loan row as it was read, column by column,
+    // because `updated_at` is whole seconds and two writes in one second
+    // share it. The column names come from the row SQLite handed back
+    // (refused unless each is a plain identifier) and every value is bound.
+    // Covered against the REAL migrated schema by
+    // `closedLoanSideTables.test.ts`, which moves a loan end to end and
+    // races a same-second write in to prove the move then changes nothing.
+    expect(skipped.length).toBeLessThanOrEqual(21);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {

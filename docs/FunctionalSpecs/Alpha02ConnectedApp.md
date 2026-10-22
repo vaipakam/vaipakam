@@ -1025,9 +1025,10 @@ The app uses chain reads and indexed reads for different jobs.
   of counting them as open forever.
 - **Such a record is withdrawn from publication, not only reported.** Once
   the chain, read at its settled point, says it has no such loan, the record
-  leaves every surface that lists or counts loans — together with anything
-  the platform was offering to act on for it — in one write, so no surface
-  goes on presenting a position that never existed. The withdrawal happens
+  leaves every surface that lists or counts loans — together with its
+  activity entries, its place in wallets' loan history, its notifications,
+  and anything the platform was offering to act on for it — in one write, so
+  no surface goes on presenting a position that never existed. The withdrawal happens
   only on that proof: a reading that failed is not evidence that a loan does
   not exist, and changes nothing. It applies to every record the platform
   publishes as a loan, running or ended alike, and it is all-or-nothing: if
@@ -1036,7 +1037,9 @@ The app uses chain reads and indexed reads for different jobs.
   publication, with the settled point the proof was read at, so a person can
   put it back if the existence test itself was at fault. That kept record is
   backed up with the platform's other records that the chain cannot
-  reproduce, since rebuilding the index from the chain cannot bring it back;
+  reproduce, since rebuilding the index from the chain cannot bring it back,
+  and it survives a redeployment of the contracts, naming the deployment it
+  is about;
   and the finding
   stays on the operator's list of unresolved records, because a position
   that vanished from the index is something a person should look at. Nothing

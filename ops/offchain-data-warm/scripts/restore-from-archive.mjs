@@ -201,10 +201,11 @@ const REQUIRED_TABLE_COLUMNS = {
     'fresh_drawdown', 'absorbed_local', 'absorbed_mirror', 'armed',
     'armed_from_day', 'recorded_at', 'generator_rev',
   ],
-  // `row_json` is the withdrawn row itself; without it the record says only
-  // that something was withdrawn, not what.
+  // `row_json` and `related_json` are the withdrawn rows themselves; without
+  // them the record says only that something was withdrawn, not what.
   loan_orphans: [
-    'id', 'chain_id', 'loan_id', 'from_status', 'observed_block', 'withdrawn_at', 'row_json',
+    'id', 'move_id', 'chain_id', 'diamond', 'loan_id', 'from_status', 'observed_block',
+    'withdrawn_at', 'row_json', 'related_json',
   ],
 };
 

@@ -845,7 +845,7 @@ export async function reconcileAfterScan(
     async withdrawOrphan(chainId, loanId, from) {
       // The one owner of the move (`loanOrphans.ts`), shared with the
       // settlement heal, which finds terminal-status orphans the same way.
-      return withdrawOrphanLoan(ctx.db, chainId, loanId, from, ctx.head, now());
+      return withdrawOrphanLoan(ctx.db, chainId, ctx.diamond, loanId, from, ctx.head, now());
     },
     async readPointer(chainId) {
       const row = await ctx.db
