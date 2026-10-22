@@ -1,4 +1,4 @@
-## Indexer — every activity row is filed under the loan or offer it names (PR #TBD)
+## Indexer — every activity row is filed under the loan or offer it names (PR #2659)
 
 **Loan and offer references now come from each event's own definition, by one rule (#1794).** The activity ledger can be filtered by loan and by offer, but those references used to be written out by hand, one event at a time. An event nobody had written out was stored with no loan and no offer. The row existed, but nobody looking at a loan could find it. Sixty event fields were in that state, among them a lender selling a loan, a borrower's early close-out, collateral being added or withdrawn, health-factor liquidations and fallback episodes. Now the indexer reads the reference straight from the event's definition, using the same rule the coverage check uses to decide that an event carries one. All of those events are filed under their loan or offer, and a new event that names a loan is filed correctly without anyone remembering to add it. Only the "who did it" field is still decided per event.
 
