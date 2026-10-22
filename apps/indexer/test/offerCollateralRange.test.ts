@@ -173,8 +173,9 @@ describe('the range backfill lane (#2382 r1/r2)', () => {
 describe('a match marks the borrower offer’s fills unread (#2382 r2)', () => {
   it('nulls only the named offers’ fills, which re-queues them for the refresh lane', async () => {
     const h = createSqliteD1(migrations());
-    seed(h, { offer_id: '1', collateral_amount_max: '400', collateral_amount_filled: '0', collateral_range_stale: 0 });
-    seed(h, { offer_id: '2', collateral_amount_max: '400', collateral_amount_filled: '0', collateral_range_stale: 0 });
+    // Refinance tag already read (#2528), so only the fill marker can queue a row.
+    seed(h, { offer_id: '1', collateral_amount_max: '400', collateral_amount_filled: '0', collateral_range_stale: 0, refinance_target_loan_id: 0 });
+    seed(h, { offer_id: '2', collateral_amount_max: '400', collateral_amount_filled: '0', collateral_range_stale: 0, refinance_target_loan_id: 0 });
     await markBorrowerFillsUnread({ DB: h.d1 } as unknown as Env, 84532, [1]);
     const rows = h.db
       .prepare('SELECT offer_id, collateral_amount_filled AS f FROM offers ORDER BY offer_id')

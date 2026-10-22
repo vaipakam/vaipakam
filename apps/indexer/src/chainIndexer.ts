@@ -3890,9 +3890,19 @@ export async function refreshStubOffers(
   // review found a row that inference missed (a pre-0054 offer closed by a
   // match, a terminal row a match both marked and closed). The marker names
   // the state instead of guessing it.
+  // #2528 (Codex #2661 r1) — and an ACTIVE offer whose refinance tag is still
+  // unread. Migration 0068's backfill runs while the previous build is still
+  // serving, and that build can insert or heal an offer without writing the
+  // tag, clearing both markers above as it goes. NULL is a state no earlier
+  // build can clear, so it is the marker: the next read writes the tag (or 0)
+  // and the row leaves the set. Active only, because the tag is what the Offer
+  // Book shows; a terminal row with an unread tag stays NULL, which the API
+  // serves as unknown. A deleted offer never reaches this clause: its cancel
+  // takes it out of 'active'.
   const stale = await env.DB.prepare(
     `SELECT offer_id FROM offers
-     WHERE chain_id = ? AND (is_stub = 1 OR collateral_range_stale = 1)
+     WHERE chain_id = ? AND (is_stub = 1 OR collateral_range_stale = 1
+            OR (status = 'active' AND refinance_target_loan_id IS NULL))
      ORDER BY updated_at ASC
      LIMIT ?`,
   )

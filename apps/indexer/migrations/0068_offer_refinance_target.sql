@@ -28,6 +28,13 @@ ALTER TABLE offers ADD COLUMN refinance_target_loan_id INTEGER;
 -- correlated lookup would re-scan every such row once per offer. Matched on
 -- the event row's own chain_id. Idempotent: only fills rows still NULL, and a
 -- row with no such log (or a log shape without the field) stays NULL, unknown.
+--
+-- The backfill is an accelerator, not the guarantee. This migration lands while
+-- the previous build is still serving, and that build can insert or heal an
+-- offer without writing the column. The new build's detail-refresh lane
+-- therefore also selects every ACTIVE offer whose tag is still NULL and reads
+-- it from chain, so a row written in that window is completed on a later pass
+-- (Codex #2661 r1). Rows the backfill fills here never need that read.
 UPDATE offers
    SET refinance_target_loan_id = src.target
   FROM (

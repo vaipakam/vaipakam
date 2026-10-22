@@ -210,4 +210,33 @@ describe('the heal lane writes the tag it reads', () => {
     await heal(h, detail(undefined));
     expect(target(h, CHAIN, 7)).toBe(9);
   });
+
+  it('re-reads an ACTIVE row whose tag is unread even with both markers clear (Codex #2661 r1)', async () => {
+    // The state the previous build leaves when it heals an offer during the
+    // migration-to-publish window: markers cleared, tag never written.
+    const h = createSqliteD1(migrations());
+    seedOffer(h, { offer_id: 1, is_stub: 0, collateral_range_stale: 0 });
+    // Terminal with an unread tag: not on the Offer Book, stays unknown.
+    seedOffer(h, { offer_id: 2, status: 'cancelled', is_stub: 0, collateral_range_stale: 0 });
+    // Active with the tag already read: nothing to do.
+    seedOffer(h, { offer_id: 3, is_stub: 0, collateral_range_stale: 0, refinance_target_loan_id: 0 });
+    const reads: number[] = [];
+    const budget = createBudget('test', { external: 1_000, d1Queries: 1_000 });
+    await refreshStubOffers(
+      {
+        async readContract({ args }: { args: [bigint] }) {
+          reads.push(Number(args[0]));
+          return detail(9n);
+        },
+      } as never,
+      '0x0' as never,
+      CHAIN,
+      meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env,
+      budget,
+      1n,
+    );
+    expect(reads).toEqual([1]);
+    expect(target(h, CHAIN, 1)).toBe(9);
+    expect(target(h, CHAIN, 2)).toBeNull();
+  });
 });
