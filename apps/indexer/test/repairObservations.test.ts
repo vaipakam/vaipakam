@@ -63,7 +63,7 @@ type Page = {
   nextBefore: string | null;
 };
 const page = async (h: SqliteD1, query: string): Promise<Page> => {
-  const res = await handleActivity(new Request(`https://x/activity?chainId=${CHAIN}&${query}`), {
+  const res = await handleActivity(new Request(`https://x/activity?chainId=${CHAIN}&repairObservations=1&${query}`), {
     DB: h.d1,
   } as unknown as Env);
   expect(res.status).toBe(200);
@@ -122,6 +122,20 @@ describe('/activity serves a repaired loan’s ending as an observation, never a
     expect((await page(h, 'loanId=7')).repairObservations?.map((o) => o.loanId)).toEqual([7]);
     expect((await page(h, `actor=0x${'1'.repeat(40)}`)).repairObservations).toEqual([]);
     expect((await page(h, 'kind=LoanRepaid')).repairObservations).toEqual([]);
+  });
+
+  it('is opt-in: a reader that does not ask gets the events-only page it always got', async () => {
+    const h = createSqliteD1(migrations());
+    seedLoan(h, 7, { status: 'repaid', block: 500, at: null });
+    seedEvent(h, 100, 0, 7);
+    seedEvent(h, 600, 0, 8);
+    const res = await handleActivity(new Request(`https://x/activity?chainId=${CHAIN}&limit=2`), {
+      DB: h.d1,
+    } as unknown as Env);
+    const body = (await res.json()) as Record<string, unknown>;
+    // Both events, no slot given to an entry the reader would not render.
+    expect((body.events as Array<{ blockNumber: number }>).map((e) => e.blockNumber)).toEqual([600, 100]);
+    expect('repairObservations' in body).toBe(false);
   });
 
   it('says NOT KNOWN on a database before 0066, and still serves the events', async () => {

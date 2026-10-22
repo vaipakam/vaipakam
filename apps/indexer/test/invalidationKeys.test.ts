@@ -70,8 +70,10 @@ describe('invalidationKeysFromResult', () => {
     // key a scan whose only loan change was a repair broadcast nothing, so
     // every open client kept presenting the ghost as an open position
     // until its next poll (#2190 r2).
+    // #2195 — and the repair's observed ending is a new Activity entry.
     expect(invalidationKeysFromResult(result({ reconciledLoans: 1 }))).toEqual([
       'loan.updated',
+      'activity.appended',
     ]);
     // RPC read-diet PR 0 — a position-NFT ownership re-point gets its own
     // key (holder-keyed views: own positions / claimables / detail owner).

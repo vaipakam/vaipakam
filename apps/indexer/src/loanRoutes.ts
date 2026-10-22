@@ -529,7 +529,7 @@ export async function handleLoansByCurrentHolder(
   }
 }
 
-/** GET /activity?chainId=8453&actor=0x...&loanId=N&offerId=N&kind=...&limit=50&before=<block:logIndex>
+/** GET /activity?chainId=8453&actor=0x...&loanId=N&offerId=N&kind=...&limit=50&before=<block:logIndex>&repairObservations=1
  *
  *  Cursor format: composite "block:logIndex" (e.g. `12345:6`) so a
  *  cron-deferred block on the boundary doesn't drop rows. When omitted,
@@ -590,13 +590,19 @@ export async function handleActivity(req: Request, env: Env): Promise<Response> 
     // a page filtered on any of those has none. Each half is read to the
     // page's limit, so the page's top `limit` of the union is exact.
     //
+    // OPT-IN (`repairObservations=1`): merged entries take page slots, and a
+    // reader that does not render them would otherwise see fewer events per
+    // page with nothing to show for it. A request without the flag gets
+    // exactly the events-only page it always got, and no such field.
+    //
     // `repairObservations: null` means NOT KNOWN, never "none": a database
     // that predates migration 0066 (this build serving before the deploy
     // applies it) or a failed read. The page is then the events alone, as
     // before this field existed, and says so rather than implying a repaired
     // loan's history is complete.
+    const wantObservations = url.searchParams.get('repairObservations') === '1';
     let observations: RepairObservationRow[] | null = [];
-    if (!actor && !offerIdRaw && !kind) {
+    if (wantObservations && !actor && !offerIdRaw && !kind) {
       try {
         const loanId = loanIdRaw ? Number.parseInt(loanIdRaw, 10) : undefined;
         const r = await repairObservationsPage(env.DB, chainId, { loanId, before }, limit).all<RepairObservationRow>();
@@ -622,7 +628,9 @@ export async function handleActivity(req: Request, env: Env): Promise<Response> 
         : merged.flatMap((m) => ('observation' in m ? [repairObservationToJson(m.observation)] : []));
     const last = merged.length === limit ? merged[merged.length - 1] : null;
     const nextBefore = last ? `${last.at.block}:${last.at.logIndex}` : null;
-    return jsonResponse({ chainId, events, repairObservations, nextBefore });
+    return jsonResponse(
+      wantObservations ? { chainId, events, repairObservations, nextBefore } : { chainId, events, nextBefore },
+    );
   } catch (err) {
     console.error('[loanRoutes] activity failed', err);
     return jsonResponse({ error: 'activity-failed' }, 500);

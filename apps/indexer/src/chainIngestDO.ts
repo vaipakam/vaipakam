@@ -404,7 +404,9 @@ export function invalidationKeysFromResult(
   // inserts with no backing log; their count is the only signal a
   // reminder minted this tick.
   if ((result.calendarNotifications ?? 0) > 0) keys.push('notification.created');
-  if (result.activityEvents > 0) keys.push('activity.appended');
+  // #2195 — a repair also adds an entry to the Activity feed (the ending it
+  // observed, `repairObservations.ts`), which no scanned log announces.
+  if (result.activityEvents > 0 || (result.reconciledLoans ?? 0) > 0) keys.push('activity.appended');
   return keys;
 }
 
