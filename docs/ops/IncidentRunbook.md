@@ -479,8 +479,8 @@ running.
 > **Tier 1 also changes nothing today, for a reason in the code.** The
 > keeper does not carry `DISCOUNT_PATH_ENABLED_<chainId>` from its settings
 > into the pass (`resolveEnv` in `apps/keeper/src/env.ts` copies a fixed list
-> of names, and this is not one), so the flash-loan branch is already off on
-> every chain whatever the env file says. See the known gap in
+> of names, and this is not one; tracked in #2633), so the flash-loan branch
+> is already off on every chain whatever the env file says. See the known gap in
 > [`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md) Step 5.
 > Doing Tier 1 is harmless and leaves the posture correct for when that is
 > fixed, but it is not the *response*.

@@ -252,7 +252,7 @@ reads the env file only when it starts, and the restart waits for
 the tick in flight to finish ([`KeeperMachine.md`](KeeperMachine.md)
 §6). Never paste a value from that file anywhere.
 
-> **⚠ Known gap (#2570): the keeper does not read this setting
+> **⚠ Known gap (#2633): the keeper does not read this setting
 > today.** The pass looks the flag up on the keeper's resolved
 > settings, and `resolveEnv` in `apps/keeper/src/env.ts` copies a
 > fixed list of names into those settings. `DISCOUNT_PATH_ENABLED_<chainId>`

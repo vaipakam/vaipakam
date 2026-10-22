@@ -26,5 +26,5 @@ One gap in the code is now stated in the runbooks rather than hidden: the
 keeper's per-chain flag that turns on the flash-loan liquidation branch is not
 passed through to the pass that reads it, so that branch cannot fire on either
 host whatever the flag says. This fails safe, but it means the flag-based
-snap-off is currently a no-op. The fix belongs in the keeper code and is left
-for a follow-up. Closes #2570.
+snap-off is currently a no-op. The fix belongs in the keeper code and is
+tracked in #2633. Closes #2570.
