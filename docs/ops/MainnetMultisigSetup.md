@@ -99,7 +99,9 @@ Holds `PAUSER_ROLE` directly on the Diamond (and is the guardian of
 every `GuardianPausable` cross-chain contract), bypassing the Timelock
 because pausing during an incident cannot wait 48h. It is also the
 Timelock's **independent canceller** (#938): it can cancel any queued
-operation, but it cannot propose one. It cannot unpause (that is
+operation, but it cannot propose one, and it cannot cancel a single-call
+operation that removes a canceller (only a proposer can), so a compromised
+Pauser Safe cannot block its own removal. It cannot unpause (that is
 `UNPAUSER_ROLE`, on the Timelock), so a compromised Pauser Safe cannot
 re-enable a contract the incident team froze.
 

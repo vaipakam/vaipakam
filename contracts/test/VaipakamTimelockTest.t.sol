@@ -209,4 +209,76 @@ contract VaipakamTimelockTest is Test {
         vm.expectRevert(VaipakamTimelock.ZeroCanceller.selector);
         new VaipakamTimelock(DELAY, proposers, executors, cancellers);
     }
+
+    // ─── Canceller removal is not vetoable by a canceller ────────────────
+
+    function _scheduleCancellerRemoval(address who, bytes32 salt) internal returns (bytes memory data, bytes32 id) {
+        data = abi.encodeCall(timelock.revokeRole, (timelock.CANCELLER_ROLE(), who));
+        vm.prank(proposer);
+        timelock.schedule(address(timelock), 0, data, bytes32(0), salt, DELAY);
+        id = timelock.hashOperation(address(timelock), 0, data, bytes32(0), salt);
+    }
+
+    /// A captured independent canceller cannot cancel its own removal, so it
+    /// cannot freeze the timelock; once the removal runs, it has no veto left.
+    function testCancellerCannotCancelItsOwnRemoval() public {
+        (bytes memory data, bytes32 id) = _scheduleCancellerRemoval(canceller, bytes32(uint256(41)));
+        assertTrue(timelock.isCancellerRemoval(id));
+
+        vm.prank(canceller);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamTimelock.CancellerRemovalNotCancellable.selector, id));
+        timelock.cancel(id);
+
+        vm.warp(block.timestamp + DELAY + 1);
+        vm.prank(executor);
+        timelock.execute(address(timelock), 0, data, bytes32(0), bytes32(uint256(41)));
+        assertFalse(timelock.hasRole(timelock.CANCELLER_ROLE(), canceller));
+        assertFalse(timelock.isCancellerRemoval(id));
+        assertEq(timelock.getPendingProposalsCount(), 0);
+    }
+
+    /// A proposer can still cancel a canceller removal it queued by mistake.
+    function testProposerCanCancelCancellerRemoval() public {
+        (, bytes32 id) = _scheduleCancellerRemoval(canceller, bytes32(uint256(42)));
+        _cancel(id);
+        assertFalse(timelock.isOperation(id));
+        assertFalse(timelock.isCancellerRemoval(id));
+        assertEq(timelock.getPendingProposalsCount(), 0);
+    }
+
+    /// Every other operation stays vetoable by the canceller, including a
+    /// revoke of a different role and a batch that removes a canceller.
+    function testOtherOperationsStayCancellable() public {
+        bytes memory other = abi.encodeCall(timelock.revokeRole, (timelock.PROPOSER_ROLE(), proposer));
+        vm.prank(proposer);
+        timelock.schedule(address(timelock), 0, other, bytes32(0), bytes32(uint256(43)), DELAY);
+        bytes32 otherId = timelock.hashOperation(address(timelock), 0, other, bytes32(0), bytes32(uint256(43)));
+        assertFalse(timelock.isCancellerRemoval(otherId));
+        vm.prank(canceller);
+        timelock.cancel(otherId);
+
+        address[] memory targets = new address[](1);
+        targets[0] = address(timelock);
+        uint256[] memory values = new uint256[](1);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodeCall(timelock.revokeRole, (timelock.CANCELLER_ROLE(), canceller));
+        vm.prank(proposer);
+        timelock.scheduleBatch(targets, values, payloads, bytes32(0), bytes32(uint256(44)), DELAY);
+        bytes32 batchId = timelock.hashOperationBatch(targets, values, payloads, bytes32(0), bytes32(uint256(44)));
+        assertFalse(timelock.isCancellerRemoval(batchId));
+        vm.prank(canceller);
+        timelock.cancel(batchId);
+        assertEq(timelock.getPendingProposalsCount(), 0);
+    }
+
+    /// Calling revokeRole on some other contract is not a canceller removal.
+    function testRevokeOnOtherTargetIsNotMarked() public {
+        bytes memory data = abi.encodeCall(timelock.revokeRole, (timelock.CANCELLER_ROLE(), canceller));
+        vm.prank(proposer);
+        timelock.schedule(target, 0, data, bytes32(0), bytes32(uint256(45)), DELAY);
+        bytes32 id = timelock.hashOperation(target, 0, data, bytes32(0), bytes32(uint256(45)));
+        assertFalse(timelock.isCancellerRemoval(id));
+        vm.prank(canceller);
+        timelock.cancel(id);
+    }
 }

@@ -432,6 +432,25 @@
   },
   {
     "type": "function",
+    "name": "isCancellerRemoval",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isOperation",
     "inputs": [
       {
@@ -990,6 +1009,17 @@
       },
       {
         "name": "neededRole",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CancellerRemovalNotCancellable",
+    "inputs": [
+      {
+        "name": "id",
         "type": "bytes32",
         "internalType": "bytes32"
       }

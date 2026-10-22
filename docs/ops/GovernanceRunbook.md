@@ -557,15 +557,30 @@ changes.
 5. Governance Safe schedules `timelock.schedule(target=diamond, ...,
    data=revokeRole(PAUSER_ROLE, oldGuardian))` and
    `timelock.schedule(target=timelock, ..., data=revokeRole(CANCELLER_ROLE,
-   oldGuardian))`. Wait 48h. Execute.
+   oldGuardian))`. Wait 48h. Execute. Queue the `CANCELLER_ROLE` revoke as
+   its own single-call `schedule`, never inside a `scheduleBatch`: only the
+   single-call form is protected from being cancelled by the canceller it
+   removes.
 
 Order matters — install the new Guardian before revoking the old, so
 the pause surface and the veto are never unmanned. If the old Guardian is
 compromised, strip its `PAUSER_ROLE` at once with `emergencyRevokeRole`
 from the Governance Safe instead of waiting for step 5; its Timelock
-`CANCELLER_ROLE` can only be removed through the Timelock, and the worst it
-can do in the meantime is cancel queued operations, which can be queued
-again.
+`CANCELLER_ROLE` can only be removed through the Timelock. Queue
+`revokeRole(CANCELLER_ROLE, oldGuardian)` as a single-call `schedule` at once:
+the Timelock refuses to let anyone but a proposer cancel that operation, so the
+compromised canceller cannot block its own removal. In the meantime the worst
+it can do is cancel other queued operations, which are queued again once the
+removal has run.
+
+The same rule cuts the other way, and it is a deliberate trade. If the
+Governance Safe (the proposer) is the one compromised, the canceller cannot
+veto a queued removal of itself. The attacker still has to wait one full
+public delay for that removal before its own operation can even be queued,
+and the canceller can veto anything queued while it still holds the role, so a
+captured proposer needs two delays (96h at the 48h floor) in plain view. Treat
+any queued `revokeRole(CANCELLER_ROLE, …)` the incident team did not plan as an
+incident.
 
 ### Bumping the Terms of Service
 

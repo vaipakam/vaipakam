@@ -23,7 +23,12 @@ ownership while leaving the role root behind.
 The Timelock itself is hardened (#938). Its delay can never be lowered below
 the value it was deployed with, so one queued operation can no longer turn it
 into a pass-through. An independent canceller (the Pauser Safe) can veto a
-queued operation, and is mandatory on mainnet. The Timelock always administers
+queued operation, and is mandatory on mainnet. It cannot, however, cancel an
+operation that removes a canceller: only a proposer can. Without that rule a
+captured canceller could cancel everything, including its own removal, and
+freeze governance for good. The price is that a captured proposer can remove
+the canceller, though only after one public delay, with a second delay before
+anything else it queues can run. The Timelock always administers
 itself. The vault-implementation upgrade event now carries the new code's hash
 so reviewers can check a queued upgrade against audited bytecode. The audit
 intake and the governance docs now say plainly that governance can move vault

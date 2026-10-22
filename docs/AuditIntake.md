@@ -95,7 +95,11 @@ technical specification.
   event carries the new code hash so it can be checked against audited
   bytecode during that window. The Timelock's delay cannot be lowered below
   its deploy-time value, and an independent canceller (the Pauser Safe) can
-  veto a queued operation.
+  veto a queued operation — except a single-call operation removing a
+  canceller, which only a proposer can cancel, so a captured canceller
+  cannot freeze the Timelock by vetoing its own removal. Trade-off: a
+  captured proposer can remove the canceller, but only after one public
+  delay, and its next operation waits a second delay.
 - **No single signer has a zero-delay path.** Before D1 the governance Safe
   held `DEFAULT_ADMIN_ROLE` directly and could re-grant a Timelock-held role
   to a hot key, or `transferAdmin` the whole Diamond, in one transaction
