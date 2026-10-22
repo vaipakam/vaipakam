@@ -3,7 +3,7 @@
  * surfaces answers a chain this Worker does not index with a 503
  * `chain-not-configured`, never an empty 200.
  *
- * Two halves. The behavioural half calls each route for a chain no RPC is
+ * `/config/:chainId` is covered too. Two halves. The behavioural half calls each route for a chain no RPC is
  * bound for. The structural half is what keeps the rule from being missed
  * again: every exported handler on those surfaces that reads a chain id must
  * ask `chainNotServed`, so a new route fails here until it does.
@@ -14,6 +14,7 @@ import type { Env } from '../src/env';
 import * as loanRoutes from '../src/loanRoutes';
 import * as offerRoutes from '../src/offerRoutes';
 import { handleSignedOffersGet } from '../src/signedOfferRoutes';
+import { handleConfigSnapshot } from '../src/configSnapshot';
 import { chainNotServed, chainServed, requestedChainId } from '../src/servedChain';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
@@ -68,6 +69,7 @@ describe('an unserved chain is refused on every chain-keyed route (#1140)', () =
     ['/offers/by-current-holder', () => offerRoutes.handleOffersByCurrentHolder(new Request(`https://x/o?${q}`), env(), ADDR)],
     ['/offers/recent', () => offerRoutes.handleOffersRecent(new Request(`https://x/offers/recent?${q}`), env())],
     ['/signed-offers', () => handleSignedOffersGet(new Request(`https://x/signed-offers?${q}`), env())],
+    ['/config/:chainId', () => handleConfigSnapshot(SERVED, env())],
   ];
   for (const [name, call] of cases) {
     it(name, async () => {

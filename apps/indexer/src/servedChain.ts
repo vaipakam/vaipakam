@@ -22,10 +22,10 @@
  * (`servedChain.test.ts`) now requires every handler on those surfaces that
  * reads a chain id to ask `chainNotServed`, so a new route cannot miss it.
  *
+ * `/config/:chainId` follows the same rule (its last row for a chain no
+ * longer indexed would otherwise be served as a live snapshot).
+ *
  * Routes outside that rule, and why:
- *  - `/config/:chainId` answers `{ available: false }` for a chain it holds
- *    no snapshot for. That body already states the unavailability rather
- *    than implying an empty value.
  *  - `/metrics/recycling` is dispatched BEFORE `resolveEnv` (it must not
  *    read the Secrets Store), so served-ness cannot be computed there.
  *  - `/metrics/loop-closure` belongs to the reward surface; its owners

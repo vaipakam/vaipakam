@@ -8,6 +8,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { PublicClient } from 'viem';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   abiOutputNames,
   handleConfigSnapshot,
@@ -34,11 +35,23 @@ const MIGRATION_0067 = readFileSync(
 
 /** Env + client stubs for the refresh path: real SQLite behind the D1
  *  shape (the upsert/stale-mark guards ARE SQL), canned reads. */
-function refreshHarness(opts?: { graceRead?: () => Promise<unknown> }) {
+/** The ConfigFacet address this build's deployment artifact records for
+ *  the test chain: what the loupe answers when the chain runs this build's
+ *  code (#2073, Codex #2653 r1). */
+const BUILD_CONFIG_FACET = getDeployment(84532)!.facets.configFacet!;
+
+function refreshHarness(opts?: {
+  graceRead?: () => Promise<unknown>;
+  /** What the loupe reports as the getters' host; defaults to this build's. */
+  loupeHost?: () => Promise<string>;
+}) {
   const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067]);
   const reads: string[] = [];
   const client = {
     readContract: async (args: { functionName: string }) => {
+      if (args.functionName === 'facetAddress') {
+        return opts?.loupeHost ? opts.loupeHost() : BUILD_CONFIG_FACET;
+      }
       reads.push(args.functionName);
       if (args.functionName === 'getMasterFlags') return [true, true, false] as const;
       // #1213 PR 2 — the grace-bucket read rides the same refresh; the
@@ -62,6 +75,8 @@ function refreshHarness(opts?: { graceRead?: () => Promise<unknown> }) {
 }
 
 const DIAMOND = '0x0000000000000000000000000000000000000d1a' as const;
+/** An RPC binding, so the route treats the test chain as served (#1140). */
+const SERVED_RPC = 'http://127.0.0.1:9';
 
 describe('configSnapshot', () => {
   it('matches every governance setter shape (representatives)', () => {
@@ -221,6 +236,33 @@ describe('configSnapshot', () => {
     expect(JSON.parse(names.b!)).toEqual(abiOutputNames('getProtocolConfigBundle'));
     expect(JSON.parse(names.f!)).toEqual(abiOutputNames('getMasterFlags'));
   });
+
+  // #2073 (Codex #2653 r1) — names are stored only when the loupe shows
+  // this build's ABI is the code that answered at the capture block.
+  for (const [label, loupeHost] of [
+    ['another facet hosts the getters (an in-place refresh this build predates)',
+      async () => '0x00000000000000000000000000000000000000ff'],
+    ['the loupe read fails', async () => { throw new Error('rpc down'); }],
+  ] as const) {
+    it(`withholds the names when ${label}`, async () => {
+      const h = refreshHarness({ loupeHost });
+      await maybeRefreshProtocolConfig({
+        env: h.env,
+        chainId: 84532,
+        client: h.client,
+        diamond: DIAMOND,
+        scannedEventNames: [],
+        blockNumber: 100n,
+        headBlock: 110n,
+      });
+      // The figures are still captured; only their names are withheld.
+      expect(JSON.parse(h.row()!.bj)).toEqual(['100', ['1', '2', '3', '4']]);
+      const names = h.db
+        .prepare('SELECT bundle_names_json AS b, master_flags_names_json AS f FROM protocol_config WHERE chain_id = 84532')
+        .get() as { b: string | null; f: string | null };
+      expect(names).toEqual({ b: null, f: null });
+    });
+  }
 
   it("treats the Diamond's FunctionDoesNotExist revert as a definitive empty bucket set (Codex #1298 r4)", async () => {
     // A pre-getter diamond's fallback reverts `FunctionDoesNotExist()`
@@ -410,7 +452,7 @@ describe('configSnapshot', () => {
         names.bundle === null ? null : JSON.stringify(names.bundle),
         names.flags === null ? null : JSON.stringify(names.flags),
       );
-      return { env: { DB: d1 } as unknown as Env };
+      return { env: { DB: d1, RPC_BASE_SEPOLIA: SERVED_RPC } as unknown as Env };
     }
 
     /** The real bundle arity, so the ABI names line up. */
@@ -464,7 +506,7 @@ describe('configSnapshot', () => {
          VALUES (?, ?, ?, ?, ?, ?)`,
       ).run(84532, serializeTuple(FULL_BUNDLE), JSON.stringify([true, true, false]), 1, 0, JSON.stringify(BUNDLE_NAMES));
       const body = (await (
-        await handleConfigSnapshot(84532, { DB: d1 } as unknown as Env)
+        await handleConfigSnapshot(84532, { DB: d1, RPC_BASE_SEPOLIA: SERVED_RPC } as unknown as Env)
       ).json()) as { stale?: boolean; values?: Record<string, unknown> };
       expect(body.stale).toBe(true);
       // Still served — a consumer may want the last-known figures — but
@@ -517,13 +559,24 @@ describe('configSnapshot', () => {
       expect(body).not.toHaveProperty('flags');
     });
 
+    it('refuses a chain this Worker no longer indexes, even with a stored row (Codex #2653 r1)', async () => {
+      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067]);
+      db.prepare(
+        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(84532, serializeTuple(FULL_BUNDLE), JSON.stringify([true, true, false]), 1, 2);
+      const res = await handleConfigSnapshot(84532, { DB: d1 } as unknown as Env);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: 'chain-not-configured' });
+    });
+
     it('still answers on a database migration 0067 has not reached, with no labels', async () => {
       const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039]);
       db.prepare(
         `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
          VALUES (?, ?, ?, ?, ?)`,
       ).run(84532, serializeTuple(FULL_BUNDLE), JSON.stringify([true, true, false]), 1, 2);
-      const res = await handleConfigSnapshot(84532, { DB: d1 } as unknown as Env);
+      const res = await handleConfigSnapshot(84532, { DB: d1, RPC_BASE_SEPOLIA: SERVED_RPC } as unknown as Env);
       expect(res.status).toBe(200);
       const body = (await res.json()) as Record<string, unknown>;
       expect(body.available).toBe(true);

@@ -19,10 +19,12 @@
  *     a future setter missing from the allowlist) still converges.
  */
 
-import type { Address, PublicClient } from 'viem';
+import { type Address, type PublicClient, getAbiItem, toFunctionSelector } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import type { Env } from './env';
 import { jsonResponse } from './offerRoutes';
+import { chainNotServed } from './servedChain';
 
 /** Explicit allowlist of GLOBAL governance config events (Codex #1231
  *  r1: a suffix rule also matched per-loan lifecycle names like
@@ -201,6 +203,53 @@ export function abiOutputNames(functionName: string): readonly string[] | null {
   return names.every((n) => n.length > 0) ? names : null;
 }
 
+/** The facet this build's deployment artifact records as the host of each
+ *  labelled getter. Both live on ConfigFacet. */
+const LABELLED_GETTER_HOST = {
+  getProtocolConfigBundle: 'configFacet',
+  getMasterFlags: 'configFacet',
+} as const;
+
+/**
+ * #2073 (Codex #2653 r1) — whether this build's ABI describes the code that
+ * answered `functionName` at `blockNumber`.
+ *
+ * The names this build decodes with are only true of the implementation the
+ * build was compiled against. During an in-place facet refresh the old
+ * Worker keeps running while the Diamond already routes the getter to new
+ * code, so a reorder at the same arity would be stored under the old names.
+ * The evidence used: the Diamond loupe's `facetAddress(selector)` AT THE
+ * CAPTURE BLOCK equals the host address in this build's deployment artifact.
+ * The artifact and the ABI ship together in `@vaipakam/contracts`, and a
+ * facet address cannot change code, so a match ties the decode to the code
+ * that ran. Anything else (no artifact entry, a different host, a failed
+ * loupe read) is "cannot establish", and the caller withholds the names.
+ */
+export async function abiDescribesChainGetter(opts: {
+  client: PublicClient;
+  diamond: Address;
+  chainId: number;
+  functionName: keyof typeof LABELLED_GETTER_HOST;
+  blockNumber: bigint;
+}): Promise<boolean> {
+  const expected = getDeployment(opts.chainId)?.facets?.[LABELLED_GETTER_HOST[opts.functionName]];
+  if (!expected) return false;
+  try {
+    const item = getAbiItem({ abi: DIAMOND_ABI_VIEM, name: opts.functionName });
+    if (!item || item.type !== 'function') return false;
+    const host = (await opts.client.readContract({
+      address: opts.diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'facetAddress',
+      args: [toFunctionSelector(item)],
+      blockNumber: opts.blockNumber,
+    })) as string;
+    return host.toLowerCase() === expected.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 /** The output names captured beside a tuple (#2073), or null when none were
  *  recorded or the column does not hold a list of non-empty names. */
 function storedNames(json: string | null | undefined): readonly string[] | null {
@@ -304,7 +353,13 @@ export async function maybeRefreshProtocolConfig(opts: {
       return;
     }
 
-    const [bundle, flags, graceBuckets] = await Promise.all([
+    const readAt = {
+      client: opts.client,
+      diamond: opts.diamond,
+      chainId: opts.chainId,
+      blockNumber: opts.blockNumber,
+    };
+    const [bundle, flags, graceBuckets, bundleAbiBound, flagsAbiBound] = await Promise.all([
       opts.client.readContract({
         address: opts.diamond,
         abi: DIAMOND_ABI_VIEM,
@@ -366,6 +421,10 @@ export async function maybeRefreshProtocolConfig(opts: {
         );
         return null;
       }),
+      // #2073 (Codex #2653 r1) — is this build's ABI the one the chain ran
+      // at this block? Never throws; false withholds the names below.
+      abiDescribesChainGetter({ ...readAt, functionName: 'getProtocolConfigBundle' }),
+      abiDescribesChainGetter({ ...readAt, functionName: 'getMasterFlags' }),
     ]);
 
     // A transient grace-read failure normally PRESERVES the existing
@@ -379,9 +438,11 @@ export async function maybeRefreshProtocolConfig(opts: {
     // #2073 — the output names THIS build decoded the tuples with, written
     // in the same statement as the tuples, so the route labels each value
     // with the name it was decoded under rather than with whatever the
-    // serving build compiled. NULL when this build's ABI names none.
-    const bundleNames = abiOutputNames('getProtocolConfigBundle');
-    const flagNames = abiOutputNames('getMasterFlags');
+    // serving build compiled. Stored only when the loupe shows this build's
+    // ABI is the code that answered at this block (Codex #2653 r1); NULL
+    // when that cannot be established or this build's ABI names none.
+    const bundleNames = bundleAbiBound ? abiOutputNames('getProtocolConfigBundle') : null;
+    const flagNames = flagsAbiBound ? abiOutputNames('getMasterFlags') : null;
     await opts.env.DB.prepare(
       `INSERT INTO protocol_config
          (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at,
@@ -449,6 +510,10 @@ export async function handleConfigSnapshot(
   chainId: number,
   env: Env,
 ): Promise<Response> {
+  // #1140 (Codex #2653 r1) — a chain this Worker no longer indexes keeps
+  // its last row, which would otherwise be served as a live snapshot.
+  const notServed = chainNotServed(env, chainId);
+  if (notServed) return notServed;
   try {
     type Row = {
       bundle_json: string;
