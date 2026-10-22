@@ -205,6 +205,23 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         internal
         returns (bytes32 h)
     {
+        return this.landForTest(amount, dayIds, remitId, id, fresh, recycled);
+    }
+
+    /// @dev {_land}'s body, behind an external self-call so viaIR cannot
+    ///      inline the delivery (and the copy of its list and leaves into
+    ///      storage) into the cells that land many epochs in a loop: inlined,
+    ///      one such cell sat one slot past the stack budget. The test
+    ///      contract stays the ingress's caller, as the registered receiver.
+    function landForTest(
+        uint256 amount,
+        uint256[] memory dayIds,
+        uint256 remitId,
+        bytes32 id,
+        uint256 fresh,
+        uint256 recycled
+    ) external returns (bytes32 h) {
+        require(msg.sender == address(this), "self only");
         bytes32[] memory leaves;
         (h, leaves) = LibD6Delivery.deliver(address(diamond), _delivery(amount, dayIds, remitId, id, fresh, recycled));
         _remember(h, remitId, dayIds, leaves);
@@ -249,28 +266,29 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
 
     /// @dev Index every chunk of a landed delivery.
     function _index(bytes32 h) internal returns (uint32 indexedDays) {
-        uint256[] memory dayIds = _daysOf[h];
-        bytes32[] memory leaves = _leavesOf[h];
-        for (uint256 c; c < leaves.length; ++c) {
-            indexedDays = LibD6Delivery.indexChunk(address(diamond), h, dayIds, leaves, c);
-        }
+        uint256 n = _leavesOf[h].length;
+        for (uint256 c; c < n; ++c) indexedDays = this.indexForTest(h, c, new bytes32[](0));
     }
 
     /// @dev Index chunk `c` of a landed delivery.
     function _indexChunk(bytes32 h, uint256 c) internal returns (uint32) {
-        uint256[] memory dayIds = _daysOf[h];
-        bytes32[] memory leaves = _leavesOf[h];
-        return LibD6Delivery.indexChunk(address(diamond), h, dayIds, leaves, c);
+        return this.indexForTest(h, c, new bytes32[](0));
     }
 
-    /// @dev Index chunk `c` with predecessor hints. The stored list and
-    ///      leaves are read into memory, and the chunk and its proof built,
-    ///      before the call: copying storage arrays inside the call's argument
-    ///      list put the frame one slot past the viaIR stack budget.
+    /// @dev Index chunk `c` with predecessor hints.
     function _indexHinted(bytes32 h, uint256 c, bytes32[] memory hints) internal returns (uint32) {
-        bytes32[] memory leaves = _leavesOf[h];
+        return this.indexForTest(h, c, hints);
+    }
+
+    /// @dev Materialize chunk `c` of a landed delivery from its stored list
+    ///      and leaves. Behind an external self-call for the reason
+    ///      {landForTest} is: the chunk, its proof and the call's arrays stay
+    ///      out of the calling cell's frame. A refusal reverts this call, so a
+    ///      cell's `expectRevert` still sees it as the next call.
+    function indexForTest(bytes32 h, uint256 c, bytes32[] memory hints) external returns (uint32) {
+        require(msg.sender == address(this), "self only");
         uint256[] memory chunk = MerkleFixture.chunk(_daysOf[h], c, RemitWire.D6_CHUNK_DAYS);
-        bytes32[] memory proof = MerkleFixture.proof(leaves, c);
+        bytes32[] memory proof = MerkleFixture.proof(_leavesOf[h], c);
         return _epoch().materializeTransportBatchChunk(h, c, chunk, proof, hints, new bytes32[](0));
     }
 
