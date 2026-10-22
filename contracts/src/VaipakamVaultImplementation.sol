@@ -62,6 +62,21 @@ contract VaipakamVaultImplementation is
     }
     mapping(address => mapping(uint256 => RentalEntry[])) private _rentalEntries;
 
+    /// @notice #902 — the most ACTIVE ERC-1155 rentals one (nftContract,
+    ///         tokenId) may carry in this vault at once.
+    /// @dev    Every write to a token's rental list, the closes included,
+    ///         walks the whole list, and the Diamond reads it twice more for
+    ///         {VaultRentalUpdated}'s aggregate. Without a bound, enough
+    ///         concurrent rentals of one token would make a repayment, default
+    ///         or handover of any of them cost more than a block allows, and
+    ///         that rental could then never close. The bound is enforced where
+    ///         a row is added (the accept), so a close always stays within it.
+    ///         Expired rows are pruned before the count, so only rentals that
+    ///         still confer rights take a place. A constant, not a knob:
+    ///         raising it is a code change measured against the close path's
+    ///         gas, never a setting.
+    uint256 public constant MAX_CONCURRENT_RENTALS_1155 = 64;
+
     /// @dev T-086 step 7 — Seaport prepay-collateral-listing support,
     ///      and since #1566 S3e the 1inch swap-to-repay order this vault
     ///      makes (validator = the Diamond's `isOrderValid`).
@@ -100,6 +115,11 @@ contract VaipakamVaultImplementation is
     ///      when packed into a {RentalEntry}. Replaces
     ///      `"quantity overflow"`.
     error QuantityOverflow();
+    /// @dev #902 — a new ERC-1155 rental would take (nftContract, tokenId)
+    ///      past {MAX_CONCURRENT_RENTALS_1155} active rows in this vault.
+    ///      Raised only when a row is ADDED; updating or removing a rental's
+    ///      own row never reverts with it.
+    error TooManyConcurrentRentals(address nftContract, uint256 tokenId);
     /// @dev An NFT (ERC-721 / ERC-1155) was pushed into this vault via a
     ///      `safeTransferFrom` whose operator was neither the Diamond nor
     ///      this vault itself. Direct user-initiated transfers are
@@ -564,7 +584,10 @@ contract VaipakamVaultImplementation is
      *      `rentalId` (a no-op when there is none). Expired rows of OTHER
      *      rentals met on the way are pruned to bound storage growth: an
      *      expired rental confers no rights, and its own later close finds no
-     *      row to remove. IERC4907 forwarding is skipped: ERC-1155 has no
+     *      row to remove. Adding a row when the token already has
+     *      {MAX_CONCURRENT_RENTALS_1155} active rows reverts
+     *      {TooManyConcurrentRentals}; an update or a removal never does.
+     *      IERC4907 forwarding is skipped: ERC-1155 has no
      *      standard per-quantity user interface, so this vault is the
      *      integration surface for ERC-1155 rental reads.
      * @param nftContract The ERC-1155 contract.
@@ -631,6 +654,9 @@ contract VaipakamVaultImplementation is
         if (existingIdx != type(uint256).max) {
             list[existingIdx] = row;
         } else {
+            if (list.length >= MAX_CONCURRENT_RENTALS_1155) {
+                revert TooManyConcurrentRentals(nftContract, tokenId);
+            }
             list.push(row);
         }
     }

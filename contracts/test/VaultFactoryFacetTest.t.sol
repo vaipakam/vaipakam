@@ -425,6 +425,67 @@ contract VaultFactoryFacetTest is Test {
         assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), 5);
     }
 
+    /// @dev The update event names the rental, so a subscriber can tell which
+    ///      of two concurrent rentals of one token a revoke (zero user, zero
+    ///      quantity) closed.
+    function test_902_rentalEventNamesTheLoan() public {
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        address nft = makeAddr("erc1155");
+        _seedRental(1, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 3);
+        _seedRental(2, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 5);
+        uint64 expB = uint64(block.timestamp + 20 days);
+        vm.startPrank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, user2, uint64(block.timestamp + 10 days));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(2, user2, expB);
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit VaultFactoryFacet.VaultRentalUpdated(user1, nft, 7, 1, address(0), 0, 0, 5, expB);
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, address(0), 0);
+        vm.stopPrank();
+    }
+
+    /// @dev A token's active rentals are bounded, so every close walks a
+    ///      bounded list. The bound refuses only an ADDED row: a close or an
+    ///      expiry refresh at the bound still goes through, a close frees a
+    ///      place, and so does a rental whose rights have expired.
+    function test_902_concurrentRentalsPerTokenAreBounded() public {
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        address nft = makeAddr("erc1155");
+        uint256 cap = VaipakamVaultImplementation(
+            VaultFactoryFacet(address(diamond)).getVaipakamVaultImplementationAddress()
+        ).MAX_CONCURRENT_RENTALS_1155();
+        uint64 exp = uint64(block.timestamp + 10 days);
+        for (uint256 id = 1; id <= cap + 1; ++id) {
+            _seedRental(id, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 1);
+        }
+        vm.startPrank(address(diamond));
+        for (uint256 id = 1; id <= cap; ++id) {
+            VaultFactoryFacet(address(diamond)).vaultSetRentalUser(id, user2, exp);
+        }
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), cap, "full");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamVaultImplementation.TooManyConcurrentRentals.selector, nft, uint256(7))
+        );
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(cap + 1, user2, exp);
+
+        // At the bound, an existing rental's update still goes through.
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, user2, exp + 1 days);
+        // A close frees a place for the next rental.
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(2, address(0), 0);
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(cap + 1, user2, exp);
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), cap, "full again");
+        vm.stopPrank();
+
+        // Expired rows take no place: once the others' rights end, a new rental fits.
+        vm.warp(exp + 1);
+        _seedRental(cap + 2, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 1);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(cap + 2, user2, uint64(block.timestamp + 1 days));
+        // Rental 1's refreshed expiry (exp + 1 day) is still active.
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), 2, "rental 1 + the new one");
+    }
+
     // ─── getOfferAmount / getVaipakamVaultImplementationAddress ───────────────
 
     function testGetOfferAmountReturnsZeroForNonExistent() public view {

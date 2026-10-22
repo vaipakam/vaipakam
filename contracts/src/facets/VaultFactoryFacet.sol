@@ -104,15 +104,20 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     ///         UpdateUser intent but is emitted from the Diamond (a single,
     ///         stable address integrators can subscribe to) and always fires —
     ///         including for NFTs that do not natively implement IERC4907.
-    ///         For ERC-1155 with concurrent renters, `quantity` is the delta
-    ///         applied for `user`, while `activeTotalQuantity` /
-    ///         `minActiveExpires` reflect the post-update aggregate across
-    ///         all active renters of the same (nftContract, tokenId).
+    ///         `loanId` (#902) names the one rental the update is for, which
+    ///         is how a subscriber tells concurrent ERC-1155 rentals of the
+    ///         same token apart, a revoke (zero `user` and `quantity`)
+    ///         included. `user`, `expires` and `quantity` are that rental's
+    ///         record after the update (its rented units, zero on a revoke),
+    ///         while `activeTotalQuantity` / `minActiveExpires` reflect the
+    ///         post-update aggregate across all active rentals of the same
+    ///         (nftContract, tokenId) in the lender's vault.
     /// @custom:event-category state-change/vault-mutation
     event VaultRentalUpdated(
         address indexed lender,
         address indexed nftContract,
         uint256 indexed tokenId,
+        uint256 loanId,
         address user,
         uint64 expires,
         uint256 quantity,
@@ -1376,8 +1381,10 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      *      closing one leaves the others' rights in place. `renter == 0`
      *      revokes this rental only. Reverts `NotRentalLoan` for an ERC-20
      *      loan, `NoVault` if the lender has no vault, or bubbles the vault's
-     *      revert (else `ProxyCallFailed("Set rental user failed")`). Emits
-     *      {VaultRentalUpdated} with the post-update aggregate.
+     *      revert (else `ProxyCallFailed("Set rental user failed")`), which
+     *      includes the vault's `TooManyConcurrentRentals` when a new ERC-1155
+     *      rental would pass its per-token bound. Emits {VaultRentalUpdated}
+     *      with `loanId` and the post-update aggregate.
      * @param loanId  The rental loan.
      * @param renter  The renter to record, or zero to revoke this rental.
      * @param expires When the renter's rights end (ignored on a revoke).
@@ -1437,6 +1444,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
             lender,
             nftContract,
             tokenId,
+            loanId,
             renter,
             expires,
             quantity,

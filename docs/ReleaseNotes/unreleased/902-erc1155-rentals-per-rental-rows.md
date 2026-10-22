@@ -18,6 +18,16 @@ This holds even when the same borrower rents the same token twice. ERC-721
 rentals are unchanged: a token can be rented once at a time and keeps its
 single record.
 
+The rental update the platform publishes for integrators now names the
+rental it changed, so a subscriber can tell concurrent rentals of one token
+apart, including when one of them is revoked. One lender's vault now carries
+at most 64 active rentals of one ERC-1155 token at once. Every change to a
+token's rentals reads all of that token's records, so without a limit enough
+concurrent rentals could make repaying or defaulting one of them cost more
+than a transaction allows, leaving it unable to close. A new rental beyond
+the limit is refused when it is accepted; rentals whose rights have expired
+do not count, and closing or extending an existing rental is never refused.
+
 Every step of a rental now sets the renter through one Diamond route that
 reads the loan for the vault, the token, the asset type and the quantity, so
 no caller can pass figures that disagree with the loan. The two earlier
