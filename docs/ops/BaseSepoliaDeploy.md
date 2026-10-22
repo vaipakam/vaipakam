@@ -576,7 +576,7 @@ cast send $BASE_SEPOLIA_DIAMOND_ADDRESS "closeDay()" \
 
 Only run after smoke tests (§11) pass. After this step, every admin setter — `OracleAdminFacet.*`, `AdminFacet.setTreasury`, `VaultAdminFacet.*`, role grants, `OwnershipFacet.transferOwnership` — must be scheduled through the `TimelockController` with a minimum 48h delay.
 
-Populate `.env`: `TIMELOCK_PROPOSER` (ops multi-sig address), `TIMELOCK_EXECUTOR=0x0000000000000000000000000000000000000000` (open execution after delay), `TIMELOCK_MIN_DELAY=172800` (48h).
+Populate `.env`: `TIMELOCK_PROPOSER` (governance multi-sig address), `PAUSER_ADDRESS` (the Pauser multi-sig; it becomes the Timelock's independent canceller), `EMERGENCY_REVOKER_ADDRESS` (the governance multi-sig), `TIMELOCK_EXECUTOR=0x0000000000000000000000000000000000000000` (open execution after delay), `TIMELOCK_MIN_DELAY=172800` (48h).
 
 **Deploy the timelock:**
 ```bash
@@ -584,12 +584,12 @@ forge script script/DeployTimelock.s.sol \
   --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --verify
 ```
 
-Record the logged address → `.env` as `BASE_SEPOLIA_TIMELOCK_ADDRESS`.
+The script records the address in `deployments/base-sepolia/addresses.json` under `.timelock`.
 
-**Hand over roles + ERC-173 ownership** (renounces EOA roles last; deployer keeps retry capability if any grant reverts):
+**Hand over roles + ERC-173 ownership** with `Handover.s.sol`, the one handover script (#936 retired `TransferAdminToTimelock.s.sol`). It renounces the admin EOA's roles last, so the admin keeps retry capability if any grant reverts. The sequence is in [GovernanceRunbook.md §2–4](GovernanceRunbook.md):
 ```bash
-CONFIRM_HANDOVER=YES \
-  forge script script/TransferAdminToTimelock.s.sol \
+CHAIN_SLUG=base-sepolia \
+  forge script script/Handover.s.sol \
     --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast
 ```
 
@@ -609,28 +609,7 @@ cast call $BASE_SEPOLIA_DIAMOND_ADDRESS "owner()(address)" \
   --rpc-url $BASE_SEPOLIA_RPC_URL  # → $BASE_SEPOLIA_TIMELOCK_ADDRESS
 ```
 
-`PAUSER_ROLE` and `KYC_ADMIN_ROLE` are **not** transferred to the timelock — both stay on the ops multi-sig for same-hour response (pause/unpause, per-asset reserve pause, KYC tier bumps). See `SECURITY.md` and `AdminKeysAndPause.md` for the full rationale. The handover script does *not* touch either role: grant them to the ops multi-sig *before* running the handover, then manually renounce from the deployer EOA afterward:
-```bash
-# Pre-handover: grant the two hot-key roles to the ops multi-sig.
-cast send $BASE_SEPOLIA_DIAMOND_ADDRESS \
-  "grantRole(bytes32,address)" \
-  $(cast keccak "PAUSER_ROLE") $OPS_MULTISIG \
-  --rpc-url $BASE_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY
-cast send $BASE_SEPOLIA_DIAMOND_ADDRESS \
-  "grantRole(bytes32,address)" \
-  $(cast keccak "KYC_ADMIN_ROLE") $OPS_MULTISIG \
-  --rpc-url $BASE_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY
-
-# Post-handover: renounce both from the deployer EOA.
-cast send $BASE_SEPOLIA_DIAMOND_ADDRESS \
-  "renounceRole(bytes32,address)" \
-  $(cast keccak "PAUSER_ROLE") $ADMIN_ADDRESS \
-  --rpc-url $BASE_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY
-cast send $BASE_SEPOLIA_DIAMOND_ADDRESS \
-  "renounceRole(bytes32,address)" \
-  $(cast keccak "KYC_ADMIN_ROLE") $ADMIN_ADDRESS \
-  --rpc-url $BASE_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY
-```
+`Handover.s.sol` gives `PAUSER_ROLE` straight to the Pauser multi-sig (no timelock, for same-hour response) and `EMERGENCY_REVOKER_ROLE` to the governance multi-sig. `KYC_ADMIN_ROLE` and `UNPAUSER_ROLE` go to the timelock with the other delayed roles. The script grants and renounces every one of these itself; no manual `grantRole` / `renounceRole` is needed before or after it. Read the timelock address back from `deployments/base-sepolia/addresses.json` (`.timelock`) for the checks above. See `SECURITY.md` and `AdminKeysAndPause.md` for the rationale.
 
 ### Post-handover: scheduling a config change
 
@@ -650,7 +629,7 @@ cast send $BASE_SEPOLIA_TIMELOCK_ADDRESS \
   $BASE_SEPOLIA_DIAMOND_ADDRESS 0 $DATA 0x00 0x00
 ```
 
-Emergency admin actions that **cannot wait 48h** — `AdminFacet.pause` / `unpause`, `AdminFacet.pauseAsset` / `unpauseAsset` (per-asset reserve pause / blacklist), and KYC tier bumps — stay on their respective hot-key roles (`PAUSER_ROLE`, `KYC_ADMIN_ROLE`) and bypass the timelock by design. `pauseAsset` / `unpauseAsset` accept either `ADMIN_ROLE` or `PAUSER_ROLE`, so once ADMIN sits behind the timelock the ops multi-sig remains the practical responder.
+Emergency actions that **cannot wait 48h** bypass the timelock by design: `AdminFacet.pause` and `pauseAsset` on `PAUSER_ROLE` (the Pauser multi-sig), and removing a role from a compromised hot key with `emergencyRevokeRole` on `EMERGENCY_REVOKER_ROLE` (the governance multi-sig). Unpausing is deliberately NOT one of them: `unpause` needs `UNPAUSER_ROLE`, which sits on the timelock. `pauseAsset` accepts `ADMIN_ROLE` or `PAUSER_ROLE`, so once ADMIN sits behind the timelock the Pauser multi-sig is the practical responder; `unpauseAsset` accepts `ADMIN_ROLE` or `UNPAUSER_ROLE`, both on the timelock.
 
 ---
 

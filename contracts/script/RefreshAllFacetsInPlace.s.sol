@@ -277,6 +277,39 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
     }
 
+    /// @notice #934 (Codex #2642 r8) - the target Diamond's role root is not
+    ///         where D1 requires it; see {_requireD1RootTopology}.
+    error RootAdminNotOnOwner(address diamond, address owner);
+    /// @notice #934 (Codex #2642 r8) - a governance Safe holds the role root
+    ///         directly, the pre-D1 bypass; see {_requireD1RootTopology}.
+    error RootAdminOnGovernanceSafe(address diamond, address safe);
+
+    /// @dev #934 (D1): this refresh installs facets whose guards keep the role
+    ///      root on the owner from now on (`CannotRemoveOwnerRootAdmin`,
+    ///      `NewOwnerNotRootAdmin`), but it migrates no role state. So it must
+    ///      only run on a Diamond that already has the D1 root topology: the
+    ///      owner holds `DEFAULT_ADMIN_ROLE`, and neither governance Safe the
+    ///      deploy env names (`EMERGENCY_REVOKER_ADDRESS`, `TIMELOCK_PROPOSER`)
+    ///      holds it directly. A Diamond that ran the retired pre-D1 handover
+    ///      fails one of these, because that handover moved ownership to the
+    ///      Timelock and the root to the Safe. Bringing such a chain to D1 is a
+    ///      fresh deploy, never an in-place refresh. Role members are not
+    ///      enumerable on-chain, so a root holder the env does not name is
+    ///      outside this check; the post-handover readback is what covers it.
+    ///      Called before any facet is deployed, so a refused run sends nothing.
+    function _requireD1RootTopology(address diamond, address owner_) internal view {
+        AccessControlFacet ac = AccessControlFacet(diamond);
+        bytes32 root = ac.DEFAULT_ADMIN_ROLE();
+        if (!ac.hasRole(root, owner_)) revert RootAdminNotOnOwner(diamond, owner_);
+        address[2] memory safes =
+            [vm.envOr("EMERGENCY_REVOKER_ADDRESS", address(0)), vm.envOr("TIMELOCK_PROPOSER", address(0))];
+        for (uint256 i; i < safes.length; ++i) {
+            if (safes[i] != address(0) && safes[i] != owner_ && ac.hasRole(root, safes[i])) {
+                revert RootAdminOnGovernanceSafe(diamond, safes[i]);
+            }
+        }
+    }
+
     function refresh() external {
         uint256 cid = block.chainid;
         require(
@@ -302,6 +335,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "RefreshAllFacetsInPlace: ADMIN_PRIVATE_KEY is not the diamond owner (handover / timelock?)"
         );
         _requireSlice3Diamond(diamond);
+        _requireD1RootTopology(diamond, currentOwner);
 
         console.log("=== Full-facet in-place refresh ===");
         console.log("Chain id:", cid);

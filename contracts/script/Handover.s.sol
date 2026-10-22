@@ -38,9 +38,18 @@ import {Deployments} from "./lib/Deployments.sol";
  *      the governance topology defined in the project's three-Safe
  *      model and renounces ADMIN's authority before exit:
  *
- *        1. DEFAULT_ADMIN_ROLE → DEFAULT_ADMIN_ADDRESS  (governance Safe,
- *           direct — rotates roles without Timelock delay during
- *           bringup, can re-architect roles later if needed)
+ *        1. DEFAULT_ADMIN_ROLE → Timelock  (owner decision D1,
+ *           2026-10-16, #934). Every grant, every rotation of the role
+ *           root and `transferAdmin` itself wait out the Timelock delay.
+ *           Before D1 this went to the governance Safe directly, which
+ *           let the Safe re-grant any Timelock-held role to a hot key —
+ *           or `transferAdmin` the whole Diamond — in one zero-delay
+ *           transaction, so the "48h review window" was not a boundary.
+ *        1b. EMERGENCY_REVOKER_ROLE → EMERGENCY_REVOKER_ADDRESS (the
+ *           governance Safe, direct). The ONE zero-delay lever the Safe
+ *           keeps: `emergencyRevokeRole`, which can only strip a role
+ *           from a hot key — never DEFAULT_ADMIN_ROLE, never anything the
+ *           Diamond owner (the Timelock) holds.
  *        2. ADMIN_ROLE / KYC / ORACLE / RISK / VAULT → Timelock
  *           (delayed-action surface; routine config edits time-locked)
  *        3. PAUSER_ROLE → PAUSER_ADDRESS  (Pauser Safe, direct —
@@ -88,8 +97,20 @@ import {Deployments} from "./lib/Deployments.sol";
  * @dev Env-var contract:
  *        ADMIN_PRIVATE_KEY        — signer for every broadcast here
  *        ADMIN_ADDRESS            — corresponding EOA, used for renounce
- *        DEFAULT_ADMIN_ADDRESS    — governance Safe address
- *        PAUSER_ADDRESS           — Pauser Safe address
+ *        EMERGENCY_REVOKER_ADDRESS — governance Safe address; receives
+ *                                   EMERGENCY_REVOKER_ROLE only. (Was
+ *                                   DEFAULT_ADMIN_ADDRESS before D1 — the
+ *                                   script refuses the old name so a
+ *                                   stale .env cannot pass silently.)
+ *                                   It must be the Timelock's proposer
+ *                                   (TIMELOCK_PROPOSER at DeployTimelock);
+ *                                   the script refuses a Timelock that
+ *                                   does not grant it PROPOSER_ROLE.
+ *        PAUSER_ADDRESS           — Pauser Safe address. The Timelock
+ *                                   must already grant it CANCELLER_ROLE
+ *                                   (`DeployTimelock` does, from the same
+ *                                   variable); the script refuses a
+ *                                   Timelock that does not.
  *        CCIP_TOKEN_ADMIN_REGISTRY — optional; the chain's CCIP
  *                                   `TokenAdminRegistry`. When set, the
  *                                   CCT admin for VPFI is rotated to the
@@ -118,6 +139,11 @@ contract Handover is Script {
     ///      for readability since LibAccessControl doesn't re-export
     ///      it (it's the OZ implementation default).
     bytes32 internal constant DEFAULT_ADMIN_ROLE = bytes32(0);
+    /// @dev OpenZeppelin `TimelockController.CANCELLER_ROLE`.
+    bytes32 internal constant CANCELLER_ROLE = keccak256("CANCELLER_ROLE");
+
+    /// @dev OpenZeppelin `TimelockController.PROPOSER_ROLE`.
+    bytes32 internal constant PROPOSER_ROLE = keccak256("PROPOSER_ROLE");
 
     /// @dev Roles that get rotated to the Timelock during handover.
     ///      Order matters for the renounce loop: ADMIN renounces them
@@ -131,6 +157,11 @@ contract Handover is Script {
     ///      restricts unpause to the Timelock so a compromised
     ///      Pauser key cannot un-do its own pause without the
     ///      review-window delay.
+    ///
+    ///      DEFAULT_ADMIN_ROLE is NOT in this list even though it also goes
+    ///      to the Timelock (D1): it is granted first and renounced last,
+    ///      outside the loops, so ADMIN can recover from any mid-flight
+    ///      slip until the very last call.
     function _timelockRoles() internal pure returns (bytes32[] memory r) {
         r = new bytes32[](6);
         r[0] = LibAccessControl.ADMIN_ROLE;
@@ -145,7 +176,15 @@ contract Handover is Script {
         // ── 1. Resolve addresses ────────────────────────────────────
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         address admin = vm.envAddress("ADMIN_ADDRESS");
-        address governanceSafe = vm.envAddress("DEFAULT_ADMIN_ADDRESS");
+        // D1 renamed the Safe's variable: it no longer receives
+        // DEFAULT_ADMIN_ROLE. Refuse the old name outright — a stale .env
+        // that still says DEFAULT_ADMIN_ADDRESS describes the retired
+        // topology, and reading it under the new meaning would hide that.
+        require(
+            vm.envOr("DEFAULT_ADMIN_ADDRESS", address(0)) == address(0),
+            "DEFAULT_ADMIN_ADDRESS is retired (D1): set EMERGENCY_REVOKER_ADDRESS to the governance Safe and unset DEFAULT_ADMIN_ADDRESS"
+        );
+        address governanceSafe = vm.envAddress("EMERGENCY_REVOKER_ADDRESS");
         address pauserSafe = vm.envAddress("PAUSER_ADDRESS");
 
         string memory addressesPath = _resolveAddressesPath();
@@ -211,11 +250,62 @@ contract Handover is Script {
         // Safe), the role split collapses and we lose the
         // pause-without-Timelock-delay property. Refuse in this case
         // so the misconfig surfaces here, not on incident day.
-        require(governanceSafe != address(0), "DEFAULT_ADMIN_ADDRESS unset");
+        require(governanceSafe != address(0), "EMERGENCY_REVOKER_ADDRESS unset");
         require(pauserSafe != address(0), "PAUSER_ADDRESS unset");
-        require(governanceSafe != admin, "DEFAULT_ADMIN_ADDRESS == ADMIN_ADDRESS (handover would no-op)");
+        require(governanceSafe != admin, "EMERGENCY_REVOKER_ADDRESS == ADMIN_ADDRESS (handover would no-op)");
         require(pauserSafe != admin, "PAUSER_ADDRESS == ADMIN_ADDRESS (pause role would no-op)");
-        require(governanceSafe != pauserSafe, "DEFAULT_ADMIN_ADDRESS == PAUSER_ADDRESS (collapses three-Safe model)");
+        require(governanceSafe != pauserSafe, "EMERGENCY_REVOKER_ADDRESS == PAUSER_ADDRESS (collapses three-Safe model)");
+        require(timelock != admin, "timelock == ADMIN_ADDRESS (handover would no-op)");
+        require(
+            timelock != governanceSafe && timelock != pauserSafe,
+            "timelock must be distinct from both Safes"
+        );
+        // Both Safes must be contracts on THIS chain, on every chain and
+        // whichever way the script is invoked (Codex #2642 r9). A role
+        // granted to an address with no Safe behind it is either held by
+        // an ordinary key (the topology this rehearsal exists to validate,
+        // silently replaced) or held by nobody, and the admin renounces
+        // right after. `deploy-*.sh --phase handover` checks the same with
+        // `cast code`; this is the check that cannot be skipped by running
+        // the script directly. The proposer is the governance Safe (bound
+        // by the PROPOSER_ROLE check below), so two checks cover all three
+        // Safe roles.
+        require(governanceSafe.code.length > 0, "EMERGENCY_REVOKER_ADDRESS has no code on this chain (not a Safe)");
+        require(pauserSafe.code.length > 0, "PAUSER_ADDRESS has no code on this chain (not a Safe)");
+        // The Timelock's independent veto (#938) must be the Pauser Safe
+        // this script hands PAUSER_ROLE to. `DeployTimelock` reads its
+        // canceller from the same PAUSER_ADDRESS, so a mismatch here means
+        // the Timelock was deployed under a different .env, and handing the
+        // Diamond to it would leave no veto anyone has verified (Codex #2642
+        // r1).
+        require(
+            ITimelockRoles(timelock).hasRole(CANCELLER_ROLE, pauserSafe),
+            "timelock does not grant CANCELLER_ROLE to PAUSER_ADDRESS - redeploy it with DeployTimelock"
+        );
+        // The Governance Safe is ONE Safe: it queues every delayed action
+        // (the Timelock's proposer) and holds the emergency revoker. If the
+        // Timelock was deployed with a different TIMELOCK_PROPOSER, the Safe
+        // named here could revoke but never queue a repair, while an
+        // unverified multisig controlled every delayed action (Codex #2642
+        // r3). Refuse before the admin gives anything up.
+        require(
+            ITimelockRoles(timelock).hasRole(PROPOSER_ROLE, governanceSafe),
+            "timelock does not grant PROPOSER_ROLE to EMERGENCY_REVOKER_ADDRESS - the Governance Safe must be TIMELOCK_PROPOSER"
+        );
+
+        // The Diamond is about to be handed to this Timelock irreversibly,
+        // so check its delay here rather than in the post-handover readback
+        // (Codex #2642 r4). On any production chain (every chain that is not
+        // a known testnet, r5) both the current delay and the permanent
+        // floor must be at least 48h; elsewhere the floor must at least be
+        // non-zero (a zero floor is a pass-through).
+        uint256 tlDelay = ITimelockRoles(timelock).getMinDelay();
+        uint256 tlFloor = ITimelockRoles(timelock).MIN_DELAY_FLOOR();
+        require(tlFloor > 0, "timelock has a zero MIN_DELAY_FLOOR - redeploy it with DeployTimelock");
+        if (Deployments.requiresProductionGovernance()) {
+            require(tlDelay >= 48 hours, "timelock delay < 48h on a production chain");
+            require(tlFloor >= 48 hours, "timelock MIN_DELAY_FLOOR < 48h on a production chain");
+        }
 
         console.log("Handover plan");
         console.log("  diamond:       ", diamond);
@@ -227,11 +317,16 @@ contract Handover is Script {
         // ── 3. Broadcast as ADMIN ──────────────────────────────────
         vm.startBroadcast(adminKey);
 
-        // 3a. Grant DEFAULT_ADMIN_ROLE to the governance Safe FIRST.
-        //     Until this lands, ADMIN is the sole DEFAULT_ADMIN
-        //     holder; if any later step reverts, ADMIN can recover.
-        IAccessControl(diamond).grantRole(DEFAULT_ADMIN_ROLE, governanceSafe);
-        console.log("Granted DEFAULT_ADMIN_ROLE to governance Safe");
+        // 3a. Grant DEFAULT_ADMIN_ROLE to the Timelock FIRST (D1, #934).
+        //     ADMIN keeps it too until the very last call, so if any
+        //     later step reverts ADMIN can recover.
+        IAccessControl(diamond).grantRole(DEFAULT_ADMIN_ROLE, timelock);
+        console.log("Granted DEFAULT_ADMIN_ROLE to Timelock");
+
+        // 3a'. The governance Safe's only Diamond authority: the
+        //      emergency revoker (D1).
+        IAccessControl(diamond).grantRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, governanceSafe);
+        console.log("Granted EMERGENCY_REVOKER_ROLE to governance Safe");
 
         // 3b. Grant the Timelock-bound roles.
         bytes32[] memory tlRoles = _timelockRoles();
@@ -247,6 +342,8 @@ contract Handover is Script {
         // 3d. Transfer ERC-173 Diamond ownership → Timelock. Future
         //     diamondCut (facet swaps) goes via the Timelock's
         //     queue+execute pattern, giving observers a delay window.
+        //     `transferOwnership` only accepts a DEFAULT_ADMIN_ROLE holder
+        //     (#906), which 3a made the Timelock.
         IOwnership(diamond).transferOwnership(timelock);
         console.log("Transferred ERC-173 Diamond ownership to Timelock");
 
@@ -256,8 +353,10 @@ contract Handover is Script {
         //     off-chain-bot roles get rotated to per-bot EOAs in a
         //     separate script after Phase-6 keeper-authorization
         //     wiring lands.
-        //     Order: PAUSER, then the five Timelock roles, then
-        //     DEFAULT_ADMIN_ROLE LAST.
+        //     ADMIN never held EMERGENCY_REVOKER_ROLE: it is not granted
+        //     at init, only in 3a' above (#934).
+        //     Order: PAUSER, then the six Timelock roles, then DEFAULT_ADMIN_ROLE LAST (allowed now that the
+        //     Timelock, not ADMIN, is the Diamond owner).
         IAccessControl(diamond).renounceRole(LibAccessControl.PAUSER_ROLE, admin);
         for (uint256 i = tlRoles.length; i > 0; i--) {
             IAccessControl(diamond).renounceRole(tlRoles[i - 1], admin);
@@ -462,6 +561,14 @@ contract Handover is Script {
 interface IAccessControl {
     function grantRole(bytes32 role, address account) external;
     function renounceRole(bytes32 role, address callerConfirmation) external;
+}
+
+/// @dev OpenZeppelin `TimelockController`'s role read, for the canceller
+///      check before handover.
+interface ITimelockRoles {
+    function getMinDelay() external view returns (uint256);
+    function MIN_DELAY_FLOOR() external view returns (uint256);
+    function hasRole(bytes32 role, address account) external view returns (bool);
 }
 
 interface IOwnership {

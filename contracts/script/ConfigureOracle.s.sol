@@ -258,7 +258,7 @@ contract ConfigureOracle is Script {
         // SCOPE: this script is the pre-handover bootstrap path. Per the
         // BaseSepoliaDeploy / DeploymentRunbook ordering, ConfigureOracle
         // runs in §2 (right after the Diamond is cut), well before §11.5
-        // (`TransferAdminToTimelock`) hands ERC-173 ownership to the
+        // (`Handover.s.sol`) hands ERC-173 ownership to the
         // governance timelock. After the timelock takes ownership, every
         // OracleAdminFacet setter must go through the timelock proposer
         // flow (encode the calldata, schedule with the documented delay,

@@ -6,6 +6,7 @@ import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
+import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {HelperTest} from "./HelperTest.sol";
 
@@ -59,11 +60,18 @@ contract DeployerZeroRolesTest is Test {
         accessControlFacet = new AccessControlFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(accessControlFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getAccessControlFacetSelectors()
+        });
+        // Ownership moves in the rotation (D1): the deployer cannot give
+        // up DEFAULT_ADMIN_ROLE while it is still the Diamond owner (#906).
+        cuts[1] = IDiamondCut.FacetCut({
+            facetAddress: address(new OwnershipFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOwnershipFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -88,6 +96,9 @@ contract DeployerZeroRolesTest is Test {
         allRoles.push(LibAccessControl.WATCHER_ROLE);
         allRoles.push(LibAccessControl.NOTIF_BILLER_ROLE);
         allRoles.push(LibAccessControl.KEEPER_ROLE);
+        // EMERGENCY_REVOKER_ROLE is deliberately absent: it is not in
+        // `grantableRoles()` and is never granted at init (#934). The
+        // post-rotation checks below assert it separately.
     }
 
     // ─── 1. Initial state (pre-rotation) ──────────────────────────────────
@@ -119,7 +130,10 @@ contract DeployerZeroRolesTest is Test {
     function _rotateRolesToProduction() internal {
         AccessControlFacet ac = AccessControlFacet(address(diamond));
 
-        ac.grantRole(LibAccessControl.DEFAULT_ADMIN_ROLE, governanceMultisig);
+        // D1 (#934): the role root goes to the Timelock; the governance
+        // Safe keeps only the revoke-only emergency lever.
+        ac.grantRole(LibAccessControl.DEFAULT_ADMIN_ROLE, adminTimelock);
+        ac.grantRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, governanceMultisig);
         ac.grantRole(LibAccessControl.ADMIN_ROLE, adminTimelock);
         ac.grantRole(LibAccessControl.PAUSER_ROLE, pauserMultisig);
         // UNPAUSER_ROLE -> adminTimelock (NOT pauserMultisig). The
@@ -134,6 +148,7 @@ contract DeployerZeroRolesTest is Test {
         ac.grantRole(LibAccessControl.WATCHER_ROLE, watcherBot);
         ac.grantRole(LibAccessControl.NOTIF_BILLER_ROLE, notifBillerBot);
         ac.grantRole(LibAccessControl.KEEPER_ROLE, keeperBot);
+        OwnershipFacet(address(diamond)).transferOwnership(adminTimelock);
 
         ac.renounceRole(LibAccessControl.KEEPER_ROLE, deployer);
         ac.renounceRole(LibAccessControl.NOTIF_BILLER_ROLE, deployer);
@@ -163,6 +178,26 @@ contract DeployerZeroRolesTest is Test {
                 "deployer must hold zero roles post-rotation"
             );
         }
+        assertFalse(
+            ac.hasRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, deployer),
+            "deployer must not hold the emergency revoker post-rotation"
+        );
+    }
+
+    /// @notice #934 (Codex #2642 r1) — the emergency revoker is a
+    ///         post-handover role only. Init must not put it on the
+    ///         deployer, or a handover path that did not know to rotate it
+    ///         would leave a hot key able to strip roles with no delay.
+    function testEmergencyRevokerNotGrantedAtInit() public view {
+        AccessControlFacet ac = AccessControlFacet(address(diamond));
+        assertFalse(ac.hasRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, deployer));
+        bytes32[] memory libraryRoles = LibAccessControl.grantableRoles();
+        for (uint256 i = 0; i < libraryRoles.length; i++) {
+            assertTrue(
+                libraryRoles[i] != LibAccessControl.EMERGENCY_REVOKER_ROLE,
+                "the revoker must not be in grantableRoles()"
+            );
+        }
     }
 
     /// @notice Each role lands at the intended principal. Prevents a
@@ -171,7 +206,9 @@ contract DeployerZeroRolesTest is Test {
         _rotateRolesToProduction();
 
         AccessControlFacet ac = AccessControlFacet(address(diamond));
-        assertTrue(ac.hasRole(LibAccessControl.DEFAULT_ADMIN_ROLE, governanceMultisig));
+        assertTrue(ac.hasRole(LibAccessControl.DEFAULT_ADMIN_ROLE, adminTimelock));
+        assertTrue(ac.hasRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, governanceMultisig));
+        assertEq(OwnershipFacet(address(diamond)).owner(), adminTimelock);
         assertTrue(ac.hasRole(LibAccessControl.ADMIN_ROLE, adminTimelock));
         assertTrue(ac.hasRole(LibAccessControl.PAUSER_ROLE, pauserMultisig));
         assertTrue(ac.hasRole(LibAccessControl.UNPAUSER_ROLE, adminTimelock));
@@ -236,14 +273,24 @@ contract DeployerZeroRolesTest is Test {
         assertFalse(ac.hasRole(LibAccessControl.VAULT_ADMIN_ROLE, pauserMultisig));
     }
 
-    /// @notice Timelock must NOT hold DEFAULT_ADMIN — only governance
-    ///         multisig does. Keeps "grant/revoke any role" behind the
-    ///         multisig rather than automatable via timelock.
-    function testTimelockDoesNotHoldDefaultAdmin() public {
+    /// @notice D1 (#934, owner decision 2026-10-16) — the role root sits
+    ///         on the Timelock and the governance Safe holds ONLY the
+    ///         revoke-only emergency role. This inverts the pre-D1 assertion
+    ///         ("timelock must NOT hold DEFAULT_ADMIN"), which pinned the
+    ///         topology that let the Safe bypass the Timelock in one
+    ///         transaction.
+    function testRootAdminOnTimelockSafeHoldsOnlyRevoker() public {
         _rotateRolesToProduction();
 
         AccessControlFacet ac = AccessControlFacet(address(diamond));
-        assertFalse(ac.hasRole(LibAccessControl.DEFAULT_ADMIN_ROLE, adminTimelock));
+        assertTrue(ac.hasRole(LibAccessControl.DEFAULT_ADMIN_ROLE, adminTimelock));
+        assertTrue(ac.hasRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, governanceMultisig));
+        for (uint256 i = 0; i < allRoles.length; i++) {
+            assertFalse(
+                ac.hasRole(allRoles[i], governanceMultisig),
+                "governance Safe must hold nothing but the emergency revoker"
+            );
+        }
     }
 
     // ─── 4. Post-rotation unreachability ──────────────────────────────────
@@ -291,5 +338,9 @@ contract DeployerZeroRolesTest is Test {
                 "no stray role grants to arbitrary addresses"
             );
         }
+        assertFalse(
+            ac.hasRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, rando),
+            "no stray emergency-revoker grant"
+        );
     }
 }

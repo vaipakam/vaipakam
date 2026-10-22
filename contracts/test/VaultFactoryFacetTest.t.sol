@@ -197,14 +197,16 @@ contract VaultFactoryFacetTest is Test {
         VaipakamVaultImplementation newImpl = new VaipakamVaultImplementation();
         address oldImpl = VaultFactoryFacet(address(diamond)).getVaipakamVaultImplementationAddress();
 
-        // Expect the enriched 3-arg event — newVersion is the bumped
-        // currentVaultVersion after the upgrade lands. `checkData=true`
-        // confirms the version value.
+        // Expect the enriched event — newVersion is the bumped
+        // currentVaultVersion after the upgrade lands, and the new
+        // implementation's codehash rides along (#897). `checkData=true`
+        // confirms both.
         vm.expectEmit(true, true, true, true);
         emit VaultFactoryFacet.VaultImplementationUpgraded(
             oldImpl,
             address(newImpl),
-            1 // first upgrade → version bumps from 0 → 1
+            1, // first upgrade → version bumps from 0 → 1
+            address(newImpl).codehash
         );
         VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(newImpl));
 

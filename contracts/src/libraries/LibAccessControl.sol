@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
+
 /**
  * @title LibAccessControl
  * @notice Diamond-safe role-based access control using ERC-7201 namespaced storage.
@@ -84,6 +86,23 @@ library LibAccessControl {
     ///      `NOTIF_BILLER_ROLE`: granted to the deployer at init, handed
     ///      to the operator's keeper EOA during the post-deploy handover.
     bytes32 internal constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
+    /// @dev Incident-response role (#934, owner decision D1 2026-10-16).
+    ///      Its ONLY power is `AccessControlFacet.emergencyRevokeRole` —
+    ///      strip a role from a compromised hot key without waiting out
+    ///      the Timelock's delay. It cannot grant, cannot revoke
+    ///      `DEFAULT_ADMIN_ROLE`, and cannot revoke anything from the
+    ///      Diamond owner (the Timelock after handover), so a compromised
+    ///      holder can neither take governance nor lock it out.
+    ///      It is never granted at init (see `initializeAccessControl`)
+    ///      and is not in `grantableRoles()`: `Handover.s.sol` grants it
+    ///      to the governance Safe and nothing else holds it.
+    ///      Post-handover it sits on the governance Safe, while
+    ///      `DEFAULT_ADMIN_ROLE` itself sits on the Timelock: before D1
+    ///      the Safe held `DEFAULT_ADMIN_ROLE` directly, which let it
+    ///      re-grant any Timelock-held role (or `transferAdmin` the whole
+    ///      Diamond) in one zero-delay transaction.
+    bytes32 internal constant EMERGENCY_REVOKER_ROLE =
+        keccak256("EMERGENCY_REVOKER_ROLE");
 
     struct RoleData {
         mapping(address => bool) hasRole;
@@ -107,6 +126,14 @@ library LibAccessControl {
     // ─── Errors ──────────────────────────────────────────────────────────
     error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
     error AccessControlBadConfirmation();
+    /// @dev Removing `DEFAULT_ADMIN_ROLE` from the current Diamond owner
+    ///      (#906). The owner is the root of governance — it gates
+    ///      `diamondCut` and every owner-gated setter — and the protocol
+    ///      keeps it a `DEFAULT_ADMIN_ROLE` holder at all times so the
+    ///      ERC-173 owner and the role root can never drift apart. Move
+    ///      ownership first (`transferOwnership` / `transferAdmin`), then
+    ///      the old owner may give up the role.
+    error CannotRemoveOwnerRootAdmin(address owner);
 
     // ─── Storage Access ──────────────────────────────────────────────────
 
@@ -141,6 +168,7 @@ library LibAccessControl {
     }
 
     function revokeRole(bytes32 role, address account) internal {
+        _assertNotOwnerRootRemoval(role, account);
         if (hasRole(role, account)) {
             _storage().roles[role].hasRole[account] = false;
             emit RoleRevoked(role, account, msg.sender);
@@ -151,9 +179,23 @@ library LibAccessControl {
         if (callerConfirmation != msg.sender) {
             revert AccessControlBadConfirmation();
         }
+        _assertNotOwnerRootRemoval(role, msg.sender);
         if (hasRole(role, msg.sender)) {
             _storage().roles[role].hasRole[msg.sender] = false;
             emit RoleRevoked(role, msg.sender, msg.sender);
+        }
+    }
+
+    /// @dev The one rule that keeps ERC-173 ownership and the role root in
+    ///      step (#906): `DEFAULT_ADMIN_ROLE` can never be taken from the
+    ///      address that is currently the Diamond owner, by revoke or by
+    ///      renounce. Its counterpart is `OwnershipFacet.transferOwnership`,
+    ///      which only hands ownership to an address that already holds the
+    ///      role. Together they make "the owner holds `DEFAULT_ADMIN_ROLE`"
+    ///      hold from the moment access control is initialised.
+    function _assertNotOwnerRootRemoval(bytes32 role, address account) private view {
+        if (role == DEFAULT_ADMIN_ROLE && account == LibDiamond.contractOwner()) {
+            revert CannotRemoveOwnerRootAdmin(account);
         }
     }
 
@@ -203,6 +245,13 @@ library LibAccessControl {
         // (§4.4 step 5); this just lands the role so the handover
         // wiring and the `setKeeperTier` access gate exist up front.
         grantRole(KEEPER_ROLE, owner);
+        // #934 / D1 — EMERGENCY_REVOKER_ROLE is deliberately NOT granted
+        // here. It is a post-handover role only: `Handover.s.sol` grants
+        // it straight to the governance Safe. Granting it at init would
+        // put it on the deployer EOA, and any handover path that did not
+        // know to rotate it would leave a hot key able to strip roles
+        // with no delay. Pre-handover the deployer holds the role root,
+        // which already covers every revocation.
 
         // Set DEFAULT_ADMIN_ROLE as admin for all roles
         setRoleAdmin(ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
@@ -215,6 +264,7 @@ library LibAccessControl {
         setRoleAdmin(WATCHER_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(NOTIF_BILLER_ROLE, DEFAULT_ADMIN_ROLE);
         setRoleAdmin(KEEPER_ROLE, DEFAULT_ADMIN_ROLE);
+        setRoleAdmin(EMERGENCY_REVOKER_ROLE, DEFAULT_ADMIN_ROLE);
     }
 
     /**
@@ -231,6 +281,10 @@ library LibAccessControl {
      *      `DEFAULT_ADMIN_ROLE` is the first entry — handover code that
      *      renounces in reverse keeps DEFAULT_ADMIN until last so an
      *      earlier-step revert leaves the deployer recoverable.
+     *      `EMERGENCY_REVOKER_ROLE` is NOT in this list: it is never
+     *      granted at init, and `transferAdmin` must not move it, because
+     *      it belongs to the governance Safe rather than to whoever holds
+     *      the role root (#934 / D1).
      */
     function grantableRoles() internal pure returns (bytes32[] memory) {
         bytes32[] memory roles = new bytes32[](11);

@@ -16,10 +16,42 @@ contract DeployTimelockGuardTest is Test {
         // run() reads these unconditionally before the gate.
         vm.setEnv("DEPLOYER_PRIVATE_KEY", "0x1");
         vm.setEnv("TIMELOCK_PROPOSER", "0x000000000000000000000000000000000000dEaD");
+        vm.setEnv("EMERGENCY_REVOKER_ADDRESS", "0x000000000000000000000000000000000000dEaD");
         vm.setEnv("TIMELOCK_MIN_DELAY", "3600"); // 1h: clears >=1h, fails >=48h mainnet gate
 
         vm.chainId(1); // Ethereum mainnet → 48h gate active
         vm.expectRevert(bytes("DeployTimelock: mainnet min delay < 48h"));
+        s.run();
+    }
+
+    /// @dev The proposer and the emergency revoker are one Governance Safe;
+    ///      a different TIMELOCK_PROPOSER is refused before anything deploys
+    ///      (Codex #2642 r3).
+    function testProposerMustBeTheRevokerSafe() public {
+        DeployTimelock s = new DeployTimelock();
+        vm.setEnv("DEPLOYER_PRIVATE_KEY", "0x1");
+        vm.setEnv("TIMELOCK_PROPOSER", "0x000000000000000000000000000000000000dEaD");
+        vm.setEnv("EMERGENCY_REVOKER_ADDRESS", "0x000000000000000000000000000000000000bEEF");
+        vm.setEnv("TIMELOCK_MIN_DELAY", "172800");
+        vm.expectRevert(
+            bytes("DeployTimelock: TIMELOCK_PROPOSER must equal EMERGENCY_REVOKER_ADDRESS (one Governance Safe)")
+        );
+        s.run();
+    }
+
+    /// @dev The canceller (the Pauser Safe) is required on testnets too: the
+    ///      handover refuses a Timelock without it on every chain, so the
+    ///      deploy must not record one it could never hand over to
+    ///      (Codex #2642 r6).
+    function testCancellerRequiredOnTestnet() public {
+        DeployTimelock s = new DeployTimelock();
+        vm.setEnv("DEPLOYER_PRIVATE_KEY", "0x1");
+        vm.setEnv("TIMELOCK_PROPOSER", "0x000000000000000000000000000000000000dEaD");
+        vm.setEnv("EMERGENCY_REVOKER_ADDRESS", "0x000000000000000000000000000000000000dEaD");
+        vm.setEnv("TIMELOCK_MIN_DELAY", "3600");
+        vm.setEnv("PAUSER_ADDRESS", "0x0000000000000000000000000000000000000000");
+        vm.chainId(84532); // Base Sepolia: a known testnet
+        vm.expectRevert(bytes("DeployTimelock: PAUSER_ADDRESS (the canceller) required"));
         s.run();
     }
 }

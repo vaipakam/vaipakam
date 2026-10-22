@@ -7,119 +7,136 @@ merged; the steps here are the on-chain ceremony the signers walk through.
 
 ## Model recap
 
-Three roles, each with a different response budget:
+Owner decision D1 (2026-10-16, #934) puts the role root on the Timelock.
+Each authority has a different response budget:
 
-| Role | Held by | Path | Delay | Can do |
+| Authority | Held by | Path | Delay | Can do |
 |---|---|---|---|---|
-| Owner | Governance Safe (e.g. 4/7) | via Timelock | 48h | `diamondCut`, `setZeroExProxy`, CCIP messenger/channel config, UUPS upgrades, `setGuardian`, `unpause` |
-| Guardian | Incident-response Safe (e.g. 2/3) | direct | 0 | `pause()` on the Diamond and every `GuardianPausable` cross-chain contract |
-| KYC Ops | Ops Safe (may equal Guardian) | direct | 0 | per-user tier bumps (`KYC_ADMIN_ROLE`) |
+| Diamond owner + role root (`DEFAULT_ADMIN_ROLE`) + the delayed admin roles | Timelock | Governance Safe proposes, anyone executes after the delay | 48h | `diamondCut`, every grant and rotation of a role, `transferAdmin`, risk / oracle / vault config, UUPS upgrades of the cross-chain contracts, `setGuardian`, `unpause` |
+| Proposer | Governance Safe (e.g. 4/7) | schedules on the Timelock | n/a | queue an operation; cancel one |
+| Emergency revoker (`EMERGENCY_REVOKER_ROLE`) | Governance Safe | direct | 0 | `emergencyRevokeRole` only: strip a role from a compromised hot key. Never grants, never touches the role root, never touches anything the Diamond owner holds |
+| Guardian / Pauser (`PAUSER_ROLE`) and the Timelock's independent canceller | Pauser Safe (e.g. 2/3) | direct | 0 | `pause()` on the Diamond and every `GuardianPausable` cross-chain contract; cancel a queued Timelock operation (#938). Cannot unpause, cannot propose |
 
 The Guardian exists to close the detect-to-freeze window that a 48h
 timelock would otherwise introduce — the April 2026 cross-chain bridge
 incident showed a 46-minute pause blocked ~$200M of follow-up drain,
 which under a pure timelock would have been impossible. Unpause is
-deliberately owner-only so a compromised Guardian cannot race the
+deliberately Timelock-only so a compromised Guardian cannot race the
 incident team to re-enable a live contract.
+
+The Governance Safe has no zero-delay path to authority. Before D1 it held
+the role root directly, so it could re-grant any Timelock-held role to a hot
+key in one transaction and the 48h window was advisory. Giving a role to a
+new key after handover is now a Timelock operation and waits out the delay;
+taking a role away from a compromised key stays immediate through the
+emergency revoker.
 
 ## Pre-flight — one-time setup
 
 1. **Deploy the Governance Safe.** Recommended 4/7 with signers from
-   separate legal entities and geographies. Record the address as
-   `GOVERNANCE_SAFE`.
-2. **Deploy the Guardian Safe.** 2/3 is reasonable; signers should be
-   the on-call rotation. Record as `GOVERNANCE_GUARDIAN`.
-3. (Optional) **Deploy the KYC-ops Safe**, distinct from the Guardian
-   if the signer sets differ. Otherwise reuse `GOVERNANCE_GUARDIAN` and
-   let `GOVERNANCE_KYC_OPS` fall back to it.
+   separate legal entities and geographies. It is the Timelock proposer
+   (`TIMELOCK_PROPOSER`) and the emergency revoker
+   (`EMERGENCY_REVOKER_ADDRESS`).
+2. **Deploy the Pauser Safe.** 2/3 is reasonable; signers should be
+   the on-call rotation. Record it as `PAUSER_ADDRESS`. It holds
+   `PAUSER_ROLE` and is the Timelock's independent canceller, so it must
+   differ from the Governance Safe.
 
-All three Safes must be replicated on every chain Vaipakam is deployed
-on, at the same address (via Safe's CreateCall / deterministic-deploy
-path). Each chain's TimelockController is independent.
+Both Safes must be replicated on every chain Vaipakam is deployed on, at
+the same address (via Safe's CreateCall / deterministic-deploy path).
+Each chain's Timelock is independent.
 
 ## Per-chain sequence
 
-Target chains (Phase 1): Ethereum, Base, Arbitrum, Optimism, Polygon
-zkEVM, BNB — mainnet and testnet each.
+Target chains (Phase 1): Ethereum, Base, Polygon, Arbitrum, Optimism —
+mainnet and testnet each. `deploy-mainnet.sh` / `deploy-testnet.sh` run
+these steps as phases; the commands below are what those phases execute.
 
 ### 1. Deploy the Timelock
 
 ```bash
 TIMELOCK_PROPOSER=<GOVERNANCE_SAFE> \
-TIMELOCK_EXECUTOR=<GOVERNANCE_SAFE> \
+PAUSER_ADDRESS=<PAUSER_SAFE> \
 forge script script/DeployTimelock.s.sol \
   --rpc-url $RPC --broadcast
 ```
 
-Record the emitted address as `<CHAIN>_TIMELOCK_ADDRESS` (e.g.
-`BASE_TIMELOCK_ADDRESS`) in your env / secrets store. 48h delay is the
-default; override with `TIMELOCK_MIN_DELAY` for testnet rehearsals.
+The script records the address in `deployments/<chain>/addresses.json`
+under `.timelock`. It deploys `VaipakamTimelock`, which:
 
-Executor of `GOVERNANCE_SAFE` means the Safe must actively confirm
-both the schedule and the execute call — two points to abort a hostile
-proposal. Setting executor to `address(0)` opens execution to anyone
-after the delay; use only if the Safe may be unavailable.
+- administers itself (no external admin);
+- gives `PROPOSER_ROLE` (and, through OpenZeppelin, `CANCELLER_ROLE`) to
+  the Governance Safe;
+- gives `CANCELLER_ROLE` to `PAUSER_ADDRESS`, the Pauser Safe. There is no
+  separate canceller variable: the same address names the Pauser Safe here
+  and in the handover, and `TIMELOCK_CANCELLER` is refused. On a Phase-1
+  mainnet the script requires `PAUSER_ADDRESS` and `TIMELOCK_PROPOSER` to
+  be deployed contracts and to differ, and on every chain it refuses a
+  `TIMELOCK_PROPOSER` that differs from `EMERGENCY_REVOKER_ADDRESS` (one
+  Governance Safe);
+- opens execution to anyone by default (`TIMELOCK_EXECUTOR` unset);
+- defaults to a 48h delay, which is also the permanent floor: the delay
+  can be raised later through the Timelock but never lowered below its
+  deploy-time value. Every chain that is not a known testnet (the Phase-1
+  mainnets and BNB Chain alike) refuses less than 48h.
 
-### 2. Seed the ops roles on the Diamond
+### 2–4. Hand the Diamond and the cross-chain contracts to governance
 
-```bash
-GOVERNANCE_GUARDIAN=<GUARDIAN_SAFE> \
-GOVERNANCE_KYC_OPS=<KYC_OPS_SAFE>   # optional, defaults to guardian
-forge script script/GrantOpsRoles.s.sol \
-  --rpc-url $RPC --broadcast
-```
-
-Grants `PAUSER_ROLE` to the Guardian and `KYC_ADMIN_ROLE` to KYC ops on
-the Diamond. Must run **before** step 3, otherwise the deployer
-renounces both roles and strands them.
-
-### 3. Hand Diamond ownership and admin roles to the Timelock
-
-```bash
-CONFIRM_HANDOVER=YES \
-forge script script/TransferAdminToTimelock.s.sol \
-  --rpc-url $RPC --broadcast
-```
-
-Transfers Diamond `owner`, `DEFAULT_ADMIN_ROLE`, `ADMIN_ROLE`,
-`ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE` to the
-Timelock; renounces them on the deployer. `PAUSER_ROLE` and
-`KYC_ADMIN_ROLE` stay on the Guardian / KYC ops Safes.
-
-After this tx lands the Diamond is fully timelock-controlled. Any
-further admin action must be Safe-proposed → 48h wait →
-Safe-executed.
-
-### 4. Migrate cross-chain + VPFIToken ownership
+Steps 2 to 4 are one script, `Handover.s.sol`. (#936 retired the older
+`GrantOpsRoles` + `TransferAdminToTimelock` pair that used to be steps 2
+and 3: they split the roles differently and did not know the D1 topology.)
 
 ```bash
-CONFIRM_HANDOVER=YES \
-GOVERNANCE_GUARDIAN=<GUARDIAN_SAFE> \
+ADMIN_PRIVATE_KEY=... ADMIN_ADDRESS=<ADMIN_EOA> \
+EMERGENCY_REVOKER_ADDRESS=<GOVERNANCE_SAFE> \
+PAUSER_ADDRESS=<PAUSER_SAFE> \
+CHAIN_SLUG=<chain-slug> \
+CCIP_TOKEN_ADMIN_REGISTRY=<registry>   # optional; rotates the VPFI CCT admin
 forge script script/Handover.s.sol \
   --rpc-url $RPC --broadcast
 ```
 
-For every cross-chain contract deployed on this chain (canonical has
-`CcipMessenger` + `VaipakamRewardMessenger` + the canonical
-`VPFIToken` and its CCIP `LockReleaseTokenPool`; mirror chains have
-`CcipMessenger` + `VaipakamRewardMessenger` + `VPFIMirrorToken` + the
-CCIP `BurnMintTokenPool`; chains with remittance/return receivers include
-those too),
-the script:
+Before broadcasting, the script refuses a stale `DEFAULT_ADMIN_ADDRESS`,
+requires the two Safes, the admin EOA and the Timelock to be distinct,
+and requires the Timelock to grant `CANCELLER_ROLE` to `PAUSER_ADDRESS` and
+`PROPOSER_ROLE` to `EMERGENCY_REVOKER_ADDRESS` (otherwise the Timelock was
+deployed under a different `.env`). Then, as
+the admin EOA:
 
-1. Calls `setGuardian(guardian)` while the deployer still owns it
-   (every `GuardianPausable` contract — see
-   `docs/adr/0004-ccip-over-layerzero.md` for the coverage map;
-   `VpfiPoolRateGovernor` is the documented exception).
-2. Calls `transferOwnership(timelock)` — an Ownable2Step **propose**.
+1. Grants `DEFAULT_ADMIN_ROLE` to the Timelock (first, so a later failure
+   leaves the admin able to recover).
+2. Grants `EMERGENCY_REVOKER_ROLE` to the Governance Safe. Nothing else
+   holds it: it is never granted at init.
+3. Grants `ADMIN_ROLE`, `UNPAUSER_ROLE`, `KYC_ADMIN_ROLE`,
+   `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE` and `VAULT_ADMIN_ROLE` to the
+   Timelock.
+4. Grants `PAUSER_ROLE` to the Pauser Safe.
+5. Transfers ERC-173 Diamond ownership to the Timelock. Ownership can
+   only move to an address that already holds the role root (#906), which
+   step 1 arranged.
+6. Renounces `PAUSER_ROLE`, the six delayed roles and, last,
+   `DEFAULT_ADMIN_ROLE` from the admin EOA. `WATCHER_ROLE`,
+   `NOTIF_BILLER_ROLE` and `KEEPER_ROLE` stay on the admin EOA until the
+   per-bot keys are set up.
+7. Proposes the Timelock as owner (`transferOwnership`, the first leg of
+   Ownable2Step) on every cross-chain contract recorded for the chain:
+   `ccipMessenger`, `vpfiTokenPool`, `vpfiPoolRateGovernor`,
+   `rewardMessenger`, `vpfiMirror`, `buybackRemittanceReceiver`,
+   `rewardRemittanceReceiver`, `vpfiReturnSender`, `vpfiReturnReceiver`.
+   Missing keys are skipped, so the same script runs on canonical and
+   mirror chains. With `CCIP_TOKEN_ADMIN_REGISTRY` set it also proposes
+   the Timelock as the VPFI CCT administrator.
 
-Addresses are pulled from per-chain env vars (`<CHAIN>_VPFI_TOKEN_ADDRESS`,
-`<CHAIN>_CCIP_MESSENGER_ADDRESS`, etc.). Missing / zero entries are
-silently skipped so the same script runs on canonical and mirror chains.
+The cross-chain contracts' guardian (the Pauser Safe) is set earlier, by
+`ConfigureCcip`, while the admin EOA still owns them.
+
+After this the Diamond is fully Timelock-controlled. Any further admin
+action is Governance-Safe-proposed, waits 48h, and can be cancelled by
+either Safe during the wait.
 
 ### 5. Safe-schedule `acceptOwnership()` on each 2-step contract
 
-After step 4, each cross-chain Ownable2Step contract (and `VPFIToken` on canonical) has the Timelock
+After steps 2–4, each cross-chain Ownable2Step contract (and `VPFIToken` on canonical) has the Timelock
 listed as *pending* owner. Ownership doesn't transfer until the new
 owner calls `acceptOwnership()`. Since the Timelock IS the new owner,
 someone must schedule that call through the Timelock.
@@ -200,8 +217,16 @@ Per chain, confirm:
 IERC173(diamond).owner()                        == timelock
 ac.hasRole(DEFAULT_ADMIN_ROLE, timelock)        == true
 ac.hasRole(DEFAULT_ADMIN_ROLE, deployerEOA)     == false
-ac.hasRole(PAUSER_ROLE, guardian)               == true
+ac.hasRole(PAUSER_ROLE, pauserSafe)             == true
 ac.hasRole(PAUSER_ROLE, deployerEOA)            == false
+ac.hasRole(EMERGENCY_REVOKER_ROLE, governanceSafe) == true
+ac.hasRole(DEFAULT_ADMIN_ROLE, governanceSafe)  == false   // D1: the Safe holds no root
+ac.hasRole(EMERGENCY_REVOKER_ROLE, deployerEOA) == false
+
+// Timelock (#938)
+timelock.hasRole(CANCELLER_ROLE, pauserSafe)    == true    // independent veto
+timelock.hasRole(DEFAULT_ADMIN_ROLE, deployerEOA) == false  // self-administered
+timelock.MIN_DELAY_FLOOR()                      >= 172800  // any non-testnet chain
 
 // VPFIToken (canonical only)
 Ownable2Step(vpfiToken).owner()                 == timelock
@@ -334,7 +359,7 @@ config — for the lifetime of the protocol.
 
 **Why governance and not direct-EOA**: each adapter inherits OpenZeppelin
 `Ownable2Step`; its owner is the per-chain `<CHAIN>_TIMELOCK_ADDRESS`
-established by §3 of this runbook. Rotation calls therefore go through
+established by §2–4 of this runbook. Rotation calls therefore go through
 the same propose-schedule-execute flow as every other privileged
 diamond mutation, not via an operator hot key.
 
@@ -528,13 +553,43 @@ changes.
 1. Governance Safe schedules `timelock.schedule(target=diamond, ...,
    data=grantRole(PAUSER_ROLE, newGuardian))`.
 2. Wait 48h. Execute. New Guardian now holds `PAUSER_ROLE`.
-3. For each OApp: schedule `timelock.schedule(target=oapp, ...,
-   data=setGuardian(newGuardian))`. Wait 48h. Execute.
-4. Governance Safe schedules `timelock.schedule(target=diamond, ...,
-   data=revokeRole(PAUSER_ROLE, oldGuardian))`. Wait 48h. Execute.
+3. For each cross-chain contract: schedule `timelock.schedule(target=contract,
+   ..., data=setGuardian(newGuardian))`. Wait 48h. Execute.
+4. Hand over the Timelock veto: schedule
+   `timelock.schedule(target=timelock, ..., data=grantRole(CANCELLER_ROLE,
+   newGuardian))`. The Timelock administers itself, so this too waits 48h.
+5. Governance Safe schedules `timelock.schedule(target=diamond, ...,
+   data=revokeRole(PAUSER_ROLE, oldGuardian))` and
+   `timelock.schedule(target=timelock, ..., data=revokeRole(CANCELLER_ROLE,
+   oldGuardian))`. Wait 48h. Execute. Queue the `CANCELLER_ROLE` revoke as
+   its own single-call `schedule`, never inside a `scheduleBatch`: only the
+   single-call form is protected from being cancelled by the canceller it
+   removes.
 
 Order matters — install the new Guardian before revoking the old, so
-the pause surface is never unmanned.
+the pause surface and the veto are never unmanned. If the old Guardian is
+compromised, strip its `PAUSER_ROLE` at once with `emergencyRevokeRole`
+from the Governance Safe instead of waiting for step 5; its Timelock
+`CANCELLER_ROLE` can only be removed through the Timelock. Queue
+`revokeRole(CANCELLER_ROLE, oldGuardian)` as a single-call `schedule` at once:
+the Timelock refuses to let the canceller being removed cancel that operation
+(a proposer or another canceller still can), so the compromised canceller
+cannot block its own removal. In the meantime the worst
+it can do is cancel other queued operations, which are queued again once the
+removal has run.
+
+The same rule cuts the other way, and it is a deliberate trade. If the
+Governance Safe (the proposer) is the one compromised, the canceller cannot
+veto a queued removal of itself. It keeps its veto over everything else until
+that removal executes, so an operation the attacker queues alongside the
+removal (even one chained behind it as a predecessor) is still cancellable
+during the first delay. Only an operation queued after the removal has run is
+beyond the veto, and that one waits a full second delay (96h in total at the
+48h floor). The Pauser Safe must therefore actually cancel whatever the
+attacker queues in the first window; if it does nothing, those operations run
+after one delay, exactly as they would with no canceller at all. Treat
+any queued `revokeRole(CANCELLER_ROLE, …)` the incident team did not plan as an
+incident.
 
 ### Bumping the Terms of Service
 
@@ -640,7 +695,7 @@ The anchor is published via a two-step commit–reveal split across two
 roles ON PURPOSE: the hiding commit goes through the slow/timelock
 authority so its queued calldata never exposes the future secret, and the
 reveal-and-activate runs through the **off-timelock** `PAUSER_ROLE` (which
-`TransferAdminToTimelock` deliberately does NOT migrate) so the secret is
+`Handover.s.sol` deliberately does NOT move to the Timelock) so the secret is
 never parked in a public timelock queue. Steps:
 
 1. **Mint a fresh random secret** `termsAnchor` (32 bytes) per
@@ -701,18 +756,29 @@ makes the gate a no-op again without touching any per-vault state.
 
 ### Rotating the Timelock itself
 
-Deploy a fresh `TimelockController` with the Safe as proposer. From
-the current Governance Safe:
+Deploy a fresh Timelock with `DeployTimelock.s.sol` (Governance Safe as
+proposer, `PAUSER_ADDRESS` as canceller). From the current Governance Safe:
 
-1. Schedule `diamond.transferOwnership(newTimelock)` through the old
-   Timelock. Also schedule `grantRole` on every admin role to the new
-   Timelock, and `revokeRole` on every admin role from the old one.
-2. For each Ownable2Step target (VPFIToken + every OApp): schedule
-   `transferOwnership(newTimelock)` through the old Timelock.
+1. Schedule `diamond.transferAdmin(newTimelock)` through the old
+   Timelock. It grants every role in `grantableRoles()` to the new
+   Timelock (the role root first), moves ERC-173 ownership, and then
+   revokes those roles from the old Timelock, in one transaction. Do NOT
+   hand-assemble this as separate `transferOwnership` / `revokeRole`
+   calls: ownership can only move to a holder of the role root, and the
+   owner's root can never be revoked (#906), so the order is fixed and
+   `transferAdmin` is the one call that gets it right.
+   `transferAdmin` revokes only from the caller, so the Pauser Safe, the
+   bot keys and the Governance Safe's emergency revoker keep what they
+   hold. It does also GRANT the new Timelock `PAUSER_ROLE`,
+   `WATCHER_ROLE`, `NOTIF_BILLER_ROLE` and `KEEPER_ROLE`, which the old
+   one never held; once it has executed, schedule `revokeRole` of those
+   four through the NEW Timelock so it holds only the delayed roles.
+2. For each Ownable2Step target (VPFIToken + every cross-chain contract):
+   schedule `transferOwnership(newTimelock)` through the old Timelock.
 3. Wait 48h. Execute all.
 4. From the Safe, schedule `newTimelock.schedule(acceptOwnership())`
    against every 2-step contract. Wait 48h. Execute.
-5. Retire the old Timelock address from `<CHAIN>_TIMELOCK_ADDRESS`.
+5. Update `.timelock` in `deployments/<chain>/addresses.json`.
 
 ## VPFI recycling — activation ceremony (M7)
 

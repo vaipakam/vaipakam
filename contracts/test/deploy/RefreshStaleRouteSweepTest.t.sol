@@ -7,6 +7,8 @@ import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
 import {RefreshAllFacetsInPlace} from "../../script/RefreshAllFacetsInPlace.s.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
+import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
+import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
 
 /// @dev Exposes the refresh's stale-route classification and sweep, which
 ///      `refresh()` runs after its post-cut verification.
@@ -21,6 +23,10 @@ contract StaleRouteSweepProbe is RefreshAllFacetsInPlace {
 
     function sweep(address diamond, Item[] memory items) external {
         _sweepStaleRoutes(diamond, IDiamondLoupe(diamond), items);
+    }
+
+    function requireD1RootTopology(address diamond, address owner_) external view {
+        _requireD1RootTopology(diamond, owner_);
     }
 }
 
@@ -80,8 +86,12 @@ contract RefreshStaleRouteSweepTest is Test {
 
         // The sweep broadcasts its Remove from the script contract, which a
         // real run does as the Diamond's owner.
-        vm.prank(OwnershipFacet(diamond).owner());
+        // Ownership only moves to a DEFAULT_ADMIN_ROLE holder (#906).
+        address currentOwner = OwnershipFacet(diamond).owner();
+        vm.startPrank(currentOwner);
+        AccessControlFacet(diamond).grantRole(LibAccessControl.DEFAULT_ADMIN_ROLE, address(probe));
         OwnershipFacet(diamond).transferOwnership(address(probe));
+        vm.stopPrank();
     }
 
     /// A Diamond that routes exactly the deploy's set has nothing stale, and
@@ -185,5 +195,38 @@ contract RefreshStaleRouteSweepTest is Test {
             if (sels[i] != IDiamondCut.diamondCut.selector) return false;
         }
         return true;
+    }
+
+    // ─── #934 D1 root-topology preflight (Codex #2642 r8) ─────────────────
+
+    /// The refresh's own fixture has the D1 topology: the owner holds the root.
+    function test_D1RootTopology_OwnerHoldingRootPasses() public view {
+        probe.requireD1RootTopology(diamond, address(probe));
+    }
+
+    /// An owner without the root role, as a pre-D1 handover left the
+    /// Timelock, is refused before anything deploys.
+    function test_D1RootTopology_OwnerWithoutRootRefused() public {
+        address timelockOwner = address(0x7130);
+        vm.expectRevert(
+            abi.encodeWithSelector(RefreshAllFacetsInPlace.RootAdminNotOnOwner.selector, diamond, timelockOwner)
+        );
+        probe.requireD1RootTopology(diamond, timelockOwner);
+    }
+
+    /// A governance Safe holding the root directly, the pre-D1 bypass, is
+    /// refused even when the owner also holds it.
+    function test_D1RootTopology_GovernanceSafeHoldingRootRefused() public {
+        address safe = 0x000000000000000000000000000000000000dEaD;
+        vm.prank(address(probe));
+        AccessControlFacet(diamond).grantRole(LibAccessControl.DEFAULT_ADMIN_ROLE, safe);
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("EMERGENCY_REVOKER_ADDRESS", vm.toString(safe));
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("TIMELOCK_PROPOSER", vm.toString(safe));
+        vm.expectRevert(
+            abi.encodeWithSelector(RefreshAllFacetsInPlace.RootAdminOnGovernanceSafe.selector, diamond, safe)
+        );
+        probe.requireD1RootTopology(diamond, address(probe));
     }
 }

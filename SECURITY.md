@@ -285,16 +285,16 @@ The Tenderly alert stack ([`ops/tenderly/`](ops/tenderly/)) polls `invalidTransi
 
 ## Admin surface and timelock
 
-All facet-level admin setters (`OracleAdminFacet.*`, `AdminFacet.*`, `VaultFactoryFacet` upgrade controls, `RiskFacet.updateRiskParams`, role grants) are gated by named roles on [`LibAccessControl`](contracts/src/libraries/LibAccessControl.sol). Post-handover, the slow-admin roles (`ADMIN_ROLE`, `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE`) are held exclusively by a [`TimelockController`](contracts/script/DeployTimelock.s.sol) with a **48h minimum delay**.
+All facet-level admin setters (`OracleAdminFacet.*`, `AdminFacet.*`, `VaultFactoryFacet` upgrade controls, `RiskFacet.updateRiskParams`, role grants) are gated by named roles on [`LibAccessControl`](contracts/src/libraries/LibAccessControl.sol). Post-handover the Diamond's ERC-173 ownership, the role root (`DEFAULT_ADMIN_ROLE`) and the slow-admin roles (`ADMIN_ROLE`, `UNPAUSER_ROLE`, `KYC_ADMIN_ROLE`, `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE`) are held by a [`VaipakamTimelock`](contracts/src/governance/VaipakamTimelock.sol) with a **48h minimum delay** that can never be lowered below its deploy-time value, and an independent canceller (the Pauser Safe). Every grant, every rotation of the role root and every upgrade therefore waits out the delay in public (owner decision D1, #934).
 
-The intentional exceptions, both on the Ops Safe (Guardian) hot multi-sig:
+The intentional zero-delay exceptions:
 
-- `KYC_ADMIN_ROLE` — KYC tier bumps are an operational same-hour action; not a fit for a 48h delay
-- `PAUSER_ROLE` — pausing is fast by design; the live exploit case is exactly the one a 48h delay would defeat
+- `PAUSER_ROLE` on the Pauser Safe — pausing is fast by design; the live exploit case is exactly the one a 48h delay would defeat. Unpause is timelocked (it represents the "we are confident the issue is fixed" decision, and should be deliberate).
+- `EMERGENCY_REVOKER_ROLE` on the governance Safe — revoke only: it can strip a role from a compromised hot key immediately, but cannot grant anything, cannot touch the role root and cannot remove anything from the Diamond owner.
 
-Unpause is timelocked (it represents the "we are confident the issue is fixed" decision, and should be deliberate).
+Governance can still change vault and facet code through an upgrade, and with it how user funds move. The protection is that such a change is public and delayed, not that it is impossible.
 
-See [`contracts/script/TransferAdminToTimelock.s.sol`](contracts/script/TransferAdminToTimelock.s.sol) for the handover script, [`docs/ops/AdminKeysAndPause.md`](docs/ops/AdminKeysAndPause.md) for the full role-by-role custody matrix, and [`docs/GovernanceRunbook.md`](docs/GovernanceRunbook.md) for the day-to-day procedures (including the contract-change → public keeper-bot ABI sync workflow).
+See [`contracts/script/Handover.s.sol`](contracts/script/Handover.s.sol) for the handover script, [`docs/ops/AdminKeysAndPause.md`](docs/ops/AdminKeysAndPause.md) for the full role-by-role custody matrix, and [`docs/ops/GovernanceRunbook.md`](docs/ops/GovernanceRunbook.md) for the day-to-day procedures (including the contract-change → public keeper-bot ABI sync workflow).
 
 ### Permissionless callers vs. role-gated admins
 
