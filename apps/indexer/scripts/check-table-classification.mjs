@@ -119,11 +119,11 @@ const CLASSIFICATION = {
   },
   swap_to_repay_intents: { class: 'replay-derived', reason: 'chainIndexer-only writes (#1450 r32)' },
   loan_orphans: {
-    class: 'replay-derived',
+    class: 'born-off-chain',
     reason:
-      'loan rows the reconciliation pass proved the chain has no loan for, moved out of ' +
-      '`loans` (#2197); cleared with `loans`, since the replay re-indexes from the chain ' +
-      'and the pass re-derives any orphan the replay recreates',
+      'loan rows proven absent on chain, moved out of `loans` with the whole row kept (#2197); ' +
+      'a block-zero replay cannot recreate them (their initiation is not in canonical history), ' +
+      'so the archive is the only copy of what was withdrawn (#2636 r1)',
   },
   loan_reconcile_quarantine: {
     class: 'replay-derived',

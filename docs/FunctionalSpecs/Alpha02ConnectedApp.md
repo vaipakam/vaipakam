@@ -271,7 +271,10 @@ The app uses chain reads and indexed reads for different jobs.
   source gave. This is a deliberate choice of correctness over liveness —
   a source that never answers the settled question never has that chain
   indexed, and says so on every turn, and the index's reported age grows —
-  rather than indexing on a guess that can never be revisited.
+  rather than indexing on a guess that can never be revisited. The
+  corrections that read the chain wait on the same terms: on such a turn no
+  record is filled in or corrected from a chain reading, because a correction
+  is never revisited either.
 - Whenever the live set was not checked against the chain on a turn, the
   reminders derived from that set wait for a turn that checked. Due-date
   and grace reminders are read off the records the platform holds, they are
@@ -1026,9 +1029,15 @@ The app uses chain reads and indexed reads for different jobs.
   the platform was offering to act on for it — in one write, so no surface
   goes on presenting a position that never existed. The withdrawal happens
   only on that proof: a reading that failed is not evidence that a loan does
-  not exist, and changes nothing. The record is kept whole, out of
+  not exist, and changes nothing. It applies to every record the platform
+  publishes as a loan, running or ended alike, and it is all-or-nothing: if
+  the record changes while the withdrawal is under way, nothing is withdrawn
+  and nothing attached to it is touched. The record is kept whole, out of
   publication, with the settled point the proof was read at, so a person can
-  put it back if the existence test itself was at fault; and the finding
+  put it back if the existence test itself was at fault. That kept record is
+  backed up with the platform's other records that the chain cannot
+  reproduce, since rebuilding the index from the chain cannot bring it back;
+  and the finding
   stays on the operator's list of unresolved records, because a position
   that vanished from the index is something a person should look at. Nothing
   public says the record was withdrawn, since nothing public about it was

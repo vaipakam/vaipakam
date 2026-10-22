@@ -1,3 +1,4 @@
+import { withdrawOrphanLoan } from './loanOrphans';
 import { LOAN_STATUS_TO_INDEXER_TERMINAL } from './loanStatusProjection';
 
 /**
@@ -617,11 +618,6 @@ export interface ScanReconcileContext {
    *  tables a repair clears must be one list, and importing it here would
    *  make the scan module and this one mutually dependent. */
   closedLoanSideTableStatements(loanId: number): D1PreparedStatement[];
-  /** #2197 — the same side tables WITHOUT the quarantine release the
-   *  close-out list carries. An orphan's marker must outlive the move: it is
-   *  the operator's record that a row was withdrawn. One list underneath
-   *  (`_loanSideTableStatements`), so the two cannot name different tables. */
-  loanSideTableStatements(loanId: number): D1PreparedStatement[];
   /** Paired with the statements above: the module that OWNS them also owns
    *  reporting what they released. That list can carry a quarantine release,
    *  and a release nothing announces is how the close-out path came to be
@@ -847,36 +843,9 @@ export async function reconcileAfterScan(
       return (results[0]?.meta?.changes ?? 0) > 0;
     },
     async withdrawOrphan(chainId, loanId, from) {
-      // The row as it stands, to keep (see migration 0065 for why the move
-      // keeps it whole). Read first because D1 cannot serialise a whole row
-      // inside a statement without naming every column.
-      const row = await ctx.db
-        .prepare(`SELECT * FROM loans WHERE chain_id = ? AND loan_id = ? AND status = ?`)
-        .bind(chainId, loanId, from)
-        .first<Record<string, unknown> & { updated_at: number }>();
-      if (!row) return false;
-      const at = now();
-      // BOTH statements carry the same compare-and-set — the status the
-      // rotation read AND the `updated_at` of the copy being kept — so a
-      // writer that touched the row in between leaves both no-ops: nothing
-      // is deleted whose kept copy is stale, and nothing is archived that
-      // was not deleted. The INSERT runs first, while the row still exists.
-      // Written out in each statement (not interpolated) so the #1149
-      // SQL-vs-schema guard checks both against the migrated schema.
-      const guardBinds = [chainId, loanId, from, row.updated_at] as const;
-      const results = await ctx.db.batch([
-        ctx.db
-          .prepare(
-            `INSERT INTO loan_orphans (chain_id, loan_id, from_status, observed_block, withdrawn_at, row_json)
-             SELECT ?, ?, ?, ?, ?, ?
-              WHERE EXISTS (SELECT 1 FROM loans WHERE chain_id = ? AND loan_id = ? AND status = ? AND updated_at = ?)`,
-          )
-          .bind(chainId, loanId, from, Number(ctx.head), at, JSON.stringify(row), ...guardBinds),
-        ctx.db
-          .prepare(`DELETE FROM loans WHERE chain_id = ? AND loan_id = ? AND status = ? AND updated_at = ?`).bind(...guardBinds),
-        ...ctx.loanSideTableStatements(loanId),
-      ]);
-      return (results[1]?.meta?.changes ?? 0) > 0;
+      // The one owner of the move (`loanOrphans.ts`), shared with the
+      // settlement heal, which finds terminal-status orphans the same way.
+      return withdrawOrphanLoan(ctx.db, chainId, loanId, from, ctx.head, now());
     },
     async readPointer(chainId) {
       const row = await ctx.db

@@ -38,6 +38,7 @@ import {
   RECONCILE_BUDGET_SHARED_TICK,
 } from '../src/chainIndexer';
 import { reconcileAfterScan } from '../src/loanReconcile';
+import { withdrawOrphanLoan } from '../src/loanOrphans';
 import {
   notificationInsertStatement,
   planReconciledNotifications,
@@ -385,8 +386,6 @@ describe('reconcileAfterScan against a real database', () => {
           // argument left it falsy and quietly dropped that statement, which
           // is how the repair path's quarantine release went untested here.
           _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId, true),
-        loanSideTableStatements: (loanId) =>
-          _loanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
         // Wired exactly as production wires it, so the repair path's
         // disclosure is exercised here rather than only asserted structurally
         // (#2231 r9 `4036242408`). `discloseAt` lets one test push the clock
@@ -505,8 +504,6 @@ describe('reconcileAfterScan against a real database', () => {
         loanAbi: [],
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
-        loanSideTableStatements: (loanId) =>
-          _loanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
         mutableColumns: (d: Record<string, unknown>) => ({
           assignments: ['principal = ?', 'collateral_amount = ?'],
           values: [String(d.principal), String(d.collateralAmount)],
@@ -540,8 +537,6 @@ describe('reconcileAfterScan against a real database', () => {
         loanAbi: [],
         closedLoanSideTableStatements: (loanId) =>
           _closedLoanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId, true),
-        loanSideTableStatements: (loanId) =>
-          _loanSideTableStatements({ DB: h.d1 } as unknown as Env, CHAIN, loanId),
         discloseSideTableBatch: () => {},
         mutableColumns: () => ({ assignments: [], values: [] }),
         terminalHolderStatements: async () => [],
@@ -561,5 +556,43 @@ describe('reconcileAfterScan against a real database', () => {
     expect(kept).toHaveLength(1);
     expect(kept[0]).toMatchObject({ chain_id: CHAIN, loan_id: 23, from_status: 'active', observed_block: 100 });
     expect(JSON.parse(kept[0].row_json)).toEqual(before);
+  });
+});
+
+describe('withdrawOrphanLoan — one guarded move (#2636 r1)', () => {
+  it('a writer that changes the row before the batch leaves EVERYTHING in place, side tables included', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 61);
+    seedListing(h, 61);
+    seedIntent(h, 61);
+    // The scan touches the row between the move's read and its batch.
+    const raced = new Proxy(h.d1, {
+      get(target, prop, recv) {
+        if (prop === 'batch') {
+          return async (stmts: unknown[]) => {
+            h.db.prepare('UPDATE loans SET updated_at = updated_at + 1 WHERE chain_id = ? AND loan_id = ?').run(CHAIN, 61);
+            return (target as unknown as { batch: (s: unknown[]) => Promise<unknown> }).batch(stmts);
+          };
+        }
+        const v = Reflect.get(target, prop, recv);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+    expect(await withdrawOrphanLoan(raced as never, CHAIN, 61, 'active', 100n, 1)).toBe(false);
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loans WHERE loan_id = 61').get()).toEqual({ n: 1 });
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM loan_orphans').get()).toEqual({ n: 0 });
+    expect(hasListing(h, 61)).toBe(true);
+    expect(hasIntent(h, 61)).toBe(true);
+  });
+
+  it('clears the same side tables a close-out clears', () => {
+    const tables = (src: string) =>
+      [...src.matchAll(/DELETE FROM (\w+)/g)].map((m) => m[1]).filter((t) => t !== 'loans').sort();
+    const orphan = readFileSync(new URL('../src/loanOrphans.ts', import.meta.url), 'utf8');
+    const indexer = readFileSync(new URL('../src/chainIndexer.ts', import.meta.url), 'utf8');
+    const start = indexer.indexOf('export function _loanSideTableStatements(');
+    const closeOut = indexer.slice(start, indexer.indexOf('\n}\n', start));
+    expect(tables(orphan)).toEqual(tables(closeOut));
+    expect(tables(orphan).length).toBeGreaterThan(0);
   });
 });

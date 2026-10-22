@@ -118,6 +118,12 @@ const ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED: Array<{
   //     re-run yields different numbers and the original is unrecoverable.
   //     A D1 loss without backup silently rewrites published history.
   { table: 'recycle_day_backfill', migrationPrefix: '0047' },
+  //   - loan_orphans (#2197, migration 0065) — `loans` rows the indexer
+  //     proved the chain has no loan for, moved out of publication with the
+  //     whole row kept. A block-zero replay cannot recreate one (its
+  //     initiation is not in canonical history), so without the archive a
+  //     D1 loss would erase the only record of what was withdrawn.
+  { table: 'loan_orphans', migrationPrefix: '0065' },
 ];
 
 // Re-derivable tables (backed up as restore-performance optimisation only).

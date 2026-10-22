@@ -5,6 +5,7 @@
  * against.
  */
 import { readFileSync, readdirSync } from 'node:fs';
+import { toFunctionSelector } from 'viem';
 import { describe, expect, it, vi } from 'vitest';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { createSqliteD1 } from './helpers/sqliteD1';
@@ -36,7 +37,7 @@ function rpcWithoutSafeTag(latest: bigint) {
   const methods: string[] = [];
   const fetchFn = vi.fn(async (_url: unknown, init?: RequestInit) => {
     const req = JSON.parse(String(init?.body)) as { id: number; method: string; params?: unknown[] };
-    methods.push(req.method);
+    methods.push(req.method === 'eth_call' ? `eth_call:${JSON.stringify(req.params).slice(0, 200)}` : req.method);
     const ok = (result: unknown) =>
       new Response(JSON.stringify({ jsonrpc: '2.0', id: req.id, result }), {
         headers: { 'content-type': 'application/json' },
@@ -79,7 +80,13 @@ function rpcWithoutSafeTag(latest: bigint) {
 }
 
 describe('a pass with no settled head holds the scan (#2201)', () => {
-  it('scans nothing, keeps the cursor, says why, and reports no head', async () => {
+  // Both sides of the guess: a cursor behind it (a backlog the pass would
+  // otherwise scan to the guess) and a caught-up cursor already above it
+  // (#2636 r1 — once read as an ordinary caught-up tick with a head).
+  it.each([
+    ['behind the guessed head', 10_000n],
+    ['above the guessed head (caught up)', 10n],
+  ])('cursor %s: scans nothing, keeps the cursor, heals nothing from the chain, says why, reports no head', async (_label, aheadOfCursor) => {
     const h = createSqliteD1([...migrations(), MIGRATIONS_DDL]);
     for (const n of REQUIRED_D1_MIGRATIONS) h.db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').run(n);
     h.db
@@ -88,7 +95,22 @@ describe('a pass with no settled head holds the scan (#2201)', () => {
     const cursor = bundle.deployBlock + 5;
     h.db.prepare('INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, ?, ?, ?)').run(BASE, 'diamond', cursor, 1);
 
-    const { fetchFn, methods } = rpcWithoutSafeTag(BigInt(bundle.deployBlock) + 10_000n);
+    // A stub loan the heal would otherwise read at the unsettled tip.
+    h.db
+      .prepare(
+        `INSERT INTO loans (chain_id, loan_id, offer_id, status, lender, borrower,
+           principal, collateral_amount, asset_type, collateral_asset_type,
+           lending_asset, collateral_asset, duration_days, token_id,
+           collateral_token_id, lender_token_id, borrower_token_id,
+           lender_current_owner, borrower_current_owner, interest_rate_bps,
+           start_time, start_block, start_at, updated_at, is_stub)
+         VALUES (?, 7, 1, 'active', '0xlend', '0xborrow', '100', '200', 0, 0,
+           '0xasset', '0xcoll', 30, '0', '0', '0', '0', '0xlend', '0xborrow',
+           500, 0, 0, 0, 0, 1)`,
+      )
+      .run(BASE);
+
+    const { fetchFn, methods } = rpcWithoutSafeTag(BigInt(cursor) + aheadOfCursor);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
     const chain = { id: BASE, rpc: 'https://rpc.invalid', diamond: bundle.diamond } as unknown as ChainConfig;
@@ -103,6 +125,13 @@ describe('a pass with no settled head holds the scan (#2201)', () => {
     expect(r.headBlock).toBeUndefined();
     expect(r.scannedTo).toBe(BigInt(cursor));
     expect(methods).not.toContain('eth_getLogs');
+    // No heal read a loan from the chain either: what it wrote would never be
+    // re-read. (The protocol-config refresh may read, pinned to the cursor, a
+    // block an earlier settled pass already scanned, and it re-reads on its
+    // own schedule; it is not a heal.)
+    const loanDetails = toFunctionSelector('getLoanDetails(uint256)');
+    expect(methods.filter((m) => m.startsWith('eth_call') && m.includes(loanDetails))).toEqual([]);
+    expect(h.db.prepare('SELECT is_stub FROM loans WHERE chain_id = ? AND loan_id = 7').get(BASE)).toEqual({ is_stub: 1 });
     expect(
       h.db.prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = 'diamond'`).get(BASE),
     ).toEqual({ last_block: cursor });

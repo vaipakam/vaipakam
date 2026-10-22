@@ -1392,7 +1392,20 @@ For each table:
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
    `notify_state`, `pre_grace_notify_state` (absent from pre-#1480
    archives), `telegram_links`, `support_tickets`,
-   `recycle_day_backfill` (absent from pre-#1349-M5 archives).
+   `recycle_day_backfill` (absent from pre-#1349-M5 archives),
+   `loan_orphans` (absent from pre-#2197 archives).
+
+   > **`loan_orphans` is restored, not replayed** (#2197, #2636). It holds
+   > `loans` rows the indexer proved the chain has no loan for, each moved
+   > out of publication with the whole row kept in `row_json`. The replay
+   > cannot recreate one: the row came from something canonical history
+   > does not contain (an initiation from a block later reorganised away),
+   > so the archive is the only record of what the platform published and
+   > withdrew. Nothing reads the table on any surface; it is the operator's
+   > record. If the replay re-indexes a loan that is also listed here, the
+   > chain has that loan after all: the `loans` row is correct, and the
+   > `loan_orphans` entry is a record of the earlier withdrawal, nothing
+   > more.
 
    > **`recycle_day_backfill` is the one recycling table that is restored
    > rather than replayed**, and the distinction is load-bearing. Almost
@@ -1530,7 +1543,6 @@ DELETE FROM loan_participants; \
 DELETE FROM notifications; \
 DELETE FROM swap_to_repay_intents; \
 DELETE FROM loan_reconcile_quarantine; \
-DELETE FROM loan_orphans; \
 DELETE FROM loans; \
 DELETE FROM offers; \
 DELETE FROM oracle_snapshot_state; \
@@ -1590,9 +1602,9 @@ withholds a real borrower's due-date and grace reminders with nothing
 on any surface to show why. The reconciliation pass rewrites the
 table from the chain as it examines rows, so clearing it costs at
 most one rotation's worth of re-marking. #2212.
-`loan_orphans` likewise: it holds `loans` rows the pass proved the
-chain has no loan for, moved out of publication, and the replay
-re-derives every such finding the same way. #2197.)
+`loan_orphans` is deliberately NOT in this command: the replay cannot
+recreate a withdrawn row, so it is restored from the archive in §4
+instead. #2197.)
 
 **`notifications` is cleared with its producer state, and the loss
 boundary is stated honestly** (#1450 r33). The table has THREE

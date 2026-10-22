@@ -105,6 +105,10 @@ const BORN_OFF_CHAIN_TABLES = new Set([
   // hostile, so omitting it here would make every post-rollout archive
   // unrestorable (Codex #1513 r1 P1).
   'recycle_day_backfill',
+  // #2197 (migration 0065) — loan rows proven absent on chain and withdrawn
+  // from publication. A replay cannot recreate them, so the archive is the
+  // only copy of the withdrawn row.
+  'loan_orphans',
 ]);
 // Archived as a restore-performance optimisation ONLY. The runbook's
 // default treatment for these is §6 clear-and-replay from chain — a
@@ -148,6 +152,7 @@ const BASELINE_TABLES = [
 const ERA_GATED_TABLES = {
   support_tickets: 'migration 0028 (#1040)',
   recycle_day_backfill: 'migration 0047 (#1349 M5)',
+  loan_orphans: 'migration 0065 (#2197)',
 };
 
 // Live column sets for the born-off-chain tables (Codex #1484 r13):
@@ -196,6 +201,11 @@ const REQUIRED_TABLE_COLUMNS = {
     'fresh_drawdown', 'absorbed_local', 'absorbed_mirror', 'armed',
     'armed_from_day', 'recorded_at', 'generator_rev',
   ],
+  // `row_json` is the withdrawn row itself; without it the record says only
+  // that something was withdrawn, not what.
+  loan_orphans: [
+    'id', 'chain_id', 'loan_id', 'from_status', 'observed_block', 'withdrawn_at', 'row_json',
+  ],
 };
 
 // TRUSTED primary keys for the born-off-chain tables, from the same
@@ -215,6 +225,7 @@ const TRUSTED_PRIMARY_KEYS = {
   diag_legal_holds: ['wallet_hash'],
   diag_legal_hold_audit: ['id'],
   recycle_day_backfill: ['chain_id', 'day_id'],
+  loan_orphans: ['id'],
 };
 
 // The archived legal-hold tables whose rows carry `legal_doc_ref`
