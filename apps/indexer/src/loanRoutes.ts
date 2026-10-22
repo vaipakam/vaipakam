@@ -16,6 +16,12 @@
 import { type Env, getChainConfigs } from './env';
 import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
 import {
+  type RepairObservationRow,
+  repairObservationPosition,
+  repairObservationsPage,
+  repairObservationToJson,
+} from './repairObservations';
+import {
   CANDLE_INTERVALS,
   CANDLE_RANGES,
   foldRateCandles,
@@ -523,7 +529,7 @@ export async function handleLoansByCurrentHolder(
   }
 }
 
-/** GET /activity?chainId=8453&actor=0x...&loanId=N&offerId=N&kind=...&limit=50&before=<block:logIndex>
+/** GET /activity?chainId=8453&actor=0x...&loanId=N&offerId=N&kind=...&limit=50&before=<block:logIndex>&repairObservations=1
  *
  *  Cursor format: composite "block:logIndex" (e.g. `12345:6`) so a
  *  cron-deferred block on the boundary doesn't drop rows. When omitted,
@@ -564,11 +570,13 @@ export async function handleActivity(req: Request, env: Env): Promise<Response> 
     where.push('kind = ?');
     binds.push(kind);
   }
+  let before: { block: number; logIndex: number } | undefined;
   if (beforeRaw) {
     const m = beforeRaw.match(/^(\d+):(\d+)$/);
     if (!m) return jsonResponse({ error: 'bad-before' }, 400);
+    before = { block: Number.parseInt(m[1], 10), logIndex: Number.parseInt(m[2], 10) };
     where.push('(block_number, log_index) < (?, ?)');
-    binds.push(Number.parseInt(m[1], 10), Number.parseInt(m[2], 10));
+    binds.push(before.block, before.logIndex);
   }
   try {
     const sql = `SELECT * FROM activity_events
@@ -577,10 +585,52 @@ export async function handleActivity(req: Request, env: Env): Promise<Response> 
                  LIMIT ?`;
     binds.push(limit);
     const rows = await env.DB.prepare(sql).bind(...binds).all<ActivityRow>();
-    const events = (rows.results ?? []).map(activityToJson);
-    const last = rows.results && rows.results.length === limit ? rows.results[rows.results.length - 1] : null;
-    const nextBefore = last ? `${last.block_number}:${last.log_index}` : null;
-    return jsonResponse({ chainId, events, nextBefore });
+    // #2195 — repaired loans' endings, merged into the same order (see
+    // `repairObservations.ts`). They carry no actor, offer or event kind, so
+    // a page filtered on any of those has none. Each half is read to the
+    // page's limit, so the page's top `limit` of the union is exact.
+    //
+    // OPT-IN (`repairObservations=1`): merged entries take page slots, and a
+    // reader that does not render them would otherwise see fewer events per
+    // page with nothing to show for it. A request without the flag gets
+    // exactly the events-only page it always got, and no such field.
+    //
+    // `repairObservations: null` means NOT KNOWN, never "none": a database
+    // that predates migration 0066 (this build serving before the deploy
+    // applies it) or a failed read. The page is then the events alone, as
+    // before this field existed, and says so rather than implying a repaired
+    // loan's history is complete.
+    const wantObservations = url.searchParams.get('repairObservations') === '1';
+    let observations: RepairObservationRow[] | null = [];
+    if (wantObservations && !actor && !offerIdRaw && !kind) {
+      try {
+        const loanId = loanIdRaw ? Number.parseInt(loanIdRaw, 10) : undefined;
+        const r = await repairObservationsPage(env.DB, chainId, { loanId, before }, limit).all<RepairObservationRow>();
+        observations = r.results ?? [];
+      } catch (err) {
+        console.warn('[loanRoutes] activity: repaired-loan endings not read; served as unknown', err);
+        observations = null;
+      }
+    }
+    type Item =
+      | { at: { block: number; logIndex: number }; event: ActivityRow }
+      | { at: { block: number; logIndex: number }; observation: RepairObservationRow };
+    const merged: Item[] = [
+      ...(rows.results ?? []).map((r) => ({ at: { block: r.block_number, logIndex: r.log_index }, event: r })),
+      ...(observations ?? []).map((o) => ({ at: repairObservationPosition(o), observation: o })),
+    ]
+      .sort((a, b) => b.at.block - a.at.block || b.at.logIndex - a.at.logIndex)
+      .slice(0, limit);
+    const events = merged.flatMap((m) => ('event' in m ? [activityToJson(m.event)] : []));
+    const repairObservations =
+      observations === null
+        ? null
+        : merged.flatMap((m) => ('observation' in m ? [repairObservationToJson(m.observation)] : []));
+    const last = merged.length === limit ? merged[merged.length - 1] : null;
+    const nextBefore = last ? `${last.at.block}:${last.at.logIndex}` : null;
+    return jsonResponse(
+      wantObservations ? { chainId, events, repairObservations, nextBefore } : { chainId, events, nextBefore },
+    );
   } catch (err) {
     console.error('[loanRoutes] activity failed', err);
     return jsonResponse({ error: 'activity-failed' }, 500);

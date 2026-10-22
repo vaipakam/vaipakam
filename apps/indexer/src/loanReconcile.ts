@@ -605,6 +605,9 @@ export interface ScanReconcileContext {
   diamond: string;
   /** The SAFE head the scan resolved. Every read pins to it. */
   head: bigint;
+  /** #2195 — the head block's chain time, recorded with a repair as when it
+   *  was OBSERVED (never as when the loan ended); null when not known. */
+  headAt: number | null;
   /**
    * #2636 r4 — whether the invocation can still afford a WHOLE orphan move
    * and everything this pass does after it. Asked before each move; a no
@@ -807,11 +810,27 @@ export async function reconcileAfterScan(
         .prepare(
           `UPDATE loans
               SET status = ?, ${repair.mutable.assignments.join(', ')},
-                  terminal_block = NULL, terminal_at = NULL, terminal_by_repair = 1, updated_at = ?
+                  terminal_block = NULL, terminal_at = NULL, terminal_by_repair = 1,
+                  repair_observed_status = ?, repair_observed_block = ?, repair_observed_at = ?,
+                  updated_at = ?
             WHERE chain_id = ? AND loan_id = ?
               AND status IN ('active', 'fallback_pending')`,
         )
-        .bind(repair.status, ...repair.mutable.values, at, chainId, loanId);
+        .bind(
+          repair.status,
+          ...repair.mutable.values,
+          // #2195 — what this repair OBSERVED, in the same compare-and-set as
+          // the status, so it is recorded exactly when the repair is: the
+          // status, the settled block the read was pinned to, and that
+          // block's time. The Activity feed serves it as an observation; it
+          // is not a terminal block or time (those stay NULL above).
+          repair.status,
+          Number(ctx.head),
+          ctx.headAt,
+          at,
+          chainId,
+          loanId,
+        );
       // The inbox rows go in the SAME batch. Written afterwards they could
       // be lost for good: the repair takes the row out of the live set the
       // rotation selects from, so nothing would ever come back to write

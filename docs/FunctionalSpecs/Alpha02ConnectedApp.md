@@ -1074,6 +1074,21 @@ The app uses chain reads and indexed reads for different jobs.
   point they were confirmed at, since the moment they acquired the position
   is not known. A holder already in the history is left as recorded, and a
   side the chain did not name records nothing.
+- **A corrected position's history shows that it ended, as something the
+  platform observed rather than something it saw announced.** The activity
+  history is a record of the chain's announcements, and a corrected position's
+  ending was never announced to the platform, so no announcement is invented
+  for it. Instead the history carries a separate entry, marked as found by
+  checking the chain: it says the position was in its ended state by a given
+  settled point of the chain (and that point's time, when known). It does not
+  say when the position ended, which event ended it, who acted, or in which
+  transaction — none of those was seen. The entry sits in the history in the
+  order of the point at which it was observed, and stays there after the
+  position later settles. Positions corrected before this entry existed carry
+  no such entry, because the point at which they were observed was not kept,
+  and none is made up for them. Where the history cannot say whether such
+  entries exist (for example while the platform's records are being upgraded),
+  it says that it does not know rather than presenting the history as complete.
 - A lifecycle state the platform does not recognise is reported, never
   passed over. Refusing to guess at an unfamiliar state is right; doing so
   silently is how a newly introduced ENDING would leave records published
@@ -1198,6 +1213,14 @@ The app uses chain reads and indexed reads for different jobs.
   pending-fallback loan). The push rail also reports its own freshness (how
   recently ingestion advanced, and how often it is expected to), so the app
   can tell a healthy-but-quiet rail from a stalled one instead of guessing.
+- A live-update signal is not lost because the platform stopped between
+  recording a change and announcing it. Some changes cannot be found again
+  once recorded (a correction made by checking the chain, a withdrawn record,
+  a reminder, and every announcement already read past), so the intent to
+  announce is noted before the work starts and cleared only once the
+  announcement is out. A turn that finds a note left standing announces that
+  everything may have changed, naming no particular loans or offers, since
+  what the lost turn changed is not known.
 - Governance-tunable display configuration (fees, buffers, feature flags)
   may be served from the indexer's config snapshot, which follows
   governance changes within moments; the chain remains the fallback when

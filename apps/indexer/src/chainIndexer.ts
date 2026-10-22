@@ -1721,6 +1721,7 @@ export async function _runLoanReconcilePass(input: {
         chainId,
         diamond,
         head,
+        headAt: Number(settled.timestamp),
         canStartOrphanMove: () => orphanMoveAffordable(tickBudget, reconcileAfterOrphanMoveReserve(budget)),
         readContract: (args) =>
           reconcileClient.readContract(args as never) as Promise<unknown>,

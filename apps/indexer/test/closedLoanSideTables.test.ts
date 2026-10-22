@@ -377,6 +377,7 @@ describe('reconcileAfterScan against a real database', () => {
         chainId: CHAIN,
         diamond: DIAMOND,
         head: 100n,
+        headAt: 1_699_999_000,
         canStartOrphanMove: () => true,
         readContract: readTerminal as never,
         metricsAbi: [],
@@ -465,6 +466,17 @@ describe('reconcileAfterScan against a real database', () => {
     expect(
       (h.db.prepare('SELECT terminal_by_repair AS m FROM loans WHERE loan_id = ?').get(21) as { m: number }).m,
     ).toBe(1);
+    // #2195 — what the repair OBSERVED, in the same compare-and-set: the
+    // status, the settled block the read was pinned to and that block's
+    // time. The terminal block and time stay unknown.
+    expect(
+      h.db
+        .prepare(
+          `SELECT repair_observed_status AS s, repair_observed_block AS b, repair_observed_at AS t,
+                  terminal_block AS tb, terminal_at AS ta FROM loans WHERE loan_id = ?`,
+        )
+        .get(21),
+    ).toEqual({ s: 'repaid', b: 100, t: 1_699_999_000, tb: null, ta: null });
     // The money comes from the same read as the status.
     expect(row.principal).toBe('0');
     expect(row.collateral_amount).toBe('250');
@@ -490,6 +502,7 @@ describe('reconcileAfterScan against a real database', () => {
         chainId: CHAIN,
         diamond: DIAMOND,
         head: 100n,
+        headAt: 1_699_999_000,
         canStartOrphanMove: () => true,
         readContract: (async (args: Record<string, unknown>) =>
           args.functionName === 'getActiveLoansCount'
@@ -530,6 +543,7 @@ describe('reconcileAfterScan against a real database', () => {
         chainId: CHAIN,
         diamond: DIAMOND,
         head: 100n,
+        headAt: 1_699_999_000,
         canStartOrphanMove: () => true,
         // The zero struct: the chain has never heard of loan 23.
         readContract: (async (args: Record<string, unknown>) =>
@@ -570,6 +584,7 @@ describe('reconcileAfterScan against a real database', () => {
         chainId: CHAIN,
         diamond: DIAMOND,
         head: 100n,
+        headAt: 1_699_999_000,
         canStartOrphanMove: () => false,
         readContract: (async (args: Record<string, unknown>) =>
           args.functionName === 'getActiveLoansCount'
