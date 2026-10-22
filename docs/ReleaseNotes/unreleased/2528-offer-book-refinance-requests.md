@@ -1,4 +1,4 @@
-## Indexer and app — the Offer Book names refinance requests (PR #TBD)
+## Indexer and app — the Offer Book names refinance requests (PR #2661)
 
 **A refinance request now says what it is on the Offer Book (#2528).** A borrower asks to refinance a running loan by posting a borrow request tagged with that loan. A lender who accepts it funds a new loan that replaces the old one. Until now the indexer kept no record of the tag, so on the Offer Book a refinance request looked exactly like an ordinary borrow request. The indexer now records which loan each request is for, and the Offer Book row says "refinance request: the borrower wants to move loan #N to a new lender". The label is translated in the nine translated languages.
 
