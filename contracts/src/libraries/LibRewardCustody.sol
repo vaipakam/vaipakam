@@ -1777,7 +1777,8 @@ library LibRewardCustody {
     ///         a just-recorded COMPENSATION packet (its one day): the hash and
     ///         the count, written ONCE by the compensation ingress in the same
     ///         transaction as the record. Provenance only — no index, proof or
-    ///         admission reads it; a budget packet is committed by its root
+    ///         admission reads its value (the root stamp reads it only to
+    ///         refuse a packet already committed by a list); a budget packet is committed by its root
     ///         ({stampPacketDayListRoot}) instead.
     function stampPacketDayList(LibVaipakam.Storage storage s, bytes32 h, uint256[] memory dayIds) internal {
         LibVaipakam.IngressPacket storage p = s.ingressPackets[h];

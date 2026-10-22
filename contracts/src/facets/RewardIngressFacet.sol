@@ -783,7 +783,4 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     // delivery covers is at or after `D*`. Its conservative gap (a delivery
     // overtaking the arming broadcast counted as zero) no longer exists,
     // because vintage no longer decides what is counted.
-
-    // ─── #1566 transport epochs PR 3a — the split attestation ingress ───────
-
 }

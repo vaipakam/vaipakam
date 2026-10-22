@@ -8573,7 +8573,10 @@ library LibVaipakam {
         ///
         ///      `freshAttested` / `recycledAttested` / `attested` — the split
         ///      the packet's own d6 wire carried, written ONCE at ingress and
-        ///      IMMUTABLE ({LibRewardCustody.attestPacketFromWire}). The
+        ///      IMMUTABLE ({LibRewardCustody.attestPacketFromWire}) — on an
+        ///      ACTIVATED deployment only. A d6 packet that lands before custody
+        ///      activation is typed through `freshShare` / `recycledShare` and
+        ///      leaves these unset. The
         ///      evidence bounding a classification is DERIVED from them at use
         ///      time ({LibRewardCustody.authenticatedFresh}), never snapshotted
         ///      into `freshAuthenticated` (Codex #2217 r3).

@@ -1070,8 +1070,6 @@ contract VaipakamRewardMessenger is
         );
     }
 
-    // ─── #1566 transport epochs PR 3a — Base → mirror split attestation ─────
-
     /// @notice #1568 C2 — send a Base→mirror Mode-A repatriation
     ///         instruction. Diamond-only (the Diamond enforces the
     ///         canonical-side precondition — an ADMIN-issued PENDING
