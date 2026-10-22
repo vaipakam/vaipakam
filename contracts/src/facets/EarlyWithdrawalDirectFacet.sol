@@ -103,6 +103,30 @@ contract EarlyWithdrawalDirectFacet is
         uint64 newDueTimestamp
     );
 
+    /// @notice #2527 — the buy offer this sale consumed. Byte-identical to
+    ///         `OfferAcceptFacet.OfferAccepted` (same name and arguments, so
+    ///         the same topic hash): every consumer that already retires an
+    ///         offer on an accept (the indexer's offer status, the app's
+    ///         book catch-up) retires a buy offer consumed here the same way.
+    ///         `LoanSold` carries no offer id, so before this the consumed
+    ///         offer kept showing as fillable.
+    /// @param offerId         The consumed buy offer.
+    /// @param acceptor        The selling lender (`msg.sender`).
+    /// @param loanId          The loan whose lender position was sold.
+    /// @param matchAmount     The principal the buyer took over.
+    /// @param newAmountFilled Equal to `matchAmount`: the sale consumes the
+    ///        offer in full, as the accept path reports a full accept.
+    /// @param newAccepted     Always true: the offer is consumed.
+    /// @custom:event-category state-change/offer-mutation
+    event OfferAccepted(
+        uint256 indexed offerId,
+        address indexed acceptor,
+        uint256 loanId,
+        uint256 matchAmount,
+        uint256 newAmountFilled,
+        bool newAccepted
+    );
+
     /// @notice The buy offer being consumed as a sale vehicle is past its GTT
     ///         deadline. Mirrors `OfferAcceptFacet.OfferExpired` (same name +
     ///         same args ⇒ same EVM selector), so a caller decodes identical
@@ -1035,6 +1059,15 @@ contract EarlyWithdrawalDirectFacet is
             NFTBurnFailed.selector
         );
 
+        // #2527 — name the consumed offer, the way the accept path does.
+        emit OfferAccepted(
+            buyOffer.id,
+            msg.sender,
+            loanId,
+            loan.principal,
+            loan.principal,
+            true
+        );
         emit LoanSold(
             loanId,
             msg.sender,

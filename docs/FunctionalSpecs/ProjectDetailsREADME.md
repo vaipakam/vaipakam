@@ -111,6 +111,11 @@ for the following platform areas:
     above it is refused, not partially filled and refunded. This mirrors the
     listed route, whose sale vehicle is built at exactly the principal, so the
     two routes cannot deliver different sizes.
+  - **The consumed offer leaves the book.** A buy offer a direct sale consumes
+    is reported as accepted exactly as an offer taken through the ordinary
+    accept is, naming the offer, the selling lender and the loan, so the offer
+    book and every consumer that retires accepted offers stop showing it as
+    fillable.
   - **The remaining term must fit within the buyer's authored duration, and this
     one is one-directional.** Because the loan's maturity is fixed at origination
     and a sale never moves it, the buyer's authored duration is a ceiling on how
