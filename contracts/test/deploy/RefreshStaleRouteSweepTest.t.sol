@@ -7,6 +7,8 @@ import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
 import {RefreshAllFacetsInPlace} from "../../script/RefreshAllFacetsInPlace.s.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
+import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
+import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
 
 /// @dev Exposes the refresh's stale-route classification and sweep, which
 ///      `refresh()` runs after its post-cut verification.
@@ -80,8 +82,12 @@ contract RefreshStaleRouteSweepTest is Test {
 
         // The sweep broadcasts its Remove from the script contract, which a
         // real run does as the Diamond's owner.
-        vm.prank(OwnershipFacet(diamond).owner());
+        // Ownership only moves to a DEFAULT_ADMIN_ROLE holder (#906).
+        address currentOwner = OwnershipFacet(diamond).owner();
+        vm.startPrank(currentOwner);
+        AccessControlFacet(diamond).grantRole(LibAccessControl.DEFAULT_ADMIN_ROLE, address(probe));
         OwnershipFacet(diamond).transferOwnership(address(probe));
+        vm.stopPrank();
     }
 
     /// A Diamond that routes exactly the deploy's set has nothing stale, and

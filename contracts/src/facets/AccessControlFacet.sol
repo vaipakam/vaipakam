@@ -18,9 +18,10 @@ contract AccessControlFacet is DiamondAccessControl {
      * @notice Initializes all access control roles for the Diamond owner.
      * @dev Must be called once during diamond deployment (e.g., in DiamondInit).
      *      Guarded by `LibDiamond.enforceIsContractOwner`, so only the Diamond
-     *      owner can invoke it. Grants the caller DEFAULT_ADMIN, ADMIN, PAUSER,
-     *      KYC_ADMIN, ORACLE_ADMIN, RISK_ADMIN, and VAULT_ADMIN, and wires
-     *      DEFAULT_ADMIN_ROLE as the admin for every other role.
+     *      owner can invoke it. Grants the caller every role in
+     *      `LibAccessControl.grantableRoles()` (EMERGENCY_REVOKER_ROLE
+     *      included) and wires DEFAULT_ADMIN_ROLE as the admin for every
+     *      other role.
      *
      *      NOTE: not idempotent — re-calling after ownership has transferred
      *      would hand the caller a fresh superset of roles. Keep invocation
@@ -97,7 +98,7 @@ contract AccessControlFacet is DiamondAccessControl {
     /// @param role     The role identifier that was revoked.
     /// @param account  The account that lost the role.
     /// @param revoker  `msg.sender` at the time of the call (the
-    ///                 DEFAULT_ADMIN_ROLE holder driving the response).
+    ///                 EMERGENCY_REVOKER_ROLE holder driving the response).
     /// @param reason   Caller-supplied free-form reason (e.g. "key compromised 2025-03-01").
     /// @custom:event-category informational/admin
     event EmergencyRoleRevoked(
@@ -108,24 +109,44 @@ contract AccessControlFacet is DiamondAccessControl {
     );
 
     /// @dev Caller attempted to revoke DEFAULT_ADMIN_ROLE itself via the
-    ///      emergency path; forbidden so a compromised op can't lock
-    ///      everyone out of governance. Use the standard ADMIN_ROLE
-    ///      setters (Timelock-gated) to rotate DEFAULT_ADMIN deliberately.
+    ///      emergency path; forbidden so a compromised revoker can't lock
+    ///      everyone out of governance. Rotating the root admin is a
+    ///      Timelock action (`grantRole` / `revokeRole` / `transferAdmin`
+    ///      scheduled through the queue).
     error CannotEmergencyRevokeRootAdmin();
+
+    /// @dev Caller attempted to emergency-revoke a role from the Diamond
+    ///      owner — the Timelock after handover. The emergency path exists
+    ///      to strip a compromised hot key, not to disarm governance: a
+    ///      compromised revoker that could strip the Timelock's roles could
+    ///      halt every governed setter, and the Timelock would need a full
+    ///      review window to re-grant each one. The owner's roles move only
+    ///      through the Timelock itself.
+    /// @param owner The current Diamond owner the call targeted.
+    error CannotEmergencyRevokeFromOwner(address owner);
 
     /**
      * @notice Emergency escape hatch for revoking a role WITHOUT routing
-     *         the call through the 48h Timelock that usually gates ADMIN_ROLE.
-     * @dev DEFAULT_ADMIN_ROLE-only (by design, DEFAULT_ADMIN is expected to be
-     *      held by an ops-multisig that signs incident-response txs directly,
-     *      not the Timelock). Emits {EmergencyRoleRevoked} with the caller's
-     *      reason string so downstream indexers and audit tooling can
-     *      distinguish an urgent revocation from routine role churn.
-     *      DEFAULT_ADMIN_ROLE itself cannot be revoked through this path —
-     *      rotating the root admin is a governance action that MUST go
-     *      through the Timelock-gated grant/revoke on the deployer-handover
-     *      script — otherwise a compromised signer could lock the protocol
-     *      out of governance.
+     *         the call through the Timelock's review window.
+     * @dev EMERGENCY_REVOKER_ROLE-only (#934, owner decision D1
+     *      2026-10-16). Post-handover the governance Safe holds this role
+     *      and NOTHING else on the Diamond: `DEFAULT_ADMIN_ROLE` sits on
+     *      the Timelock, so every grant, every rotation of the root admin
+     *      and every {transferAdmin} waits out the Timelock delay. This
+     *      function is the one zero-delay lever the Safe keeps, and it can
+     *      only REMOVE authority:
+     *        - never `DEFAULT_ADMIN_ROLE` ({CannotEmergencyRevokeRootAdmin});
+     *        - never any role of the Diamond owner
+     *          ({CannotEmergencyRevokeFromOwner}) — the Timelock's roles
+     *          are governance's own, not a hot key to strip.
+     *      Emits {EmergencyRoleRevoked} with the caller's reason string so
+     *      downstream indexers and audit tooling can distinguish an urgent
+     *      revocation from routine role churn.
+     *
+     *      Before D1 this was `DEFAULT_ADMIN_ROLE`-gated with the Safe
+     *      holding `DEFAULT_ADMIN_ROLE` directly — which also let the Safe
+     *      re-grant any Timelock-held role to a hot key, or `transferAdmin`
+     *      the whole Diamond, in one transaction (#934).
      * @param role     The role to revoke.
      * @param account  The account to strip `role` from.
      * @param reason   Free-form human-readable reason (surfaces in the
@@ -136,10 +157,12 @@ contract AccessControlFacet is DiamondAccessControl {
         bytes32 role,
         address account,
         string calldata reason
-    ) external onlyRole(LibAccessControl.DEFAULT_ADMIN_ROLE) {
+    ) external onlyRole(LibAccessControl.EMERGENCY_REVOKER_ROLE) {
         if (role == LibAccessControl.DEFAULT_ADMIN_ROLE) {
             revert CannotEmergencyRevokeRootAdmin();
         }
+        address owner = LibDiamond.contractOwner();
+        if (account == owner) revert CannotEmergencyRevokeFromOwner(owner);
         LibAccessControl.revokeRole(role, account);
         emit EmergencyRoleRevoked(role, account, msg.sender, reason);
     }
@@ -169,7 +192,9 @@ contract AccessControlFacet is DiamondAccessControl {
      * @notice Atomically hand every privileged role + ERC-173 ownership
      *         from the caller to `newAdmin` in a single transaction.
      *
-     * @dev DEFAULT_ADMIN_ROLE-gated. Replaces the legacy 23-tx role-handover
+     * @dev DEFAULT_ADMIN_ROLE-gated, so post-handover only the Timelock can
+     *      call it — through its queue, after the full delay (#934 / D1).
+     *      Replaces the legacy 23-tx role-handover
      *      sequence (11 grants + 1 ownership transfer + 11 renounces) with
      *      one atomic tx — same end-state, gas-cheaper, impossible to leave
      *      in a half-applied middle state if any sub-step reverts (the
@@ -284,6 +309,15 @@ contract AccessControlFacet is DiamondAccessControl {
     // forge-lint: disable-next-line(mixed-case-function)
     function RISK_ADMIN_ROLE() external pure returns (bytes32) {
         return LibAccessControl.RISK_ADMIN_ROLE;
+    }
+
+    /// @notice Authorised ONLY to call {emergencyRevokeRole}: strip a role
+    ///         from a hot key with no Timelock delay, never from the
+    ///         Diamond owner and never DEFAULT_ADMIN_ROLE (#934 / D1).
+    /// @return The EMERGENCY_REVOKER_ROLE identifier.
+    // forge-lint: disable-next-line(mixed-case-function)
+    function EMERGENCY_REVOKER_ROLE() external pure returns (bytes32) {
+        return LibAccessControl.EMERGENCY_REVOKER_ROLE;
     }
 
     /// @notice Authorised to manage the vault implementation template and

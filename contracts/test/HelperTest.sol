@@ -1685,7 +1685,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](16);
         selectors[0] = AccessControlFacet.initializeAccessControl.selector;
         selectors[1] = AccessControlFacet.grantRole.selector;
         selectors[2] = AccessControlFacet.revokeRole.selector;
@@ -1700,6 +1700,8 @@ contract HelperTest {
         selectors[11] = AccessControlFacet.RISK_ADMIN_ROLE.selector;
         selectors[12] = AccessControlFacet.emergencyRevokeRole.selector;
         selectors[13] = AccessControlFacet.transferAdmin.selector;
+        selectors[14] = AccessControlFacet.VAULT_ADMIN_ROLE.selector;
+        selectors[15] = AccessControlFacet.EMERGENCY_REVOKER_ROLE.selector;
         return selectors;
     }
 

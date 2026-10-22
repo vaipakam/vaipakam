@@ -134,7 +134,7 @@ The platform's user-facing surface, as specified for the reference web applicati
 
 **Treasury / operator.** The treasury collects protocol fees — the `{liveValue:loanInitiationFeeBps}`% loan-initiation fee, the yield fee on interest and rental earnings, late-fee intake, and liquidation-handling entitlements — and is managed through `TreasuryFacet` and admin configuration. Operators run the off-chain surfaces (keeper worker, indexer, deploy ceremonies) but hold no special on-chain authority beyond the roles granted to them.
 
-**Governance (multisig → timelock).** Privileged authority is split by blast radius after handover: a Governance Safe holds `DEFAULT_ADMIN_ROLE`, a Timelock holds delayed-action roles (admin, oracle/risk/vault administration, `UNPAUSER_ROLE`) and ERC-173 Diamond ownership, and the deployer renounces every privileged role once grants are confirmed. All parameter changes flow through bounded, range-validated setters composed as Safe/Timelock batches. Broader VPFI token-holder governance is Phase 2 scope.
+**Governance (multisig → timelock).** Privileged authority is split by blast radius after handover: a Timelock holds the role root (`DEFAULT_ADMIN_ROLE`), the delayed-action roles (admin, oracle/risk/vault administration, `UNPAUSER_ROLE`) and ERC-173 Diamond ownership; the Governance Safe proposes Timelock operations and holds only a revoke-only emergency role on the Diamond; and the deployer renounces every privileged role once grants are confirmed. No single signer can grant a role, hand over the Diamond, or upgrade code without waiting out the Timelock delay in public. All parameter changes flow through bounded, range-validated setters composed as Safe/Timelock batches. Broader VPFI token-holder governance is Phase 2 scope.
 
 **Guardian.** The fast incident lever. A Pauser/Guardian Safe holds `PAUSER_ROLE` for immediate global and per-asset pause, and every cross-chain contract carries a guardian-or-owner `pause()`. Unpause is deliberately asymmetric — owner/Timelock only — so a compromised or mistaken fast-pauser cannot undo a freeze without the review delay.
 
@@ -1367,9 +1367,9 @@ Privileged authority over each Diamond deployment is split across three holders 
 
 | Holder | Authority | Character |
 | --- | --- | --- |
-| **Governance Safe** | `DEFAULT_ADMIN_ROLE` — the only actor that can grant or revoke roles | Multisig; proposes timelocked actions |
-| **Admin Timelock** (`TimelockController`) | Delayed-action roles — `ADMIN_ROLE`, the oracle / risk / vault admin roles, `UNPAUSER_ROLE` — plus ERC-173 Diamond ownership | Every configuration change and upgrade waits out the delay in public |
-| **Pauser / Guardian Safe** | `PAUSER_ROLE`, held directly with no delay | Fast incident lever only |
+| **Governance Safe** | Proposes Timelock operations; on the Diamond, only `EMERGENCY_REVOKER_ROLE` — remove a role from a compromised hot key at once, never the role root and never anything the Timelock holds | Multisig; cannot grant, upgrade or hand over anything directly |
+| **Admin Timelock** (`VaipakamTimelock`) | The role root `DEFAULT_ADMIN_ROLE` (the only holder that can grant roles), the delayed-action roles — `ADMIN_ROLE`, the oracle / risk / vault admin roles, `UNPAUSER_ROLE` — plus ERC-173 Diamond ownership | Every role change, configuration change and upgrade waits out the delay in public; the delay can never be lowered below its deploy-time value |
+| **Pauser / Guardian Safe** | `PAUSER_ROLE`, held directly with no delay, and the Timelock's independent canceller | Fast incident lever and veto on a queued operation |
 
 The split is asymmetric by design: the guardian can freeze the protocol immediately, but cannot
 unfreeze it — `UNPAUSER_ROLE` sits behind the timelock, so a compromised or mistaken fast-pauser

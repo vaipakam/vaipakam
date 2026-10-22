@@ -1305,7 +1305,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getAccessControlSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](15);
+        s = new bytes4[](16);
         s[0] = AccessControlFacet.initializeAccessControl.selector;
         s[1] = AccessControlFacet.grantRole.selector;
         s[2] = AccessControlFacet.revokeRole.selector;
@@ -1320,16 +1320,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[11] = AccessControlFacet.RISK_ADMIN_ROLE.selector;
         s[12] = AccessControlFacet.VAULT_ADMIN_ROLE.selector;
         // Hot-path role-revoke for incident response. Distinct from
-        // the timelocked `revokeRole` so a Pauser (or other emergency
-        // role-holder) can pull a compromised key without waiting
-        // 48h. See AccessControlFacet implementation for the role
-        // gate that scopes this.
+        // the timelocked `revokeRole` so the EMERGENCY_REVOKER_ROLE
+        // holder (the governance Safe, #934 / D1) can pull a compromised
+        // key without waiting out the Timelock delay. It can only revoke,
+        // never DEFAULT_ADMIN_ROLE and never from the Diamond owner.
         s[13] = AccessControlFacet.emergencyRevokeRole.selector;
         // Atomic role + ERC-173 ownership handover (Item 3 of the
         // 2026-05-06 rehearsal follow-ups). Replaces the legacy
         // 23-tx grant + transferOwnership + renounce sequence.
         // Gated by `onlyRole(DEFAULT_ADMIN_ROLE)`.
         s[14] = AccessControlFacet.transferAdmin.selector;
+        s[15] = AccessControlFacet.EMERGENCY_REVOKER_ROLE.selector;
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {

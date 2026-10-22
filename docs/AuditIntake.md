@@ -69,22 +69,53 @@ technical specification.
 
 ## Trust assumptions
 
-| Role | Address | Powers |
+| Holder | Address | Powers |
 |------|---------|--------|
-| Owner / admin | Multisig | Facet cuts, pause, treasury config, oracle config (Chainlink + Tellor + API3 + DIA + V3-clone factory addresses), swap-adapter chain config, KYC verifier role |
+| Timelock (`VaipakamTimelock`, ≥48h on mainnet) | Contract | ERC-173 Diamond owner (facet cuts, owner-gated setters) and the role root `DEFAULT_ADMIN_ROLE` (grant / revoke every role, `transferAdmin`), plus `ADMIN_ROLE`, `UNPAUSER_ROLE`, oracle / risk / vault / KYC admin roles. Every action waits out the delay in public |
+| Governance Safe | Multisig | Proposes Timelock operations. On the Diamond it holds only `EMERGENCY_REVOKER_ROLE`: remove a role from a hot key immediately — never the role root, never anything the Timelock holds |
+| Pauser / Guardian Safe | Multisig | `PAUSER_ROLE` (immediate pause, no unpause) and the Timelock's independent canceller |
 | Treasury | Multisig | Receives fee skim (`Yield Fee` on interest, 2% liquidation fallback) |
-| KYC verifier | Role-gated address | `ProfileFacet.verifyKYC` — gates loans above `KYC_THRESHOLD_USD` |
+| Off-chain bots | EOAs | `KEEPER_ROLE` / `WATCHER_ROLE` / `NOTIF_BILLER_ROLE` — bounded, individually revocable by the emergency revoker |
 
-Key assumption: **the admin multisig can halt the protocol via `pause()`
-but cannot rewrite user claims or move user vault funds.** Auditors
-should verify that no facet function gives admin direct control over
-`lenderClaims[...]`, `borrowerClaims[...]`, `fallbackSnapshot[...]`, or
-per-user vault proxies.
+**What governance can and cannot do to user funds — stated plainly**
+(#897, #909, #934; owner decision D1, 2026-10-16).
 
-No timelock. Rationale (deliberate, documented): a failed-liquidation
-lender position decays if collateral keeps falling, so a timelock on
-admin actions would harm lenders in exactly the scenarios they most need
-protection.
+- **Governance CAN move user vault funds and rewrite claims.** The Diamond
+  is upgradeable: a `diamondCut` (with its `_init` delegatecall) can write
+  any storage slot — `lenderClaims`, `borrowerClaims`, the fallback
+  snapshot — or add a facet that withdraws from any user's vault, because
+  the Diamond owns every vault proxy. A new vault implementation, made
+  mandatory, changes the code behind every vault. Both levers belong to the
+  Timelock.
+- **What the protocol guarantees is that such a change is PUBLIC and
+  DELAYED.** Every one of those levers, and every way to reach them (granting
+  a role, rotating the role root, `transferAdmin`, moving ownership), is
+  Timelock-only after handover, so it sits in the queue for the full delay
+  — at least 48 hours on mainnet — before it can run. The vault-implementation
+  event carries the new code hash so it can be checked against audited
+  bytecode during that window. The Timelock's delay cannot be lowered below
+  its deploy-time value, and an independent canceller (the Pauser Safe) can
+  veto a queued operation.
+- **No single signer has a zero-delay path.** Before D1 the governance Safe
+  held `DEFAULT_ADMIN_ROLE` directly and could re-grant a Timelock-held role
+  to a hot key, or `transferAdmin` the whole Diamond, in one transaction
+  (#934). It now holds only the revoke-only emergency role.
+- **What the window protects, and what it does not.** A user with funds
+  only in their vault can withdraw during the delay. Collateral locked in an
+  open loan cannot leave until the loan closes, so for those positions the
+  delay buys visibility and the canceller's veto, not a guaranteed exit.
+- **Pause:** the Pauser Safe can halt the protocol immediately; only the
+  Timelock can unpause.
+
+Auditors should verify that no facet function gives any role DIRECT
+control over `lenderClaims[...]`, `borrowerClaims[...]`, the fallback
+snapshot, or per-user vault proxies outside the upgrade levers above, and
+that every path to those levers is Timelock-gated after handover.
+
+The earlier version of this section said the admin "cannot rewrite user
+claims or move user vault funds" and that there was "no timelock". Both
+were wrong (#897, #909): the first ignored the upgrade levers, and the
+second predated the Timelock handover the deploy pipeline performs.
 
 ---
 

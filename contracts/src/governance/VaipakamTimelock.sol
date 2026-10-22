@@ -13,6 +13,17 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
  *         dependency. AnalyticalGettersDesign §3.3 (decision D7
  *         resolved here: the standalone-contract option).
  *
+ *         Hardened per #938: the delay can never be lowered below the
+ *         one it was deployed with, an independent canceller can veto a
+ *         queued operation, and the contract is always self-administered.
+ *
+ *         One OZ behaviour is kept and stated here rather than changed:
+ *         an operation has no expiry. Once ready it stays executable by
+ *         any executor (anyone, with the open executor) until it is run
+ *         or cancelled. A scheduled-then-forgotten operation is therefore
+ *         a standing authorisation — cancel what will not be run, and
+ *         watch {getPendingProposals} for stale entries.
+ *
  * @dev Every public scheduling / cancellation / execution path is
  *      overridden to push or swap-pop a `bytes32 activeProposalIds`
  *      array; the bare OZ contract maintains only a per-id
@@ -61,12 +72,58 @@ contract VaipakamTimelock is TimelockController {
     ///         O(1) swap-pop removal.
     mapping(bytes32 => uint256) private _activeIdIndexPlus1;
 
+    /// @notice The lowest delay {updateDelay} may ever set: the delay this
+    ///         timelock was deployed with (#938). Raising the delay stays a
+    ///         normal queued operation; lowering it below the deploy-time
+    ///         figure is refused outright, so one scheduled operation can
+    ///         never turn the timelock into a pass-through.
+    uint256 public immutable MIN_DELAY_FLOOR;
+
+    /// @dev {updateDelay} asked for less than {MIN_DELAY_FLOOR}.
+    error DelayBelowFloor(uint256 requested, uint256 floor);
+
+    /// @dev A zero address in the `cancellers` list: it would grant the
+    ///      veto to nobody while the deploy log read as if a canceller
+    ///      existed.
+    error ZeroCanceller();
+
+    /**
+     * @param minDelay   Initial minimum delay, and permanently the floor for
+     *                   {updateDelay} ({MIN_DELAY_FLOOR}).
+     * @param proposers  Proposers. OZ also makes each a canceller.
+     * @param executors  Executors; `address(0)` means anyone may execute a
+     *                   ready operation.
+     * @param cancellers Additional cancellers that are NOT proposers
+     *                   (#938) — an independent party that can veto a
+     *                   queued operation during its delay window. Without
+     *                   one, a malicious operation's only defence is that
+     *                   someone notices and exits. May be empty (testnets);
+     *                   the mainnet deploy requires one.
+     * @dev The OZ `admin` argument is fixed to `address(0)`: the timelock
+     *      administers itself, so changing proposers, cancellers or the
+     *      delay goes through its own queue. A non-zero admin could
+     *      re-wire every role with no delay, so it is not offered.
+     */
     constructor(
         uint256 minDelay,
         address[] memory proposers,
         address[] memory executors,
-        address admin
-    ) TimelockController(minDelay, proposers, executors, admin) {}
+        address[] memory cancellers
+    ) TimelockController(minDelay, proposers, executors, address(0)) {
+        MIN_DELAY_FLOOR = minDelay;
+        for (uint256 i = 0; i < cancellers.length; ++i) {
+            if (cancellers[i] == address(0)) revert ZeroCanceller();
+            _grantRole(CANCELLER_ROLE, cancellers[i]);
+        }
+    }
+
+    /// @inheritdoc TimelockController
+    /// @dev Adds the {MIN_DELAY_FLOOR} check (#938). OZ's own rule — only
+    ///      the timelock itself may call it — is kept by `super`.
+    function updateDelay(uint256 newDelay) public virtual override {
+        if (newDelay < MIN_DELAY_FLOOR) revert DelayBelowFloor(newDelay, MIN_DELAY_FLOOR);
+        super.updateDelay(newDelay);
+    }
 
     // ─── Override hooks ──────────────────────────────────────────────────
 

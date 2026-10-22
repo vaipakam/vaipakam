@@ -15,12 +15,10 @@ yet. Instead we commit to:
 
 1. A **guardian fast-pause** on the core lending Diamond — *which already
    exists* (the asymmetric `PAUSER`/`UNPAUSER` split) and is wired to survive
-   handover. §1. (The slow-unpause half of that split is a *process*
-   guarantee, not an absolute one: the root `DEFAULT_ADMIN_ROLE` lands on the
-   governance Safe at handover and can re-grant `UNPAUSER_ROLE` outside the
-   timelock — so the guarantee rests on that multisig honouring process. The
-   §1 caveat states this in full; timelocking `DEFAULT_ADMIN_ROLE` itself is
-   tracked freeze-stage hardening.)
+   handover. §1. (The slow-unpause half of that split is now code-enforced:
+   since owner decision D1 (#934, 2026-10-16) the root `DEFAULT_ADMIN_ROLE`
+   lands on the timelock at handover, so re-granting `UNPAUSER_ROLE` also
+   waits out the delay. The §1 caveat records what changed.)
 2. A **staged ossification** of the trusted surface over time, with the rules
    that move custody freezing first and curation staying bounded-upgradeable.
    §2.
@@ -71,19 +69,17 @@ already implements this guarantee** — it just isn't named "guardian":
   pause takes the full review-window delay. A compromised or impatient Pauser
   key **cannot un-do its own pause** to race the incident team — exactly the
   cross-chain `GuardianPausable` rationale.
-  - **Caveat (honest):** this full-delay guarantee holds only because the
-    **root** `DEFAULT_ADMIN_ROLE` does not sit on a hot key. That role is a
-    *general* timelock-bypass, not just an unpause one: a holder can `grantRole`
-    `UNPAUSER_ROLE` to any address **and** can call
-    `AccessControlFacet.transferAdmin`, which `setContractOwner`s ERC-173
-    ownership to a new address (re-granting every role to it) before revoking
-    the caller's — i.e. it can move the Diamond's whole privileged surface off
-    the timelock in one call. At handover `DEFAULT_ADMIN_ROLE` moves to the
-    **governance Safe** (a multisig, not the timelock itself), and the deployer
-    renounces it; the unpause-delay (and timelock control generally) therefore
-    rests on that multisig's honesty/threshold, not on code. Hardening it
-    further — timelocking `DEFAULT_ADMIN_ROLE` itself so even a role-grant or
-    `transferAdmin` respects the delay — is a freeze-stage item, not done today.
+  - **Caveat — closed by D1 (#934, 2026-10-16).** The root
+    `DEFAULT_ADMIN_ROLE` is a *general* timelock-bypass, not just an unpause
+    one: a holder can `grantRole` `UNPAUSER_ROLE` to any address **and** can
+    call `AccessControlFacet.transferAdmin`, which moves ERC-173 ownership and
+    every role to a new address in one call. Until D1, handover put that role
+    on the **governance Safe** directly, so the delay rested on the Safe's
+    honesty and threshold. It now goes to the **timelock**; the Safe keeps
+    only `EMERGENCY_REVOKER_ROLE`, which can remove a role from a hot key but
+    never the root and never anything the timelock holds. Every role grant,
+    every `transferAdmin` and every ownership move is therefore code-bound to
+    the delay.
 - **The guardian can only halt — never move custody.** `PAUSER_ROLE` gates only
   the pause flag; it has no fund-custody authority. Pausing freezes new state
   transitions; it cannot redirect, seize, or mint.
@@ -191,21 +187,20 @@ team time to cancel — it does not preserve the exit window it freezes.
   guardian halts user activity and the timelock proposer (governance) can
   cancel the queued operation. The guardian does **not** itself block the
   upgrade (the cut path is intentionally not pause-gated, for recovery).
-- **Remaining gap — the root `DEFAULT_ADMIN_ROLE` is not itself timelocked.**
-  At handover `DEFAULT_ADMIN_ROLE` moves to the **governance Safe** (a multisig,
-  not the timelock). Because that role is the `roleAdmin` of **`ADMIN_ROLE`**,
-  `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE`, and
-  `UNPAUSER_ROLE`, a holder of `DEFAULT_ADMIN_ROLE` can **grant itself any of
-  those immediately** and then call any `ADMIN_ROLE`-gated setter (e.g.
-  `setRateModel`, treasury / fee config), change oracle/risk/vault settings, or
-  unpause — all **without** the 48–72h delay. (And via `transferAdmin` it can
-  move ERC-173 ownership wholesale, per the §1 caveat.)
-  So the "custody-moving changes sit behind the timelock" guarantee is, today,
-  only as strong as the governance Safe's threshold/honesty — it is **not**
-  code-enforced for the role-grant path. Closing this (timelocking
-  `DEFAULT_ADMIN_ROLE` so even a role grant respects the delay, or splitting
-  these admin roles' `roleAdmin` onto the timelock) is a **freeze-stage
-  commitment**, called out here rather than glossed over.
+- **Closed by D1 — the root `DEFAULT_ADMIN_ROLE` is timelocked** (#934,
+  owner decision 2026-10-16). It used to move to the governance Safe at
+  handover, and because it is the `roleAdmin` of `ADMIN_ROLE`,
+  `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE` and
+  `UNPAUSER_ROLE`, the Safe could grant itself any of them immediately and
+  skip the delay. It now moves to the timelock, so the "custody-moving changes
+  sit behind the timelock" guarantee is code-enforced for the role-grant path
+  too. The timelock's own delay cannot be lowered below its deploy-time value,
+  and an independent canceller can veto a queued operation (#938).
+- **Ossification cannot be done by renouncing ownership.** The ERC-173 owner
+  must always hold `DEFAULT_ADMIN_ROLE`, and ownership can never move to the
+  zero address (#906). Freezing a surface therefore needs the per-selector
+  freeze mechanism below, not an ownership renounce — which is the intended
+  route anyway, since the curation surfaces stay bounded-upgradeable.
 - **No on-chain quorum yet** (acknowledged gap, shared with #394's governance
   gap). The bounded-steward + timelock-asymmetry + guardian-pause fabric is the
   same one the risk knobs ride on; an on-chain quorum is a later addition, not

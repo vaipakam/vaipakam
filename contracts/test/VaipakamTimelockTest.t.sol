@@ -14,7 +14,7 @@ contract VaipakamTimelockTest is Test {
     VaipakamTimelock internal timelock;
     address internal proposer = makeAddr("proposer");
     address internal executor = makeAddr("executor");
-    address internal admin = makeAddr("admin");
+    address internal canceller = makeAddr("canceller");
     address internal target = makeAddr("target");
     uint256 internal constant DELAY = 60;
 
@@ -23,7 +23,9 @@ contract VaipakamTimelockTest is Test {
         proposers[0] = proposer;
         address[] memory executors = new address[](1);
         executors[0] = executor;
-        timelock = new VaipakamTimelock(DELAY, proposers, executors, admin);
+        address[] memory cancellers = new address[](1);
+        cancellers[0] = canceller;
+        timelock = new VaipakamTimelock(DELAY, proposers, executors, cancellers);
     }
 
     function _schedule(uint256 salt) internal returns (bytes32 id) {
@@ -119,5 +121,92 @@ contract VaipakamTimelockTest is Test {
             )
         );
         timelock.getPendingProposals(0, 101);
+    }
+
+    // ─── #938 hardening ─────────────────────────────────────────────────
+
+    /// @dev Runs `updateDelay(newDelay)` the only way OZ allows — as an
+    ///      operation the timelock schedules on itself.
+    function _queueUpdateDelay(uint256 newDelay, bytes32 salt) internal returns (bytes memory data) {
+        data = abi.encodeCall(timelock.updateDelay, (newDelay));
+        vm.prank(proposer);
+        timelock.schedule(address(timelock), 0, data, bytes32(0), salt, DELAY);
+        vm.warp(block.timestamp + DELAY + 1);
+    }
+
+    function testFloor_isDeployDelay() public view {
+        assertEq(timelock.MIN_DELAY_FLOOR(), DELAY);
+    }
+
+    /// One queued operation must not be able to turn the timelock into a
+    /// pass-through (#938 item 2).
+    function testUpdateDelay_belowFloorRefused() public {
+        bytes memory data = _queueUpdateDelay(0, bytes32("zero"));
+        vm.prank(executor);
+        vm.expectRevert(); // DelayBelowFloor, bubbled through execute
+        timelock.execute(address(timelock), 0, data, bytes32(0), bytes32("zero"));
+        assertEq(timelock.getMinDelay(), DELAY);
+    }
+
+    function testUpdateDelay_directCallBelowFloorRefused() public {
+        vm.prank(address(timelock));
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamTimelock.DelayBelowFloor.selector, DELAY - 1, DELAY)
+        );
+        timelock.updateDelay(DELAY - 1);
+    }
+
+    function testUpdateDelay_raiseThenLowerToFloorAllowed() public {
+        bytes memory up = _queueUpdateDelay(DELAY * 2, bytes32("up"));
+        vm.prank(executor);
+        timelock.execute(address(timelock), 0, up, bytes32(0), bytes32("up"));
+        assertEq(timelock.getMinDelay(), DELAY * 2);
+
+        bytes memory down = abi.encodeCall(timelock.updateDelay, (DELAY));
+        vm.prank(proposer);
+        timelock.schedule(address(timelock), 0, down, bytes32(0), bytes32("down"), DELAY * 2);
+        vm.warp(block.timestamp + DELAY * 2 + 1);
+        vm.prank(executor);
+        timelock.execute(address(timelock), 0, down, bytes32(0), bytes32("down"));
+        assertEq(timelock.getMinDelay(), DELAY);
+    }
+
+    function testUpdateDelay_stillOnlySelf() public {
+        vm.prank(proposer);
+        vm.expectRevert();
+        timelock.updateDelay(DELAY * 2);
+    }
+
+    /// The independent canceller can veto but cannot propose (#938 item 3).
+    function testIndependentCanceller_canCancelNotPropose() public {
+        assertTrue(timelock.hasRole(timelock.CANCELLER_ROLE(), canceller));
+        assertFalse(timelock.hasRole(timelock.PROPOSER_ROLE(), canceller));
+
+        bytes32 id = _schedule(31);
+        vm.prank(canceller);
+        timelock.cancel(id);
+        assertEq(timelock.getPendingProposalsCount(), 0);
+
+        vm.prank(canceller);
+        vm.expectRevert();
+        timelock.schedule(target, 0, "", bytes32(0), bytes32(uint256(32)), DELAY);
+    }
+
+    function testSelfAdministered_noExternalAdmin() public view {
+        bytes32 adminRole = timelock.DEFAULT_ADMIN_ROLE();
+        assertTrue(timelock.hasRole(adminRole, address(timelock)));
+        assertFalse(timelock.hasRole(adminRole, proposer));
+        assertFalse(timelock.hasRole(adminRole, canceller));
+        assertFalse(timelock.hasRole(adminRole, address(this)));
+    }
+
+    function testZeroCanceller_refused() public {
+        address[] memory proposers = new address[](1);
+        proposers[0] = proposer;
+        address[] memory executors = new address[](1);
+        executors[0] = executor;
+        address[] memory cancellers = new address[](1);
+        vm.expectRevert(VaipakamTimelock.ZeroCanceller.selector);
+        new VaipakamTimelock(DELAY, proposers, executors, cancellers);
     }
 }

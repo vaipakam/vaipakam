@@ -12,9 +12,10 @@ import {Deployments} from "./lib/Deployments.sol";
  *         the multi-sig (proposer) and the Vaipakam Diamond privileged roles
  *         (ADMIN_ROLE, DEFAULT_ADMIN_ROLE, and LibDiamond owner).
  *
- * @dev Ownership transfer is NOT performed here — run
- *      `TransferAdminToTimelock` after this script once the timelock is live
- *      and the multi-sig is comfortable with the proposer/executor wiring.
+ * @dev Ownership transfer is NOT performed here — the deploy pipeline's
+ *      `--phase handover` (`Handover.s.sol`) does it once the timelock is
+ *      live and the multi-sig is comfortable with the proposer/executor
+ *      wiring.
  *      Keeping the two phases separate lets the deployer EOA reclaim control
  *      cheaply if the multi-sig setup is wrong (before the handover is made).
  *
@@ -28,15 +29,25 @@ import {Deployments} from "./lib/Deployments.sol";
  *        - EXECUTOR_ROLE : same multi-sig OR address(0) for "anyone can
  *                          execute once the delay has elapsed" (reduces the
  *                          chance a malicious multi-sig stalls a benign op)
- *        - DEFAULT_ADMIN : address(0) — the timelock is self-administered,
- *                          i.e. changing the delay or adding proposers also
- *                          goes through the timelock
+ *        - CANCELLER_ROLE: the proposer (OZ grants it) PLUS an independent
+ *                          canceller — the Pauser Safe — so a queued
+ *                          operation has a veto party other than the Safe
+ *                          that queued it (#938). Required on a Phase-1
+ *                          mainnet; optional on testnets.
+ *        - DEFAULT_ADMIN : none — `VaipakamTimelock` is self-administered
+ *                          by construction, i.e. changing the delay or
+ *                          adding proposers also goes through the timelock.
+ *                          The delay can never drop below the deploy-time
+ *                          value (`MIN_DELAY_FLOOR`, #938).
  *
  *      Required env vars:
  *        - DEPLOYER_PRIVATE_KEY           : deployer key (any funded EOA)
  *        - TIMELOCK_MIN_DELAY    : optional, defaults to 172800 (48h)
  *        - TIMELOCK_PROPOSER     : proposer/canceller (multi-sig address)
  *        - TIMELOCK_EXECUTOR     : optional, defaults to address(0) = open
+ *        - TIMELOCK_CANCELLER    : independent canceller (the Pauser Safe);
+ *                                  required on a Phase-1 mainnet, must
+ *                                  differ from the proposer
  */
 contract DeployTimelock is Script {
     uint256 internal constant DEFAULT_MIN_DELAY = 48 hours;
@@ -46,6 +57,7 @@ contract DeployTimelock is Script {
         uint256 minDelay = vm.envOr("TIMELOCK_MIN_DELAY", DEFAULT_MIN_DELAY);
         address proposer = vm.envAddress("TIMELOCK_PROPOSER");
         address executor = vm.envOr("TIMELOCK_EXECUTOR", address(0));
+        address canceller = vm.envOr("TIMELOCK_CANCELLER", address(0));
 
         require(proposer != address(0), "DeployTimelock: proposer required");
         require(minDelay >= 1 hours, "DeployTimelock: min delay < 1h");
@@ -55,15 +67,19 @@ contract DeployTimelock is Script {
         // gate. Testnets keep the 1h floor for iteration speed. Phase-1 mainnet
         // set per ProjectDetailsREADME / TokenomicsTechSpec: Ethereum, Base,
         // Polygon, Arbitrum, Optimism.
-        if (
+        bool phase1Mainnet =
             block.chainid == 1 ||      // Ethereum
             block.chainid == 8453 ||   // Base
             block.chainid == 137 ||    // Polygon
             block.chainid == 42161 ||  // Arbitrum One
-            block.chainid == 10        // Optimism
-        ) {
+            block.chainid == 10;       // Optimism
+        if (phase1Mainnet) {
             require(minDelay >= 48 hours, "DeployTimelock: mainnet min delay < 48h");
+            // #938 — a mainnet timelock must have a veto party other than
+            // the Safe that queues operations.
+            require(canceller != address(0), "DeployTimelock: mainnet needs TIMELOCK_CANCELLER");
         }
+        require(canceller != proposer, "DeployTimelock: canceller must differ from proposer");
 
         address[] memory proposers = new address[](1);
         proposers[0] = proposer;
@@ -75,13 +91,17 @@ contract DeployTimelock is Script {
         console.log("Min delay (s):  ", minDelay);
         console.log("Proposer:       ", proposer);
         console.log("Executor:       ", executor);
+        console.log("Canceller:      ", canceller);
+
+        address[] memory cancellers = new address[](canceller == address(0) ? 0 : 1);
+        if (canceller != address(0)) cancellers[0] = canceller;
 
         vm.startBroadcast(deployerKey);
         VaipakamTimelock tl = new VaipakamTimelock(
             minDelay,
             proposers,
             executors,
-            address(0) // self-administered — no EOA admin backdoor
+            cancellers // self-administered by construction — no admin argument
         );
         vm.stopBroadcast();
 

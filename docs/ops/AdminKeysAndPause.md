@@ -6,7 +6,7 @@ Defines, for mainnet:
 - Who can pause, and what a pause does.
 - Key-rotation procedure.
 
-Non-mainnet deployments may simplify to a single EOA for speed, but **must** keep the same role separation (ADMIN ≠ PAUSER ≠ DEFAULT_ADMIN at minimum).
+Non-mainnet deployments may simplify to a single EOA for speed, but **must** keep the same role separation (ADMIN ≠ PAUSER ≠ EMERGENCY_REVOKER at minimum).
 
 ---
 
@@ -16,15 +16,22 @@ Roles defined in `LibAccessControl.sol`:
 
 | Role | Constant | Grants on init | Guards (selected) |
 |---|---|---|---|
-| `DEFAULT_ADMIN_ROLE` | `0x00` | Deployer on init, then rotated to governance multisig | Can grant/revoke every other role |
+| `DEFAULT_ADMIN_ROLE` | `0x00` | Deployer on init, then rotated to the admin timelock (D1, #934) | Can grant/revoke every other role, `transferAdmin` |
 | `ADMIN_ROLE` | `keccak256("ADMIN_ROLE")` | Deployer on init | `AdminFacet.setTreasury/setZeroExProxy/setallowanceTarget/setKYCEnforcement/addSwapAdapter/removeSwapAdapter/reorderSwapAdapters/setPancakeswapV3Factory/setSushiswapV3Factory`, `RewardReporterFacet.set*`, `RewardAggregatorFacet.setExpectedSourceEids` |
 | `PAUSER_ROLE` | `keccak256("PAUSER_ROLE")` | Deployer on init | `AdminFacet.pause / unpause`, `AdminFacet.pauseAsset / unpauseAsset` (per-asset reserve pause / blacklist — either `ADMIN_ROLE` or `PAUSER_ROLE` accepted) |
 | `KYC_ADMIN_ROLE` | `keccak256("KYC_ADMIN_ROLE")` | Deployer on init | `ProfileFacet.updateKYCStatus/updateKYCTier/updateKYCThresholds/setKeeperAccess/setLoanKeeperAccess` |
 | `ORACLE_ADMIN_ROLE` | `keccak256("ORACLE_ADMIN_ROLE")` | Deployer on init | `OracleAdminFacet.setChainlinkRegistry/setUsdChainlinkDenominator/setEthChainlinkDenominator/setWethContract/setUniswapV3Factory/setStableTokenFeed/setSequencerUptimeFeed/setFeedOverride/setTellorOracle/setApi3ServerV1/setDIAOracleV2/setSecondaryOracleMaxDeviationBps/setSecondaryOracleMaxStaleness` |
 | `RISK_ADMIN_ROLE` | `keccak256("RISK_ADMIN_ROLE")` | Deployer on init | `RiskFacet.updateRiskParams` |
 | `VAULT_ADMIN_ROLE` | `keccak256("VAULT_ADMIN_ROLE")` | Deployer on init | `VaultFactoryFacet.upgradeVaultImplementation/setMandatoryVaultUpgrade` |
+| `EMERGENCY_REVOKER_ROLE` | `keccak256("EMERGENCY_REVOKER_ROLE")` | Deployer on init, then rotated to the governance multisig | `AccessControlFacet.emergencyRevokeRole` only — removes a role immediately; never `DEFAULT_ADMIN_ROLE`, never from the Diamond owner |
 
-`DEFAULT_ADMIN_ROLE` is the admin of every other role (see `LibAccessControl.initialize`).
+`DEFAULT_ADMIN_ROLE` is the admin of every other role (see `LibAccessControl.initializeAccessControl`).
+
+Two rules keep the ERC-173 owner and the role root together (#906): ownership
+moves only to a non-zero address that already holds `DEFAULT_ADMIN_ROLE`, and
+`DEFAULT_ADMIN_ROLE` cannot be revoked from or renounced by the current owner.
+So the order is always: grant the root, move ownership, then the old owner
+gives up the root.
 
 ---
 
@@ -34,15 +41,16 @@ Roles defined in `LibAccessControl.sol`:
 
 | Entity | Purpose | Signer threshold |
 |---|---|---|
-| **Governance multisig** | Holds `DEFAULT_ADMIN_ROLE`. Only actor that can grant/revoke roles. Actions **always** go through the timelock. | 4-of-7, geographically separated |
-| **Admin timelock** (OZ `TimelockController`) | Holds `ADMIN_ROLE`, `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE`. Queues all admin-impacting changes with a delay. | Proposer: governance multisig. Executor: open (after delay). |
-| **Ops hot-key multisig** | Holds `PAUSER_ROLE` and `KYC_ADMIN_ROLE`. Same-hour response surface: pause/unpause, per-asset reserve pause (`pauseAsset` / `unpauseAsset`), KYC tier bumps. No other role. | 2-of-5, fast-response on-call signers |
+| **Governance multisig** | The timelock's proposer. On the Diamond it holds **only** `EMERGENCY_REVOKER_ROLE` (D1, #934) — it cannot grant a role, move ownership or upgrade anything directly; every such action is a timelock operation. | 4-of-7, geographically separated |
+| **Admin timelock** (`VaipakamTimelock`) | ERC-173 Diamond owner and `DEFAULT_ADMIN_ROLE`, plus `ADMIN_ROLE`, `UNPAUSER_ROLE`, `KYC_ADMIN_ROLE`, `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE`. Queues every admin-impacting change with a delay. Self-administered (no external admin). | Proposer: governance multisig. Executor: open (after delay). Independent canceller: the pauser multisig. |
+| **Pauser multisig** | Holds `PAUSER_ROLE` (pause, per-asset pause — not unpause) and is the timelock's independent canceller. No other role. | 2-of-5, fast-response on-call signers |
 | **Deployer hot key** | Used for initial deploy + role transfer. **Revoked** within 24h. | 1 EOA, rotated per deploy |
 
 ### Timelock delay
 
-- Default: **48 hours** for production.
-- Minimum: **24 hours** after a deploy has stabilised and ops has built confidence. Never below 24h on mainnet without an audited rationale.
+- Default: **48 hours** for production; `DeployTimelock` refuses less on a Phase-1 mainnet.
+- Floor: the delay can never be lowered below the value the timelock was deployed with (`MIN_DELAY_FLOOR`, #938). Raising it is an ordinary queued operation. A lower delay needs a new timelock and a governed handover to it.
+- No expiry: a ready operation stays executable by anyone until it runs or is cancelled. Cancel anything that will not be executed, and watch `getPendingProposals` for stale entries.
 - Emergency override: **no override via timelock.** Emergencies go through `PAUSER_ROLE` (no delay). If an admin-only change is needed under emergency, unpause only after the timelock's delay — or queue the change immediately and pause until it lands.
 
 ### Why pauser is separate
@@ -103,46 +111,34 @@ This is audited and enforced by `PauseGatingTest` — any change to the gated se
 
 ## Key rotation procedure (post-deploy)
 
-Executed once, within 24h of a fresh deploy, from the deployer hot key. Each step is one tx unless noted.
+The rotation is `Handover.s.sol`, run by the deploy pipeline's
+`--phase handover` (see `docs/ops/DeploymentRunbook.md`). It is no longer a
+hand-typed ceremony. In order, as the admin EOA:
 
 ```
-# 1. Grant new governance multisig DEFAULT_ADMIN_ROLE
-AccessControlFacet.grantRole(DEFAULT_ADMIN_ROLE, GOV_MULTISIG)
+# 1. Role root to the timelock FIRST (D1); the admin keeps it until the end
+grantRole(DEFAULT_ADMIN_ROLE, TIMELOCK)
+# 2. The governance multisig's only Diamond role
+grantRole(EMERGENCY_REVOKER_ROLE, GOV_MULTISIG)
+# 3. Delayed roles to the timelock
+grantRole(ADMIN_ROLE | UNPAUSER_ROLE | KYC_ADMIN_ROLE | ORACLE_ADMIN_ROLE |
+          RISK_ADMIN_ROLE | VAULT_ADMIN_ROLE, TIMELOCK)
+# 4. Fast pause lever, direct
+grantRole(PAUSER_ROLE, PAUSER_MULTISIG)
+# 5. Ownership (only accepted because step 1 made the timelock root admin)
+transferOwnership(TIMELOCK)
+# 6. Admin renounces, DEFAULT_ADMIN_ROLE last
+```
 
-# 2. From GOV_MULTISIG: queue timelock grant (48h delay). KYC_ADMIN_ROLE
-#    and PAUSER_ROLE are NOT in this batch — they live on the ops
-#    hot-key multisig so pause/blacklist and tier bumps bypass the delay.
-TimelockController.scheduleBatch(
-  targets=[DIAMOND, DIAMOND, DIAMOND, DIAMOND],
-  values=[0,0,0,0],
-  payloads=[
-    grantRole(ADMIN_ROLE, TIMELOCK),
-    grantRole(ORACLE_ADMIN_ROLE, TIMELOCK),
-    grantRole(RISK_ADMIN_ROLE, TIMELOCK),
-    grantRole(VAULT_ADMIN_ROLE, TIMELOCK)
-  ],
-  ...
-)
+Verify afterwards:
 
-# 3. Grant the ops hot-key multisig its two roles directly (no timelock —
-#    speed matters). Same multisig holds both so one key rotation covers
-#    every hot-key path.
-From GOV_MULTISIG:
-  AccessControlFacet.grantRole(PAUSER_ROLE,    OPS_MULTISIG)
-  AccessControlFacet.grantRole(KYC_ADMIN_ROLE, OPS_MULTISIG)
-
-# 4. After 48h timelock delay, execute the batch from step 2.
-
-# 5. From deployer hot key: renounce every role
-For each role in [DEFAULT_ADMIN, ADMIN, PAUSER, KYC_ADMIN, ORACLE_ADMIN, RISK_ADMIN, VAULT_ADMIN]:
-  AccessControlFacet.renounceRole(role, DEPLOYER)
-
-# 6. Verify
-For each role: AccessControlFacet.hasRole(role, DEPLOYER) == false
-AccessControlFacet.hasRole(DEFAULT_ADMIN_ROLE, GOV_MULTISIG) == true
-AccessControlFacet.hasRole(ADMIN_ROLE, TIMELOCK) == true
-AccessControlFacet.hasRole(PAUSER_ROLE, OPS_MULTISIG) == true
-AccessControlFacet.hasRole(KYC_ADMIN_ROLE, OPS_MULTISIG) == true
+```
+owner() == TIMELOCK
+hasRole(DEFAULT_ADMIN_ROLE, TIMELOCK) == true
+hasRole(EMERGENCY_REVOKER_ROLE, GOV_MULTISIG) == true
+hasRole(<any other role>, GOV_MULTISIG) == false
+hasRole(PAUSER_ROLE, PAUSER_MULTISIG) == true
+hasRole(<any role>, DEPLOYER) == false and hasRole(<any role but the bot roles>, ADMIN) == false
 ```
 
 ### Failure modes during rotation
@@ -150,9 +146,9 @@ AccessControlFacet.hasRole(KYC_ADMIN_ROLE, OPS_MULTISIG) == true
 | Failure | Mitigation |
 |---|---|
 | Deployer renounces before new multisig is active | **Never skip step 6 verify.** If broken, the Diamond has no admin; only recovery is a fresh deploy + migration. |
-| Timelock delay too short and a bad proposal is queued | Governance multisig cancels via `TimelockController.cancel(id)`. Cancel permission is on the multisig by default. |
+| A bad proposal is queued | The governance multisig (proposer) or the independent canceller (pauser multisig) cancels via `cancel(id)` during the delay. |
+| A bot or pauser key is compromised | The governance multisig calls `emergencyRevokeRole(role, key, reason)` — immediate, no timelock. It cannot touch `DEFAULT_ADMIN_ROLE` or the timelock's roles. |
 | PAUSER_ROLE granted to a single EOA (not multisig) | Do not ship. A single-EOA pauser is a single point of compromise *and* a single point of delay. |
-| KYC_ADMIN_ROLE or PAUSER_ROLE accidentally queued through the timelock | Cancel via `TimelockController.cancel(id)` from GOV_MULTISIG. Both roles must stay on the ops hot-key multisig — a 48h delay makes either role useless in its actual scenario. |
 
 ---
 
@@ -160,10 +156,11 @@ AccessControlFacet.hasRole(KYC_ADMIN_ROLE, OPS_MULTISIG) == true
 
 | Item | Canonical chain (Base) | Every other chain |
 |---|---|---|
-| `DEFAULT_ADMIN_ROLE` holder | Governance multisig | Governance multisig on that chain (separate safes per chain) |
+| `DEFAULT_ADMIN_ROLE` holder + ERC-173 owner | Admin timelock | Admin timelock on that chain |
+| `EMERGENCY_REVOKER_ROLE` holder | Governance multisig | Governance multisig on that chain (separate safes per chain) |
 | `ADMIN_ROLE` holder | Admin timelock | Admin timelock |
-| `PAUSER_ROLE` holder | Ops hot-key multisig | Ops hot-key multisig |
-| `KYC_ADMIN_ROLE` holder | Ops hot-key multisig (not timelocked) | Ops hot-key multisig (not timelocked) |
+| `PAUSER_ROLE` holder | Pauser multisig | Pauser multisig |
+| `KYC_ADMIN_ROLE` holder | Admin timelock (dormant on retail) | Admin timelock (dormant on retail) |
 | `rewardMessenger` | Base reward messenger | Local reward messenger |
 | `isCanonicalRewardChain` | **true** | false |
 | `baseChainId` | Base chain id (`8453` mainnet / `84532` testnet) | Base chain id |
