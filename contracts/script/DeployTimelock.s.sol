@@ -32,8 +32,11 @@ import {Deployments} from "./lib/Deployments.sol";
  *        - CANCELLER_ROLE: the proposer (OZ grants it) PLUS an independent
  *                          canceller — the Pauser Safe — so a queued
  *                          operation has a veto party other than the Safe
- *                          that queued it (#938). Required on a Phase-1
- *                          mainnet; optional on testnets.
+ *                          that queued it (#938). Required on every
+ *                          chain: `Handover.s.sol` refuses a Timelock
+ *                          whose Pauser Safe lacks CANCELLER_ROLE, so a
+ *                          canceller-free Timelock could never be handed
+ *                          the Diamond (Codex #2642 r6).
  *        - DEFAULT_ADMIN : none — `VaipakamTimelock` is self-administered
  *                          by construction, i.e. changing the delay or
  *                          adding proposers also goes through the timelock.
@@ -48,9 +51,10 @@ import {Deployments} from "./lib/Deployments.sol";
  *        - PAUSER_ADDRESS        : the Pauser Safe. It becomes the
  *                                  Timelock's independent canceller
  *                                  (#938): it can veto a queued operation
- *                                  but not propose one. Required, must be
- *                                  a deployed contract on a Phase-1
- *                                  mainnet, must differ from the proposer.
+ *                                  but not propose one. Required on every
+ *                                  chain, must differ from the proposer,
+ *                                  and must be a deployed contract on any
+ *                                  chain that is not a known testnet.
  *                                  There is deliberately no separate
  *                                  canceller variable: one address names
  *                                  the Pauser Safe for both this script and
@@ -97,9 +101,13 @@ contract DeployTimelock is Script {
         bool phase1Mainnet = Deployments.requiresProductionGovernance();
         if (phase1Mainnet) {
             require(minDelay >= 48 hours, "DeployTimelock: mainnet min delay < 48h");
-            // #938 — a mainnet timelock must have a veto party other than
-            // the Safe that queues operations.
-            require(canceller != address(0), "DeployTimelock: mainnet needs PAUSER_ADDRESS (the canceller)");
+        }
+        // #938 — every Timelock gets a veto party other than the Safe that
+        // queues operations. Required on testnets too: the handover refuses
+        // a Timelock without it on every chain, so a canceller-free deploy
+        // would only fail later, after the Timelock is recorded (r6).
+        require(canceller != address(0), "DeployTimelock: PAUSER_ADDRESS (the canceller) required");
+        if (phase1Mainnet) {
             // A Safe is a contract. An EOA or a mistyped address here would
             // be a veto nobody can exercise, reported as if one existed.
             require(canceller.code.length > 0, "DeployTimelock: PAUSER_ADDRESS has no code (not a Safe)");
@@ -119,8 +127,8 @@ contract DeployTimelock is Script {
         console.log("Executor:       ", executor);
         console.log("Canceller (Pauser Safe):", canceller);
 
-        address[] memory cancellers = new address[](canceller == address(0) ? 0 : 1);
-        if (canceller != address(0)) cancellers[0] = canceller;
+        address[] memory cancellers = new address[](1);
+        cancellers[0] = canceller;
 
         vm.startBroadcast(deployerKey);
         VaipakamTimelock tl = new VaipakamTimelock(

@@ -581,7 +581,7 @@ phase_preflight() {
   MISSING=()
   for v in DEPLOYER_PRIVATE_KEY ADMIN_PRIVATE_KEY ADMIN_ADDRESS TREASURY_ADDRESS \
            VPFI_OWNER VPFI_TREASURY VPFI_INITIAL_MINTER \
-           TIMELOCK_PROPOSER CCIP_ROUTER CCIP_RMN_PROXY; do
+           TIMELOCK_PROPOSER PAUSER_ADDRESS CCIP_ROUTER CCIP_RMN_PROXY; do
     if [ -z "${!v:-}" ]; then MISSING+=("$v"); fi
   done
   # Mirror chains need BASE_CHAIN_ID — the canonical Base EVM chain id —

@@ -38,4 +38,20 @@ contract DeployTimelockGuardTest is Test {
         );
         s.run();
     }
+
+    /// @dev The canceller (the Pauser Safe) is required on testnets too: the
+    ///      handover refuses a Timelock without it on every chain, so the
+    ///      deploy must not record one it could never hand over to
+    ///      (Codex #2642 r6).
+    function testCancellerRequiredOnTestnet() public {
+        DeployTimelock s = new DeployTimelock();
+        vm.setEnv("DEPLOYER_PRIVATE_KEY", "0x1");
+        vm.setEnv("TIMELOCK_PROPOSER", "0x000000000000000000000000000000000000dEaD");
+        vm.setEnv("EMERGENCY_REVOKER_ADDRESS", "0x000000000000000000000000000000000000dEaD");
+        vm.setEnv("TIMELOCK_MIN_DELAY", "3600");
+        vm.setEnv("PAUSER_ADDRESS", "0x0000000000000000000000000000000000000000");
+        vm.chainId(84532); // Base Sepolia: a known testnet
+        vm.expectRevert(bytes("DeployTimelock: PAUSER_ADDRESS (the canceller) required"));
+        s.run();
+    }
 }

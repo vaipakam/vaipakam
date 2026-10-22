@@ -52,8 +52,10 @@ handover gives it out, straight to the governance Safe, so no handover path can
 leave it behind on the deployer's hot key. The Timelock's canceller is taken
 from the same `PAUSER_ADDRESS` setting the handover uses for the Pauser Safe,
 there is no separate setting to mistype, and the handover refuses a Timelock
-whose canceller is not that Safe. On a mainnet both Safes must be deployed
-contracts.
+whose canceller is not that Safe. The Timelock deploy requires that canceller
+on every chain, testnets included, because the handover requires it everywhere;
+a Timelock deployed without one could never be handed the Diamond. On any chain
+that is not a known testnet both Safes must also be deployed contracts.
 
 There is now one handover procedure. The two older scripts (a separate
 "grant ops roles" step and "transfer admin to timelock") are retired: they split
