@@ -173,6 +173,10 @@ assets, so no lender intent can be filled there. Precondition 4 therefore cannot
 its live state, and a credit sold there could never be used. Price it only once a
 fillable pair exists and the same fork check passes there.
 
+**Update 2026-10-22.** BNB testnet's mocks are now deployed, so a fillable priced pair
+exists there. BNB is still unpriced: the fork check has no BNB cell yet, and pricing
+waits for that cell to pass and for the owner's OK (#2641).
+
 Then `setPerkConfig(PERK_PRIORITY_ROUTING, price, 0)` is the LAST step on that
 chain. That write is also the **explicit arming of the effect** (Codex #2563 r5):
 the first priced, counted write by this version sets a one-time marker that the

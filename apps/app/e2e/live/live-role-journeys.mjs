@@ -652,8 +652,8 @@ const SCENARIOS = [
     desired:
       'The faucet page itself renders AND offers mint controls. One ' +
       'button on some other page satisfied the old predicate. On a testnet ' +
-      'whose deployment carries NO faucet mocks (BNB Testnet uses the real ' +
-      'PancakeSwap venue), the honest answer is instead: the no-test-assets ' +
+      'whose deployment carries NO faucet mocks (BNB Testnet carried none ' +
+      'until 2026-10-22), the honest answer is instead: the no-test-assets ' +
       'state, no mint rows, and a one-click switch to a testnet that has them.',
     async check(page) {
       // Read from the deployments bundle the app reads, so this follows the
