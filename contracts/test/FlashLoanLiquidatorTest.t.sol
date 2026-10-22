@@ -339,6 +339,101 @@ contract FlashLoanLiquidatorTest is Test {
         );
     }
 
+    // ─── #961 — measured against this run, not the standing balance ─
+
+    /// @dev The contract keeps earned profit until the owner sweeps it.
+    ///      A swap that under-delivers must revert even when that
+    ///      standing balance could cover the shortfall.
+    function testRevertsWhenLossIsCoveredOnlyByStandingBalance() public {
+        uint256 standing = 500 ether;
+        principal.mint(address(liquidator), standing);
+        swap.setRateMul(95); // proceeds 997.5 < debt + fee 1000.5
+        swap.setRateDiv(100);
+
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlashLoanLiquidator.InsufficientPostSwapBalance.selector,
+                standing + FLASH_LOAN_AMOUNT + FLASH_FEE,
+                standing + (COLLATERAL_SEIZED * 95) / 100
+            )
+        );
+        liquidator.liquidateViaAaveV3(
+            LOAN_ID,
+            address(principal),
+            address(collateral),
+            FLASH_LOAN_AMOUNT,
+            address(swap),
+            address(swap),
+            _swapCalldata()
+        );
+    }
+
+    /// @dev `netProfit` is this run's gain, not the standing balance
+    ///      plus it.
+    function testNetProfitExcludesStandingBalance() public {
+        uint256 standing = 500 ether;
+        principal.mint(address(liquidator), standing);
+
+        vm.expectEmit(true, true, true, true, address(liquidator));
+        emit FlashLoanLiquidator.FlashLoanLiquidationCompleted(
+            LOAN_ID,
+            address(principal),
+            address(collateral),
+            FLASH_LOAN_AMOUNT,
+            FLASH_FEE,
+            COLLATERAL_SEIZED,
+            SWAP_PROCEEDS,
+            SWAP_PROCEEDS - FLASH_LOAN_AMOUNT - FLASH_FEE
+        );
+        vm.prank(owner);
+        liquidator.liquidateViaAaveV3(
+            LOAN_ID,
+            address(principal),
+            address(collateral),
+            FLASH_LOAN_AMOUNT,
+            address(swap),
+            address(swap),
+            _swapCalldata()
+        );
+        assertEq(
+            principal.balanceOf(address(liquidator)),
+            standing + SWAP_PROCEEDS - FLASH_LOAN_AMOUNT - FLASH_FEE,
+            "standing balance kept, profit added"
+        );
+    }
+
+    /// @dev Collateral left over from an earlier run is neither counted
+    ///      as seized nor offered to this run's swap.
+    function testStandingCollateralIsNotCountedOrApproved() public {
+        uint256 standingCollateral = 100 ether;
+        collateral.mint(address(liquidator), standingCollateral);
+
+        vm.expectEmit(true, true, true, true, address(liquidator));
+        emit FlashLoanLiquidator.FlashLoanLiquidationCompleted(
+            LOAN_ID,
+            address(principal),
+            address(collateral),
+            FLASH_LOAN_AMOUNT,
+            FLASH_FEE,
+            COLLATERAL_SEIZED,
+            SWAP_PROCEEDS,
+            SWAP_PROCEEDS - FLASH_LOAN_AMOUNT - FLASH_FEE
+        );
+        vm.prank(owner);
+        liquidator.liquidateViaAaveV3(
+            LOAN_ID,
+            address(principal),
+            address(collateral),
+            FLASH_LOAN_AMOUNT,
+            address(swap),
+            address(swap),
+            _swapCalldata()
+        );
+        assertEq(collateral.balanceOf(address(liquidator)), standingCollateral, "standing collateral untouched");
+        assertEq(collateral.allowance(address(liquidator), address(swap)), 0, "no allowance left");
+    }
+
     // ─── Withdraw path ───────────────────────────────────────────────
 
     function testWithdrawSweepsProfitToOwner() public {
@@ -389,6 +484,21 @@ contract MockAaveV3Pool is IAaveV3Pool {
 
     function FLASHLOAN_PREMIUM_TOTAL() external view returns (uint128) {
         return uint128(premiumBpsLocal);
+    }
+
+    // The treasury-reserve half of the shared interface; the
+    // liquidator never calls it.
+    function supply(address, uint256, address, uint16) external pure {
+        revert("unused");
+    }
+
+    function withdraw(address, uint256, address) external pure returns (uint256) {
+        revert("unused");
+    }
+
+    // forge-lint: disable-next-line(mixed-case-function)
+    function ADDRESSES_PROVIDER() external pure returns (address) {
+        return address(0);
     }
 
     function flashLoanSimple(

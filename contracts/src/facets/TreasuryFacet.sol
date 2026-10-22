@@ -1075,6 +1075,14 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     ///         the OLD pool. Operator must withdraw all positions
     ///         first.
     error AavePoolRotationWithDeployedPrincipal(uint256 tokensDeployed);
+    /// @notice #965 — the candidate is not the pool its own Aave
+    ///         `PoolAddressesProvider` reports: it exposes no
+    ///         `ADDRESSES_PROVIDER()`, or the provider names a
+    ///         different pool. A fat-finger gate: it refuses a mistyped
+    ///         address or a contract that is not an Aave Pool, and is
+    ///         not by itself proof that the market is genuine (see
+    ///         `LibTreasuryYield.isCanonicalAavePool`).
+    error TreasuryYieldAavePoolNotCanonical(address candidate);
 
     /// @custom:event-category informational/config
     event TreasuryYieldVenueSet(address indexed token, uint8 venue);
@@ -1138,6 +1146,9 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     {
         if (pool == address(0)) revert InvalidAddress();
         if (pool.code.length == 0) revert TreasuryYieldVenueAddressNotContract(pool);
+        if (!LibTreasuryYield.isCanonicalAavePool(pool)) {
+            revert TreasuryYieldAavePoolNotCanonical(pool);
+        }
         // Codex round-2 P1 #1 — reject rotation while any token
         // has Aave-deployed principal. The old pool still custodies
         // those aTokens; switching the address would route the
