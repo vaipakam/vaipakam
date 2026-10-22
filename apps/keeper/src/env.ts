@@ -96,6 +96,15 @@ interface BaseEnv {
   // default before #1854; no such default was ever implemented.)
   FRONTEND_ORIGIN?: string;
 
+  // The Push channel the alerts post as (#1456). A plain var, OPTIONAL:
+  // unset or empty, the channel is the `PUSH_CHANNEL_PK` signer's own
+  // address, as it always was. Set to another address, the signer posts as a
+  // delegate of that channel, so rotating the key swaps the signer instead of
+  // moving every send to a channel nobody subscribed to. Whether the
+  // delegation exists is Push's record; a signer that is not a delegate shows
+  // up as failed sends.
+  PUSH_CHANNEL_ADDRESS?: string;
+
   // Phase 7a.4 — autonomous-keeper enable flag. When
   // `KEEPER_ENABLED == 'true'` AND `KEEPER_PRIVATE_KEY` is set, the
   // liquidator / matcher / liquidity-confidence passes arm their
@@ -295,6 +304,7 @@ export const SECRET_BINDING_KEYS = [
 export const PLAIN_VAR_KEYS = [
   'TG_BOT_USERNAME',
   'FRONTEND_ORIGIN',
+  'PUSH_CHANNEL_ADDRESS',
   'KEEPER_ENABLED',
   'KEEPER_RUNNER_ID',
   'REWARD_REMIT_ENABLED',
@@ -455,6 +465,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     KEEPER_DB: resolveD1Binding(raw.KEEPER_DB, WORKER_NAME) as KeeperD1,
     TG_BOT_USERNAME: raw.TG_BOT_USERNAME,
     FRONTEND_ORIGIN: raw.FRONTEND_ORIGIN,
+    PUSH_CHANNEL_ADDRESS: raw.PUSH_CHANNEL_ADDRESS,
     KEEPER_ENABLED: raw.KEEPER_ENABLED,
     REWARD_REMIT_ENABLED: raw.REWARD_REMIT_ENABLED,
     REWARD_REMIT_LOOKBACK_DAYS: raw.REWARD_REMIT_LOOKBACK_DAYS,

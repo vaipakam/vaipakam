@@ -795,10 +795,11 @@ identity), so rotation is time-sensitive.
   file (`/etc/vaipakam/keeper.env`, [`KeeperMachine.md`](KeeperMachine.md)
   §4). Both sign as this channel, so both are sources to search and both
   must be rotated.
-- **Channel setting:** `PUSH_CHANNEL_ADDRESS` (plain var on the agent,
-  #1456). Unset, the agent posts as its signer's own address. The keeper
-  honours it only once it moves onto the shared rail (`packages/push`,
-  #2248); until then it posts as its key's own address.
+- **Channel setting:** `PUSH_CHANNEL_ADDRESS` (#1456): a plain var on the
+  agent, and a line in the keeper machine's env file. Both send through the
+  shared rail (`packages/push`, #2248), so both honour it the same way: unset,
+  each posts as its own signer's address. Set it in BOTH places, or the two
+  senders post as different channels.
 - **Frontend:** nothing to set since #2251. The Alerts card links to the
   channel the agent reports from `GET /push/status`.
 
@@ -944,12 +945,13 @@ you write the new key over `PUSH_CHANNEL_PK`, and subscribers keep receiving.
 That works only if (a) `PUSH_CHANNEL_ADDRESS` is set to the channel, and (b)
 the channel OWNER key is not the compromised one — a compromised owner can add
 delegates too. It is why the owner key should be held cold and the Workers
-should sign as a delegate. The keeper follows this path only after it moves
-onto the shared rail (#2248); until then its key still IS its channel, and the
-migration below applies to it. If either precondition fails, read on.
+should sign as a delegate. The keeper takes the same path (it sends through
+the same shared rail since #2248), provided its env file sets
+`PUSH_CHANNEL_ADDRESS` too. If either precondition fails, read on.
 
 **Otherwise: there is no signer rotation, and there is no ownership
-transfer.** Both Workers derive the channel identity from the signing key
+transfer.** With `PUSH_CHANNEL_ADDRESS` unset, both senders derive the
+channel identity from the signing key
 (`channelCaip = eip155:1:<wallet(PUSH_CHANNEL_PK).address>`), so changing the
 key changes *which channel the platform posts as*. And Push does not
 implement channel-ownership transfer at all — `PushCoreV2` declares a
@@ -1004,9 +1006,10 @@ the keeper's machine. Verify there rather than assuming success.
    sudo -e /etc/vaipakam/keeper.env
    sudo systemctl try-restart vaipakam-keeper
    ```
-4. **Point the agent at the new channel.** Set the agent's
-   `PUSH_CHANNEL_ADDRESS` var to the new channel (or clear it, when the new
-   key IS the new channel's owner). No app redeploy is needed since #2251:
+4. **Point both senders at the new channel.** Set `PUSH_CHANNEL_ADDRESS` to
+   the new channel (or clear it, when the new key IS the new channel's owner)
+   on the agent's vars AND in the keeper machine's env file, then restart the
+   keeper. No app redeploy is needed since #2251:
    the Alerts card links to whatever channel the agent reports from
    `GET /push/status`, so the link moves with the agent. Confirm it: open
    `/settings` and check that "Open the Push channel" points at the new
