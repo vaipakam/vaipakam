@@ -1443,7 +1443,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](18);
+        s = new bytes4[](19);
         s[0] = OracleFacet.checkLiquidity.selector;
         s[1] = OracleFacet.getAssetPrice.selector;
         s[2] = OracleFacet.calculateLTV.selector;
@@ -1476,6 +1476,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #638 — read-only live-secondary-feed counter, consumed only by the
         // backstop oracle-coverage gate (LibBackstopOracleGate).
         s[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
+        // #666 — the price read that tells a missing price from a
+        // distrusted one (LibFallback's failed-swap split reads it).
+        s[18] = OracleFacet.getAssetPriceStatus.selector;
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {

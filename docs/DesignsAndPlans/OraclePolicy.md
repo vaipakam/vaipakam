@@ -72,7 +72,7 @@ Three secondary oracles are wired alongside Chainlink:
 
 | Source | Lookup keying | Staleness convention | Decimals returned |
 |---|---|---|---|
-| **Tellor** | `keccak256(abi.encode("SpotPrice", abi.encode(symbol, "usd")))` | Reporter-driven, dispute-bounded. `getDataBefore(queryId, block.timestamp)` returns latest. | 18 |
+| **Tellor** | `keccak256(abi.encode("SpotPrice", abi.encode(symbol, "usd")))` | Reporter-driven, dispute-bounded. `getDataBefore(queryId, block.timestamp - TELLOR_DISPUTE_BUFFER)` returns the newest report at least 20 minutes old, so a report nobody has yet had time to dispute is never read (#665). Staleness is still measured from now: with the default one-hour ceiling a report counts while 20–60 minutes old. On a chain younger than the buffer, Tellor is unavailable. The buffer is a constant, not a knob. | 18 |
 | **API3** | `keccak256(abi.encodePacked(bytes32("<SYMBOL>/USD")))` | First-party publisher, sub-minute updates typical. | 18 |
 | **DIA** | string `"<SYMBOL>/USD"` passed to `getValue(string)` | Daily updates; configurable per feed at the DIA side. | 8 |
 
@@ -119,6 +119,14 @@ For each price read:
      secondary form the 2-source majority).
    - **Some Disagree AND no Agree** → revert
      `OraclePriceDivergence`.
+
+That revert is a *distrusted* price, not a missing one, and so is the
+Pyth cross-check's `OracleCrossCheckDivergence`. `getAssetPriceStatus`
+reports the three outcomes (priced, unavailable, distrusted), and a
+forced close-out that would act on a distrusted price refuses with the
+read's own error instead of taking the oracle-unavailable branch (#666).
+`tryGetAssetPrice` folds the last two into one `ok = false`, so settlement
+code that must tell them apart reads the status view.
 
 Effect: a single secondary source compromise can no longer push a
 disagreeing price through the gate; an attacker would have to

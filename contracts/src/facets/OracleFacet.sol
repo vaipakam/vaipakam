@@ -158,35 +158,98 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     }
 
     /**
-     * @notice Active-network liquidity check. Functionally identical to
-     *         {checkLiquidity}; retained as a dedicated entry point for
-     *         execution-routing call sites.
+     * @notice The liquidity check a forced close routes on (the time-based
+     *         default's swap-or-in-kind choice, the split liquidation's
+     *         liquid-only gate). Same classification as {checkLiquidity},
+     *         with one difference (#666): an Illiquid verdict that rests on
+     *         a DISTRUSTED price is not returned. It reverts with that
+     *         price read's own divergence error instead
+     *         ({OraclePriceDivergence} or {OracleCrossCheckDivergence}), so
+     *         the close-out is refused and can be retried once the feeds
+     *         agree.
+     * @dev    An Illiquid verdict means "the lender takes the collateral in
+     *         kind" on the default path, which is right when a price or a
+     *         pool is genuinely missing and wrong when the secondary oracles
+     *         merely disagree with Chainlink. Distrusted means: the asset's
+     *         own price read is {PriceStatus.Divergent}, or a quote asset it
+     *         has a pool with is (that route's verdict is then unknown rather
+     *         than absent). A missing price stays Illiquid, as before.
+     *         {checkLiquidity} keeps the Illiquid reading for every case: it
+     *         gates new positions, where treating a distrusted asset as
+     *         illiquid is the conservative answer.
      */
     function checkLiquidityOnActiveNetwork(
         address asset
-    ) external view returns (LibVaipakam.LiquidityStatus) {
+    ) external view returns (LibVaipakam.LiquidityStatus status) {
         if (asset == address(0)) revert InvalidAsset();
-        return _checkLiquidity(asset);
+        address distrusted;
+        (status, distrusted) = _classifyLiquidity(asset);
+        if (distrusted != address(0)) _refuseDistrusted(distrusted);
+    }
+
+    /// @dev #666 — refuse because `distrusted`'s price is distrusted, with
+    ///      the error its own price read raises, so the caller sees which
+    ///      check disagreed (the secondary quorum, or the Pyth cross-check
+    ///      of the ETH reference) rather than a generic refusal. The strict
+    ///      read repeats the one {getAssetPriceStatus} just classified, in
+    ///      the same transaction, so it reverts the same way; the trailing
+    ///      revert only keeps the refusal unconditional.
+    function _refuseDistrusted(address distrusted) private view {
+        this.getAssetPrice(distrusted);
+        revert OraclePriceDivergence();
+    }
+
+    /// @dev {_classifyLiquidity} without the distrust flag, for every
+    ///      caller that reads a distrusted price as Illiquid.
+    function _checkLiquidity(address asset) internal view returns (LibVaipakam.LiquidityStatus status) {
+        (status, ) = _classifyLiquidity(asset);
     }
 
     /// @dev Internal dispatch. Pre-checks the sequencer circuit breaker
     ///      fail-closed, special-cases WETH, then runs the asset/WETH
-    ///      pool depth + freshness gate for everything else.
-    function _checkLiquidity(address asset) internal view returns (LibVaipakam.LiquidityStatus) {
-        if (!_sequencerHealthy()) return LibVaipakam.LiquidityStatus.Illiquid;
+    ///      pool depth + freshness gate for everything else. `distrusted`
+    ///      is non-zero only on an Illiquid verdict that a distrusted price
+    ///      produced (see {checkLiquidityOnActiveNetwork}), and names the
+    ///      asset whose price it was: `asset` itself, or a quote asset over
+    ///      which a route would have cleared the floor but for that price
+    ///      ({_distrustedQuoteThatClears}). Every missing price, feed or
+    ///      pool reports zero.
+    function _classifyLiquidity(address asset)
+        internal
+        view
+        returns (LibVaipakam.LiquidityStatus, address distrusted)
+    {
+        if (!_sequencerHealthy()) return (LibVaipakam.LiquidityStatus.Illiquid, address(0));
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address weth = s.wethContract;
         address ethFeed = s.ethNumeraireFeed;
         if (weth == address(0) || ethFeed == address(0)) {
-            return LibVaipakam.LiquidityStatus.Illiquid;
+            return (LibVaipakam.LiquidityStatus.Illiquid, address(0));
+        }
+
+        // #666 — the asset's own price gates EVERY branch, WETH's included:
+        // a distrusted price (the quorum, or the Pyth cross-check of the ETH
+        // reference) is named so the settlement read refuses, and a missing
+        // one is Illiquid like any unpriced asset. Before #666 WETH skipped
+        // this gate and read Liquid on ETH/USD freshness alone, so a
+        // distrusted WETH price never reached the refusal the classifier
+        // owes, and an unavailable one sent the default into price reads
+        // that revert instead of the missing-price rule every other asset
+        // follows.
+        (PriceStatus priceStatus, , ) = getAssetPriceStatus(asset);
+        if (priceStatus != PriceStatus.Priced) {
+            return (
+                LibVaipakam.LiquidityStatus.Illiquid,
+                priceStatus == PriceStatus.Divergent ? asset : address(0)
+            );
         }
 
         // WETH itself: no asset/WETH pool (circular); Liquid iff ETH/USD
         // is fresh (2h, no peg branch — ETH is volatile).
         if (asset == weth) {
             (bool ok, , ) = _readFreshUsdFeed(ethFeed, /*allowStablePeg=*/ false);
-            return ok ? LibVaipakam.LiquidityStatus.Liquid : LibVaipakam.LiquidityStatus.Illiquid;
+            return (ok ? LibVaipakam.LiquidityStatus.Liquid : LibVaipakam.LiquidityStatus.Illiquid, address(0));
         }
 
         // Every other asset must have a fresh asset/USD OR asset/ETH
@@ -217,22 +280,22 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         // PAA quote × any configured V3 / V2 venue × any fee tier
         // ≤ 0.3%) still clears the floor at the configured slippage.
         // Zero per-asset governance config — pool discovery is
-        // on-chain via `factory.getPool` / `factory.getPair`.
-        (bool priceOk, , ) = tryGetAssetPrice(asset);
-        if (!priceOk) return LibVaipakam.LiquidityStatus.Illiquid;
+        // on-chain via `factory.getPool` / `factory.getPair`. The asset's
+        // own price was gated above.
 
         // ETH/USD freshness — kept as a soft pre-flight: the
         // route-search itself rechecks each quote-asset's oracle via
-        // `tryGetAssetPrice(q)`, but bailing out early here when
+        // `getAssetPriceStatus(q)`, but bailing out early here when
         // the ETH numeraire feed is stale matches the previous
         // behaviour and short-circuits the ~3 V3 staticcalls per PAA
         // quote that would otherwise run.
         (bool ethOk, , ) = _readFreshUsdFeed(ethFeed, false);
-        if (!ethOk) return LibVaipakam.LiquidityStatus.Illiquid;
+        if (!ethOk) return (LibVaipakam.LiquidityStatus.Illiquid, address(0));
 
-        return _passesFloorSlippage(asset, s)
-            ? LibVaipakam.LiquidityStatus.Liquid
-            : LibVaipakam.LiquidityStatus.Illiquid;
+        (bool passes, address distrustedQuote) = _passesFloorSlippage(asset, s);
+        return passes
+            ? (LibVaipakam.LiquidityStatus.Liquid, address(0))
+            : (LibVaipakam.LiquidityStatus.Illiquid, distrustedQuote);
     }
 
     /// @dev Floor-size slippage check used by {_checkLiquidity}. An
@@ -246,18 +309,25 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///
     ///      §4.4 step 3 full upgrade — replaces the previous
     ///      {_v3DepthLiquid} depth-at-tick metric.
+    ///
+    ///      `distrustedQuote` (#666): when no trusted route clears, a quote
+    ///      asset whose price is distrusted and over which a route would
+    ///      have cleared on everything checkable without that price
+    ///      ({_distrustedQuoteThatClears}). The failed search is then not
+    ///      evidence the asset is illiquid. Zero when there is none.
     function _passesFloorSlippage(address asset, LibVaipakam.Storage storage s)
         private
         view
-        returns (bool)
+        returns (bool passes, address distrustedQuote)
     {
         (bool okA, uint256 pA, uint8 dA) = tryGetAssetPrice(asset);
-        if (!okA || pA == 0) return false;
+        if (!okA || pA == 0) return (false, address(0));
         _TierCtx memory ctx = _TierCtx({
             pA: pA,
             scaleA: 10 ** (uint256(dA) + uint256(_tryTokenDecimals(asset))),
             band: LibVaipakam.cfgTwapConsistencyBps(),
-            twapWindow: uint32(LibVaipakam.cfgTwapWindowSec())
+            twapWindow: uint32(LibVaipakam.cfgTwapWindowSec()),
+            quoteUnvalued: false
         });
         // Probe only the floor size; the other slots are 0 so
         // `_accumulatePoolImpacts` skips them via its
@@ -281,7 +351,55 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
                 _routeOverQuote(asset, q, s, ctx, sizes, best);
             }
         }
-        return best[0] <= LibVaipakam.cfgLiquiditySlippageBps();
+        if (best[0] <= LibVaipakam.cfgLiquiditySlippageBps()) return (true, address(0));
+        return (false, _distrustedQuoteThatClears(asset, s, ctx, sizes, paa));
+    }
+
+    /// @dev #666 — after the trusted search has FAILED, the quote asset (if
+    ///      any) whose price is distrusted and over which a route would
+    ///      have cleared the floor on everything the search can check
+    ///      without that price. Asked only here, where the answer can
+    ///      change the verdict: a quote that is merely unavailable, or
+    ///      distrusted with no route that clears, leaves the asset
+    ///      Illiquid.
+    ///
+    ///      The probe runs the same pool reads, depth test and TWAP check
+    ///      as the trusted search ({_foldRoutes}) and leaves out the one
+    ///      check that needs the quote's price, the value-balance guard.
+    ///      So an empty pool, or one too shallow to take the floor at the
+    ///      configured slippage, cannot turn an Illiquid verdict into a
+    ///      refusal; only a route with the depth the trusted search
+    ///      demands can. The probe's result never counts toward a Liquid
+    ///      verdict or a tier. What it cannot exclude is depth placed at
+    ///      a price away from the market, since that is what the missing
+    ///      guard checks; such a pool can only delay a close-out while the
+    ///      quote stays distrusted, never move collateral.
+    function _distrustedQuoteThatClears(
+        address asset,
+        LibVaipakam.Storage storage s,
+        _TierCtx memory ctx,
+        uint256[4] memory sizes,
+        address[] memory paa
+    ) private view returns (address) {
+        // `ctx` is finished with for the trusted search; from here every
+        // fold skips the value-balance guard.
+        ctx.quoteUnvalued = true;
+        uint256 slipBound = LibVaipakam.cfgLiquiditySlippageBps();
+        for (uint256 qi; qi < paa.length; ++qi) {
+            address q = paa[qi];
+            if (q == address(0) || q == asset) continue;
+            (PriceStatus stQ, , ) = getAssetPriceStatus(q);
+            if (stQ != PriceStatus.Divergent) continue;
+            uint256[4] memory unvalued = [
+                type(uint256).max,
+                type(uint256).max,
+                type(uint256).max,
+                type(uint256).max
+            ];
+            _foldRoutes(asset, q, s, ctx, 0, 0, sizes, unvalued);
+            if (unvalued[0] <= slipBound) return q;
+        }
+        return address(0);
     }
 
     /// @dev V3-style depth probe — the same code path applied against
@@ -960,7 +1078,11 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     /// @dev Tellor probe — returns the per-source status against
     ///      Chainlink. Standard SpotPrice queryId derivation:
     ///      `keccak256(abi.encode("SpotPrice", abi.encode(symbol, "usd")))`
-    ///      where `symbol` is the asset's lowercased ERC-20 symbol.
+    ///      where `symbol` is the asset's lowercased ERC-20 symbol. Reads
+    ///      the newest value reported at least
+    ///      `LibVaipakam.TELLOR_DISPUTE_BUFFER` ago (#665), so a value
+    ///      submitted in this block, or too recently to have been
+    ///      disputed, is never consumed.
     function _checkTellor(
         address asset,
         uint256 primaryPrice,
@@ -982,9 +1104,14 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         bytes32 queryId = keccak256(
             abi.encode("SpotPrice", abi.encode(lower, numerLower))
         );
+        // A chain this young has no value that old to read.
+        if (block.timestamp <= LibVaipakam.TELLOR_DISPUTE_BUFFER) return SecondaryStatus.Unavailable;
         bytes memory raw;
         uint256 reportedAt;
-        try ITellor(oracle).getDataBefore(queryId, block.timestamp) returns (
+        try ITellor(oracle).getDataBefore(
+            queryId,
+            block.timestamp - LibVaipakam.TELLOR_DISPUTE_BUFFER
+        ) returns (
             bytes memory v,
             uint256 t
         ) {
@@ -1647,12 +1774,18 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///      `scaleA` = `10**(feedDecimals + tokenDecimals)` so a
     ///      PAD↔base-unit conversion is one `mulDiv`; `band` =
     ///      `twapConsistencyBps`; `twapWindow` = `twapWindowSec`.
+    ///      `quoteUnvalued` (#666): the quote's price is distrusted, so its
+    ///      leg has no value and the value-balance guard is skipped; depth
+    ///      and the TWAP check still run. Set only by
+    ///      {_distrustedQuoteThatClears}, whose result never counts toward
+    ///      a Liquid verdict or a tier.
     // forge-lint: disable-next-line(pascal-case-struct)
     struct _TierCtx {
         uint256 pA;
         uint256 scaleA;
         uint256 band;
         uint32 twapWindow;
+        bool quoteUnvalued;
     }
 
     /// @dev For one resolved Uni-V3-clone pool, fold its best-route
@@ -1687,8 +1820,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         // Guard 1 — the two legs' Chainlink-priced values must be
         // balanced within `band` bps (⇔ the pool's spot price agrees
         // with the trusted feed): `legValueRatio = feedMid / poolMid`,
-        // so balanced legs ⇔ poolMid ≈ feedMid.
-        {
+        // so balanced legs ⇔ poolMid ≈ feedMid. Skipped when the quote's
+        // price is distrusted (`ctx.quoteUnvalued`, #666): there is no
+        // trusted value to balance against.
+        if (!ctx.quoteUnvalued) {
             uint256 vAsset = Math.mulDiv(reserveAsset, ctx.pA * 1e6, ctx.scaleA); // PAD × 1e6
             uint256 vQ = Math.mulDiv(reserveQ, pQ * 1e6, scaleQ); // PAD × 1e6
             if (vAsset == 0 || vQ == 0) return;
@@ -1723,9 +1858,11 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     }
 
     /// @dev Route the `asset/q` pair over every configured Uni-V3-clone
-    ///      factory at every fee tier ≤ 0.3%, folding each found pool's
-    ///      contribution into `best`. Skips `q` entirely when its
-    ///      Chainlink price is unavailable (can't value its leg).
+    ///      and V2-fork venue ({_foldRoutes}), folding each found pool's
+    ///      contribution into `best`. Skips `q` entirely unless its price
+    ///      reads as Priced: an unavailable quote cannot value its leg, and
+    ///      a distrusted one (#666) is weighed separately, only when the
+    ///      trusted search has failed ({_distrustedQuoteThatClears}).
     function _routeOverQuote(
         address asset,
         address q,
@@ -1734,9 +1871,26 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         uint256[4] memory sizes,
         uint256[4] memory best
     ) private view {
-        (bool okQ, uint256 pQ, uint8 dQ) = tryGetAssetPrice(q);
-        if (!okQ || pQ == 0) return;
+        (PriceStatus stQ, uint256 pQ, uint8 dQ) = getAssetPriceStatus(q);
+        if (stQ != PriceStatus.Priced || pQ == 0) return;
         uint256 scaleQ = 10 ** (uint256(dQ) + uint256(_tryTokenDecimals(q)));
+        _foldRoutes(asset, q, s, ctx, pQ, scaleQ, sizes, best);
+    }
+
+    /// @dev The pool walk {_routeOverQuote} and {_distrustedQuoteThatClears}
+    ///      share: every configured Uni-V3-clone factory at every fee tier
+    ///      ≤ 0.3%, then every configured V2 fork. `pQ`/`scaleQ` value the
+    ///      quote leg; both are zero, and unread, when `ctx.quoteUnvalued`.
+    function _foldRoutes(
+        address asset,
+        address q,
+        LibVaipakam.Storage storage s,
+        _TierCtx memory ctx,
+        uint256 pQ,
+        uint256 scaleQ,
+        uint256[4] memory sizes,
+        uint256[4] memory best
+    ) private view {
         bool assetIsToken0 = asset < q;
         // V3 leg: 3 factories × 4 fee tiers via `getPool(t0, t1, fee)`.
         {
@@ -1812,8 +1966,9 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         (uint256 r0, uint256 r1, ) = abi.decode(rdata, (uint256, uint256, uint256));
         if (r0 == 0 || r1 == 0) return;
         (uint256 reserveAsset, uint256 reserveQ) = assetIsToken0 ? (r0, r1) : (r1, r0);
-        // Value-balance guard (spot ≈ feed) — identical to the V3 path.
-        {
+        // Value-balance guard (spot ≈ feed) — identical to the V3 path,
+        // and skipped the same way for a distrusted quote (#666).
+        if (!ctx.quoteUnvalued) {
             uint256 vAsset = Math.mulDiv(reserveAsset, ctx.pA * 1e6, ctx.scaleA);
             uint256 vQ = Math.mulDiv(reserveQ, pQ * 1e6, scaleQ);
             if (vAsset == 0 || vQ == 0) return;
@@ -1849,7 +2004,8 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             pA: pA,
             scaleA: 10 ** (uint256(dA) + uint256(_tryTokenDecimals(asset))),
             band: LibVaipakam.cfgTwapConsistencyBps(),
-            twapWindow: uint32(LibVaipakam.cfgTwapWindowSec())
+            twapWindow: uint32(LibVaipakam.cfgTwapWindowSec()),
+            quoteUnvalued: false
         });
         uint256[4] memory sizes = [
             LibVaipakam.cfgFloorSizePad(),
@@ -1885,29 +2041,78 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         return 0; // cleared $5k but not $50k ⇒ untierable
     }
 
+    /// @notice What a price read found (#666). `Priced`: {getAssetPrice}
+    ///         returned. `Unavailable`: there is no price to use right now
+    ///         (no feed, a stale or non-positive answer, the sequencer
+    ///         down, any other failure). `Divergent`: a price was read, but
+    ///         the independent sources the read checks it against disagree:
+    ///         every secondary oracle that responded disagreed with
+    ///         Chainlink ({OraclePriceDivergence}), or the Pyth cross-check
+    ///         of the ETH reference price diverged beyond its bound
+    ///         ({OracleCrossCheckDivergence}). The price exists and is
+    ///         DISTRUSTED. The two failures need opposite treatment where a
+    ///         missing price hands the lender the whole collateral: a
+    ///         missing price may, a distrusted one must refuse instead.
+    enum PriceStatus { Priced, Unavailable, Divergent }
+
+    /// @notice {getAssetPrice} without the revert, naming why a read
+    ///         failed. The one place a failed read is classified: every
+    ///         caller that must tell "no price" from "a price the quorum
+    ///         distrusts" reads this, never the revert data itself.
+    /// @dev    A divergence is recognised by its own selector, at its own
+    ///         encoded length, in the revert data of the self-call. Only
+    ///         {_enforceSecondaryQuorum} raises {OraclePriceDivergence} and
+    ///         only {_validatePythCrossCheck} raises
+    ///         {OracleCrossCheckDivergence}. The secondary oracles and Pyth
+    ///         are each read inside their own try/catch, so their revert
+    ///         data never reaches here; a governance-configured Chainlink
+    ///         feed that reverted with the same data would be read as
+    ///         Divergent, which can only turn a read into a refusal, never
+    ///         into "no price". The self-call
+    ///         takes 63/64 of the gas left; a caller that has real work
+    ///         after the read cannot starve it into a false `Unavailable`,
+    ///         because the 1/64 kept back would not pay for that work.
+    function getAssetPriceStatus(address asset)
+        public
+        view
+        returns (PriceStatus status, uint256 price, uint8 decimals)
+    {
+        try this.getAssetPrice(asset) returns (uint256 p, uint8 d) {
+            return (PriceStatus.Priced, p, d);
+        } catch (bytes memory reason) {
+            if (reason.length >= 4) {
+                bytes4 sel = bytes4(reason);
+                if (
+                    (sel == OraclePriceDivergence.selector && reason.length == 4) ||
+                    (sel == OracleCrossCheckDivergence.selector && reason.length == 4 + 4 * 32)
+                ) return (PriceStatus.Divergent, 0, 0);
+            }
+            return (PriceStatus.Unavailable, 0, 0);
+        }
+    }
+
     /// @notice `getAssetPrice` look-alike but try/catch wrapped — callers
     ///         that want to fail-closed instead of fail-open (the
-    ///         {checkLiquidity}, {getIlliquidAssets}, and the
-    ///         oracle-quorum failed-swap fallback in `LibFallback`) can
-    ///         detect pricing failure without bubbling a revert.
+    ///         {checkLiquidity}, {getIlliquidAssets}) can detect pricing
+    ///         failure without bubbling a revert. `ok` is false for a
+    ///         missing AND for a distrusted price alike, which is right for
+    ///         a caller that only proceeds on a usable price. A caller that
+    ///         would act one-sidedly on "no price" reads
+    ///         {getAssetPriceStatus} instead (#666).
     /// @dev    Promoted from `private _tryGetAssetPriceView` to `public
     ///         tryGetAssetPrice` (Phase 2 of the
-    ///         AutonomousLtvAndOracleFallback.md design) so `LibFallback`
-    ///         can route through the diamond proxy to detect the
-    ///         oracle-quorum-stale case and switch from the
-    ///         oracle-priced settlement to the full-collateral fallback.
-    ///         Same behaviour as before for in-facet callers — internal
-    ///         calls bypass the proxy + try/catch overhead naturally.
+    ///         AutonomousLtvAndOracleFallback.md design). `LibFallback` now
+    ///         reads {getAssetPriceStatus} for the failed-swap split, so a
+    ///         distrusted price refuses the split instead of pricing it as
+    ///         unavailable.
     function tryGetAssetPrice(address asset)
         public
         view
         returns (bool ok, uint256 price, uint8 decimals)
     {
-        try this.getAssetPrice(asset) returns (uint256 p, uint8 d) {
-            return (true, p, d);
-        } catch {
-            return (false, 0, 0);
-        }
+        PriceStatus status;
+        (status, price, decimals) = getAssetPriceStatus(asset);
+        ok = status == PriceStatus.Priced;
     }
 
     /// @dev Feed Registry lookup, try/catch wrapped. Returns `address(0)`

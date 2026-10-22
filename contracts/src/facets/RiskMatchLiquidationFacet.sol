@@ -791,13 +791,16 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
     /// @dev EC-003 Phase 1 — reverts `InternalMatchAssetUnpriceable` when
-    ///      the oracle stack can't return a fresh price for `asset`.
-    ///      Mirrors the gate `LibFallback.tryOracleRate` applies for
-    ///      the at-fallback equivalent-value path: `tryGetAssetPrice` must
-    ///      return `ok=true` and the price must be non-zero. The
-    ///      `getAssetPrice` view this delegates to runs the full Soft
-    ///      2-of-N secondary quorum on its way back, so quorum disagreement
-    ///      surfaces as `ok=false` here.
+    ///      the oracle stack can't return a fresh, trusted price for
+    ///      `asset`: `tryGetAssetPrice` must return `ok=true` and the price
+    ///      must be non-zero. The `getAssetPrice` view this delegates to
+    ///      runs the full Soft 2-of-N secondary quorum on its way back, so
+    ///      quorum disagreement surfaces as `ok=false` here and the match
+    ///      refuses, as it does on a missing price. Either way nothing
+    ///      settles. (`LibFallback.tryOracleRate`, the at-fallback gate,
+    ///      reports the two differently because a missing price there
+    ///      sends the collateral to the lender and a distrusted one must
+    ///      not — #666.)
     function _assertOraclePriceable(address asset) private view {
         (bool ok, uint256 price, ) = OracleFacet(address(this)).tryGetAssetPrice(asset);
         if (!ok || price == 0) revert InternalMatchAssetUnpriceable(asset);

@@ -86,6 +86,14 @@ describe('forcedCloseReadPlan', () => {
     expect(byKey.ltv.args).toEqual([7n]);
     expect(byKey.liquidity.args).toEqual([ASSET]);
   });
+
+  // #666 — the card asks the classifier the default routes on, not the
+  // creation-time one, because the two differ exactly when a price is
+  // distrusted (the settlement classifier then reverts).
+  it('asks the settlement-time liquidity classifier', () => {
+    const byKey = Object.fromEntries(planWith(ASSET).map((e) => [e.key, e.contract]));
+    expect(byKey.liquidity.functionName).toBe('checkLiquidityOnActiveNetwork');
+  });
 });
 
 describe('forcedCloseFacts', () => {
@@ -131,6 +139,19 @@ describe('forcedCloseFacts', () => {
     const plan = planWith(ASSET);
     const slots = allGood(plan).map((s, i) => (plan[i].key === 'liquidity' ? ok(2n) : s));
     expect(forcedCloseFacts(plan, slots).collateralIlliquid).toBe(true);
+  });
+
+  // #666 — a distrusted price makes the settlement classifier revert. The
+  // failed slot must leave illiquidity UNREAD, never read as illiquid, so
+  // the card cannot predict an in-kind close the chain would refuse; and it
+  // touches nothing else.
+  it('leaves liquidity unread when the classifier reverts on a distrusted price', () => {
+    const plan = planWith(ASSET);
+    const slots = allGood(plan).map((s, i) => (plan[i].key === 'liquidity' ? fail : s));
+    const facts = forcedCloseFacts(plan, slots);
+    expect(facts.collateralIlliquid).toBeUndefined();
+    expect(facts.defaultable).toBe(true);
+    expect(facts.block).toBe(46_725_021n);
   });
 
   it('leaves liquidity unread for a plan without an asset', () => {

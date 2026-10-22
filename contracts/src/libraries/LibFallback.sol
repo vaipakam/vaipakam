@@ -46,22 +46,51 @@ library LibFallback {
         return _rate(collateralAsset, principalAsset, colPrice, colFeedDec, prinPrice, prinFeedDec);
     }
 
-    /// @dev The rate at the current oracle without reverting. `priced` is
-    ///      false when either leg has no fresh quorum price or reads zero
-    ///      (`OracleFacet.tryGetAssetPrice`), and is the ONLY availability
-    ///      signal: a priced rate can still convert a small amount to zero
-    ///      units, and that zero is a real figure, never "unavailable"
-    ///      (#1281 item 027). `r` is zero when `priced` is false.
+    /// @dev The rate at the current oracle, telling a MISSING price from a
+    ///      DISTRUSTED one (`OracleFacet.getAssetPriceStatus`, #666):
+    ///      - `priced` is false when either leg has no price at all, or
+    ///        reads zero. The pair cannot be priced whatever the other leg
+    ///        says, so a caller may take its unpriced branch.
+    ///      - Otherwise, when either leg's price is distrusted (the sources
+    ///        that read checks against disagree: the secondary quorum, or
+    ///        the Pyth cross-check of the ETH reference), this REVERTS with
+    ///        that read's own error (`OraclePriceDivergence` or
+    ///        `OracleCrossCheckDivergence`), by repeating the strict read.
+    ///        A distrusted price is not a missing one: no caller may read
+    ///        it as "unpriced", because the unpriced branch of the
+    ///        failed-swap split hands the lender the whole collateral,
+    ///        which would reward whoever caused the disagreement. The revert unwinds the whole close-out, which
+    ///        can be retried once the feeds agree.
+    ///      `priced` is the ONLY availability signal: a priced rate can still
+    ///      convert a small amount to zero units, and that zero is a real
+    ///      figure, never "unavailable" (#1281 item 027). `r` is zero when
+    ///      `priced` is false.
     function tryOracleRate(
         address diamond,
         address collateralAsset,
         address principalAsset
     ) internal view returns (bool priced, Rate memory r) {
-        (bool colOk, uint256 colPrice, uint8 colFeedDec) = OracleFacet(diamond)
-            .tryGetAssetPrice(collateralAsset);
-        (bool prinOk, uint256 prinPrice, uint8 prinFeedDec) = OracleFacet(diamond)
-            .tryGetAssetPrice(principalAsset);
-        if (!colOk || !prinOk || colPrice == 0 || prinPrice == 0) return (false, r);
+        (OracleFacet.PriceStatus colStatus, uint256 colPrice, uint8 colFeedDec) =
+            OracleFacet(diamond).getAssetPriceStatus(collateralAsset);
+        (OracleFacet.PriceStatus prinStatus, uint256 prinPrice, uint8 prinFeedDec) =
+            OracleFacet(diamond).getAssetPriceStatus(principalAsset);
+        if (
+            colStatus == OracleFacet.PriceStatus.Unavailable ||
+            prinStatus == OracleFacet.PriceStatus.Unavailable
+        ) return (false, r);
+        if (
+            colStatus == OracleFacet.PriceStatus.Divergent ||
+            prinStatus == OracleFacet.PriceStatus.Divergent
+        ) {
+            // The strict read of the distrusted leg repeats the read just
+            // classified, in this transaction, so it raises the same error;
+            // the trailing revert only keeps the refusal unconditional.
+            OracleFacet(diamond).getAssetPrice(
+                colStatus == OracleFacet.PriceStatus.Divergent ? collateralAsset : principalAsset
+            );
+            revert OracleFacet.OraclePriceDivergence();
+        }
+        if (colPrice == 0 || prinPrice == 0) return (false, r);
         return (true, _rate(collateralAsset, principalAsset, colPrice, colFeedDec, prinPrice, prinFeedDec));
     }
 
@@ -99,11 +128,12 @@ library LibFallback {
         return toPrincipal(r, collateralAmount);
     }
 
-    /// @dev Collateral units for `principalAmount` at the current oracle,
-    ///      without reverting ({tryOracleRate}): `priced` is false when either
-    ///      leg is unavailable, so a caller can route to the oracle-unavailable
-    ///      branch instead of having the whole liquidation revert. `rounding`
-    ///      as in {toCollateral}.
+    /// @dev Collateral units for `principalAmount` at the current oracle
+    ///      ({tryOracleRate}): `priced` is false when either leg is
+    ///      unavailable, so a caller can route to the oracle-unavailable
+    ///      branch instead of having the whole liquidation revert. A
+    ///      distrusted price reverts with its read's own divergence error
+    ///      (#666). `rounding` as in {toCollateral}.
     function collateralEquivalent(
         address diamond,
         uint256 principalAmount,
@@ -119,7 +149,9 @@ library LibFallback {
     /// @notice The principal-asset VALUE of `collateralAmount` at the current
     ///         oracle (the inverse of {collateralEquivalent}), rounded down.
     /// @dev `priced` is false if either leg's oracle is unavailable, so a
-    ///      caller refuses on `!priced` rather than on a zero value. Used by
+    ///      caller refuses on `!priced` rather than on a zero value; a
+    ///      distrusted price reverts with its read's own divergence error
+    ///      (#666). Used by
     ///      the #399 backstop Role-B par-guard to check the lender slice's
     ///      value directly (`value >= lenderPrincipalDue`).
     function principalEquivalent(
@@ -164,10 +196,16 @@ library LibFallback {
     ///
     ///      `oracleAvailable` comes from the price reads themselves
     ///      ({tryOracleRate}), one reading for both slices. When either leg
-    ///      has no fresh quorum price the split is the full-collateral-to-
-    ///      lender branch and the flag is false, so callers emit the
+    ///      has no price at all the split is the full-collateral-to-lender
+    ///      branch and the flag is false, so callers emit the
     ///      oracle-unavailable event. A priced split is never read as an
     ///      oracle failure, however small its slices (#1281 item 027).
+    ///      When a leg's price exists but the sources it is checked against
+    ///      disagree, the split is refused (the read's own divergence
+    ///      error, #666) rather than
+    ///      priced as unavailable: the fallback entry reverts, so the
+    ///      liquidation or default that reached it is undone and can be
+    ///      retried once the feeds agree.
     function computeFallbackEntitlements(
         address diamond,
         LibVaipakam.Loan storage loan,
