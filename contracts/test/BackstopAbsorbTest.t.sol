@@ -472,6 +472,43 @@ contract BackstopAbsorbTest is SetupTest {
         ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
     }
 
+    /// @notice #1281 — a rescale can leave a one-unit lender slice (rounded
+    ///         up) beside a due rounded down to zero. A purchase for no cash
+    ///         would take that slice and pay the lender nothing, so the absorb
+    ///         returns without spending or moving anything and the lender keeps
+    ///         the slice in kind (lender first).
+    function test_absorb_dueRescaledToZero_isANoop() public {
+        address lender_ = makeAddr("lender7");
+        _fallbackOptedIn(lender_, makeAddr("borrower7"));
+        (uint256 l, uint256 t, uint256 b, , uint256 tDue, bool active, bool retried) =
+            ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN);
+        TestMutatorFacet(address(diamond)).setFallbackSnapshotRaw(
+            LOAN,
+            LibVaipakam.FallbackSnapshot({
+                lenderCollateral: 1,
+                treasuryCollateral: t,
+                borrowerCollateral: b + l - 1,
+                lenderPrincipalDue: 0,
+                treasuryPrincipalDue: tDue,
+                active: active,
+                retryAttempted: retried
+            })
+        );
+        (uint256 cashBefore, uint256 exposureBefore, ) =
+            BackstopFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
+
+        vm.prank(owner);
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
+
+        (uint256 cash, uint256 exposure, ) =
+            BackstopFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
+        assertEq(cash, cashBefore, "no absorb cash spent");
+        assertEq(exposure, exposureBefore, "no exposure taken");
+        (uint256 lAfter, , , , , bool activeAfter, ) = ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN);
+        assertTrue(activeAfter, "the snapshot stays active for the in-kind claim");
+        assertEq(lAfter, 1, "the lender keeps the one-unit slice");
+    }
+
     function test_absorb_capExceeded_reverts() public {
         vm.prank(owner);
         BackstopFacet(address(diamond)).setBackstopAbsorbCap(

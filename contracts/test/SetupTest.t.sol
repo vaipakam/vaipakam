@@ -1577,16 +1577,16 @@ contract SetupTest is Test {
     ///      `lenderCol` / `treasuryCol` for a zero-rate loan of `principal`,
     ///      with both feeds at par and equal token decimals. The producer
     ///      prices each due in collateral at the entry price,
-    ///      `due * PAR / entryPrice`, floored:
+    ///      `due * PAR / entryPrice`, the lender's rounded UP (lender first,
+    ///      #1281) and the treasury's rounded down:
     ///        - lender slice >= principal: par serves; the bonus is the excess
-    ///          over the principal, rounded up so the floored due lands on the
-    ///          slice;
+    ///          over the principal, rounded up so the due lands on the slice;
     ///        - lender slice < principal: no bonus lowers the due below the
     ///          principal, so the collateral is priced ABOVE par at entry (a 2%
-    ///          bonus, entry price = due * PAR / lenderCol, floored, which
-    ///          floors the slice back onto `lenderCol`) and the caller restores
-    ///          par afterwards -- the collateral fell between the default and
-    ///          the cell, as it does for a real loan.
+    ///          bonus, entry price = due * PAR / lenderCol, rounded up, which
+    ///          rounds the slice back up onto `lenderCol`) and the caller
+    ///          restores par afterwards -- the collateral fell between the
+    ///          default and the cell, as it does for a real loan.
     ///      The treasury cut is then the smallest that floors onto
     ///      `treasuryCol` at that price. A zero bps reads as the protocol
     ///      default (3% / 2%), so a zero result is written as 1 bps, which adds
@@ -1605,7 +1605,7 @@ contract SetupTest is Test {
         } else {
             bonus = 200;
             uint256 lenderDue = principal + (principal * bonus) / 10_000;
-            entryPrice = (lenderDue * FALLBACK_FIXTURE_PAR_PRICE) / lenderCol;
+            entryPrice = _fixtureCeilDiv(lenderDue * FALLBACK_FIXTURE_PAR_PRICE, lenderCol);
         }
         uint256 treasuryDue = _fixtureCeilDiv(treasuryCol * entryPrice, FALLBACK_FIXTURE_PAR_PRICE);
         uint256 treasury = _fixtureCeilDiv(treasuryDue * 10_000, principal);

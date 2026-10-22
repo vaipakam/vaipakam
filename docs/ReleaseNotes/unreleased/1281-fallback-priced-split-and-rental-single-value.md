@@ -22,6 +22,9 @@ borrower keeps the remainder. Two places keep the same rule:
   lender share is rescaled rounding up.
 - The keeper backstop's purchase check no longer allows a one-wei shortfall.
   At an unchanged price the slice it buys is now always worth the full due.
+  And when a rescale leaves a collateral share beside a due rounded down to
+  zero, the backstop no longer buys that share for nothing: it spends
+  nothing and the lender keeps the share in kind.
 
 The same conversion change reaches two other paths:
 
@@ -48,4 +51,12 @@ the measured-delivery change (#2622), and item 041 by the earlier
 par-guard rework, whose last one-wei allowance this change removes.
 
 Nothing here has reached the testnets yet: per the owner's 2026-10-21
-decision, every testnet refresh waits until all the waves of work are done. Since this changes no storage, it needs no separate migration.
+decision, every testnet refresh waits until all the waves of work are done.
+This changes no storage. Both rules assume records written under them. A
+rental offer created earlier with a fee range would not be refused when it
+is used, and a fallback split sized by the old rounding could fall one unit
+short of the exact purchase check, so the backstop would refuse it and the
+lender would keep the ordinary claim. Neither kind of record can exist
+where this code runs: every chain that runs the current fallback custody
+code is deployed fresh (owner decision of 2026-10-07), so it starts with no
+earlier records.

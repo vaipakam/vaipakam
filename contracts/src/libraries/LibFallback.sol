@@ -75,7 +75,7 @@ library LibFallback {
         returns (uint256)
     {
         uint256 scaled = principalAmount * r.num;
-        return rounding == Math.Rounding.Ceil ? Math.ceilDiv(scaled, r.den) : scaled / r.den;
+        return Math.unsignedRoundsUp(rounding) ? Math.ceilDiv(scaled, r.den) : scaled / r.den;
     }
 
     /// @dev Principal-asset value of `collateralAmount` at `r`, rounded down.

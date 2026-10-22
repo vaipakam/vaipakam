@@ -461,8 +461,11 @@ contract ClaimFacet is
         // FallbackPending with `snap.active` still true. There is nothing for the
         // backstop to buy — return WITHOUT spending absorb cash (reverting here
         // would roll back that objective rescue); the lender finalizes via the
-        // normal claim, which pays the `heldForLender`.
-        if (snap.lenderCollateral == 0) return;
+        // normal claim, which pays the `heldForLender`. The same holds when the
+        // rescale leaves the due itself at zero (a dust remainder): a purchase
+        // for no cash would take the lender's slice and pay nothing, so the
+        // lender keeps it in kind instead (lender first, #1281).
+        if (snap.lenderCollateral == 0 || snap.lenderPrincipalDue == 0) return;
 
         // Require an OBJECTIVE retry to have actually been attempted (this call or
         // a prior `claimAsLenderWithRetry`) before any backstop cash is spent — the
