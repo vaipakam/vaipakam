@@ -249,28 +249,29 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
 
     /// @dev Index every chunk of a landed delivery.
     function _index(bytes32 h) internal returns (uint32 indexedDays) {
+        uint256[] memory dayIds = _daysOf[h];
         bytes32[] memory leaves = _leavesOf[h];
         for (uint256 c; c < leaves.length; ++c) {
-            indexedDays = LibD6Delivery.indexChunk(address(diamond), h, _daysOf[h], leaves, c);
+            indexedDays = LibD6Delivery.indexChunk(address(diamond), h, dayIds, leaves, c);
         }
     }
 
     /// @dev Index chunk `c` of a landed delivery.
     function _indexChunk(bytes32 h, uint256 c) internal returns (uint32) {
-        return LibD6Delivery.indexChunk(address(diamond), h, _daysOf[h], _leavesOf[h], c);
+        uint256[] memory dayIds = _daysOf[h];
+        bytes32[] memory leaves = _leavesOf[h];
+        return LibD6Delivery.indexChunk(address(diamond), h, dayIds, leaves, c);
     }
 
-    /// @dev Index chunk `c` with predecessor hints.
+    /// @dev Index chunk `c` with predecessor hints. The stored list and
+    ///      leaves are read into memory, and the chunk and its proof built,
+    ///      before the call: copying storage arrays inside the call's argument
+    ///      list put the frame one slot past the viaIR stack budget.
     function _indexHinted(bytes32 h, uint256 c, bytes32[] memory hints) internal returns (uint32) {
-        uint256[] memory dayIds = _daysOf[h];
-        return _epoch().materializeTransportBatchChunk(
-            h,
-            c,
-            MerkleFixture.chunk(dayIds, c, RemitWire.D6_CHUNK_DAYS),
-            MerkleFixture.proof(_leavesOf[h], c),
-            hints,
-            new bytes32[](0)
-        );
+        bytes32[] memory leaves = _leavesOf[h];
+        uint256[] memory chunk = MerkleFixture.chunk(_daysOf[h], c, RemitWire.D6_CHUNK_DAYS);
+        bytes32[] memory proof = MerkleFixture.proof(leaves, c);
+        return _epoch().materializeTransportBatchChunk(h, c, chunk, proof, hints, new bytes32[](0));
     }
 
     /// @dev An epoch whose split is NOT attested, indexed. No production path
