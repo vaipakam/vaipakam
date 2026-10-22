@@ -59,13 +59,21 @@ one expression), and splitting on it produced two nonsense fragments.
 | `vaipakam-indexer` | `* * * * *` | `apps/indexer` | live |
 | `vaipakam-offchain-data-warm` | `17 3 * * *` | `ops/offchain-data-warm` | live |
 | `vaipakam-offchain-data-archive` | `17 3 * * *` | *none* | live — and should not be (#1977) |
-| `vaipakam-keeper` | *(none)* | `apps/keeper` | reserved — unscheduled since #1896, held for its return |
 | `vaipakam-mesh-watcher` | *(would be `*/15 * * * *`)* | `ops/mesh-watcher` | undeployed — code-complete, holds no trigger |
 
 **The table above is the whole inventory.** A Worker not listed holds no
 trigger, and `--live` is what enforces that: any Worker armed on the account
 and absent from the table is reported as `ACCOUNT ONLY`, which is how #1977
 was found in the first place.
+
+**`vaipakam-keeper` is not listed, and holds no reservation.** Its row read
+`reserved` until #2570, holding a trigger for a Worker schedule to return.
+None will: since #2504 the keeper runs on an always-on machine
+([`KeeperMachine.md`](KeeperMachine.md)), and from #2569 its Worker's
+`scheduled` handler declines every invocation. A reservation exists only in
+this table, so releasing it changed no account state, and the `Verified:`
+stamp above still dates the last read of the account. `--live` still guards
+the keeper: a schedule restored on it by hand would show up as `ACCOUNT ONLY`.
 
 An earlier revision listed the unscheduled Workers here by name. That was a
 second inventory nothing checked — if one of them later gained a trigger, an
@@ -75,8 +83,8 @@ paragraph still asserting it had none.
 ## What that adds up to
 
 - **Live right now:** 4 of 5
-- **Committed, live plus the keeper's reserve:** 5 of 5
-- **Genuinely spare:** 0
+- **Committed, live only:** 4 of 5
+- **Genuinely spare:** 1
 
 These three lines are **derived from the inventory above, and checked against
 it** — `check-cron-slots.mjs` fails if "Live right now" disagrees with the
@@ -140,23 +148,21 @@ restated count wearing operational clothes, and it would have gone stale
 during exactly the cleanup the rest of this file anticipates.
 
 - **`ops/mesh-watcher` needs one trigger on its first deploy.** Whether it
-  fits is `Genuinely spare` above: if that is zero, deploying it spends
-  `apps/keeper`'s reservation, and the keeper's later re-arm is the deploy
-  that fails with 10072.
+  fits is `Genuinely spare` above: if that is zero, the deploy fails with
+  10072.
 - **A Worker that already holds a reservation needs no spare trigger to
   re-arm.** Re-arming CONVERTS its reservation into a live trigger, so
   `committed` does not move. Its procedure still begins by confirming a
   trigger is free, because a reservation only helps if nobody has spent it.
-  **Whether `apps/keeper` is currently such a Worker is the table's answer,
-  not this paragraph's** — once its re-arm lands, its row reads `live` and it
-  holds no reservation, and a bullet asserting otherwise would contradict the
-  checked table while every gate stayed green.
-- **Both fit when `Genuinely spare` is at least 1**, not 2 — the keeper's
-  half is already committed. Below that, exactly one of the two can proceed
-  and whichever goes first takes it. **Read the current value off the
-  summary**; an earlier revision of this bullet stated it here, along with
-  what retirement would change it to, and both would have been wrong the
-  moment the retirement landed.
+  **Whether any Worker is currently such a Worker is the table's answer,
+  not this paragraph's**: a row reading `reserved` is one, and a bullet
+  naming one would contradict the checked table the moment it changed while
+  every gate stayed green. `apps/keeper` was the case this bullet was
+  written for, and it no longer holds one (see the note under the inventory).
+- **Read the current value off the summary** before any new trigger; an
+  earlier revision of this file stated how many fit, along with what
+  retirement would change it to, and both would have been wrong the moment
+  the retirement landed.
 - Retiring `vaipakam-offchain-data-archive` is what frees a trigger. That is
   the operator action tracked in #1977, and it is not something to do
   casually: until the replacement is confirmed to be landing and verifying

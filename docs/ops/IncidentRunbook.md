@@ -197,20 +197,17 @@ recoverable back-pressure — not a fund-loss event.
 
 ### Automated remittance (keeper, #925)
 
-> **⚠ HOLD — #1896: there is no cron tick, so this automation is NOT running.**
-> `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker was
-> terminated for exceeding CPU on ~100% of invocations. Everything below
-> describes the pass accurately **for when a schedule exists**; right now it
-> never executes, whatever the two flags say. **Treat the manual steps above as
-> the only remittance path** until **both** a live schedule is read back
-> (Settings → Trigger Events — not merely a quiet `wrangler tail`, which proves
-> nothing here) **and** you have seen this pass actually run. A restored cron
-> alone is not enough: the pass is gated TWICE, on `KEEPER_ENABLED` and
-> `REWARD_REMIT_ENABLED`, and the re-enable sequence keeps the first false
-> through its unarmed-validation step. Worse, `timedPass` logs
-> `rewardBudgetRemit done in Nms` even when the pass returned instantly from
-> its gate — so read the accompanying `passIsArmed` skip line, which names the
-> blocking binding, rather than the `done` line. Then require this pass's own
+> **Treat the manual steps above as the only remittance path until you have
+> seen this pass actually run and cover every destination.** The keeper runs on
+> the always-on machine ([`KeeperMachine.md`](KeeperMachine.md)), not as a
+> Worker, so its evidence is the machine's journal (`journalctl -u
+> vaipakam-keeper`), not `wrangler tail`. A running keeper is not enough: the
+> pass is gated TWICE, on `KEEPER_ENABLED` and `REWARD_REMIT_ENABLED`, and the
+> machine starts disarmed (`KEEPER_ENABLED=false` through KeeperMachine §5's
+> validation step). Worse, `timedPass` logs `rewardBudgetRemit done in Nms`
+> even when the pass returned instantly from its gate, so read the
+> accompanying `[keeper] rewardBudgetRemit skipped: …` line, which names the
+> blocking setting, rather than the `done` line. Then require this pass's own
 > POSITIVE marker — `rewardBudgetRemit coverage: C/A destination(s) completed`
 > — with **C equal to A**. **`C == A` means nothing is left owed AT THE SOURCE
 > — it does NOT mean the mirrors were funded.** A successful Base receipt only
@@ -224,7 +221,7 @@ recoverable back-pressure — not a fund-loss event.
 > day parked from an EARLIER tick is already marked remitted, so the pass now
 > treats it as non-actionable and a perfectly idle tick reports `A/A` — and
 > the success log carries only a batch count, never the day IDs, so the
-> undelivered day appears nowhere in the tail you are reading. Watching one
+> undelivered day appears nowhere in the journal you are reading. Watching one
 > green tick therefore cannot surface it. Before standing down manual funding,
 > reconcile the source-marked remittances against destination-side events or
 > pending CCIP messages for the whole window that could still be in flight.
@@ -257,17 +254,18 @@ recoverable back-pressure — not a fund-loss event.
 > reverts this section warns about.
 
 The steps above are the **manual** fallback. In normal operation the `apps/keeper`
-Worker drives remittance itself (`runRewardBudgetRemit`): each cron tick, running
+keeper, running on the always-on machine, drives remittance itself
+(`runRewardBudgetRemit`): on each tick it is due, running
 against Base, it re-scans a bounded recent-day window per mirror, batches the
 finalized-but-un-remitted days under the lane cap, quotes the exact fee, and
-remits — keeping mirrors funded on a best-effort cron cadence (it does **not**
+remits — keeping mirrors funded on a best-effort tick cadence (it does **not**
 synchronize with broadcasts; see the Ordering caveat above). It is **dark by
 default** and requires all of:
 1. `KEEPER_ENABLED=true` (master switch) **and** `REWARD_REMIT_ENABLED=true`
-   (dedicated flag). Both are per-Worker `secret_text`, **not** entries in
-   the committed `vars` block, which this step named until #2223. **Do not
-   set them yet** — they are the LAST step, not the first; see the arming
-   note after item 4.
+   (dedicated flag). Both are lines in the machine's env file,
+   `/etc/vaipakam/keeper.env` ([`KeeperMachine.md`](KeeperMachine.md) §4),
+   and take effect only when the keeper restarts. **Do not set them yet** —
+   they are the LAST step, not the first; see the arming note after item 4.
 2. `KEEPER_PRIVATE_KEY` set (the pass shares the keeper's signing key — without it
    the whole keeper stays disabled) **and** that EOA funded with native Base for
    gas plus each remit's quoted CCIP `msg.value`. An unfunded key arms the pass
@@ -287,7 +285,7 @@ succeed rather than fail on-chain; `runRewardBudgetRemit` checks only the flags
 and the key before heading for `writeContract`, so arming while the EOA is
 unauthorized, the receiver unregistered or the lane unprovisioned produces
 failed or unintended attempts against half-configured infrastructure. Set the
-two secrets only once 2-4 are verified.
+two flags only once 2-4 are verified.
 
 **`KEEPER_ENABLED` is not a remittance switch.** If it is currently `false`,
 setting it `true` here restarts every duty that gates on it — the gated passes,
@@ -318,17 +316,19 @@ already `true` — the normal case, remittance being added to a running keeper,
 so set only the dedicated flag — or arming the whole keeper is its own
 decision with its own prerequisites.
 
-Scope each command to the keeper — from the repository root there is no
-Wrangler config, so a bare command fails or targets whichever Worker's
-directory you happen to be in:
+Set them on the machine, in `/etc/vaipakam/keeper.env` (`sudo -e
+/etc/vaipakam/keeper.env`), then restart the keeper so it reads them. Arming is
+the owner's decision and follows [`KeeperMachine.md`](KeeperMachine.md) §5 step
+3 (one per-pass flag at a time, each validated on its own cadence):
 
 ```bash
-# The dedicated flag. This is the one this procedure is about:
-( cd apps/keeper && wrangler secret put REWARD_REMIT_ENABLED ) # enter: true
-
+# In /etc/vaipakam/keeper.env — the dedicated flag. This is the one this
+# procedure is about:
+#   REWARD_REMIT_ENABLED=true
 # Only if the keeper as a whole is meant to be armed, and only having
-# checked what else that restarts:
-( cd apps/keeper && wrangler secret put KEEPER_ENABLED )       # enter: true
+# checked what else that restarts (KeeperMachine.md §5 step 2):
+#   KEEPER_ENABLED=true
+sudo systemctl restart vaipakam-keeper
 ```
 
 Optional tuning vars: `REWARD_REMIT_LOOKBACK_DAYS` (default 45) and
@@ -345,8 +345,10 @@ manual control): set `REWARD_REMIT_ENABLED=false` (leaves the rest of the keeper
 running) or `KEEPER_ENABLED=false` (stops the seven GATED passes — **not**
 `runDailyOracleSnapshot`, which signs on `KEEPER_PRIVATE_KEY` alone and
 keeps broadcasting; owner decision 2026-08-03 leaves it that way, see
-#1466). That flag is a per-Worker `secret_text`, so `wrangler secret put` is
-the right tool for it.
+#1466). Either is an edit to `/etc/vaipakam/keeper.env` followed by `sudo
+systemctl restart vaipakam-keeper`; to stop every pass, the snapshot
+included, stop the service instead ([`KeeperMachine.md`](KeeperMachine.md)
+§6).
 
 **`graceDefault` has its own switch, and it is the one that sells collateral.**
 The pass submits `triggerDefault` for loans past their grace period, which
@@ -358,7 +360,8 @@ this pass in an incident (a bad route source, a mispriced oracle) while the
 rest of the keeper keeps running:
 
 ```bash
-( cd apps/keeper && wrangler secret put GRACE_DEFAULT_ENABLED ) # enter: false
+# In /etc/vaipakam/keeper.env:  GRACE_DEFAULT_ENABLED=false
+sudo systemctl restart vaipakam-keeper
 ```
 
 `triggerDefault` is permissionless, so stopping the pass stops only this
@@ -372,30 +375,23 @@ reads that variable; the Telegram deep link is built by `apps/agent` from its
 own binding, which a keeper deploy does not touch. No restore step is
 needed.
 
-**To stop everything, including the snapshot**, empty the Worker's cron list
-(`"triggers": { "crons": [] }`) and follow the full procedure in
-[`apps/keeper/README.md`](../../apps/keeper/README.md) §"What the kill-switch
-does and does not stop". **That is a dashboard change, not a redeploy** —
-*Settings → Trigger Events*. An earlier revision of this line said "do not
-stop at the redeploy", which implied a deploy was part of it.
+**To stop everything, including the snapshot**, stop the keeper on the
+machine: `sudo systemctl stop vaipakam-keeper`, as
+[`KeeperMachine.md`](KeeperMachine.md) §6 describes. The Worker needs no
+change: its schedule is already empty and its `scheduled` handler declines
+every invocation. Two things about the stop are load-bearing in an incident
+and neither is obvious:
 
-A deploy is the wrong *shape* for this — it republishes the entire Worker
-configuration to change one schedule — rather than dangerous. A previous
-revision called it "actively wrong" on the strength of the
-`TG_BOT_USERNAME: ""` clobber; that clobber is harmless, because
-`apps/keeper` never reads the value (see lines above).
-
-Two things about it are load-bearing in an incident and neither is obvious:
-
-- the readback must be **trigger-aware** (Trigger Events pane or the
-  schedules API) — confirm the schedule is actually gone rather than
-  assuming the change took; and
-- an empty schedules response is the control plane accepting the change, not
-  the ticks having stopped — Cloudflare documents **up to 15 minutes** of
-  propagation, and this Worker runs every minute, so roughly a dozen further
-  ticks can still sign. **The confirmation is the absence of ticks after the window**, not
-  before it. A stationary nonce is corroboration only — it is per-chain,
-  and a RUNNING keeper has one anyway outside the snapshot window with no
+- the stop is **graceful and has no timeout**: the tick in flight finishes
+  first, so a pass that is mid-send completes that send before the process
+  exits. **The confirmation is `systemctl is-active vaipakam-keeper`
+  printing `inactive`**, not the command returning. A stop that hangs means
+  a pass is waiting on a network call; §6 there says what to check before
+  killing it; and
+- a stop **does not survive a reboot**. To keep the keeper off until you
+  decide otherwise, use `sudo systemctl disable --now vaipakam-keeper`.
+  A stationary nonce is corroboration only — it is per-chain, and a RUNNING
+  keeper has one anyway outside the snapshot window with no
   eligible work. The pass is idempotent and bounds its receipt waits, so stopping it never
 strands funds — any in-flight day simply re-evaluates on the next armed tick or
 via the manual procedure above.
@@ -469,53 +465,50 @@ protocol pause. The atomic-swap path (`triggerLiquidation`,
 `triggerLiquidationSplit`, `triggerPartialLiquidation`) keeps
 running.
 
-> **⚠ HOLD — #1896: Tiers 1 and 2 currently change NOTHING, and their
-> stated safety property does not hold.** The keeper commits
-> `"crons": []` because the Worker was terminated for exceeding CPU on
-> ~100% of invocations, so there is no next tick. Our bot already runs
-> neither the flash-loan branch **nor** the legacy partial / split /
-> atomic branches — the reassurance below that "legacy still runs" is
-> false while the hold is in force, and a successful secret deletion
-> must not be read as preserving automated liquidation.
+> **Tiers 1 and 2 act only on our own bot, and only while it is running and
+> armed.** The keeper runs on the always-on machine
+> ([`KeeperMachine.md`](KeeperMachine.md)), not as a Worker. Its settings are
+> lines in `/etc/vaipakam/keeper.env`, read only when it starts, so Tier 1 is
+> an env-file edit plus a restart. Its log is `journalctl -u vaipakam-keeper`.
+> The "legacy still runs" reassurance below holds only while the keeper is
+> running and `KEEPER_ENABLED` is `true`: stopped or disarmed, our bot runs
+> neither the flash-loan branch **nor** the legacy partial / split / atomic
+> branches, and a successful Tier 1 edit must not be read as preserving
+> automated liquidation.
 >
-> **What this means in an incident:**
-> - **Tier 1 / Tier 2** — already achieved by the hold, as far as our
->   bot is concerned. Doing them is harmless and leaves the posture
->   correctly latched for re-enable, but neither is the *response*.
-> - **The immediate on-chain stop is the §3 GLOBAL protocol pause — not
->   `pauseAsset`.** The Tier 3 note below names Tier 1 and
->   `AdminFacet.pauseAsset` as the post-handover immediate levers; that
->   is wrong for this incident and is corrected there too. `pauseAsset`
->   blocks NEW exposure only — creation paths consult it, and exit paths
->   including liquidation deliberately do not, so existing loans stay
->   liquidatable by design (`LibVaipakam` storage note; `RiskFacet` calls
->   `requireAssetNotPaused` nowhere). `triggerLiquidationDiscounted`
->   gates on the GLOBAL `whenNotPaused` alone. So pausing the asset
->   leaves the vulnerable discounted path fully callable by external
->   liquidators — and during the hold Tier 1 is a no-op as well, which
->   would leave an operator with two levers engaged and nothing stopped.
-> - **Tier 3 still binds external liquidators — but it is not fast.**
->   Post-handover it is a Timelock-scheduled tx with the 48h delay (see
->   the Tier 3 note below), so it is the eventual targeted control, not
->   the incident response. Pre-handover, where it is a direct ADMIN_ROLE
->   call, it does act immediately.
-> - **Liquidation coverage from our side is manual, and stays manual
->   longer than the schedule alone implies.** A restored cron is NOT the
->   end of it: `runLiquidator` returns immediately from `passIsArmed`
->   while `KEEPER_ENABLED` is false, and the re-enable sequence
->   deliberately keeps it false through its unarmed-validation step —
->   which spans a full 15-minute cycle and can span a daily window.
->   Keep manual coverage until **all five** hold. Shorter versions of
->   this list have been wrong three times, each by letting a tick that
->   did not do the work look like coverage:
->   1. A live schedule read back from Settings → Trigger Events — not a
->      quiet `wrangler tail`, which proves nothing here.
+> **Tier 1 also changes nothing today, for a reason in the code.** The
+> keeper does not carry `DISCOUNT_PATH_ENABLED_<chainId>` from its settings
+> into the pass (`resolveEnv` in `apps/keeper/src/env.ts` copies a fixed list
+> of names, and this is not one), so the flash-loan branch is already off on
+> every chain whatever the env file says. See the known gap in
+> [`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md) Step 5.
+> Doing Tier 1 is harmless and leaves the posture correct for when that is
+> fixed, but it is not the *response*.
+>
+> **The immediate on-chain stop for external callers post-handover is the §3
+> GLOBAL protocol pause — not `pauseAsset`**; see the correction after Tier 3.
+> Pre-handover, Tier 3 is a direct ADMIN_ROLE call and acts immediately.
+>
+> **Liquidation coverage from our side is manual after any start, restart,
+> arming or host move, and stays manual longer than a running service
+> implies.** `runLiquidator` returns immediately from `passIsArmed` while
+> `KEEPER_ENABLED` is false, and the machine's own procedure (KeeperMachine
+> §5) deliberately starts disarmed through a validation step that spans a
+> full 15-minute cycle and the daily window. Keep manual coverage until
+> **all five** hold. Shorter versions of this list have been wrong three
+> times, each by letting a tick that did not do the work look like coverage:
+>   1. The keeper is running on exactly one machine and holds the lease:
+>      `systemctl is-active vaipakam-keeper` prints `active`, the journal
+>      shows the first tick's `runner "host:…" acquired the one-runner
+>      lease` line, and no `tick declined` line since. One keeper at
+>      a time is KeeperMachine §2; the Worker's empty schedule is not
+>      evidence of anything here.
 >   2. `chains resolved: N — …` naming the chains this deployment is
 >      meant to serve. A chain whose RPC secret is missing or failing is
 >      dropped silently, and the pass still finishes normally.
->   3. `liquidator done in Nms` with **no** `passIsArmed` skip line
->      naming a blocking binding — `timedPass` logs `done` even for a
->      pass that returned instantly from its gate.
+>   3. `liquidator done in Nms` with **no** `[keeper] liquidator skipped:`
+>      line naming a blocking setting — `timedPass` logs `done` even for
+>      a pass that returned instantly from its gate.
 >   4. **One `liquidator chain=… scan complete: scanned=… atRisk=…
 >      submitted=… noHealthFactor=…` line per chain in (2).** (`scanned`
 >      counts the loans whose health factor was read; `noHealthFactor`
@@ -549,26 +542,32 @@ running.
 
 Three escalation tiers, least to most disruptive:
 
-**Tier 1 — keeper-side snap-off (30-second op, our bot only)**
+**Tier 1 — keeper-side snap-off (local edit, our bot only)**
 
-Delete the per-chain env flag in the Cloudflare keeper Worker:
+Remove the per-chain flag from the keeper's env file on the machine
+and restart it:
 
 ```bash
-pnpm --filter @vaipakam/keeper exec wrangler secret delete \
-  DISCOUNT_PATH_ENABLED_<chainId>
+sudo -e /etc/vaipakam/keeper.env   # delete DISCOUNT_PATH_ENABLED_<chainId>, or leave it empty
+sudo systemctl restart vaipakam-keeper
 ```
 
-The Worker reads `undefined` on next tick → flash-loan branch
-skips → legacy partial/split/atomic still runs. Affects ONLY our
-bot; external liquidators are unaffected (use Tier 3 for that).
+The restart waits for the tick in flight, then the flash-loan
+branch skips from the first tick after it → legacy
+partial/split/atomic still runs while the keeper is armed. Affects
+ONLY our bot; external liquidators are unaffected (use Tier 3 for
+that). See the box above: until the code carries the flag through,
+this changes nothing.
 
 **Tier 2 — pull our receiver from the per-chain config**
 
 Edit [`apps/keeper/src/flashLoanProviders.ts`](../../apps/keeper/src/flashLoanProviders.ts),
-delete the `liquidator:` line for the affected chain, commit +
-redeploy the Worker. Slower than Tier 1 (needs a deploy) but
-doesn't depend on the Cloudflare API. Same blast radius as
-Tier 1.
+delete the `liquidator:` line for the affected chain, commit and
+merge to `main`. The machine's update timer deploys the merge within
+about five minutes and restarts the keeper onto it
+([`KeeperMachine.md`](KeeperMachine.md) §1), unless deploys are paused
+there. Slower than Tier 1 but needs no shell on the machine. Same
+blast radius as Tier 1.
 
 **Tier 3 — flip the on-chain kill-switch (affects EVERYONE)**
 
@@ -599,8 +598,9 @@ can always be closed out (see the `assetPaused` note in
 discounted path fully callable by external liquidators.
 
 So post-handover the immediate levers are **Tier 1** (our bot
-only — and see the #1896 hold above, which makes it a no-op
-today) and the **§3 global protocol pause** (everyone). If the
+only — and see the box above, which makes it a no-op until the
+keeper reads the flag) and the **§3 global protocol pause**
+(everyone). If the
 defect is in the diamond's discount-path code and external
 callers must be stopped now, the global pause is the only
 immediate option; Tier 3 follows behind it as the targeted
@@ -839,9 +839,12 @@ runs after revocation.
 
    Rotation is in the **account-level Secrets Store**, NOT per Worker.
    The pre-split `hf-watcher` Worker was removed by the Stage 3 split; the live consumers
-   are `apps/agent` and `apps/keeper`, and both resolve `TG_BOT_TOKEN`
-   from the shared store — so one write covers both, and a per-Worker
-   `wrangler secret put` would rotate neither.
+   are `apps/agent` and `apps/keeper`. The agent resolves `TG_BOT_TOKEN`
+   from the shared store, and a per-Worker `wrangler secret put` would not
+   rotate it. **The keeper does not read the store:** it runs on the
+   always-on machine and reads `TG_BOT_TOKEN` from
+   `/etc/vaipakam/keeper.env` ([`KeeperMachine.md`](KeeperMachine.md) §4),
+   so it needs its own write, in step 5.
 2. From `@BotFather`: `/revoke`. The old token dies within seconds and
    BotFather's reply contains the NEW token. The outage starts here.
 3. Write the new token with the id resolved in step 1 — a single
@@ -889,8 +892,8 @@ runs after revocation.
    exists only in `apps/agent`. Telegram accepts `setWebhook` against a
    dead host without complaint, so getting this wrong fails SILENTLY: the
    bot simply stops receiving updates.
-5. Redeploy the live consumers to flush in-memory clients tied to the
-   old token:
+5. Redeploy the agent to flush in-memory clients tied to the old token,
+   and give the keeper the new token on its machine:
 
    ```bash
    pnpm --filter @vaipakam/agent run deploy
@@ -898,11 +901,17 @@ runs after revocation.
    # merely harmless: RECIPIENT_VALIDATING_TOKENS and OPENSEA_OFFERS_MAX_PAGES
    # are dashboard-managed and absent from its config, so a bare deploy
    # switches recipient-token validation off.
-   # For the KEEPER the flag preserves TG_BOT_USERNAME and the tuning vars —
-   # but it is NOT what keeps the keeper armed; see "How the keeper's arming
-   # flags are actually held" below. A plain deploy does not disarm it.
-   pnpm --filter @vaipakam/keeper exec wrangler deploy --keep-vars
+
+   # On the keeper machine: write the new token over TG_BOT_TOKEN in the
+   # env file (the editor keeps it out of shell history), then restart so
+   # the keeper reads it.
+   sudo -e /etc/vaipakam/keeper.env
+   sudo systemctl restart vaipakam-keeper
    ```
+
+   Until the restart, the keeper's HF-band alerts fail against the revoked
+   token; `Telegram sendMessage failed:` lines in `journalctl -u
+   vaipakam-keeper` are that window, and they should stop after it.
 
 No subscriber action required — the bot's @-handle stays
 `@VaipakamBot`, only the API token rotates.
@@ -926,7 +935,8 @@ with it. Budget for that before you start.
 know does not throw anything user-visible. `sendPush` catches and logs
 `[push] send failed subscriber=… err=…` and moves on — fail-soft and
 UNALERTED. Nothing pages, nothing appears in the app. The only place it shows
-is `wrangler tail`, so verify there rather than assuming success.
+is the log: `wrangler tail` for the agent, `journalctl -u vaipakam-keeper` on
+the keeper's machine. Verify there rather than assuming success.
 
 1. From a clean EOA you control, **create a new Push channel** —
    `createChannelWithPUSH`, which requires a **50 PUSH stake**. This is not
@@ -934,9 +944,11 @@ is `wrangler tail`, so verify there rather than assuming success.
    or every send is rejected. Acquiring PUSH mid-incident is not a fast path,
    so treat the stake as a standing prerequisite for being able to rotate.
 2. Write that EOA's private key over `PUSH_CHANNEL_PK` in the **account-level
-   Secrets Store** — `apps/agent` and `apps/keeper` both bind it from there,
-   so one write covers both and a per-Worker `wrangler secret put` would
-   rotate neither:
+   Secrets Store** — `apps/agent` binds it from there, so a per-Worker
+   `wrangler secret put` would not rotate it. **The keeper does not read the
+   store:** it runs on the always-on machine and reads `PUSH_CHANNEL_PK` from
+   `/etc/vaipakam/keeper.env` ([`KeeperMachine.md`](KeeperMachine.md) §4), so
+   step 3 writes it there separately:
 
    ```bash
    STORE=<the vaipakam-credentials store id>
@@ -948,15 +960,19 @@ is `wrangler tail`, so verify there rather than assuming success.
    wrangler secrets-store secret update "$STORE" \
      --secret-id <PUSH_CHANNEL_PK's id> --remote
    ```
-3. Redeploy **both** consumers to drop their cached PushAPI clients:
+3. Redeploy the agent, and restart the keeper with the new key, so both
+   drop their cached PushAPI clients:
 
    ```bash
    pnpm --filter @vaipakam/agent run deploy
    # Same as the Telegram rotation: `run deploy` carries --keep-vars, which
    # the agent REQUIRES (RECIPIENT_VALIDATING_TOKENS,
-   # OPENSEA_OFFERS_MAX_PAGES). On the keeper it preserves TG_BOT_USERNAME and
-   # the tuning vars; it is not what keeps the keeper armed.
-   pnpm --filter @vaipakam/keeper exec wrangler deploy --keep-vars
+   # OPENSEA_OFFERS_MAX_PAGES).
+
+   # On the keeper machine: write the new key over PUSH_CHANNEL_PK in the
+   # env file, then restart so the keeper reads it.
+   sudo -e /etc/vaipakam/keeper.env
+   sudo systemctl restart vaipakam-keeper
    ```
 4. **Point the app at the new channel.** Set `VITE_PUSH_CHANNEL_ADDRESS` to
    the new EOA and redeploy `apps/app`. Leaving it on the old address sends
@@ -989,28 +1005,20 @@ is `wrangler tail`, so verify there rather than assuming success.
    deploy.
 5. Update the **Vaipakam Push channel reference** block at the top of this
    section, so the next incident does not cross-reference a dead channel.
-6. Verify with `wrangler tail` on both Workers that a send actually
-   SUCCEEDS — look for `[push] sent channel=…` carrying the new channel
+6. Verify on both consumers that a send actually SUCCEEDS: `wrangler tail`
+   for the agent, and `journalctl -u vaipakam-keeper` on the keeper's machine.
+   Look for `[push] sent channel=…` carrying the new channel
    address. (The line deliberately does not name the subscriber: it fires on
    every notification, so carrying the wallet would leave a routine
    wallet-to-event trail in observability. The channel is the field a
-   rotation changes, and it is all this check needs.) Two quiet tails are NOT
+   rotation changes, and it is all this check needs.) Two quiet logs are NOT
    confirmation: sends only happen
    when an eligible subscriber event occurs, so silence means "nothing has
    been attempted yet" and "every attempt is failing" equally. Wait for a
-   real send, or trigger one, before calling the migration done.
-
-   > **⚠ HOLD — #1896: verify the AGENT only; defer the keeper.** The
-   > keeper is deliberately unscheduled (`"crons": []`, because the Worker
-   > was terminated for exceeding CPU on ~100% of invocations) and it has
-   > no HTTP surface, so it has no invocation from which to send and this
-   > check can never complete against it. Complete the rotation on the
-   > agent, which can satisfy it, and **record the keeper's Push
-   > verification as deferred** — do not wait indefinitely, and do not
-   > drop the check. It carries a real risk: an incompatible signer would
-   > stay undetected until the keeper is re-enabled, so the deferral must
-   > be re-run as part of the re-enable sequence in
-   > `apps/keeper/wrangler.jsonc`, at its armed-tick step.
+   real send, or trigger one, before calling the migration done. Check both:
+   an incompatible signer on either one stays undetected until that one
+   sends, and a keeper still posting with the old channel address means its
+   env file was not updated or it was not restarted.
 7. Tell subscribers to re-subscribe (see **Communicate**). They are subscribed
    to the OLD channel and nothing migrates them.
 
@@ -1029,6 +1037,14 @@ swap. Until then, plan for migration. If a rotation is foreseeable rather
 than an emergency, landing #1456 first is strictly better.
 
 ### How the keeper's arming flags are actually held
+
+**On the machine, which is where the keeper runs now, they are lines in
+`/etc/vaipakam/keeper.env`**, read when the keeper starts
+([`KeeperMachine.md`](KeeperMachine.md) §4–§5). No Worker deploy touches them,
+and the rotation steps above no longer deploy the keeper Worker. What follows
+is the record of how they were held on the Worker. The confirmation that carries over unchanged is the log:
+each gated pass prints `[keeper] <pass> start` or a `skipped:` line naming the
+setting that held it, on every tick it is due.
 
 **An earlier version of this section had this backwards, and its advice
 would have created the very hazard it warned about.** It is corrected here
@@ -1062,18 +1078,18 @@ deployment held them as secrets. **The comment was wrong, not the
 deployment** — #2223 fixed it (closing #1465), so the config now agrees with
 this section rather than contradicting it.
 
-`--keep-vars` is left on the rotation steps above. It is harmless, it is
-correct for `TG_BOT_USERNAME`, and a deploy flag that preserves state is
-not worth removing under incident pressure — but do not treat it as the
-thing keeping the keeper armed.
+`--keep-vars` is left on the agent's rotation deploys above. It is harmless,
+and a deploy flag that preserves state is not worth removing under incident
+pressure — but it was never the thing keeping the keeper armed.
 
 The readback below still matters, for a different reason than originally
 given: not because a deploy may have deleted a flag, but because a rotation
 may have set one wrong.
 
-After **any** keeper redeploy, confirm the flags survived by reading the
-deployed variables back — see `OffChainRestore.md` §7a step 4 for the
-command and for the case-sensitivity trap between the two guards.
+After **any** change to the keeper's env file, confirm the flags by the log
+lines above rather than by the file alone: the running keeper holds what it
+read at its last start. `OffChainRestore.md` §7a step 4 describes the
+case-sensitivity trap between the two guards.
 
 
 ### Communicate

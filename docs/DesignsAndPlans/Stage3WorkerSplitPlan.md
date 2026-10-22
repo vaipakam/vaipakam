@@ -36,10 +36,11 @@ The split unblocks four follow-on changes that are awkward today:
    the same trigger as the HF passes, so it has neither an independent
    deployment nor an independent schedule. The coupling is real — a
    matcher fault would share a tick with liquidation — and is recorded
-   here rather than presented as satisfied. Note the tense: that trigger
-   was `* * * * *` and is now `[]` (#1896), so nothing on this Worker
-   ticks today. The coupling is a property of the code and unchanged;
-   the execution is not happening at all.
+   here rather than presented as satisfied. Note the host: that trigger
+   was `* * * * *` and is now `[]` (#1896), and since #2504 the same tick
+   runs on the keeper's always-on machine (`docs/ops/KeeperMachine.md`)
+   instead of this Worker. The coupling is a property of the code and
+   unchanged: the matcher still shares that one tick with liquidation.
 
 ## 2. Current state — `ops/hf-watcher/src/`
 
@@ -261,10 +262,12 @@ After PR2 / PR3 / PR4 have all been validated in production:
 > cited `index.ts:141-146`, which was the wiring before the passes were
 > extracted into their own schedule; those lines now close `timedPass` and
 > open `scheduled()`, so the citation sent readers to unrelated code.) The matcher pass is IMPLEMENTED — do not re-implement
-> or re-schedule it — but it does not EXECUTE today: that cron is committed
-> as `[]` under #1896, so the Worker takes no ticks for `runMatcher` to
-> ride. Read "live" here as shipped code, not as running work, and do not
-> diagnose an absence of matches as a matcher fault.
+> or re-schedule it. It runs on the keeper's always-on machine
+> (`docs/ops/KeeperMachine.md`, #2504), not on the Worker, whose cron is
+> `[]` and whose `scheduled` handler declines every invocation (#2569). It
+> acts only while that keeper is running and armed (`KEEPER_ENABLED`), so
+> do not diagnose an absence of matches as a matcher fault before checking
+> that.
 >
 > Two things this banner previously overstated, both corrected:
 > the cross-Worker `offers` read is **NOT** shipped (`matcher.ts:41-43`
@@ -345,9 +348,10 @@ status marked per item — read the items, not this sentence:
 
 - Cron triggers loose enough for a matcher pass — **done**, and tighter
   than planned: `apps/keeper/wrangler.jsonc` was set to `* * * * *`, not
-  the `*/5 * * * *` this section assumed. **It runs neither today** —
-  that file now commits `"crons": []` under #1896, so the matcher pass
-  described here does not execute until the hold lifts.
+  the `*/5 * * * *` this section assumed. That file now commits
+  `"crons": []` (#1896), and the matcher pass described here runs on the
+  keeper's always-on machine instead, which ticks every UTC minute
+  (`docs/ops/KeeperMachine.md`, #2504).
 - The keeper-side `db.ts` subset reading the indexer's `offers` table
   (cross-Worker D1 read, same database, different bindings) — **STILL
   OUTSTANDING.** `matcher.ts:41-43` states discovery is on-chain (count +
@@ -367,7 +371,7 @@ and Stage 3 is about the FIRST-party one.
 
 | Surface | Repo | Purpose |
 | --- | --- | --- |
-| **`apps/keeper`** (this Stage 3 work) | This monorepo | Vaipakam's own first-party keeper Worker on Cloudflare. Runs as a single privileged operator with project-funded gas. Hosts the offer matcher (§7) — shipped, and wired to the keeper cron, though that cron is `[]` today under #1896 so it does not currently run — alongside the HF watcher + liquidation triggers and the daily oracle snapshot. |
+| **`apps/keeper`** (this Stage 3 work) | This monorepo | Vaipakam's own first-party keeper, built as a Cloudflare Worker and since #2504 run on an always-on machine (`docs/ops/KeeperMachine.md`). Runs as a single privileged operator with project-funded gas. Hosts the offer matcher (§7) — shipped, and run on the keeper's tick (the Worker's cron is `[]`, and the tick runs on the machine) — alongside the HF watcher + liquidation triggers and the daily oracle snapshot. |
 | **`vaipakam-keeper-bot`** | Sibling repo at `~/Codes/Vaipakam/vaipakam-keeper-bot` (per [`CLAUDE.md`](../../CLAUDE.md)) | Public reference implementation of a keeper bot for third-party operators to run themselves. Read-only ABI surface, OSS-licensed, designed for community liquidators. |
 
 They share the contract surface (same `RiskFacet.calculateHealthFactor`

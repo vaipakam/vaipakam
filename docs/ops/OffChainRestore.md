@@ -2074,11 +2074,10 @@ is #1977 again by a different route.
    the `Verified:` stamp.
 
    **The spare line is the one this step used to omit, and omitting it fails
-   the very next command** (Codex #1978 r42). Dropping the archive row after
-   the keeper has consumed its reservation takes committed from five to four,
-   so spare must go from `0` to `1`; `checkSummary` derives spare as
-   `5 − committed` and rejects the stale `0`, so step 3's `--live` exits
-   non-zero and the reconciliation cannot complete. The three lines are one
+   the very next command** (Codex #1978 r42). Dropping the archive row
+   lowers committed by one, so spare must rise by one; `checkSummary`
+   derives spare as `5 − committed` and rejects the stale value, so step
+   3's `--live` exits non-zero and the reconciliation cannot complete. The three lines are one
    derivation and have to be re-done together — which is exactly what the
    authority says about itself, in the sentence explaining why the summary is
    pinned to the table.
