@@ -1271,6 +1271,16 @@ This holds for every money input, including amounts the user never sees again
 before signing (such as a fee ceiling), because a rounded figure would mean
 the review states one amount while the contract moves another.
 
+### Receipt amounts are exact
+
+The amounts a review receipt states are the exact figures the transaction
+carries, to the token's smallest unit: what is lent, borrowed, locked as
+collateral, or owed in interest. They are never rounded for display, up or
+down, because the user's consent is given against those numbers and a rounded
+figure would describe a different amount from the one signed. A shorter,
+rounded figure may appear on browsing surfaces (lists, cards) where nothing is
+being agreed to.
+
 Consent is collected against the terms actually shown. If a material term,
 warning, selected offer, selected listing, or disclosed risk changes after
 consent, consent is cleared and the user is told to review again.
@@ -1320,6 +1330,15 @@ progress.
 - Guided borrow and lend flows begin with user intent: asset, amount, duration,
   and acceptable terms.
 - Matching open offers are shown first when available.
+- Matching offers are a recommendation, so only offers the independent token
+  security check has answered for are offered as a pick. An offer the check
+  flags as dangerous is left out, and the list says how many were left out. An
+  offer whose check has not finished is shown in its place, marked as being
+  checked, and cannot be chosen until the answer arrives. Offers beyond the
+  part of the list the check has covered are never recommended unchecked: when
+  flagged offers leave the list short, more of the list is checked, up to a
+  bound; past that bound the list says that more matching offers exist and
+  points to the Offer Book, which shows every offer with its own badge.
 - Posting the user's own offer is the explicit fallback.
 - The app blocks self-authored offers where accepting them would be unsafe or
   nonsensical.
@@ -4037,7 +4056,14 @@ Its intended behaviour, as the test oracle for this surface:
   listing on the same token — whose own cards will flag it and offer
   restore. When the loan/offer data sources are unavailable the list
   says it can't be built completely rather than showing a partial
-  picture as complete.
+  picture as complete. When the wallet's loans or offers could be read
+  only from the backup source, which can lag behind the chain by a few
+  minutes, the list is still shown but says that a token from a
+  position opened or received in the last few minutes may be missing.
+- The vault page builds its asset list partly from the wallet's own loans
+  and offers. When those could be read only from the lagging backup
+  source, the page says that an asset behind a very recent position may
+  be missing, rather than presenting the list as complete.
 - Advanced mode surfaces keeper permissions as the protocol's
   three-switch opt-in: a master switch, per-keeper action grants,
   and a per-loan switch on each loan's page — all off by default,

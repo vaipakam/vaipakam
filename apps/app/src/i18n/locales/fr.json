@@ -169,6 +169,10 @@
         "unchecked": {
           "label": "Non vérifié",
           "title": "Un token de cette offre n'a pas pu être vérifié par le filtre de sécurité indépendant. Traitez-le avec une prudence supplémentaire."
+        },
+        "checking": {
+          "label": "Vérification",
+          "title": "La vérification de sécurité indépendante des jetons de cette offre n’est pas encore terminée. Vous pourrez la choisir une fois terminée."
         }
       },
       "matchesHidden_zero": "{{count}} offres correspondantes sont masquées parce qu’un contrôle de sécurité indépendant a signalé l’un de leurs tokens comme dangereux.",
@@ -177,6 +181,7 @@
       "matchesHidden_few": "{{count}} offres correspondantes sont masquées parce qu’un contrôle de sécurité indépendant a signalé l’un de leurs tokens comme dangereux.",
       "matchesHidden_many": "{{count}} offres correspondantes sont masquées parce qu’un contrôle de sécurité indépendant a signalé l’un de leurs tokens comme dangereux.",
       "matchesHidden_other": "{{count}} offres correspondantes sont masquées parce qu’un contrôle de sécurité indépendant a signalé l’un de leurs tokens comme dangereux.",
+      "matchesUnscreenedTail": "D’autres offres correspondantes existent au-delà de celles vérifiées ici. Elles ne sont pas recommandées sans vérification de sécurité ; le carnet d’offres les liste toutes, chacune avec son propre badge.",
       "reputationListedTop": "Cotation de marché trouvée : {{name}}{{symbolSuffix}}, classé n°{{rank}} par taille de marché. Vérifiez que cela correspond au token voulu.",
       "reputationListedDeep": "Cotation de marché trouvée : {{name}}{{symbolSuffix}} — hors du top 200 par taille de marché. Les petits tokens bougent plus difficilement et disparaissent plus vite ; revérifiez le projet.",
       "reputationUnlisted": "Aucune cotation de marché trouvée pour cette adresse — le marché au sens large ne connaît pas ce token. Cela ne le rend pas mauvais en soi, mais vérifiez l'adresse du contrat auprès du projet avant de l'utiliser."
@@ -847,6 +852,7 @@
       "loading": "Lecture de vos approbations permanentes…",
       "unavailable": "Impossible de lire vos approbations pour le moment — réessayez dans un instant.",
       "sourcesUnavailable": "Impossible de charger vos prêts et offres pour le moment, cette liste ne peut donc pas être complète — plutôt qu'afficher une image partielle, réessayez dans un instant.",
+      "sourcesDegraded": "Vos prêts et offres viennent d’être lus depuis la source de secours, donc un jeton d’une position ouverte ou reçue ces dernières minutes peut manquer dans cette liste. Il apparaîtra à la prochaine actualisation.",
       "revoke": "Révoquer",
       "staleNote": "Impossible de rafraîchir cette liste pour le moment — les lignes affichées peuvent être légèrement obsolètes. La révocation fonctionne tout de même.",
       "revoked": "Approbation supprimée pour {{symbol}}. Si une demande ou une annonce active en avait besoin, sa carte affichera un avertissement et proposera de la restaurer."
@@ -2198,6 +2204,7 @@
       "unreadableCount_many": "{{count}} actifs",
       "unreadableCount_other": "{{count}} actifs",
       "unreadableWarn": "Nous n’avons pas pu lire {{assets}} pour l’instant ({{list}}) — la liste ci-dessous peut omettre des soldes. Cela se corrige généralement au prochain rafraîchissement.",
+      "sourcesDegraded": "Vos prêts et offres viennent d’être lus depuis la source de secours, donc un actif lié à une position ouverte ou reçue ces dernières minutes peut manquer ci-dessous. Il apparaîtra à la prochaine actualisation.",
       "noBalancesInWindow": "Aucun solde parmi les {{count}} premiers tokens vérifiés — élargissez l’analyse ci-dessous pour continuer à chercher.",
       "loading": "Lecture de votre vault…",
       "addressLabel": "Adresse du Vault :",

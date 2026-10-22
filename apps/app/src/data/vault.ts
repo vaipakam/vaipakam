@@ -20,7 +20,7 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { getCanonicalAssetsForChain } from '@vaipakam/lib';
 import { useActiveChain } from '../chain/useActiveChain';
 import { AssetType } from '../lib/types';
-import { useMyLoans, useMyOffers } from './hooks';
+import { rowSetComplete, useMyLoansFull, useMyOffersFull } from './hooks';
 import { signalAware } from '../chain/railHealth';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -49,8 +49,8 @@ export interface VaultSnapshot {
 export function useVaultAssets(scanWindow: number) {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
-  const loans = useMyLoans();
-  const offers = useMyOffers();
+  const loans = useMyLoansFull();
+  const offers = useMyOffersFull();
   // The candidate list depends on loans+offers — a failed dependency
   // must surface as UNAVAILABLE, not as a canonical-only scan that
   // renders an incomplete "where my assets sit" page.
@@ -59,18 +59,25 @@ export function useVaultAssets(scanWindow: number) {
     !depsUnavailable &&
     (loans.data === undefined || offers.data === undefined) &&
     Boolean(address);
+  // #2536 — both lists answered, but at least one from its lagging
+  // fallback only: an asset backing a just-opened position may be
+  // missing from the scan. The page says so instead of looking whole.
+  const depsDegraded =
+    loans.data != null &&
+    offers.data != null &&
+    !(rowSetComplete(loans.data) && rowSetComplete(offers.data));
 
   // Candidate ERC-20 set: canonical + every ERC-20 leg we know about.
   const candidates = new Set<string>(
     getCanonicalAssetsForChain(readChain.chainId).map((a) => a.toLowerCase()),
   );
-  for (const loan of Array.isArray(loans.data) ? loans.data : []) {
+  for (const loan of loans.data?.rows ?? []) {
     if (loan.assetType === AssetType.ERC20) candidates.add(loan.lendingAsset.toLowerCase());
     if (loan.collateralAssetType === AssetType.ERC20 && loan.collateralAsset.toLowerCase() !== ZERO_ADDRESS) {
       candidates.add(loan.collateralAsset.toLowerCase());
     }
   }
-  for (const offer of Array.isArray(offers.data) ? offers.data : []) {
+  for (const offer of offers.data?.rows ?? []) {
     if (offer.assetType === AssetType.ERC20) candidates.add(offer.lendingAsset.toLowerCase());
     if (offer.collateralAssetType === AssetType.ERC20 && offer.collateralAsset.toLowerCase() !== ZERO_ADDRESS) {
       candidates.add(offer.collateralAsset.toLowerCase());
@@ -196,5 +203,5 @@ export function useVaultAssets(scanWindow: number) {
     },
   });
 
-  return { ...query, depsUnavailable, depsLoading };
+  return { ...query, depsUnavailable, depsLoading, depsDegraded };
 }

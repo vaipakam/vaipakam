@@ -50,6 +50,21 @@ export function formatTokenAmountDown(
   return f ? `${intText}.${f}` : intText;
 }
 
+/** The EXACT figure, for a review receipt (#2537) — the amount that is
+ *  signed and moved, digit for digit. `formatTokenAmount` rounds to
+ *  nearest (sometimes up) and goes through Number, which loses digits
+ *  past about fifteen significant figures, so a reviewed "1,000.0001"
+ *  could stand for a different on-chain amount. Same grouped integer part
+ *  as `formatTokenAmount`; the fraction is every digit the token carries,
+ *  trailing zeros dropped. */
+export function formatTokenAmountExact(raw: bigint | string, decimals: number): string {
+  const value = typeof raw === 'string' ? BigInt(raw) : raw;
+  if (value < 0n) return `-${formatTokenAmountExact(-value, decimals)}`;
+  const [int, frac = ''] = formatUnits(value, decimals).split('.');
+  const intText = BigInt(int).toLocaleString('en-US');
+  return frac ? `${intText}.${frac}` : intText;
+}
+
 /** Parse a typed decimal amount into base units WITHOUT rounding
  *  (#2389 r3). viem's `parseUnits` rounds a value with more fractional
  *  digits than the token has — `0.0000009` at six decimals becomes one

@@ -253,12 +253,23 @@ const copySource = {
         title:
           'A token in this offer could not be checked by the independent security screen. Treat it with extra care.',
       },
+      // #2535 — guided matching only: a recommended offer whose screen
+      // has not answered yet. It cannot be chosen until it has.
+      checking: {
+        label: 'Checking',
+        title:
+          'The independent security check on this offer’s tokens has not finished yet. You can choose it once it has.',
+      },
     },
     matchesHidden: tmpl(
       '{{count}} matching offers are hidden because an independent security check flagged one of their tokens as dangerous.',
       ['count'],
       { one: '1 matching offer is hidden because an independent security check flagged one of its tokens as dangerous.' },
     ),
+    // #2535 — the security check covers a bounded head of the candidate
+    // list; past it, offers are not recommended unchecked.
+    matchesUnscreenedTail:
+      'More matching offers exist beyond the ones checked here. They are not recommended without a security check; the Offer Book lists them all, each with its own badge.',
     // CoinGecko reputation soft-signal (#1036 fallback layer) — only
     // on networks with market data; never a block, never a gate.
     reputationListedTop: tmpl(
@@ -1754,6 +1765,10 @@ const copySource = {
       'We couldn’t read your approvals right now — please try again in a moment.',
     sourcesUnavailable:
       'We couldn’t load your loans and offers just now, so this list can’t be built completely — rather than show a partial picture, try again in a moment.',
+    // #2536 — the lists answered, but from the slower backup source:
+    // the rows shown are real, a just-changed position's token may not be.
+    sourcesDegraded:
+      'Your loans and offers were read from the backup source just now, so a token from a position opened or received in the last few minutes may be missing from this list. It fills in on the next refresh.',
     revoke: 'Revoke',
     staleNote:
       'We couldn’t refresh this list just now — the rows shown may be slightly stale. Revoking still works.',
@@ -4968,6 +4983,10 @@ const copySource = {
       'We couldn’t read {{assets}} just now ({{list}}) — the list below may be missing balances. This usually clears on the next refresh.',
       ['assets', 'list'],
     ),
+    // #2536 — the asset list comes from the wallet's positions, and one
+    // of those lists was read from the slower backup source.
+    sourcesDegraded:
+      'Your loans and offers were read from the backup source just now, so an asset behind a position opened or received in the last few minutes may be missing below. It fills in on the next refresh.',
     noBalancesInWindow: tmpl(
       'No balances among the first {{count}} tokens checked — widen the scan below to keep looking.',
       ['count'],

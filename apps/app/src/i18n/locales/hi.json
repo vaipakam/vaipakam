@@ -169,6 +169,10 @@
         "unchecked": {
           "label": "Screened नहीं",
           "title": "इस offer का कोई token independent security screen से check नहीं हो सका। इसे extra care से treat करें।"
+        },
+        "checking": {
+          "label": "जाँच जारी",
+          "title": "इस ऑफ़र के टोकन की स्वतंत्र सुरक्षा जाँच अभी पूरी नहीं हुई है। पूरी होने पर आप इसे चुन सकेंगे।"
         }
       },
       "matchesHidden_zero": "{{count}} matching offers hidden हैं क्योंकि independent security check ने उनके tokens में से एक को dangerous flag किया।",
@@ -177,6 +181,7 @@
       "matchesHidden_few": "{{count}} matching offers hidden हैं क्योंकि independent security check ने उनके tokens में से एक को dangerous flag किया।",
       "matchesHidden_many": "{{count}} matching offers hidden हैं क्योंकि independent security check ने उनके tokens में से एक को dangerous flag किया।",
       "matchesHidden_other": "{{count}} matching offers hidden हैं क्योंकि independent security check ने उनके tokens में से एक को dangerous flag किया।",
+      "matchesUnscreenedTail": "यहाँ जाँचे गए ऑफ़र के अलावा और भी मेल खाते ऑफ़र मौजूद हैं। सुरक्षा जाँच के बिना उनकी सिफ़ारिश नहीं की जाती; ऑफ़र बुक उन सभी को उनके अपने बैज के साथ दिखाती है।",
       "reputationListedTop": "Market listing found: {{name}}{{symbolSuffix}}, market size rank #{{rank}}। Check करें कि यह वही token है जो आप चाहते थे।",
       "reputationListedDeep": "Market listing found: {{name}}{{symbolSuffix}} — market size में top 200 से बाहर। Smaller tokens move करना कठिन और जल्दी गायब हो सकते हैं; project double-check करें।",
       "reputationUnlisted": "इस address के लिए कोई market listing नहीं मिली — wider market इस token को नहीं जानता। इससे अकेले यह bad नहीं हो जाता, लेकिन इसमें deal करने से पहले project से contract address verify करें।"
@@ -847,6 +852,7 @@
       "loading": "आपकी standing approvals read कर रहे हैं…",
       "unavailable": "अभी आपकी approvals read नहीं कर सके — थोड़ी देर में try करें।",
       "sourcesUnavailable": "अभी आपके loans और offers load नहीं कर सके, इसलिए यह list completely build नहीं हो सकती — partial picture दिखाने के बजाय थोड़ी देर में try करें।",
+      "sourcesDegraded": "आपके लोन और ऑफ़र अभी बैकअप स्रोत से पढ़े गए हैं, इसलिए पिछले कुछ मिनटों में खोली या प्राप्त की गई किसी पोज़िशन का टोकन इस सूची से छूट सकता है। अगली रीफ़्रेश पर यह जुड़ जाएगा।",
       "revoke": "Revoke",
       "staleNote": "अभी यह list refresh नहीं कर सके — rows थोड़ी stale हो सकती हैं। Revoking फिर भी काम करता है।",
       "revoked": "{{symbol}} के लिए approval removed। यदि किसी live request या listing को इसकी ज़रूरत थी, उसका card warn करेगा और restore option देगा।"
@@ -2198,6 +2204,7 @@
       "unreadableCount_many": "{{count}} assets",
       "unreadableCount_other": "{{count}} assets",
       "unreadableWarn": "हम अभी {{assets}} पढ़ नहीं सके ({{list}}) — नीचे list में balances missing हो सकते हैं। यह आम तौर पर next refresh पर clear हो जाता है।",
+      "sourcesDegraded": "आपके लोन और ऑफ़र अभी बैकअप स्रोत से पढ़े गए हैं, इसलिए पिछले कुछ मिनटों में खोली या प्राप्त की गई किसी पोज़िशन की संपत्ति नीचे से छूट सकती है। अगली रीफ़्रेश पर यह जुड़ जाएगी।",
       "noBalancesInWindow": "पहले {{count}} checked tokens में कोई balances नहीं — खोज जारी रखने के लिए scan नीचे widen करें।",
       "loading": "आपका vault पढ़ा जा रहा है…",
       "addressLabel": "Vault address:",

@@ -222,6 +222,22 @@ export interface MyRows<T> {
   indexerOk: boolean;
 }
 
+/** #2536 — whether `rows` is the wallet's WHOLE current set, as opposed
+ *  to a lagging copy. Membership is the chain leg's call (see the merge
+ *  rule above): when it answered, `rows` is exactly what the wallet is
+ *  in this block. When it did not, `rows` is the indexed fallback, which
+ *  can be missing anything opened or received inside the ingest lag — so
+ *  a consumer that derives something from the SET of positions (the
+ *  token list behind Approvals or the Vault) must say so rather than
+ *  present that set as complete. `chainOk` already demands the held-offer
+ *  leg (heldLegOk), so a legacy deploy whose held leg is indexer-only
+ *  reads as incomplete here too. The indexer leg is not part of this
+ *  answer: when the chain answered it adds no row, only per-row detail
+ *  (Positions flags that separately). */
+export function rowSetComplete(data: MyRows<unknown>): boolean {
+  return data.chainOk;
+}
+
 /** Loans variant of {@link MyRows}: also carries the loan ids the
  *  INDEXED leg returned (empty when that leg failed). Activity's
  *  participation filter needs the UNION of both legs — `rows` is
@@ -315,10 +331,13 @@ export function useMyLoansFull() {
 }
 
 /** Slim view of {@link useMyLoansFull} — same cache entry, rows only.
- *  For consumers that don't render source-degradation (Home, vault,
+ *  For consumers that don't render source-degradation (Home,
  *  claimables — each already tolerates a missing source or does its
  *  own authoritative confirms). Activity uses the FULL variant: its
- *  participation filter needs the indexer leg. */
+ *  participation filter needs the indexer leg. Anything that derives a
+ *  list from the SET of rows and could present it as complete (the
+ *  Vault, Approvals) uses the FULL variant too, with
+ *  {@link rowSetComplete} (#2536). */
 export function useMyLoans() {
   const full = useMyLoansFull();
   return {
@@ -490,7 +509,9 @@ export function useMyOffersFull() {
   });
 }
 
-/** Slim view of {@link useMyOffersFull} — rows only. */
+/** Slim view of {@link useMyOffersFull} — rows only. Same rule as
+ *  {@link useMyLoans}: a consumer whose output can read as complete
+ *  uses the FULL variant (#2536). */
 export function useMyOffers() {
   const full = useMyOffersFull();
   return {

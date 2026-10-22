@@ -169,6 +169,10 @@
         "unchecked": {
           "label": "Nicht geprüft",
           "title": "Ein Token in diesem Angebot konnte von der unabhängigen Sicherheitsprüfung nicht geprüft werden. Behandeln Sie ihn mit besonderer Vorsicht."
+        },
+        "checking": {
+          "label": "Wird geprüft",
+          "title": "Die unabhängige Sicherheitsprüfung der Token dieses Angebots ist noch nicht abgeschlossen. Du kannst es auswählen, sobald sie fertig ist."
         }
       },
       "matchesHidden_zero": "{{count}} passende Angebote sind ausgeblendet, weil eine unabhängige Sicherheitsprüfung einen ihrer Token als gefährlich markiert hat.",
@@ -177,6 +181,7 @@
       "matchesHidden_few": "{{count}} passende Angebote sind ausgeblendet, weil eine unabhängige Sicherheitsprüfung einen ihrer Token als gefährlich markiert hat.",
       "matchesHidden_many": "{{count}} passende Angebote sind ausgeblendet, weil eine unabhängige Sicherheitsprüfung einen ihrer Token als gefährlich markiert hat.",
       "matchesHidden_other": "{{count}} passende Angebote sind ausgeblendet, weil eine unabhängige Sicherheitsprüfung einen ihrer Token als gefährlich markiert hat.",
+      "matchesUnscreenedTail": "Es gibt weitere passende Angebote über die hier geprüften hinaus. Ohne Sicherheitsprüfung werden sie nicht empfohlen; das Angebotsbuch listet sie alle, jedes mit eigenem Hinweis.",
       "reputationListedTop": "Marktlisting gefunden: {{name}}{{symbolSuffix}}, Rang #{{rank}} nach Marktgröße. Prüfen Sie, ob dies dem gemeinten Token entspricht.",
       "reputationListedDeep": "Marktlisting gefunden: {{name}}{{symbolSuffix}} — außerhalb der Top 200 nach Marktgröße. Kleinere Token bewegen sich schwerer und verschwinden schneller; prüfen Sie das Projekt erneut.",
       "reputationUnlisted": "Für diese Adresse wurde kein Markteintrag gefunden — der breitere Markt kennt dieses Token nicht. Das macht es nicht automatisch schlecht, aber prüfen Sie die Vertragsadresse beim Projekt, bevor Sie damit handeln."
@@ -847,6 +852,7 @@
       "loading": "Ihre bestehenden Freigaben werden gelesen…",
       "unavailable": "Wir konnten Ihre Freigaben gerade nicht lesen — bitte versuchen Sie es gleich noch einmal.",
       "sourcesUnavailable": "Wir konnten Ihre Kredite und Angebote gerade nicht laden, daher lässt sich diese Liste nicht vollständig aufbauen — statt ein unvollständiges Bild zu zeigen, bitten wir Sie, es gleich noch einmal zu versuchen.",
+      "sourcesDegraded": "Deine Kredite und Angebote wurden gerade aus der Ersatzquelle gelesen, daher kann in dieser Liste ein Token aus einer Position fehlen, die in den letzten Minuten eröffnet oder empfangen wurde. Er erscheint bei der nächsten Aktualisierung.",
       "revoke": "Widerrufen",
       "staleNote": "Wir konnten diese Liste gerade nicht aktualisieren — die angezeigten Zeilen sind möglicherweise leicht veraltet. Der Widerruf funktioniert trotzdem.",
       "revoked": "Genehmigung für {{symbol}} entfernt. Wenn eine aktive Anfrage oder ein Listing sie benötigte, warnt die Karte und bietet eine Wiederherstellung an."
@@ -2198,6 +2204,7 @@
       "unreadableCount_many": "{{count}} Assets",
       "unreadableCount_other": "{{count}} Assets",
       "unreadableWarn": "Wir konnten {{assets}} gerade nicht lesen ({{list}}) — der Liste unten können Guthaben fehlen. Das behebt sich meist beim nächsten Aktualisieren.",
+      "sourcesDegraded": "Deine Kredite und Angebote wurden gerade aus der Ersatzquelle gelesen, daher kann unten ein Vermögenswert aus einer Position fehlen, die in den letzten Minuten eröffnet oder empfangen wurde. Er erscheint bei der nächsten Aktualisierung.",
       "noBalancesInWindow": "Keine Guthaben unter den ersten {{count}} geprüften Token — erweitern Sie den Scan unten, um weiterzusuchen.",
       "loading": "Ihr Vault wird gelesen…",
       "addressLabel": "Vault-Adresse:",

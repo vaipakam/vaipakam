@@ -26,7 +26,12 @@ import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
 import { revokeAllowance } from '../contracts/erc20';
-import { fetchAllPages, useMyLoans, useMyOffers } from '../data/hooks';
+import {
+  fetchAllPages,
+  rowSetComplete,
+  useMyLoansFull,
+  useMyOffersFull,
+} from '../data/hooks';
 import { fetchOffersByCreator, type IndexedOffer } from '../data/indexer';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
@@ -49,8 +54,10 @@ export function ApprovalsCard() {
   // — the read client must not wait for a receipt on another chain.
   const walletPublicClient = usePublicClient({ chainId: walletChain?.chainId });
   const queryClient = useQueryClient();
-  const loans = useMyLoans();
-  const offers = useMyOffers();
+  // FULL variants (#2536): the token list is derived from the SET of
+  // positions, so it must know whether that set is the whole one.
+  const loans = useMyLoansFull();
+  const offers = useMyOffersFull();
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,28 +78,38 @@ export function ApprovalsCard() {
 
   // Candidate tokens: every ERC-20 leg of every loan/offer this
   // wallet touches. Data-source unavailability means the list may be
-  // INCOMPLETE — said in the UI, never silently.
-  const { tokens, complete } = useMemo(() => {
+  // INCOMPLETE — said in the UI, never silently. Two states: BOTH lists
+  // failed (`complete` false — nothing to build from, the card says so
+  // instead of listing), or a list answered from its lagging fallback
+  // only (`sourcesDegraded` — the rows still show, with a note that a
+  // token from a just-changed position may be missing, #2536).
+  const loanData = loans.data;
+  const offerData = offers.data;
+  const { tokens, complete, sourcesDegraded } = useMemo(() => {
     const set = new Set<string>();
     const add = (addr: string | undefined, isErc20: boolean) => {
       if (!addr || !isErc20) return;
       const a = addr.toLowerCase();
       if (a !== ZERO_ADDRESS) set.add(a);
     };
-    for (const l of loans.data ?? []) {
+    for (const l of loanData?.rows ?? []) {
       add(l.lendingAsset, l.assetType === AssetType.ERC20);
       add(l.collateralAsset, l.collateralAssetType === AssetType.ERC20);
     }
-    for (const o of offers.data ?? []) {
+    for (const o of offerData?.rows ?? []) {
       add(o.lendingAsset, o.assetType === AssetType.ERC20);
       add(o.collateralAsset, o.collateralAssetType === AssetType.ERC20);
       add(o.prepayAsset, true);
     }
     return {
       tokens: [...set].sort() as `0x${string}`[],
-      complete: loans.data != null && offers.data != null,
+      complete: loanData != null && offerData != null,
+      sourcesDegraded:
+        loanData != null &&
+        offerData != null &&
+        !(rowSetComplete(loanData) && rowSetComplete(offerData)),
     };
-  }, [loans.data, offers.data]);
+  }, [loanData, offerData]);
 
   const approvals = useQuery({
     queryKey: [
@@ -228,9 +245,19 @@ export function ApprovalsCard() {
       ) : !approvals.data ? (
         <p className="muted">{copy.approvals.loading}</p>
       ) : approvals.data.rows.length === 0 && approvals.data.moreTokens === 0 ? (
-        <p className="muted">{copy.approvals.none}</p>
+        // "None" from a lagging position list is a narrower claim — the
+        // note says which tokens it could not cover (#2536).
+        <>
+          <p className="muted">{copy.approvals.none}</p>
+          {sourcesDegraded ? (
+            <p className="muted">{copy.approvals.sourcesDegraded}</p>
+          ) : null}
+        </>
       ) : (
         <div className="stack" style={{ gap: 8 }}>
+          {sourcesDegraded ? (
+            <p className="muted">{copy.approvals.sourcesDegraded}</p>
+          ) : null}
           {approvals.isError ? (
             // Retained data on a failed background refetch — revoke
             // must stay reachable; flag staleness instead of hiding.

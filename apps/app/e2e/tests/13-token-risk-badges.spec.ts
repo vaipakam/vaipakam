@@ -21,6 +21,10 @@
  *     fail-closed enforcement point, covered by the #1036 gate work).
  *  4. CONTROL: the standard server (chain unsupported) shows no risk
  *     badges at all.
+ *  5. PENDING (#2535): while the screen has not answered, the guided
+ *     matcher lists the offer as "Checking" with Choose disabled — a
+ *     recommendation is never offered ahead of its screen — and opens it
+ *     once the answer lands.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Page } from '@playwright/test';
@@ -128,13 +132,17 @@ function goPlusRow(overrides: Record<string, unknown> = {}) {
 }
 
 /** Answer every GoPlus request (single or comma-batched) with `row`
- *  for each requested address — or an HTTP `status` failure. */
+ *  for each requested address — or an HTTP `status` failure. With
+ *  `gate`, every answer is held until it settles (a screen still in
+ *  flight, #2535). */
 async function mockGoPlus(
   page: Page,
   row: Record<string, unknown> | null,
   status = 200,
+  gate?: Promise<void>,
 ): Promise<void> {
   await page.route('https://api.gopluslabs.io/**', async (route) => {
+    if (gate) await gate;
     if (row === null) {
       await route.fulfill({ status, body: 'mocked failure' });
       return;
@@ -244,6 +252,37 @@ test('an unreachable screen shows "Not screened" and keeps the offer listed', as
   const row = bookRowFor(viewer.page, offerId);
   await expect(row).toBeVisible({ timeout: 30_000 });
   await expect(row.getByText('Not screened')).toBeVisible({ timeout: 30_000 });
+});
+
+test('a guided match whose screen has not answered is "Checking" and cannot be chosen until it has (#2535)', async ({
+  launchWallet,
+}) => {
+  const offerId = await newestOfferIdFor(accountFor('lender').address);
+
+  const viewer = await launchWallet('borrower', { advanced: true });
+  let release!: () => void;
+  const answered = new Promise<void>((r) => {
+    release = r;
+  });
+  await mockGoPlus(viewer.page, goPlusRow(), 200, answered);
+
+  await openGuidedMatches(viewer.page, BADGE_BASE);
+  const card = viewer.page
+    .locator('.item-row')
+    .filter({ has: viewer.page.getByText(`offer #${offerId}`) })
+    .first();
+  const choose = card.getByRole('button', { name: /^choose$/i });
+  await expect(card).toBeVisible({ timeout: 30_000 });
+  await expect(card.getByText('Checking', { exact: true })).toBeVisible();
+  await expect(choose).toBeDisabled();
+
+  // The screen answers clean: the hold lifts, and nothing else is shown
+  // (a clean verdict wears no badge).
+  release();
+  await expect(card.getByText('Checking', { exact: true })).toHaveCount(0, {
+    timeout: 30_000,
+  });
+  await expect(choose).toBeEnabled();
 });
 
 test('control: the standard server (unscreened chain) shows no risk badges', async ({

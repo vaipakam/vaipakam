@@ -83,6 +83,13 @@ export function Vault() {
             </p>
           </section>
 
+          {vault.depsDegraded ? (
+            // #2536 — the asset list is built from the wallet's positions;
+            // one of those lists came from its lagging source only.
+            <div className="banner banner-warn" role="status">
+              <span className="banner-body">{copy.vault.sourcesDegraded}</span>
+            </div>
+          ) : null}
           {vault.data.unreadable.length > 0 ? (
             // A token whose reads failed this scan may hold REAL locked
             // funds — never let the list look complete without it.
