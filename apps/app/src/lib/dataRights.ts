@@ -1686,8 +1686,14 @@ export interface FullEraseOptions {
    * Tear down the live wallet connection. Injected rather than imported so
    * this module stays free of the wagmi config — it is a pure storage
    * library, and a page that has no wallet (or a test) supplies nothing.
+   *
+   * Resolves whether it CLOSED any connection (Codex #2670 r3). `false` —
+   * there was nothing left to close by the time it ran — is not a sign-out
+   * and is left out of the reported outcome, exactly as a teardown that was
+   * never supplied is: a successful no-op is not evidence that a wallet was
+   * disconnected.
    */
-  readonly disconnect?: () => Promise<unknown>;
+  readonly disconnect?: () => Promise<boolean>;
   /**
    * Tear down the connections that RELOAD THE PAGE as they close, after
    * everything else — the sweep and the counted database clear included —
@@ -1704,12 +1710,15 @@ export interface FullEraseOptions {
    *
    * Handed the result as it stands at that point, so the caller can keep a
    * copy that outlives a reload. Its outcome is folded into `connector`.
+   * Resolves whether it closed any connection, as `disconnect` does.
    */
-  readonly disconnectLast?: (interim: FullEraseResult) => Promise<unknown>;
+  readonly disconnectLast?: (interim: FullEraseResult) => Promise<boolean>;
 }
 
 /** How a single teardown came out, before the two are folded together. */
 interface TeardownOutcome {
+  /** It ran to completion and found nothing to close: not a sign-out. */
+  readonly closedNothing: boolean;
   readonly disconnected: boolean;
   readonly reconnectPending: boolean;
   /** Given up on by the bound, so it may still write when it settles. */
@@ -1722,7 +1731,7 @@ interface TeardownOutcome {
  * stores must never run ahead of the call that COUNTS them (round 12 P2).
  */
 async function runTeardown(
-  teardown: Promise<unknown>,
+  teardown: Promise<boolean>,
   afterCountedClear: Promise<void>,
   hasLiveSession: (() => boolean) | undefined,
 ): Promise<TeardownOutcome> {
@@ -1806,8 +1815,13 @@ async function runTeardown(
     // erasure still runs, which is the outcome that matters: failing to
     // close a connection must not cost the user the deletion of
     // everything else.
-    await withTimeout(teardown, DISCONNECT_TIMEOUT_MS);
-    return { disconnected: true, reconnectPending: false, settledLate: false };
+    const closedAny = await withTimeout(teardown, DISCONNECT_TIMEOUT_MS);
+    return {
+      closedNothing: !closedAny,
+      disconnected: true,
+      reconnectPending: false,
+      settledLate: false,
+    };
   } catch (error) {
     // Same distinction as inside `disconnectEvery`, and the same reason
     // (round 11 P2, second site — the finding named the per-connector one).
@@ -1817,6 +1831,7 @@ async function runTeardown(
     // and could zero the reported record count.
     settledLate = error instanceof TimeoutError;
     return {
+      closedNothing: false,
       disconnected: false,
       reconnectPending: error instanceof ReconnectPendingError,
       settledLate,
@@ -1824,14 +1839,19 @@ async function runTeardown(
   }
 }
 
-/** Fold the teardowns that were supplied into the one outcome reported. */
+/**
+ * Fold the teardowns that were supplied into the one outcome reported. One
+ * that found nothing to close is left out, as if it had not been supplied:
+ * it neither signed anyone out nor failed to.
+ */
 function foldConnector(
   outcomes: readonly TeardownOutcome[],
 ): ConnectorEraseResult {
+  const asked = outcomes.filter((o) => !o.closedNothing);
   return {
-    attempted: outcomes.length > 0,
-    disconnected: outcomes.length > 0 && outcomes.every((o) => o.disconnected),
-    reconnectPending: outcomes.some((o) => o.reconnectPending),
+    attempted: asked.length > 0,
+    disconnected: asked.length > 0 && asked.every((o) => o.disconnected),
+    reconnectPending: asked.some((o) => o.reconnectPending),
   };
 }
 

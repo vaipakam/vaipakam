@@ -26,7 +26,7 @@
  * awaiting it and reloads only once its relay connection is destroyed, after
  * the teardown has already resolved. So the kept copy is not removed when
  * the teardown returns; it carries the time it was kept and lives for a
- * bounded window (`KEPT_REPORT_WINDOW_MS`). A load inside the window takes
+ * bounded window (`RELOAD_WINDOW_MS`). A load inside the window takes
  * it out and shows it; a load after it, a timer at its end, a dismissal and
  * the next erasure each remove it. It is outside the erasure set (see
  * `ERASURE_REPORT_KEY`), so it is never counted as something an erasure
@@ -41,7 +41,10 @@
  * broadcast that arrives while this tab's own run is going is left to that
  * run, which does everything the follow-up would, and a run requested while
  * a follow-up is still closing the wallet waits for it before touching
- * anything. This is a write made after an erasure,
+ * anything. "Closing" lasts until the reload can no longer come (Codex #2670
+ * r3): the teardown resolving is not that moment, for the reason above, so a
+ * follow-up that closed a reload-prone connection holds the lock for
+ * `RELOAD_WINDOW_MS` after it. This is a write made after an erasure,
  * and it is justified narrowly: it holds counts and outcome flags only —
  * nothing about the wallet, the user or what was erased — it lives only
  * across the window a reload can land in, it is removed on the first read,
@@ -84,10 +87,13 @@ export type ErasureRunState =
  *  erasure set (see `ERASURE_REPORT_KEY`). */
 export const REPORT_KEY = ERASURE_REPORT_KEY;
 
-/** How long after the reload-prone teardown starts a reload is still
- *  attributed to it. The SDK reloads once a network round trip completes;
- *  a load later than this is the user's own and gets no report. */
-export const KEPT_REPORT_WINDOW_MS = 30_000;
+/** How long after a reload-prone teardown a reload is still attributed to
+ *  it. The SDK reloads once a network round trip completes, after the
+ *  teardown has resolved. Two things are bounded by it: a kept report lives
+ *  this long (a load later than this is the user's own and gets none), and
+ *  a follow-up that closed such a connection holds the lock this long, so
+ *  the reload cannot land inside a run this tab starts meanwhile. */
+export const RELOAD_WINDOW_MS = 30_000;
 
 const IDLE: ErasureRunState = { phase: 'idle' };
 let state: ErasureRunState = takeKeptReport() ?? IDLE;
@@ -271,13 +277,28 @@ async function closeConnections<C>(wallet: WalletPort<C>): Promise<void> {
   // The plan waits out a restoring session rather than closing its
   // placeholder (#2039).
   const plan = planWalletTeardown(wallet);
-  for (const teardown of [plan.first, plan.last]) {
+  let closedReloadProne = false;
+  const teardowns = [
+    plan.first,
+    plan.last &&
+      (() =>
+        plan.last!(() => {
+          closedReloadProne = true;
+        })),
+  ];
+  for (const teardown of teardowns) {
     try {
       await teardown?.();
     } catch {
       // A wallet that refuses, or is still restoring, must not stop the
       // other teardown being tried.
     }
+  }
+  // Held until the reload can no longer come (see the header) — set once
+  // the close was ASKED for, whatever it answered, since the reload is
+  // scheduled by the asking.
+  if (closedReloadProne) {
+    await new Promise((resolve) => setTimeout(resolve, RELOAD_WINDOW_MS));
   }
 }
 
@@ -317,7 +338,7 @@ function keepReport(report: ErasureReport): void {
   }
   // A tab that never reloads must not keep it past the window.
   clearTimeout(keptExpiry);
-  keptExpiry = setTimeout(dropKeptReport, KEPT_REPORT_WINDOW_MS);
+  keptExpiry = setTimeout(dropKeptReport, RELOAD_WINDOW_MS);
 }
 
 function dropKeptReport(): void {
@@ -365,7 +386,7 @@ export function parseKeptReport(raw: string, now: number = Date.now()): ErasureR
     typeof e.keptAt !== 'number' ||
     !Number.isFinite(e.keptAt) ||
     now < e.keptAt ||
-    now - e.keptAt > KEPT_REPORT_WINDOW_MS
+    now - e.keptAt > RELOAD_WINDOW_MS
   ) {
     return null;
   }

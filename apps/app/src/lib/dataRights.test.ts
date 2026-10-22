@@ -846,6 +846,7 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
         order.push('disconnect');
         // What a connector writing on its way out looks like.
         store.set('wagmi.recentConnectorId', '"injected"');
+        return true;
       },
     });
     expect(order).toEqual(['disconnect']);
@@ -913,7 +914,7 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
       fakeWindow(new Map([['wagmi.store', '{}']]));
       stubIdb('success');
       const pending = eraseMyDataFully({
-        disconnect: () => new Promise<void>(() => {}),
+        disconnect: () => new Promise<boolean>(() => {}),
       });
       await vi.advanceTimersByTimeAsync(DISCONNECT_TIMEOUT_MS + 1);
       const result = await pending;
@@ -1042,6 +1043,7 @@ describe('round 3 — the reported count, the sentinel, the wedged transaction',
         // alongside the store rewrite.
         store.set('wagmi.store', '{}');
         store.set('wagmi.metaMask.disconnected', 'true');
+        return true;
       },
     });
     expect(store.has('wagmi.metaMask.disconnected')).toBe(true);
@@ -1362,11 +1364,11 @@ describe('round 4 — the pre-confirm figure and the late teardown', () => {
       let finishTeardown: (() => void) | undefined;
       const pending = eraseMyDataFully({
         disconnect: () =>
-          new Promise<void>((resolve) => {
+          new Promise<boolean>((resolve) => {
             finishTeardown = () => {
               // The late write, exactly as wagmi makes it.
               store.set('wagmi.store', '{}');
-              resolve();
+              resolve(true);
             };
           }),
       });
@@ -1404,6 +1406,7 @@ describe('round 4 — the pre-confirm figure and the late teardown', () => {
     const result = await eraseMyDataFully({
       disconnect: async () => {
         store.set('wagmi.store', '{}');
+        return true;
       },
     });
     expect(result.connector).toEqual({
@@ -1412,6 +1415,23 @@ describe('round 4 — the pre-confirm figure and the late teardown', () => {
       reconnectPending: false,
     });
     expect(store.has('wagmi.store')).toBe(false);
+    expect(result.complete).toBe(true);
+  });
+
+  it('a teardown that found nothing to close is not reported as a sign-out (Codex #2670 r3)', async () => {
+    const store = new Map<string, string>([['app.mode', 'lend']]);
+    fakeWindow(store);
+    stubIdb(() => ({ stores: ['keyvaluestorage', 'keys'] }));
+    const result = await eraseMyDataFully({
+      disconnect: async () => false,
+      disconnectLast: async () => false,
+    });
+    // Folded out exactly as if no teardown had been supplied.
+    expect(result.connector).toEqual({
+      attempted: false,
+      disconnected: false,
+      reconnectPending: false,
+    });
     expect(result.complete).toBe(true);
   });
 });
@@ -1521,7 +1541,7 @@ describe('round 6 — what a late, partial, or unresponsive teardown leaves behi
       let land: (() => void) | undefined;
       const pending = eraseMyDataFully({
         disconnect: () =>
-          new Promise<void>((_resolve, reject) => {
+          new Promise<boolean>((_resolve, reject) => {
             land = () => {
               // One connector let go and wrote; a later one refused.
               store.set('wagmi.store', '{}');
@@ -1888,8 +1908,8 @@ describe('round 11 — a refusal is not a timeout, and a guard that throws', () 
       const teardown = disconnectEvery(
         ['slow'],
         () =>
-          new Promise<void>((resolve) => {
-            land = resolve;
+          new Promise<boolean>((resolve) => {
+            land = () => resolve(true);
           }),
         {
           perConnectorTimeoutMs: 50,
@@ -2126,8 +2146,8 @@ describe('round 12 — a late cleanup must never outrun the counted clear', () =
       let land: (() => void) | undefined;
       const pending = eraseMyDataFully({
         disconnect: () =>
-          new Promise<void>((resolve) => {
-            land = resolve;
+          new Promise<boolean>((resolve) => {
+            land = () => resolve(true);
           }),
       });
       // The straggler lands around the counted clear.
@@ -2237,8 +2257,8 @@ describe('round 15 — the fence cannot ask the witness that was tampered with',
     const pending = eraseMyDataFully({
       hasLiveSession,
       disconnect: () =>
-        new Promise<void>((resolve) => {
-          land = resolve;
+        new Promise<boolean>((resolve) => {
+          land = () => resolve(true);
         }),
     });
     // The aggregate bound expires: the erasure gives up and reports.

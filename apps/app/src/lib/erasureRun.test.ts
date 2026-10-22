@@ -10,7 +10,7 @@ import {
   type FullEraseResult,
 } from './dataRights';
 import {
-  KEPT_REPORT_WINDOW_MS,
+  RELOAD_WINDOW_MS,
   REPORT_KEY,
   dismissErasureReport,
   followPeerErasure,
@@ -101,12 +101,14 @@ describe('eraseMyDataFully — the reload-prone teardown runs last (#2035)', () 
     const result = await eraseMyDataFully({
       disconnect: async () => {
         events.push('first');
+        return true;
       },
       disconnectLast: async (soFar) => {
         events.push('last');
         interim = soFar;
         // What wagmi rewrites as the connector closes, after the sweep.
         local.set('wagmi.store', '{}');
+        return true;
       },
     });
     expect(events.indexOf('first')).toBeLessThan(events.indexOf('idb-clear'));
@@ -146,10 +148,12 @@ function connectedPort(
 ): WalletPort<{ id: string }> & { closed: string[] } {
   let status = 'connected';
   const closed: string[] = [];
+  // One object for the life of the port, as wagmi's connectors are.
+  const connector = { id };
   return {
     closed,
     status: () => status,
-    connectors: () => (status === 'connected' ? [{ id }] : []),
+    connectors: () => (status === 'connected' ? [connector] : []),
     isLive: () => true,
     reloadsOnDisconnect: (c) => c.id === 'coinbaseWalletSDK',
     disconnect: async (c) => {
@@ -240,7 +244,7 @@ describe('a report kept across a wallet-forced reload (#2035)', () => {
         resetPreferences: () => {},
       });
       expect(session.has(REPORT_KEY)).toBe(true);
-      vi.advanceTimersByTime(KEPT_REPORT_WINDOW_MS - 1);
+      vi.advanceTimersByTime(RELOAD_WINDOW_MS - 1);
       expect(session.has(REPORT_KEY)).toBe(true);
       vi.advanceTimersByTime(1);
       expect(session.has(REPORT_KEY)).toBe(false);
@@ -324,8 +328,8 @@ describe('a report kept across a wallet-forced reload (#2035)', () => {
     if (raw === undefined) return;
     const keptAt = (JSON.parse(raw) as { keptAt: number }).keptAt;
     expect(parseKeptReport(raw, keptAt)).not.toBeNull();
-    expect(parseKeptReport(raw, keptAt + KEPT_REPORT_WINDOW_MS)).not.toBeNull();
-    expect(parseKeptReport(raw, keptAt + KEPT_REPORT_WINDOW_MS + 1)).toBeNull();
+    expect(parseKeptReport(raw, keptAt + RELOAD_WINDOW_MS)).not.toBeNull();
+    expect(parseKeptReport(raw, keptAt + RELOAD_WINDOW_MS + 1)).toBeNull();
     expect(parseKeptReport(raw, keptAt - 1)).toBeNull();
   });
 
@@ -403,15 +407,53 @@ describe("one lock for this tab's run and its follow-up of another tab (Codex #2
     expect(getErasureRun().phase).toBe('done');
   });
 
-  it("waits for a follow-up still closing this tab's wallet before starting", async () => {
-    let release: () => void = () => {};
-    const port = connectedPort(
-      'coinbaseWalletSDK',
-      () =>
-        new Promise<void>((resolve) => {
-          release = resolve;
-        }),
-    );
+  it("waits for a follow-up until its reload can no longer come, before starting (Codex #2670 r3)", async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let release: () => void = () => {};
+      const port = connectedPort(
+        'coinbaseWalletSDK',
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve;
+          }),
+      );
+      followPeerErasure({
+        wallet: port,
+        followPreferences: () => {},
+        followLanguage: () => {},
+      });
+      await vi.advanceTimersByTimeAsync(10);
+      let languageResets = 0;
+      const run = runErasure({
+        wallet: port,
+        resetLanguage: () => {
+          languageResets += 1;
+        },
+        resetPreferences: () => {},
+      });
+      // The run holds the lock (a second request is refused) but has done
+      // nothing yet: a reload landing now would interrupt nothing.
+      expect(getErasureRun().phase).toBe('running');
+      await vi.advanceTimersByTimeAsync(10);
+      expect(languageResets).toBe(0);
+      // The close resolves — but the SDK's reload can still be on its way,
+      // so the follow-up keeps the lock for the reload window.
+      release();
+      await vi.advanceTimersByTimeAsync(RELOAD_WINDOW_MS - 1);
+      expect(languageResets).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      await run;
+      expect(languageResets).toBe(1);
+      expect(port.closed).toEqual(['coinbaseWalletSDK']);
+      expect(getErasureRun().phase).toBe('done');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not hold the lock after a follow-up that closed no reload-prone wallet', async () => {
+    const port = connectedPort('metaMask');
     followPeerErasure({
       wallet: port,
       followPreferences: () => {},
@@ -419,22 +461,14 @@ describe("one lock for this tab's run and its follow-up of another tab (Codex #2
     });
     await new Promise((resolve) => setTimeout(resolve, 10));
     let languageResets = 0;
-    const run = runErasure({
+    await runErasure({
       wallet: port,
       resetLanguage: () => {
         languageResets += 1;
       },
       resetPreferences: () => {},
     });
-    // The run holds the lock (a second request is refused) but has done
-    // nothing yet: a reload landing now would interrupt nothing.
-    expect(getErasureRun().phase).toBe('running');
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(languageResets).toBe(0);
-    release();
-    await run;
     expect(languageResets).toBe(1);
-    expect(port.closed).toEqual(['coinbaseWalletSDK']);
-    expect(getErasureRun().phase).toBe('done');
+    expect(port.closed).toEqual(['metaMask']);
   });
 });

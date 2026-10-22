@@ -42,12 +42,17 @@ function fakePort(init: {
       return true;
     },
   };
-  return { port, closed };
+  /** A connection the user makes while the teardown is under way. */
+  const connectMeanwhile = (c: FakeConnector) => {
+    connectors = [...connectors, c];
+    status = 'connected';
+  };
+  return { port, closed, connectMeanwhile };
 }
 
 describe('planWalletTeardown', () => {
-  it('supplies nothing when nothing is connected or restoring', () => {
-    for (const status of ['disconnected', 'connecting']) {
+  it('supplies nothing when the connection map is empty', () => {
+    for (const status of ['disconnected', 'connecting', 'reconnecting']) {
       const { port } = fakePort({ status, connectors: [] });
       expect(planWalletTeardown(port)).toEqual({});
     }
@@ -112,9 +117,42 @@ describe('planWalletTeardown', () => {
       settle: { status: 'disconnected', connectors: [] },
     });
     const plan = planWalletTeardown(port);
-    await expect(plan.first!()).resolves.toBeUndefined();
+    // Neither teardown claims a sign-out it did not make (Codex #2670 r3).
+    await expect(plan.first!()).resolves.toBe(false);
     await expect(plan.last!()).resolves.toBe(false);
     expect(closed).toEqual([]);
+  });
+
+  it('closes a live wallet while another connection is still being made (Codex #2670 r3)', async () => {
+    // wagmi reports `connecting` and keeps the existing connections while a
+    // further wallet is being connected.
+    const { port, closed } = fakePort({
+      status: 'connecting',
+      connectors: [{ id: 'metaMask', live: true }],
+    });
+    const plan = planWalletTeardown(port);
+    await expect(plan.first!()).resolves.toBe(true);
+    expect(closed).toEqual(['metaMask']);
+  });
+
+  it('never closes a connection made after the request settled (Codex #2670 r3)', async () => {
+    const metaMask = { id: 'metaMask', live: true };
+    const { port, closed, connectMeanwhile } = fakePort({
+      status: 'connected',
+      connectors: [metaMask],
+    });
+    const plan = planWalletTeardown(port);
+    await expect(plan.first!()).resolves.toBe(true);
+    // While the erasure clears, the user connects Coinbase from the header.
+    connectMeanwhile({ id: 'coinbaseWalletSDK', live: true });
+    let before = false;
+    await expect(
+      plan.last!(() => {
+        before = true;
+      }),
+    ).resolves.toBe(false);
+    expect(before).toBe(false);
+    expect(closed).toEqual(['metaMask']);
   });
 
   it('closes reload-prone connections only in the LAST teardown (#2035)', async () => {
@@ -126,7 +164,7 @@ describe('planWalletTeardown', () => {
       ],
     });
     const plan = planWalletTeardown(port);
-    await plan.first!();
+    await expect(plan.first!()).resolves.toBe(true);
     expect(closed).toEqual(['metaMask']);
     const before: string[] = [];
     await expect(plan.last!(() => before.push([...closed].join(',')))).resolves.toBe(

@@ -18,6 +18,13 @@
  * 2. RELOAD-PRONE CONNECTIONS GO LAST (#2035). A connection whose disconnect
  *    reloads the page is closed by a separate teardown, which the erasure
  *    runs only after everything it counts has been cleared.
+ * 3. CLOSE ONLY THE REQUEST'S CONNECTIONS, AND SAY WHETHER ANY WERE CLOSED
+ *    (Codex #2670 r3). Both teardowns close the connections the map held once
+ *    the restore settled — one snapshot, taken then — and nothing connected
+ *    afterwards: the erasure runs for seconds with the Connect control live,
+ *    and a session the user creates in that time is theirs, not the
+ *    request's. And each teardown resolves whether it closed anything, so a
+ *    teardown that found nothing left is never reported as a sign-out.
  */
 import { ReconnectPendingError, disconnectEvery } from './dataRights';
 
@@ -64,8 +71,11 @@ export interface WalletTeardownOptions {
 }
 
 export interface WalletTeardownPlan {
-  /** Closes every connection that does not reload the page. */
-  readonly first?: () => Promise<void>;
+  /**
+   * Closes every connection that does not reload the page. Resolves `true`
+   * if it closed any, `false` if there were none to close.
+   */
+  readonly first?: () => Promise<boolean>;
   /**
    * Closes the connections that reload the page, calling `beforeClosing`
    * first ONLY when there is one to close. Resolves `true` if it closed
@@ -77,30 +87,31 @@ export interface WalletTeardownPlan {
 /**
  * Plan the teardown at the moment of the request.
  *
- * Supplies NOTHING when nothing is connected or restoring (#1862 Part 2
- * round 2 P2): a teardown resolving over nothing would be reported as a
- * sign-out that never happened. `connecting` is excluded for the same reason
- * (round 8): it is the state with a wallet modal open and an empty map.
+ * Decided by the CONNECTION MAP, not the status (Codex #2670 r3). Supplies
+ * NOTHING when the map is empty (#1862 Part 2 round 2 P2): a teardown
+ * resolving over nothing would be reported as a sign-out that never
+ * happened. The status cannot stand in for that: `connecting` is the state of
+ * an open wallet modal (round 8), but wagmi keeps the existing connections
+ * while a further one is being made, so a status gate left a live wallet
+ * attached through an erasure. A connection still being MADE cannot be
+ * stopped; completing it is a sign-in after the request, which the erasure's
+ * late cleanups already decline to undo.
  *
- * Both teardowns re-read the map when they run, after the settle, so a
- * connection the render did not have yet is still closed — and one that a
- * failed reconnect dropped is no longer asked to close. A planned teardown
- * that finds nothing left to close resolves: the session that was being
- * restored at the request is gone either way, and the erasure removed what
- * would have restored it.
+ * The targets are the map as it stands once any restore has settled — after
+ * the settle, so a connection the render did not have yet is still closed,
+ * and one that a failed reconnect dropped is no longer asked to close — and
+ * NOTHING connected after that (rule 3 in the header). Each teardown closes
+ * those of its targets still in the map when it runs, and resolves `false`
+ * when there are none: the session that was being restored at the request
+ * is gone either way, and the erasure removed what would have restored it,
+ * but no wallet was signed out and the report must not say one was.
  */
 export function planWalletTeardown<C>(
   port: WalletPort<C>,
   options: WalletTeardownOptions = {},
 ): WalletTeardownPlan {
-  const status = port.status();
-  if (
-    (status !== 'connected' && status !== 'reconnecting') ||
-    port.connectors().length === 0
-  ) {
-    return {};
-  }
-  let settled: Promise<void> | undefined;
+  if (port.connectors().length === 0) return {};
+  let settled: Promise<readonly C[]> | undefined;
   const settle = () => {
     settled ??= port
       .whenSettled(options.settleTimeoutMs ?? RECONNECT_SETTLE_TIMEOUT_MS)
@@ -108,13 +119,15 @@ export function planWalletTeardown<C>(
         // The status is re-read rather than trusting the boolean, and the
         // map is checked as well: a placeholder still in it means the
         // reconnect has not replaced it, whatever the status says.
+        const request = port.connectors();
         if (
           port.status() === 'reconnecting' ||
-          port.connectors().some((connector) => !port.isLive(connector))
+          request.some((connector) => !port.isLive(connector))
         ) {
           throw new ReconnectPendingError();
         }
         options.onSettled?.();
+        return request;
       });
     return settled;
   };
@@ -123,19 +136,23 @@ export function planWalletTeardown<C>(
       onStragglerSettled: options.onStragglerSettled,
       perConnectorTimeoutMs: options.perConnectorTimeoutMs,
     })();
-  const group = (reloads: boolean) =>
-    port
-      .connectors()
-      .filter((connector) => port.reloadsOnDisconnect(connector) === reloads);
+  // The request's connections of one kind that are still connected now.
+  const group = (request: readonly C[], reloads: boolean) => {
+    const now = new Set(port.connectors());
+    return request.filter(
+      (connector) =>
+        now.has(connector) && port.reloadsOnDisconnect(connector) === reloads,
+    );
+  };
   return {
     first: async () => {
-      await settle();
-      const targets = group(false);
-      if (targets.length > 0) await close(targets);
+      const targets = group(await settle(), false);
+      if (targets.length === 0) return false;
+      await close(targets);
+      return true;
     },
     last: async (beforeClosing) => {
-      await settle();
-      const targets = group(true);
+      const targets = group(await settle(), true);
       if (targets.length === 0) return false;
       beforeClosing?.();
       await close(targets);

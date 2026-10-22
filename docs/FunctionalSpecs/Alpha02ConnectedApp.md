@@ -2979,7 +2979,17 @@ is the borrower's own money.
   connection, not the one in use**: where more than one wallet is connected,
   every one of them must be ended before a sign-out is claimed, since a wallet
   left connected is a live client able to write its session back into storage
-  the erasure has already cleared.
+  the erasure has already cleared. A teardown that finds nothing left to end
+  by the time it runs is the same no-op and claims nothing either. What
+  counts as "connected" is the set of live connections, not a summary status:
+  while the user is part-way through connecting a further wallet, the ones
+  already connected are still connected and are ended.
+- **The erasure ends the connections the request found, and none made
+  since.** It runs for some seconds with the app still usable, and a wallet
+  the user connects in that time is a sign-in after the request, not part of
+  it; ending it would destroy a session the user just created. The same holds
+  for a connection that was still being made at the request and completes
+  afterwards.
 - **A sign-out must outlast a reload.** Ending a connection only for the app to
   reconnect on the next visit is not an ending, so the erasure must leave in
   place whatever record tells the app not to reconnect on its own, and the
@@ -3015,7 +3025,10 @@ is the borrower's own money.
   everything the follow-up would. An erasure requested while a follow-up is
   still closing the wallet waits for it before doing anything, so a reload
   in that time interrupts nothing and the page simply offers the erasure
-  again.
+  again. A follow-up that closed a connection which reloads the page is
+  "still closing" for the same short bounded window the kept report uses,
+  since the reload can follow the close; an erasure requested in that time
+  shows as running and starts when the window ends.
 - **A peer tab does not clear the stores it shares with the erasing tab.**
   The shared stores are cleared by the tab where the user asked, which is
   also the only one that reports on them. A peer tab clearing them as well
