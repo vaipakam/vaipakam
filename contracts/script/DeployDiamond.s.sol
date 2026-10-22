@@ -1583,7 +1583,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getVaultFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](35);
+        s = new bytes4[](34);
         s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -1594,7 +1594,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[7] = VaultFactoryFacet.vaultDepositERC1155.selector;
         s[8] = VaultFactoryFacet.vaultWithdrawERC1155.selector;
         s[9] = VaultFactoryFacet.vaultApproveNFT721.selector;
-        s[10] = VaultFactoryFacet.vaultSetNFTUser.selector;
+        // #902 — the one loan-keyed renter route (replaced vaultSetNFTUser
+        // and vaultSetNFTUser1155).
+        s[10] = VaultFactoryFacet.vaultSetRentalUser.selector;
         s[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
         s[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
         s[13] = VaultFactoryFacet.getOfferAmount.selector;
@@ -1604,7 +1606,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[17] = VaultFactoryFacet.upgradeUserVault.selector;
         s[18] = VaultFactoryFacet.getUserVaultAddress.selector;
         s[19] = VaultFactoryFacet.getVaultVersionInfo.selector;
-        s[20] = VaultFactoryFacet.vaultSetNFTUser1155.selector;
+        // #1566 S3e — the swap fill's counter-only outflow record (the LOP
+        // moves the lot). In slot 20 since #902 retired vaultSetNFTUser1155.
+        s[20] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
         s[21] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
         // T-051 / T-054 — chokepoint deposit + counter-only companions.
         // `vaultDepositERC20From` is the third-party-payer variant
@@ -1628,8 +1632,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[32] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
         s[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
-        // #1566 S3e — the swap fill's counter-only outflow record (the LOP moves the lot).
-        s[34] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
     }
 
     /// @dev Issue #67 — `OfferFacet` was split into `OfferCreateFacet`

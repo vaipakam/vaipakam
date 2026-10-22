@@ -253,10 +253,8 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         );
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                VaultFactoryFacet.vaultSetNFTUser.selector,
-                loan.lender,
-                loan.principalAsset,
-                loan.tokenId,
+                VaultFactoryFacet.vaultSetRentalUser.selector,
+                loan.id,
                 loan.borrower,
                 newExpires
             ),
@@ -314,10 +312,8 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             // Reset renter (non-critical — renter may have already expired)
             (bool ok, ) = address(this).call(
                 abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultSetNFTUser.selector,
-                    loan.lender,
-                    loan.principalAsset,
-                    loan.tokenId,
+                    VaultFactoryFacet.vaultSetRentalUser.selector,
+                    loan.id,
                     address(0),
                     0
                 )

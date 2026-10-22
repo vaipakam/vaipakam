@@ -201,6 +201,21 @@ runs half of it on old code:
   carries the three consumers but not OracleFacet, so it refuses such a Diamond
   (`PredatesOraclePriceStatus`) and the oracle is refreshed first.
 
+- **VaultFactoryFacet + the vault implementation + every facet that sets a
+  renter (#902).** Every rental step writes the renter through one route,
+  `vaultSetRentalUser(loanId, renter, expires)`, which reads the loan and
+  writes an ERC-1155 rental as its own vault row keyed by the loan
+  (`setRental1155`, on the vault IMPLEMENTATION). The writers are
+  OfferAcceptFacet (origination, right after `initiateLoan` returns the loan
+  id), RepayPeriodicFacet, RepayFacet, PrecloseFacet and DefaultedFacet. The retired `vaultSetNFTUser` /
+  `vaultSetNFTUser1155` routes are gone, so a writer refreshed without the
+  route reverts `FunctionDoesNotExist`, and an ERC-1155 rental in a vault
+  still on the old implementation is refused at accept. `RedeployFacets`
+  carries neither RepayFacet nor the vault implementation and refuses a
+  Diamond that does not already route `vaultSetRentalUser`; cross it by fresh
+  deploy, or by `RefreshAllFacetsInPlace` plus `UpgradeVaultImplementation`
+  with each lender vault upgraded.
+
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place
 across this boundary and no pre-slice row is migrated; slices 2–3 make a

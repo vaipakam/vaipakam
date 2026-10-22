@@ -721,6 +721,27 @@ contract OfferAcceptFacet is
         );
     }
 
+    /// @dev #902 — record the borrower as the renter of an NFT rental for
+    ///      its term. Runs right after `initiateLoan`, because the vault
+    ///      keeps one row per rental keyed by the loan id and this is the
+    ///      first point the id exists. `initiateLoan` is reached only from
+    ///      this facet, so every origination passes here; the rented NFT is
+    ///      already in the lender's vault (vaulted at offer creation, or
+    ///      pulled by the accept above). An ERC-20 loan has no renter.
+    function _recordRenter(uint256 loanId) private {
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        if (loan.assetType == LibVaipakam.AssetType.ERC20) return;
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultSetRentalUser.selector,
+                loanId,
+                loan.borrower,
+                uint64(block.timestamp + loan.durationDays * 1 days)
+            ),
+            NFTRenterUpdateFailed.selector
+        );
+    }
+
     /// @dev NFT-rental prepay pull. Extracted from `_acceptOffer` to
     ///      keep that function's local count under viaIR's
     ///      stack-too-deep budget after the OfferFacet split.
@@ -1408,19 +1429,10 @@ contract OfferAcceptFacet is
                     );
                 }
             }
-
-            // Set renter (borrower as user)
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultSetNFTUser.selector,
-                    lender,
-                    offer.lendingAsset,
-                    offer.tokenId,
-                    borrower,
-                    uint64(block.timestamp + offer.durationDays * 1 days)
-                ),
-                NFTRenterUpdateFailed.selector
-            );
+            // The borrower is recorded as the renter once the loan exists
+            // ({_recordRenter}, below `initiateLoan`): the vault keeps one row
+            // per rental keyed by the loan id (#902), which does not exist yet
+            // here.
         }
 
         // Lock collateral from borrower (already in vault for Borrower offers)
@@ -1508,6 +1520,7 @@ contract OfferAcceptFacet is
             LoanInitiationFailed.selector
         );
         loanId = abi.decode(result, (uint256));
+        _recordRenter(loanId);
 
         // Range Orders Phase 1 — record the matcher on the loan so the
         // VPFI-path 1% LIF kickback (deferred to terminal in

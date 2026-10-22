@@ -169,6 +169,9 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     error UpgradeFailed();
     error ProxyCallFailed(string reason);
     error NoVault();
+    /// @dev #902 — {vaultSetRentalUser} was asked to set the renter of an
+    ///      ERC-20 loan, which rents nothing.
+    error NotRentalLoan();
     error VaultUpgradeRequired();
     /// @dev Stuck-recovery rejected: caller-supplied amount is zero.
     error AmountZero();
@@ -1358,42 +1361,66 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     }
 
     /**
-     * @notice Sets the temporary user (renter) for a rentable NFT from the specified user's vault.
-     * @dev Low-level call to the proxy's setUser function (IERC4907.setUser).
-     *      Enhanced: Explicit proxy existence check. Reverts with reason on failure.
-     *      For ERC721: Calls as operator (NFT not held in vault).
-     *      For ERC1155: Calls while holding tokens in vault. Underlying
-     *      IERC4907 support is optional — the vault maintains its own
-     *      wrapper state so third-party integrations can query the vault
-     *      uniformly even when the NFT does not implement ERC-4907.
-     *      Callable by facets (e.g., for loan acceptance in OfferFacet).
-     * @param user The user whose vault to operate from (typically the lender).
-     * @param nftContract The NFT contract address (must support IERC4907).
-     * @param tokenId The token ID.
-     * @param renter The temporary renter address (borrower).
-     * @param expires The expiration timestamp (end of loan term).
+     * @notice Assigns, updates or revokes the renter of loan `loanId`'s
+     *         rented NFT, in the lender's vault where the NFT is held. The one
+     *         route every rental lifecycle step uses (#902): origination,
+     *         each expiry refresh, an obligation handover and every close.
+     * @dev onlyDiamondInternal. Reads the loan for the vault owner
+     *      (`loan.lender`), the NFT, the token id and the asset type, so a
+     *      caller cannot pass a quantity or token that disagrees with the loan.
+     *      An ERC-721 rental goes to {VaipakamVaultImplementation.setUser},
+     *      the token's single slot (forwarded to IERC4907 when supported). An
+     *      ERC-1155 rental goes to {VaipakamVaultImplementation.setRental1155}
+     *      as its own row keyed by `loanId` with the loan's `quantity`, so
+     *      concurrent rentals of the same token from one vault coexist and
+     *      closing one leaves the others' rights in place. `renter == 0`
+     *      revokes this rental only. Reverts `NotRentalLoan` for an ERC-20
+     *      loan, `NoVault` if the lender has no vault, or bubbles the vault's
+     *      revert (else `ProxyCallFailed("Set rental user failed")`). Emits
+     *      {VaultRentalUpdated} with the post-update aggregate.
+     * @param loanId  The rental loan.
+     * @param renter  The renter to record, or zero to revoke this rental.
+     * @param expires When the renter's rights end (ignored on a revoke).
      */
     // forge-lint: disable-next-line(mixed-case-function)
-    function vaultSetNFTUser(
-        address user,
-        address nftContract,
-        uint256 tokenId,
+    function vaultSetRentalUser(
+        uint256 loanId,
         address renter,
         uint64 expires
     ) external onlyDiamondInternal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address proxy = s.userVaipakamVaults[user];
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        if (loan.assetType == LibVaipakam.AssetType.ERC20) revert NotRentalLoan();
+        address lender = loan.lender;
+        address proxy = s.userVaipakamVaults[lender];
         if (proxy == address(0)) revert NoVault();
+        address nftContract = loan.principalAsset;
+        uint256 tokenId = loan.tokenId;
 
-        (bool success, bytes memory returnData) = proxy.call(
-            abi.encodeWithSelector(
+        uint256 quantity;
+        bytes memory vaultCall;
+        if (loan.assetType == LibVaipakam.AssetType.ERC1155) {
+            quantity = renter == address(0) ? 0 : loan.quantity;
+            vaultCall = abi.encodeWithSelector(
+                VaipakamVaultImplementation.setRental1155.selector,
+                nftContract,
+                tokenId,
+                loanId,
+                renter,
+                expires,
+                quantity
+            );
+        } else {
+            quantity = renter == address(0) ? 0 : 1;
+            vaultCall = abi.encodeWithSelector(
                 VaipakamVaultImplementation.setUser.selector,
                 nftContract,
                 tokenId,
                 renter,
                 expires
-            )
-        );
+            );
+        }
+        (bool success, bytes memory returnData) = proxy.call(vaultCall);
         if (!success) {
             // Decode revert reason if available
             if (returnData.length > 0) {
@@ -1402,17 +1429,17 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
                     revert(add(32, returnData), returndata_size)
                 }
             } else {
-                revert ProxyCallFailed("Set NFT user failed");
+                revert ProxyCallFailed("Set rental user failed");
             }
         }
         (uint256 aggQty, uint64 minExp) = _readAggregate(proxy, nftContract, tokenId);
         emit VaultRentalUpdated(
-            user,
+            lender,
             nftContract,
             tokenId,
             renter,
             expires,
-            renter == address(0) ? 0 : 1,
+            quantity,
             aggQty,
             minExp
         );
@@ -1580,68 +1607,6 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         );
         if (!success) return 0;
         return abi.decode(result, (uint64));
-    }
-
-    /**
-     * @notice Records an ERC-1155 partial-quantity rental in the lender's
-     *         vault alongside any other concurrent active rentals for the
-     *         same (nftContract, tokenId). See
-     *         {VaipakamVaultImplementation.setUser1155}.
-     * @dev onlyDiamondInternal. Reverts NoVault if the lender's proxy
-     *      has not been created yet, or bubbles the proxy's revert data
-     *      (or ProxyCallFailed("Set NFT user 1155 failed")) on failure.
-     *      Emits VaultRentalUpdated with the post-update aggregate.
-     * @param user         The lender whose vault holds the 1155 balance.
-     * @param nftContract  The ERC-1155 contract.
-     * @param tokenId      The token id being rented.
-     * @param renter       The borrower receiving rental rights (zero to clear).
-     * @param expires      Rental expiry timestamp for this `renter`.
-     * @param quantity     Units of `tokenId` to record for `renter`.
-     */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function vaultSetNFTUser1155(
-        address user,
-        address nftContract,
-        uint256 tokenId,
-        address renter,
-        uint64 expires,
-        uint256 quantity
-    ) external onlyDiamondInternal {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address proxy = s.userVaipakamVaults[user];
-        if (proxy == address(0)) revert NoVault();
-
-        (bool success, bytes memory returnData) = proxy.call(
-            abi.encodeWithSelector(
-                VaipakamVaultImplementation.setUser1155.selector,
-                nftContract,
-                tokenId,
-                renter,
-                expires,
-                quantity
-            )
-        );
-        if (!success) {
-            if (returnData.length > 0) {
-                assembly {
-                    let returndata_size := mload(returnData)
-                    revert(add(32, returnData), returndata_size)
-                }
-            } else {
-                revert ProxyCallFailed("Set NFT user 1155 failed");
-            }
-        }
-        (uint256 aggQty, uint64 minExp) = _readAggregate(proxy, nftContract, tokenId);
-        emit VaultRentalUpdated(
-            user,
-            nftContract,
-            tokenId,
-            renter,
-            expires,
-            quantity,
-            aggQty,
-            minExp
-        );
     }
 
     /// @dev Staticcalls the proxy for post-update aggregate state used in

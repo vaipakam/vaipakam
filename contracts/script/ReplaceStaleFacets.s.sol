@@ -63,6 +63,10 @@ import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
  *     --rpc-url $SEPOLIA_RPC_URL --broadcast -vvv
  */
 contract ReplaceStaleFacets is DeployDiamond {
+    /// @notice #902 - the target Diamond predates the per-rental renter rows;
+    ///         see {_requirePerRentalRenterRows}.
+    error PredatesPerRentalRenterRows(address diamond);
+
     function run() external override {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         // Same env-var-prefix normalisation as RedeployFacets — read
@@ -84,6 +88,9 @@ contract ReplaceStaleFacets is DeployDiamond {
         console.log("Diamond:", diamond);
         // #2407 — see RefinanceRecordRollout.
         RefinanceRecordRollout.assertInstalled(diamond);
+        // #902 - refuse a Diamond from before the per-rental renter rows; see
+        // {_requirePerRentalRenterRows}.
+        _requirePerRentalRenterRows(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -352,6 +359,25 @@ contract ReplaceStaleFacets is DeployDiamond {
             action: IDiamondCut.FacetCutAction.Replace,
             functionSelectors: selectors
         });
+    }
+
+    /// @dev #902 - refuse a Diamond from before the per-rental renter rows. The
+    ///      refreshed OfferAcceptFacet and VaultFactoryFacet here record the
+    ///      renter through `vaultSetRentalUser`, a per-rental row the vault
+    ///      IMPLEMENTATION keys by loan, while the closes and expiry refreshes
+    ///      (RepayFacet, RepayPeriodicFacet, PrecloseFacet, DefaultedFacet),
+    ///      which this curated set does not carry, still call the retired
+    ///      setters. Run across the boundary, every rental close would revert,
+    ///      and an ERC-1155 rental's accept would revert in an un-upgraded vault.
+    ///      Crossing it is a fresh deploy, or the all-facets refresh with the
+    ///      vault-implementation upgrade. The marker is the routing of
+    ///      `vaultSetRentalUser`, which #902 introduced. Called before the
+    ///      broadcast starts, so a refused run sends nothing.
+    function _requirePerRentalRenterRows(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.vaultSetRentalUser.selector)
+                == address(0)
+        ) revert PredatesPerRentalRenterRows(diamond);
     }
 
     /// @dev RL-1 (Codex #1302 P2) — split `selectors` into the subset the

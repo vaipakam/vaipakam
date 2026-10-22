@@ -434,7 +434,7 @@ contract OfferFacetTest is Test {
         selectors[7] = VaultFactoryFacet.vaultDepositERC1155.selector;
         selectors[8] = VaultFactoryFacet.vaultWithdrawERC1155.selector;
         selectors[9] = VaultFactoryFacet.vaultApproveNFT721.selector;
-        selectors[10] = VaultFactoryFacet.vaultSetNFTUser.selector;
+        selectors[10] = VaultFactoryFacet.vaultSetRentalUser.selector;
         selectors[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
         selectors[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
         selectors[13] = VaultFactoryFacet.getOfferAmount.selector;
@@ -2232,8 +2232,8 @@ contract OfferFacetTest is Test {
             })
         );
 
-        // Mock acceptOffer path: vaultSetNFTUser (for NFT), initiateLoan
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        // Mock acceptOffer path: vaultSetRentalUser (for NFT), initiateLoan
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(3)));
 
         // Borrower needs prepay tokens
@@ -2566,7 +2566,7 @@ contract OfferFacetTest is Test {
 
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector),
             "set renter fail"
         );
 
@@ -2753,7 +2753,7 @@ contract OfferFacetTest is Test {
     /// @dev Covers acceptOffer Borrower NFT offer (Lender accepts Borrower ERC721 offer).
     ///      This covers the `if (offer.offerType == Borrower)` path in acceptOffer NFT section.
     ///      In Borrower offer NFT type, the prepay is already deposited in createOffer, so no
-    ///      additional prepay during accept. The `vaultSetNFTUser` is still called.
+    ///      additional prepay during accept. The `vaultSetRentalUser` is still called.
     function testAcceptBorrowerNFTOffer() public {
         // user2 creates Borrower offer for ERC721 rental (wants to rent NFT from lender)
         // Prepay is done in createOffer
@@ -2792,7 +2792,7 @@ contract OfferFacetTest is Test {
         );
 
         // user1 (has NFT 1) accepts the borrower offer
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(2)));
 
         LibAcceptTestSigner.signAndAccept(address(diamond), user1, user1Pk, offerId);
@@ -3226,7 +3226,7 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         nft1155.setApprovalForAll(lenderVault, true);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(7)));
 
         uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user1, user1Pk, offerId);
@@ -4021,7 +4021,7 @@ contract OfferFacetTest is Test {
         vm.prank(user1);
         MockRentableNFT721(mockNft721).approve(address(diamond), 77);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(1)));
 
         uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user1, user1Pk, offerId);
@@ -4234,7 +4234,7 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(10)));
 
         uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);

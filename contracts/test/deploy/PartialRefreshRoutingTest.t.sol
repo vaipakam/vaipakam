@@ -14,6 +14,7 @@ import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
 import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
 import {SwapToRepayIntentFacet} from "../../src/facets/SwapToRepayIntentFacet.sol";
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
+import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 
 /**
  * @title  PartialRefreshRoutingTest
@@ -548,6 +549,58 @@ contract PartialRefreshRoutingTest is Test {
 
         RedeployFacets script = new RedeployFacets();
         vm.expectRevert(abi.encodeWithSelector(RedeployFacets.PredatesOraclePriceStatus.selector, diamond));
+        script.runWith(diamond, DEPLOYER_KEY);
+    }
+
+    /// @notice #902 - the curated refresh refuses a Diamond that predates the
+    ///         per-rental renter route. It refreshes VaultFactoryFacet (the
+    ///         retired setters gone) but not OfferAcceptFacet (origination sets
+    ///         the renter), RepayFacet or the vault implementation, so across
+    ///         the boundary it would leave a rental half on the retired routes.
+    /// @dev    Straddle: the same script against a current Diamond runs to
+    ///         completion ({test_RedeployFacets_IsIdempotent_OnCurrentDiamond}).
+    function test_RedeployFacets_RefusesADiamondBeforeThePerRentalRenterRows() public {
+        bytes4[] memory sels = new bytes4[](1);
+        sels[0] = VaultFactoryFacet.vaultSetRentalUser.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: sels
+        });
+        vm.prank(deployer);
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
+        assertEq(IDiamondLoupe(diamond).facetAddress(sels[0]), address(0), "fixture-live: the #902 marker is unrouted");
+        assertTrue(
+            IDiamondLoupe(diamond).facetAddress(SwapToRepayIntentFacet.getIntentCustody.selector) != address(0),
+            "fixture-live: the slice-3 marker stays routed, so that refusal is not what fires"
+        );
+
+        RedeployFacets script = new RedeployFacets();
+        vm.expectRevert(abi.encodeWithSelector(RedeployFacets.PredatesPerRentalRenterRows.selector, diamond));
+        script.runWith(diamond, DEPLOYER_KEY);
+    }
+
+    /// @notice #902 - `ReplaceStaleFacets` refuses the same Diamond: it carries
+    ///         OfferAcceptFacet and VaultFactoryFacet onto the new route but not
+    ///         the closes (RepayFacet, RepayPeriodicFacet, PrecloseFacet,
+    ///         DefaultedFacet) or the vault implementation, so across the
+    ///         boundary every rental close would revert on a retired route.
+    function test_ReplaceStaleFacets_RefusesADiamondBeforeThePerRentalRenterRows() public {
+        bytes4[] memory sels = new bytes4[](1);
+        sels[0] = VaultFactoryFacet.vaultSetRentalUser.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: sels
+        });
+        vm.prank(deployer);
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
+        assertEq(IDiamondLoupe(diamond).facetAddress(sels[0]), address(0), "fixture-live: the #902 marker is unrouted");
+
+        ReplaceStaleFacets script = new ReplaceStaleFacets();
+        vm.expectRevert(abi.encodeWithSelector(ReplaceStaleFacets.PredatesPerRentalRenterRows.selector, diamond));
         script.runWith(diamond, DEPLOYER_KEY);
     }
 

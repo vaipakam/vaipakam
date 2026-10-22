@@ -1256,10 +1256,10 @@ contract RepayFacetTest is Test {
         helperOfferLoan();
         vm.warp(block.timestamp + 1 days);
 
-        // Mock vaultSetNFTUser to fail (called during NFT reset renter step)
+        // Mock vaultSetRentalUser to fail (called during NFT reset renter step)
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector),
             "mock revert"
         );
         vm.prank(borrower);
@@ -1302,11 +1302,11 @@ contract RepayFacetTest is Test {
     /// @dev Tests repayPartial NFT with NFT update expires failing.
     function testRepayPartialNFTUpdateExpiresFails() public {
         helperOfferLoan();
-        // First need the lender/treasury withdrawals to succeed, then vaultSetNFTUser to fail.
-        // We'll mock vaultSetNFTUser to revert specifically.
+        // First need the lender/treasury withdrawals to succeed, then vaultSetRentalUser to fail.
+        // We'll mock vaultSetRentalUser to revert specifically.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector),
             "mock revert"
         );
         vm.prank(borrower);
@@ -1702,13 +1702,13 @@ contract RepayFacetTest is Test {
     }
 
     /// @dev Tests repayPartial NFT "Update expires failed" path.
-    ///      Lender and treasury share succeed; vaultSetNFTUser fails.
+    ///      Lender and treasury share succeed; vaultSetRentalUser fails.
     function testRepayPartialNFTUpdateExpiresFails2() public {
         helperOfferLoan();
-        // Mock vaultSetNFTUser to fail
+        // Mock vaultSetRentalUser to fail
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector),
             "expires fail"
         );
         vm.prank(borrower);
@@ -1750,15 +1750,15 @@ contract RepayFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Tests autoDeductDaily "Update expires failed" when vaultSetNFTUser fails.
+    /// @dev Tests autoDeductDaily "Update expires failed" when vaultSetRentalUser fails.
     function testAutoDeductDailyUpdateExpiresFails() public {
         helperOfferLoan();
         vm.warp(block.timestamp + 1 days);
 
-        // Mock vaultSetNFTUser to fail
+        // Mock vaultSetRentalUser to fail
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector),
             "expires fail"
         );
         vm.expectRevert(bytes("expires fail"));

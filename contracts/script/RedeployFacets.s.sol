@@ -76,6 +76,9 @@ contract RedeployFacets is Script {
     /// @notice #666 - the target Diamond's OracleFacet predates the three-way
     ///         price status; see {_requireOraclePriceStatus}.
     error PredatesOraclePriceStatus(address diamond);
+    /// @notice #902 - the target Diamond predates the per-rental renter rows;
+    ///         see {_requirePerRentalRenterRows}.
+    error PredatesPerRentalRenterRows(address diamond);
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -114,6 +117,9 @@ contract RedeployFacets is Script {
         // #666 - and one whose OracleFacet cannot answer the fallback's
         // price-status read; see {_requireOraclePriceStatus}.
         _requireOraclePriceStatus(diamond);
+        // #902 - and one from before the per-rental renter rows; see
+        // {_requirePerRentalRenterRows}.
+        _requirePerRentalRenterRows(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -667,6 +673,30 @@ contract RedeployFacets is Script {
             IDiamondLoupe(diamond).facetAddress(OracleFacet.getAssetPriceStatus.selector)
                 == address(0)
         ) revert PredatesOraclePriceStatus(diamond);
+    }
+
+    /// @dev #902 - refuse a Diamond from before the per-rental renter rows. One
+    ///      rental's renter is written by origination (OfferAcceptFacet, once
+    ///      `initiateLoan` returns the loan id), each expiry refresh
+    ///      (RepayPeriodicFacet, RepayFacet's partial), the obligation handover
+    ///      (PrecloseFacet) and every close (RepayFacet, RepayPeriodic,
+    ///      Preclose, Defaulted), all through `vaultSetRentalUser`, which writes
+    ///      a row the vault IMPLEMENTATION keys by loan. This curated set
+    ///      refreshes VaultFactoryFacet, which no longer routes the retired
+    ///      setters, but carries neither OfferAcceptFacet, RepayFacet nor the
+    ///      vault implementation, so run across the boundary every rental accept
+    ///      and repayment would revert on a route that is gone, and an ERC-1155
+    ///      rental would revert in a vault that has no per-rental row.
+    ///      Crossing the boundary is a fresh deploy, or the all-facets refresh
+    ///      with the vault-implementation upgrade, never this refresh. The
+    ///      marker is the routing of `vaultSetRentalUser`, which #902
+    ///      introduced. Called before the broadcast starts, so a refused run
+    ///      sends nothing.
+    function _requirePerRentalRenterRows(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.vaultSetRentalUser.selector)
+                == address(0)
+        ) revert PredatesPerRentalRenterRows(diamond);
     }
 
     function _replace(address facet, bytes4[] memory selectors)

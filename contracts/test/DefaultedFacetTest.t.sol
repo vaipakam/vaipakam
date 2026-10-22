@@ -1610,10 +1610,10 @@ contract DefaultedFacetTest is Test {
         );
         vm.warp(block.timestamp + 33 days + 3);
 
-        // Mock vaultSetNFTUser to fail
+        // Mock vaultSetRentalUser to fail
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector),
             "mock revert"
         );
         vm.expectRevert(bytes("mock revert"));
@@ -1681,8 +1681,8 @@ contract DefaultedFacetTest is Test {
         );
         vm.warp(block.timestamp + 33 days + 3);
 
-        // Mock vaultSetNFTUser to succeed (renter reset is still done)
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        // Mock vaultSetRentalUser to succeed (renter reset is still done)
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
 
         // Default should succeed without attempting vaultWithdrawERC721/ERC1155
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -1701,8 +1701,8 @@ contract DefaultedFacetTest is Test {
         );
         vm.warp(block.timestamp + 33 days + 3);
 
-        // Mock vaultSetNFTUser (reset renter) to succeed
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        // Mock vaultSetRentalUser (reset renter) to succeed
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
         // Mock vaultWithdrawERC20 to succeed (buffer + prepay withdrawal)
         MockVaultWithdraw.deliversAll(address(diamond));
         // Deal tokens to diamond so safeTransfer to treasury succeeds
@@ -1734,8 +1734,8 @@ contract DefaultedFacetTest is Test {
 
         address treasuryAddr = address(diamond); // treasury = diamond in setUp
 
-        // Mock vaultSetNFTUser (reset renter) to succeed
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        // Mock vaultSetRentalUser (reset renter) to succeed
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
         // First vaultWithdrawERC20 (buffer=15 ether to treasury) succeeds — match by full args
         vm.mockCall(
             address(diamond),
@@ -2228,9 +2228,9 @@ contract DefaultedFacetTest is Test {
         deal(mockERC20, address(diamond), 5000 ether);
         deal(mockCollateralERC20, address(diamond), 5000 ether);
 
-        // Mock vaultWithdrawERC20 and vaultSetNFTUser
+        // Mock vaultWithdrawERC20 and vaultSetRentalUser
         MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -2301,7 +2301,7 @@ contract DefaultedFacetTest is Test {
         deal(mockERC20, address(diamond), 5000 ether);
         deal(mockCollateralERC20, address(diamond), 5000 ether);
         MockVaultWithdraw.deliversAll(address(diamond));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -2472,7 +2472,7 @@ contract DefaultedFacetTest is Test {
     }
 
     /// @dev Tests triggerDefault NFT rental path fully, covering:
-    ///      - resetNFTRenter (vaultSetNFTUser)
+    ///      - resetNFTRenter (vaultSetRentalUser)
     ///      - bufferAmount to treasury
     ///      - prepayAmount treasury fee deduction
     ///      - prepayToLender distribution
@@ -2489,7 +2489,7 @@ contract DefaultedFacetTest is Test {
         deal(mockCollateralERC20, address(diamond), 50000 ether);
 
         // Mock cross-facet calls for NFT rental default path
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
@@ -2657,7 +2657,7 @@ contract DefaultedFacetTest is Test {
         deal(mockERC20, address(diamond), 50000 ether);
         deal(mockCollateralERC20, address(diamond), 50000 ether);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
@@ -2738,7 +2738,7 @@ contract DefaultedFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Tests triggerDefault NFT path where vaultSetNFTUser (reset renter) fails.
+    /// @dev Tests triggerDefault NFT path where vaultSetRentalUser (reset renter) fails.
     function testTriggerDefaultNFTResetRenterFails() public {
         uint256 loanId = createAndAcceptOffer(
             mockNft721, mockERC20, LibVaipakam.AssetType.ERC721,
@@ -2748,7 +2748,7 @@ contract DefaultedFacetTest is Test {
 
         deal(mockERC20, address(diamond), 50000 ether);
         deal(mockCollateralERC20, address(diamond), 50000 ether);
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), "set user fail");
+        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), "set user fail");
 
         vm.expectRevert(bytes("set user fail"));
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
