@@ -71,7 +71,9 @@ under `.timelock`. It deploys `VaipakamTimelock`, which:
   separate canceller variable: the same address names the Pauser Safe here
   and in the handover, and `TIMELOCK_CANCELLER` is refused. On a Phase-1
   mainnet the script requires `PAUSER_ADDRESS` and `TIMELOCK_PROPOSER` to
-  be deployed contracts and to differ;
+  be deployed contracts and to differ, and on every chain it refuses a
+  `TIMELOCK_PROPOSER` that differs from `EMERGENCY_REVOKER_ADDRESS` (one
+  Governance Safe);
 - opens execution to anyone by default (`TIMELOCK_EXECUTOR` unset);
 - defaults to a 48h delay, which is also the permanent floor: the delay
   can be raised later through the Timelock but never lowered below its
@@ -95,8 +97,9 @@ forge script script/Handover.s.sol \
 
 Before broadcasting, the script refuses a stale `DEFAULT_ADMIN_ADDRESS`,
 requires the two Safes, the admin EOA and the Timelock to be distinct,
-and requires the Timelock to grant `CANCELLER_ROLE` to `PAUSER_ADDRESS`
-(otherwise the Timelock was deployed under a different `.env`). Then, as
+and requires the Timelock to grant `CANCELLER_ROLE` to `PAUSER_ADDRESS` and
+`PROPOSER_ROLE` to `EMERGENCY_REVOKER_ADDRESS` (otherwise the Timelock was
+deployed under a different `.env`). Then, as
 the admin EOA:
 
 1. Grants `DEFAULT_ADMIN_ROLE` to the Timelock (first, so a later failure
@@ -575,10 +578,14 @@ removal has run.
 
 The same rule cuts the other way, and it is a deliberate trade. If the
 Governance Safe (the proposer) is the one compromised, the canceller cannot
-veto a queued removal of itself. The attacker still has to wait one full
-public delay for that removal before its own operation can even be queued,
-and the canceller can veto anything queued while it still holds the role, so a
-captured proposer needs two delays (96h at the 48h floor) in plain view. Treat
+veto a queued removal of itself. It keeps its veto over everything else until
+that removal executes, so an operation the attacker queues alongside the
+removal (even one chained behind it as a predecessor) is still cancellable
+during the first delay. Only an operation queued after the removal has run is
+beyond the veto, and that one waits a full second delay (96h in total at the
+48h floor). The Pauser Safe must therefore actually cancel whatever the
+attacker queues in the first window; if it does nothing, those operations run
+after one delay, exactly as they would with no canceller at all. Treat
 any queued `revokeRole(CANCELLER_ROLE, …)` the incident team did not plan as an
 incident.
 

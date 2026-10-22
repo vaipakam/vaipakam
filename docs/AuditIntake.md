@@ -99,7 +99,9 @@ technical specification.
   canceller, which only a proposer can cancel, so a captured canceller
   cannot freeze the Timelock by vetoing its own removal. Trade-off: a
   captured proposer can remove the canceller, but only after one public
-  delay, and its next operation waits a second delay.
+  delay. Operations queued before the removal runs stay vetoable, so one
+  that escapes the veto waits a second delay; the canceller has to act on
+  the first ones.
 - **No single signer has a zero-delay path.** Before D1 the governance Safe
   held `DEFAULT_ADMIN_ROLE` directly and could re-grant a Timelock-held role
   to a hot key, or `transferAdmin` the whole Diamond, in one transaction

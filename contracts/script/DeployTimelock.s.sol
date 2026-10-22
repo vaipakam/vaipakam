@@ -77,6 +77,14 @@ contract DeployTimelock is Script {
         );
 
         require(proposer != address(0), "DeployTimelock: proposer required");
+        // The proposer is the Governance Safe, which Handover also names as
+        // EMERGENCY_REVOKER_ADDRESS and refuses unless it holds PROPOSER_ROLE
+        // here. Catch a mismatch now rather than at handover.
+        address revoker = vm.envOr("EMERGENCY_REVOKER_ADDRESS", address(0));
+        require(
+            revoker == address(0) || revoker == proposer,
+            "DeployTimelock: TIMELOCK_PROPOSER must equal EMERGENCY_REVOKER_ADDRESS (one Governance Safe)"
+        );
         require(minDelay >= 1 hours, "DeployTimelock: min delay < 1h");
         // #1195 F4 (Pass-2 hardening) — on a Phase-1 MAINNET the Timelock must
         // enforce the ratified 48h minimum delay; the `TIMELOCK_MIN_DELAY` env

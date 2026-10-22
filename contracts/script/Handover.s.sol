@@ -102,6 +102,10 @@ import {Deployments} from "./lib/Deployments.sol";
  *                                   DEFAULT_ADMIN_ADDRESS before D1 — the
  *                                   script refuses the old name so a
  *                                   stale .env cannot pass silently.)
+ *                                   It must be the Timelock's proposer
+ *                                   (TIMELOCK_PROPOSER at DeployTimelock);
+ *                                   the script refuses a Timelock that
+ *                                   does not grant it PROPOSER_ROLE.
  *        PAUSER_ADDRESS           — Pauser Safe address. The Timelock
  *                                   must already grant it CANCELLER_ROLE
  *                                   (`DeployTimelock` does, from the same
@@ -137,6 +141,9 @@ contract Handover is Script {
     bytes32 internal constant DEFAULT_ADMIN_ROLE = bytes32(0);
     /// @dev OpenZeppelin `TimelockController.CANCELLER_ROLE`.
     bytes32 internal constant CANCELLER_ROLE = keccak256("CANCELLER_ROLE");
+
+    /// @dev OpenZeppelin `TimelockController.PROPOSER_ROLE`.
+    bytes32 internal constant PROPOSER_ROLE = keccak256("PROPOSER_ROLE");
 
     /// @dev Roles that get rotated to the Timelock during handover.
     ///      Order matters for the renounce loop: ADMIN renounces them
@@ -262,6 +269,16 @@ contract Handover is Script {
         require(
             ITimelockRoles(timelock).hasRole(CANCELLER_ROLE, pauserSafe),
             "timelock does not grant CANCELLER_ROLE to PAUSER_ADDRESS - redeploy it with DeployTimelock"
+        );
+        // The Governance Safe is ONE Safe: it queues every delayed action
+        // (the Timelock's proposer) and holds the emergency revoker. If the
+        // Timelock was deployed with a different TIMELOCK_PROPOSER, the Safe
+        // named here could revoke but never queue a repair, while an
+        // unverified multisig controlled every delayed action (Codex #2642
+        // r3). Refuse before the admin gives anything up.
+        require(
+            ITimelockRoles(timelock).hasRole(PROPOSER_ROLE, governanceSafe),
+            "timelock does not grant PROPOSER_ROLE to EMERGENCY_REVOKER_ADDRESS - the Governance Safe must be TIMELOCK_PROPOSER"
         );
 
         console.log("Handover plan");

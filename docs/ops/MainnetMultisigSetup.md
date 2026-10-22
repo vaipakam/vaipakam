@@ -184,6 +184,10 @@ EMERGENCY_REVOKER_ADDRESS=0x<governance-safe>  # the Safe's one Diamond role
 PAUSER_ADDRESS=0x<pauser-safe>                 # PAUSER_ROLE + Timelock canceller
 ```
 
+`TIMELOCK_PROPOSER` and `EMERGENCY_REVOKER_ADDRESS` must be the same address.
+`DeployTimelock.s.sol` refuses a mismatch, and `Handover.s.sol` refuses a
+Timelock that does not grant the revoker Safe `PROPOSER_ROLE`.
+
 `DEFAULT_ADMIN_ADDRESS` is retired (D1): `Handover.s.sol` refuses to run
 while it is set, because it named the topology in which the governance
 Safe held the role root. `TIMELOCK_CANCELLER` is retired too:
