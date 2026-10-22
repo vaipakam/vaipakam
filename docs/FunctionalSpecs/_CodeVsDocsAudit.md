@@ -927,8 +927,8 @@ is held and the provider's own reason, every tick. That is the
 correctness-over-liveness choice the paragraph below says must be made
 deliberately rather than inherited from a `catch`, and
 `Alpha02ConnectedApp.md` now states it. The paragraph below is kept as the
-record of why it was deferred, and Raaj made that liveness call explicitly
-(2026-10-22: pause the scan and say so).
+record of why it was deferred, and the owner made that liveness call explicitly
+(owner decision 2026-10-22: pause the scan and say so).
 
 **Historical, superseded by the paragraph above: why the scan half was first
 left open.** The entry above is right that the fix must cover both consumers; what stopped the scan being
