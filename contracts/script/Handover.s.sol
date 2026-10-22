@@ -281,6 +281,19 @@ contract Handover is Script {
             "timelock does not grant PROPOSER_ROLE to EMERGENCY_REVOKER_ADDRESS - the Governance Safe must be TIMELOCK_PROPOSER"
         );
 
+        // The Diamond is about to be handed to this Timelock irreversibly,
+        // so check its delay here rather than in the post-handover readback
+        // (Codex #2642 r4). On a Phase-1 mainnet both the current delay and
+        // the permanent floor must be at least 48h; elsewhere the floor
+        // must at least be non-zero (a zero floor is a pass-through).
+        uint256 tlDelay = ITimelockRoles(timelock).getMinDelay();
+        uint256 tlFloor = ITimelockRoles(timelock).MIN_DELAY_FLOOR();
+        require(tlFloor > 0, "timelock has a zero MIN_DELAY_FLOOR - redeploy it with DeployTimelock");
+        if (Deployments.isPhase1Mainnet()) {
+            require(tlDelay >= 48 hours, "timelock delay < 48h on a Phase-1 mainnet");
+            require(tlFloor >= 48 hours, "timelock MIN_DELAY_FLOOR < 48h on a Phase-1 mainnet");
+        }
+
         console.log("Handover plan");
         console.log("  diamond:       ", diamond);
         console.log("  timelock:      ", timelock);
@@ -540,6 +553,8 @@ interface IAccessControl {
 /// @dev OpenZeppelin `TimelockController`'s role read, for the canceller
 ///      check before handover.
 interface ITimelockRoles {
+    function getMinDelay() external view returns (uint256);
+    function MIN_DELAY_FLOOR() external view returns (uint256);
     function hasRole(bytes32 role, address account) external view returns (bool);
 }
 

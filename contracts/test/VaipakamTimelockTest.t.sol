@@ -223,7 +223,7 @@ contract VaipakamTimelockTest is Test {
     /// cannot freeze the timelock; once the removal runs, it has no veto left.
     function testCancellerCannotCancelItsOwnRemoval() public {
         (bytes memory data, bytes32 id) = _scheduleCancellerRemoval(canceller, bytes32(uint256(41)));
-        assertTrue(timelock.isCancellerRemoval(id));
+        assertEq(timelock.cancellerRemovalTarget(id), canceller);
 
         vm.prank(canceller);
         vm.expectRevert(abi.encodeWithSelector(VaipakamTimelock.CancellerRemovalNotCancellable.selector, id));
@@ -233,7 +233,7 @@ contract VaipakamTimelockTest is Test {
         vm.prank(executor);
         timelock.execute(address(timelock), 0, data, bytes32(0), bytes32(uint256(41)));
         assertFalse(timelock.hasRole(timelock.CANCELLER_ROLE(), canceller));
-        assertFalse(timelock.isCancellerRemoval(id));
+        assertEq(timelock.cancellerRemovalTarget(id), address(0));
         assertEq(timelock.getPendingProposalsCount(), 0);
     }
 
@@ -242,7 +242,7 @@ contract VaipakamTimelockTest is Test {
         (, bytes32 id) = _scheduleCancellerRemoval(canceller, bytes32(uint256(42)));
         _cancel(id);
         assertFalse(timelock.isOperation(id));
-        assertFalse(timelock.isCancellerRemoval(id));
+        assertEq(timelock.cancellerRemovalTarget(id), address(0));
         assertEq(timelock.getPendingProposalsCount(), 0);
     }
 
@@ -253,7 +253,7 @@ contract VaipakamTimelockTest is Test {
         vm.prank(proposer);
         timelock.schedule(address(timelock), 0, other, bytes32(0), bytes32(uint256(43)), DELAY);
         bytes32 otherId = timelock.hashOperation(address(timelock), 0, other, bytes32(0), bytes32(uint256(43)));
-        assertFalse(timelock.isCancellerRemoval(otherId));
+        assertEq(timelock.cancellerRemovalTarget(otherId), address(0));
         vm.prank(canceller);
         timelock.cancel(otherId);
 
@@ -265,7 +265,7 @@ contract VaipakamTimelockTest is Test {
         vm.prank(proposer);
         timelock.scheduleBatch(targets, values, payloads, bytes32(0), bytes32(uint256(44)), DELAY);
         bytes32 batchId = timelock.hashOperationBatch(targets, values, payloads, bytes32(0), bytes32(uint256(44)));
-        assertFalse(timelock.isCancellerRemoval(batchId));
+        assertEq(timelock.cancellerRemovalTarget(batchId), address(0));
         vm.prank(canceller);
         timelock.cancel(batchId);
         assertEq(timelock.getPendingProposalsCount(), 0);
@@ -277,8 +277,33 @@ contract VaipakamTimelockTest is Test {
         vm.prank(proposer);
         timelock.schedule(target, 0, data, bytes32(0), bytes32(uint256(45)), DELAY);
         bytes32 id = timelock.hashOperation(target, 0, data, bytes32(0), bytes32(uint256(45)));
-        assertFalse(timelock.isCancellerRemoval(id));
+        assertEq(timelock.cancellerRemovalTarget(id), address(0));
         vm.prank(canceller);
         timelock.cancel(id);
+    }
+
+    /// Two cancellers overlapping during a rotation each keep a veto over
+    /// the OTHER's removal; neither can block its own.
+    function testPeerCancellerCanVetoRemoval() public {
+        address peer = makeAddr("peer-canceller");
+        bytes memory grant = abi.encodeCall(timelock.grantRole, (timelock.CANCELLER_ROLE(), peer));
+        vm.prank(proposer);
+        timelock.schedule(address(timelock), 0, grant, bytes32(0), bytes32(uint256(46)), DELAY);
+        vm.warp(block.timestamp + DELAY + 1);
+        vm.prank(executor);
+        timelock.execute(address(timelock), 0, grant, bytes32(0), bytes32(uint256(46)));
+
+        (, bytes32 removeOld) = _scheduleCancellerRemoval(canceller, bytes32(uint256(47)));
+        (, bytes32 removePeer) = _scheduleCancellerRemoval(peer, bytes32(uint256(48)));
+
+        vm.prank(peer);
+        vm.expectRevert(abi.encodeWithSelector(VaipakamTimelock.CancellerRemovalNotCancellable.selector, removePeer));
+        timelock.cancel(removePeer);
+
+        vm.prank(canceller);
+        timelock.cancel(removePeer);
+        vm.prank(peer);
+        timelock.cancel(removeOld);
+        assertEq(timelock.getPendingProposalsCount(), 0);
     }
 }

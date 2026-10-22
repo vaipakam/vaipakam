@@ -95,8 +95,9 @@ technical specification.
   event carries the new code hash so it can be checked against audited
   bytecode during that window. The Timelock's delay cannot be lowered below
   its deploy-time value, and an independent canceller (the Pauser Safe) can
-  veto a queued operation — except a single-call operation removing a
-  canceller, which only a proposer can cancel, so a captured canceller
+  veto a queued operation — except a single-call operation removing that
+  same canceller, which only a proposer or another canceller can cancel,
+  so a captured canceller
   cannot freeze the Timelock by vetoing its own removal. Trade-off: a
   captured proposer can remove the canceller, but only after one public
   delay. Operations queued before the removal runs stay vetoable, so one

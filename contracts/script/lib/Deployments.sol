@@ -267,6 +267,16 @@ library Deployments {
         );
     }
 
+    /// @notice Whether the current chain is a Phase-1 mainnet (Ethereum,
+    ///         Base, Polygon, Arbitrum, Optimism — ProjectDetailsREADME /
+    ///         TokenomicsTechSpec §10). The one list the governance scripts
+    ///         use for their mainnet-only gates (48h Timelock delay, Safe
+    ///         bytecode, mandatory canceller).
+    function isPhase1Mainnet() internal view returns (bool) {
+        uint256 cid = block.chainid;
+        return cid == 1 || cid == 8453 || cid == 137 || cid == 42161 || cid == 10;
+    }
+
     /// Legacy env-var prefix for the active chain — used as the
     /// per-key fallback when `addresses.json` is missing or the key
     /// hasn't been written yet. E.g. on Base Sepolia returns

@@ -571,8 +571,9 @@ compromised, strip its `PAUSER_ROLE` at once with `emergencyRevokeRole`
 from the Governance Safe instead of waiting for step 5; its Timelock
 `CANCELLER_ROLE` can only be removed through the Timelock. Queue
 `revokeRole(CANCELLER_ROLE, oldGuardian)` as a single-call `schedule` at once:
-the Timelock refuses to let anyone but a proposer cancel that operation, so the
-compromised canceller cannot block its own removal. In the meantime the worst
+the Timelock refuses to let the canceller being removed cancel that operation
+(a proposer or another canceller still can), so the compromised canceller
+cannot block its own removal. In the meantime the worst
 it can do is cancel other queued operations, which are queued again once the
 removal has run.
 

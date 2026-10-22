@@ -36,6 +36,9 @@ contract GovernanceRootTimelockTest is Test {
     address internal keeperBot = makeAddr("keeper-bot");
     address internal attacker = makeAddr("attacker");
 
+    /// @dev State right after the handover, before the bot roles rotate.
+    uint256 internal handoverState;
+
     function setUp() public {
         admin = address(this);
         DiamondCutFacet cutFacet = new DiamondCutFacet();
@@ -68,6 +71,8 @@ contract GovernanceRootTimelockTest is Test {
         timelock = new VaipakamTimelock(DELAY, proposers, executors, cancellers);
 
         _handover();
+        handoverState = vm.snapshotState();
+        _rotateBotRoles();
     }
 
     /// @dev Mirrors `Handover.s.sol` step 3: root admin to the Timelock
@@ -87,19 +92,43 @@ contract GovernanceRootTimelockTest is Test {
         ];
         for (uint256 i; i < tlRoles.length; ++i) ac.grantRole(tlRoles[i], address(timelock));
         ac.grantRole(LibAccessControl.PAUSER_ROLE, pauserSafe);
-        ac.grantRole(LibAccessControl.KEEPER_ROLE, keeperBot);
         OwnershipFacet(address(diamond)).transferOwnership(address(timelock));
 
+        // Like the script, KEEPER / WATCHER / NOTIF_BILLER stay on the
+        // handover signer: they rotate to per-bot keys in a later stage.
         ac.renounceRole(LibAccessControl.PAUSER_ROLE, admin);
         for (uint256 i = tlRoles.length; i > 0; --i) ac.renounceRole(tlRoles[i - 1], admin);
+        ac.renounceRole(LibAccessControl.DEFAULT_ADMIN_ROLE, admin);
+    }
+
+    /// @dev The separate bot-role rotation that follows the handover: the
+    ///      Timelock (now the role root) grants the keeper key after its
+    ///      delay, and the handover signer renounces the three bot roles.
+    function _rotateBotRoles() internal {
+        vm.prank(address(timelock));
+        ac.grantRole(LibAccessControl.KEEPER_ROLE, keeperBot);
         ac.renounceRole(LibAccessControl.KEEPER_ROLE, admin);
         ac.renounceRole(LibAccessControl.WATCHER_ROLE, admin);
         ac.renounceRole(LibAccessControl.NOTIF_BILLER_ROLE, admin);
-        ac.renounceRole(LibAccessControl.DEFAULT_ADMIN_ROLE, admin);
+    }
+
+    /// The handover alone leaves exactly the three off-chain-bot roles on
+    /// the signer and nothing else; zero authority needs the rotation stage.
+    function test_ImmediateHandover_SignerKeepsOnlyBotRoles() public {
+        vm.revertToState(handoverState);
+        bytes32[] memory roles = LibAccessControl.grantableRoles();
+        for (uint256 i; i < roles.length; ++i) {
+            bool bot = roles[i] == LibAccessControl.KEEPER_ROLE || roles[i] == LibAccessControl.WATCHER_ROLE
+                || roles[i] == LibAccessControl.NOTIF_BILLER_ROLE;
+            assertEq(ac.hasRole(roles[i], admin), bot, "signer role set after handover");
+        }
+        assertFalse(ac.hasRole(LibAccessControl.DEFAULT_ADMIN_ROLE, admin));
+        assertFalse(ac.hasRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, admin));
     }
 
     // ─── topology ───────────────────────────────────────────────────────
 
+    /// After the bot-role rotation stage the signer holds nothing.
     function test_Topology_RootAndOwnershipOnTimelock_SafeHoldsOnlyRevoker() public view {
         assertEq(OwnershipFacet(address(diamond)).owner(), address(timelock));
         assertTrue(ac.hasRole(LibAccessControl.DEFAULT_ADMIN_ROLE, address(timelock)));

@@ -92,12 +92,7 @@ contract DeployTimelock is Script {
         // gate. Testnets keep the 1h floor for iteration speed. Phase-1 mainnet
         // set per ProjectDetailsREADME / TokenomicsTechSpec: Ethereum, Base,
         // Polygon, Arbitrum, Optimism.
-        bool phase1Mainnet =
-            block.chainid == 1 ||      // Ethereum
-            block.chainid == 8453 ||   // Base
-            block.chainid == 137 ||    // Polygon
-            block.chainid == 42161 ||  // Arbitrum One
-            block.chainid == 10;       // Optimism
+        bool phase1Mainnet = Deployments.isPhase1Mainnet();
         if (phase1Mainnet) {
             require(minDelay >= 48 hours, "DeployTimelock: mainnet min delay < 48h");
             // #938 — a mainnet timelock must have a veto party other than

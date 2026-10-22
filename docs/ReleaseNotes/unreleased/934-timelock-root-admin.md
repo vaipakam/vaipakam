@@ -24,7 +24,9 @@ The Timelock itself is hardened (#938). Its delay can never be lowered below
 the value it was deployed with, so one queued operation can no longer turn it
 into a pass-through. An independent canceller (the Pauser Safe) can veto a
 queued operation, and is mandatory on mainnet. It cannot, however, cancel an
-operation that removes a canceller: only a proposer can. Without that rule a
+operation that removes itself as canceller: a proposer or another canceller
+can. The handover also refuses a Timelock whose delay or permanent floor is
+below 48 hours on a mainnet. Without that rule a
 captured canceller could cancel everything, including its own removal, and
 freeze governance for good. The price is that a captured proposer can remove
 the canceller, though only after one public delay. Whatever it queues before

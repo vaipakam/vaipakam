@@ -18,12 +18,14 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
  *         one it was deployed with, an independent canceller can veto a
  *         queued operation, and the contract is always self-administered.
  *
- *         One veto is withheld from the independent canceller: it cannot
- *         cancel a queued single-call operation that revokes CANCELLER_ROLE
- *         from someone. Without this, a captured canceller could cancel
- *         every operation, including the one removing it, and freeze the
- *         timelock (and with it the Diamond's root) for good. A proposer
- *         can still cancel such an operation. The cost is stated rather
+ *         One veto is withheld from a canceller: it cannot cancel a queued
+ *         single-call operation that revokes CANCELLER_ROLE from ITSELF.
+ *         Without this, a captured canceller could cancel every operation,
+ *         including the one removing it, and freeze the timelock (and with
+ *         it the Diamond's root) for good. A proposer, or any OTHER
+ *         canceller, can still cancel such an operation, so two cancellers
+ *         overlapping during a rotation keep their veto over each other's
+ *         removal. The cost is stated rather
  *         than hidden: a captured proposer can remove the canceller, but
  *         only through one full public delay before its own operation can
  *         even be queued, so the veto becomes a warning of two delays.
@@ -93,14 +95,15 @@ contract VaipakamTimelock is TimelockController {
     /// @dev {updateDelay} asked for less than {MIN_DELAY_FLOOR}.
     error DelayBelowFloor(uint256 requested, uint256 floor);
 
-    /// @notice Ids of queued single-call operations that revoke
-    ///         CANCELLER_ROLE on this timelock. Only a proposer may cancel
-    ///         one (see the contract notice). Cleared when the operation is
-    ///         executed or cancelled.
-    mapping(bytes32 => bool) private _cancellerRemoval;
+    /// @notice For each queued single-call operation that revokes
+    ///         CANCELLER_ROLE on this timelock, the account it removes. That
+    ///         account may not cancel it unless it is also a proposer (see
+    ///         the contract notice). Cleared when the operation is executed
+    ///         or cancelled.
+    mapping(bytes32 => address) private _cancellerRemovalTarget;
 
-    /// @dev The caller tried to cancel an operation that removes a
-    ///      canceller without holding PROPOSER_ROLE.
+    /// @dev The caller tried to cancel the operation that removes its own
+    ///      CANCELLER_ROLE, without holding PROPOSER_ROLE.
     error CancellerRemovalNotCancellable(bytes32 id);
 
     /// @dev A zero address in the `cancellers` list: it would grant the
@@ -150,8 +153,8 @@ contract VaipakamTimelock is TimelockController {
 
     /// @inheritdoc TimelockController
     /// @dev Single-call schedule path. Adds the resulting id to the
-    ///      active list after the base's checks + emit, and marks it when it
-    ///      revokes CANCELLER_ROLE on this timelock.
+    ///      active list after the base's checks + emit, and records the
+    ///      account removed when it revokes CANCELLER_ROLE on this timelock.
     function schedule(
         address target,
         uint256 value,
@@ -163,13 +166,15 @@ contract VaipakamTimelock is TimelockController {
         super.schedule(target, value, data, predecessor, salt, delay);
         bytes32 id = hashOperation(target, value, data, predecessor, salt);
         _addActive(id);
-        if (_isCancellerRemoval(target, value, data)) _cancellerRemoval[id] = true;
+        address removed = _cancellerRemoved(target, value, data);
+        if (removed != address(0)) _cancellerRemovalTarget[id] = removed;
     }
 
     /// @inheritdoc TimelockController
     /// @dev Multi-call schedule path. Same hook; the batch id covers
     ///      the whole call list. A batch is never marked as a canceller
-    ///      removal, so it stays cancellable by any canceller: remove a
+    ///      removal, so it stays cancellable by any canceller, including the
+    ///      one it removes: remove a
     ///      canceller with a single-call {schedule}.
     function scheduleBatch(
         address[] calldata targets,
@@ -185,12 +190,15 @@ contract VaipakamTimelock is TimelockController {
     }
 
     /// @inheritdoc TimelockController
-    /// @dev A canceller-removal operation can be cancelled only by a
-    ///      proposer; everything else keeps OZ's CANCELLER_ROLE rule.
+    /// @dev The canceller an operation removes cannot cancel it unless it
+    ///      is also a proposer; everyone else keeps OZ's CANCELLER_ROLE rule.
     function cancel(bytes32 id) public virtual override {
-        if (_cancellerRemoval[id]) {
-            if (!hasRole(PROPOSER_ROLE, _msgSender())) revert CancellerRemovalNotCancellable(id);
-            delete _cancellerRemoval[id];
+        address removed = _cancellerRemovalTarget[id];
+        if (removed != address(0)) {
+            if (_msgSender() == removed && !hasRole(PROPOSER_ROLE, removed)) {
+                revert CancellerRemovalNotCancellable(id);
+            }
+            delete _cancellerRemovalTarget[id];
         }
         super.cancel(id);
         _removeActive(id);
@@ -207,7 +215,7 @@ contract VaipakamTimelock is TimelockController {
         super.execute(target, value, payload, predecessor, salt);
         bytes32 id = hashOperation(target, value, payload, predecessor, salt);
         _removeActive(id);
-        delete _cancellerRemoval[id];
+        delete _cancellerRemovalTarget[id];
     }
 
     /// @inheritdoc TimelockController
@@ -222,25 +230,26 @@ contract VaipakamTimelock is TimelockController {
         _removeActive(hashOperationBatch(targets, values, payloads, predecessor, salt));
     }
 
-    /// @dev `true` when the call is `revokeRole(CANCELLER_ROLE, account)` on
-    ///      this timelock, for any account. Exact-length calldata only, so a
-    ///      padded encoding is not treated as one (it would still revoke,
-    ///      and would simply remain cancellable by any canceller).
-    function _isCancellerRemoval(address target, uint256 value, bytes calldata data)
+    /// @dev The account removed when the call is
+    ///      `revokeRole(CANCELLER_ROLE, account)` on this timelock, else
+    ///      `address(0)`. Exact-length calldata only, so a padded encoding is
+    ///      not recognised (it would still revoke, and would simply remain
+    ///      cancellable by the canceller it removes).
+    function _cancellerRemoved(address target, uint256 value, bytes calldata data)
         private
         view
-        returns (bool)
+        returns (address)
     {
-        if (target != address(this) || value != 0 || data.length != 68) return false;
-        if (bytes4(data[:4]) != IAccessControl.revokeRole.selector) return false;
-        (bytes32 role,) = abi.decode(data[4:], (bytes32, address));
-        return role == CANCELLER_ROLE;
+        if (target != address(this) || value != 0 || data.length != 68) return address(0);
+        if (bytes4(data[:4]) != IAccessControl.revokeRole.selector) return address(0);
+        (bytes32 role, address account) = abi.decode(data[4:], (bytes32, address));
+        return role == CANCELLER_ROLE ? account : address(0);
     }
 
-    /// @notice Whether queued operation `id` removes a canceller, and so may
-    ///         be cancelled only by a proposer.
-    function isCancellerRemoval(bytes32 id) external view returns (bool) {
-        return _cancellerRemoval[id];
+    /// @notice The canceller queued operation `id` removes, which therefore
+    ///         cannot cancel it; `address(0)` when `id` removes no canceller.
+    function cancellerRemovalTarget(bytes32 id) external view returns (address) {
+        return _cancellerRemovalTarget[id];
     }
 
     // ─── Public read surface ─────────────────────────────────────────────
