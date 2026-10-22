@@ -69,8 +69,11 @@ contract RewardAggregatorFacet is
     /// @param sourceChainId             chainId of the mirror that reported.
     /// @param lenderNumeraire18           Reported lender USD-18 for that chain.
     /// @param borrowerNumeraire18         Reported borrower USD-18 for that chain.
-    /// @param reportCount           Running count of expected chainIds
-    ///                              reported for `dayId` (incl. this one).
+    /// @param reportCount           Running count of every chain's report
+    ///                              Base holds for `dayId` (incl. this one),
+    ///                              listed or not (#2618). NOT a coverage
+    ///                              measure: coverage is judged per listed
+    ///                              chain ({isDayReadyToFinalize}).
     /// @custom:event-category informational/reward-transport
     event ChainReportAggregated(
         uint256 indexed dayId,
@@ -616,6 +619,11 @@ contract RewardAggregatorFacet is
         bool markIneligible = s.governorCommitArmedFromDay != 0
             && dayId >= s.governorCommitArmedFromDay;
         uint32 selfId = uint32(block.chainid);
+        // #2645 — the day's mirror recycled credit (Ā's mirror half), summed
+        // over exactly the chains this finalization counts and ASSIGNED once
+        // below. This loop is the one writer: whatever an earlier code path
+        // left in the slot is replaced, never added to.
+        uint256 mirrorCredit;
 
         for (uint256 i; i < nExpected; ) {
             uint32 chainId = expected[i];
@@ -628,13 +636,16 @@ contract RewardAggregatorFacet is
                 // #2645 — and only now attribute its recycled day credit, so
                 // the day's budget is sized from exactly the chains it counts.
                 LibVpfiRecycle.attributeChainDayRecycled(s, chainId, dayId);
+                if (chainId != selfId) {
+                    mirrorCredit += s.chainDailyRecycledCredit[dayId][chainId];
+                }
                 unchecked {
                     ++participating;
                 }
             } else {
                 // #2619 — record the zeroed set as the finalization saw it, so
                 // a later list edit cannot change what readers are told.
-                s.dayZeroedSourceChainIds[dayId].push(chainId);
+                s.dayFinalizationRecord[dayId].zeroed.push(chainId);
                 emit ChainContributionZeroed(dayId, chainId, forced);
                 if (markIneligible && chainId != selfId) {
                     s.chainDayCommitments[dayId][chainId].remitIneligible = true;
@@ -658,6 +669,8 @@ contract RewardAggregatorFacet is
 
         s.dailyGlobalLenderInterestNumeraire18[dayId] = globalLender;
         s.dailyGlobalBorrowerInterestNumeraire18[dayId] = globalBorrower;
+        s.dayMirrorRecycledCredit[dayId] = mirrorCredit;
+        s.dayFinalizationRecord[dayId].recorded = true;
         s.dailyGlobalFinalized[dayId] = true;
 
         // Base is also a consumer — mirror the finalized pair into the
@@ -1311,10 +1324,11 @@ contract RewardAggregatorFacet is
         uint256 credited;
         // #1222 M3 B2-a — Ā's feed under the mesh: Base's own raw local
         // series (first-party, unclamped — exactly the pre-mesh feed) PLUS
-        // the per-day MIRROR credit accumulator, which is written once at
-        // report ACCEPTANCE (clamped, Base excluded) so the fold is O(1)
-        // per day and a later `expectedSourceChainIds` edit can never
-        // rewrite an already-accepted day (Codex #1414 r1).
+        // the per-day MIRROR credit, which the day's finalization writes
+        // once (#2645: the sum of the clamped credit of the mirrors it
+        // counted, Base excluded) so the fold is O(1) per day and a later
+        // `expectedSourceChainIds` edit can never rewrite a finalized day
+        // (Codex #1414 r1).
         for (uint256 i; i < w; ) {
             if (dayId >= i) {
                 uint256 d = dayId - i;
@@ -2006,10 +2020,21 @@ contract RewardAggregatorFacet is
     /// @notice #2619 — the chains whose interest counts as zero for `dayId`:
     ///         those on the expected-source list when the day finalized that
     ///         had not reported, in list order. Recorded at finalization, so a
-    ///         later edit of the list does not change it. Empty while the day
-    ///         is not finalized, and for a day every listed chain reported.
-    function getDayZeroedChains(uint256 dayId) external view returns (uint32[] memory) {
-        return LibVaipakam.storageSlot().dayZeroedSourceChainIds[dayId];
+    ///         later edit of the list does not change it.
+    /// @return recorded True once the day's finalization wrote this record.
+    ///                  False while the day is not finalized, and for a day
+    ///                  finalized by a Diamond that predates the record, whose
+    ///                  zeroed set this view does not know (its
+    ///                  `ChainContributionZeroed` events still state it).
+    /// @return zeroed   The zeroed chains; empty for a recorded day every
+    ///                  listed chain reported, and whenever `recorded` is
+    ///                  false.
+    function getDayZeroedChains(
+        uint256 dayId
+    ) external view returns (bool recorded, uint32[] memory zeroed) {
+        LibVaipakam.DayFinalizationRecord storage r =
+            LibVaipakam.storageSlot().dayFinalizationRecord[dayId];
+        return (r.recorded, r.zeroed);
     }
 
     /// @notice Mirror-specific `(lender, borrower)` pair for `dayId`.

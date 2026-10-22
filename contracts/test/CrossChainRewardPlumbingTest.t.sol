@@ -529,13 +529,16 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
         messenger.deliverChainReport(CHAIN_OP, 1, 7e18, 7e18); // off the list
 
-        assertEq(_agg().getDayZeroedChains(1).length, 0, "nothing recorded before finalization");
+        (bool recorded, uint32[] memory zeroed) = _agg().getDayZeroedChains(1);
+        assertFalse(recorded, "nothing recorded before finalization");
+        assertEq(zeroed.length, 0);
         assertFalse(_agg().isChainIncluded(1, CHAIN_BASE), "nothing included before finalization");
 
         vm.warp(block.timestamp + 4 hours + 1);
         _agg().finalizeDay(1);
 
-        uint32[] memory zeroed = _agg().getDayZeroedChains(1);
+        (recorded, zeroed) = _agg().getDayZeroedChains(1);
+        assertTrue(recorded, "the finalization wrote its record");
         assertEq(zeroed.length, 1, "one listed chain missed the day");
         assertEq(zeroed[0], CHAIN_ARB);
         assertTrue(_agg().isChainIncluded(1, CHAIN_BASE), "Base counted");
@@ -549,10 +552,29 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         wider[1] = CHAIN_ARB;
         wider[2] = CHAIN_OP;
         _agg().setExpectedSourceChainIds(wider);
-        zeroed = _agg().getDayZeroedChains(1);
+        (recorded, zeroed) = _agg().getDayZeroedChains(1);
+        assertTrue(recorded);
         assertEq(zeroed.length, 1, "the record does not follow the list");
         assertEq(zeroed[0], CHAIN_ARB);
         assertFalse(_agg().isChainIncluded(1, CHAIN_OP), "nor does inclusion");
+    }
+
+    /// @dev #2645 r2 — a day every listed chain reported is RECORDED with an
+    ///      empty zeroed set, so a reader can tell it from a day finalized by a
+    ///      Diamond that kept no record.
+    function testFullyReportedDayIsRecordedWithNoZeroedChains() public {
+        _configureCanonical();
+        uint32[] memory chainIds = new uint32[](2);
+        chainIds[0] = CHAIN_BASE;
+        chainIds[1] = CHAIN_ARB;
+        _agg().setExpectedSourceChainIds(chainIds);
+        messenger.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        messenger.deliverChainReport(CHAIN_ARB, 1, 2e18, 2e18);
+        _agg().finalizeDay(1);
+
+        (bool recorded, uint32[] memory zeroed) = _agg().getDayZeroedChains(1);
+        assertTrue(recorded, "the finalization recorded the day");
+        assertEq(zeroed.length, 0, "and zeroed no chain");
     }
 
     function testOnChainReportRevertsOnDuplicate() public {

@@ -5933,10 +5933,12 @@ library LibVaipakam {
         mapping(uint256 => mapping(uint32 => bool)) chainRecycledDayAccepted;
         // Per-day Σ of accepted MIRROR day credits (Base's own excluded —
         //   its credit lives in the local `recycledCreditedByDay`),
-        //   accumulated at ACCEPTANCE time so the Ā fold is O(1) per day
-        //   and immune to later `expectedSourceChainIds` edits (Codex
-        //   #1414 r1: folding history through the mutable list would let
-        //   an ops change rewrite already-accepted credits).
+        //   ASSIGNED once by the day's finalization over exactly the chains
+        //   it counted (#2645 r2 — `_finalizeAndWrite` is the one writer),
+        //   so the Ā fold is O(1) per day and immune to later
+        //   `expectedSourceChainIds` edits (Codex #1414 r1: folding history
+        //   through the mutable list would let an ops change rewrite
+        //   already-finalized credits).
         mapping(uint256 => uint256) dayMirrorRecycledCredit;
         // ─── #1222 M3 B2-a — two-pass per-chain funding resolution ─────────
         // APPEND-ONLY TAIL. Records-only in B2-a: written at ARMED-day
@@ -8165,8 +8167,11 @@ library LibVaipakam {
         ///      reader could only work the set out against the list as it
         ///      stood at read time, which a later list edit changes. Together
         ///      with `chainDailyIncluded` it is the finalization's own account
-        ///      of what it summed. Appended — append-only.
-        mapping(uint256 => uint32[]) dayZeroedSourceChainIds;
+        ///      of what it summed. `recorded` marks a day whose finalization
+        ///      wrote the record at all, so an empty `zeroed` is never
+        ///      confused with a day finalized before the record existed.
+        ///      Appended — append-only.
+        mapping(uint256 => DayFinalizationRecord) dayFinalizationRecord;
         /// @dev #2645 — per `[dayId][chainId]`, the recycled day credit the
         ///      chain's report CLAIMED (its `recycledForDay18`), held from
         ///      the report's arrival until the day finalizes. Attribution
@@ -9112,6 +9117,18 @@ library LibVaipakam {
         uint32 scheduleVersion;
         uint64 lapseWindowSeconds;
         uint64 dispatchCutoffGap;
+    }
+
+    /// @notice #2619 — the finalization's own record of the chains it
+    ///         zeroed for one day.
+    /// @dev    `recorded` is set by every finalization that writes the record,
+    ///         including one that zeroed nothing, so a reader can tell "this
+    ///         finalization zeroed no chain" from "this day was finalized by
+    ///         code that kept no record" (a Diamond upgraded across #2619,
+    ///         #2645 r2). `zeroed` is in expected-source-list order.
+    struct DayFinalizationRecord {
+        bool recorded;
+        uint32[] zeroed;
     }
 
     /// @notice #1434 P2-w1 (R5) — one lapse-schedule version's parameter

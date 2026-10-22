@@ -43,8 +43,10 @@ const ZEROED_EVENT = eventOf('ChainContributionZeroed');
 /**
  * The chains day `d`'s finalization zeroed, from the record Base keeps of it
  * (#2619), read in one aggregate with the day's finalization. `'not kept'`
- * only when Base ANSWERED that it routes no such record (a Base built before
- * it), which is the one case the events and then the list may stand in for.
+ * only when Base ANSWERED that it keeps no such record for the day: it routes
+ * no such view (a Base built before it), or the day reads finalized with no
+ * record written (finalized before an upgrade added it). Those are the cases
+ * the events and then the list may stand in for.
  * Any other failure, or a node that reads the day as not finalized yet, is
  * `unread`: the day is left for the next run rather than recorded for good
  * from the list as it stands now (#2645 r1).
@@ -60,14 +62,18 @@ async function zeroedByRecord(c: ChainRun, d: number): Promise<number[] | 'not k
       `rewardDayClose ${c.where} zeroed record(${d})`,
       c.deps.sendDeadline,
     );
-    const rec = routedOrAbsent<readonly (number | bigint)[]>(res[1], "Base's record of the chains the finalization zeroed");
+    const rec = routedOrAbsent<readonly [boolean, readonly (number | bigint)[]]>(res[1], "Base's record of the chains the finalization zeroed");
     if (rec === null) return 'not kept';
     if (!rec.known) return { unread: rec.why };
     if (res[0]?.status !== 'success') return { unread: 'the day as finalized, in one read with that record' };
     if (Number((res[0].result as readonly [boolean, number])[1]) !== REASON_FINALIZED) {
       return { unread: 'the day as finalized in one read with that record (the node answering read it as not finalized yet)' };
     }
-    return [...new Set(rec.value.map(Number))].sort((a, b) => a - b);
+    // Finalized, but by code that kept no record (a Base upgraded across it):
+    // an empty set here would claim no chain was zeroed (#2645 r2).
+    const [recorded, zeroed] = rec.value;
+    if (!recorded) return 'not kept';
+    return [...new Set(zeroed.map(Number))].sort((a, b) => a - b);
   } catch (err) {
     if (err instanceof PastRunDeadline) throw err;
     return { unread: `Base's record of the chains the finalization zeroed (${shortErr(err)})` };

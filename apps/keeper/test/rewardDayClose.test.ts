@@ -254,6 +254,8 @@ class FakeDiamond {
   /** Its record reads fail transiently (it is still routed). */
   dayRecordUnread = false;
   zeroedRecord = new Map<number, number[]>();
+  /** Days finalized before an upgrade added the record: routed, but unwritten. */
+  unrecordedDays = new Set<number>();
   included = new Map<number, Set<number>>();
   /** Where the loupe says `getInterestFrontiers` is routed: with `closeDay`
    *  (a B4 reporter), elsewhere (a reporter that predates B4), or unread. */
@@ -380,7 +382,7 @@ class FakeDiamond {
       case 'getDayZeroedChains':
         if (this.dayRecordUnread) throw new Error('rpc down');
         if (!this.dayRecord) throw revert('FunctionDoesNotExist');
-        return this.zeroedRecord.get(d) ?? [];
+        return [this.finalized.has(d) && !this.unrecordedDays.has(d), this.zeroedRecord.get(d) ?? []];
       case 'isChainIncluded':
         if (this.dayRecordUnread) throw new Error('rpc down');
         if (!this.dayRecord) throw revert('FunctionDoesNotExist');
@@ -1948,6 +1950,17 @@ describe('a run', () => {
     await run(base);
     expect(logged.filter((l) => /notice: reward day 0: finalized without chain\(s\) 421614; their interest counts as zero for the day$/.test(l)), 'from the record, with no caveat').toHaveLength(1);
     expect(logged.filter((l) => /finalized without chain\(s\) 97/.test(l)), 'never the replacement').toEqual([]);
+  });
+
+  it('never reads a day finalized before Base kept the record as zeroing no chain', async () => {
+    base.dayRecord = true;
+    base.today = 1;
+    base.reported.set(0, new Set([BASE]));
+    base.firstAt.set(0, NOW - 60);
+    base.finalizeByOther(0); // zeroes the mirror
+    base.unrecordedDays.add(0); // by code that wrote no record
+    await run(base);
+    expect(logged.filter((l) => /notice: reward day 0: finalized without chain\(s\) 421614; their interest counts as zero for the day \(judged against the expected-source list/.test(l)), 'the fallback, with its caveat').toHaveLength(1);
   });
 
   it("leaves a zeroed day for the next run when Base keeps the record but it is unread, never judging it against the list", async () => {

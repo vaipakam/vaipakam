@@ -1872,13 +1872,10 @@ library LibVpfiRecycle {
         if (accepted != 0) {
             s.chainDailyRecycledCredit[dayId][sourceChainId] = accepted;
             s.chainAttributedRecycled[sourceChainId] = attributed + accepted;
-            // Ā's mirror half, accumulated at acceptance so the trailing
-            // fold never re-reads history through a mutable chain list
-            // (Codex #1414 r1). Base's own day credit stays out — it lives
-            // in the local `recycledCreditedByDay` series.
-            if (sourceChainId != uint32(block.chainid)) {
-                s.dayMirrorRecycledCredit[dayId] += accepted;
-            }
+            // Ā's mirror half (`dayMirrorRecycledCredit`) is NOT written here:
+            // the finalization that calls this sums the credit of the chains
+            // it counts and assigns the day's total once (#2645 r2), so no
+            // other path can leave a credit in it.
         }
 
         emit ChainRecycledReported(
