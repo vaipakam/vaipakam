@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {HandoverPlan} from "./lib/HandoverPlan.sol";
 
 /**
  * @title Handover
@@ -16,10 +17,8 @@ import {Deployments} from "./lib/Deployments.sol";
  *        - DEFAULT_ADMIN_ROLE (root admin gating every other role)
  *        - ADMIN_ROLE / PAUSER_ROLE / KYC_ADMIN_ROLE /
  *          ORACLE_ADMIN_ROLE / RISK_ADMIN_ROLE / VAULT_ADMIN_ROLE
- *        - WATCHER_ROLE + NOTIF_BILLER_ROLE + KEEPER_ROLE (kept on
- *          ADMIN; the off-chain-bot roles get rotated to per-bot EOAs
- *          separately via the keeper-authorization flow, NOT in this
- *          script)
+ *        - WATCHER_ROLE + NOTIF_BILLER_ROLE + KEEPER_ROLE (the
+ *          off-chain bot roles)
  *        - ERC-173 ownership of the Diamond (gates `diamondCut`)
  *        - Ownable2Step ownership of every CCIP cross-chain contract
  *          deployed on this chain — `CcipMessenger`, the VPFI
@@ -60,15 +59,18 @@ import {Deployments} from "./lib/Deployments.sol";
  *           governance-tier risk, deserve a time-locked review
  *           window — operator can override later via the multisig
  *           if the model changes)
- *        5. ADMIN renounces every role it still holds, in the
+ *        4b. KEEPER_ROLE / WATCHER_ROLE / NOTIF_BILLER_ROLE → the
+ *           bot keys named by KEEPER_ADDRESS / WATCHER_ADDRESS /
+ *           NOTIF_BILLER_ADDRESS (#669). Granted here, while ADMIN is
+ *           still the role root; afterwards only a Timelock proposal
+ *           can grant them. A zero address leaves that role unheld,
+ *           on purpose and said so in the output.
+ *        5. ADMIN renounces EVERY Diamond role it holds, in the
  *           reverse order of grant (DEFAULT_ADMIN_ROLE last, so
  *           up until the very last call, ADMIN can correct any
- *           mid-flight error). WATCHER_ROLE + NOTIF_BILLER_ROLE +
- *           KEEPER_ROLE are NOT renounced here — those stay on ADMIN
- *           until the per-bot EOA setup (Phase 6 keeper authorization),
- *           after which a separate one-shot script renounces
- *           them. They have no DEFAULT_ADMIN-level authority, so
- *           a delayed renounce is safe.
+ *           mid-flight error). Before #669 the three bot roles stayed
+ *           on ADMIN "until the per-bot setup", which no script ever
+ *           did, so the admin key stayed live after every handover.
  *        6. CCIP cross-chain ownership + the CCT admin → the Timelock,
  *           via the first leg of each two-step transfer
  *           (`transferOwnership` / `transferAdminRole`). The Timelock
@@ -82,9 +84,12 @@ import {Deployments} from "./lib/Deployments.sol";
  *
  *      AFTER this script lands and AFTER the Timelock accepts every
  *      CCIP contract's pending ownership (and the pending CCT admin
- *      role), `DeployerZeroRolesTest.t.sol` runs as the hard exit gate
- *      — asserting the deployer + admin EOAs hold zero authority on
- *      this chain.
+ *      role), `HandoverGate.s.sol` runs as the hard exit gate
+ *      (`--phase handover-gate`). It reads the LIVE chain: every
+ *      Diamond and Timelock role holder rebuilt from the role events,
+ *      the owners and pending owners, the delay. Until #944 the "gate"
+ *      was `DeployerZeroRolesTest`, which built its own throwaway
+ *      Diamond and passed whatever the chain held.
  *
  *      This script does NOT use Multicall3. AccessControl's
  *      `grantRole`/`renounceRole` and OZ's `transferOwnership` all
@@ -111,6 +116,13 @@ import {Deployments} from "./lib/Deployments.sol";
  *                                   (`DeployTimelock` does, from the same
  *                                   variable); the script refuses a
  *                                   Timelock that does not.
+ *        KEEPER_ADDRESS /
+ *        WATCHER_ADDRESS /
+ *        NOTIF_BILLER_ADDRESS     — REQUIRED: the bot key that receives
+ *                                   each bot role. Set one to the zero
+ *                                   address to leave that role unheld.
+ *                                   None may be ADMIN_ADDRESS, a Safe,
+ *                                   the Timelock or the Diamond.
  *        CCIP_TOKEN_ADMIN_REGISTRY — optional; the chain's CCIP
  *                                   `TokenAdminRegistry`. When set, the
  *                                   CCT admin for VPFI is rotated to the
@@ -122,60 +134,42 @@ import {Deployments} from "./lib/Deployments.sol";
  *                                   the slug from CHAIN_SLUG env if
  *                                   ADDRESSES_JSON_PATH is unset.
  *
- *      Reads from addresses.json:
- *        diamond, timelock, ccipMessenger, vpfiTokenPool,
- *        vpfiPoolRateGovernor, rewardMessenger,
- *        vpfiToken | vpfiMirror,
- *        buybackRemittanceReceiver (canonical only — T-087 Sub 3.A),
- *        vpfiReturnReceiver (canonical only — #1568 C2) |
- *        vpfiReturnSender (mirror only — #1568 C2)
- *
- *      Per CLAUDE.md "Deployments sync — Omit-keys policy", canonical
- *      and mirror keys are mutually exclusive on any single chain;
- *      missing keys are skipped silently.
+ *      Reads `diamond` and `timelock` from addresses.json, and the
+ *      two-step-owned targets through `HandoverPlan.read` — the same
+ *      list `HandoverGate` verifies, so the two cannot drift.
  */
 contract Handover is Script {
-    /// @dev OZ AccessControl's root admin slot — `bytes32(0)`. Aliased
-    ///      for readability since LibAccessControl doesn't re-export
-    ///      it (it's the OZ implementation default).
-    bytes32 internal constant DEFAULT_ADMIN_ROLE = bytes32(0);
-    /// @dev OpenZeppelin `TimelockController.CANCELLER_ROLE`.
-    bytes32 internal constant CANCELLER_ROLE = keccak256("CANCELLER_ROLE");
-
-    /// @dev OpenZeppelin `TimelockController.PROPOSER_ROLE`.
-    bytes32 internal constant PROPOSER_ROLE = keccak256("PROPOSER_ROLE");
-
-    /// @dev Roles that get rotated to the Timelock during handover.
-    ///      Order matters for the renounce loop: ADMIN renounces them
-    ///      after DEFAULT_ADMIN_ROLE has been granted to the
-    ///      governance Safe, before renouncing DEFAULT_ADMIN_ROLE
-    ///      itself.
-    ///
-    ///      UNPAUSER_ROLE is in this set deliberately — the asymmetric
-    ///      asymmetric pause pattern keeps PAUSER_ROLE on the
-    ///      fast-key Pauser Safe (direct, no Timelock delay) AND
-    ///      restricts unpause to the Timelock so a compromised
-    ///      Pauser key cannot un-do its own pause without the
-    ///      review-window delay.
-    ///
-    ///      DEFAULT_ADMIN_ROLE is NOT in this list even though it also goes
-    ///      to the Timelock (D1): it is granted first and renounced last,
-    ///      outside the loops, so ADMIN can recover from any mid-flight
-    ///      slip until the very last call.
-    function _timelockRoles() internal pure returns (bytes32[] memory r) {
-        r = new bytes32[](6);
-        r[0] = LibAccessControl.ADMIN_ROLE;
-        r[1] = LibAccessControl.UNPAUSER_ROLE;
-        r[2] = LibAccessControl.KYC_ADMIN_ROLE;
-        r[3] = LibAccessControl.ORACLE_ADMIN_ROLE;
-        r[4] = LibAccessControl.RISK_ADMIN_ROLE;
-        r[5] = LibAccessControl.VAULT_ADMIN_ROLE;
+    /// @notice Everything one handover acts on, resolved before the first
+    ///         broadcast. `run()` builds it from the environment and the
+    ///         chain's `addresses.json`; a test builds it directly.
+    struct Config {
+        uint256 adminKey;
+        address admin;
+        address governanceSafe;
+        address pauserSafe;
+        address diamond;
+        address timelock;
+        /// @dev Parallel to `HandoverPlan.botRoles()`. A zero entry leaves
+        ///      that role unheld once the admin renounces it.
+        address[] botHolders;
+        HandoverPlan.Target[] targets;
+        /// @dev The chain's VPFI ERC-20, whose CCT administrator rotates.
+        address vpfiToken;
+        /// @dev The CCIP `TokenAdminRegistry`; zero skips the CCT leg.
+        address cctRegistry;
     }
 
     function run() external {
-        // ── 1. Resolve addresses ────────────────────────────────────
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        address admin = vm.envAddress("ADMIN_ADDRESS");
+        _execute(_loadConfig());
+    }
+
+    /// @dev Reads the handover's inputs. Every bot-role holder is REQUIRED:
+    ///      an unset variable reverts here rather than leaving that role on
+    ///      the admin key or silently unheld. Set it to the zero address to
+    ///      leave the role unheld on purpose.
+    function _loadConfig() internal returns (Config memory c) {
+        c.adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        c.admin = vm.envAddress("ADMIN_ADDRESS");
         // D1 renamed the Safe's variable: it no longer receives
         // DEFAULT_ADMIN_ROLE. Refuse the old name outright — a stale .env
         // that still says DEFAULT_ADMIN_ADDRESS describes the retired
@@ -184,80 +178,71 @@ contract Handover is Script {
             vm.envOr("DEFAULT_ADMIN_ADDRESS", address(0)) == address(0),
             "DEFAULT_ADMIN_ADDRESS is retired (D1): set EMERGENCY_REVOKER_ADDRESS to the governance Safe and unset DEFAULT_ADMIN_ADDRESS"
         );
-        address governanceSafe = vm.envAddress("EMERGENCY_REVOKER_ADDRESS");
-        address pauserSafe = vm.envAddress("PAUSER_ADDRESS");
+        c.governanceSafe = vm.envAddress("EMERGENCY_REVOKER_ADDRESS");
+        c.pauserSafe = vm.envAddress("PAUSER_ADDRESS");
+
+        string[] memory botEnv = HandoverPlan.botRoleEnvNames();
+        c.botHolders = new address[](botEnv.length);
+        for (uint256 i; i < botEnv.length; ++i) {
+            c.botHolders[i] = vm.envAddress(botEnv[i]);
+        }
 
         string memory addressesPath = _resolveAddressesPath();
         // forge-lint: disable-next-line(unsafe-cheatcode)
         string memory addrJson = vm.readFile(addressesPath);
+        c.diamond = _readAddrOrRevert(addrJson, "diamond", addressesPath);
+        c.timelock = _readAddrOrRevert(addrJson, "timelock", addressesPath);
+        c.targets = HandoverPlan.read(addrJson);
+        c.vpfiToken = HandoverPlan.vpfiToken(addrJson);
+        c.cctRegistry = vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0));
+    }
 
-        address diamond = _readAddrOrRevert(addrJson, "diamond", addressesPath);
-        address timelock = _readAddrOrRevert(addrJson, "timelock", addressesPath);
-        // CCIP cross-chain stack — every chain. `DeployCrosschain` writes
-        // these keys; all are ADMIN-owned after `ConfigureCcip`.
-        address ccipMessenger = _readAddrOptional(addrJson, "ccipMessenger");
-        address tokenPool = _readAddrOptional(addrJson, "vpfiTokenPool");
-        address rateGovernor = _readAddrOptional(addrJson, "vpfiPoolRateGovernor");
-        address rewardMessenger = _readAddrOptional(addrJson, "rewardMessenger");
-        // Legacy fallback: pre-PR #272 artifacts stored the same address
-        // under the LayerZero-era key `rewardOApp`. Without this the
-        // ownership-transfer block below silently skips the reward
-        // messenger on legacy artifacts — the address would resolve to
-        // zero, the `if (rewardMessenger != address(0))` gate would
-        // short-circuit, and the messenger's owner stays on the deploy
-        // EOA instead of rotating to the timelock. Flagged by external
-        // review of PR #272.
-        if (rewardMessenger == address(0)) {
-            rewardMessenger = _readAddrOptional(addrJson, "rewardOApp");
+    /// @dev The whole handover for one resolved `Config`.
+    function _execute(Config memory c) internal {
+        _preflight(c);
+        _rotateDiamond(c);
+
+        // ── CCIP cross-chain ownership → Timelock ───────────────────────
+        // The whole CCIP stack is ADMIN-owned two-step: `DeployCrosschain`
+        // initializes every proxy with ADMIN and `ConfigureCcip` accepts the
+        // pool's ownership as ADMIN, so every transfer broadcasts as ADMIN.
+        // On canonical Base the VPFI token (#853) is in the list too; on a
+        // mirror the local ERC-20 is `vpfiMirror`. `transferOwnership` is the
+        // first leg; the Timelock accepts later. A target not owned by ADMIN
+        // is skipped with a notice — the gate then refuses until it is moved.
+        for (uint256 i; i < c.targets.length; ++i) {
+            _transferCrossChainOwnership(c.adminKey, c.targets[i].addr, c.targets[i].label, c.timelock);
         }
-        // Chain-scoped per the omit-keys policy: a mirror carries
-        // `vpfiMirror`; canonical Base's VPFI is the pre-existing `vpfiToken`.
-        // (#687-A removed the `vpfiBuyAdapter`/`vpfiBuyReceiver` handover legs
-        // along with the cross-chain VPFI sale.)
-        address mirror = _readAddrOptional(addrJson, "vpfiMirror");
-        // T-087 Sub 3.A — Base-only handler for the buyback channel.
-        address buybackReceiver =
-            _readAddrOptional(addrJson, "buybackRemittanceReceiver");
-        // #776 — mirror-only inbound handler for the reward-budget channel
-        // (Ownable2Step / UUPS). Must rotate to the Timelock like the buyback
-        // receiver, else a post-handover ADMIN EOA could upgrade it or call
-        // `setDiamond` and divert future Base→mirror reward-budget VPFI.
-        address rewardReceiver =
-            _readAddrOptional(addrJson, "rewardRemittanceReceiver");
-        // #1568 C2 — the shared vpfi-return channel satellites (Ownable2Step
-        // / UUPS; role-scoped per the omit-keys policy, so exactly one of
-        // the pair resolves on any chain). Both must rotate to the Timelock
-        // like the remittance receivers: a post-handover ADMIN EOA holding
-        // either could upgrade it or repoint `setMessenger`/`setDiamond`
-        // (and `setVpfiToken` on the sender) to divert repatriation returns
-        // (Codex #1618 r1 P1).
-        address returnSender = _readAddrOptional(addrJson, "vpfiReturnSender");
-        address returnReceiver =
-            _readAddrOptional(addrJson, "vpfiReturnReceiver");
 
-        // The VPFI token whose CCT admin is rotated below — the
-        // pre-existing `vpfiToken` on canonical Base, the `vpfiMirror`
-        // ERC20 on a mirror.
-        bool canonical = block.chainid == 8453 || block.chainid == 84532;
-        address vpfiToken = canonical
-            ? _readAddrOptional(addrJson, "vpfiToken")
-            : mirror;
+        // ── CCT admin → Timelock ────────────────────────────────────────
+        // The CCIP `TokenAdminRegistry` administrator for VPFI rotates to the
+        // Timelock as well — `transferAdminRole` is the first leg of a
+        // two-step transfer; the Timelock `acceptAdminRole`s later. Skipped
+        // when CCIP_TOKEN_ADMIN_REGISTRY is unset, or when ADMIN is not the
+        // current administrator (CCT registration may have been done by a
+        // separate token owner — see ConfigureCcip `_registerCct`).
+        bool cctRotated = _transferCctAdmin(c.adminKey, c.cctRegistry, c.vpfiToken, c.timelock);
 
-        // ── 2. Sanity — the three Safes must be distinct ────────────
-        // The .env.example ships with three different addresses; if
-        // the operator pastes the same address into two of them
-        // (e.g. accidentally setting PAUSER_ADDRESS to the governance
-        // Safe), the role split collapses and we lose the
-        // pause-without-Timelock-delay property. Refuse in this case
-        // so the misconfig surfaces here, not on incident day.
-        require(governanceSafe != address(0), "EMERGENCY_REVOKER_ADDRESS unset");
-        require(pauserSafe != address(0), "PAUSER_ADDRESS unset");
-        require(governanceSafe != admin, "EMERGENCY_REVOKER_ADDRESS == ADMIN_ADDRESS (handover would no-op)");
-        require(pauserSafe != admin, "PAUSER_ADDRESS == ADMIN_ADDRESS (pause role would no-op)");
-        require(governanceSafe != pauserSafe, "EMERGENCY_REVOKER_ADDRESS == PAUSER_ADDRESS (collapses three-Safe model)");
-        require(timelock != admin, "timelock == ADMIN_ADDRESS (handover would no-op)");
+        _printAcceptSteps(c, cctRotated);
+    }
+
+    /// @dev Every refusal happens here, before the admin gives anything up.
+    function _preflight(Config memory c) internal view {
+        // ── The three Safes must be distinct ────────────────────────────
+        // The .env.example ships with three different addresses; if the
+        // operator pastes the same address into two of them (e.g.
+        // accidentally setting PAUSER_ADDRESS to the governance Safe), the
+        // role split collapses and we lose the pause-without-Timelock-delay
+        // property. Refuse so the misconfig surfaces here, not on incident
+        // day.
+        require(c.governanceSafe != address(0), "EMERGENCY_REVOKER_ADDRESS unset");
+        require(c.pauserSafe != address(0), "PAUSER_ADDRESS unset");
+        require(c.governanceSafe != c.admin, "EMERGENCY_REVOKER_ADDRESS == ADMIN_ADDRESS (handover would no-op)");
+        require(c.pauserSafe != c.admin, "PAUSER_ADDRESS == ADMIN_ADDRESS (pause role would no-op)");
+        require(c.governanceSafe != c.pauserSafe, "EMERGENCY_REVOKER_ADDRESS == PAUSER_ADDRESS (collapses three-Safe model)");
+        require(c.timelock != c.admin, "timelock == ADMIN_ADDRESS (handover would no-op)");
         require(
-            timelock != governanceSafe && timelock != pauserSafe,
+            c.timelock != c.governanceSafe && c.timelock != c.pauserSafe,
             "timelock must be distinct from both Safes"
         );
         // Both Safes must be contracts on THIS chain, on every chain and
@@ -270,8 +255,26 @@ contract Handover is Script {
         // the script directly. The proposer is the governance Safe (bound
         // by the PROPOSER_ROLE check below), so two checks cover all three
         // Safe roles.
-        require(governanceSafe.code.length > 0, "EMERGENCY_REVOKER_ADDRESS has no code on this chain (not a Safe)");
-        require(pauserSafe.code.length > 0, "PAUSER_ADDRESS has no code on this chain (not a Safe)");
+        require(c.governanceSafe.code.length > 0, "EMERGENCY_REVOKER_ADDRESS has no code on this chain (not a Safe)");
+        require(c.pauserSafe.code.length > 0, "PAUSER_ADDRESS has no code on this chain (not a Safe)");
+
+        // ── Bot keys are bot keys ───────────────────────────────────────
+        // A bot role handed to the admin key would leave it holding
+        // authority the live gate then refuses; handed to a Safe or the
+        // Timelock it would put a hot-path role behind a multisig or a 48h
+        // delay. Several bot roles may share one key.
+        string[] memory botEnv = HandoverPlan.botRoleEnvNames();
+        require(c.botHolders.length == botEnv.length, "bot holder count != HandoverPlan.botRoles()");
+        for (uint256 i; i < c.botHolders.length; ++i) {
+            address b = c.botHolders[i];
+            if (b == address(0)) continue;
+            require(b != c.admin, string.concat(botEnv[i], " == ADMIN_ADDRESS (the admin key must end with no role)"));
+            require(
+                b != c.governanceSafe && b != c.pauserSafe && b != c.timelock && b != c.diamond,
+                string.concat(botEnv[i], " must be a bot key, not a Safe, the Timelock or the Diamond")
+            );
+        }
+
         // The Timelock's independent veto (#938) must be the Pauser Safe
         // this script hands PAUSER_ROLE to. `DeployTimelock` reads its
         // canceller from the same PAUSER_ADDRESS, so a mismatch here means
@@ -279,7 +282,7 @@ contract Handover is Script {
         // Diamond to it would leave no veto anyone has verified (Codex #2642
         // r1).
         require(
-            ITimelockRoles(timelock).hasRole(CANCELLER_ROLE, pauserSafe),
+            ITimelockRoles(c.timelock).hasRole(HandoverPlan.CANCELLER_ROLE, c.pauserSafe),
             "timelock does not grant CANCELLER_ROLE to PAUSER_ADDRESS - redeploy it with DeployTimelock"
         );
         // The Governance Safe is ONE Safe: it queues every delayed action
@@ -289,7 +292,7 @@ contract Handover is Script {
         // unverified multisig controlled every delayed action (Codex #2642
         // r3). Refuse before the admin gives anything up.
         require(
-            ITimelockRoles(timelock).hasRole(PROPOSER_ROLE, governanceSafe),
+            ITimelockRoles(c.timelock).hasRole(HandoverPlan.PROPOSER_ROLE, c.governanceSafe),
             "timelock does not grant PROPOSER_ROLE to EMERGENCY_REVOKER_ADDRESS - the Governance Safe must be TIMELOCK_PROPOSER"
         );
 
@@ -299,124 +302,95 @@ contract Handover is Script {
         // a known testnet, r5) both the current delay and the permanent
         // floor must be at least 48h; elsewhere the floor must at least be
         // non-zero (a zero floor is a pass-through).
-        uint256 tlDelay = ITimelockRoles(timelock).getMinDelay();
-        uint256 tlFloor = ITimelockRoles(timelock).MIN_DELAY_FLOOR();
+        uint256 tlDelay = ITimelockRoles(c.timelock).getMinDelay();
+        uint256 tlFloor = ITimelockRoles(c.timelock).MIN_DELAY_FLOOR();
         require(tlFloor > 0, "timelock has a zero MIN_DELAY_FLOOR - redeploy it with DeployTimelock");
         if (Deployments.requiresProductionGovernance()) {
             require(tlDelay >= 48 hours, "timelock delay < 48h on a production chain");
             require(tlFloor >= 48 hours, "timelock MIN_DELAY_FLOOR < 48h on a production chain");
         }
+    }
 
+    /// @dev The Diamond half: roles and ERC-173 ownership, broadcast as ADMIN.
+    function _rotateDiamond(Config memory c) internal {
         console.log("Handover plan");
-        console.log("  diamond:       ", diamond);
-        console.log("  timelock:      ", timelock);
-        console.log("  governance Safe:", governanceSafe);
-        console.log("  pauser Safe:   ", pauserSafe);
-        console.log("  admin (renouncing):", admin);
+        console.log("  diamond:       ", c.diamond);
+        console.log("  timelock:      ", c.timelock);
+        console.log("  governance Safe:", c.governanceSafe);
+        console.log("  pauser Safe:   ", c.pauserSafe);
+        console.log("  admin (renouncing):", c.admin);
 
-        // ── 3. Broadcast as ADMIN ──────────────────────────────────
-        vm.startBroadcast(adminKey);
+        IAccessControl ac = IAccessControl(c.diamond);
+        bytes32[] memory tlRoles = HandoverPlan.timelockRoles();
+        bytes32[] memory bots = HandoverPlan.botRoles();
+        string[] memory botEnv = HandoverPlan.botRoleEnvNames();
 
-        // 3a. Grant DEFAULT_ADMIN_ROLE to the Timelock FIRST (D1, #934).
-        //     ADMIN keeps it too until the very last call, so if any
-        //     later step reverts ADMIN can recover.
-        IAccessControl(diamond).grantRole(DEFAULT_ADMIN_ROLE, timelock);
+        vm.startBroadcast(c.adminKey);
+
+        // a. Grant DEFAULT_ADMIN_ROLE to the Timelock FIRST (D1, #934).
+        //    ADMIN keeps it too until the very last call, so if any later
+        //    step reverts ADMIN can recover.
+        ac.grantRole(HandoverPlan.DEFAULT_ADMIN_ROLE, c.timelock);
         console.log("Granted DEFAULT_ADMIN_ROLE to Timelock");
 
-        // 3a'. The governance Safe's only Diamond authority: the
-        //      emergency revoker (D1).
-        IAccessControl(diamond).grantRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, governanceSafe);
+        // b. The governance Safe's only Diamond authority: the emergency
+        //    revoker (D1).
+        ac.grantRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, c.governanceSafe);
         console.log("Granted EMERGENCY_REVOKER_ROLE to governance Safe");
 
-        // 3b. Grant the Timelock-bound roles.
-        bytes32[] memory tlRoles = _timelockRoles();
-        for (uint256 i = 0; i < tlRoles.length; i++) {
-            IAccessControl(diamond).grantRole(tlRoles[i], timelock);
+        // c. The Timelock-bound roles.
+        for (uint256 i; i < tlRoles.length; ++i) {
+            ac.grantRole(tlRoles[i], c.timelock);
         }
-        console.log("Granted ADMIN/KYC/ORACLE/RISK/VAULT to Timelock");
+        console.log("Granted ADMIN/UNPAUSER/KYC/ORACLE/RISK/VAULT to Timelock");
 
-        // 3c. Grant PAUSER_ROLE to the pauser Safe (direct, NO Timelock).
-        IAccessControl(diamond).grantRole(LibAccessControl.PAUSER_ROLE, pauserSafe);
+        // d. PAUSER_ROLE to the Pauser Safe (direct, NO Timelock).
+        ac.grantRole(LibAccessControl.PAUSER_ROLE, c.pauserSafe);
         console.log("Granted PAUSER_ROLE to pauser Safe");
 
-        // 3d. Transfer ERC-173 Diamond ownership → Timelock. Future
-        //     diamondCut (facet swaps) goes via the Timelock's
-        //     queue+execute pattern, giving observers a delay window.
-        //     `transferOwnership` only accepts a DEFAULT_ADMIN_ROLE holder
-        //     (#906), which 3a made the Timelock.
-        IOwnership(diamond).transferOwnership(timelock);
+        // e. Each bot role to its own key (#669). Done HERE, while ADMIN is
+        //    still the role root: once it renounces, the only way to grant a
+        //    bot role is a Timelock proposal, so a role left on ADMIN "for
+        //    later" kept the admin key live and failed the zero-roles gate.
+        for (uint256 i; i < bots.length; ++i) {
+            if (c.botHolders[i] == address(0)) {
+                console.log(string.concat("  ", botEnv[i], " = 0: role left UNHELD (grant it later via the Timelock)"));
+                continue;
+            }
+            ac.grantRole(bots[i], c.botHolders[i]);
+            console.log(string.concat("Granted bot role from ", botEnv[i], " to"), c.botHolders[i]);
+        }
+
+        // f. Transfer ERC-173 Diamond ownership → Timelock. Future
+        //    diamondCut (facet swaps) goes via the Timelock's queue+execute
+        //    pattern. `transferOwnership` only accepts a DEFAULT_ADMIN_ROLE
+        //    holder (#906), which step a made the Timelock.
+        IOwnership(c.diamond).transferOwnership(c.timelock);
         console.log("Transferred ERC-173 Diamond ownership to Timelock");
 
-        // 3e. ADMIN renounces every multisig-bound role it holds, in
-        //     reverse-grant order. WATCHER_ROLE + NOTIF_BILLER_ROLE +
-        //     KEEPER_ROLE are intentionally LEFT on ADMIN — these
-        //     off-chain-bot roles get rotated to per-bot EOAs in a
-        //     separate script after Phase-6 keeper-authorization
-        //     wiring lands.
-        //     ADMIN never held EMERGENCY_REVOKER_ROLE: it is not granted
-        //     at init, only in 3a' above (#934).
-        //     Order: PAUSER, then the six Timelock roles, then DEFAULT_ADMIN_ROLE LAST (allowed now that the
-        //     Timelock, not ADMIN, is the Diamond owner).
-        IAccessControl(diamond).renounceRole(LibAccessControl.PAUSER_ROLE, admin);
-        for (uint256 i = tlRoles.length; i > 0; i--) {
-            IAccessControl(diamond).renounceRole(tlRoles[i - 1], admin);
+        // g. ADMIN renounces EVERY role it holds — the bot roles, PAUSER,
+        //    the six Timelock roles, then DEFAULT_ADMIN_ROLE LAST (allowed
+        //    now that the Timelock, not ADMIN, is the Diamond owner). ADMIN
+        //    never held EMERGENCY_REVOKER_ROLE: it is not granted at init,
+        //    only in step b (#934).
+        for (uint256 i = bots.length; i > 0; --i) {
+            ac.renounceRole(bots[i - 1], c.admin);
         }
-        IAccessControl(diamond).renounceRole(DEFAULT_ADMIN_ROLE, admin);
-        console.log("Admin renounced PAUSER + Timelock-bound + DEFAULT_ADMIN");
+        ac.renounceRole(LibAccessControl.PAUSER_ROLE, c.admin);
+        for (uint256 i = tlRoles.length; i > 0; --i) {
+            ac.renounceRole(tlRoles[i - 1], c.admin);
+        }
+        ac.renounceRole(HandoverPlan.DEFAULT_ADMIN_ROLE, c.admin);
+        console.log("Admin renounced every Diamond role (bots, PAUSER, Timelock-bound, DEFAULT_ADMIN)");
 
         vm.stopBroadcast();
+    }
 
-        // ── 3f. CCIP cross-chain ownership → Timelock ───────────────────
-        // The whole CCIP stack is ADMIN-owned `Ownable2Step` —
-        // `DeployCrosschain` initializes every proxy with ADMIN and
-        // `ConfigureCcip` accepts the pools' ownership as ADMIN — so
-        // every transfer here broadcasts as ADMIN, and the LZ-era
-        // per-owner-key resolution is no longer needed.
-        //
-        // `transferOwnership` is the first leg of `Ownable2Step`; the
-        // Timelock accepts in step 4. `_transferCrossChainOwnership`
-        // skips with a notice when a contract is not deployed on this
-        // chain, or not ADMIN-owned — never a confusing mid-run revert.
-        _transferCrossChainOwnership(adminKey, ccipMessenger,   "ccipMessenger",        timelock);
-        _transferCrossChainOwnership(adminKey, tokenPool,       "vpfiTokenPool",        timelock);
-        _transferCrossChainOwnership(adminKey, rateGovernor,    "vpfiPoolRateGovernor", timelock);
-        _transferCrossChainOwnership(adminKey, rewardMessenger, "rewardMessenger",      timelock);
-        _transferCrossChainOwnership(adminKey, mirror,          "vpfiMirror",           timelock);
-        _transferCrossChainOwnership(adminKey, buybackReceiver, "buybackRemittanceReceiver", timelock);
-        _transferCrossChainOwnership(adminKey, rewardReceiver,  "rewardRemittanceReceiver",  timelock);
-        _transferCrossChainOwnership(adminKey, returnSender,    "vpfiReturnSender",          timelock);
-        _transferCrossChainOwnership(adminKey, returnReceiver,  "vpfiReturnReceiver",        timelock);
-        // #853 Codex P2 — canonical VPFI token OZ ownership → Timelock. On
-        // canonical Base the token is now DEPLOYED as part of the flow
-        // (`DeployVPFIToken`) with owner = ADMIN (`Ownable2StepUpgradeable`).
-        // That owner gates UUPS upgrades, `setMinter`, and pause — so it must
-        // rotate to the Timelock like every other cross-chain contract, else a
-        // post-handover admin EOA could still upgrade/re-mint canonical VPFI
-        // outside governance. On mirror chains the `vpfiMirror` leg above
-        // already covers the local VPFI ERC20 (`vpfiToken == mirror` there), so
-        // this canonical-only leg would be a redundant no-op — hence the guard.
-        if (canonical) {
-            _transferCrossChainOwnership(adminKey, vpfiToken, "vpfiToken", timelock);
-        }
-
-        // ── 3g. CCT admin → Timelock ────────────────────────────────────
-        // The CCIP `TokenAdminRegistry` administrator for VPFI rotates to
-        // the Timelock as well — `transferAdminRole` is the first leg of
-        // a two-step transfer; the Timelock `acceptAdminRole`s in step 4.
-        // Skipped when CCIP_TOKEN_ADMIN_REGISTRY is unset, or when ADMIN
-        // is not the current administrator (CCT registration may have
-        // been done by a separate token owner — see ConfigureCcip
-        // `_registerCct`, which itself skips when admin != token owner).
-        address cctRegistry = vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0));
-        bool cctRotated =
-            _transferCctAdmin(adminKey, cctRegistry, vpfiToken, timelock);
-
-        // ── 4. Print the Timelock-side accept calldata ──────────────────
-        // Each pending transfer needs the Timelock to accept it (through
-        // its schedule/execute queue) before it takes effect. Emit the
-        // calldata + targets so the operator can queue them without
-        // hand-typing. `acceptOwnership()` takes no args — calldata is
-        // the bare 4-byte selector.
+    /// @dev Prints the Timelock-side accept calldata. Each pending transfer
+    ///      needs the Timelock to accept it (through its schedule/execute
+    ///      queue) before it takes effect. `acceptOwnership()` takes no
+    ///      args — the calldata is the bare 4-byte selector.
+    function _printAcceptSteps(Config memory c, bool cctRotated) internal view {
         console.log("");
         console.log("=========================================================");
         console.log("NEXT STEP - the Timelock must accept each pending transfer:");
@@ -425,24 +399,18 @@ contract Handover is Script {
             "  acceptOwnership() selector:",
             vm.toString(abi.encodePacked(bytes4(keccak256("acceptOwnership()"))))
         );
-        if (ccipMessenger != address(0)) console.log("    target: ccipMessenger        @", ccipMessenger);
-        if (tokenPool != address(0)) console.log("    target: vpfiTokenPool        @", tokenPool);
-        if (rateGovernor != address(0)) console.log("    target: vpfiPoolRateGovernor @", rateGovernor);
-        if (rewardMessenger != address(0)) console.log("    target: rewardMessenger      @", rewardMessenger);
-        if (mirror != address(0)) console.log("    target: vpfiMirror           @", mirror);
-        if (buybackReceiver != address(0)) console.log("    target: buybackRemittanceReceiver @", buybackReceiver);
-        if (rewardReceiver != address(0)) console.log("    target: rewardRemittanceReceiver @", rewardReceiver);
-        if (returnSender != address(0)) console.log("    target: vpfiReturnSender     @", returnSender);
-        if (returnReceiver != address(0)) console.log("    target: vpfiReturnReceiver   @", returnReceiver);
-        if (canonical && vpfiToken != address(0)) console.log("    target: vpfiToken            @", vpfiToken);
+        for (uint256 i; i < c.targets.length; ++i) {
+            console.log(string.concat("    target: ", c.targets[i].label, " @"), c.targets[i].addr);
+        }
         if (cctRotated) {
             console.log("  acceptAdminRole(address) on the CCIP TokenAdminRegistry:");
-            console.log("    registry:      ", cctRegistry);
-            console.log("    arg localToken:", vpfiToken);
+            console.log("    registry:      ", c.cctRegistry);
+            console.log("    arg localToken:", c.vpfiToken);
         }
         console.log("");
-        console.log("After all are accepted, run DeployerZeroRolesTest as the");
-        console.log("hard exit gate to assert deployer + admin hold no authority.");
+        console.log("After all are accepted, run the live exit gate:");
+        console.log("  deploy-<mainnet|testnet>.sh <slug> --phase handover-gate");
+        console.log("(script/HandoverGate.s.sol). The chain is not handed off until it passes.");
     }
 
     // ── Helpers ────────────────────────────────────────────────────
@@ -469,14 +437,6 @@ contract Handover is Script {
             return a;
         } catch {
             revert(string.concat("Missing key '", key, "' in ", pathHint));
-        }
-    }
-
-    function _readAddrOptional(string memory json, string memory key) internal view returns (address) {
-        try vm.parseJsonAddress(json, string.concat(".", key)) returns (address a) {
-            return a;
-        } catch {
-            return address(0);
         }
     }
 
