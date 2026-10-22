@@ -1402,9 +1402,12 @@ progress.
   is not a refinance.
 - A lender's review of a refinance request says what accepting it does
   (#2421): it names the running loan, and says that accepting opens the
-  lender's loan and, in the same transaction, pays off and closes that loan,
-  with its current lender paid from the borrower's own wallet rather than from
-  the accepting lender's funds. The collateral is described from the request's
+  lender's loan and, in the same transaction, pays off and closes that loan.
+  It states how that payoff is funded: the amount the accepting lender lends
+  goes to the borrower's wallet as with any loan, and the payoff to the running
+  loan's current lender is then drawn from that wallet, so the new loan can
+  fund part or all of it, with the borrower covering any difference. The
+  collateral is described from the request's
   own recorded decision: either the stake already locked under the running loan
   carries over to the new loan (not a new pledge), or the borrower pledged a
   new batch and the old loan's collateral goes back to them when it closes. The
@@ -1413,7 +1416,9 @@ progress.
   shows no lender receipt and cannot be signed. The loan a request targets
   can change after the request is posted (it can be repaid, closed or have
   collateral added), so the review also runs the protocol's own acceptance
-  check for the request. When that check refuses, the review says the request
+  check for the request, re-reads it while the review stays open, and reads it
+  once more at signing, refusing to sign against a review it no longer
+  matches. When that check refuses, the review says the request
   cannot be taken right now and why, shows no lender receipt, and offers
   nothing to sign. When the deployment has no such check, the review says it
   cannot confirm the request is still takeable and that a stale request fails

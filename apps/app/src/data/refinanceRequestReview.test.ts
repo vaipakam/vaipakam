@@ -9,6 +9,7 @@ import { copy } from '../content/copy';
 import {
   lenderCollateralLine,
   refinanceRequestOf,
+  sameRefinanceReview,
   standingFromCheckError,
 } from './refinanceRequestReview';
 
@@ -100,5 +101,26 @@ describe('lenderCollateralLine (#2421)', () => {
       )).toBe(
       copy.offerFlow.receipts.lenderCollateralFreshPledge('100 tCOL', '22'),
     );
+  });
+});
+
+describe('sameRefinanceReview (Codex #2668 r2)', () => {
+  const reviewed = { targetLoanId: 22n, carryOver: true, standing: takeable };
+  it('holds when the fresh read says what was reviewed', () => {
+    expect(sameRefinanceReview(reviewed, { ...reviewed })).toBe(true);
+    expect(sameRefinanceReview(null, null)).toBe(true);
+  });
+  it('refuses when the request has since become untakeable', () => {
+    expect(
+      sameRefinanceReview(reviewed, {
+        ...reviewed,
+        standing: { kind: 'blocked', reason: 'Closed.' },
+      }),
+    ).toBe(false);
+  });
+  it('refuses on a different target, collateral decision or a vanished tag', () => {
+    expect(sameRefinanceReview(reviewed, { ...reviewed, targetLoanId: 23n })).toBe(false);
+    expect(sameRefinanceReview(reviewed, { ...reviewed, carryOver: false })).toBe(false);
+    expect(sameRefinanceReview(reviewed, null)).toBe(false);
   });
 });

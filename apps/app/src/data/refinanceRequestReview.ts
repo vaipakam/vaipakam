@@ -88,6 +88,22 @@ export function standingFromCheckError(err: unknown): RefinanceRequestStanding {
   return { kind: 'blocked', reason: submitErrorText(err) };
 }
 
+/** Whether a fresh read still says what the lender reviewed: the same
+ *  target, the same collateral decision and the same standing (Codex #2668
+ *  r2). A blocked review never reaches submit, so a blocked reason that
+ *  merely reworded is not a difference worth refusing on. */
+export function sameRefinanceReview(
+  reviewed: RefinanceRequestInfo | null,
+  live: RefinanceRequestInfo | null,
+): boolean {
+  if (reviewed === null || live === null) return reviewed === live;
+  return (
+    reviewed.targetLoanId === live.targetLoanId &&
+    reviewed.carryOver === live.carryOver &&
+    reviewed.standing.kind === live.standing.kind
+  );
+}
+
 export async function readRefinanceRequestLive(
   client: PublicClient,
   diamond: Address,

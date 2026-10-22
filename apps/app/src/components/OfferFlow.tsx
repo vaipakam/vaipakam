@@ -79,6 +79,7 @@ import { saleSettlementNow } from '../data/loanSalePending';
 import {
   lenderCollateralLine,
   readRefinanceRequestLive,
+  sameRefinanceReview,
 } from '../data/refinanceRequestReview';
 import {
   exactUnitsOrNull,
@@ -531,7 +532,11 @@ export function OfferFlow({ side }: { side: Side }) {
     queryKey: ['offerRefinanceRequest', readChain.chainId, selected?.offerId],
     enabled:
       mode === 'accept' && side === 'lender' && Boolean(readClient) && Boolean(selected),
-    staleTime: 60_000,
+    // Codex #2668 r2 — the target loan can close or change while the review
+    // stays open, so the standing is re-read on the sale review's cadence;
+    // submit re-reads it once more before anything is signed.
+    staleTime: 30_000,
+    refetchInterval: idleAware(60_000),
     queryFn: () =>
       readRefinanceRequestLive(
         readClient!,
@@ -1854,6 +1859,25 @@ export function OfferFlow({ side }: { side: Side }) {
     ) {
       void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
       throw new Error(copy.match.termsChanged);
+    }
+    // Codex #2668 r2 — the refinance disclosure and its signability were
+    // read when the review opened (and polled since); the target loan can
+    // have closed or changed in between. Re-read it on the wallet chain and
+    // refuse to sign against a review that no longer matches, putting the
+    // fresh answer in place so the review shows why.
+    if (refinanceInfo) {
+      const liveRefinance = await readRefinanceRequestLive(
+        publicClient,
+        walletChain.diamondAddress,
+        BigInt(selected.offerId),
+      );
+      if (!sameRefinanceReview(refinanceInfo, liveRefinance)) {
+        queryClient.setQueryData(
+          ['offerRefinanceRequest', readChain.chainId, selected.offerId],
+          liveRefinance,
+        );
+        throw new Error(copy.match.termsChanged);
+      }
     }
     // Sign canonical terms; approval amounts come from the SIGNED
     // terms (canonical), not the indexer row. The REVIEWED terms are
