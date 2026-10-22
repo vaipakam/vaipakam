@@ -3050,6 +3050,64 @@ contract OfferFacetTest is Test {
         assertEq(nft1155.balanceOf(lenderVault, 1), 5);
     }
 
+    /// @dev #902 — an ERC-1155 rental quantity the vault cannot record for one
+    ///      rental (above `uint128`) is refused at create, before any units
+    ///      move, so no standing offer vaults units every accept would refuse.
+    function test_902_createRefusesUnrepresentableErc1155Quantity() public {
+        ERC1155Mock nft1155 = new ERC1155Mock();
+        uint256 tooMany = uint256(type(uint128).max) + 1;
+        nft1155.mint(user1, 1, tooMany);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, address(nft1155)),
+            abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
+        );
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        vm.prank(user1);
+        nft1155.setApprovalForAll(address(diamond), true);
+        vm.prank(user1);
+        nft1155.setApprovalForAll(lenderVault, true);
+
+        LibVaipakam.CreateOfferParams memory p = LibVaipakam.CreateOfferParams({
+            offerType: LibVaipakam.OfferType.Lender,
+            lendingAsset: address(nft1155),
+            amount: 10,
+            interestRateBps: 0,
+            collateralAsset: mockERC20,
+            collateralAmount: 100,
+            durationDays: 30,
+            assetType: LibVaipakam.AssetType.ERC1155,
+            tokenId: 1,
+            quantity: tooMany,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: mockERC20,
+            collateralAssetType: LibVaipakam.AssetType.ERC20,
+            collateralTokenId: 0,
+            collateralQuantity: 0,
+            allowsPartialRepay: false,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: 10,
+            interestRateBpsMax: 0,
+            collateralAmountMax: 100,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial,
+            refinanceTargetLoanId: 0,
+            useFullTermInterest: false
+        });
+        vm.prank(user1);
+        vm.expectRevert(OfferCreateFacet.RentalQuantityAboveVaultRange.selector);
+        OfferCreateFacet(address(diamond)).createOffer(p);
+        assertEq(nft1155.balanceOf(lenderVault, 1), 0, "no units moved");
+
+        // The vault's own bound is the accepted edge.
+        p.quantity = type(uint128).max;
+        vm.prank(user1);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(p);
+        assertEq(OfferCancelFacet(address(diamond)).getOffer(offerId).quantity, type(uint128).max);
+    }
+
     // ─── Additional branch coverage: acceptOffer with ERC721 collateral ─────
 
     /// @dev Covers acceptOffer Lender ERC20 offer with ERC721 collateral (borrower deposits NFT collateral).

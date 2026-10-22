@@ -27,6 +27,9 @@ concurrent rentals could make repaying or defaulting one of them cost more
 than a transaction allows, leaving it unable to close. A new rental beyond
 the limit is refused when it is accepted; rentals whose rights have expired
 do not count, and closing or extending an existing rental is never refused.
+An ERC-1155 rental offer whose quantity is larger than one rental record can
+hold is now refused when it is created, before any units move, rather than
+standing open with units no accept could ever record.
 
 Every step of a rental now sets the renter through one Diamond route that
 reads the loan for the vault, the token, the asset type and the quantity, so
