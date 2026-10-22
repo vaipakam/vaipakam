@@ -359,6 +359,18 @@ describe('refusal digest (Codex #2599 r4)', () => {
     expect(digestText('H', ['a', 'b'], 'F')).toBe('H\na\nb\nF');
   });
 
+  it('fits the per-kind count of the rest and keeps the whole footer, however many kinds (#2565 r1)', () => {
+    const lines = Array.from({ length: 400 }, (_, i) => `line ${i} ${'x'.repeat(30)}`);
+    const groups = lines.map((_, i) => `condition kind number ${i % 40} with a long name`);
+    const footer = 'Each line repeats every 6h while it holds, and stops once a fresh read shows it gone.';
+    const t = digestText('H', lines, footer, groups);
+    expect(t.length).toBeLessThanOrEqual(4096);
+    expect(t.endsWith(`, each named in the keeper journal.\n${footer}`)).toBe(true);
+    const shown = t.split('\n').filter((l) => l.startsWith('line ')).length;
+    expect(shown).toBeGreaterThan(0);
+    expect(t).toContain(`…and ${400 - shown} more (`);
+  });
+
   it('keeps what an oversized line is about, cutting only its end (Codex #2599 r5)', () => {
     const t = digestText('H', [`${P1} — ${'chunk refused; '.repeat(500)}`], 'F');
     expect(t).toContain(P1);

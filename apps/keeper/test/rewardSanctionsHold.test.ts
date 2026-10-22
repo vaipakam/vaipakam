@@ -48,7 +48,6 @@ import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 // keeper's own schema, beside a shared database that has no keeper tables.
 import { createKeeperD1, createSharedD1 } from './helpers/schemas';
 import type { KeeperD1 } from '../src/env';
-import { maxD1InListWidth } from '@vaipakam/lib/d1Binds';
 
 const MIGRATIONS_DIR = new URL('../../indexer/migrations/', import.meta.url);
 const ALL_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
@@ -713,6 +712,22 @@ describe('raiseAlerts — one digest per chain, however many owners (#2565)', ()
   const quiet = { ...plan, deadlineAtRisk: [], overdue: [], heldWithoutChain: [] };
   const opsEnv = (h: SqliteD1) => ({ DB: createSharedD1().d1, KEEPER_DB: h.d1, TG_OPS_BOT_TOKEN: 't', TG_OPS_CHAT_ID: '-1' }) as unknown as Env;
   const count = (h: SqliteD1) => (h.db.prepare('SELECT COUNT(*) AS n FROM keeper_ops_alert').get() as { n: number }).n;
+  /** Every statement and batch the pass sends to the keeper's database. */
+  const meter = (h: SqliteD1) => {
+    const d1 = h.d1 as unknown as { prepare: (sql: string) => unknown; batch: (stmts: unknown[]) => Promise<unknown> };
+    const prepare = d1.prepare.bind(d1);
+    const batch = d1.batch.bind(d1);
+    const seen = { statements: [] as string[], batches: [] as number[] };
+    d1.prepare = (sql: string) => {
+      seen.statements.push(sql.trim().split(/\s+/).slice(0, 3).join(' '));
+      return prepare(sql);
+    };
+    d1.batch = (stmts: unknown[]) => {
+      seen.batches.push(stmts.length);
+      return batch(stmts);
+    };
+    return seen;
+  };
 
   it('500 owners × 3 conditions on a failing ops channel: one post for the chain, and no key recorded', async () => {
     const h = createKeeperD1();
@@ -742,9 +757,18 @@ describe('raiseAlerts — one digest per chain, however many owners (#2565)', ()
     armHeldFence();
     const journal: string[] = [];
     const warn = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void journal.push(a.map(String).join(' ')));
+    const seen = meter(h);
     try {
       await raiseAlerts(opsEnv(h), CHAIN, statuses, plan, NOW, null, { due: 2, unreached: 2, skippedOracleDown: 0, clean: 0, unread: 0 });
       expect(fetchSpy).toHaveBeenCalledTimes(1);
+      // #2565 r1 — however many keys: the open keys, the sent-state and the
+      // delivery record are one statement each, never one per key.
+      expect(seen.statements).toEqual(['SELECT alert_key FROM', 'SELECT alert_key, last_sent_at', 'INSERT INTO keeper_ops_alert']);
+      expect(seen.batches).toEqual([]);
+      // And the journal is written in parts well under the log platforms'
+      // per-line limits, every owner whole in one of them.
+      expect(journal.every((l) => l.length <= 16_500)).toBe(true);
+      expect(journal.filter((l) => l.includes('reward sanctions hold: 1501 conditions')).length).toBeGreaterThan(1);
       const text = bodies[0];
       expect(text.length).toBeLessThanOrEqual(4096);
       expect(text).toMatch(new RegExp(`^\\[chain ${CHAIN}\\] reward sanctions hold: 1501 conditions to report this run:`));
@@ -769,22 +793,44 @@ describe('raiseAlerts — one digest per chain, however many owners (#2565)', ()
     for (const o of owners) {
       h.db.prepare(`INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at) VALUES (?, ?, ?)`).run(`sanctions-hold-overdue:${CHAIN}:${o}`, NOW, NOW);
     }
-    const d1 = h.d1 as unknown as { batch: (stmts: unknown[]) => Promise<unknown> };
-    const realBatch = d1.batch.bind(d1);
-    const batches: number[] = [];
-    d1.batch = (stmts: unknown[]) => {
-      batches.push(stmts.length);
-      return realBatch(stmts);
-    };
+    const seen = meter(h);
     const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchSpy);
     try {
       await raiseAlerts(opsEnv(h), CHAIN, statuses, quiet, NOW);
       expect(fetchSpy).not.toHaveBeenCalled();
-      expect(batches, 'one batched clear, one statement per bound-parameter chunk').toEqual([Math.ceil(owners.length / maxD1InListWidth(0))]);
+      expect(seen.statements, 'the open keys, then one clear for all 500').toEqual(['SELECT alert_key FROM', 'DELETE FROM keeper_ops_alert']);
+      expect(seen.batches).toEqual([]);
       expect(count(h)).toBe(0);
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+
+  it('abandons D1 work still in flight at the alert deadline, posting nothing (#2565 r1)', async () => {
+    const h = createKeeperD1();
+    const d1 = h.d1 as unknown as { prepare: (sql: string) => { bind: (...a: unknown[]) => unknown } };
+    const prepare = d1.prepare.bind(d1);
+    // The digest's sent-state read hangs; every other statement answers.
+    d1.prepare = (sql: string) => {
+      const stmt = prepare(sql) as { bind: (...a: unknown[]) => { all: () => Promise<unknown> } };
+      if (!sql.includes('last_sent_at FROM')) return stmt;
+      return { bind: () => ({ all: () => new Promise(() => {}) }) };
+    };
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    armHeldFence();
+    const quietLogs = [vi.spyOn(console, 'warn').mockImplementation(() => {}), vi.spyOn(console, 'error').mockImplementation(() => {})];
+    try {
+      const started = Date.now();
+      await raiseAlerts(opsEnv(h), CHAIN, statuses, plan, NOW, null, null, started + 200);
+      expect(Date.now() - started, 'back at the deadline, not after the hung read').toBeLessThan(2_000);
+      expect(fetchSpy, 'a post that would start past the window waits for the next run').not.toHaveBeenCalled();
+      expect(count(h)).toBe(0);
+    } finally {
+      for (const s of quietLogs) s.mockRestore();
+      vi.unstubAllGlobals();
+      disarmEpochFence();
     }
   });
 });

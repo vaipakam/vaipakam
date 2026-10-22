@@ -63,7 +63,7 @@ import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { possiblyRelayedHash, reportSendError } from './submissionQueue';
 import type { PassTick } from './passSchedule';
-import { boundedRead, deadlineClient, PastRunDeadline, settledRead } from './batchRead';
+import { boundedRead, deadlineClient, PastRunDeadline, settleBy, settledRead } from './batchRead';
 import {
   deploymentFloor,
   countLoanParties,
@@ -511,7 +511,10 @@ export const RECONCILE_MS = 15_000;
 
 /** The re-read of the owners a run's sends touched, after its sends. */
 export const STATUS_REREAD_MS = 30_000;
-/** Room for the alert phase's own D1 reads and writes. */
+/** Room for the alert phase's own D1 work: four single statements (the open
+ *  keys, the digest's sent-state, its delivery record, the clears), each one
+ *  round trip however many keys (#2565 r1). Every one is settled by the run's
+ *  deadline, so this sizes the tail; it is not the bound. */
 const ALERT_D1_SLACK_MS = 15_000;
 /** The tail of a run reserved for what follows its sends (#2497 r17, r18):
  *  reads and sends stop this long before the run's deadline
@@ -1523,7 +1526,12 @@ export async function raiseAlerts(
   // that is actually open, touches the table.
   let open: Set<string>;
   try {
-    open = new Set(await listOpsAlertKeys(env.KEEPER_DB, `sanctions-%:${chainId}:%`));
+    // Settled by the alert deadline like the digest's own D1 work (#2565 r1).
+    open = new Set(
+      await settleBy(listOpsAlertKeys(env.KEEPER_DB, `sanctions-%:${chainId}:%`), alertDeadline, () => {
+        throw new Error('open-alert read still in flight at the alert deadline');
+      }),
+    );
   } catch (err) {
     console.error(`[keeper] rewardSanctionsHold open-alert read failed on chain ${chainId}: ${shortErr(err)}`);
     return;
@@ -1650,8 +1658,9 @@ export async function raiseAlerts(
     ALERT_REPEAT_SEC,
     nowSec,
     chainId,
+    alertDeadline,
   );
-  await resolveOpsAlerts(env, clears);
+  await resolveOpsAlerts(env, clears, alertDeadline);
 }
 
 function iso(sec: number): string {
