@@ -144,6 +144,8 @@ interface BaseEnv {
   // #2612 — the reward day-close pass (`rewardDayClose/`).
   /** 'true' arms the reward day-close pass (in addition to KEEPER_ENABLED). `secret_text`, like the flags above. */
   REWARD_DAY_CLOSE_ENABLED?: string;
+  /** #2627 — the most one day-close send pays as its CCIP fee: `<chainId>=<wei>` entries, comma-separated, plus an optional `*=<wei>` for the rest (default 0.002 native, 2e15 wei, on every chain). A plain var. */
+  REWARD_DAY_CLOSE_MAX_FEE_WEI?: string;
 
   // OPERATOR alerts — the ops bot, never `TG_BOT_TOKEN` (CLAUDE.md, "Two
   // Telegram bots": split by who reads the alert). Plain `wrangler secret
@@ -303,6 +305,7 @@ export const PLAIN_VAR_KEYS = [
   'REWARD_SANCTIONS_KEEPER_ENABLED',
   'REWARD_HORIZON_HEARTBEAT_ENABLED',
   'REWARD_DAY_CLOSE_ENABLED',
+  'REWARD_DAY_CLOSE_MAX_FEE_WEI',
   'TG_OPS_BOT_TOKEN',
   'TG_OPS_CHAT_ID',
   'REWARD_COMMIT_LOOKBACK_DAYS',
@@ -461,6 +464,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_SANCTIONS_KEEPER_ENABLED: raw.REWARD_SANCTIONS_KEEPER_ENABLED,
     REWARD_HORIZON_HEARTBEAT_ENABLED: raw.REWARD_HORIZON_HEARTBEAT_ENABLED,
     REWARD_DAY_CLOSE_ENABLED: raw.REWARD_DAY_CLOSE_ENABLED,
+    REWARD_DAY_CLOSE_MAX_FEE_WEI: raw.REWARD_DAY_CLOSE_MAX_FEE_WEI,
     TG_OPS_BOT_TOKEN: raw.TG_OPS_BOT_TOKEN,
     TG_OPS_CHAT_ID: raw.TG_OPS_CHAT_ID,
     REWARD_COMMIT_LOOKBACK_DAYS: raw.REWARD_COMMIT_LOOKBACK_DAYS,
