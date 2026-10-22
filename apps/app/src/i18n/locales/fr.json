@@ -307,6 +307,11 @@
       "pushEnable": "Activer la livraison Push",
       "pushEnabled": "La livraison Push est activée pour ce portefeuille.",
       "pushButton": "Ouvrir le canal Push",
+      "pushChecking": "Vérification de la possibilité d’envoyer des alertes Push en ce moment…",
+      "pushUnavailable": "Les alertes Push ne peuvent pas être envoyées depuis ce déploiement pour le moment, l’option est donc désactivée.",
+      "pushUnknown": "Nous n’avons pas pu vérifier si les alertes Push peuvent être envoyées en ce moment, l’option est donc désactivée. Réessayez plus tard.",
+      "pushKeptNote": "Le choix Push que vous aviez fait pour ce portefeuille est conservé, et les alertes reprennent sur Push dès que l’envoi est rétabli.",
+      "pushNotSaved": "Vos autres réglages ont été enregistrés, mais Push n’a pas été activé : les alertes Push ne peuvent pas être envoyées depuis ce déploiement pour le moment.",
       "loanNudge": "Vous voulez un avertissement Telegram si ce prêt devient risqué ? Configurez les alertes dans les Paramètres.",
       "unlinkedChainOnly": "Dissocié pour {{network}}. Un portefeuille à compte intelligent se déconnecte réseau par réseau — si ce portefeuille est lié sur d’autres réseaux, dissociez chacun depuis ce réseau avec sa propre signature."
     },

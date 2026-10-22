@@ -18,7 +18,7 @@ The **proactive-notifications + public-Frame + operator-services Worker**. Stage
 
 Two things it used to say alongside that are **withdrawn**:
 
-- **"holds NO signing key"** — `PUSH_CHANNEL_PK` is an Ethereum private key, instantiated as an ethers `Wallet` in `src/push.ts` to sign Push notifications as the channel. No **protocol** authority — it holds no Diamond role and can't move loan or treasury funds — but it is not authority-free either: `AdminKeysAndPause.md` records the channel-owner wallet as holding the 50 PUSH staking deposit and ~$50 of native gas, so a thief gets a funded EOA along with the right to push arbitrary notifications to every subscriber. Saying "no on-chain authority" of a key that owns an on-chain stake reads as *nothing on-chain to lose*, which is the wrong instruction for a responder. Real signing material a secret reviewer must not skip.
+- **"holds NO signing key"** — `PUSH_CHANNEL_PK` is an Ethereum private key, instantiated as an ethers `Wallet` by the shared Push rail (`packages/push`) to sign Push notifications as the channel. No **protocol** authority — it holds no Diamond role and can't move loan or treasury funds — but it is not authority-free either: `AdminKeysAndPause.md` records the channel-owner wallet as holding the 50 PUSH staking deposit and ~$50 of native gas, so a thief gets a funded EOA along with the right to push arbitrary notifications to every subscriber. Saying "no on-chain authority" of a key that owns an on-chain stake reads as *nothing on-chain to lose*, which is the wrong instruction for a responder. Real signing material a secret reviewer must not skip.
 - **"a compromised agent produces stale data"** — it deletes diagnostics and support records on a schedule (`pruneOldSupportTickets` enforces the 12-month deletion promise), writes `loans`, sends Push/Telegram to real users, and publishes listings via `/opensea/listing`. A defect or compromise here means data loss, mis-sent notifications, and publication to a live marketplace — bounded, and the bounds matter: `openseaPublish.ts` posts an **empty `0x` signature**, which OpenSea accepts only because the vault's ERC-1271 check recognises an order hash the borrower already bound **on-chain**. So a compromised Worker can re-expose an already-authorised listing and impose removal latency, but **cannot manufacture one** (no on-chain binding, no listing) and **cannot preserve one** (the borrower's `cancelPrepayListing` revokes the binding and OpenSea drops it on the next revalidation pass). An earlier version of this called it "irreversible upstream publication", which overstated the blast radius in both directions.
 
   Separately, and unbounded by any of that: via the shared database-scoped D1 binding it can corrupt state the signing Worker acts on (#1722). None of this is "stale data".
@@ -78,6 +78,7 @@ pnpm --filter @vaipakam/agent exec tsc -p . --noEmit
 Worker `wrangler.jsonc:vars`:
 
 - `FRONTEND_ORIGIN`, `TG_BOT_USERNAME`, `DIAG_*` knobs.
+- `PUSH_CHANNEL_ADDRESS` (optional, #1456) — the Push channel the signer posts for. Unset, the channel is the signer's own address; set, `PUSH_CHANNEL_PK` signs as that channel's delegate. `GET /push/status` reports the channel the rail will use, and the app's subscribe link reads it from there.
 
 Worker secrets (via `wrangler secret put`):
 
@@ -87,7 +88,7 @@ Worker secrets (via `wrangler secret put`):
 | `TG_BOT_TOKEN` | Telegram bot credential (user-facing bot). |
 | `TG_OPS_BOT_TOKEN` | Ops-internal bot credential — instant new-support-ticket alert (#1040 phase 1). While unset the alert skips (warn-logged) and tickets still land in D1; the nightly ops report's open-ticket count is the backstop. |
 | `TG_OPS_CHAT_ID` | Operator chat the ops bot posts to. Same skip-while-unset behaviour. |
-| `PUSH_CHANNEL_PK` | Push channel signing key — **an Ethereum private key**, loaded as an ethers `Wallet` in `src/push.ts`. This row used to say "not a chain key — a push protocol identity"; it is a real key, which is not the same thing. It carries no **protocol** authority (no Diamond role, no fund movement), but it is not authority-free: the channel-owner wallet holds the 50 PUSH staking deposit and ~$50 of native gas (`docs/ops/AdminKeysAndPause.md`). A revision of this row said "no on-chain authority", which tells a responder there is nothing on-chain at stake — there is. |
+| `PUSH_CHANNEL_PK` | Push channel signing key — **an Ethereum private key**, loaded as an ethers `Wallet` by the shared Push rail (`packages/push`). This row used to say "not a chain key — a push protocol identity"; it is a real key, which is not the same thing. It carries no **protocol** authority (no Diamond role, no fund movement), but it is not authority-free: the channel-owner wallet holds the 50 PUSH staking deposit and ~$50 of native gas (`docs/ops/AdminKeysAndPause.md`). A revision of this row said "no on-chain authority", which tells a responder there is nothing on-chain at stake — there is. |
 | `ZEROEX_API_KEY` / `ONEINCH_API_KEY` | Aggregator quote proxy credentials. |
 
 No `KEEPER_PRIVATE_KEY` here — that's `apps/keeper` exclusively.

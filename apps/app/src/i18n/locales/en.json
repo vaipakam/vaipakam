@@ -326,6 +326,11 @@
       "pushEnable": "Enable Push delivery",
       "pushEnabled": "Push delivery is on for this wallet.",
       "pushButton": "Open the Push channel",
+      "pushChecking": "Checking whether Push alerts can be sent right now…",
+      "pushUnavailable": "Push alerts can’t be sent from this deployment right now, so the option is switched off.",
+      "pushUnknown": "We couldn’t check whether Push alerts can be sent right now, so the option is switched off. Please try again later.",
+      "pushKeptNote": "The Push choice you made earlier for this wallet is kept, and alerts resume on Push once sending is back.",
+      "pushNotSaved": "Your other settings were saved, but Push wasn’t switched on: Push alerts can’t be sent from this deployment right now.",
       "loanNudge": "Want a Telegram warning if this loan gets risky? Set up alerts in Settings."
     },
     "notifications": {

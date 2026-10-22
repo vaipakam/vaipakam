@@ -40,6 +40,8 @@
  *   POST /quote/0x                          — 0x v2 aggregator proxy
  *   POST /quote/1inch                       — 1inch v6 aggregator proxy
  *   GET  /quote/readiness                   — which aggregator keys this Worker holds
+ *   GET  /push/status                       — whether this Worker can send Push,
+ *                                             and as which channel (#2251)
  *   POST /intent/fusion/post                — 1inch Fusion resolver-pickup
  *                                             proxy (T-090 v1.1 Sub 3)
  *   POST /opensea/listing                   — OpenSea Listings API proxy
@@ -92,6 +94,8 @@ import {
 } from '@vaipakam/lib/d1Maintenance';
 import { createSchemaGate, schemaDeclineNotice } from '@vaipakam/lib/d1SchemaGate';
 import { runPeriodicPreNotify } from './periodicPreNotify';
+import { decidePushOptIn, handlePushStatus, pushRailConfigOf } from './pushRail';
+import { pushRailStatus } from '@vaipakam/push';
 import { handle0xQuote, handle1inchQuote, handleQuoteReadiness } from './quoteProxy';
 import { handleOpenSeaListingPost } from './openseaProxy';
 import { handleIntentFusionPost } from './intentFusionPost';
@@ -348,6 +352,11 @@ export default {
     if (url.pathname === '/quote/readiness' && req.method === 'GET') {
       return handleQuoteReadiness(resolved, resolveAllowedOrigin(req, resolved));
     }
+    // #2251 — the Push rail's own status, read by the app before it offers
+    // the opt-in. Same shape and CORS handling as the readiness probe above.
+    if (url.pathname === '/push/status' && req.method === 'GET') {
+      return handlePushStatus(resolved, resolveAllowedOrigin(req, resolved));
+    }
     if (url.pathname === '/quote/1inch' && req.method === 'POST') {
       return handle1inchQuote(req, resolved, resolveAllowedOrigin(req, resolved));
     }
@@ -562,11 +571,17 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
       );
     }
   }
+  // #2251 — a Push opt-in is stored only where this deployment's rail can
+  // honour it; see `decidePushOptIn` for what is dropped and what survives.
+  const { write, push } = decidePushOptIn(
+    parsed,
+    pushRailStatus(pushRailConfigOf(env)),
+  );
   // If the threshold settings ever start to drive on-chain actions,
   // extend the signed-payload requirement to every write so
   // msg.sender parity is cryptographic.
   try {
-    await upsertThresholds(env.DB, parsed);
+    await upsertThresholds(env.DB, write);
   } catch (err) {
     // Rollout window — an opt-out can't be stored until migration
     // 0027 lands. A distinct 503 lets the client say "try again
@@ -584,7 +599,17 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
     }
     throw err;
   }
-  return json({ ok: true }, 200, corsOrigin);
+  return json(
+    {
+      ok: true,
+      // What happened to the Push opt-in this save carried, if any. Absent
+      // from older agents, which the app reads as "stored" — the behaviour
+      // those agents had.
+      push,
+    },
+    200,
+    corsOrigin,
+  );
 }
 
 async function handleIssueTelegramLink(

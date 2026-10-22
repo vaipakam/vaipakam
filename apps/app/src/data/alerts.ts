@@ -69,13 +69,63 @@ export function alertsConfigured(): boolean {
   return agentOrigin() !== null;
 }
 
-/** Push Protocol channel — deep-link only (subscription happens on
- *  app.push.org, signed by the user's wallet there). Null when unset
- *  or not address-shaped. */
-export function pushChannelUrl(): string | null {
-  const addr = import.meta.env.VITE_PUSH_CHANNEL_ADDRESS as string | undefined;
-  if (!addr || !/^0x[a-fA-F0-9]{40}$/.test(addr)) return null;
-  return `https://app.push.org/channels/${addr}`;
+/**
+ * What this deployment can do on the Push rail, as the agent reports it
+ * (#2251).
+ *
+ * The app used to offer Push on its own build-time channel address alone, so a
+ * deployment whose signer was unset or malformed said "Push delivery is on"
+ * and sent nothing. The agent answers from the same rail it sends with, and
+ * names the channel it posts as, which is also the channel the subscribe link
+ * must open — so the link can no longer point at a channel the platform does
+ * not post to.
+ *
+ * - `available` — the rail can issue a request, as `channel`. It does not
+ *   promise Push accepts every send; that is only known per send.
+ * - `unavailable` — this deployment cannot send Push at all.
+ * - `unknown` — the agent could not be asked (unreachable, or an agent that
+ *   predates the endpoint). Never read as either of the others.
+ */
+export type PushRailState =
+  | { kind: 'available'; channel: `0x${string}`; channelUrl: string }
+  | { kind: 'unavailable' }
+  | { kind: 'unknown' };
+
+export async function fetchPushStatus(): Promise<PushRailState> {
+  const origin = agentOrigin();
+  if (!origin) return { kind: 'unknown' };
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${origin}/push/status`, { signal: ctrl.signal });
+    if (!res.ok) return { kind: 'unknown' };
+    const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    return parsePushStatus(data);
+  } catch {
+    return { kind: 'unknown' };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/** The agent's `GET /push/status` body, read strictly: anything that is not
+ *  one of the two documented shapes is `unknown`, never a guess. */
+export function parsePushStatus(data: Record<string, unknown> | null): PushRailState {
+  if (!data) return { kind: 'unknown' };
+  if (data.available === false) return { kind: 'unavailable' };
+  if (
+    data.available === true &&
+    typeof data.channel === 'string' &&
+    /^0x[a-fA-F0-9]{40}$/.test(data.channel)
+  ) {
+    const channel = data.channel as `0x${string}`;
+    return {
+      kind: 'available',
+      channel,
+      channelUrl: `https://app.push.org/channels/${channel}`,
+    };
+  }
+  return { kind: 'unknown' };
 }
 
 /** The bands behind the plain-words "risky loan" toggle. */
@@ -272,12 +322,17 @@ export interface SaveAlertPrefsOptions {
  *  pre-notify opt-out (only when just changed), and (when enabling)
  *  the Push flag. No aspirational fields: sending flags the parser
  *  drops would let the UI imply storage that never happens. */
+/** What the agent did with a Push opt-in the save carried (#2251).
+ *  `stored` for an agent that predates the answer, since storing it was
+ *  what those agents did. */
+export type PushSaveOutcome = 'not-requested' | 'stored' | 'unavailable';
+
 export async function saveAlertPrefs(
   wallet: `0x${string}`,
   chainId: number,
   prefs: AlertPrefs,
   opts: SaveAlertPrefsOptions = {},
-): Promise<void> {
+): Promise<PushSaveOutcome> {
   // Bands travel ONLY when this save is the user changing the risky
   // lane (#2000) — mirroring the due-date field's omission rule. Sent
   // unconditionally, a fresh device's DEFAULT lane state (defaults on,
@@ -350,6 +405,8 @@ export async function saveAlertPrefs(
     }
     throw new Error(`saving alert settings failed (${res.status})`);
   }
+  if (!prefs.pushEnabled) return 'not-requested';
+  return res.data?.push === 'unavailable' ? 'unavailable' : 'stored';
 }
 
 export interface TelegramLink {

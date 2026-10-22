@@ -1,4 +1,9 @@
 /**
+ * The shared Push rail (#2248). Moved here from `apps/agent/test/
+ * pushAttempt.test.ts` with the implementation, so the capability guard is
+ * pinned on the one unit both Workers import rather than in one Worker's
+ * suite.
+ *
  * `sendPush` reports whether it actually made a request (#2213 r9
  * `4012940120`).
  *
@@ -31,7 +36,7 @@ vi.mock('@pushprotocol/restapi', () => ({
   CONSTANTS: { ENV: { PROD: 'prod' } },
 }));
 
-const { sendPush } = await import('../src/push');
+const { sendPush, pushRailStatus } = await import('./index');
 
 /** A throwaway key, generated per run so none is ever written down. */
 const usableKey = Wallet.createRandom().privateKey;
@@ -98,7 +103,7 @@ afterEach(() => {
 describe('what sendPush says it did', () => {
   it('makes no request, and says so, when the channel key is unset', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await sendPush(undefined, payload)).toBe('not-requested');
+    expect(await sendPush({}, payload)).toBe('not-requested');
   });
 
   it('makes no request, and says so QUIETLY, when the channel key is MALFORMED', async () => {
@@ -114,7 +119,7 @@ describe('what sendPush says it did', () => {
     // per chain per run with a count, which is the only place that can see
     // how many were affected.
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await sendPush('not-a-private-key', payload)).toBe('not-requested');
+    expect(await sendPush({ channelPk: 'not-a-private-key' }, payload)).toBe('not-requested');
     expect(err).not.toHaveBeenCalled();
   });
 
@@ -126,7 +131,7 @@ describe('what sendPush says it did', () => {
     const send = vi.mocked(sdk.payloads.sendNotification);
     send.mockClear();
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await sendPush(usableKey, payload)).toBe('accepted');
+    expect(await sendPush({ channelPk: usableKey }, payload)).toBe('accepted');
     // And it still targets production. `env` became a typed enum in 1.7.32;
     // the runtime value must not have moved with the type, because a silent
     // retarget to staging would look exactly like a working rail and deliver
@@ -144,7 +149,7 @@ describe('what sendPush says it did', () => {
     // this exercises the throw-after-entry branch rather than the refusal.
     sdkThrows = true;
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await sendPush(usableKey, payload)).toBe('failed');
+    expect(await sendPush({ channelPk: usableKey }, payload)).toBe('failed');
   });
 
   it('makes no request when the signer can sign NEITHER way', async () => {
@@ -165,7 +170,7 @@ describe('what sendPush says it did', () => {
     const send = vi.mocked(sdk.payloads.sendNotification);
     send.mockClear();
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await sendPush(usableKey, payload)).toBe('not-requested');
+    expect(await sendPush({ channelPk: usableKey }, payload)).toBe('not-requested');
     // The SDK was never entered, so nothing could have gone out...
     expect(send).not.toHaveBeenCalled();
     // ...and it is silent, like the other deployment-wide branches: the
@@ -184,7 +189,7 @@ describe('what sendPush says it did', () => {
     // like an unset key.
     withV5OnlySigner();
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await sendPush(usableKey, payload)).toBe('accepted');
+    expect(await sendPush({ channelPk: usableKey }, payload)).toBe('accepted');
   });
 
   it('does not put the key in the log when it is the thing that is wrong', async () => {
@@ -192,9 +197,79 @@ describe('what sendPush says it did', () => {
     // described by class rather than quoted.
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     const secret = '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef00';
-    await sendPush(secret, payload);
+    await sendPush({ channelPk: secret }, payload);
     const said = err.mock.calls.map((c) => c.join(' ')).join('\n');
     expect(said).not.toContain(secret);
     expect(said).not.toContain('deadbeef');
+  });
+});
+
+describe('which channel the rail posts as (#1456)', () => {
+  it('posts as the signer itself when no channel is configured', async () => {
+    const sdk = await import('@pushprotocol/restapi');
+    const send = vi.mocked(sdk.payloads.sendNotification);
+    send.mockClear();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const signer = new Wallet(usableKey).address;
+    expect(await sendPush({ channelPk: usableKey, channelAddress: '' }, payload)).toBe('accepted');
+    expect(send.mock.calls[0]?.[0]).toMatchObject({ channel: `eip155:1:${signer}` });
+    expect(pushRailStatus({ channelPk: usableKey })).toEqual({
+      usable: true,
+      channel: signer,
+      delegated: false,
+    });
+  });
+
+  it('posts as the CONFIGURED channel, so a key rotation does not move it', async () => {
+    // The point of #1456: the key is the signer, the channel is configuration.
+    // A rotated key posts as a delegate of the same channel instead of
+    // silently starting a new one nobody is subscribed to.
+    const channel = '0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b';
+    const sdk = await import('@pushprotocol/restapi');
+    const send = vi.mocked(sdk.payloads.sendNotification);
+    send.mockClear();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const config = { channelPk: usableKey, channelAddress: channel.toLowerCase() };
+    expect(await sendPush(config, payload)).toBe('accepted');
+    expect(send.mock.calls[0]?.[0]).toMatchObject({ channel: `eip155:1:${channel}` });
+    expect(pushRailStatus(config)).toEqual({ usable: true, channel, delegated: true });
+    // The delegate's own address is named in the success line, since it is
+    // the half a rotation swaps; the subscriber is not.
+    const said = log.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(said).toContain(new Wallet(usableKey).address);
+    expect(said).not.toContain(payload.subscriber);
+  });
+
+  it('refuses a configured channel that is not an address, without a request', async () => {
+    const sdk = await import('@pushprotocol/restapi');
+    const send = vi.mocked(sdk.payloads.sendNotification);
+    send.mockClear();
+    for (const channelAddress of ['0x1234', 'vaipakam', '0x6f5847a0ca1f2cb1bbef944124ce5995988a1D6B']) {
+      const config = { channelPk: usableKey, channelAddress };
+      expect(pushRailStatus(config)).toEqual({ usable: false, reason: 'channel-malformed' });
+      expect(await sendPush(config, payload)).toBe('not-requested');
+    }
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe('what the rail says about itself without sending (#2251)', () => {
+  it('names each reason it cannot issue a request', () => {
+    expect(pushRailStatus({})).toEqual({ usable: false, reason: 'signer-unset' });
+    expect(pushRailStatus({ channelPk: '' })).toEqual({ usable: false, reason: 'signer-unset' });
+    expect(pushRailStatus({ channelPk: 'not-a-private-key' })).toEqual({
+      usable: false,
+      reason: 'signer-malformed',
+    });
+    withoutAnySigner();
+    expect(pushRailStatus({ channelPk: usableKey })).toEqual({
+      usable: false,
+      reason: 'signer-unsupported',
+    });
+  });
+
+  it('carries no part of the key', () => {
+    const status = JSON.stringify(pushRailStatus({ channelPk: usableKey }));
+    expect(status).not.toContain(usableKey.slice(2, 18));
   });
 });

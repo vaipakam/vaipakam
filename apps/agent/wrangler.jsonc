@@ -363,7 +363,7 @@
   //                            and the erasure endpoints 503.
   //
   // NOT migrated (no ON-CHAIN signing-key secret here; PUSH_CHANNEL_PK
-  // IS an Ethereum key, see apps/agent/src/push.ts — Stage 3 architectural-
+  // IS an Ethereum key, see packages/push/src/index.ts — Stage 3 architectural-
   // rebalance moved KEEPER_PRIVATE_KEY + runDailyOracleSnapshot to
   // apps/keeper so the only Worker that holds an ON-CHAIN signing key is the
   // keeper; staging plan §2 least-privilege contract). The

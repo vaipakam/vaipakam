@@ -2509,6 +2509,17 @@ is the borrower's own money.
   would not show here — rather than implying the wallet is linked nowhere. It
   does not claim alerts still reach such a link either, since this browser cannot
   check it; it says the wallet may still be linked elsewhere.
+- Push delivery is offered only when the alert service says it can send Push
+  right now. The app asks before it shows the option, and the subscribe link
+  opens the channel the service actually posts as, never a channel named only
+  in the app's own build settings. When the service cannot send, the card says
+  Push can't be sent from this deployment and offers nothing; when the app
+  could not ask, it says that instead, and offers nothing either. Neither state
+  is shown as Push being on.
+- A Push opt-in is stored only where it can be honoured. If the service cannot
+  send when the opt-in is saved, the rest of the save stands, Push stays off,
+  and the card says why. An opt-in made earlier is kept through an outage and
+  resumes when sending is back; the card says so while sending is unavailable.
 
 ## Notifications
 

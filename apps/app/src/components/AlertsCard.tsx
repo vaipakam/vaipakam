@@ -16,8 +16,13 @@
  *  - Linked-state is an optimistic local record: the agent has no
  *    read-back endpoint, so "linked" mirrors what the user completed
  *    on this device; Unlink always works regardless.
+ *  - Push is offered only when the agent says its rail can send
+ *    (#2251), and the subscribe link opens the channel the agent posts
+ *    as. An unavailable rail, or one the card could not ask about, is
+ *    stated instead of offering an opt-in that would do nothing.
  */
 import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { BellRing } from 'lucide-react';
 import { useAccount, useSignMessage } from 'wagmi';
 import { useMode } from '../app/ModeContext';
@@ -31,7 +36,7 @@ import {
   bandsValid,
   issueTelegramLink,
   loadAlertPrefs,
-  pushChannelUrl,
+  fetchPushStatus,
   saveAlertPrefs,
   sendTestTelegramAlert,
   storeAlertPrefs,
@@ -68,7 +73,15 @@ export function AlertsCard() {
   }
 
   const configured = alertsConfigured();
-  const pushUrl = pushChannelUrl();
+  // #2251 — whether Push can be sent is the AGENT's answer, read before the
+  // opt-in is offered, and the channel the subscribe link opens is the one
+  // the agent posts as. Never inferred from a build-time address.
+  const pushStatus = useQuery({
+    queryKey: ['pushStatus'],
+    queryFn: fetchPushStatus,
+    enabled: configured,
+    staleTime: 60_000,
+  });
 
 
   /**
@@ -129,14 +142,25 @@ export function AlertsCard() {
       // carry that lane's state, so they are sent only when this save
       // is the user touching the toggle or the advanced numbers — any
       // other save omits them and the agent preserves what is stored.
-      await saveAlertPrefs(address, chainId, next, {
+      const push = await saveAlertPrefs(address, chainId, next, {
         dueDateChanged: opts?.dueDateChanged,
         bandsChanged: opts?.bandsChanged,
         signMessage: (message) => signMessageAsync({ message }),
       });
-      storeAlertPrefs(chainId, address, next);
-      setPrefs(next);
-      setNotice(copy.alerts.saved);
+      // #2251 — the agent stores a Push opt-in only where it can send. When
+      // THIS save was the one switching Push on and the agent refused it,
+      // Push stays off here too, and the card re-reads the rail's status.
+      // An opt-in made earlier is kept as it is: the agent keeps it stored.
+      const refusedEnable = push === 'unavailable' && !prefs.pushEnabled;
+      const saved = refusedEnable ? { ...next, pushEnabled: false } : next;
+      storeAlertPrefs(chainId, address, saved);
+      setPrefs(saved);
+      if (refusedEnable) {
+        void pushStatus.refetch();
+        setNotice(copy.alerts.pushNotSaved);
+      } else {
+        setNotice(copy.alerts.saved);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -413,10 +437,10 @@ export function AlertsCard() {
             />
           ) : null}
 
-          {pushUrl ? (
-            <div>
-              <h3 style={{ marginBottom: 4 }}>{copy.alerts.pushTitle}</h3>
-              <p className="muted" style={{ marginTop: 0 }}>{copy.alerts.pushBody}</p>
+          <div>
+            <h3 style={{ marginBottom: 4 }}>{copy.alerts.pushTitle}</h3>
+            <p className="muted" style={{ marginTop: 0 }}>{copy.alerts.pushBody}</p>
+            {pushStatus.data?.kind === 'available' ? (
               <div className="cluster">
                 {/* Delivery needs BOTH halves: the service-side flag
                     (push_channel, written here) AND the wallet-side
@@ -433,12 +457,31 @@ export function AlertsCard() {
                 ) : (
                   <span className="muted">{copy.alerts.pushEnabled}</span>
                 )}
-                <a className="btn btn-secondary" href={pushUrl} target="_blank" rel="noreferrer">
+                <a
+                  className="btn btn-secondary"
+                  href={pushStatus.data.channelUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   {copy.alerts.pushButton}
                 </a>
               </div>
-            </div>
-          ) : null}
+            ) : (
+              // Not offered unless the agent says the rail can send: an
+              // unavailable rail and one we could not ask about are both
+              // stated, never shown as an option that would do nothing.
+              <p className="muted" role="status" style={{ margin: 0 }}>
+                {pushStatus.data === undefined
+                  ? copy.alerts.pushChecking
+                  : pushStatus.data.kind === 'unavailable'
+                    ? copy.alerts.pushUnavailable
+                    : copy.alerts.pushUnknown}
+                {pushStatus.data !== undefined && prefs.pushEnabled
+                  ? ` ${copy.alerts.pushKeptNote}`
+                  : ''}
+              </p>
+            )}
+          </div>
 
           {notice ? <p className="muted" style={{ margin: 0 }}>{notice}</p> : null}
           {error ? (

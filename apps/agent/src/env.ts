@@ -80,6 +80,13 @@ export const WORKER_NAME = 'vaipakam-agent';
  *   - `PUSH_CHANNEL_PK`    — Push channel signer. Outbound
  *                            notifications from the crons. Secrets
  *                            Store binding (T-078).
+ *   - `PUSH_CHANNEL_ADDRESS` — the Push channel posted as (#1456).
+ *                            A plain `var`, not a secret. Unset, the
+ *                            channel is the signer's own address (the
+ *                            historical behaviour); set to another
+ *                            address, the signer posts as that
+ *                            channel's delegate, so rotating the key
+ *                            no longer moves the channel.
  *   - `ZEROEX_API_KEY` /
  *     `ONEINCH_API_KEY`    — server-side aggregator API keys for the
  *                            public `/quote/*` proxy endpoints.
@@ -95,7 +102,7 @@ export const WORKER_NAME = 'vaipakam-agent';
  *      `runDailyOracleSnapshot` in the Stage 3
  *      architectural-rebalance commit. Read that narrowly: this
  *      Worker is NOT key-free. `PUSH_CHANNEL_PK`, inventoried ~20
- *      lines above, is a real Ethereum private key (`push.ts:66`
+ *      lines above, is a real Ethereum private key (`packages/push`
  *      builds an ethers `Wallet` from it). The staging plan §2
  *      contract is about WHERE the on-chain transaction key sits,
  *      not about a privilege boundary.
@@ -148,6 +155,9 @@ interface BaseEnv {
   // Telegram (public bot handle — used to build the `t.me` deep
   // link; the bot TOKEN is the separate Secrets Store binding).
   TG_BOT_USERNAME?: string;
+  /** #1456 — the Push channel posted as; unset = the signer's own address.
+   *  Read by the shared rail in `packages/push`. */
+  PUSH_CHANNEL_ADDRESS?: string;
 
   // Cloudflare built-in rate-limit bindings — one per upstream
   // service so a noisy caller on /quote/0x can't drain the
@@ -468,6 +478,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     // refusing stub when the binding is absent (#2239).
     DB: resolveD1Binding(raw.DB, WORKER_NAME),
     TG_BOT_USERNAME: raw.TG_BOT_USERNAME,
+    PUSH_CHANNEL_ADDRESS: raw.PUSH_CHANNEL_ADDRESS,
     QUOTE_0X_RATELIMIT: raw.QUOTE_0X_RATELIMIT,
     QUOTE_1INCH_RATELIMIT: raw.QUOTE_1INCH_RATELIMIT,
     DIAG_RECORD_RATELIMIT: raw.DIAG_RECORD_RATELIMIT,

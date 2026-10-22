@@ -1,0 +1,25 @@
+{
+  "name": "@vaipakam/push",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "The Push Protocol notification rail, shared by the Workers that send Push (apps/agent, apps/keeper) so a correction lands once (#2248). Server-only: it builds an ethers signer from the channel key and calls the Push SDK, so the browser app never depends on it. Exposes sendPush (an accounting answer per send) and pushRailStatus (whether the rail can issue a request, answered without sending and without the key leaving the Worker, #2251). The channel posted as is configuration, not a property of the key (#1456).",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p . --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@pushprotocol/restapi": "^1.7.32",
+    "ethers": "^6.13.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.0",
+    "vitest": "^4.1.4"
+  }
+}
