@@ -643,6 +643,12 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertTrue(_landedBy(1, h), "stored: the early proof");
         assertFalse(_awaits(2, 1), "an unstamped day never waits");
 
+        // On an activated custody the delivery is an epoch, so the first claim
+        // opens the entry's legacy-slice domain over day 1 and pays nothing:
+        // that is progress the claim commits. The next claim before the stamp
+        // waits on the pre-existing finalization name, not on the gate's.
+        assertEq(_claim(), 0, "the first claim opens the slice's domain and pays nothing");
+        assertEq(vpfi.balanceOf(alice), 0, "nothing moved");
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(InteractionDayGlobalNotFinalized.selector, 1));
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
@@ -781,6 +787,10 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         _mut().setDailyLenderInterest(1, alice, 50e18, 100e18); // the window counter
         _legacyEntry(50e18, 1, 2); // and the legacy entry, same day
         bytes32 h = _liveOf(2 * h1, _one(1), 61, keccak256("gate-pre-dstar"));
+        // The legacy window half is live-paid: the claim weighs it against
+        // LIVE backing, which an activated custody's budget delivery never
+        // credits (it feeds its epoch). Live funding stands it in here.
+        _liveFunding(2 * h1);
         assertTrue(_gd(1).awaitsLender, "fixture: no D*, yet the unarmed day owes fresh and waits");
 
         uint256 snap = vm.snapshotState();
