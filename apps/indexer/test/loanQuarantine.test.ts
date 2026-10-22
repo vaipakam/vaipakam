@@ -823,6 +823,27 @@ describe('telling the operator about a row that stays', () => {
     warn.mockRestore();
   });
 
+  it('#2636 r5 — the review command quotes the id as a literal, so it can only ever match its own entry', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    for (const [move, id] of [["x' OR 1=1 --", 51], ['m-other', 52]] as const) {
+      h.db
+        .prepare(
+          `INSERT INTO loan_orphans (move_id, chain_id, diamond, loan_id, from_status, observed_block, withdrawn_at, row_json, related_json)
+           VALUES (?, ?, '0xd1a', ?, 'active', 700, ?, '{}', '{}')`,
+        )
+        .run(move, CHAIN, id, NOW);
+    }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    await reportStaleQuarantine(h.d1 as never, CHAIN, NOW + 3600, true);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    const cmd = /UPDATE loan_orphans SET reviewed_at = <unix seconds> WHERE move_id = '(?:[^']|'')*' AND reviewed_at IS NULL/.exec(said)?.[0];
+    expect(cmd).toBeDefined();
+    h.db.prepare(cmd!.replace('<unix seconds>', String(NOW + 7200))).run();
+    expect(h.db.prepare('SELECT loan_id FROM loan_orphans WHERE reviewed_at IS NULL').all()).toEqual([{ loan_id: 52 }]);
+    warn.mockRestore();
+  });
+
   it('names EVERY held id, not just the page it describes', async () => {
     // #2231 r5 `4035554496`. This report is now the only surface that
     // discloses a suppression, so a page that stopped at its limit left every

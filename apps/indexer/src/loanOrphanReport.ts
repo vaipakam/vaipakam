@@ -6,6 +6,14 @@
  * each other.
  */
 import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types';
+/** `value` as a SQLite string literal, quotes doubled (#2636 r5). The id is
+ *  the writer's UUID, and a restore refuses any other shape; this keeps a
+ *  printed command from being anything but a match on that one entry even
+ *  if a value of another shape ever reached the table. */
+function sqlStringLiteral(value: string): string {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
 /** How many unreviewed withdrawals the stale report describes one by one;
  *  the rest are counted. */
 export const UNREVIEWED_ORPHAN_REPORT_LIMIT = 20;
@@ -60,7 +68,7 @@ export function reportUnreviewedOrphans(
         `loan ${r.loan_id} (was ${r.from_status}; no loan at block ${r.observed_block} ` +
         `on Diamond ${r.diamond}; withdrawn ${Math.floor((nowSec - r.withdrawn_at) / 3600)}h ago; ` +
         `mark reviewed: UPDATE loan_orphans SET reviewed_at = <unix seconds> ` +
-        `WHERE move_id = '${r.move_id}' AND reviewed_at IS NULL)`,
+        `WHERE move_id = ${sqlStringLiteral(r.move_id)} AND reviewed_at IS NULL)`,
     )
     .join('; ');
   const more = n > rows.length ? `, and ${n - rows.length} more not listed` : '';

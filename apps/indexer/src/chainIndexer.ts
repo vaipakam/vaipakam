@@ -2373,17 +2373,24 @@ async function runChainPass(
       quietOutcome,
       Number(settledHead.timestamp),
     );
-    // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
-    // valid "notifications complete through lastBlock" point too — once any
-    // gap a failed insert left below it has been replayed (#2489 r3).
-    await stampNotifiedWatermark(env, chainId, lastBlock, null, false);
-    // #1349 M5 (loop closure) — every block up to `head` is ingested
-    // when `lastBlock >= head`, so the head's time is a true
-    // recorded-before moment, even when the head regressed below the cursor.
-    // A held tick (#2201) has no settled head at all, only a guess, so it
-    // stamps nothing: the moment is recorded from settled heads only.
-    if (!heldOnGuess && lastBlock >= head) {
-      await _stampIngestedBeforeTime(env, chainId, settledHead.timestamp);
+    // #2201 / #2636 r5 — A HELD TICK REFRESHES NO FRESHNESS SIGNAL. Both
+    // stamps below tell a reader "the records are current": the keeper reads
+    // a recently refreshed notified watermark beside an unchanged cursor as
+    // proof that D1 ownership is up to date, and the ingest time is a
+    // recorded-before moment. While the scan is held the chain moves on and
+    // the records do not, so neither may be refreshed; both stand where the
+    // last settled tick left them and age, which is what a reader must see.
+    if (!heldOnGuess) {
+      // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
+      // valid "notifications complete through lastBlock" point too — once any
+      // gap a failed insert left below it has been replayed (#2489 r3).
+      await stampNotifiedWatermark(env, chainId, lastBlock, null, false);
+      // #1349 M5 (loop closure) — every block up to `head` is ingested
+      // when `lastBlock >= head`, so the head's time is a true
+      // recorded-before moment, even when the head regressed below the cursor.
+      if (lastBlock >= head) {
+        await _stampIngestedBeforeTime(env, chainId, settledHead.timestamp);
+      }
     }
     // #2382 r6 — a caught-up tick heals too, or a backlog the scanning ticks
     // did not finish (or a soft-stopped heal) would wait for the next new

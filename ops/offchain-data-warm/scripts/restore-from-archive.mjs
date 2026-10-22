@@ -229,6 +229,23 @@ const TRUSTED_PRIMARY_KEYS = {
   loan_orphans: ['id'],
 };
 
+// Every OTHER uniqueness the schema declares on a born-off-chain table,
+// from the same migrations (#2636 r5). A duplicate fails its constraint
+// mid-batch exactly as a duplicate primary key does, so each set below is
+// checked the same way. Today only migration 0065 declares one.
+const TRUSTED_UNIQUE_KEYS = {
+  loan_orphans: [['move_id']],
+};
+
+// Per-column shapes the writer guarantees, checked before any SQL is
+// emitted (#2636 r5). `loan_orphans.move_id` is `crypto.randomUUID()`
+// (src/loanOrphans.ts), and the operator's review command quotes it, so a
+// value of any other shape is refused rather than restored.
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const TRUSTED_COLUMN_SHAPES = {
+  loan_orphans: { move_id: UUID_SHAPE },
+};
+
 // The archived legal-hold tables whose rows carry `legal_doc_ref`
 // (the R2 bucket key — `diagErasure.ts`: "the bucket key becomes the
 // hold's legal_doc_ref").
@@ -357,7 +374,14 @@ export function tableToSql(table) {
     .filter((c) => typeof c.pk === 'number' && c.pk > 0)
     .sort((a, b) => a.pk - b.pk)
     .map((c) => c.name);
-  const seenPks = new Set();
+  const uniqueSets = [...(pkCols.length > 0 ? [pkCols] : []), ...(TRUSTED_UNIQUE_KEYS[name] ?? [])];
+  for (const cols of uniqueSets) {
+    if (cols.some((c) => !columns.includes(c))) {
+      fail(`table ${name}: archived schema lacks unique column(s) ${cols.filter((c) => !columns.includes(c)).join(', ')} — cannot verify uniqueness`);
+    }
+  }
+  const seenKeys = uniqueSets.map(() => new Set());
+  const shapes = TRUSTED_COLUMN_SHAPES[name] ?? {};
   for (const [i, row] of rows.entries()) {
     const keys = Object.keys(row);
     // Strict shape check: a row keyed differently from the schema is
@@ -365,16 +389,21 @@ export function tableToSql(table) {
     if (keys.length !== columns.length || keys.some((k) => !columns.includes(k))) {
       fail(`table ${name} row ${i}: row keys [${keys}] do not match schema columns [${columns}]`);
     }
-    if (pkCols.length > 0) {
-      const pkKey = JSON.stringify(pkCols.map((c) => row[c]));
-      if (seenPks.has(pkKey)) {
+    for (const [k, cols] of uniqueSets.entries()) {
+      const key = JSON.stringify(cols.map((c) => row[c]));
+      if (seenKeys[k].has(key)) {
         fail(
-          `table ${name} row ${i}: duplicate primary key (${pkCols.join(', ')}) = ${pkKey} — ` +
+          `table ${name} row ${i}: duplicate ${cols === pkCols ? 'primary key' : 'unique key'} (${cols.join(', ')}) = ${key} — ` +
             `a SELECT cannot produce duplicate keys, so the archive was tampered with; ` +
             `importing would fail the UNIQUE constraint mid-batch and leave a partial restore`,
         );
       }
-      seenPks.add(pkKey);
+      seenKeys[k].add(key);
+    }
+    for (const [col, shape] of Object.entries(shapes)) {
+      if (typeof row[col] !== 'string' || !shape.test(row[col])) {
+        fail(`table ${name} row ${i}: column ${col} is not the shape the writer produces — refusing to restore it`);
+      }
     }
     const values = columns.map((c) => sqlLiteral(row[c], `table ${name} row ${i} column ${c}`));
     lines.push(`INSERT INTO "${name}" (${colList}) VALUES (${values.join(', ')});`);

@@ -94,6 +94,10 @@ describe('a pass with no settled head holds the scan (#2201)', () => {
       .run(BASE, bundle.diamond, bundle.deployBlock, 1_000);
     const cursor = bundle.deployBlock + 5;
     h.db.prepare('INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, ?, ?, ?)').run(BASE, 'diamond', cursor, 1);
+    // The keeper's freshness signal, as the last settled tick left it.
+    for (const kind of ['notified', 'notified-written']) {
+      h.db.prepare('INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, ?, ?, ?)').run(BASE, kind, cursor, 1);
+    }
 
     // A stub loan the heal would otherwise read at the unsettled tip.
     h.db
@@ -139,6 +143,16 @@ describe('a pass with no settled head holds the scan (#2201)', () => {
     expect(
       h.db.prepare(`SELECT count(*) AS n FROM indexer_cursor WHERE chain_id = ? AND kind = 'ingested_before_time'`).get(BASE),
     ).toEqual({ n: 0 });
+    // #2636 r5 — nor is the notified watermark refreshed: a held tick claims
+    // no freshness, so the keeper sees it age.
+    expect(
+      h.db
+        .prepare(`SELECT kind, last_block, updated_at FROM indexer_cursor WHERE chain_id = ? AND kind LIKE 'notified%' ORDER BY kind`)
+        .all(BASE),
+    ).toEqual([
+      { kind: 'notified', last_block: cursor, updated_at: 1 },
+      { kind: 'notified-written', last_block: cursor, updated_at: 1 },
+    ]);
     expect(warn.mock.calls.some((c) => String(c[0]).includes('holding the scan'))).toBe(true);
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
