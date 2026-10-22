@@ -49,6 +49,10 @@
 # own, consumed by the apps via workspace `:` protocol:
 #   - packages/contracts  ABI JSONs + deployments + ChainConfig
 #   - packages/lib        shared utilities (formatters, multicall, ...)
+#   - packages/push       the Push Protocol notification rail, shared by
+#                         the Workers that send Push (apps/agent, and
+#                         apps/keeper once it moves over, #2248). Server-
+#                         only: the browser app never depends on it.
 #   - packages/anvil-harness  TEST-ONLY: the local Anvil node + deploy-
 #                         from-source fixture the app's Playwright tier and
 #                         the keeper's Anvil scenarios share (#2496). A

@@ -69,13 +69,78 @@ export function alertsConfigured(): boolean {
   return agentOrigin() !== null;
 }
 
-/** Push Protocol channel — deep-link only (subscription happens on
- *  app.push.org, signed by the user's wallet there). Null when unset
- *  or not address-shaped. */
-export function pushChannelUrl(): string | null {
-  const addr = import.meta.env.VITE_PUSH_CHANNEL_ADDRESS as string | undefined;
-  if (!addr || !/^0x[a-fA-F0-9]{40}$/.test(addr)) return null;
-  return `https://app.push.org/channels/${addr}`;
+/**
+ * What this deployment can do on the Push rail, as the agent reports it
+ * (#2251).
+ *
+ * The app used to offer Push on its own build-time channel address alone, so a
+ * deployment whose signer was unset or malformed said "Push delivery is on"
+ * and sent nothing. The agent answers from the same rail it sends with, and
+ * names the channel it posts as, which is also the channel the subscribe link
+ * must open — so the link can no longer point at a channel the platform does
+ * not post to.
+ *
+ * - `available` — the rail can issue a request, as `channel`. It does not
+ *   promise Push accepts every send; that is only known per send.
+ * - `unavailable` — this deployment cannot send Push at all.
+ * - `unknown` — the agent could not be asked (unreachable, or an agent that
+ *   predates the endpoint). Never read as either of the others.
+ *
+ * `scope` is WHOSE rail the answer covers, kept rather than dropped (Codex
+ * #2665 r1). Today it is always `agent`: the agent sends the payment
+ * reminders, while the keeper sends the risky-loan warnings from its own key
+ * on its own machine, and the agent cannot see that configuration. So an
+ * `available` answer is not a promise for every alert, and the card says
+ * which alerts it covers. `service` is reserved for a combined answer that
+ * covers both senders; the card drops the caveat only for that.
+ */
+export type PushStatusScope = 'agent' | 'service';
+
+export type PushRailState =
+  | { kind: 'available'; channel: `0x${string}`; channelUrl: string; scope: PushStatusScope }
+  | { kind: 'unavailable'; scope: PushStatusScope }
+  | { kind: 'unknown' };
+
+export async function fetchPushStatus(): Promise<PushRailState> {
+  const origin = agentOrigin();
+  if (!origin) return { kind: 'unknown' };
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${origin}/push/status`, { signal: ctrl.signal });
+    if (!res.ok) return { kind: 'unknown' };
+    const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    return parsePushStatus(data);
+  } catch {
+    return { kind: 'unknown' };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/** The agent's `GET /push/status` body, read strictly: anything that is not
+ *  one of the two documented shapes is `unknown`, never a guess. */
+export function parsePushStatus(data: Record<string, unknown> | null): PushRailState {
+  if (!data) return { kind: 'unknown' };
+  // An answer that does not say whose rail it covers cannot be scoped, so
+  // it is not used at all.
+  const scope = data.scope;
+  if (scope !== 'agent' && scope !== 'service') return { kind: 'unknown' };
+  if (data.available === false) return { kind: 'unavailable', scope };
+  if (
+    data.available === true &&
+    typeof data.channel === 'string' &&
+    /^0x[a-fA-F0-9]{40}$/.test(data.channel)
+  ) {
+    const channel = data.channel as `0x${string}`;
+    return {
+      kind: 'available',
+      channel,
+      channelUrl: `https://app.push.org/channels/${channel}`,
+      scope,
+    };
+  }
+  return { kind: 'unknown' };
 }
 
 /** The bands behind the plain-words "risky loan" toggle. */
@@ -272,12 +337,19 @@ export interface SaveAlertPrefsOptions {
  *  pre-notify opt-out (only when just changed), and (when enabling)
  *  the Push flag. No aspirational fields: sending flags the parser
  *  drops would let the UI imply storage that never happens. */
+/** What the agent did with a Push opt-in the save carried (#2251).
+ *  `stored` — written, or already stored and kept (`kept` on the wire), and
+ *  for an agent that predates the answer, since storing it was what those
+ *  agents did; `unavailable` — refused: Push is NOT stored for this wallet,
+ *  and the save was repeated without it so the rest of it landed. */
+export type PushSaveOutcome = 'not-requested' | 'stored' | 'unavailable';
+
 export async function saveAlertPrefs(
   wallet: `0x${string}`,
   chainId: number,
   prefs: AlertPrefs,
   opts: SaveAlertPrefsOptions = {},
-): Promise<void> {
+): Promise<PushSaveOutcome> {
   // Bands travel ONLY when this save is the user changing the risky
   // lane (#2000) — mirroring the due-date field's omission rule. Sent
   // unconditionally, a fresh device's DEFAULT lane state (defaults on,
@@ -304,7 +376,7 @@ export async function saveAlertPrefs(
   const laneBands: AlertBands = prefs.risky
     ? { warnHf: prefs.warnHf, alertHf: prefs.alertHf, criticalHf: prefs.criticalHf }
     : FLOOR_BANDS;
-  const body = (withBands: boolean) => ({
+  const body = (withBands: boolean, withPush = true) => ({
     wallet,
     chain_id: chainId,
     ...(withBands
@@ -319,9 +391,19 @@ export async function saveAlertPrefs(
       : {}),
     ...(optOutProof ?? {}),
     // One-way by backend design (COALESCE): only sent when enabling.
-    ...(prefs.pushEnabled ? { push_channel: 'subscribed' } : {}),
+    ...(withPush && prefs.pushEnabled ? { push_channel: 'subscribed' } : {}),
   });
   let res = await post('/thresholds', body(sendBands));
+  // #2251 (Codex #2665 r1) — the agent refuses a NEW Push opt-in it cannot
+  // honour by refusing the WHOLE save with a 409, so that an app bundle
+  // from before this change reads it as a failure rather than as "Push is
+  // on". This client knows the answer: Push is not stored, and the same
+  // save is sent again without the opt-in so everything else in it lands.
+  let pushRefused = false;
+  if (res.status === 409 && res.data?.error === 'push-unavailable') {
+    pushRefused = true;
+    res = await post('/thresholds', body(sendBands, false));
+  }
   // Rollout shim (#2005 round 1 P2): the app and the agent deploy
   // independently, and an app deployed FIRST sends bandless saves to
   // a parser that still requires all three — every due-date or push
@@ -336,7 +418,7 @@ export async function saveAlertPrefs(
   // in the release note.
   if (!res.ok && res.status === 400 && !sendBands) {
     if (res.data?.error === 'invalid-payload') {
-      res = await post('/thresholds', body(true));
+      res = await post('/thresholds', body(true, !pushRefused));
     }
   }
   if (!res.ok) {
@@ -350,6 +432,9 @@ export async function saveAlertPrefs(
     }
     throw new Error(`saving alert settings failed (${res.status})`);
   }
+  if (pushRefused) return 'unavailable';
+  if (!prefs.pushEnabled) return 'not-requested';
+  return 'stored';
 }
 
 export interface TelegramLink {

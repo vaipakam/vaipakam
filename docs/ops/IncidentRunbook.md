@@ -795,7 +795,12 @@ identity), so rotation is time-sensitive.
   file (`/etc/vaipakam/keeper.env`, [`KeeperMachine.md`](KeeperMachine.md)
   §4). Both sign as this channel, so both are sources to search and both
   must be rotated.
-- **Frontend env:** `VITE_PUSH_CHANNEL_ADDRESS`
+- **Channel setting:** `PUSH_CHANNEL_ADDRESS` (plain var on the agent,
+  #1456). Unset, the agent posts as its signer's own address. The keeper
+  honours it only once it moves onto the shared rail (`packages/push`,
+  #2248); until then it posts as its key's own address.
+- **Frontend:** nothing to set since #2251. The Alerts card links to the
+  channel the agent reports from `GET /push/status`.
 
 ### Symptom
 - Subscribers report Vaipakam notifications they did not opt into,
@@ -931,7 +936,19 @@ No subscriber action required — the bot's @-handle stays
 
 ### Execute — Push channel signer rotation
 
-**Read this first: there is no signer rotation, and there is no ownership
+**Since #1456 there is ONE signer-swap path, and it has preconditions.**
+The agent posts as the channel named by `PUSH_CHANNEL_ADDRESS`, so a new key
+can post as a DELEGATE of the existing channel: the channel owner calls
+`PushCommV2.addDelegate(<new signer>)` (and `removeDelegate` for the old one),
+you write the new key over `PUSH_CHANNEL_PK`, and subscribers keep receiving.
+That works only if (a) `PUSH_CHANNEL_ADDRESS` is set to the channel, and (b)
+the channel OWNER key is not the compromised one — a compromised owner can add
+delegates too. It is why the owner key should be held cold and the Workers
+should sign as a delegate. The keeper follows this path only after it moves
+onto the shared rail (#2248); until then its key still IS its channel, and the
+migration below applies to it. If either precondition fails, read on.
+
+**Otherwise: there is no signer rotation, and there is no ownership
 transfer.** Both Workers derive the channel identity from the signing key
 (`channelCaip = eip155:1:<wallet(PUSH_CHANNEL_PK).address>`), so changing the
 key changes *which channel the platform posts as*. And Push does not
@@ -987,35 +1004,18 @@ the keeper's machine. Verify there rather than assuming success.
    sudo -e /etc/vaipakam/keeper.env
    sudo systemctl try-restart vaipakam-keeper
    ```
-4. **Point the app at the new channel.** Set `VITE_PUSH_CHANNEL_ADDRESS` to
-   the new EOA and redeploy `apps/app`. Leaving it on the old address sends
-   every user who opens the Alerts page to subscribe to a channel the
-   platform no longer posts to — and that subscribe succeeds, so nothing
-   signals the mistake.
+4. **Point the agent at the new channel.** Set the agent's
+   `PUSH_CHANNEL_ADDRESS` var to the new channel (or clear it, when the new
+   key IS the new channel's owner). No app redeploy is needed since #2251:
+   the Alerts card links to whatever channel the agent reports from
+   `GET /push/status`, so the link moves with the agent. Confirm it: open
+   `/settings` and check that "Open the Push channel" points at the new
+   channel. A link still on the old address means the agent's var is stale,
+   and it sends every user to subscribe to a channel the platform no longer
+   posts to — a subscribe that succeeds, so nothing signals the mistake.
 
-   This is a BUILD-time value, so it has to be present when the bundle is
-   built — a shell comment does nothing. `apps/app` reads its build env
-   from `apps/app/.env.local` (gitignored, operator-held); the deploy runs
-   locally, so Vite loads that file itself. There is no `.env.production`:
-   the retired connected app needed one because Cloudflare Workers Builds
-   pulled from git and could not see a gitignored file, and `apps/app` is
-   built and pushed by the operator instead. Set the key, then deploy:
-
-   ```bash
-   # Add (or update) in apps/app/.env.local:
-   #   VITE_PUSH_CHANNEL_ADDRESS=<new EOA address>
-   pnpm --filter @vaipakam/app run deploy
-   ```
-
-   (`run` is required: bare `pnpm --filter <pkg> deploy` is pnpm's
-   builtin portable-package command, not the package's script — #1478.)
-
-   `deploy` builds as part of its own pipeline, so a separate `build` is
-   redundant. Confirm afterwards that `/settings` renders the subscribe
-   link — the alerts card mounts there, NOT on an `/alerts` route, which
-   the successor app does not define — the page treats an unset value as "no channel" and hides the link
-   entirely, which looks like a deliberate design rather than a broken
-   deploy.
+   (Before #2251 this step set `VITE_PUSH_CHANNEL_ADDRESS` and redeployed
+   the app. That variable is no longer read.)
 5. Update the **Vaipakam Push channel reference** block at the top of this
    section, so the next incident does not cross-reference a dead channel.
 6. Verify on both consumers that a send actually SUCCEEDS: `wrangler tail`
