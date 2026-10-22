@@ -287,9 +287,6 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///         rentals would not stay true until the cuts land.
     error PerRentalRowsCrossingNeedsManualPause(address diamond);
 
-    /// @dev Page size for the open-loan walk in {_requireNoOpenErc1155RentalAcross902}.
-    uint256 private constant OPEN_LOAN_PAGE = 200;
-
     /// @dev #902 - a pre-#902 vault records an ERC-1155 rental under its renter,
     ///      not its loan (`rentalId` 0). Once this refresh routes the per-rental
     ///      writes, such a row is never found by its loan: the rental's next
@@ -300,6 +297,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///      cross by fresh deploy. A Diamond that already routes
     ///      `vaultSetRentalUser` is past the boundary and is not walked. Called
     ///      before any facet is deployed, so a refused run sends nothing.
+    ///
+    ///      The walk reads EVERY loan id up to the id high-water mark
+    ///      (`getGlobalCounts`), not the metrics active list: the lifecycle
+    ///      library documents active loans absent from that list (loans that
+    ///      predate the counter layer or its backfill), and a rental among them
+    ///      would carry a renter-keyed row across unseen. Each loan record is
+    ///      read directly, so the answer rests on the loans themselves rather
+    ///      than on an index of them. A loan whose rental is still open is one
+    ///      not yet closed: `Active`, or `FallbackPending`, which has not reached
+    ///      a terminal path either.
     ///
     ///      The walk is a read taken before the run's own pause, so on its own
     ///      it would not hold: an accept landing between the walk and that
@@ -317,18 +324,20 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
         (bool manual,,,) = LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
         if (!manual) revert PerRentalRowsCrossingNeedsManualPause(diamond);
-        for (uint256 offset;; offset += OPEN_LOAN_PAGE) {
-            uint256[] memory ids = MetricsFacet(diamond).getActiveLoansPaginated(offset, OPEN_LOAN_PAGE);
-            for (uint256 i; i < ids.length; ++i) {
-                if (_isErc1155Loan(diamond, ids[i])) revert OpenErc1155RentalAcrossPerRentalRows(diamond, ids[i]);
+        (uint256 highestLoanId,) = MetricsFacet(diamond).getGlobalCounts();
+        for (uint256 loanId = 1; loanId <= highestLoanId; ++loanId) {
+            if (_isOpenErc1155Rental(diamond, loanId)) {
+                revert OpenErc1155RentalAcrossPerRentalRows(diamond, loanId);
             }
-            if (ids.length < OPEN_LOAN_PAGE) return;
         }
     }
 
     /// @dev Kept in its own frame: the full loan record is decoded here only.
-    function _isErc1155Loan(address diamond, uint256 loanId) private view returns (bool) {
-        return LoanFacet(diamond).getLoanDetails(loanId).assetType == LibVaipakam.AssetType.ERC1155;
+    ///      A never-written id reads as a zeroed record (ERC-20), so it passes.
+    function _isOpenErc1155Rental(address diamond, uint256 loanId) private view returns (bool) {
+        LibVaipakam.Loan memory loan = LoanFacet(diamond).getLoanDetails(loanId);
+        return loan.assetType == LibVaipakam.AssetType.ERC1155
+            && (loan.status == LibVaipakam.LoanStatus.Active || loan.status == LibVaipakam.LoanStatus.FallbackPending);
     }
 
     function refresh() external {

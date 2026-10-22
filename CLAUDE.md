@@ -220,7 +220,8 @@ runs half of it on old code:
   window. A pre-#902 vault keys an ERC-1155 rental by renter, which the
   per-rental writes never find, so both in-place refreshes
   (`RefreshAllFacetsInPlace`, `RefreshChangedFacetsInPlace`) refuse to cross
-  the boundary while any ERC-1155 loan is open
+  the boundary while any ERC-1155 loan is open — read from every loan id,
+  not the metrics active list, which can miss a live legacy loan
   (`OpenErc1155RentalAcrossPerRentalRows`); close those rentals first, or
   fresh-deploy. That check is taken before the run's own pause, so it holds
   only if no accept can land after it: the crossing runs only under the
