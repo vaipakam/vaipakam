@@ -356,7 +356,7 @@ then deploy.
    >   machine, whose sanctions-hold pass posts operator alerts with it
    >   (#2450): replace the `TG_OPS_BOT_TOKEN=` line in
    >   `/etc/vaipakam/keeper.env` (`sudo -e`, never pasting the value
-   >   elsewhere), then `sudo systemctl restart vaipakam-keeper` and check a
+   >   elsewhere), then `sudo systemctl try-restart vaipakam-keeper` and check a
    >   tick logs no `ops alert … failed`. A surviving machine otherwise keeps
    >   the revoked token and every operator alert fails. `TG_OPS_CHAT_ID`
    >   is not a credential and needs no rotation.
@@ -1858,9 +1858,10 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
 
    Count a tick as good only if its `[keeper] chains resolved: …` line names
    exactly the chains served, no pass logged an error, and there is no `tick
-   declined`, skipped-minute or `not launched … still in flight` line. The
-   first tick logs `runner "host:…" acquired the one-runner lease`; a `holds
-   the one-runner lease` decline means another runner is live — stop and find
+   declined`, skipped-minute or `not launched … still in flight` line. A
+   tick that takes the lease logs `runner "host:…" acquired the one-runner
+   lease`; one that renews its own lease prints nothing about it (KeeperMachine
+   §6, "Apply an env-file change"). A `holds the one-runner lease` decline means another runner is live — stop and find
    it before anything else. Cover a full 15-minute cycle (`preGraceWatcher`)
    and the 00:00–00:09 UTC window (`dailyOracleSnapshot`); neither checks
    `KEEPER_ENABLED`, so both run disarmed — and the snapshot SIGNS, from the
@@ -1871,7 +1872,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
 
    **E. Arm — the earliest safe point, and only with the owner's OK** —
    `KeeperMachine.md` §5 steps 2–3. Set `KEEPER_ENABLED=true` in the env
-   file, `sudo systemctl restart vaipakam-keeper`, and cover at least one
+   file, `sudo systemctl try-restart vaipakam-keeper`, and cover at least one
    full 5-minute cycle of the gated passes. Then the per-pass flags that were
    on per the offline record, ONE AT A TIME, each validated on its own
    cadence. Rollback at any point: `KEEPER_ENABLED=false` and restart, or
@@ -1974,7 +1975,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
 
    ```bash
    sudo -e /etc/vaipakam/keeper.env        # fix the named line; never paste the value elsewhere
-   sudo systemctl restart vaipakam-keeper  # the tick in flight finishes first
+   sudo systemctl try-restart vaipakam-keeper  # the tick in flight finishes first
    ```
 
    Then watch another tick. There is no `wrangler secret put` and no

@@ -12,9 +12,21 @@ section, the reward remittance coverage rule (all destinations covered at the
 source, which still does not prove the mirrors were funded) together with its
 reconcile-every-day rule, and the governance ceremony's handling of the master
 and reward flags. Evidence now comes from the machine's journal instead of the
-Worker log, a setting change is an edit to the machine's env file followed by
-a service restart, and the keeper machine runbook is the one place that says
-how to start, stop and arm the keeper.
+Worker log, a setting change is an edit to the machine's env file applied by one
+procedure in the keeper machine runbook, and that runbook is the one place
+that says how to start, stop and arm the keeper. That procedure restarts the
+keeper only if it is already running, so a keeper someone stopped during an
+incident stays stopped. It confirms the change from a tick that began after
+the restart, because the lease line the runbooks used to cite is printed only
+when the lease changes hands.
+
+The flash-loan rollout no longer tells operators to set the keeper's
+discount-path flag while the keeper ignores it. A line set early would switch
+the branch on by itself at the restart after the fix lands, with nobody
+watching. The staging plan's smoke-test and arming steps no longer stop or
+restart the one keeper machine, which also serves the live testnets. The
+watcher smoke test now raises a threshold above a loan's health factor, the
+direction that sends an alert.
 
 The cron-slot inventory no longer holds a trigger in reserve for the keeper
 Worker, because that Worker will not be scheduled again. The inventory itself

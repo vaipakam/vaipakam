@@ -1478,8 +1478,9 @@ step 5 item.**
 > **Where these flags live.** The keeper runs on the always-on machine
 > ([`KeeperMachine.md`](KeeperMachine.md)), not as a Worker, so the flags
 > below are lines in `/etc/vaipakam/keeper.env`, which the keeper reads only
-> when it starts: set them there, then `sudo systemctl restart
-> vaipakam-keeper`. The confirming cycle is read from `journalctl -u
+> when it starts: set them there, then `sudo systemctl try-restart
+> vaipakam-keeper` (KeeperMachine §6, "Apply an env-file change", which
+> leaves a stopped keeper stopped and says how to confirm the change took). The confirming cycle is read from `journalctl -u
 > vaipakam-keeper`. How to start, stop and arm the keeper is KeeperMachine §5
 > and §6, and this step does not restate it.
 >

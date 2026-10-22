@@ -259,15 +259,18 @@ journalctl -u vaipakam-keeper -f
    - no `tick declined` line, no skipped-minute line, and no `not launched …
      its previous run is still in flight` line. A pass whose previous run is
      still going is not started again, but every other due pass still runs
-     that minute, so a slow pass cannot hold back the liquidator. The first tick logs
-     `runner "host:…" acquired the one-runner lease`; a `holds the one-runner
-     lease` decline means another runner is live, so stop and find it.
+     that minute, so a slow pass cannot hold back the liquidator. A tick
+     that takes the lease logs `runner "host:…" acquired the one-runner
+     lease`. A restart within the lease's 10 minutes renews it without that
+     line, so its `chains resolved` line is the evidence (§6, "Apply an
+     env-file change"). A `holds the one-runner lease` decline means another
+     runner is live, so stop and find it.
 
    Cover a full 15-minute cycle (`preGraceWatcher`) and the 00:00–00:09 UTC
    window (`dailyOracleSnapshot`). Neither checks `KEEPER_ENABLED`, so both
    run while the keeper is disarmed.
-2. **Arm** only with the owner's OK: set `KEEPER_ENABLED=true`, then
-   `sudo systemctl restart vaipakam-keeper`. Cover at least one full 5-minute
+2. **Arm** only with the owner's OK: set `KEEPER_ENABLED=true` and apply
+   it (§6, "Apply an env-file change"). Cover at least one full 5-minute
    cycle. A pass's `done in Nms` line does not prove it acted: a pass that is
    not armed returns at once, and its log line names the flag that held it.
 3. **Per-pass flags** are each the owner's decision: `GRACE_DEFAULT_ENABLED`
@@ -289,12 +292,31 @@ journalctl -u vaipakam-keeper -f
    and Base's broadcast fees from the keeper key, so check that key's gas on
    every reward chain before arming it.
 
-Rollback at any point: set `KEEPER_ENABLED=false` and restart, or stop the
-service (§6). The Worker side needs no change, because its schedule stayed
+Rollback at any point: set `KEEPER_ENABLED=false` and apply it (§6), or stop
+the service (§6). The Worker side needs no change, because its schedule stayed
 empty.
 
 ## 6. Stop, roll back, move hosts
 
+- **Apply an env-file change.** The keeper reads `/etc/vaipakam/keeper.env`
+  only when it starts. Every runbook that changes a setting there uses these
+  two steps:
+  1. Edit the file (`sudo -e /etc/vaipakam/keeper.env`). Never paste a
+     value from it anywhere.
+  2. Run `sudo systemctl try-restart vaipakam-keeper`. `try-restart`
+     restarts the keeper only if it is running. A keeper someone stopped on
+     purpose stays stopped, and reads the new file when it is next started.
+     Plain `restart` would start it again. The restart waits for the tick
+     in flight to finish.
+
+  To confirm the change took, look for a tick that began after the restart:
+  `journalctl -u vaipakam-keeper --since "$(systemctl show -p
+  ActiveEnterTimestamp --value vaipakam-keeper)"` must show a `[keeper]
+  chains resolved: …` line, and no `tick declined` line. A tick prints that
+  line only once it holds the one-runner lease. Do not wait for the
+  `acquired the one-runner lease` line. It appears only when the lease
+  changes hands, and a restart within the lease's 10 minutes renews it under
+  the same runner without printing it.
 - **Stop:** `sudo systemctl stop vaipakam-keeper`. The tick in flight finishes
   first and the process exits. There is deliberately no stop timeout: systemd
   never kills a keeper that is mid-pass, because a kill can cut a pass off

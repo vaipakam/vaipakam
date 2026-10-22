@@ -16,8 +16,10 @@ All commands run from `contracts/` unless noted otherwise.
 > the Worker's `scheduled` handler declines every invocation. So every keeper
 > setting this runbook names is a line in the machine's env file,
 > `/etc/vaipakam/keeper.env`, which the keeper reads only when it starts: a
-> change takes effect after `sudo systemctl restart vaipakam-keeper`, not on
-> the next tick of a process that is already running. Its log is
+> change takes effect after `sudo systemctl try-restart vaipakam-keeper`, not on
+> the next tick of a process that is already running. `try-restart` leaves a
+> keeper that was stopped on purpose stopped; how to confirm the change took
+> is [`KeeperMachine.md`](KeeperMachine.md) §6, "Apply an env-file change". Its log is
 > `journalctl -u vaipakam-keeper`. How to start, stop and arm the keeper is
 > stated in one place, [`KeeperMachine.md`](KeeperMachine.md) §5 ("Start
 > disarmed, validate, then arm") and §6 ("Stop, roll back, move hosts"); this
@@ -244,24 +246,31 @@ fire:
 
 The second is the bot's belt-and-suspenders: even if governance
 flipped the on-chain flag prematurely, the bot still won't try
-the discount path until you tell it to. Set it on the machine, in
-`/etc/vaipakam/keeper.env` (`sudo -e /etc/vaipakam/keeper.env`),
-as the line `DISCOUNT_PATH_ENABLED_8453=true`, then restart the
-keeper with `sudo systemctl restart vaipakam-keeper`. The keeper
-reads the env file only when it starts, and the restart waits for
-the tick in flight to finish ([`KeeperMachine.md`](KeeperMachine.md)
-§6). Never paste a value from that file anywhere.
+the discount path until you tell it to.
 
 > **⚠ Known gap (#2633): the keeper does not read this setting
-> today.** The pass looks the flag up on the keeper's resolved
-> settings, and `resolveEnv` in `apps/keeper/src/env.ts` copies a
-> fixed list of names into those settings. `DISCOUNT_PATH_ENABLED_<chainId>`
-> is not on that list, so the lookup finds nothing on either host and
-> the flash-loan branch stays off whatever the env file says. That is
-> the safe direction, but it means setting the line above changes
-> nothing until the code carries the flag through. Do not read the
-> absence of `submitted-flashloan` lines in §6 as an unprofitable
-> market until it does.
+> today, so do not set it yet.** The pass looks the flag up on the
+> keeper's resolved settings, and `resolveEnv` in
+> `apps/keeper/src/env.ts` copies a fixed list of names into those
+> settings. `DISCOUNT_PATH_ENABLED_<chainId>` is not on that list, so
+> the lookup finds nothing on either host and the flash-loan branch
+> stays off whatever the env file says. That is the safe direction.
+>
+> **Leave the line out of the env file until the #2633 fix is
+> deployed on the machine.** A line set now would do nothing today and
+> then switch the branch on by itself at the first restart after the
+> fix lands. The machine deploys `main` and restarts the keeper on its
+> own, so that could happen with nobody watching the §6 checks. Once
+> the fix is deployed, set the line as below and do §6 straight away.
+> Until then, do not read the absence of `submitted-flashloan` lines
+> in §6 as an unprofitable market.
+
+Once #2633's fix is on the machine, set it in
+`/etc/vaipakam/keeper.env` as the line
+`DISCOUNT_PATH_ENABLED_8453=true` and apply it by
+[`KeeperMachine.md`](KeeperMachine.md) §6, "Apply an env-file
+change" (`sudo systemctl try-restart vaipakam-keeper`, then a tick
+that began after the restart). Then do §6 below at once.
 
 **Why a separate keeper-side flag rather than reading the
 on-chain flag every tick**: cost. An on-chain read every tick ×
@@ -373,7 +382,7 @@ submits txs that the diamond rejects.
 
 Snap it off on the machine: remove the `DISCOUNT_PATH_ENABLED_8453`
 line from `/etc/vaipakam/keeper.env` (or leave it empty) and run
-`sudo systemctl restart vaipakam-keeper`. The restart waits for the
+`sudo systemctl try-restart vaipakam-keeper`. The restart waits for the
 tick in flight, so it takes as long as that tick does, not a fixed
 30 seconds.
 
@@ -446,7 +455,7 @@ order of preference (least to most disruptive):
 1. **Remove the keeper-side env flag** — a local edit on the
    machine, no deploy, no governance: delete the
    `DISCOUNT_PATH_ENABLED_8453` line from `/etc/vaipakam/keeper.env`
-   (or leave it empty), then `sudo systemctl restart vaipakam-keeper`.
+   (or leave it empty), then `sudo systemctl try-restart vaipakam-keeper`.
    From the first tick after the restart the discount branch skips,
    and legacy partial/split/atomic still runs while the keeper is
    armed. The restart waits for the tick in flight

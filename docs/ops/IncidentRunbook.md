@@ -328,7 +328,7 @@ the owner's decision and follows [`KeeperMachine.md`](KeeperMachine.md) §5 step
 # Only if the keeper as a whole is meant to be armed, and only having
 # checked what else that restarts (KeeperMachine.md §5 step 2):
 #   KEEPER_ENABLED=true
-sudo systemctl restart vaipakam-keeper
+sudo systemctl try-restart vaipakam-keeper
 ```
 
 Optional tuning vars: `REWARD_REMIT_LOOKBACK_DAYS` (default 45) and
@@ -346,7 +346,7 @@ running) or `KEEPER_ENABLED=false` (stops the seven GATED passes — **not**
 `runDailyOracleSnapshot`, which signs on `KEEPER_PRIVATE_KEY` alone and
 keeps broadcasting; owner decision 2026-08-03 leaves it that way, see
 #1466). Either is an edit to `/etc/vaipakam/keeper.env` followed by `sudo
-systemctl restart vaipakam-keeper`; to stop every pass, the snapshot
+systemctl try-restart vaipakam-keeper`; to stop every pass, the snapshot
 included, stop the service instead ([`KeeperMachine.md`](KeeperMachine.md)
 §6).
 
@@ -361,7 +361,7 @@ rest of the keeper keeps running:
 
 ```bash
 # In /etc/vaipakam/keeper.env:  GRACE_DEFAULT_ENABLED=false
-sudo systemctl restart vaipakam-keeper
+sudo systemctl try-restart vaipakam-keeper
 ```
 
 `triggerDefault` is permissionless, so stopping the pass stops only this
@@ -498,11 +498,15 @@ running.
 > **all five** hold. Shorter versions of this list have been wrong three
 > times, each by letting a tick that did not do the work look like coverage:
 >   1. The keeper is running on exactly one machine and holds the lease:
->      `systemctl is-active vaipakam-keeper` prints `active`, the journal
->      shows the first tick's `runner "host:…" acquired the one-runner
->      lease` line, and no `tick declined` line since. One keeper at
->      a time is KeeperMachine §2; the Worker's empty schedule is not
->      evidence of anything here.
+>      `systemctl is-active vaipakam-keeper` prints `active`, and the
+>      journal since its latest start (the `journalctl … --since` command
+>      in KeeperMachine §6, "Apply an env-file change") shows a tick's
+>      `chains resolved` line and no `tick declined` line. A tick prints
+>      that line only while it holds the lease. Do not wait for `acquired
+>      the one-runner lease`: it appears only when the lease changes
+>      hands, and a restart within the lease's 10 minutes renews it
+>      silently. One keeper at a time is KeeperMachine §2; the Worker's
+>      empty schedule is not evidence of anything here.
 >   2. `chains resolved: N — …` naming the chains this deployment is
 >      meant to serve. A chain whose RPC secret is missing or failing is
 >      dropped silently, and the pass still finishes normally.
@@ -549,7 +553,7 @@ and restart it:
 
 ```bash
 sudo -e /etc/vaipakam/keeper.env   # delete DISCOUNT_PATH_ENABLED_<chainId>, or leave it empty
-sudo systemctl restart vaipakam-keeper
+sudo systemctl try-restart vaipakam-keeper
 ```
 
 The restart waits for the tick in flight, then the flash-loan
@@ -906,7 +910,7 @@ runs after revocation.
    # env file (the editor keeps it out of shell history), then restart so
    # the keeper reads it.
    sudo -e /etc/vaipakam/keeper.env
-   sudo systemctl restart vaipakam-keeper
+   sudo systemctl try-restart vaipakam-keeper
    ```
 
    Until the restart, the keeper's HF-band alerts fail against the revoked
@@ -972,7 +976,7 @@ the keeper's machine. Verify there rather than assuming success.
    # On the keeper machine: write the new key over PUSH_CHANNEL_PK in the
    # env file, then restart so the keeper reads it.
    sudo -e /etc/vaipakam/keeper.env
-   sudo systemctl restart vaipakam-keeper
+   sudo systemctl try-restart vaipakam-keeper
    ```
 4. **Point the app at the new channel.** Set `VITE_PUSH_CHANNEL_ADDRESS` to
    the new EOA and redeploy `apps/app`. Leaving it on the old address sends

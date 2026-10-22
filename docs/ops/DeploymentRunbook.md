@@ -2448,10 +2448,15 @@ journalctl -u vaipakam-keeper -f
 # From a test wallet:
 #   1. Subscribe to the Push channel at the URL in 8b.2
 #   2. /alerts → Save thresholds, Link Telegram, Enable Push rail
-#   3. Lower one threshold below the connected wallet's HF
-#   4. Wait for the next tick (the keeper ticks every UTC minute)
+#   3. With all thresholds below the HF of one of the wallet's open
+#      loans, wait for a tick: that records the loan as healthy
+#   4. RAISE the warn threshold above that HF. A loan enters a band
+#      when its HF is at or below the threshold, and the watcher
+#      alerts only on a move to a worse band, so lowering a threshold
+#      below the HF is a recovery and sends nothing
+#   5. Wait for the next tick (the keeper ticks every UTC minute)
 # Expect: the Telegram message arriving in the linked chat, and a
-# `[push] sent channel=…` line, on band crossings.
+# `[push] sent channel=…` line, on that move into the warn band.
 ```
 
 A Telegram send that succeeds logs nothing: the keeper logs only
