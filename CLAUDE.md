@@ -187,6 +187,20 @@ runs half of it on old code:
   VaultFactoryFacet in the same cut as any of them. All three refresh scripts
   carry it.
 
+- **OracleFacet + every facet that prices a fallback split (#666).**
+  `LibFallback.tryOracleRate` reads `getAssetPriceStatus`, a selector only
+  OracleFacet carries, to tell a missing price (the lender takes all the
+  collateral) from a distrusted one (the close-out refuses). It is inlined into
+  FallbackCustodyFacet (the fallback entry), RiskFacet (the discounted
+  liquidation) and ClaimFacet (the backstop par check); find the set again with
+  a grep for `tryOracleRate`, `collateralEquivalent`, `principalEquivalent` and
+  `computeFallbackEntitlements`, not from this list. Any of them refreshed onto
+  a Diamond whose OracleFacet predates #666 reverts `FunctionDoesNotExist` on
+  that path (a hard revert, never a misread price). `RefreshAllFacetsInPlace`
+  carries all four and `UpgradeOracleFacet` adds the selector; `RedeployFacets`
+  carries the three consumers but not OracleFacet, so it refuses such a Diamond
+  (`PredatesOraclePriceStatus`) and the oracle is refreshed first.
+
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place
 across this boundary and no pre-slice row is migrated; slices 2–3 make a

@@ -18,15 +18,22 @@ pragma solidity ^0.8.29;
  * lowercasing it, and packing the standard SpotPrice query.
  *
  * `getDataBefore` returns the most recent value reported before
- * `_timestamp`. The OracleFacet calls it with `block.timestamp` to
- * pick up the latest data and applies its own staleness guard
- * against the returned `_timestampRetrieved`.
+ * `_timestamp`. The OracleFacet calls it with
+ * `block.timestamp - LibVaipakam.TELLOR_DISPUTE_BUFFER` (#665), so a
+ * report younger than the buffer is never consumed before anyone has
+ * had time to dispute it, and applies its own staleness guard (measured
+ * from `block.timestamp`, not from the buffered bound) against the
+ * returned `_timestampRetrieved`.
  */
 interface ITellor {
     /// @notice Read the most recent value reported before `_timestamp`.
     /// @param _queryId Standard 32-byte Tellor query id.
-    /// @param _timestamp Upper bound on report time. Pass
-    ///                   `block.timestamp` to get the latest data.
+    /// @param _timestamp Upper bound on report time; only reports made
+    ///                   before it are returned. Passing
+    ///                   `block.timestamp` would return a report made
+    ///                   seconds earlier, before anyone could dispute
+    ///                   it, which is why the OracleFacet subtracts its
+    ///                   dispute buffer first.
     /// @return _value Encoded report payload. SpotPrice format = a
     ///                left-padded `uint256` price with 18-decimal
     ///                scaling (0xUUUU...PPPP, where PPPP is the
