@@ -34,7 +34,7 @@ import { isCeilingOvertaken, shouldBlockOnCeiling } from './fullTariffCeiling';
 import {
   exactAmountString,
   exactUnitsOrNull,
-  formatTokenAmount,
+  formatTokenAmountExact,
   isTooPrecise,
 } from '../lib/format';
 import { AmountPrecisionHint } from './AmountPrecisionHint';
@@ -317,7 +317,7 @@ export function FullTariffOptIn({
           ? copy.tariff.quoteLoading
           : quote.data.numeraireOk
             ? copy.tariff.quoteLine(
-                formatTokenAmount(quote.data.cStar, VPFI_DECIMALS),
+                formatTokenAmountExact(quote.data.cStar, VPFI_DECIMALS),
               )
             : copy.tariff.quoteUnavailable}
       </p>
@@ -415,8 +415,8 @@ export function FullTariffOptIn({
               style={{ margin: '4px 0 0', fontSize: '0.85rem', color: 'var(--danger)' }}
             >
               {copy.tariff.balanceShort(
-                formatTokenAmount(freeVpfi, VPFI_DECIMALS),
-                formatTokenAmount(quoted, VPFI_DECIMALS),
+                formatTokenAmountExact(freeVpfi, VPFI_DECIMALS),
+                formatTokenAmountExact(quoted, VPFI_DECIMALS),
               )}
             </p>
           ) : null}

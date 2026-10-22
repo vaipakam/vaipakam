@@ -66,7 +66,7 @@ import {
 import {
   exactAmountString,
   formatDurationDays,
-  formatTokenAmount,
+  formatTokenAmountExact,
   shortAddress,
 } from '../../lib/format';
 import type { DeskPair } from '../../data/desk';
@@ -950,7 +950,7 @@ export function OrderTicket({
           setGaslessFundsWarn(
             copy.desk.ticket.gaslessFundsWarn(
               dec !== undefined
-                ? formatTokenAmount(stakeAmount, dec)
+                ? formatTokenAmountExact(stakeAmount, dec)
                 : String(stakeAmount),
               sym,
             ),
@@ -1087,7 +1087,7 @@ export function OrderTicket({
     const collSym = collateralMeta.data?.symbol ?? '';
     const gasless = postMode === 'gasless';
     if (side === 'lender') {
-      const escrow = formatTokenAmount(payload.amountMax, lendDec);
+      const escrow = formatTokenAmountExact(payload.amountMax, lendDec);
       const netRate = (
         (Number(rate) * (10000 - fees.treasuryFeeBps)) /
         10000
@@ -1099,7 +1099,7 @@ export function OrderTicket({
         fee: text.netYield(netRate, String(fees.treasuryFeeBps / 100)),
       };
     }
-    const lock = formatTokenAmount(payload.collateralAmountMax, collDec);
+    const lock = formatTokenAmountExact(payload.collateralAmountMax, collDec);
     const lifAmt = (payload.amountMax * BigInt(fees.loanInitiationFeeBps)) / 10000n;
     return {
       commit: gasless
@@ -1107,7 +1107,7 @@ export function OrderTicket({
         : text.lockNow(lock, collSym),
       fee: text.lifNote(
         String(fees.loanInitiationFeeBps / 100),
-        formatTokenAmount(lifAmt, lendDec),
+        formatTokenAmountExact(lifAmt, lendDec),
         lendSym,
       ),
     };

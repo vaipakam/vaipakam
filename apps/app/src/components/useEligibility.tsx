@@ -10,7 +10,7 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useSanctionsCheck } from '../data/sanctions';
 import { copy } from '../content/copy';
-import { formatTokenAmount } from '../lib/format';
+import { formatTokenAmountExact } from '../lib/format';
 import type { CheckItem } from './Checklist';
 import type { TokenMeta } from '../contracts/erc20';
 
@@ -123,7 +123,7 @@ export function useEligibility(inputs: EligibilityInputs): CheckItem[] {
             // are known; plain "need more" only when they aren't.
             (asset.meta
               ? copy.errors.needMoreBy(
-                  formatTokenAmount(
+                  formatTokenAmountExact(
                     asset.required! - asset.balance!,
                     asset.meta.decimals,
                   ),

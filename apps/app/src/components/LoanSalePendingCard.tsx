@@ -28,7 +28,7 @@ import {
   saleSettlementBound,
   type LoanSalePendingState,
 } from '../data/loanSalePending';
-import { formatTokenAmount } from '../lib/format';
+import { formatTokenAmountExact } from '../lib/format';
 
 export function LoanSalePendingCard({
   loanId,
@@ -194,7 +194,7 @@ export function LoanSalePendingCard({
             {copy.loanSale.allowanceShort}{' '}
             {principalMeta
               ? copy.loanSale.allowanceShortDetail(
-                  formatTokenAmount(state.requiredNow, principalMeta.decimals),
+                  formatTokenAmountExact(state.requiredNow, principalMeta.decimals),
                   principalMeta.symbol,
                 )
               : null}

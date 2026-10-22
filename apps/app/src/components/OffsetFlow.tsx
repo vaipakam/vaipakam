@@ -48,7 +48,7 @@ import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
 import {
   exactAmountString,
   exactUnitsOrNull,
-  formatTokenAmount,
+  formatTokenAmountExact,
   isTooPrecise,
 } from '../lib/format';
 import { AmountPrecisionHint } from './AmountPrecisionHint';
@@ -198,9 +198,9 @@ export function OffsetFlow({
 
   const dec = principalMeta.decimals;
   const sym = principalMeta.symbol;
-  const principalStr = `${formatTokenAmount(live.principal, dec)} ${sym}`;
+  const principalStr = `${formatTokenAmountExact(live.principal, dec)} ${sym}`;
   const completionBound = offsetCompletionBoundOf(live);
-  const completionStr = `${formatTokenAmount(completionBound, dec)} ${sym}`;
+  const completionStr = `${formatTokenAmountExact(completionBound, dec)} ${sym}`;
 
   // The consent rule covers the FIGURES too — the live-loan prop
   // refreshes in the background, and a tick given against old numbers
@@ -387,7 +387,7 @@ export function OffsetFlow({
         setError(
           copy.offset.collateralMin(
             collateralMeta
-              ? formatTokenAmount(
+              ? formatTokenAmountExact(
                   liveLoan.collateralAmount,
                   collateralMeta.decimals,
                 )
@@ -578,7 +578,7 @@ export function OffsetFlow({
           {!collateralValid && collateralInput !== '' && !collateralTooPrecise ? (
             <span className="field-hint" style={{ color: 'var(--danger)' }}>
               {copy.offset.collateralMin(
-                formatTokenAmount(
+                formatTokenAmountExact(
                   live.collateralAmount,
                   collateralMeta!.decimals,
                 ),

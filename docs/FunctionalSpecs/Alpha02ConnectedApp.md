@@ -1281,6 +1281,17 @@ figure would describe a different amount from the one signed. A shorter,
 rounded figure may appear on browsing surfaces (lists, cards) where nothing is
 being agreed to.
 
+The rule covers every surface where the user agrees to a figure, not only the
+offer receipt: refinance, loan sale, offset, obligation transfer, early exit,
+the trading desk's ticket and signed-fill confirmation, rentals, VPFI deposit
+and withdrawal, the Full tariff quote, the position page's receipts (including what a claim
+pays and the recorded debt stated beside it), the Claim-everything checklist,
+and the pending-step cards that ask for a top-up or state a bound. A row that
+only links to the loan page where the claim is made may round. A shortfall or
+minimum stated beside an amount input ("you need X more", "at least X") is
+exact for the same reason: a rounded minimum can sit just below the real one,
+and a user who typed it would be refused.
+
 Consent is collected against the terms actually shown. If a material term,
 warning, selected offer, selected listing, or disclosed risk changes after
 consent, consent is cleared and the user is told to review again.

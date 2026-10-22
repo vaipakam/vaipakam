@@ -11,11 +11,18 @@
  * `what` is the payout (an exact amount whenever `getClaimable` named one,
  * otherwise a plain description that never overstates — see the branch
  * comments); `why` is the one-clause reason the claim exists.
+ *
+ * #2662 — every amount it writes, in the payout and in the note beside it,
+ * is EXACT by default: the loan page's claim confirmation and the
+ * Claim-everything checklist are what the user consents to, and a rounded
+ * figure there can stand for a different on-chain amount. A row that only
+ * links to the loan page (the Claims list, the Positions list) asks for
+ * `'rounded'`; the exact figure is on the page it opens.
  */
 import { copy } from '../content/copy';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
-import { formatTokenAmount, shortAddress } from '../lib/format';
+import { formatTokenAmount, formatTokenAmountExact, shortAddress } from '../lib/format';
 import type { ClaimableLoan, OwedAtDefaultRead, OwedAtInternalMatchRead } from './claimables';
 
 export interface ClaimPayoutText {
@@ -32,15 +39,35 @@ export interface ClaimPayoutText {
   provisional?: boolean;
 }
 
-export function useClaimPayoutText(loan: ClaimableLoan): ClaimPayoutText;
+/** How the amounts are written (#2662): `'exact'` — every digit the token
+ *  carries — for any surface that asks the user to claim or confirms what
+ *  the claim pays; `'rounded'` only for a list that points elsewhere. */
+export type PayoutPrecision = 'exact' | 'rounded';
+
+/** Writes a raw token amount at the token's decimals (a decimal string is
+ *  accepted, as the indexer carries some amounts that way). */
+export type AmountFormatter = (raw: bigint | string, decimals: number) => string;
+
+export function amountFormatter(precision: PayoutPrecision): AmountFormatter {
+  return precision === 'exact'
+    ? formatTokenAmountExact
+    : (raw, decimals) => formatTokenAmount(raw, decimals);
+}
+
+export function useClaimPayoutText(
+  loan: ClaimableLoan,
+  precision?: PayoutPrecision,
+): ClaimPayoutText;
 export function useClaimPayoutText(
   loan: ClaimableLoan | undefined,
+  precision?: PayoutPrecision,
 ): ClaimPayoutText | null;
 /** Accepts `undefined` so a page can call it ABOVE its early returns (the
  *  hooks-order rule; #1511) before it knows whether a claim exists — the
  *  token-metadata reads it makes are disabled for an absent leg. */
 export function useClaimPayoutText(
   loan: ClaimableLoan | undefined,
+  precision: PayoutPrecision = 'exact',
 ): ClaimPayoutText | null {
   // Rentals have an NFT principal leg and often no collateral — never
   // format them through the ERC-20 loan template.
@@ -60,15 +87,16 @@ export function useClaimPayoutText(
   const heldMeta = useTokenMeta(hasHeld ? (loan?.claim.heldAsset ?? undefined) : undefined);
   if (!loan) return null;
   const labels = copy.claims.row;
-  const base = laneAmount(loan.claim.amount, claimAssetMeta);
+  const fmt = amountFormatter(precision);
+  const base = laneAmount(loan.claim.amount, claimAssetMeta, fmt);
   // A held asset the probe could not resolve is stated as unreadable, not
   // as loading: no read is in flight that could ever name it.
   const held = hasHeld
-    ? laneAmount(loan.claim.heldForLender, loan.claim.heldAsset ? heldMeta : { isError: true })
+    ? laneAmount(loan.claim.heldForLender, loan.claim.heldAsset ? heldMeta : { isError: true }, fmt)
     : null;
   const rebateStr =
     loan.claim.lifRebate > 0n
-      ? labels.rebateAmount(formatTokenAmount(loan.claim.lifRebate, 18))
+      ? labels.rebateAmount(fmt(loan.claim.lifRebate, 18))
       : null;
   const defaulted = loan.status === 'defaulted' || loan.status === 'liquidated';
   // Claimable proper-close group: repaid or internal_matched. NOT
@@ -76,14 +104,14 @@ export function useClaimPayoutText(
   // already consumed), and the claimables hook filters those out.
   const properClose = loan.status === 'repaid' || loan.status === 'internal_matched';
   const collateralStr = collateralMeta.data
-    ? `${formatTokenAmount(loan.collateralAmount, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`
+    ? `${fmt(loan.collateralAmount, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`
     : 'collateral';
 
   // #2374 — writes an amount of the principal asset; null while its details
   // load or once they failed (`formatUnreadable` tells the two apart).
   const format = principalMeta.data
     ? (amount: bigint) =>
-        `${formatTokenAmount(amount, principalMeta.data!.decimals)} ${principalMeta.data!.symbol}`
+        `${fmt(amount, principalMeta.data!.decimals)} ${principalMeta.data!.symbol}`
     : null;
   const formatUnreadable = !principalMeta.data && principalMeta.isError;
 
@@ -115,7 +143,7 @@ export function useClaimPayoutText(
       held,
       principalPlusInterest: principalMeta.data
         ? labels.principalPlusInterest(
-            formatTokenAmount(loan.principal, principalMeta.data.decimals),
+            fmt(loan.principal, principalMeta.data.decimals),
             principalMeta.data.symbol,
           )
         : null,
@@ -174,10 +202,10 @@ export function useClaimPayoutText(
       returnedNft: nftClaimLabel(loan.claim),
       rebate: rebateStr,
       // The frozen swap-to-repay surplus.
-      surplus: loan.claim.surplus ? laneAmount(loan.claim.surplus.amount, surplusMeta) : null,
+      surplus: loan.claim.surplus ? laneAmount(loan.claim.surplus.amount, surplusMeta, fmt) : null,
       // Collateral still liened in a different asset from the claim row.
       extraCollateral: loan.claim.extraCollateral
-        ? laneAmount(loan.claim.extraCollateral.amount, extraMeta)
+        ? laneAmount(loan.claim.extraCollateral.amount, extraMeta, fmt)
         : null,
       collateral: collateralStr,
       labels,
@@ -219,10 +247,11 @@ export type LaneAmount =
 export function laneAmount(
   amount: bigint,
   meta: { data?: { decimals: number; symbol: string }; isError: boolean },
+  fmt: AmountFormatter = formatTokenAmountExact,
 ): LaneAmount | null {
   if (amount <= 0n) return null;
   if (meta.data) {
-    return { kind: 'known', text: `${formatTokenAmount(amount, meta.data.decimals)} ${meta.data.symbol}` };
+    return { kind: 'known', text: `${fmt(amount, meta.data.decimals)} ${meta.data.symbol}` };
   }
   return meta.isError ? { kind: 'unreadable' } : { kind: 'loading' };
 }

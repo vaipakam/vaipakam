@@ -18,6 +18,7 @@ import {
   defaultRecoveryNote,
   fallbackPendingNote,
   internalMatchNote,
+  amountFormatter,
   laneAmount,
   lenderPayoutWhat,
   nftClaimLabel,
@@ -158,6 +159,18 @@ describe('laneAmount', () => {
   it('formats an amount whose token details loaded', () => {
     expect(laneAmount(5_000_000n, { data: { decimals: 6, symbol: 'USDC' }, isError: false })).toEqual(
       known('5 USDC'),
+    );
+  });
+  // #2662 — a claim payout is written to the last digit unless the surface
+  // only links to the claim.
+  it('writes every digit by default, and rounds only when asked', () => {
+    const weth = { data: { decimals: 18, symbol: 'WETH' }, isError: false };
+    expect(laneAmount(1_000_000_000_000_000_001n, weth)).toEqual(known('1.000000000000000001 WETH'));
+    expect(laneAmount(1_000_000_000_000_000_001n, weth, amountFormatter('exact'))).toEqual(
+      known('1.000000000000000001 WETH'),
+    );
+    expect(laneAmount(1_000_000_000_000_000_001n, weth, amountFormatter('rounded'))).toEqual(
+      known('1 WETH'),
     );
   });
   it('is loading while the token details are being read', () => {

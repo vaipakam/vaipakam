@@ -33,7 +33,7 @@ import { useAutoRefinancePosture } from '../data/protocol';
 import { AutoMatchPostureBanner } from './AutoMatchPostureBanner';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { cancelRevokesApproval } from '../data/refinanceInterlock';
-import { formatDate, formatTokenAmount } from '../lib/format';
+import { formatDate, formatTokenAmountExact } from '../lib/format';
 
 export function RefinancePendingCard({
   loanId,
@@ -88,7 +88,7 @@ export function RefinancePendingCard({
     onSupportedChain && Boolean(walletClient) && Boolean(publicClient);
   const topUpStr =
     state && principalMeta
-      ? `${formatTokenAmount(state.topUp, principalMeta.decimals)} ${principalMeta.symbol}`
+      ? `${formatTokenAmountExact(state.topUp, principalMeta.decimals)} ${principalMeta.symbol}`
       : null;
 
   async function cancelPending() {

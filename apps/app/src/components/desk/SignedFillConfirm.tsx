@@ -61,7 +61,7 @@ import {
 import {
   formatBpsAsPercent,
   formatDurationDays,
-  formatTokenAmount,
+  formatTokenAmountExact,
   shortAddress,
 } from '../../lib/format';
 
@@ -402,14 +402,14 @@ export function SignedFillConfirm({
         </span>{' '}
         ·{' '}
         {headlineDecimals !== undefined
-          ? `${formatTokenAmount(headlineAmount, headlineDecimals)} ${lendingMeta.data?.symbol ?? ''}`
+          ? `${formatTokenAmountExact(headlineAmount, headlineDecimals)} ${lendingMeta.data?.symbol ?? ''}`
           : '…'}{' '}
         · {shortAddress(signed.signer)}
       </p>
       <p className="muted" style={{ margin: '4px 0 8px', fontSize: '0.85rem' }}>
         {payDecimals !== undefined
           ? (isLenderOrder ? text.payCollateral : text.payPrincipal)(
-              formatTokenAmount(payAmount, payDecimals),
+              formatTokenAmountExact(payAmount, payDecimals),
               payMeta.data?.symbol ?? shortAddress(payToken),
             )
           : '…'}
