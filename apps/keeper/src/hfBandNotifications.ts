@@ -264,21 +264,29 @@ export async function recordHfBandNotifications(
     // both the mint decision and the state commit; healthy loans only
     // ever DELETE state, which needs no recipient).
     const inBand = observed.filter((o) => o.band !== 'healthy');
-    // The newest of the indexer's loan withdrawals (#2638), read BEFORE the
-    // holders below and stamped on every marker this pass writes. A
-    // withdrawal recorded after this read carries a higher id, so the prune
-    // can tell a marker written about the withdrawn loan from one written
-    // about the loan the chain later gave the same id, without comparing this
-    // machine's clock with the indexer's. See `pruneTerminalBandState`.
-    const orphanSeq = inBand.length === 0 ? 0 : await latestOrphanSeq(db);
-    const recipientByLoan = new Map<number, string>();
+    // Each holder is read TOGETHER with the newest of the indexer's loan
+    // withdrawals (#2638), in ONE statement, so both come from one snapshot of
+    // the shared database (Codex #2655 r4). That number is this pass's
+    // causal token for the loan, and it is the one fence both of the pass's
+    // writes about the loan carry: the inbox row refuses to land if a
+    // withdrawal of the loan newer than it exists, and the marker is stamped
+    // with it so the prune can tell a marker written about the withdrawn loan
+    // from one written about the loan the chain later gave the same id. Read
+    // in separate statements, a withdrawal and reissue landing between them
+    // would stamp the reissued loan's marker with a token older than the
+    // withdrawal it had in fact seen, and the prune would drop it. Ordered by
+    // the record's own AUTOINCREMENT ids, never this machine's clock against
+    // the indexer's (Codex #2655 r1). See `pruneTerminalBandState`.
+    const holderByLoan = new Map<number, { recipient: string; orphanSeq: number }>();
     for (const c of chunkD1InList(
       inBand.map((o) => o.loanId),
       { before: [chainId] },
     )) {
       const res = await db
         .prepare(
-          `SELECT loan_id, borrower, borrower_current_owner FROM loans
+          `SELECT loan_id, borrower, borrower_current_owner,
+                  (SELECT COALESCE(MAX(id), 0) FROM loan_orphans) AS orphan_seq
+             FROM loans
             WHERE chain_id = ? AND loan_id IN (${c.placeholders})`,
         )
         .bind(...c.binds)
@@ -286,10 +294,13 @@ export async function recordHfBandNotifications(
           loan_id: number;
           borrower: string | null;
           borrower_current_owner: string | null;
+          orphan_seq: number;
         }>();
       for (const row of res.results ?? []) {
         const who = (row.borrower_current_owner ?? row.borrower ?? '').toLowerCase();
-        if (who && who !== ZERO_ADDR) recipientByLoan.set(row.loan_id, who);
+        if (who && who !== ZERO_ADDR) {
+          holderByLoan.set(row.loan_id, { recipient: who, orphanSeq: Number(row.orphan_seq ?? 0) });
+        }
       }
     }
 
@@ -308,6 +319,7 @@ export async function recordHfBandNotifications(
       recipient: string;
       kind: string;
       dedupKey: string;
+      orphanSeq: number;
     }
     const rows: Row[] = [];
     interface Commit {
@@ -315,17 +327,19 @@ export async function recordHfBandNotifications(
       band: HfBand;
       milli: number;
       recipient: string | null; // null only for healthy (DELETE)
+      orphanSeq: number | null; // null only for healthy (DELETE)
     }
     const commits: Commit[] = [];
     for (const o of observed) {
       const p = prev.get(o.loanId);
       const prevBand: HfBand = p?.band ?? 'healthy';
       if (o.band === 'healthy') {
-        if (p) commits.push({ loanId: o.loanId, band: 'healthy', milli: o.milli, recipient: null });
+        if (p) commits.push({ loanId: o.loanId, band: 'healthy', milli: o.milli, recipient: null, orphanSeq: null });
         continue;
       }
-      const recipient = recipientByLoan.get(o.loanId);
-      if (!recipient) continue; // deferred — retry next tick
+      const holder = holderByLoan.get(o.loanId);
+      if (!holder) continue; // deferred — retry next tick
+      const { recipient, orphanSeq } = holder;
       const worsened = BAND_RANK[o.band] > BAND_RANK[prevBand];
       const holderChanged = p !== undefined && recipient !== p.recipient;
       if (worsened || holderChanged) {
@@ -339,20 +353,33 @@ export async function recordHfBandNotifications(
           // bucket bounds a flapping HF to one row per band per UTC
           // day PER RECIPIENT (a new holder's key always differs).
           dedupKey: `${chainId}:${recipient}:${kind}:${o.loanId}:${dayBucket}`,
+          orphanSeq,
         });
       }
       if (o.band !== prevBand || holderChanged) {
-        commits.push({ loanId: o.loanId, band: o.band, milli: o.milli, recipient });
+        commits.push({ loanId: o.loanId, band: o.band, milli: o.milli, recipient, orphanSeq });
       }
     }
 
-    // Each insert carries the epoch guard in its own statement (epochFence.ts):
-    // a row lands only while the indexer's epoch for this chain is the one
-    // this process runs under. An `INSERT OR IGNORE` cannot report a refusal
-    // by its change count — a duplicate changes nothing too — so when a
-    // non-empty batch inserted nothing the fence is asked, and a moved epoch
-    // is thrown as the refusal it was rather than logged as "0 inserted".
+    // Each insert carries two guards in its own statement. The epoch guard
+    // (epochFence.ts): a row lands only while the indexer's epoch for this
+    // chain is the one this process runs under. And the loan's causal token
+    // (above): a row lands only while no withdrawal of the loan newer than the
+    // holder read exists (Codex #2655 r4). The indexer's move takes the loan's
+    // inbox rows with it and refuses to run if one appears mid-move, so a row
+    // this pass inserted before the move goes with the loan; without the
+    // token, one inserted AFTER it would recreate the withdrawn loan's alert,
+    // and a loan the chain gives the same id that day, same holder and band,
+    // would collide with it on the dedup key and never get its own. A refused
+    // row still leaves its marker committed below; the next prune drops that
+    // marker by the same token, and the loan alerts afresh.
+    //
+    // An `INSERT OR IGNORE` cannot report a refusal by its change count — a
+    // duplicate changes nothing too — so when a non-empty batch inserted
+    // nothing the epoch fence is asked, and a moved epoch is thrown as the
+    // refusal it was rather than logged as "0 inserted".
     const guard = epochWriteGuard(chainId);
+    const diamondKey = diamond.toLowerCase();
     let inserted = 0;
     for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
       const batch = rows.slice(i, i + INSERT_CHUNK).map((r) =>
@@ -361,7 +388,10 @@ export async function recordHfBandNotifications(
             `INSERT OR IGNORE INTO notifications
                (chain_id, recipient, kind, loan_id, event_kind,
                 block_number, log_index, created_at, dedup_key)
-             SELECT ?, ?, ?, ?, NULL, ?, ?, ?, ? WHERE ${guard.where}`,
+             SELECT ?, ?, ?, ?, NULL, ?, ?, ?, ?
+              WHERE ${guard.where}
+                AND NOT EXISTS (SELECT 1 FROM loan_orphans
+                                 WHERE chain_id = ? AND diamond = ? AND loan_id = ? AND id > ?)`,
           )
           .bind(
             chainId,
@@ -373,6 +403,10 @@ export async function recordHfBandNotifications(
             nowSec,
             r.dedupKey,
             ...guard.binds,
+            chainId,
+            diamondKey,
+            r.loanId,
+            r.orphanSeq,
           ),
       );
       const results = await db.batch(batch);
@@ -407,7 +441,7 @@ export async function recordHfBandNotifications(
                    updated_at = excluded.updated_at,
                    orphan_seq = excluded.orphan_seq`,
               )
-              .bind(chainId, o.loanId, o.band, o.milli, o.recipient, nowSec, orphanSeq),
+              .bind(chainId, o.loanId, o.band, o.milli, o.recipient, nowSec, o.orphanSeq),
       );
       await keeper.batch(batch);
       stateWrites += batch.length;
@@ -440,15 +474,20 @@ export async function recordHfBandNotifications(
  *
  *      A marker goes only when the withdrawal is one it had NOT seen: an
  *      entry whose `id` is above the marker's `orphan_seq`, the newest entry
- *      the writing pass read before it resolved the loan's holder. A marker is
- *      written only for a loan with a `loans` row (an unresolved holder
- *      defers), so a withdrawal after that read is the move of the very row
- *      the marker was written from. A withdrawal the marker had already seen
+ *      the writing pass read IN THE SAME STATEMENT as the loan's holder, so
+ *      from one snapshot. A marker is written only for a loan with a `loans`
+ *      row (an unresolved holder defers), so a withdrawal after that read is
+ *      the move of the very row the marker was written from. A withdrawal the marker had already seen
  *      came before it, so the marker is about the loan that bears the id now
  *      — the id reissued — and is kept: that loan's own edges are tracked as
  *      normal and never re-alerted every pass. The order is the entries' own
  *      AUTOINCREMENT ids, read and written through the shared database, never
- *      this machine's clock against the indexer's (Codex #2655 r1). The entry
+ *      this machine's clock against the indexer's (Codex #2655 r1). An
+ *      operator's put-back of a withdrawal (migration 0065: the row and its
+ *      inbox rows re-inserted, the entry deleted) removes the evidence, and
+ *      rightly keeps a marker the prune had not yet dropped: the put-back
+ *      says the loan was real all along, so the marker describes it, and its
+ *      alert rows come back with it. The entry
  *      must name THIS Diamond: entries outlive a fresh Diamond on the chain,
  *      and an old Diamond's withdrawal says nothing about the new one's ids.
  *
@@ -573,13 +612,4 @@ async function pruneTerminalBandState(
         .bind(...c.binds),
     ),
   );
-}
-
-/** The newest entry in the indexer's loan-withdrawal record (0 when empty).
- *  Ids are AUTOINCREMENT, so a later withdrawal always carries a higher one. */
-async function latestOrphanSeq(db: D1Database): Promise<number> {
-  const row = await db
-    .prepare(`SELECT COALESCE(MAX(id), 0) AS seq FROM loan_orphans`)
-    .first<{ seq: number }>();
-  return row?.seq ?? 0;
 }

@@ -14,5 +14,8 @@ The keeper now also clears its memory of any loan number the indexer has
 withdrawn under the current deployment, but only what it remembered before the
 withdrawal. Anything it learned afterwards is about the real loan and is kept,
 so that loan's warnings follow their normal rules and are never repeated on
-every check. A withdrawal recorded under an earlier deployment of the
+every check. A warning the keeper was about to post for a loan that the
+indexer withdraws in the same moment is no longer posted after the withdrawal,
+so it cannot bring back an alert for a loan that never existed or take the
+place of the real loan's first warning that day. A withdrawal recorded under an earlier deployment of the
 contracts is ignored. Closes #2638.

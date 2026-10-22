@@ -481,6 +481,72 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
     expect(notifRows(h)).toHaveLength(0);
   });
 
+  /** The pass's bindings, with `fn` run once right after its holder read
+   *  returns: a withdrawal landing between that read and the pass's writes. */
+  function afterHolderRead(h: Harness, fn: () => void): Pick<Env, 'DB' | 'KEEPER_DB'> {
+    const shared = h.shared.d1 as {
+      prepare(sql: string): { bind(...a: unknown[]): { all(): Promise<unknown> } };
+      batch(s: unknown[]): Promise<unknown>;
+    };
+    let fired = false;
+    const DB = {
+      prepare(sql: string) {
+        const stmt = shared.prepare(sql);
+        if (!/FROM loans/.test(sql) || !/orphan_seq/.test(sql)) return stmt;
+        return {
+          ...stmt,
+          bind: (...a: unknown[]) => {
+            const bound = stmt.bind(...a);
+            return {
+              ...bound,
+              all: async () => {
+                const out = await bound.all();
+                if (!fired) {
+                  fired = true;
+                  fn();
+                }
+                return out;
+              },
+            };
+          },
+        };
+      },
+      batch: (s: unknown[]) => shared.batch(s),
+    };
+    return { ...h.dbs, DB } as unknown as Pick<Env, 'DB' | 'KEEPER_DB'>;
+  }
+
+  it('refuses the inbox row of a loan withdrawn after its holder was read, and the reissued loan alerts that day (Codex #2655 r4)', async () => {
+    const h = harness();
+    seedLoan(h, 50);
+    const dbs = afterHolderRead(h, () => withdraw(h, 50, NOW + 1));
+    await recordHfBandNotifications(dbs, CHAIN, DIAMOND, [{ id: 50n, hf: hf(1_400) }], NOW);
+    // The withdrawn loan's alert does not come back after the move took it.
+    expect(notifRows(h)).toEqual([]);
+
+    // The chain issues the id to a real loan the same day, same holder and
+    // band: the stale marker goes by the same token, and the new loan's own
+    // alert lands under the day's dedup key, which the refused row never took.
+    seedLoan(h, 50);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 50n, hf: hf(1_400) }], NOW + 60);
+    expect(notifRows(h).map((r) => [r.loan_id, r.kind, r.dedup_key])).toEqual([
+      [50, 'hf_warn', `${CHAIN}:${BORROWER}:hf_warn:50:${Math.floor((NOW + 60) / 86_400)}`],
+    ]);
+    const newest = (h.shared.db.prepare('SELECT MAX(id) AS id FROM loan_orphans').get() as { id: number }).id;
+    expect(seqOf(h, 50)).toBe(newest);
+  });
+
+  it("does not refuse an inbox row over another Diamond's or an older withdrawal of the id (Codex #2655 r4)", async () => {
+    const h = harness();
+    withdraw(h, 51, NOW - 600); // before the holder read: the id was reissued
+    seedLoan(h, 51);
+    const dbs = afterHolderRead(h, () => withdraw(h, 51, NOW + 1, '0x' + 'e'.repeat(40)));
+    // Neither withdrawal is one of this Diamond's loan after the holder read:
+    // the older one came before it, the newer one names another Diamond.
+    await recordHfBandNotifications(dbs, CHAIN, DIAMOND, [{ id: 51n, hf: hf(1_400) }], NOW);
+    expect(notifRows(h).map((r) => [r.loan_id, r.kind])).toEqual([[51, 'hf_warn']]);
+  });
+
   it('matches the Diamond whatever case the caller spells it in (#2638)', async () => {
     const h = harness();
     seedLoan(h, 33);
