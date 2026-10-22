@@ -805,7 +805,8 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertTrue(_rec().scanComplete);
         assertEq(_rec().skippedCount, 63);
         // One of the skipped is attested now: no live source is reserved
-        // ahead of it, and the next preparation stages _attest(100 + 10, TINY, 0);
+        // ahead of it, and the next preparation stages it.
+        _attest(100 + 10, TINY, 0);
         _liveFresh(1e18);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, _key()));
         _staging().reserveStagedDay(_key());
@@ -869,7 +870,8 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_rec().skippedCount, 63);
         // A skipped epoch is attested recycled-only: typed, but with no fresh
         // room for a fresh-only day. Re-checked, it contributes nothing and
-        // must not hold the reservation _attest(100 + 10, 0, TINY);
+        // must not hold the reservation hostage.
+        _attest(100 + 10, 0, TINY);
         _liveFresh(1e18);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, _key()));
         _staging().reserveStagedDay(_key());
@@ -1222,7 +1224,8 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_rec().skippedCount, 1, "remembered");
         // It is attested, and an older typed epoch lands ahead of it in the
         // chain: the generation moves and the next walk restarts from the
-        // chain's head — where it meets the re-checked epoch _attest(810, TINY, 0);
+        // chain's head — where it meets the re-checked epoch again.
+        _attest(810, TINY, 0);
         vm.warp(t0 - 2000);
         bytes32 l2 = _epochOf(TINY, 811, keccak256("late-typed"));
         _attest(811, TINY, 0);

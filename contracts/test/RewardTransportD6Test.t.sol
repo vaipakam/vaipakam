@@ -367,9 +367,9 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
         vm.expectRevert(abi.encodeWithSelector(TransportDayListMismatch.selector, h, bytes32(0), bytes32(0)));
         _epoch().materializeTransportBatchChunk(h, 1, MerkleFixture.chunk(list, 1, S), MerkleFixture.proof(leaves, 1), badHints, none);
 
-        // and a stamp no budget delivery recorded has no root to prove against
+        // and a stamp no budget delivery recorded holds no epoch to index
         bytes32 nobody = keccak256("no delivery");
-        vm.expectRevert(abi.encodeWithSelector(TransportBatchNotRooted.selector, nobody));
+        vm.expectRevert(abi.encodeWithSelector(TransportBatchUnknown.selector, nobody));
         _epoch().materializeTransportBatchChunk(nobody, 0, _days(1, 1), none, none, none);
     }
 
