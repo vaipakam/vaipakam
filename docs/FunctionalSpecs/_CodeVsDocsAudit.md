@@ -927,10 +927,11 @@ is held and the provider's own reason, every tick. That is the
 correctness-over-liveness choice the paragraph below says must be made
 deliberately rather than inherited from a `catch`, and
 `Alpha02ConnectedApp.md` now states it. The paragraph below is kept as the
-record of why it was deferred.
+record of why it was deferred, and Raaj made that liveness call explicitly
+(2026-10-22: pause the scan and say so).
 
-**The scan half remains open and #2201 stays open with it.** The entry above
-is right that the fix must cover both consumers; what stopped the scan being
+**Historical, superseded by the paragraph above: why the scan half was first
+left open.** The entry above is right that the fix must cover both consumers; what stopped the scan being
 covered in the same change is that its remedy is a real trade rather than a
 strictly-better refusal. The correction declining costs nothing that was
 working — no correction is the status quo ante. A scan declining to advance
