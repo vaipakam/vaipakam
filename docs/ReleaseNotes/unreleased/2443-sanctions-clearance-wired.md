@@ -1,4 +1,4 @@
-## Thread — The cross-chain sanctions clearance is wired on the testnets (PR #<n>)
+## Thread — The cross-chain sanctions clearance is wired on the testnets (PR #2606)
 
 The clearance route rehearsed in the previous change is now live on the three
 test networks, with the owner's go-ahead. BNB testnet hosts the clearance

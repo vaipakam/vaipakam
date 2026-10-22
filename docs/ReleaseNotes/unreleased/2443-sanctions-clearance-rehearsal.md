@@ -1,4 +1,4 @@
-## Thread — Rehearsing the cross-chain sanctions clearance on testnets (PR #<n>)
+## Thread — Rehearsing the cross-chain sanctions clearance on testnets (PR #2601)
 
 The delisting timelock completes a proposal only after RedStone's Sanctions
 Oracle agrees, and on chains without RedStone that agreement travels over
