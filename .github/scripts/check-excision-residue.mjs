@@ -445,7 +445,6 @@ const PINNED = new Map([
   ["contracts/script/ConfigureCcip.s.sol", [3, "RETRACTION — removed-step note", "3e71b78fbcf8"]],
   ["contracts/script/DeployCrosschain.s.sol", [6, "RETRACTION — removed-deploy-target notes", "40a135c2bf8f"]],
   ["contracts/script/DeployDiamond.s.sol", [8, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "478444039e75"]],
-  ["contracts/script/Handover.s.sol", [2, "RETRACTION — removed-ownership-target note", "d09e23b3cc9c"]],
   ["contracts/script/SetInteractionLaunch.s.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b52d6cd78b2d"]],
   ["contracts/script/deploy-chain.sh", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "53cdc742fba2"]],
   ["contracts/script/deploy-mainnet.sh", [3, "#884 — LOWERED 5→3: the launch no longer runs ConfigureVPFIBuy, so the help text that named it in the configure phase is gone. The 3 that remain describe the OPT-IN (--configure-vpfi-peg) path — digest re-pinned #1938: the two #884 mentions are unchanged and still describe ConfigureVPFIBuy as the OPT-IN discount-peg step, not the removed buy surface; the context moved because the .env load block was rewritten beside them", "8e2cf2c5c406"]],
