@@ -56,7 +56,7 @@ import {
   type ReconcileOptions,
   type ReconcileReport,
 } from './loanReconcile';
-import { withdrawOrphanLoan } from './loanOrphans';
+import { ORPHAN_MOVE_D1_QUERIES, ORPHAN_MOVE_SUBREQUESTS, withdrawOrphanLoan } from './loanOrphans';
 // #762/#766 — the terminal end-of-block states an `InternalMatchExecuted`
 // block-pinned read can land on. ONE definition, shared with the repair pass;
 // see the module for why the copy it replaced was a defect (#2190 round 3).
@@ -1276,6 +1276,9 @@ export function _reportReconcilePass(chainId: number, report: ReconcileReport): 
   if (
     !report.agreed &&
     report.repaired.length === 0 &&
+    // #2636 r3 — a withdrawal is a correction too: an orphan withdrawn this
+    // pass WAS the overcount, so "repaired none" would be false.
+    report.withdrawn.length === 0 &&
     (report.wrappedLap || report.examined.length === 0)
   ) {
     // A lap that left rows UNREAD or UNWRITTEN established nothing about
@@ -1292,10 +1295,13 @@ export function _reportReconcilePass(chainId: number, report: ReconcileReport): 
     // status from a newer deployment is PRECISELY what that unknown
     // would be, and precisely what would cause the mismatch being
     // diagnosed. Three ways to learn nothing about a row, one rule.
+    // An orphan found but not withdrawn is an indexed OVERCOUNT, the opposite
+    // of a missed `LoanInitiated`, so it rules the verdict out as well.
     const settled =
       report.unread.length === 0 &&
       report.writeFailed.length === 0 &&
-      report.unknownStatus.length === 0;
+      report.unknownStatus.length === 0 &&
+      report.unresolvable.length === 0;
     console.warn(
       `[chainIndexer] reconcile chain ${chainId}: chain reports ` +
         `${report.chainActive} live loans, index has ${report.indexedActive}, and a ` +
@@ -1308,10 +1314,11 @@ export function _reportReconcilePass(chainId: number, report: ReconcileReport): 
             // "0 read(s) and 0 write(s) failed, cause UNDETERMINED" would
             // send an operator looking for a fault that is not there.
             `but ${report.unread.length} read(s) failed, ` +
-            `${report.writeFailed.length} write(s) failed, and ` +
+            `${report.writeFailed.length} write(s) failed, ` +
             `${report.unknownStatus.length} row(s) carry a status this build ` +
-            `cannot project, so the cause is UNDETERMINED — this lap ruled ` +
-            `nothing out`),
+            `cannot project, and ${report.unresolvable.length} row(s) the chain ` +
+            `has no loan for are still published, so the cause is UNDETERMINED — ` +
+            `this lap ruled nothing out`),
     );
   }
 }
@@ -4173,9 +4180,12 @@ const SETTLE_HEAL_BATCH = 20;
 /** Per healed row: the canonical status read, the event lookup, its receipt,
  *  the block read, the write. */
 const SETTLE_HEAL_COST = 5;
-/** D1 queries per healed row (event lookup, settle write), plus one for the
- *  rotation-pointer write the loop reserves. */
-const SETTLE_HEAL_D1_QUERIES = 3;
+/** D1 queries the rotation write at the end of a tick costs: the pointer
+ *  and the lap's high-water mark, one batch (one subrequest). */
+const SETTLE_HEAL_POINTER_D1_QUERIES = 2;
+/** D1 queries per healed row (event lookup, settle write), plus the
+ *  rotation write the loop reserves. */
+const SETTLE_HEAL_D1_QUERIES = 2 + SETTLE_HEAL_POINTER_D1_QUERIES;
 
 /** Whether a heal row may START: its own reads and writes, and still the
  *  rotation-pointer write after it, in both meters. */
@@ -4187,6 +4197,10 @@ function settleRowAffordable(budget: TickBudget): boolean {
 }
 /** `indexer_cursor.kind` of the heal's rotation pointer (a loan id). */
 export const SETTLE_HEAL_CURSOR_KIND = 'settle_heal_rotation';
+/** `indexer_cursor.kind` of the current lap's high-water loan id (#2636 r3):
+ *  fixed when a lap starts, so loans that end during the lap cannot keep the
+ *  walk from ever wrapping back to rows it passed over. 0 = not yet fixed. */
+export const SETTLE_HEAL_LAP_END_KIND = 'settle_heal_lap_end';
 /** The chain's `LoanStatus.Settled` (see loanStatusProjection.ts). */
 const CHAIN_STATUS_SETTLED = 3;
 
@@ -4269,15 +4283,31 @@ export async function settleFromLedger(
   /** The pass's settled block — the canonical state every read is pinned to. */
   atBlock: bigint,
 ): Promise<number[]> {
-  // #2476 r10 — the setup itself: the pointer read, the page read, and the
-  // pointer reset an empty page can require.
-  if (budget.subrequests.remaining < 3 || budget.d1Queries.remaining < 3) return [];
-  const pointer =
-    (
-      await env.DB.prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`)
-        .bind(chainId, SETTLE_HEAL_CURSOR_KIND)
-        .first<{ last_block: number }>()
-    )?.last_block ?? 0;
+  // #2476 r10 — the setup itself: the rotation read (pointer, lap end and the
+  // chain's highest loan id, one batch), the page read, and the rotation
+  // write an empty page can require.
+  if (budget.subrequests.remaining < 3 || budget.d1Queries.remaining < 4 + SETTLE_HEAL_POINTER_D1_QUERIES) return [];
+  const [pointerRes, lapEndRes, maxRes] = await env.DB.batch([
+    env.DB.prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`).bind(
+      chainId,
+      SETTLE_HEAL_CURSOR_KIND,
+    ),
+    env.DB.prepare(`SELECT last_block FROM indexer_cursor WHERE chain_id = ? AND kind = ?`).bind(
+      chainId,
+      SETTLE_HEAL_LAP_END_KIND,
+    ),
+    env.DB.prepare(`SELECT MAX(loan_id) AS m FROM loans WHERE chain_id = ?`).bind(chainId),
+  ]);
+  const pointer = Number((pointerRes?.results?.[0] as { last_block?: number } | undefined)?.last_block ?? 0);
+  const storedLapEnd = Number((lapEndRes?.results?.[0] as { last_block?: number } | undefined)?.last_block ?? 0);
+  // #2636 r3 — A LAP HAS A FIXED END. It is set from the chain's highest
+  // indexed loan id when a lap starts and kept until the walk wraps, so rows
+  // that end during the lap (all at higher ids) wait for the next lap instead
+  // of extending this one forever and starving the lower ids it passed over.
+  const lapEnd =
+    pointer > 0 && storedLapEnd > 0
+      ? storedLapEnd
+      : Number((maxRes?.results?.[0] as { m?: number | null } | undefined)?.m ?? 0);
   // Each status branch is driven by the status index from the pointer, so a
   // tick costs one page of CANDIDATES, never a walk over every loan on the
   // chain (#2476 r13). INDEXED BY pins the plan: on a database without
@@ -4306,21 +4336,21 @@ export async function settleFromLedger(
   const res = await env.DB.prepare(
     `SELECT loan_id, status FROM (
         SELECT * FROM (SELECT loan_id, status FROM loans INDEXED BY idx_loans_chain_status_loan
-                        WHERE chain_id = ?1 AND status = 'repaid' AND loan_id > ?2 ORDER BY loan_id LIMIT ?3)
+                        WHERE chain_id = ?1 AND status = 'repaid' AND loan_id > ?2 AND loan_id <= ?4 ORDER BY loan_id LIMIT ?3)
         UNION ALL
         SELECT * FROM (SELECT loan_id, status FROM loans INDEXED BY idx_loans_chain_status_loan
-                        WHERE chain_id = ?1 AND status = 'defaulted' AND loan_id > ?2 ORDER BY loan_id LIMIT ?3)
+                        WHERE chain_id = ?1 AND status = 'defaulted' AND loan_id > ?2 AND loan_id <= ?4 ORDER BY loan_id LIMIT ?3)
         UNION ALL
         SELECT * FROM (SELECT loan_id, status FROM loans INDEXED BY idx_loans_chain_status_loan
-                        WHERE chain_id = ?1 AND status = 'liquidated' AND loan_id > ?2 ORDER BY loan_id LIMIT ?3)
+                        WHERE chain_id = ?1 AND status = 'liquidated' AND loan_id > ?2 AND loan_id <= ?4 ORDER BY loan_id LIMIT ?3)
         UNION ALL
         SELECT * FROM (SELECT loan_id, status FROM loans INDEXED BY idx_loans_chain_status_loan
-                        WHERE chain_id = ?1 AND status = 'internal_matched' AND loan_id > ?2 ORDER BY loan_id LIMIT ?3)
+                        WHERE chain_id = ?1 AND status = 'internal_matched' AND loan_id > ?2 AND loan_id <= ?4 ORDER BY loan_id LIMIT ?3)
       )
       ORDER BY loan_id
       LIMIT ?3`,
   )
-    .bind(chainId, pointer, SETTLE_HEAL_BATCH)
+    .bind(chainId, pointer, SETTLE_HEAL_BATCH, lapEnd)
     .all<{ loan_id: number; status: string }>();
   const rows = res.results ?? [];
   const healed: number[] = [];
@@ -4351,7 +4381,12 @@ export async function settleFromLedger(
       // makes (`loanOrphans.ts`), under the same live-budget check as a
       // settle write, and reported the same way.
       if (Number(detail.id ?? 0) === 0) {
-        if (budget.subrequests.remaining < 2 || budget.d1Queries.remaining < 2) {
+        // #2636 r3 — the move's whole cost (both of its batches, every
+        // statement in them) and still the rotation write after it.
+        if (
+          budget.subrequests.remaining < ORPHAN_MOVE_SUBREQUESTS + 1 ||
+          budget.d1Queries.remaining < ORPHAN_MOVE_D1_QUERIES + SETTLE_HEAL_POINTER_D1_QUERIES
+        ) {
           reached = before;
           break;
         }
@@ -4383,7 +4418,7 @@ export async function settleFromLedger(
       // normal figure, not a bound (the client retries a failed read), so if
       // the reads ran over, stop here: the row stays unsettled, the pointer
       // stays before it, and the next lap does it with room to report it.
-      if (budget.subrequests.remaining < 2 || budget.d1Queries.remaining < 2) {
+      if (budget.subrequests.remaining < 2 || budget.d1Queries.remaining < 1 + SETTLE_HEAL_POINTER_D1_QUERIES) {
         reached = before;
         break;
       }
@@ -4402,19 +4437,25 @@ export async function settleFromLedger(
   // failed after retries can have spent the reserve, and a write past the
   // ceiling could end the invocation before the ids above are returned. A
   // skipped write only repeats a page next tick.
-  if (next !== pointer && budget.subrequests.remaining >= 1 && budget.d1Queries.remaining >= 1) {
+  if (
+    next !== pointer &&
+    budget.subrequests.remaining >= 1 &&
+    budget.d1Queries.remaining >= SETTLE_HEAL_POINTER_D1_QUERIES
+  ) {
     // #2476 r7 — a failed pointer write must not lose the ids above: those
     // rows are settled and will never be selected again, so this return is
     // the only report they get. The walk merely repeats a page next tick.
     try {
       const t = Math.floor(Date.now() / 1000);
-      await env.DB.prepare(
-        `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+      // The pointer and the lap end together: a wrap clears the end (0), so
+      // the next lap fixes a fresh one.
+      const upsert = `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
          VALUES (?, ?, ?, ?)
-         ON CONFLICT(chain_id, kind) DO UPDATE SET last_block = excluded.last_block, updated_at = excluded.updated_at`,
-      )
-        .bind(chainId, SETTLE_HEAL_CURSOR_KIND, next, t)
-        .run();
+         ON CONFLICT(chain_id, kind) DO UPDATE SET last_block = excluded.last_block, updated_at = excluded.updated_at`;
+      await env.DB.batch([
+        env.DB.prepare(upsert).bind(chainId, SETTLE_HEAL_CURSOR_KIND, next, t),
+        env.DB.prepare(upsert).bind(chainId, SETTLE_HEAL_LAP_END_KIND, next === 0 ? 0 : lapEnd, t),
+      ]);
     } catch (err) {
       console.warn(`[chainIndexer] ledger settlement heal: rotation pointer not saved on chain ${chainId}`, err);
     }

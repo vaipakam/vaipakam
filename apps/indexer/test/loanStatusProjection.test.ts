@@ -568,11 +568,11 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     const h = createSqliteD1(ALL_MIGRATIONS);
     const src = readFileSync(new URL('../src/chainIndexer.ts', import.meta.url), 'utf8');
     const body = src.slice(src.indexOf('export async function settleFromLedger('));
-    const sql = body.slice(body.indexOf('`SELECT loan_id, status FROM ('), body.indexOf('.bind(chainId, pointer, SETTLE_HEAL_BATCH)'));
+    const sql = body.slice(body.indexOf('`SELECT loan_id, status FROM ('), body.indexOf('.bind(chainId, pointer, SETTLE_HEAL_BATCH, lapEnd)'));
     const text = sql.slice(1, sql.lastIndexOf('`'));
-    const plan = (h.db.prepare(`EXPLAIN QUERY PLAN ${text}`).all(CHAIN, 0, 20) as Array<{ detail: string }>).map((r) => r.detail);
+    const plan = (h.db.prepare(`EXPLAIN QUERY PLAN ${text}`).all(CHAIN, 0, 20, 1000) as Array<{ detail: string }>).map((r) => r.detail);
     // Each branch searches its own status range of the index in loan_id order…
-    expect(plan.filter((d) => /USING (COVERING )?INDEX idx_loans_chain_status_loan \(chain_id=\? AND status=\? AND loan_id>\?\)/.test(d))).toHaveLength(4);
+    expect(plan.filter((d) => /USING (COVERING )?INDEX idx_loans_chain_status_loan \(chain_id=\? AND status=\? AND loan_id>\?( AND loan_id<\?)?\)/.test(d))).toHaveLength(4);
     // …so no sort ever reads `loans` directly: every sort SQLite plans is over
     // one branch's page (a subquery scan of at most the page size), never
     // over the matching rows themselves.
@@ -631,6 +631,29 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     expect(seen.reads[0].id).toBe(100); // wrapped to the start
   });
 
+  it('#2636 r3 — a lap ends where it started: rows added mid-lap wait for the next one', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    for (let id = 100; id < 125; id++) {
+      seedLoan(h, id, 'internal_matched');
+      ledger(h, id, 'LoanSettled', id, 1);
+    }
+    const unconfirmed = () => 5;
+    await heal(h, chain({}, unconfirmed)); // first page: 100–119, lap fixed at 124
+    // A newer ended loan lands while the lap is running.
+    seedLoan(h, 300, 'internal_matched');
+    ledger(h, 300, 'LoanSettled', 300, 1);
+    const second = { reads: [] as Array<{ id: number; block: bigint }> };
+    await heal(h, chain({}, unconfirmed, second));
+    // The lap finishes at its own end, so it completes instead of chasing.
+    expect(second.reads.map((r) => r.id)).toEqual([120, 121, 122, 123, 124]);
+    const third = { reads: [] as Array<{ id: number; block: bigint }> };
+    await heal(h, chain({}, unconfirmed, third));
+    expect(third.reads[0].id).toBe(100); // the next lap starts over…
+    const fourth = { reads: [] as Array<{ id: number; block: bigint }> };
+    await heal(h, chain({}, unconfirmed, fourth));
+    expect(fourth.reads.map((r) => r.id)).toContain(300); // …and reaches the new row
+  });
+
   it('takes the provenance only from an event the chain confirms, never from a discarded one (#2476 r7)', async () => {
     const h = createSqliteD1(ALL_MIGRATIONS);
     seedLoan(h, 70, 'internal_matched');
@@ -661,15 +684,17 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
     const h = createSqliteD1(ALL_MIGRATIONS);
     const seen: string[] = [];
     const d1 = h.d1 as { prepare(sql: string): unknown };
-    const spy = { DB: { prepare: (sql: string) => (seen.push(sql), d1.prepare(sql)) } } as unknown as Env;
+    const spy = {
+      DB: { prepare: (sql: string) => (seen.push(sql), d1.prepare(sql)), batch: (s: never[]) => h.d1.batch(s) },
+    } as unknown as Env;
     await settleFromLedger(chain({}) as never, DIAMOND, spy, CHAIN, budget(), 777n);
     const select = seen.find((q) => q.includes('idx_loans_chain_status_loan'));
     expect(select).toBeDefined();
-    const plan = (h.db.prepare(`EXPLAIN QUERY PLAN ${select}`).all(CHAIN, 0, 20) as { detail: string }[])
+    const plan = (h.db.prepare(`EXPLAIN QUERY PLAN ${select}`).all(CHAIN, 0, 20, 1000) as { detail: string }[])
       .map((r) => r.detail)
       .join('\n');
     // It SEEKS on the rotation bound, not just on the chain.
-    expect(plan).toMatch(/USING (COVERING )?INDEX idx_loans_chain_status_loan \(chain_id=\? AND status=\? AND loan_id>\?\)/);
+    expect(plan).toMatch(/USING (COVERING )?INDEX idx_loans_chain_status_loan \(chain_id=\? AND status=\? AND loan_id>\?( AND loan_id<\?)?\)/);
     expect(plan).not.toMatch(/SCAN loans|sqlite_autoindex_loans/);
   });
 
@@ -721,6 +746,11 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
             b.subrequests.remaining--;
             return d1.prepare(sql);
           },
+          // A batch is ONE request, however many statements it carries.
+          batch: (s: never[]) => {
+            b.subrequests.remaining += s.length - 1;
+            return h.d1.batch(s);
+          },
         },
       } as unknown as Env;
     };
@@ -753,6 +783,7 @@ describe('settleFromLedger — the terminal→Settled edge the ledger and the ch
           if (sql.includes('INSERT INTO indexer_cursor')) throw new Error('D1 write failed');
           return d1.prepare(sql);
         },
+        batch: (s: never[]) => h.d1.batch(s),
       },
     } as unknown as Env;
     // Fill a whole page so the pointer advances and must be written.

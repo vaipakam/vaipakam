@@ -1032,23 +1032,27 @@ The app uses chain reads and indexed reads for different jobs.
   only on that proof: a reading that failed is not evidence that a loan does
   not exist, and changes nothing. It applies to every record the platform
   publishes as a loan, running or ended alike, and it is all-or-nothing: if
-  the record changes while the withdrawal is under way, nothing is withdrawn
-  and nothing attached to it is touched. The record is kept whole, out of
+  the record, or the set of entries about it, changes while the withdrawal is
+  under way, nothing is withdrawn and nothing attached to it is touched. The
+  platform's memory of which alerts it already sent about the position goes
+  with it, so a real loan later given the same number is warned from scratch. The record is kept whole, out of
   publication, with the settled point the proof was read at, so a person can
   put it back if the existence test itself was at fault. That kept record is
   backed up with the platform's other records that the chain cannot
   reproduce, since rebuilding the index from the chain cannot bring it back,
   and it survives a redeployment of the contracts, naming the deployment it
   is about;
-  and the finding
-  stays on the operator's list of unresolved records, because a position
+  and the finding is put on the operator's list of unresolved records in the
+  same write, however it was found, and stays there until a person clears it, because a position
   that vanished from the index is something a person should look at. Nothing
   public says the record was withdrawn, since nothing public about it was
   ever true.
 - **A record that shows an ending, where the chain says the loan has since
   been fully settled, is brought up to settled even when the settlement's own
   announcement was missed.** Every ended-but-unsettled record is checked
-  against the chain on a continuing rotation, and is moved to settled only
+  against the chain on a continuing rotation (each pass over the records
+  finishes at the newest one it started with, so a steady stream of new
+  endings cannot keep older ones from being checked), and is moved to settled only
   when the chain, read at its settled point, says so — never to any other
   ending, since the chain cannot say how a loan ended more precisely than the
   record already does. The settlement's block and time are recorded only

@@ -16,9 +16,13 @@
 -- (`loan_participants`) and its inbox notifications, each kept whole in
 -- `related_json`, and its side tables (`prepay_listings`,
 -- `swap_to_repay_intents`), which are commitments to act and are not kept.
--- The archive insert is guarded by the WHOLE row as it was read, column by
--- column, and every later statement acts only if that insert landed, so a
--- concurrent writer that changed anything leaves the whole move a no-op. Moving rather than restatusing is the
+-- `notify_state` and `pre_grace_notify_state` (alert memory for the id) are
+-- cleared too and not kept, so an id later issued to a real loan does not
+-- inherit the withdrawn one's alert history. The archive insert is guarded by
+-- the WHOLE row as it was read, column by column, and by each related table
+-- still holding exactly the rows that were read (by rowid); every later
+-- statement acts only if that insert landed, so a concurrent writer that
+-- changed or added anything leaves the whole move a no-op. Moving rather than restatusing is the
 -- point: every reader of `loans` — four Workers and every route — stops
 -- seeing it with no filter added anywhere, where a new status value would
 -- have had to be excluded, deliberately, at every site that lists loans.
@@ -42,10 +46,11 @@
 -- (src/diamondEpochKeep.json): every entry names the Diamond it is about,
 -- and nothing joins it to live ids.
 --
--- Where the reconciliation pass made the move, the quarantine marker
--- (`loan_reconcile_quarantine`, reason `orphan`) is deliberately NOT cleared: with no `loans` row it is held
--- indefinitely and named in the operator's stale report, which is where a
--- person learns a position was withdrawn. Nothing on a public surface says
+-- The move itself sets the quarantine marker (`loan_reconcile_quarantine`,
+-- reason `orphan`), whichever lane found the orphan. With no `loans` row
+-- nothing ever releases it, so it is held until a person clears it and is
+-- named in the operator's stale report, which is where a person learns a
+-- position was withdrawn. Nothing on a public surface says
 -- so, because nothing on a public surface ever existed on chain.
 --
 -- Additive: a new table; the deployed code neither reads nor writes it.
