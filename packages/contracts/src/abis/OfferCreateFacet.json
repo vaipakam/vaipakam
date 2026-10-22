@@ -4392,6 +4392,11 @@
   },
   {
     "type": "error",
+    "name": "RentalQuantityAboveVaultRange",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ReportAfterFinalization",
     "inputs": []
   },
