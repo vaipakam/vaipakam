@@ -49,12 +49,33 @@ contract VaipakamVaultImplementation is
     ///      aggregate quantity and the minimum active expiry. ERC-721
     ///      rentals always collapse to a single entry with quantity = 1.
     ///      Storage kept at the tail of the layout for UUPS-upgrade safety.
+    ///      `rentalId` (#902) keys an ERC-1155 row to the one rental (the
+    ///      Diamond's loan id) it records, so concurrent rentals of the same
+    ///      token are separate rows and closing one leaves the others; it is
+    ///      zero on an ERC-721 row. It packs into the slot `quantity` already
+    ///      occupies, so the entry's two-slot stride is unchanged.
     struct RentalEntry {
         address user;
         uint64 expires;
         uint128 quantity;
+        uint128 rentalId;
     }
     mapping(address => mapping(uint256 => RentalEntry[])) private _rentalEntries;
+
+    /// @notice #902 — the most ACTIVE ERC-1155 rentals one (nftContract,
+    ///         tokenId) may carry in this vault at once.
+    /// @dev    Every write to a token's rental list, the closes included,
+    ///         walks the whole list, and the Diamond reads it twice more for
+    ///         {VaultRentalUpdated}'s aggregate. Without a bound, enough
+    ///         concurrent rentals of one token would make a repayment, default
+    ///         or handover of any of them cost more than a block allows, and
+    ///         that rental could then never close. The bound is enforced where
+    ///         a row is added (the accept), so a close always stays within it.
+    ///         Expired rows are pruned before the count, so only rentals that
+    ///         still confer rights take a place. A constant, not a knob:
+    ///         raising it is a code change measured against the close path's
+    ///         gas, never a setting.
+    uint256 public constant MAX_CONCURRENT_RENTALS_1155 = 64;
 
     /// @dev T-086 step 7 — Seaport prepay-collateral-listing support,
     ///      and since #1566 S3e the 1inch swap-to-repay order this vault
@@ -94,6 +115,11 @@ contract VaipakamVaultImplementation is
     ///      when packed into a {RentalEntry}. Replaces
     ///      `"quantity overflow"`.
     error QuantityOverflow();
+    /// @dev #902 — a new ERC-1155 rental would take (nftContract, tokenId)
+    ///      past {MAX_CONCURRENT_RENTALS_1155} active rows in this vault.
+    ///      Raised only when a row is ADDED; updating or removing a rental's
+    ///      own row never reverts with it.
+    error TooManyConcurrentRentals(address nftContract, uint256 tokenId);
     /// @dev An NFT (ERC-721 / ERC-1155) was pushed into this vault via a
     ///      `safeTransferFrom` whose operator was neither the Diamond nor
     ///      this vault itself. Direct user-initiated transfers are
@@ -508,12 +534,13 @@ contract VaipakamVaultImplementation is
     // }
 
     /**
-     * @notice Sets the temporary user (renter) for a rentable NFT.
-     * @dev Calls IERC4907.setUser on the external NFT contract.
-     *      Uses try-catch to handle non-supporting contracts (reverts if fail).
-     *      For ERC721: Assumes prior approval as operator.
-     *      For ERC1155: Assumes held in vault.
-     *      Callable by owner (facets for loan acceptance).
+     * @notice Sets the temporary user (renter) of a rented ERC-721.
+     * @dev Single-slot: replaces the token's one row, or clears it when
+     *      `user` is zero. Forwards to IERC4907.setUser when the NFT
+     *      supports it. ERC-1155 rentals use {setRental1155} instead, whose
+     *      rows are per rental (#902): this function wipes every row for the
+     *      token, which is correct only for a token that can be rented once
+     *      at a time.
      * @param nftContract The NFT contract address.
      * @param tokenId The token ID.
      * @param user The temporary user address.
@@ -530,7 +557,7 @@ contract VaipakamVaultImplementation is
         delete _rentalEntries[nftContract][tokenId];
         if (user != address(0)) {
             _rentalEntries[nftContract][tokenId].push(
-                RentalEntry({user: user, expires: expires, quantity: 1})
+                RentalEntry({user: user, expires: expires, quantity: 1, rentalId: 0})
             );
         }
         bool forwards;
@@ -547,33 +574,48 @@ contract VaipakamVaultImplementation is
     }
 
     /**
-     * @notice Records an ERC-1155 rental alongside any other active rentals
-     *         already held in this vault for the same (nftContract, tokenId).
-     * @dev Aggregate-capable variant of {setUser} used for partial-quantity
-     *      ERC-1155 rentals. If `user` already has an entry, its row is
-     *      replaced; otherwise a new row is appended. Passing `quantity == 0`
-     *      removes the user's entry. Expired rows encountered on the way are
-     *      pruned to bound storage growth. IERC4907 forwarding is skipped —
-     *      1155 rental is a first-party Vaipakam semantic and the underlying
-     *      contract is not required to implement it.
+     * @notice Records, updates or removes ONE ERC-1155 rental of
+     *         (nftContract, tokenId) held in this vault, leaving every other
+     *         concurrent rental of the same token as it is (#902).
+     * @dev Rows are keyed by `rentalId` (the Diamond passes the loan id), not
+     *      by renter: two rentals of the same token, even to the same renter,
+     *      are two rows, and closing one removes only its own. Passing
+     *      `quantity == 0` or `user == address(0)` removes the row for
+     *      `rentalId` (a no-op when there is none). Expired rows of OTHER
+     *      rentals met on the way are pruned to bound storage growth: an
+     *      expired rental confers no rights, and its own later close finds no
+     *      row to remove. Adding a row when the token already has
+     *      {MAX_CONCURRENT_RENTALS_1155} active rows reverts
+     *      {TooManyConcurrentRentals}; an update or a removal never does.
+     *      IERC4907 forwarding is skipped: ERC-1155 has no
+     *      standard per-quantity user interface, so this vault is the
+     *      integration surface for ERC-1155 rental reads.
+     * @param nftContract The ERC-1155 contract.
+     * @param tokenId     The token id rented.
+     * @param rentalId    The rental this row records (the Diamond's loan id).
+     * @param user        The renter, or zero to remove the rental's row.
+     * @param expires     When the renter's rights end.
+     * @param quantity    Units rented, or zero to remove the rental's row.
      */
-    function setUser1155(
+    function setRental1155(
         address nftContract,
         uint256 tokenId,
+        uint256 rentalId,
         address user,
         uint64 expires,
         uint256 quantity
     ) external onlyDiamond {
         if (quantity > type(uint128).max) revert QuantityOverflow();
+        uint128 key = SafeCast.toUint128(rentalId);
         RentalEntry[] storage list = _rentalEntries[nftContract][tokenId];
 
-        // Compact expired entries and locate any existing row for `user`.
+        // Compact expired rows of other rentals and locate this rental's row.
         uint256 write;
         uint256 existingIdx = type(uint256).max;
         uint256 listLen = list.length;
         for (uint256 read; read < listLen; ) {
             RentalEntry memory e = list[read];
-            if (e.user == user) {
+            if (e.rentalId == key) {
                 existingIdx = write;
             } else if (e.expires < block.timestamp) {
                 // drop expired others
@@ -603,20 +645,19 @@ contract VaipakamVaultImplementation is
             return;
         }
 
+        RentalEntry memory row = RentalEntry({
+            user: user,
+            expires: expires,
+            quantity: SafeCast.toUint128(quantity),
+            rentalId: key
+        });
         if (existingIdx != type(uint256).max) {
-            list[existingIdx] = RentalEntry({
-                user: user,
-                expires: expires,
-                quantity: SafeCast.toUint128(quantity)
-            });
+            list[existingIdx] = row;
         } else {
-            list.push(
-                RentalEntry({
-                    user: user,
-                    expires: expires,
-                    quantity: SafeCast.toUint128(quantity)
-                })
-            );
+            if (list.length >= MAX_CONCURRENT_RENTALS_1155) {
+                revert TooManyConcurrentRentals(nftContract, tokenId);
+            }
+            list.push(row);
         }
     }
 
@@ -666,7 +707,7 @@ contract VaipakamVaultImplementation is
      * @notice Returns the active aggregate rented quantity for (nftContract,
      *         tokenId). Expired entries are excluded. For ERC-721 this is
      *         either 0 or 1; for ERC-1155 it is the sum of concurrent
-     *         active-renter quantities recorded via {setUser1155}.
+     *         active-renter quantities recorded via {setRental1155}.
      */
     function userQuantity(
         address nftContract,

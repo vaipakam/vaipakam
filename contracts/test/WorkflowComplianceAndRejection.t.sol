@@ -394,10 +394,10 @@ contract WorkflowComplianceAndRejection is Test {
             abi.encode(uint8(18))
         );
 
-        // Mock vaultSetNFTUser to succeed
+        // Mock vaultSetRentalUser to succeed
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector),
             abi.encode(true)
         );
 

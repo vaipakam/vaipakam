@@ -1253,10 +1253,8 @@ contract PrecloseFacet is
             // Revoke alice's user right
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultSetNFTUser.selector,
-                    loan.lender,
-                    loan.principalAsset,
-                    loan.tokenId,
+                    VaultFactoryFacet.vaultSetRentalUser.selector,
+                    loan.id,
                     address(0),
                     0
                 ),
@@ -1265,10 +1263,8 @@ contract PrecloseFacet is
             // Assign ben as new user for remaining duration
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultSetNFTUser.selector,
-                    loan.lender,
-                    loan.principalAsset,
-                    loan.tokenId,
+                    VaultFactoryFacet.vaultSetRentalUser.selector,
+                    loan.id,
                     newBorrower,
                     uint64(block.timestamp + loan.durationDays * 1 days)
                 ),
@@ -2216,10 +2212,8 @@ contract PrecloseFacet is
     function _resetNftRenter(LibVaipakam.Loan storage loan) internal {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                VaultFactoryFacet.vaultSetNFTUser.selector,
-                loan.lender,
-                loan.principalAsset,
-                loan.tokenId,
+                VaultFactoryFacet.vaultSetRentalUser.selector,
+                loan.id,
                 address(0),
                 0
             ),

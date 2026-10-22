@@ -967,7 +967,7 @@ contract HelperTest {
         selectors[7] = VaultFactoryFacet.vaultDepositERC1155.selector;
         selectors[8] = VaultFactoryFacet.vaultWithdrawERC1155.selector;
         selectors[9] = VaultFactoryFacet.vaultApproveNFT721.selector;
-        selectors[10] = VaultFactoryFacet.vaultSetNFTUser.selector;
+        selectors[10] = VaultFactoryFacet.vaultSetRentalUser.selector;
         selectors[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
         selectors[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
         selectors[13] = VaultFactoryFacet.getOfferAmount.selector;
@@ -3036,7 +3036,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](35);
+        selectors = new bytes4[](34);
         selectors[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -3047,7 +3047,7 @@ contract HelperTest {
         selectors[7] = VaultFactoryFacet.vaultDepositERC1155.selector;
         selectors[8] = VaultFactoryFacet.vaultWithdrawERC1155.selector;
         selectors[9] = VaultFactoryFacet.vaultApproveNFT721.selector;
-        selectors[10] = VaultFactoryFacet.vaultSetNFTUser.selector;
+        selectors[10] = VaultFactoryFacet.vaultSetRentalUser.selector;
         selectors[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
         selectors[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
         selectors[13] = VaultFactoryFacet.getOfferAmount.selector;
@@ -3056,7 +3056,9 @@ contract HelperTest {
         selectors[16] = VaultFactoryFacet.setMandatoryVaultUpgrade.selector;
         selectors[17] = VaultFactoryFacet.upgradeUserVault.selector;
         selectors[18] = VaultFactoryFacet.vaultGetNFTQuantity.selector;
-        selectors[19] = VaultFactoryFacet.vaultSetNFTUser1155.selector;
+        // #1566 S3e — the swap fill's counter-only outflow record. In slot 19
+        // since #902 retired vaultSetNFTUser1155.
+        selectors[19] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
         selectors[20] = VaultFactoryFacet.getUserVaultAddress.selector;
         // T-051 / T-054 — counter chokepoint companions.
         selectors[21] = VaultFactoryFacet.vaultDepositERC20From.selector;
@@ -3076,8 +3078,6 @@ contract HelperTest {
         selectors[32] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
         selectors[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
-        // #1566 S3e — the swap fill's counter-only outflow record.
-        selectors[34] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
         return selectors;
     }
 

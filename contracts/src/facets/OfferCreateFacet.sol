@@ -316,6 +316,11 @@ contract OfferCreateFacet is
     /// obligation handover) while the loan runs on the matched or accepted
     /// fee, so a range lets the two differ and leaves the prepayment short.
     error RentalAmountRangeNotAllowed();
+    /// #902 — an ERC-1155 rental offer's `quantity` exceeds what the lender's
+    /// vault can record for one rental (a `uint128`, the width of a rental
+    /// row's quantity). Refused at create so no standing offer vaults units
+    /// that every accept would then refuse to record.
+    error RentalQuantityAboveVaultRange();
     // ── Canonical Limit-Order Phase 2 errors (#183) — strict
     //    non-zero invariants replacing the dropped auto-collapse.
     /// `params.amount == 0`. Every offer must have a positive minimum.
@@ -1663,6 +1668,10 @@ contract OfferCreateFacet is
             params.assetType != LibVaipakam.AssetType.ERC20 &&
             params.amountMax != params.amount
         ) revert RentalAmountRangeNotAllowed();
+        if (
+            params.assetType == LibVaipakam.AssetType.ERC1155 &&
+            params.quantity > type(uint128).max
+        ) revert RentalQuantityAboveVaultRange();
         // #183 — the rate invariant deliberately ALLOWS zero on both
         // ends (`interestRateBps = interestRateBpsMax = 0`). This is a
         // legitimate shape: NFT rental offers don't carry an APR (the

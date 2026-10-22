@@ -1312,6 +1312,12 @@
         "internalType": "uint256"
       },
       {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "user",
         "type": "address",
         "indexed": false,
@@ -3249,6 +3255,11 @@
   {
     "type": "error",
     "name": "NoVault",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotRentalLoan",
     "inputs": []
   },
   {
@@ -8037,58 +8048,10 @@
   },
   {
     "type": "function",
-    "name": "vaultSetNFTUser1155",
+    "name": "vaultSetRentalUser",
     "inputs": [
       {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nftContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "renter",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "expires",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "quantity",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "vaultSetNFTUser",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "nftContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "tokenId",
+        "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
       },

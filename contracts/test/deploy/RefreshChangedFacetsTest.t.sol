@@ -11,6 +11,12 @@ import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {PerkFacet} from "../../src/facets/PerkFacet.sol";
 import {RewardEpochFacet} from "../../src/facets/RewardEpochFacet.sol";
 import {RewardCustodyFacet} from "../../src/facets/RewardCustodyFacet.sol";
+import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
+import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
+import {LoanFacet} from "../../src/facets/LoanFacet.sol";
+import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {LibPausable} from "../../src/libraries/LibPausable.sol";
+import {RefreshAllFacetsInPlace} from "../../script/RefreshAllFacetsInPlace.s.sol";
 
 /**
  * @title  RefreshChangedFacetsTest
@@ -216,5 +222,158 @@ contract RefreshChangedFacetsTest is Test {
         RefreshChangedFacetsInPlace script = new RefreshChangedFacetsInPlace();
         vm.expectRevert(bytes("RefreshChangedFacetsInPlace: the signing key is not the diamond owner"));
         script.refreshChangedWith(diamond, 2, "");
+    }
+
+    // ── #902: crossing the per-rental rows in place ─────────────────────────
+
+    address internal _hostOfRentalRoute;
+
+    /// @dev Set the manual pause flag (the slot's low byte), as an operator's
+    ///      `AdminFacet.pause()` would, leaving the rest of the slot alone.
+    function _pauseManually() internal {
+        bytes32 raw = vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION);
+        vm.store(diamond, LibPausable.PAUSABLE_STORAGE_POSITION, raw | bytes32(uint256(1)));
+    }
+
+    /// @dev Make the Diamond read as pre-#902 (no `vaultSetRentalUser` route)
+    ///      with `ids` as its loans (the highest one the id high-water mark),
+    ///      each carrying `assetType` and `status`, under the operator's manual
+    ///      pause that a crossing requires. Ids not listed read as the real,
+    ///      zeroed records of this loan-less Diamond.
+    function _pre902WithLoans(uint256[] memory ids, LibVaipakam.AssetType assetType, LibVaipakam.LoanStatus status)
+        internal
+    {
+        _pre902WithLoansUnpaused(ids, assetType, status);
+        _pauseManually();
+    }
+
+    function _pre902WithLoansUnpaused(
+        uint256[] memory ids,
+        LibVaipakam.AssetType assetType,
+        LibVaipakam.LoanStatus status
+    ) internal {
+        vm.mockCall(
+            diamond,
+            abi.encodeWithSelector(IDiamondLoupe.facetAddress.selector, VaultFactoryFacet.vaultSetRentalUser.selector),
+            abi.encode(address(0))
+        );
+        uint256 highest;
+        for (uint256 i; i < ids.length; ++i) {
+            if (ids[i] > highest) highest = ids[i];
+            LibVaipakam.Loan memory loan;
+            loan.id = ids[i];
+            loan.assetType = assetType;
+            loan.status = status;
+            vm.mockCall(diamond, abi.encodeWithSelector(LoanFacet.getLoanDetails.selector, ids[i]), abi.encode(loan));
+        }
+        vm.mockCall(diamond, abi.encodeWithSelector(MetricsFacet.getGlobalCounts.selector), abi.encode(highest, uint256(0)));
+    }
+
+    /// A pre-#902 Diamond with an open ERC-1155 rental is refused before
+    /// anything is deployed, naming the loan: its vault row is keyed by renter
+    /// and the per-rental writes would never find it.
+    function test_902_OpenErc1155RentalAcrossTheBoundary_Refuses() public {
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = 3;
+        ids[1] = 9;
+        _pre902WithLoans(ids, LibVaipakam.AssetType.ERC1155, LibVaipakam.LoanStatus.Active);
+        RefreshChangedFacetsInPlace script = new RefreshChangedFacetsInPlace();
+        vm.expectRevert(
+            abi.encodeWithSelector(RefreshAllFacetsInPlace.OpenErc1155RentalAcrossPerRentalRows.selector, diamond, uint256(3))
+        );
+        script.refreshChangedWith(diamond, DEPLOYER_KEY, "");
+    }
+
+    /// An open ERC-1155 rental absent from the metrics active list is still
+    /// found (Codex #2657 r5): the walk reads every loan id, not that index,
+    /// which the lifecycle library documents can miss a live loan.
+    function test_902_UncountedOpenErc1155Rental_IsFound() public {
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 7;
+        _pre902WithLoans(ids, LibVaipakam.AssetType.ERC1155, LibVaipakam.LoanStatus.Active);
+        vm.mockCall(
+            diamond,
+            abi.encodeWithSelector(MetricsFacet.getActiveLoansPaginated.selector, uint256(0), uint256(200)),
+            abi.encode(new uint256[](0))
+        );
+        Guard902Harness h = new Guard902Harness();
+        vm.expectRevert(
+            abi.encodeWithSelector(RefreshAllFacetsInPlace.OpenErc1155RentalAcrossPerRentalRows.selector, diamond, uint256(7))
+        );
+        h.check(diamond);
+    }
+
+    /// A rental in the fallback has not reached a terminal path, so it holds
+    /// the boundary like an active one.
+    function test_902_FallbackPendingErc1155Rental_Refuses() public {
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 2;
+        _pre902WithLoans(ids, LibVaipakam.AssetType.ERC1155, LibVaipakam.LoanStatus.FallbackPending);
+        Guard902Harness h = new Guard902Harness();
+        vm.expectRevert(
+            abi.encodeWithSelector(RefreshAllFacetsInPlace.OpenErc1155RentalAcrossPerRentalRows.selector, diamond, uint256(2))
+        );
+        h.check(diamond);
+    }
+
+    /// A closed ERC-1155 rental had its renter revoked when it closed, so it
+    /// leaves no row to carry and does not hold the boundary.
+    function test_902_ClosedErc1155Rental_Passes() public {
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = 1;
+        ids[1] = 6;
+        _pre902WithLoans(ids, LibVaipakam.AssetType.ERC1155, LibVaipakam.LoanStatus.Repaid);
+        Guard902Harness h = new Guard902Harness();
+        h.check(diamond);
+    }
+
+    /// An unpaused pre-#902 Diamond is refused before the walk (Codex #2657
+    /// r4): a walk taken while accepts are open could be falsified by an
+    /// accept landing before the run's own pause. Refused even with no
+    /// ERC-1155 loan open, since that is exactly what the walk cannot pin.
+    function test_902_UnpausedAcrossTheBoundary_RefusesBeforeTheWalk() public {
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 4;
+        _pre902WithLoansUnpaused(ids, LibVaipakam.AssetType.ERC721, LibVaipakam.LoanStatus.Active);
+        Guard902Harness h = new Guard902Harness();
+        vm.expectRevert(
+            abi.encodeWithSelector(RefreshAllFacetsInPlace.PerRentalRowsCrossingNeedsManualPause.selector, diamond)
+        );
+        h.check(diamond);
+    }
+
+    /// Open loans of any other kind do not hold the boundary.
+    function test_902_OpenNon1155LoansAcrossTheBoundary_Pass() public {
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 4;
+        _pre902WithLoans(ids, LibVaipakam.AssetType.ERC721, LibVaipakam.LoanStatus.Active);
+        Guard902Harness h = new Guard902Harness();
+        h.check(diamond);
+    }
+
+    /// A Diamond already past the boundary is not walked, so an open ERC-1155
+    /// rental on it (whose row is loan-keyed) does not refuse.
+    function test_902_PastTheBoundary_IsNotWalked() public {
+        _hostOfRentalRoute = _host(VaultFactoryFacet.vaultSetRentalUser.selector);
+        assertTrue(_hostOfRentalRoute != address(0), "fixture: the fresh Diamond routes the rental writes");
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 5;
+        _pre902WithLoans(ids, LibVaipakam.AssetType.ERC1155, LibVaipakam.LoanStatus.Active);
+        // Restore the real route: only the loupe answer is put back, so the
+        // open ERC-1155 loan stays in place for a walk that must not happen.
+        vm.mockCall(
+            diamond,
+            abi.encodeWithSelector(IDiamondLoupe.facetAddress.selector, VaultFactoryFacet.vaultSetRentalUser.selector),
+            abi.encode(_hostOfRentalRoute)
+        );
+        Guard902Harness h = new Guard902Harness();
+        h.check(diamond);
+    }
+}
+
+/// @dev Exposes the #902 boundary check of the in-place refreshes.
+contract Guard902Harness is RefreshChangedFacetsInPlace {
+    function check(address d) external view {
+        _requireNoOpenErc1155RentalAcross902(d);
     }
 }

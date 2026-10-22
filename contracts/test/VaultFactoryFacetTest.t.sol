@@ -26,6 +26,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC1155Mock} from "./mocks/ERC1155Mock.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 
 /**
  * @title VaultFactoryFacetTest
@@ -282,7 +283,28 @@ contract VaultFactoryFacetTest is Test {
         assertEq(IERC721(mockNft721).ownerOf(1), user1);
     }
 
-    // ─── vaultSetNFTUser / vaultGetNFTUserOf / vaultGetNFTUserExpires ─────
+    // ─── vaultSetRentalUser / vaultGetNFTUserOf / vaultGetNFTUserExpires ──
+
+    /// @dev Seeds a rental loan record the renter route reads: the vault
+    ///      owner (`lender`), the rented NFT, its id, the asset type and,
+    ///      for ERC-1155, the units rented.
+    function _seedRental(
+        uint256 loanId,
+        address lender,
+        address nft,
+        uint256 tokenId,
+        LibVaipakam.AssetType assetType,
+        uint256 quantity
+    ) internal {
+        LibVaipakam.Loan memory loan;
+        loan.id = loanId;
+        loan.lender = lender;
+        loan.principalAsset = nft;
+        loan.tokenId = tokenId;
+        loan.assetType = assetType;
+        loan.quantity = quantity;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
+    }
 
     function testVaultSetNFTUserAndQuery() public {
         // Create vault for user1 (NFT owner/lender)
@@ -294,8 +316,9 @@ contract VaultFactoryFacetTest is Test {
         IERC721(mockNft721).setApprovalForAll(vault, true);
 
         uint64 expires = uint64(block.timestamp + 30 days);
+        _seedRental(1, user1, mockNft721, 1, LibVaipakam.AssetType.ERC721, 1);
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultSetNFTUser(user1, mockNft721, 1, user2, expires);
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, user2, expires);
 
         assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTUserOf(user1, mockNft721, 1), user2);
         assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTUserExpires(user1, mockNft721, 1), expires);
@@ -303,9 +326,7 @@ contract VaultFactoryFacetTest is Test {
 
     function testVaultSetNFTUserRevertsNotDiamondInternal() public {
         vm.expectRevert(VaultFactoryFacet.OnlyDiamondInternal.selector);
-        VaultFactoryFacet(address(diamond)).vaultSetNFTUser(
-            makeAddr("noVaultUser"),
-            mockNft721,
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(
             1,
             user2,
             uint64(block.timestamp + 1 days)
@@ -324,6 +345,195 @@ contract VaultFactoryFacetTest is Test {
             VaultFactoryFacet(address(diamond)).vaultGetNFTUserExpires(makeAddr("x"), mockNft721, 1),
             0
         );
+    }
+
+    // ─── #902: one vault row per ERC-1155 rental ───────────────────────────
+
+    /// @dev An ERC-20 loan rents nothing, so the route refuses it by name.
+    function test_902_renterRouteRefusesAnErc20Loan() public {
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        _seedRental(1, user1, mockERC20, 0, LibVaipakam.AssetType.ERC20, 0);
+        vm.prank(address(diamond));
+        vm.expectRevert(VaultFactoryFacet.NotRentalLoan.selector);
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, user2, uint64(block.timestamp + 1 days));
+    }
+
+    /// @dev Two concurrent ERC-1155 rentals of the same token from one vault
+    ///      are two rows: the aggregate is their sum, the expiry their
+    ///      earliest, and closing one leaves the other's renter in place.
+    ///      Pre-fix the single-slot route wiped every row for the token, so
+    ///      the second accept overwrote the first renter and either close
+    ///      evicted both.
+    function test_902_concurrentErc1155RentalsAreSeparateRows() public {
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        address renterB = makeAddr("renterB");
+        address nft = makeAddr("erc1155");
+        _seedRental(1, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 3);
+        _seedRental(2, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 5);
+        uint64 expA = uint64(block.timestamp + 10 days);
+        uint64 expB = uint64(block.timestamp + 20 days);
+
+        vm.startPrank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, user2, expA);
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(2, renterB, expB);
+        vm.stopPrank();
+
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), 8, "3 + 5 rented");
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTUserExpires(user1, nft, 7), expA, "earliest expiry");
+
+        // Close rental 1 only.
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, address(0), 0);
+
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), 5, "rental 2 keeps its 5");
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTUserOf(user1, nft, 7), renterB, "rental 2's renter stays");
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTUserExpires(user1, nft, 7), expB);
+    }
+
+    /// @dev The rows are keyed by rental, not by renter: the same renter
+    ///      holding two rentals of one token keeps the second when the first
+    ///      closes, and refreshing one rental's expiry leaves the other's.
+    function test_902_sameRenterTwoRentalsStayIndependent() public {
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        address nft = makeAddr("erc1155");
+        _seedRental(1, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 2);
+        _seedRental(2, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 4);
+        uint64 expA = uint64(block.timestamp + 10 days);
+        uint64 expB = uint64(block.timestamp + 20 days);
+
+        vm.startPrank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, user2, expA);
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(2, user2, expB);
+        // An expiry refresh of rental 2 replaces its own row, not rental 1's.
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(2, user2, expB);
+        vm.stopPrank();
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), 6, "2 + 4, not one merged row");
+
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, address(0), 0);
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), 4, "rental 2 survives");
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTUserOf(user1, nft, 7), user2);
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTUserExpires(user1, nft, 7), expB);
+    }
+
+    /// @dev An ERC-1155 renter's quantity is the loan's, not the single unit
+    ///      the old route recorded for every rental.
+    function test_902_erc1155RowCarriesTheLoanQuantity() public {
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        address nft = makeAddr("erc1155");
+        _seedRental(1, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 5);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, user2, uint64(block.timestamp + 1 days));
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), 5);
+    }
+
+    /// @dev The update event names the rental, so a subscriber can tell which
+    ///      of two concurrent rentals of one token a revoke (zero user, zero
+    ///      quantity) closed.
+    function test_902_rentalEventNamesTheLoan() public {
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        address nft = makeAddr("erc1155");
+        _seedRental(1, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 3);
+        _seedRental(2, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 5);
+        uint64 expB = uint64(block.timestamp + 20 days);
+        vm.startPrank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, user2, uint64(block.timestamp + 10 days));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(2, user2, expB);
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit VaultFactoryFacet.VaultRentalUpdated(user1, nft, 7, 1, address(0), 0, 0, 5, expB);
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, address(0), 0);
+        vm.stopPrank();
+    }
+
+    /// @dev A lender vault left on an implementation without
+    ///      `setRental1155` (a pre-#902 vault after an in-place facet refresh)
+    ///      is upgraded to the current template by the rental step itself, so
+    ///      an accept or a close never waits on the lender upgrading. The stub
+    ///      stands in for the old implementation: it carries the upgrade entry
+    ///      and nothing else, so the fixture is asserted live first.
+    function test_902_staleVaultIsUpgradedBeforeARentalStep() public {
+        address proxy = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        address nft = makeAddr("erc1155");
+        _seedRental(1, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 3);
+        LegacyVaultWithout1155Rows legacy = new LegacyVaultWithout1155Rows();
+        vm.prank(address(diamond));
+        UUPSUpgradeable(proxy).upgradeToAndCall(address(legacy), "");
+        vm.prank(address(diamond));
+        (bool ok, ) = proxy.call(
+            abi.encodeWithSelector(
+                VaipakamVaultImplementation.setRental1155.selector, nft, uint256(7), uint256(1), user2, uint64(1), uint256(3)
+            )
+        );
+        assertFalse(ok, "fixture-live: the legacy vault has no per-rental rows");
+
+        VaipakamVaultImplementation current = new VaipakamVaultImplementation();
+        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(current));
+
+        uint64 exp = uint64(block.timestamp + 10 days);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, user2, exp);
+
+        assertEq(
+            address(uint160(uint256(vm.load(proxy, ERC1967_IMPLEMENTATION_SLOT)))),
+            address(current),
+            "the vault now runs the current template"
+        );
+        (uint256 userVersion, uint256 currentVersion, , ) = VaultFactoryFacet(address(diamond)).getVaultVersionInfo(user1);
+        assertEq(userVersion, currentVersion, "the vault's version stamp is current");
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), 3, "the rental is recorded");
+
+        // A current vault is not upgraded again; the close goes through on it.
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, address(0), 0);
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), 0, "the close went through");
+        assertEq(
+            address(uint160(uint256(vm.load(proxy, ERC1967_IMPLEMENTATION_SLOT)))),
+            address(current),
+            "still the current template"
+        );
+    }
+
+    /// @dev A token's active rentals are bounded, so every close walks a
+    ///      bounded list. The bound refuses only an ADDED row: a close or an
+    ///      expiry refresh at the bound still goes through, a close frees a
+    ///      place, and so does a rental whose rights have expired.
+    function test_902_concurrentRentalsPerTokenAreBounded() public {
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        address nft = makeAddr("erc1155");
+        uint256 cap = VaipakamVaultImplementation(
+            VaultFactoryFacet(address(diamond)).getVaipakamVaultImplementationAddress()
+        ).MAX_CONCURRENT_RENTALS_1155();
+        uint64 exp = uint64(block.timestamp + 10 days);
+        for (uint256 id = 1; id <= cap + 1; ++id) {
+            _seedRental(id, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 1);
+        }
+        vm.startPrank(address(diamond));
+        for (uint256 id = 1; id <= cap; ++id) {
+            VaultFactoryFacet(address(diamond)).vaultSetRentalUser(id, user2, exp);
+        }
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), cap, "full");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamVaultImplementation.TooManyConcurrentRentals.selector, nft, uint256(7))
+        );
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(cap + 1, user2, exp);
+
+        // At the bound, an existing rental's update still goes through.
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, user2, exp + 1 days);
+        // A close frees a place for the next rental.
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(2, address(0), 0);
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(cap + 1, user2, exp);
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), cap, "full again");
+        vm.stopPrank();
+
+        // Expired rows take no place: once the others' rights end, a new rental fits.
+        vm.warp(exp + 1);
+        _seedRental(cap + 2, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 1);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(cap + 2, user2, uint64(block.timestamp + 1 days));
+        // Rental 1's refreshed expiry (exp + 1 day) is still active.
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), 2, "rental 1 + the new one");
     }
 
     // ─── getOfferAmount / getVaipakamVaultImplementationAddress ───────────────
@@ -578,14 +788,9 @@ contract VaultFactoryFacetTest is Test {
     function testVaultSetNFTUserSucceedsForNon4907() public {
         VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
         uint64 expires = uint64(block.timestamp + 1 days);
+        _seedRental(1, user1, mockERC20, 1, LibVaipakam.AssetType.ERC721, 1);
         vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).vaultSetNFTUser(
-            user1,
-            mockERC20,
-            1,
-            user2,
-            expires
-        );
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, user2, expires);
         assertEq(
             VaultFactoryFacet(address(diamond)).vaultGetNFTUserOf(user1, mockERC20, 1),
             user2
@@ -596,8 +801,8 @@ contract VaultFactoryFacetTest is Test {
         );
     }
 
-    /// @dev Tests vaultSetNFTUser failure when proxy call fails with empty returnData.
-    ///      Covers `revert ProxyCallFailed("Set NFT user failed")` branch (returnData.length == 0).
+    /// @dev Tests vaultSetRentalUser failure when proxy call fails with empty returnData.
+    ///      Covers `revert ProxyCallFailed("Set rental user failed")` branch (returnData.length == 0).
     ///      Uses a mock proxy that returns empty data on call failure.
     function testVaultSetNFTUserRevertsWithEmptyReturnData() public {
         address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
@@ -608,9 +813,10 @@ contract VaultFactoryFacetTest is Test {
             abi.encodeWithSelector(VaipakamVaultImplementation.setUser.selector),
             "" // empty return data
         );
+        _seedRental(1, user1, mockNft721, 1, LibVaipakam.AssetType.ERC721, 1);
         vm.prank(address(diamond));
-        vm.expectRevert(abi.encodeWithSelector(VaultFactoryFacet.ProxyCallFailed.selector, "Set NFT user failed"));
-        VaultFactoryFacet(address(diamond)).vaultSetNFTUser(user1, mockNft721, 1, user2, uint64(block.timestamp + 1 days));
+        vm.expectRevert(abi.encodeWithSelector(VaultFactoryFacet.ProxyCallFailed.selector, "Set rental user failed"));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, user2, uint64(block.timestamp + 1 days));
         vm.clearMockedCalls();
     }
 
@@ -997,4 +1203,13 @@ contract VaultFactoryFacetTest is Test {
         address result = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
         assertEq(result, vault, "Should return existing vault without reverting");
     }
+}
+
+/// @dev The ERC-1967 implementation slot of a vault proxy.
+bytes32 constant ERC1967_IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+/// @dev Stands in for a vault implementation that predates #902: it can be
+///      upgraded away from, and has no `setRental1155`.
+contract LegacyVaultWithout1155Rows is UUPSUpgradeable {
+    function _authorizeUpgrade(address) internal override {}
 }
