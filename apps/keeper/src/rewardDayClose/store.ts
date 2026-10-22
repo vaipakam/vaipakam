@@ -71,10 +71,10 @@ export interface BroadcastRecord {
 export interface ZeroedRecord {
   missing: number[];
   posted: boolean;
-  /** Where `missing` came from: the finalization's own events, or (when this
-   *  keeper never saw the day open, or those events could not be found) the
-   *  expected-source list as read when the day was first seen finalized. */
-  basis?: 'events' | 'list';
+  /** Where `missing` came from: the record Base keeps of the finalization
+   *  (#2619), the finalization's own events, or (when neither could be had)
+   *  the expected-source list as read when the day was first seen finalized. */
+  basis?: 'record' | 'events' | 'list';
 }
 
 /** A mirror close whose receipt showed its report leaving through a messenger

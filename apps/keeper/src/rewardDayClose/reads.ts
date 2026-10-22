@@ -74,12 +74,15 @@ export async function readReported(c: ChainRun, days: readonly number[], expecte
 }
 
 /** What a mirror reads of one day on Base: whether Base has finalized it,
- *  whether Base could finalize it now, and whether it counted this chain's
- *  report. Each read stands alone: a failed one must not hide another. */
+ *  whether Base could finalize it now, whether it holds this chain's report,
+ *  and whether it included that report in the finalized day (#2626; a Base
+ *  built before that record has no such read). Each read stands alone: a
+ *  failed one must not hide another. */
 export interface BaseDay {
   finalized: Fact<boolean>;
   ready: Fact<boolean>;
   counted: Fact<boolean>;
+  included: Fact<boolean>;
 }
 
 export async function readBaseDays(base: PeerReader, days: readonly number[], self: number, deadline: number): Promise<Map<number, BaseDay>> {
@@ -90,18 +93,24 @@ export async function readBaseDays(base: PeerReader, days: readonly number[], se
     days.flatMap((d) => [
       { address: base.diamond, abi: ABI, functionName: 'isDayReadyToFinalize', args: [BigInt(d)] },
       { address: base.diamond, abi: ABI, functionName: 'isChainReported', args: [BigInt(d), self] },
+      { address: base.diamond, abi: ABI, functionName: 'isChainIncluded', args: [BigInt(d), self] },
     ]),
     'rewardDayClose base day view',
     deadline,
   );
   days.forEach((d, i) => {
-    const ready = res[2 * i];
-    const counted = res[2 * i + 1];
+    const ready = res[3 * i];
+    const counted = res[3 * i + 1];
+    const included = res[3 * i + 2];
     const r = ready?.status === 'success' ? (ready.result as readonly [boolean, number]) : null;
     out.set(d, {
       finalized: r === null ? unknown('readiness on Base unread') : known(Number(r[1]) === REASON_FINALIZED),
       ready: r === null ? unknown('readiness on Base unread') : known(r[0] === true),
       counted: counted?.status === 'success' ? known(counted.result === true) : unknown("Base's record of this chain's report unread"),
+      included:
+        included?.status === 'success'
+          ? known(included.result === true)
+          : unknown("whether Base included this chain's landed report in the finalized day (Base's record of it is unread: a Base built before #2626 keeps none, or the read failed)"),
     });
   });
   return out;

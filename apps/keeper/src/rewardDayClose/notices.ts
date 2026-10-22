@@ -24,7 +24,7 @@ import type { AbiEvent } from 'viem';
 export type Note = (key: string, what: string) => void;
 
 const ZEROED_FOOTER =
-  "Finalization is final: a missing chain's report for these days has its day figures dropped when it lands (its chain-wide figures still apply). Each day's chains are read from the finalization's own ChainContributionZeroed events where this keeper saw the day open before it was finalized; a day marked otherwise was judged against Base's expected-source list as read when this keeper first saw the day finalized, which may not be the list it was finalized against.";
+  "Finalization is final: a missing chain's report for these days has its day figures dropped when it lands (its chain-wide figures still apply). Each day's chains are read from the record Base keeps of the finalization where Base has one (#2619), and otherwise from the finalization's own ChainContributionZeroed events where this keeper saw the day open before it was finalized; a day marked otherwise was judged against Base's expected-source list as read when this keeper first saw the day finalized, which may not be the list it was finalized against.";
 
 function zeroedLine(day: number, r: ZeroedRecord): string {
   const basis = r.basis === 'list' ? " (judged against the expected-source list as read when first seen finalized: this keeper did not see the finalization's own record)" : '';
@@ -38,6 +38,32 @@ const MAX_LOG_RANGE = 200_000n;
 const eventOf = (name: string) => ABI.find((x) => x.type === 'event' && x.name === name) as AbiEvent;
 const FINALIZED_EVENT = eventOf('DailyGlobalInterestFinalized');
 const ZEROED_EVENT = eventOf('ChainContributionZeroed');
+
+/**
+ * The chains day `d`'s finalization zeroed, from the record Base keeps of it
+ * (#2619), read in one aggregate with the day's finalization. Null when the
+ * record cannot be had: a Base built before it, a failed read, or a node that
+ * reads the day as not finalized yet.
+ */
+async function zeroedByRecord(c: ChainRun, d: number): Promise<number[] | null> {
+  try {
+    const res = await boundedRead(
+      c.deps.readClient as never,
+      [
+        { address: c.diamond, abi: ABI, functionName: 'isDayReadyToFinalize', args: [BigInt(d)] },
+        { address: c.diamond, abi: ABI, functionName: 'getDayZeroedChains', args: [BigInt(d)] },
+      ],
+      `rewardDayClose ${c.where} zeroed record(${d})`,
+      c.deps.sendDeadline,
+    );
+    if (res.some((x) => x?.status !== 'success')) return null;
+    if (Number((res[0].result as readonly [boolean, number])[1]) !== REASON_FINALIZED) return null;
+    return [...new Set((res[1].result as readonly (number | bigint)[]).map(Number))].sort((a, b) => a - b);
+  } catch (err) {
+    if (err instanceof PastRunDeadline) throw err;
+    return null;
+  }
+}
 
 /**
  * The chains day `d`'s finalization zeroed, from its own events, searched
@@ -93,6 +119,19 @@ export async function recordZeroed(c: ChainRun, store: DayStore, finalizedDays: 
     const have = await store.zeroed(finalizedDays);
     pending = finalizedDays.filter((x) => !have.has(x));
     for (const d of pending) {
+      // #2619 — a Base built with the finalization's own record of the
+      // chains it zeroed answers exactly, whatever the list says now. One
+      // built before it has no such read; that, or a failed read, falls
+      // through to the events and then the list, as before.
+      // eslint-disable-next-line no-await-in-loop
+      const rec = await zeroedByRecord(c, d);
+      if (rec !== null) {
+        const r: ZeroedRecord = { missing: rec, posted: rec.length === 0, basis: 'record' };
+        if (r.missing.length > 0) console.log(`[keeper] rewardDayClose ${c.where} notice: ${zeroedLine(d, r)}`);
+        // eslint-disable-next-line no-await-in-loop
+        await store.saveZeroed(d, r);
+        continue;
+      }
       if (!openSeen.known) {
         note(`notice:${d}`, `the block this keeper last saw the day open from (its database: ${openSeen.why})`);
         continue;

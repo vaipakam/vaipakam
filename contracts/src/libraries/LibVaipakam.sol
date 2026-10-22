@@ -8156,6 +8156,17 @@ library LibVaipakam {
         ///      keeper reading a Diamond deployed before this field decodes the
         ///      same reservation it always did. Appended — append-only.
         mapping(uint256 => address) remitRemoteMessenger;
+        /// @dev #2619 — per finalized `dayId`, the chains that were on the
+        ///      expected-source list when the day finalized and had not
+        ///      reported, in list order: the chains whose interest counts as
+        ///      zero for that day. Written only by
+        ///      `RewardAggregatorFacet._finalizeAndWrite`, once per day (a
+        ///      finalized day never finalizes again). Before this record a
+        ///      reader could only work the set out against the list as it
+        ///      stood at read time, which a later list edit changes. Together
+        ///      with `chainDailyIncluded` it is the finalization's own account
+        ///      of what it summed. Appended — append-only.
+        mapping(uint256 => uint32[]) dayZeroedSourceChainIds;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

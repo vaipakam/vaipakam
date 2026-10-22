@@ -919,6 +919,25 @@
   },
   {
     "type": "event",
+    "name": "ChainReportStoredOffList",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "CustodyEraOpened",
     "inputs": [
       {
@@ -2364,6 +2383,11 @@
   {
     "type": "error",
     "name": "ExpectedManualPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ExpectedSourceListUnusable",
     "inputs": []
   },
   {

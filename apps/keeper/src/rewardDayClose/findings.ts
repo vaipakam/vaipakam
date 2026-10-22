@@ -60,10 +60,14 @@ export interface MirrorFindings {
    *  day is finalized, a counted report being able to be left out before
    *  then, and whether Base holds this chain's report is read). */
   outcome: PerDay<boolean>;
-  /** Per window day: Base finalized it without this chain's report (known
-   *  false before finalization; unknown for a finalized day whose report
-   *  landed, since Base does not expose whether it was counted in). */
+  /** Per window day: Base finalized it without counting this chain's
+   *  interest (known false before finalization). For a finalized day whose
+   *  report landed it is read from Base's inclusion record (#2626), and is
+   *  unknown on a Base built before that record. */
   excluded: PerDay<boolean>;
+  /** The excluded days whose report HAD landed on Base: not counted because
+   *  the chain was off Base's expected-source list at finalization. */
+  landedNotCounted: ReadonlySet<number>;
   /** Window days closed here whose report left through a messenger other than
    *  the one checked. */
   dispatched: Map<number, DispatchRecord>;

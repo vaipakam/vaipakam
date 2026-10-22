@@ -14,6 +14,7 @@ import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibRewardDayReport} from "../src/libraries/LibRewardDayReport.sol";
 
 /// @notice Codex #1413 r3 — a stand-in for a PRE-#1222 mirror messenger:
 ///         only the legacy four-argument send surface exists. Proves the
@@ -377,10 +378,142 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverChainReport(CHAIN_OP, 1, 10e18, 5e18);
     }
 
-    function testOnChainReportRevertsOnUnknownChainId() public {
+    /// @dev #2618 — an authenticated report from a chain off the expected
+    ///      list is stored and announced, not refused: it starts no grace
+    ///      window and its day figures count only if the chain is listed when
+    ///      the day finalizes.
+    function testOffListReportIsStoredNotCounted() public {
         _configureCanonical();
-        vm.expectRevert(SourceChainIdNotExpected.selector);
+        vm.expectEmit(true, true, false, false, address(diamond));
+        emit LibRewardDayReport.ChainReportStoredOffList(CHAIN_UNKNOWN, 1);
         messenger.deliverChainReport(CHAIN_UNKNOWN, 1, 10e18, 5e18);
+        assertTrue(_agg().isChainReported(1, CHAIN_UNKNOWN), "stored");
+        assertEq(_agg().getDailyFirstReportAt(1), 0, "an off-list report starts no grace window");
+        (bool ready, uint8 reason) = _agg().isDayReadyToFinalize(1);
+        assertFalse(ready);
+        assertEq(reason, 2, "no listed chain has reported");
+
+        messenger.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        messenger.deliverChainReport(CHAIN_ARB, 1, 2e18, 2e18);
+        messenger.deliverChainReport(CHAIN_OP, 1, 3e18, 3e18);
+        _agg().finalizeDay(1);
+        (, uint256 lender, uint256 borrower) = _agg().getDailyGlobalInterest(1);
+        assertEq(lender, 6e18, "only the listed chains are summed");
+        assertEq(borrower, 6e18);
+    }
+
+    /// @dev #2618 — a chain taken off the list by mistake and listed again
+    ///      before the day finalizes counts, with no re-execution of anything.
+    function testOffListReportCountsOnceRelistedBeforeFinalization() public {
+        _configureCanonical();
+        messenger.deliverChainReport(CHAIN_UNKNOWN, 1, 10e18, 5e18);
+        uint32[] memory chainIds = new uint32[](2);
+        chainIds[0] = CHAIN_BASE;
+        chainIds[1] = CHAIN_UNKNOWN;
+        _agg().setExpectedSourceChainIds(chainIds);
+        messenger.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        (bool ready, ) = _agg().isDayReadyToFinalize(1);
+        assertTrue(ready, "every listed chain has reported");
+        _agg().finalizeDay(1);
+        (, uint256 lender, ) = _agg().getDailyGlobalInterest(1);
+        assertEq(lender, 11e18, "the relisted chain's stored figures count");
+    }
+
+    /// @dev #2613 — coverage is judged chain by chain: an off-list report does
+    ///      not stand in for a listed chain that has not reported.
+    function testOffListReportDoesNotCompleteCoverage() public {
+        _configureCanonical();
+        uint32[] memory chainIds = new uint32[](2);
+        chainIds[0] = CHAIN_BASE;
+        chainIds[1] = CHAIN_ARB;
+        _agg().setExpectedSourceChainIds(chainIds);
+        messenger.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        messenger.deliverChainReport(CHAIN_OP, 1, 1e18, 1e18); // off the list
+        assertEq(_agg().getChainDailyReportCount(1), 2, "two reports received");
+        (bool ready, uint8 reason) = _agg().isDayReadyToFinalize(1);
+        assertFalse(ready, "Arbitrum, which is listed, has not reported");
+        assertEq(reason, 3);
+        vm.expectRevert(DayNotReadyToFinalize.selector);
+        _agg().finalizeDay(1);
+    }
+
+    /// @dev #2621 — the setter refuses a list that is empty or leaves Base
+    ///      out, so neither can be stored from here on.
+    function testSetExpectedSourceChainIdsRefusesAListWithoutBase() public {
+        _configureCanonical();
+        uint32[] memory chainIds = new uint32[](1);
+        chainIds[0] = CHAIN_ARB;
+        vm.expectRevert(ExpectedSourceListUnusable.selector);
+        _agg().setExpectedSourceChainIds(chainIds);
+        vm.expectRevert(ExpectedSourceListUnusable.selector);
+        _agg().setExpectedSourceChainIds(new uint32[](0));
+        assertEq(_agg().getExpectedSourceChainIds().length, 3, "the stored list is unchanged");
+    }
+
+    /// @dev #2613 — no permissionless finalization against a list that is
+    ///      empty or leaves Base out (one stored before the setter refused
+    ///      them); the admin override is not refused.
+    function testFinalizeRefusesAListWithoutBase() public {
+        _configureCanonical();
+        uint32[] memory chainIds = new uint32[](1);
+        chainIds[0] = CHAIN_ARB;
+        _mut().setExpectedSourceChainIdsRaw(chainIds);
+        messenger.deliverChainReport(CHAIN_ARB, 1, 1e18, 1e18);
+        (bool ready, uint8 reason) = _agg().isDayReadyToFinalize(1);
+        assertFalse(ready);
+        assertEq(reason, 4, "the list leaves Base out");
+        vm.expectRevert(ExpectedSourceListUnusable.selector);
+        _agg().finalizeDay(1);
+        vm.warp(block.timestamp + 4 hours + 1);
+        vm.expectRevert(ExpectedSourceListUnusable.selector);
+        _agg().finalizeDay(1);
+
+        _mut().setExpectedSourceChainIdsRaw(new uint32[](0));
+        (, reason) = _agg().isDayReadyToFinalize(1);
+        assertEq(reason, 4, "an empty list");
+
+        _agg().forceFinalizeDay(1);
+        (bool finalized, , ) = _agg().getDailyGlobalInterest(1);
+        assertTrue(finalized, "the admin override still closes the day");
+    }
+
+    /// @dev #2619 / #2626 — the finalization records what it counted: which
+    ///      listed chains were zeroed, and which reports were included. A
+    ///      later list edit does not change either, and a report from a chain
+    ///      off the list at finalization lands without being included.
+    function testFinalizationRecordsZeroedChainsAndInclusion() public {
+        _configureCanonical();
+        uint32[] memory chainIds = new uint32[](2);
+        chainIds[0] = CHAIN_BASE;
+        chainIds[1] = CHAIN_ARB;
+        _agg().setExpectedSourceChainIds(chainIds);
+        messenger.deliverChainReport(CHAIN_BASE, 1, 1e18, 1e18);
+        messenger.deliverChainReport(CHAIN_OP, 1, 7e18, 7e18); // off the list
+
+        assertEq(_agg().getDayZeroedChains(1).length, 0, "nothing recorded before finalization");
+        assertFalse(_agg().isChainIncluded(1, CHAIN_BASE), "nothing included before finalization");
+
+        vm.warp(block.timestamp + 4 hours + 1);
+        _agg().finalizeDay(1);
+
+        uint32[] memory zeroed = _agg().getDayZeroedChains(1);
+        assertEq(zeroed.length, 1, "one listed chain missed the day");
+        assertEq(zeroed[0], CHAIN_ARB);
+        assertTrue(_agg().isChainIncluded(1, CHAIN_BASE), "Base counted");
+        assertFalse(_agg().isChainIncluded(1, CHAIN_ARB), "the zeroed chain is not included");
+        assertTrue(_agg().isChainReported(1, CHAIN_OP), "the off-list report landed");
+        assertFalse(_agg().isChainIncluded(1, CHAIN_OP), "and was not counted");
+
+        // A later list edit leaves the day's record as it was.
+        uint32[] memory wider = new uint32[](3);
+        wider[0] = CHAIN_BASE;
+        wider[1] = CHAIN_ARB;
+        wider[2] = CHAIN_OP;
+        _agg().setExpectedSourceChainIds(wider);
+        zeroed = _agg().getDayZeroedChains(1);
+        assertEq(zeroed.length, 1, "the record does not follow the list");
+        assertEq(zeroed[0], CHAIN_ARB);
+        assertFalse(_agg().isChainIncluded(1, CHAIN_OP), "nor does inclusion");
     }
 
     function testOnChainReportRevertsOnDuplicate() public {

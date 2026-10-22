@@ -72,15 +72,16 @@ export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x:
   // This run's unchecked dispatches, and the earlier ones still recorded.
   const dispatched = new Map([...(await store.dispatches(x.window)), ...run.dispatched]);
 
-  const day = (d: number): { finalized: Fact<boolean>; counted: Fact<boolean> } => {
-    if (baseDays === 'unserved') return { finalized: unknown('Base not served'), counted: unknown('Base not served') };
+  const day = (d: number): { finalized: Fact<boolean>; counted: Fact<boolean>; included: Fact<boolean> } => {
+    if (baseDays === 'unserved') return { finalized: unknown('Base not served'), counted: unknown('Base not served'), included: unknown('Base not served') };
     const v = baseDays.get(d);
-    return { finalized: v?.finalized ?? unknown('not read'), counted: v?.counted ?? unknown('not read') };
+    return { finalized: v?.finalized ?? unknown('not read'), counted: v?.counted ?? unknown('not read'), included: v?.included ?? unknown('not read') };
   };
   const outcome: PerDay<boolean> = new Map();
   const excluded: PerDay<boolean> = new Map();
+  const landedNotCounted = new Set<number>();
   for (const d of x.window) {
-    const { finalized, counted } = day(d);
+    const { finalized, counted, included } = day(d);
     // Base's outcome for this chain is final only once the day is finalized
     // (a report Base has counted can still be left out, if the chain leaves
     // the expected-source list before finalization), and learned here once
@@ -95,11 +96,16 @@ export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x:
     }
     // Finalized without this chain's report: excluded, known. Finalized with
     // it: included only if the chain was on Base's list when the day was
-    // finalized, which Base does not expose (#2626), so not known, and never
-    // said either way.
+    // finalized. A Base built with #2626 records that; one built before it
+    // does not, so there it is not known, and never said either way.
     if (!finalized.known || !finalized.value) excluded.set(d, finalized.known ? known(false) : unknown(finalized.why));
     else if (!counted.known) excluded.set(d, unknown(counted.why));
-    else excluded.set(d, counted.value ? unknown("whether Base counted this chain's landed report into the finalized day is not readable on Base") : known(true));
+    else if (!counted.value) excluded.set(d, known(true));
+    else if (!included.known) excluded.set(d, unknown(included.why));
+    else {
+      excluded.set(d, known(!included.value));
+      if (!included.value) landedNotCounted.add(d);
+    }
   }
 
   const m: MirrorFindings = {
@@ -111,6 +117,7 @@ export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x:
     closeHold,
     outcome,
     excluded,
+    landedNotCounted,
     dispatched,
   };
   return { m, clock, closed: run.closed };

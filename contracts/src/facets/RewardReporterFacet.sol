@@ -24,6 +24,7 @@ interface ICompensationDayHook {
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
+import {LibRewardDayReport} from "../libraries/LibRewardDayReport.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @notice #1222 M3 B1 (Codex #1413 r3) — the pre-widening sender shape, the
@@ -91,11 +92,6 @@ contract RewardReporterFacet is
     DiamondPausable,
     IVaipakamErrors
 {
-    /// @notice Default grace window applied when the admin has not set
-    ///         `rewardGraceSeconds` — 4 hours for Phase 1. Admin may
-    ///         widen or tighten per spec §4a via {setRewardGraceSeconds}.
-    uint64 internal constant DEFAULT_REWARD_GRACE_SECONDS = 4 hours;
-
     /// @dev #1222 M3 B3 — the six figures one day-close report carries,
     ///      gathered once and threaded through the canonical write and the
     ///      mirror send as a memory struct rather than six stack slots
@@ -192,7 +188,8 @@ contract RewardReporterFacet is
      *
      *      Whenever the write is recorded into aggregator storage on the
      *      Base path, this facet updates `dailyFirstReportAt[dayId]` so
-     *      the grace-window clock starts ticking.
+     *      the grace-window clock starts ticking — when Base is on its own
+     *      expected-source list, as it must be (`LibRewardDayReport`).
      * @param dayId Day index (spec §4 emission schedule) to close.
      */
     function closeDay(
@@ -448,15 +445,9 @@ contract RewardReporterFacet is
             f.commitRetiredCumulative18,
             f.commitReleasedCumulative18
         );
-        if (!s.chainDailyReported[dayId][sourceChainId]) {
-            s.chainDailyReported[dayId][sourceChainId] = true;
-            unchecked {
-                s.chainDailyReportCount[dayId] += 1;
-            }
-        }
-        if (s.dailyFirstReportAt[dayId] == 0) {
-            s.dailyFirstReportAt[dayId] = uint64(block.timestamp);
-        }
+        // The same bookkeeping a mirror's report gets: only a listed chain
+        // starts the grace window (#2618 / #2613).
+        LibRewardDayReport.markReported(s, dayId, sourceChainId);
     }
 
     // ─── Mirror-side trusted broadcast ingress ──────────────────────────────
@@ -1763,7 +1754,7 @@ contract RewardReporterFacet is
     ///         day `D` within which `finalizeDay(D)` may be called even
     ///         if not every expected mirror has reported.
     /// @param secondsValue Grace duration in seconds (default 4h when
-    ///                     zero — see {DEFAULT_REWARD_GRACE_SECONDS}).
+    ///                     zero — see {LibRewardDayReport.DEFAULT_REWARD_GRACE_SECONDS}).
     function setRewardGraceSeconds(
         uint64 secondsValue
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
@@ -1875,7 +1866,7 @@ contract RewardReporterFacet is
             s.baseChainId,
             s.isCanonicalRewardChain,
             s.rewardGraceSeconds == 0
-                ? DEFAULT_REWARD_GRACE_SECONDS
+                ? LibRewardDayReport.DEFAULT_REWARD_GRACE_SECONDS
                 : s.rewardGraceSeconds
         );
     }
