@@ -206,21 +206,34 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         returns (bytes32 h)
     {
         bytes32[] memory leaves;
-        (h, leaves) = LibD6Delivery.deliver(
-            address(diamond),
-            LibD6Delivery.Delivery({
-                token: address(vpfi),
-                amount: amount,
-                dayIds: dayIds,
-                sourceChainId: CHAIN_BASE,
-                remitId: remitId,
-                remitter: REMITTER,
-                recycled: recycled,
-                fresh: fresh,
-                messageId: id,
-                era: 0
-            })
-        );
+        (h, leaves) = LibD6Delivery.deliver(address(diamond), _delivery(amount, dayIds, remitId, id, fresh, recycled));
+        _remember(h, remitId, dayIds, leaves);
+    }
+
+    /// @dev The delivery {_land} lands, built in its own frame.
+    function _delivery(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id, uint256 fresh, uint256 recycled)
+        internal
+        view
+        returns (LibD6Delivery.Delivery memory)
+    {
+        return LibD6Delivery.Delivery({
+            token: address(vpfi),
+            amount: amount,
+            dayIds: dayIds,
+            sourceChainId: CHAIN_BASE,
+            remitId: remitId,
+            remitter: REMITTER,
+            recycled: recycled,
+            fresh: fresh,
+            messageId: id,
+            era: 0
+        });
+    }
+
+    /// @dev Keep a landed packet's list and chunk leaves for indexing later.
+    ///      Its own frame: copying the two arrays into storage beside
+    ///      {_land}'s arguments put that frame one slot past the viaIR budget.
+    function _remember(bytes32 h, uint256 remitId, uint256[] memory dayIds, bytes32[] memory leaves) internal {
         _daysOf[h] = dayIds;
         _leavesOf[h] = leaves;
         _packetOfRemit[remitId] = h;
