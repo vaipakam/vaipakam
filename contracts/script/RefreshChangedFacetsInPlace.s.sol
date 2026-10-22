@@ -124,6 +124,7 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
             "RefreshChangedFacetsInPlace: the signing key is not the diamond owner"
         );
         _requireSlice3Diamond(diamond);
+        _requireNoOpenErc1155RentalAcross902(diamond);
         IDiamondLoupe loupe = IDiamondLoupe(diamond);
         bool writesArtifact = Deployments.artifactWritesEnabled();
 

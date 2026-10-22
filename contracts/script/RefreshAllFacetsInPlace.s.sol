@@ -21,6 +21,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -277,6 +278,41 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
     }
 
+    /// @notice #902 - the target Diamond predates the per-rental renter rows and
+    ///         has an ERC-1155 rental open; see {_requireNoOpenErc1155RentalAcross902}.
+    error OpenErc1155RentalAcrossPerRentalRows(address diamond, uint256 loanId);
+
+    /// @dev Page size for the open-loan walk in {_requireNoOpenErc1155RentalAcross902}.
+    uint256 private constant OPEN_LOAN_PAGE = 200;
+
+    /// @dev #902 - a pre-#902 vault records an ERC-1155 rental under its renter,
+    ///      not its loan (`rentalId` 0). Once this refresh routes the per-rental
+    ///      writes, such a row is never found by its loan: the rental's next
+    ///      expiry refresh adds a second row, and its handover's revoke leaves the
+    ///      old renter reported until the old row expires. A chain with no open
+    ///      ERC-1155 rental has no such row to carry, so crossing the boundary
+    ///      in place is refused only while one is open: close those rentals, or
+    ///      cross by fresh deploy. A Diamond that already routes
+    ///      `vaultSetRentalUser` is past the boundary and is not walked. Called
+    ///      before any facet is deployed, so a refused run sends nothing.
+    function _requireNoOpenErc1155RentalAcross902(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.vaultSetRentalUser.selector) != address(0)) {
+            return;
+        }
+        for (uint256 offset;; offset += OPEN_LOAN_PAGE) {
+            uint256[] memory ids = MetricsFacet(diamond).getActiveLoansPaginated(offset, OPEN_LOAN_PAGE);
+            for (uint256 i; i < ids.length; ++i) {
+                if (_isErc1155Loan(diamond, ids[i])) revert OpenErc1155RentalAcrossPerRentalRows(diamond, ids[i]);
+            }
+            if (ids.length < OPEN_LOAN_PAGE) return;
+        }
+    }
+
+    /// @dev Kept in its own frame: the full loan record is decoded here only.
+    function _isErc1155Loan(address diamond, uint256 loanId) private view returns (bool) {
+        return LoanFacet(diamond).getLoanDetails(loanId).assetType == LibVaipakam.AssetType.ERC1155;
+    }
+
     function refresh() external {
         uint256 cid = block.chainid;
         require(
@@ -302,6 +338,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "RefreshAllFacetsInPlace: ADMIN_PRIVATE_KEY is not the diamond owner (handover / timelock?)"
         );
         _requireSlice3Diamond(diamond);
+        _requireNoOpenErc1155RentalAcross902(diamond);
 
         console.log("=== Full-facet in-place refresh ===");
         console.log("Chain id:", cid);

@@ -41,8 +41,11 @@ all-facets refresh together with the vault-implementation upgrade, in one
 paused window. Lenders do not have to upgrade their own vaults: the first
 rental step that reaches a vault on an older version upgrades it to the
 current implementation, so an accept, a repayment, a default or a handover
-is never blocked on that. An ERC-1155 rental opened before the upgrade
-keeps its old one-unit record until that record expires. The curated partial refresh refuses a Diamond
+is never blocked on that. An older vault keeps an ERC-1155 rental's record
+under its renter rather than its loan, and the new writes would never find
+it, so the in-place refreshes refuse to cross this change while any ERC-1155
+rental is open: such rentals are closed first, or the chain gets a fresh
+deploy. The curated partial refresh refuses a Diamond
 from before this change rather than leave a rental half on the old routes.
 
 Closes #902.

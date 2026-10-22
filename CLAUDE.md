@@ -217,7 +217,12 @@ runs half of it on old code:
   vault implementation and refuses a Diamond that does not already route
   `vaultSetRentalUser`; cross it by fresh deploy, or by
   `UpgradeVaultImplementation` and `RefreshAllFacetsInPlace` in one paused
-  window.
+  window. A pre-#902 vault keys an ERC-1155 rental by renter, which the
+  per-rental writes never find, so both in-place refreshes
+  (`RefreshAllFacetsInPlace`, `RefreshChangedFacetsInPlace`) refuse to cross
+  the boundary while any ERC-1155 loan is open
+  (`OpenErc1155RentalAcrossPerRentalRows`); close those rentals first, or
+  fresh-deploy.
 
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place
