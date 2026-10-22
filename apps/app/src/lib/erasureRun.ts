@@ -28,7 +28,20 @@
  * the teardown returns; it carries the time it was kept and lives for a
  * bounded window (`KEPT_REPORT_WINDOW_MS`). A load inside the window takes
  * it out and shows it; a load after it, a timer at its end, a dismissal and
- * the next erasure each remove it. This is a write made after an erasure,
+ * the next erasure each remove it. It is outside the erasure set (see
+ * `ERASURE_REPORT_KEY`), so it is never counted as something an erasure
+ * left behind, and nothing but this module removes it.
+ *
+ * ONE LOCK FOR BOTH WAYS INTO AN ERASURE (Codex #2670 r2 P1). This tab's
+ * own run and its follow-up of ANOTHER tab's erasure both close this tab's
+ * wallet, and a reload-prone wallet reloads the tab as it closes. Run side
+ * by side, the follow-up could reach that reload while the run was still
+ * clearing — before it had kept a report — which is the interrupted,
+ * unreported erasure the ordering exists to prevent. So both live here: a
+ * broadcast that arrives while this tab's own run is going is left to that
+ * run, which does everything the follow-up would, and a run requested while
+ * a follow-up is still closing the wallet waits for it before touching
+ * anything. This is a write made after an erasure,
  * and it is justified narrowly: it holds counts and outcome flags only —
  * nothing about the wallet, the user or what was erased — it lives only
  * across the window a reload can land in, it is removed on the first read,
@@ -37,9 +50,11 @@
  * happened.
  */
 import {
+  ERASURE_REPORT_KEY,
   eraseConnectorStorageQuietly,
   eraseIndexedDbData,
   eraseMyDataFully,
+  erasePerTabData,
   inspectErasableData,
   connectionGeneration,
   type FullEraseResult,
@@ -65,8 +80,9 @@ export type ErasureRunState =
   | { readonly phase: 'running' }
   | { readonly phase: 'done'; readonly report: ErasureReport };
 
-/** Where a report waits out a reload. Under `app.`, so an erasure reaches it. */
-export const REPORT_KEY = 'app.dataRights.erasureReport';
+/** Where a report waits out a reload — owned by this module, outside the
+ *  erasure set (see `ERASURE_REPORT_KEY`). */
+export const REPORT_KEY = ERASURE_REPORT_KEY;
 
 /** How long after the reload-prone teardown starts a reload is still
  *  attributed to it. The SDK reloads once a network round trip completes;
@@ -119,11 +135,19 @@ export interface ErasureDeps<C> {
  */
 export async function runErasure<C>(deps: ErasureDeps<C>): Promise<void> {
   if (state.phase === 'running') return;
+  setState({ phase: 'running' });
+  // A previous run's kept copy describes that run, not this one.
+  dropKeptReport();
+  // A follow-up of another tab's erasure may still be closing this tab's
+  // wallet, and a reload-prone one reloads the tab as it closes. Nothing of
+  // this run has happened yet, so a reload landing here interrupts nothing
+  // and claims nothing; started alongside it, the run could be cut off
+  // mid-clear with no report (see the header).
+  if (peerFollowUp) await peerFollowUp;
   // Language goes back to the default BEFORE the erase, deliberately.
   // `changeLanguage` persists — to the key and the shared-domain cookie — so
   // running it afterwards would rewrite what the erase had just removed.
   deps.resetLanguage();
-  setState({ phase: 'running' });
 
   // The mark every late cleanup compares against, taken at the request so
   // "newer than the request" is measured from when the user asked. Re-taken
@@ -193,6 +217,68 @@ export async function runErasure<C>(deps: ErasureDeps<C>): Promise<void> {
   // Everything else that read storage once and kept the value re-reads off
   // this. Deliberately NO page reload: it would throw the report away.
   bumpEraseEpoch();
+}
+
+export interface PeerErasureDeps<C> {
+  /** The wallet, read at call time — see `chain/walletTeardownPort.ts`. */
+  readonly wallet: WalletPort<C>;
+  /**
+   * Bring the live theme and mode into line with storage WITHOUT writing:
+   * the default when nothing is stored, a choice made since the erasure
+   * when one is.
+   */
+  readonly followPreferences: () => void;
+  /** The same for the language, undoing exactly what its reset persists. */
+  readonly followLanguage: () => void;
+}
+
+/** This tab's follow-ups of other tabs' erasures, while any is closing the
+ *  wallet. Chained, so two broadcasts never close it side by side. */
+let peerFollowUp: Promise<void> | undefined;
+
+/**
+ * Bring this tab into line after ANOTHER tab erased (#1960, #2037): its
+ * per-tab data, its live preferences, its readers, and its own wallet
+ * connections — and nothing shared, which the originating tab has cleared
+ * and is the only party to report on.
+ *
+ * Under the same lock as `runErasure` (see the header): while this tab's own
+ * run is going it does nothing, because that run covers all of it.
+ */
+export function followPeerErasure<C>(deps: PeerErasureDeps<C>): void {
+  if (state.phase === 'running') return;
+  erasePerTabData();
+  deps.followPreferences();
+  deps.followLanguage();
+  // ...and tell this tab's mounted readers to re-read, exactly as the
+  // erasing tab does for its own.
+  bumpEraseEpoch();
+  // This tab's own connections, LAST: a reload-prone one reloads this tab
+  // (#2035), which is harmless once everything above has run. Planned when
+  // its turn comes, so it sees the connections as they are then. Best effort
+  // and unacknowledged: there is nobody to report to, which is why the
+  // originating page says other tabs were ASKED.
+  const next = (peerFollowUp ?? Promise.resolve()).then(() =>
+    closeConnections(deps.wallet),
+  );
+  peerFollowUp = next;
+  void next.finally(() => {
+    if (peerFollowUp === next) peerFollowUp = undefined;
+  });
+}
+
+async function closeConnections<C>(wallet: WalletPort<C>): Promise<void> {
+  // The plan waits out a restoring session rather than closing its
+  // placeholder (#2039).
+  const plan = planWalletTeardown(wallet);
+  for (const teardown of [plan.first, plan.last]) {
+    try {
+      await teardown?.();
+    } catch {
+      // A wallet that refuses, or is still restoring, must not stop the
+      // other teardown being tried.
+    }
+  }
 }
 
 /**
@@ -338,6 +424,7 @@ export function parseKeptReport(raw: string, now: number = Date.now()): ErasureR
 /** Test seam: forget any state and any kept report. Not for app code. */
 export function resetErasureRunForTests(): void {
   dropKeptReport();
+  peerFollowUp = undefined;
   state = takeKeptReport() ?? IDLE;
   listeners.clear();
 }

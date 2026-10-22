@@ -2918,8 +2918,11 @@ is the borrower's own money.
   connection reporting itself closed is NOT proof that no reload is coming
   (the reload can follow a moment later), so the kept copy lives for a short
   bounded window rather than ending with the step, and is removed when the
-  window ends, when the report is dismissed, or when it is read; a copy
-  found after the window is discarded unread. It must claim nothing about
+  window ends, when the report is dismissed, by the next erasure, or when
+  it is read; a copy found after the window is discarded unread. The kept
+  copy is the erasure's own record, not the user's data: it is never
+  counted as something the erasure left behind, and no sweep but its
+  owner's removes it. It must claim nothing about
   the step that was interrupted: the page says the step ran last and the
   page reloaded during it or shortly after it, and tells the user how to
   check their wallet.
@@ -3002,7 +3005,17 @@ is the borrower's own money.
   removed. Where the natural way to reset something persists, the peer tab
   removes exactly what it wrote and nothing more; and where the user has set
   that preference again since the erasure, the peer tab adopts it rather
-  than overwriting it.
+  than overwriting it. This holds for every preference the tab shows —
+  theme and mode as well as language.
+- **One tab never runs its own erasure and a follow-up of another tab's at
+  the same time.** Both close this tab's wallet, and a wallet that reloads
+  the page as it closes would cut the tab's own erasure off mid-clear,
+  before it had kept a report. A request from another tab that arrives while
+  this tab's own erasure is running is left to that erasure, which does
+  everything the follow-up would. An erasure requested while a follow-up is
+  still closing the wallet waits for it before doing anything, so a reload
+  in that time interrupts nothing and the page simply offers the erasure
+  again.
 - **A peer tab does not clear the stores it shares with the erasing tab.**
   The shared stores are cleared by the tab where the user asked, which is
   also the only one that reports on them. A peer tab clearing them as well

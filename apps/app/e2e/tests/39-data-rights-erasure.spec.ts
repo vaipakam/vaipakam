@@ -48,3 +48,35 @@ test('an erasure started in Spanish still reports what it did after the language
   }));
   expect(left).toEqual({ language: null, note: null });
 });
+
+/** A tab hearing of another tab's erasure late (Codex #2670 r2 P2).
+ *
+ *  By the time a background tab handles the broadcast, the user may already
+ *  have chosen a new theme in another tab. The theme provider never re-reads
+ *  storage on its own, so a peer that reset to the default would show the
+ *  wrong theme indefinitely; it must adopt what is stored. A second
+ *  `BroadcastChannel` in the same page stands in for the erasing tab — the
+ *  browser delivers to every channel object of that name except the sender.
+ */
+test("a peer tab adopts a theme chosen since the erasure instead of resetting over it", async ({
+  launchWallet,
+}) => {
+  const { page } = await launchWallet('lender', { preAuthorized: false });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/data-rights', { waitUntil: 'domcontentloaded' });
+  await page.evaluate(() => localStorage.setItem('app.theme', 'light'));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+
+  // Another tab erased, and the user then chose dark before this tab heard.
+  await page.evaluate(() => {
+    localStorage.setItem('app.theme', 'dark');
+    const channel = new BroadcastChannel('vaipakam-data-erase-v1');
+    channel.postMessage({ type: 'erase' });
+    channel.close();
+  });
+
+  // Adopted, not reset to the (light) system default — and left stored.
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  expect(await page.evaluate(() => localStorage.getItem('app.theme'))).toBe('dark');
+});

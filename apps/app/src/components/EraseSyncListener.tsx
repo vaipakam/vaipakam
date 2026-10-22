@@ -17,8 +17,8 @@
  * **Every reset here must be NON-PERSISTING.** The originating tab's sweep
  * has already run by the time this fires, so anything written here lands in
  * storage that was just cleared and stays there — a peer tab resurrecting
- * the keys the erasure removed. That is why the theme and mode resets are
- * the state-only `resetToDefault`s rather than their ordinary setters, and
+ * the keys the erasure removed. That is why theme and mode follow storage
+ * through the state-only `followStorage`s rather than their ordinary setters, and
  * why the language reset undoes exactly what `changeLanguage` persists on
  * its way through.
  *
@@ -40,14 +40,9 @@
 import { useEffect } from 'react';
 import { useConfig } from 'wagmi';
 import { useTranslation } from 'react-i18next';
-import {
-  erasePerTabData,
-  readStoredLanguage,
-  undoLanguageWrite,
-} from '../lib/dataRights';
-import { bumpEraseEpoch } from '../lib/eraseEpoch';
+import { readStoredLanguage, undoLanguageWrite } from '../lib/dataRights';
 import { listenForErase } from '../lib/eraseBroadcast';
-import { planWalletTeardown } from '../lib/walletTeardown';
+import { followPeerErasure } from '../lib/erasureRun';
 import { wagmiWalletPort } from '../chain/walletTeardownPort';
 import { useTheme } from '../app/ThemeContext';
 import { useMode } from '../app/ModeContext';
@@ -61,57 +56,46 @@ export function EraseSyncListener() {
   const config = useConfig();
   // Round 4 P2 — the live preferences. `ThemeProvider` and `ModeProvider`
   // read storage once at mount and never subscribe to it, so a peer tab went
-  // on displaying an erased theme or mode indefinitely. Both `resetToDefault`s
-  // are state-only by construction, which is exactly what this needs.
-  const { resetToDefault: resetTheme } = useTheme();
-  const { resetToDefault: resetMode } = useMode();
+  // on displaying an erased theme or mode indefinitely. Both `followStorage`s
+  // are state-only by construction, which is exactly what this needs, and
+  // both ADOPT a choice stored since the erasure (Codex #2670 r2 P2) — the
+  // same rule as the language below, so a broadcast heard late cannot paint
+  // the default over a newer preference.
+  const { followStorage: followThemeStorage } = useTheme();
+  const { followStorage: followModeStorage } = useMode();
   const { i18n } = useTranslation();
   // ONLY STABLE DEPENDENCIES. A churning subscription tears the
   // BroadcastChannel down and re-opens it, and a broadcast landing in that gap
   // is simply not heard — the whole failure this listener exists to prevent.
   useEffect(
     () =>
-      listenForErase(() => {
-        // What belongs to this browsing context alone: session storage and the
-        // in-memory error slot.
-        erasePerTabData();
-        resetTheme();
-        resetMode();
-        // The language. If a preference is stored now, the user set it since
-        // the erasure (in some tab), so this tab adopts it rather than
-        // overwriting it. Otherwise it goes back to the default and removes
-        // exactly what that change persists — the storage key and the
-        // parent-scope cookie, each only while it still holds what was
-        // written (round 6 P2 found the cookie half; #2037 narrowed the
-        // removal from a blanket sweep to the write itself).
-        const stored = readStoredLanguage();
-        if (stored) {
-          void i18n.changeLanguage(stored);
-        } else {
-          void i18n.changeLanguage('en').then(() => undoLanguageWrite('en'));
-        }
-        // ...and tell this tab's mounted readers to re-read, exactly as the
-        // erasing tab does for its own.
-        bumpEraseEpoch();
-        // This tab's own connections, LAST: a reload-prone one reloads this
-        // tab (#2035), which is harmless once everything above has run. The
-        // plan waits out a restoring session rather than closing its
-        // placeholder (#2039, round 9 P1 for the gate). Best effort and
-        // unacknowledged: there is nobody to report to, which is why the
-        // originating page says other tabs were ASKED.
-        const plan = planWalletTeardown(wagmiWalletPort(config));
-        void (async () => {
-          for (const teardown of [plan.first, plan.last]) {
-            try {
-              await teardown?.();
-            } catch {
-              // A wallet that refuses, or is still restoring, must not stop
-              // the other teardown being tried.
+      listenForErase(() =>
+        // The work, and the lock it shares with this tab's own erasure
+        // (Codex #2670 r2 P1), live in `lib/erasureRun.ts`.
+        followPeerErasure({
+          wallet: wagmiWalletPort(config),
+          followPreferences: () => {
+            followThemeStorage();
+            followModeStorage();
+          },
+          // The language. If a preference is stored now, the user set it
+          // since the erasure (in some tab), so this tab adopts it rather
+          // than overwriting it. Otherwise it goes back to the default and
+          // removes exactly what that change persists — the storage key and
+          // the parent-scope cookie, each only while it still holds what was
+          // written (round 6 P2 found the cookie half; #2037 narrowed the
+          // removal from a blanket sweep to the write itself).
+          followLanguage: () => {
+            const stored = readStoredLanguage();
+            if (stored) {
+              void i18n.changeLanguage(stored);
+            } else {
+              void i18n.changeLanguage('en').then(() => undoLanguageWrite('en'));
             }
-          }
-        })();
-      }),
-    [config, resetTheme, resetMode, i18n],
+          },
+        }),
+      ),
+    [config, followThemeStorage, followModeStorage, i18n],
   );
   return null;
 }

@@ -4,11 +4,16 @@
  * fourth step (`disconnectLast`), which is what makes that reload harmless.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { eraseMyDataFully, type FullEraseResult } from './dataRights';
+import {
+  eraseMyDataFully,
+  inspectErasableData,
+  type FullEraseResult,
+} from './dataRights';
 import {
   KEPT_REPORT_WINDOW_MS,
   REPORT_KEY,
   dismissErasureReport,
+  followPeerErasure,
   getErasureRun,
   parseKeptReport,
   reloadErasureRunForTests,
@@ -259,6 +264,46 @@ describe('a report kept across a wallet-forced reload (#2035)', () => {
     expect(getErasureRun().phase).toBe('idle');
   });
 
+  it('is not counted as something the erasure left behind (Codex #2670 r2 P1)', async () => {
+    local.set('app.mode', 'lend');
+    await runErasure({
+      wallet: connectedPort('coinbaseWalletSDK'),
+      resetLanguage: () => {},
+      resetPreferences: () => {},
+    });
+    expect(session.has(REPORT_KEY)).toBe(true);
+    const run = getErasureRun();
+    expect(run.phase).toBe('done');
+    if (run.phase !== 'done') return;
+    expect(run.report.remaining).toBe(0);
+    expect(inspectErasableData().count).toBe(0);
+  });
+
+  it("is removed by the next erasure, and not by another tab's", async () => {
+    await runErasure({
+      wallet: connectedPort('coinbaseWalletSDK'),
+      resetLanguage: () => {},
+      resetPreferences: () => {},
+    });
+    expect(session.has(REPORT_KEY)).toBe(true);
+    // A peer's per-tab sweep leaves it to its owner...
+    followPeerErasure({
+      wallet: connectedPort('metaMask'),
+      followPreferences: () => {},
+      followLanguage: () => {},
+    });
+    expect(session.has(REPORT_KEY)).toBe(true);
+    // ...and this tab's next erasure drops it before it starts.
+    dismissErasureReport();
+    session.set(REPORT_KEY, session.get(REPORT_KEY) ?? '');
+    await runErasure({
+      wallet: connectedPort('metaMask'),
+      resetLanguage: () => {},
+      resetPreferences: () => {},
+    });
+    expect(session.has(REPORT_KEY)).toBe(false);
+  });
+
   it('is never kept for a wallet that does not reload', async () => {
     await runErasure({
       wallet: connectedPort('metaMask'),
@@ -319,5 +364,77 @@ describe('a report kept across a wallet-forced reload (#2035)', () => {
     expect(
       parseKeptReport(JSON.stringify({ keptAt: 'now', report: { total: 1 } })),
     ).toBeNull();
+  });
+});
+
+describe("one lock for this tab's run and its follow-up of another tab (Codex #2670 r2 P1)", () => {
+  it("leaves a broadcast heard during this tab's own run to that run", async () => {
+    let release: () => void = () => {};
+    const own = connectedPort(
+      'metaMask',
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const running = runErasure({
+      wallet: own,
+      resetLanguage: () => {},
+      resetPreferences: () => {},
+    });
+    expect(getErasureRun().phase).toBe('running');
+    let followed = 0;
+    const peerWallet = connectedPort('coinbaseWalletSDK');
+    followPeerErasure({
+      wallet: peerWallet,
+      followPreferences: () => {
+        followed += 1;
+      },
+      followLanguage: () => {
+        followed += 1;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // No second teardown — in particular no reload-prone close racing the run.
+    expect(peerWallet.closed).toEqual([]);
+    expect(followed).toBe(0);
+    release();
+    await running;
+    expect(getErasureRun().phase).toBe('done');
+  });
+
+  it("waits for a follow-up still closing this tab's wallet before starting", async () => {
+    let release: () => void = () => {};
+    const port = connectedPort(
+      'coinbaseWalletSDK',
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    followPeerErasure({
+      wallet: port,
+      followPreferences: () => {},
+      followLanguage: () => {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    let languageResets = 0;
+    const run = runErasure({
+      wallet: port,
+      resetLanguage: () => {
+        languageResets += 1;
+      },
+      resetPreferences: () => {},
+    });
+    // The run holds the lock (a second request is refused) but has done
+    // nothing yet: a reload landing now would interrupt nothing.
+    expect(getErasureRun().phase).toBe('running');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(languageResets).toBe(0);
+    release();
+    await run;
+    expect(languageResets).toBe(1);
+    expect(port.closed).toEqual(['coinbaseWalletSDK']);
+    expect(getErasureRun().phase).toBe('done');
   });
 });

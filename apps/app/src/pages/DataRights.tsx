@@ -107,8 +107,8 @@ export function DataRights() {
   // theme and mode showing the erased values until a reload — the page
   // promising in copy that preferences return to their defaults while
   // the app visibly kept them.
-  const { resetToDefault: resetTheme } = useTheme();
-  const { resetToDefault: resetMode } = useMode();
+  const { followStorage: followThemeStorage } = useTheme();
+  const { followStorage: followModeStorage } = useMode();
   // Language is the third live preference (review round 2 P2). i18next
   // is a singleton held above this route, so clearing its key left the
   // erased language active and the picker still showing it — while the
@@ -309,12 +309,13 @@ export function DataRights() {
       // `changeLanguage` persists — to the key and the shared-domain cookie —
       // so the erase must run after it to clear its write.
       resetLanguage: () => void i18n.changeLanguage('en'),
-      // Theme and mode reset AFTER, through setters that do not persist:
-      // their ordinary setters would write the key back. Both providers sit
-      // above `LanguageRemount`, so these stay valid when this page does not.
+      // Theme and mode follow the swept storage AFTER, through setters that
+      // do not persist: their ordinary setters would write the key back.
+      // Both providers sit above `LanguageRemount`, so these stay valid when
+      // this page does not.
       resetPreferences: () => {
-        resetTheme();
-        resetMode();
+        followThemeStorage();
+        followModeStorage();
       },
     });
   }

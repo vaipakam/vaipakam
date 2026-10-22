@@ -18,6 +18,7 @@ import {
   eraseMyData,
   inspectErasableData,
   isErasableStorageKey,
+  ERASURE_REPORT_KEY,
   liveLastErrorEntry,
   STORAGE_PREFIXES,
   PREFERENCE_COOKIES,
@@ -110,8 +111,18 @@ describe('erasure reaches connector storage (#1862)', () => {
 
   it('still erases everything the app itself writes', () => {
     for (const key of KNOWN_KEYS) {
+      // The one exception, asserted on its own below: the erasure's kept
+      // report belongs to the erasure, which removes it itself.
+      if (key === ERASURE_REPORT_KEY) continue;
       expect(isErasableStorageKey(key), key).toBe(true);
     }
+  });
+
+  it("leaves the erasure's own kept report to its owner (#2035)", () => {
+    // Under `app.`, so the export shows it; outside the erasure set, so a
+    // clean erasure never reports it as an item left behind.
+    expect(isAppStorageKey(ERASURE_REPORT_KEY)).toBe(true);
+    expect(isErasableStorageKey(ERASURE_REPORT_KEY)).toBe(false);
   });
 
   it('leaves an unrelated key alone', () => {

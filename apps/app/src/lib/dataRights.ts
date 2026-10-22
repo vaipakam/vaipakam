@@ -184,9 +184,26 @@ export function isDisconnectSentinelKey(
   return !!key && WAGMI_DISCONNECT_SENTINEL.test(key);
 }
 
+/**
+ * Where an erasure's own report waits out a wallet-forced reload (#2035).
+ *
+ * The second key an erasure leaves to its owner rather than sweeping or
+ * counting (Codex #2670 r2 P1). It is written AFTER the counted clear, on
+ * purpose, and lives for a bounded window (see `lib/erasureRun.ts`), so
+ * counting it made a clean erasure report one item "that could not be
+ * removed" and the inventory show it until the window closed — the report
+ * misdescribing the erasure it exists to describe. It holds counts and
+ * outcome flags only, nothing about the wallet or the user. It stays under
+ * `app.` so the EXPORT still shows it while it exists; it is only outside
+ * the ERASURE set, and its owner removes it: the window's end, a dismissal,
+ * the next erasure, or the load that reads it.
+ */
+export const ERASURE_REPORT_KEY = 'app.dataRights.erasureReport';
+
 export function isErasableStorageKey(key: string | null | undefined): boolean {
   if (!key) return false;
   if (isDisconnectSentinelKey(key)) return false;
+  if (key === ERASURE_REPORT_KEY) return false;
   if (isAppStorageKey(key)) return true;
   // CASE-INSENSITIVE (round 3 P1). The markers were matched exactly, and
   // `@coinbase/wallet-sdk@4.3.6` persists `cbwsdk.store` in lower case while
