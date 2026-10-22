@@ -1,4 +1,4 @@
-## Thread — Base keeps every chain's report; the list only decides what counts (PR #<n>)
+## Thread — Base keeps every chain's report; the list only decides what counts (PR #2645)
 
 Base's reward aggregator used to refuse a day report from any chain not on its expected-source list. That one check was answering two questions. Who may report is already settled by the messenger, which authenticates every report. Whose figures count toward a day's total was settled anyway at finalization, which adds up only the chains listed at that moment. So the refusal protected nothing and lost real data. A report also carries what a chain says about itself (its custody era, its recycled availability, and the commitments it has retired or released), and a chain taken off the list before its last report landed had all of that thrown away. Base then kept showing those retired commitments as outstanding, and capped the repatriation that winds the chain down below what it actually holds (#2618).
 
