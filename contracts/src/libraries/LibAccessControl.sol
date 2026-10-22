@@ -93,6 +93,9 @@ library LibAccessControl {
     ///      `DEFAULT_ADMIN_ROLE`, and cannot revoke anything from the
     ///      Diamond owner (the Timelock after handover), so a compromised
     ///      holder can neither take governance nor lock it out.
+    ///      It is never granted at init (see `initializeAccessControl`)
+    ///      and is not in `grantableRoles()`: `Handover.s.sol` grants it
+    ///      to the governance Safe and nothing else holds it.
     ///      Post-handover it sits on the governance Safe, while
     ///      `DEFAULT_ADMIN_ROLE` itself sits on the Timelock: before D1
     ///      the Safe held `DEFAULT_ADMIN_ROLE` directly, which let it
@@ -242,10 +245,13 @@ library LibAccessControl {
         // (§4.4 step 5); this just lands the role so the handover
         // wiring and the `setKeeperTier` access gate exist up front.
         grantRole(KEEPER_ROLE, owner);
-        // #934 / D1 — the emergency revoker lands on the deployer like
-        // every other role and is handed to the governance Safe by
-        // `Handover.s.sol`.
-        grantRole(EMERGENCY_REVOKER_ROLE, owner);
+        // #934 / D1 — EMERGENCY_REVOKER_ROLE is deliberately NOT granted
+        // here. It is a post-handover role only: `Handover.s.sol` grants
+        // it straight to the governance Safe. Granting it at init would
+        // put it on the deployer EOA, and any handover path that did not
+        // know to rotate it would leave a hot key able to strip roles
+        // with no delay. Pre-handover the deployer holds the role root,
+        // which already covers every revocation.
 
         // Set DEFAULT_ADMIN_ROLE as admin for all roles
         setRoleAdmin(ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
@@ -275,9 +281,13 @@ library LibAccessControl {
      *      `DEFAULT_ADMIN_ROLE` is the first entry — handover code that
      *      renounces in reverse keeps DEFAULT_ADMIN until last so an
      *      earlier-step revert leaves the deployer recoverable.
+     *      `EMERGENCY_REVOKER_ROLE` is NOT in this list: it is never
+     *      granted at init, and `transferAdmin` must not move it, because
+     *      it belongs to the governance Safe rather than to whoever holds
+     *      the role root (#934 / D1).
      */
     function grantableRoles() internal pure returns (bytes32[] memory) {
-        bytes32[] memory roles = new bytes32[](12);
+        bytes32[] memory roles = new bytes32[](11);
         roles[0] = DEFAULT_ADMIN_ROLE;
         roles[1] = ADMIN_ROLE;
         roles[2] = PAUSER_ROLE;
@@ -289,7 +299,6 @@ library LibAccessControl {
         roles[8] = WATCHER_ROLE;
         roles[9] = NOTIF_BILLER_ROLE;
         roles[10] = KEEPER_ROLE;
-        roles[11] = EMERGENCY_REVOKER_ROLE;
         return roles;
     }
 }

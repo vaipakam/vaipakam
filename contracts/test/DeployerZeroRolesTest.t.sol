@@ -96,7 +96,9 @@ contract DeployerZeroRolesTest is Test {
         allRoles.push(LibAccessControl.WATCHER_ROLE);
         allRoles.push(LibAccessControl.NOTIF_BILLER_ROLE);
         allRoles.push(LibAccessControl.KEEPER_ROLE);
-        allRoles.push(LibAccessControl.EMERGENCY_REVOKER_ROLE);
+        // EMERGENCY_REVOKER_ROLE is deliberately absent: it is not in
+        // `grantableRoles()` and is never granted at init (#934). The
+        // post-rotation checks below assert it separately.
     }
 
     // ─── 1. Initial state (pre-rotation) ──────────────────────────────────
@@ -148,7 +150,6 @@ contract DeployerZeroRolesTest is Test {
         ac.grantRole(LibAccessControl.KEEPER_ROLE, keeperBot);
         OwnershipFacet(address(diamond)).transferOwnership(adminTimelock);
 
-        ac.renounceRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, deployer);
         ac.renounceRole(LibAccessControl.KEEPER_ROLE, deployer);
         ac.renounceRole(LibAccessControl.NOTIF_BILLER_ROLE, deployer);
         ac.renounceRole(LibAccessControl.WATCHER_ROLE, deployer);
@@ -175,6 +176,26 @@ contract DeployerZeroRolesTest is Test {
             assertFalse(
                 ac.hasRole(allRoles[i], deployer),
                 "deployer must hold zero roles post-rotation"
+            );
+        }
+        assertFalse(
+            ac.hasRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, deployer),
+            "deployer must not hold the emergency revoker post-rotation"
+        );
+    }
+
+    /// @notice #934 (Codex #2642 r1) — the emergency revoker is a
+    ///         post-handover role only. Init must not put it on the
+    ///         deployer, or a handover path that did not know to rotate it
+    ///         would leave a hot key able to strip roles with no delay.
+    function testEmergencyRevokerNotGrantedAtInit() public view {
+        AccessControlFacet ac = AccessControlFacet(address(diamond));
+        assertFalse(ac.hasRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, deployer));
+        bytes32[] memory libraryRoles = LibAccessControl.grantableRoles();
+        for (uint256 i = 0; i < libraryRoles.length; i++) {
+            assertTrue(
+                libraryRoles[i] != LibAccessControl.EMERGENCY_REVOKER_ROLE,
+                "the revoker must not be in grantableRoles()"
             );
         }
     }
@@ -263,8 +284,8 @@ contract DeployerZeroRolesTest is Test {
 
         AccessControlFacet ac = AccessControlFacet(address(diamond));
         assertTrue(ac.hasRole(LibAccessControl.DEFAULT_ADMIN_ROLE, adminTimelock));
+        assertTrue(ac.hasRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, governanceMultisig));
         for (uint256 i = 0; i < allRoles.length; i++) {
-            if (allRoles[i] == LibAccessControl.EMERGENCY_REVOKER_ROLE) continue;
             assertFalse(
                 ac.hasRole(allRoles[i], governanceMultisig),
                 "governance Safe must hold nothing but the emergency revoker"
@@ -317,5 +338,9 @@ contract DeployerZeroRolesTest is Test {
                 "no stray role grants to arbitrary addresses"
             );
         }
+        assertFalse(
+            ac.hasRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, rando),
+            "no stray emergency-revoker grant"
+        );
     }
 }

@@ -11,8 +11,8 @@ The companion docs are:
 
 - [GovernanceRunbook.md](GovernanceRunbook.md) — what the timelock
   guards and how to schedule operations once it's live
-- [AdminKeysAndPause.md](AdminKeysAndPause.md) — which roles stay on
-  the ops Safe (PAUSER_ROLE, KYC_ADMIN_ROLE) vs the governance Safe
+- [AdminKeysAndPause.md](AdminKeysAndPause.md) — which roles sit on
+  the Timelock, the Pauser Safe and the governance Safe
 - [DeploymentRunbook.md](DeploymentRunbook.md) — the full per-chain
   deploy sequence the timelock setup plugs into at the end
 
@@ -21,18 +21,21 @@ The companion docs are:
 ## TL;DR — six steps, in order
 
 ```
-[A]  Pick signer set + threshold for governance Safe + ops Safe
-[B]  Deploy Safe(s) per chain via app.safe.global (or via SafeProxyFactory CLI)
-[C]  Set TIMELOCK_PROPOSER=<governance-safe-addr> in .env
+[A]  Pick signer set + threshold for the governance Safe + the Pauser Safe
+[B]  Deploy both Safes per chain via app.safe.global (or via SafeProxyFactory CLI)
+[C]  Set TIMELOCK_PROPOSER, EMERGENCY_REVOKER_ADDRESS (governance Safe) and
+     PAUSER_ADDRESS (Pauser Safe) in .env
 [D]  forge script DeployTimelock.s.sol --broadcast
-[E]  forge script TransferAdminToTimelock.s.sol --broadcast (CONFIRM_HANDOVER=YES)
-[F]  Verify role distribution on-chain + grant PAUSER + KYC_ADMIN to ops Safe
+[E]  forge script Handover.s.sol --broadcast
+[F]  Accept the cross-chain ownerships through the Timelock, then verify
 ```
 
-Step E is irreversible — once the deployer EOA renounces
-`DEFAULT_ADMIN_ROLE`, only the timelock can reach the Diamond's admin
-surface. Rehearse the entire sequence on a Sepolia Diamond before
-running it on a mainnet Diamond.
+Step E is irreversible — once the admin EOA renounces
+`DEFAULT_ADMIN_ROLE`, only the Timelock can reach the Diamond's admin
+surface. Rehearse the entire sequence on a testnet Diamond before
+running it on a mainnet Diamond. `deploy-mainnet.sh` runs D and E as its
+timelock and handover phases; the commands below are what those phases
+execute.
 
 ---
 
@@ -66,10 +69,17 @@ signers can cancel).
 
 You will run **two** Safes, each on each mainnet chain:
 
-### A.1 Governance Safe (timelock proposer)
+### A.1 Governance Safe (timelock proposer + emergency revoker)
 
-Holds the timelock's `PROPOSER_ROLE` + `CANCELLER_ROLE`. Used for
-parameter changes that go through the 48h delay.
+Holds the Timelock's `PROPOSER_ROLE` (and, through OpenZeppelin,
+`CANCELLER_ROLE`), so it queues every parameter change, every grant and
+every upgrade, each of which waits out the 48h delay. On the Diamond it
+holds exactly one role, `EMERGENCY_REVOKER_ROLE` (owner decision D1,
+#934): it can strip a role from a compromised hot key immediately, and
+nothing else. It cannot grant a role, cannot touch the role root
+(`DEFAULT_ADMIN_ROLE`, which sits on the Timelock) and cannot remove
+anything the Diamond owner holds, so a captured governance Safe can
+neither take governance nor disarm it without the delay.
 
 | Phase | Threshold | Signers |
 |---|---|---|
@@ -83,30 +93,36 @@ launch with 1-of-1** — it defeats the multisig layer entirely; the
 timelock alone protects against insta-execution but not against a
 single-key proposer that can schedule any op.
 
-### A.2 Ops Safe (pause + KYC)
+### A.2 Pauser Safe (pause + the Timelock veto)
 
-Holds `PAUSER_ROLE` + `KYC_ADMIN_ROLE` directly on the Diamond. These
-two roles intentionally **bypass** the timelock per
-[TransferAdminToTimelock.s.sol](../../contracts/script/TransferAdminToTimelock.s.sol)
-— pausing during an incident can't wait 48h, and per-user KYC tier
-bumps need same-hour response.
+Holds `PAUSER_ROLE` directly on the Diamond (and is the guardian of
+every `GuardianPausable` cross-chain contract), bypassing the Timelock
+because pausing during an incident cannot wait 48h. It is also the
+Timelock's **independent canceller** (#938): it can cancel any queued
+operation, but it cannot propose one. It cannot unpause (that is
+`UNPAUSER_ROLE`, on the Timelock), so a compromised Pauser Safe cannot
+re-enable a contract the incident team froze.
+
+`KYC_ADMIN_ROLE` is no longer an ops-Safe role: `Handover.s.sol` gives it
+to the Timelock, and KYC enforcement is off on the retail deploy anyway.
 
 | Threshold | Signers |
 |---|---|
 | **1-of-3** | three on-call operators (founder + 2 ops engineers) |
 
-1-of-3 is acceptable here because the only powers are
-`pause()` / `pauseAsset()` (defensive) and KYC tier bumps (no
-fund-movement authority). The blast radius of a leaked 1-of-3 ops
-signer key is bounded to "denial-of-service via spurious pause" — a
-governance Safe can call `unpause()` through the timelock to clean up.
-The trade is faster incident response; the alternative (2-of-3 ops)
-adds ~5 min to every pause and has historically lost protocols
-millions in those minutes.
+1-of-3 is acceptable here because the only powers are defensive:
+`pause()` / `pauseAsset()` and cancelling a queued operation. The blast
+radius of a leaked 1-of-3 Pauser signer key is bounded to
+denial-of-service: a spurious pause (the Timelock unpauses) or cancelled
+operations (the governance Safe queues them again). The governance Safe
+can also strip the leaked Safe's `PAUSER_ROLE` at once with
+`emergencyRevokeRole`. The trade is faster incident response; the
+alternative (2-of-3) adds ~5 min to every pause and has historically lost
+protocols millions in those minutes.
 
-If you want both: deploy ops Safe as **1-of-3 for `pause`** and rely
-on the same Safe (or a separate one) for KYC at any threshold —
-`KYC_ADMIN_ROLE` and `PAUSER_ROLE` are independent and can be split.
+The Pauser Safe must be a different Safe from the governance Safe:
+`DeployTimelock` and `Handover` both refuse the same address in both
+places, because a veto held by the proposer is no veto.
 
 ---
 
@@ -122,7 +138,7 @@ Polygon zkEVM, BNB Chain — repeat:
 2. Pick the chain in the network dropdown
 3. Add owners (paste each signer's address; they don't sign anything
    yet — they're just listed as approved signers)
-4. Set threshold (2-of-3 for governance, 1-of-3 for ops)
+4. Set threshold (2-of-3 for governance, 1-of-3 for the Pauser Safe)
 5. Deploy. Cost: ~0.005 ETH on Ethereum, dust on L2s
 6. Record the Safe address — you'll paste it into `.env` next
 
@@ -156,60 +172,53 @@ from the deployer is enough.
 
 ---
 
-## C. Wire the governance Safe address into `.env`
+## C. Wire the Safe addresses into `.env`
 
 Edit [contracts/.env](../../contracts/.env):
 
 ```bash
-# Old (single EOA — for testnet rehearsal):
-TIMELOCK_PROPOSER=0x44CEFFF7643CAfFDD029030D4c7920e1551e9583
-
-# New (governance Safe address from step B):
-TIMELOCK_PROPOSER=0x<safe-addr>
+TIMELOCK_PROPOSER=0x<governance-safe>          # queues Timelock operations
+EMERGENCY_REVOKER_ADDRESS=0x<governance-safe>  # the Safe's one Diamond role
+PAUSER_ADDRESS=0x<pauser-safe>                 # PAUSER_ROLE + Timelock canceller
 ```
 
-If different chains have different Safe addresses (you skipped step
-B.2), use the per-chain override pattern that the deploy scripts
-already use elsewhere:
+`DEFAULT_ADMIN_ADDRESS` is retired (D1): `Handover.s.sol` refuses to run
+while it is set, because it named the topology in which the governance
+Safe held the role root. `TIMELOCK_CANCELLER` is retired too:
+`DeployTimelock.s.sol` refuses it and takes the canceller from
+`PAUSER_ADDRESS`, so one variable names the Pauser Safe for both scripts.
+
+Optional knobs:
 
 ```bash
-ETHEREUM_TIMELOCK_PROPOSER=0x<eth-safe>
-BASE_TIMELOCK_PROPOSER=0x<base-safe>
-ARB_TIMELOCK_PROPOSER=0x<arb-safe>
-# ... etc
-```
-
-You'll need to add a small read-with-fallback shim to
-[DeployTimelock.s.sol](../../contracts/script/DeployTimelock.s.sol)
-to consume those — currently it only reads `TIMELOCK_PROPOSER`. The
-shim is a 5-line patch (try `<SLUG>_TIMELOCK_PROPOSER` first, fall
-back to `TIMELOCK_PROPOSER`). Take it as a separate small PR before
-the multisig rollout if you go this route.
-
-Also set the optional knobs if you want non-defaults:
-
-```bash
-TIMELOCK_MIN_DELAY=172800   # default 48h; minimum 1h enforced by script
+TIMELOCK_MIN_DELAY=172800   # default 48h; a Phase-1 mainnet refuses less.
+                            # Also the permanent floor (MIN_DELAY_FLOOR).
 TIMELOCK_EXECUTOR=0x0000000000000000000000000000000000000000
                             # default open-execute; set to a Safe to gate
                             # execution as well as proposing (see §F.3)
 ```
 
+The deploy scripts read one value of each per run. If the Safes have
+different addresses on different chains (you skipped B.2), keep a `.env`
+per chain.
+
 ---
 
-## D. Deploy TimelockController per chain
+## D. Deploy the Timelock per chain
 
 Run [DeployTimelock.s.sol](../../contracts/script/DeployTimelock.s.sol)
-against each chain's RPC. The script:
+against each chain's RPC. It deploys `VaipakamTimelock` (an OpenZeppelin
+`TimelockController` with no external admin) with:
 
-- Constructs an OZ `TimelockController` with `minDelay`, the proposer
-  Safe as the only proposer/canceller, `address(0)` as executor (open
-  execution, see §F.3), `address(0)` as admin (self-administered)
-- Writes the deployed timelock address into
-  `deployments/<chain-slug>/addresses.json` under `.timelock` so
-  downstream scripts can read it
+- `minDelay` as both the delay and the permanent floor;
+- the governance Safe as the only proposer;
+- the Pauser Safe (`PAUSER_ADDRESS`) as the independent canceller. On a
+  Phase-1 mainnet both Safes must be deployed contracts and must differ;
+- `address(0)` as executor unless `TIMELOCK_EXECUTOR` is set (open
+  execution, see §F.3).
 
-Per chain:
+It records the address in `deployments/<chain-slug>/addresses.json`
+under `.timelock`, which the handover reads.
 
 ```bash
 cd contracts
@@ -220,139 +229,115 @@ forge script script/DeployTimelock.s.sol \
     --slow
 ```
 
-Verify the resulting timelock on-chain:
+Verify the resulting Timelock on-chain:
 
 ```bash
 TIMELOCK=$(jq -r .timelock deployments/ethereum/addresses.json)
-SAFE=$(echo $TIMELOCK_PROPOSER)
 
-# Must be the Safe, not the deployer EOA
-cast call $TIMELOCK \
-    "hasRole(bytes32,address)(bool)" \
-    $(cast keccak "PROPOSER_ROLE") \
-    $SAFE \
-    --rpc-url $ETHEREUM_RPC_URL
-
-# Must NOT have a default admin (self-administered)
-cast call $TIMELOCK \
-    "hasRole(bytes32,address)(bool)" \
+# The governance Safe proposes
+cast call $TIMELOCK "hasRole(bytes32,address)(bool)" \
+    $(cast keccak "PROPOSER_ROLE") $TIMELOCK_PROPOSER --rpc-url $ETHEREUM_RPC_URL
+# The Pauser Safe can cancel (#938)
+cast call $TIMELOCK "hasRole(bytes32,address)(bool)" \
+    $(cast keccak "CANCELLER_ROLE") $PAUSER_ADDRESS --rpc-url $ETHEREUM_RPC_URL
+# The floor is the deploy-time delay
+cast call $TIMELOCK "MIN_DELAY_FLOOR()(uint256)" --rpc-url $ETHEREUM_RPC_URL
+# Nobody but the Timelock administers it: the deployer must print false
+cast call $TIMELOCK "hasRole(bytes32,address)(bool)" \
     0x0000000000000000000000000000000000000000000000000000000000000000 \
-    $(cast wallet address $PRIVATE_KEY) \
-    --rpc-url $ETHEREUM_RPC_URL
-# Should print: false
+    $(cast wallet address $DEPLOYER_PRIVATE_KEY) --rpc-url $ETHEREUM_RPC_URL
 ```
 
 ---
 
-## E. Hand Diamond admin to the timelock
+## E. Hand the Diamond and the cross-chain contracts to governance
 
-Run [TransferAdminToTimelock.s.sol](../../contracts/script/TransferAdminToTimelock.s.sol).
-This is the irreversible step. Read the script comments before
-running — it spells out the exact 7-step sequence (5 grants, 1
-ownership transfer, 6 renounces, in that order so that any mid-flight
-revert leaves the deployer able to retry).
+Run [Handover.s.sol](../../contracts/script/Handover.s.sol) as the admin
+EOA. This is the irreversible step, and the only handover script: #936
+retired `GrantOpsRoles.s.sol` and `TransferAdminToTimelock.s.sol`, which
+split the roles differently and did not know the D1 topology. The
+sequence, and what the script checks before it broadcasts, is written out
+in [GovernanceRunbook.md §2–4](GovernanceRunbook.md). In short: the role
+root and ownership go to the Timelock, the six delayed roles go to the
+Timelock, `PAUSER_ROLE` goes to the Pauser Safe, the emergency revoker
+goes to the governance Safe, the admin EOA renounces with the role root
+last, and every cross-chain contract gets the Timelock proposed as its
+owner. It refuses a Timelock that does not name `PAUSER_ADDRESS` as its
+canceller.
 
 ```bash
 cd contracts
 set -a; source .env; set +a
-CONFIRM_HANDOVER=YES forge script script/TransferAdminToTimelock.s.sol \
+CHAIN_SLUG=ethereum forge script script/Handover.s.sol \
     --rpc-url $ETHEREUM_RPC_URL \
     --broadcast \
     --slow
 ```
 
-The `CONFIRM_HANDOVER=YES` env guard is a typo-safety net; if the
-script is launched against the wrong RPC by accident, the missing
-guard fails fast.
-
-After the script completes, the deployer EOA cannot make any
-admin-gated call. Test it explicitly:
+After the script completes, the admin EOA cannot make any admin-gated
+call. Test it explicitly — this must revert with a missing-role error:
 
 ```bash
-DEPLOYER=$(cast wallet address $PRIVATE_KEY)
 DIAMOND=$(jq -r .diamond deployments/ethereum/addresses.json)
-
-# Should revert with "AccessControl: account ... is missing role ..."
-cast send $DIAMOND \
-    "setProtocolPaused(bool)" true \
+cast send $DIAMOND "pause()" \
     --rpc-url $ETHEREUM_RPC_URL \
-    --private-key $PRIVATE_KEY
+    --private-key $ADMIN_PRIVATE_KEY
 ```
 
-If this revert does NOT fire, the handover did not complete cleanly —
-DO NOT proceed to step F. Re-read [GovernanceRunbook.md §6](GovernanceRunbook.md)
-for recovery steps and contact the deployer.
+If it does NOT revert, the handover did not complete — do not proceed.
 
 ---
 
-## F. Post-handover wiring
+## F. Post-handover
 
-### F.1 Grant PAUSER_ROLE + KYC_ADMIN_ROLE to ops Safe
+### F.1 Accept the cross-chain ownerships through the Timelock
 
-The handover script intentionally does NOT grant these to the
-timelock — they need same-hour response. Grant them directly to the
-ops Safe **through the timelock** (because the deployer EOA can no
-longer grant roles):
+Every cross-chain contract now lists the Timelock as its pending owner.
+The governance Safe schedules `acceptOwnership()` on each (and
+`acceptAdminRole` on the CCIP token admin registry) through the Timelock,
+waits 48h and executes. [GovernanceRunbook.md §5](GovernanceRunbook.md)
+has the exact calls.
+
+### F.2 Verify final role distribution
 
 ```bash
 DIAMOND=$(jq -r .diamond deployments/ethereum/addresses.json)
 TIMELOCK=$(jq -r .timelock deployments/ethereum/addresses.json)
-GOV_SAFE=$TIMELOCK_PROPOSER
-OPS_SAFE=0x<ops-safe-addr>
-PAUSER_ROLE=$(cast keccak "PAUSER_ROLE")
-KYC_ADMIN_ROLE=$(cast keccak "KYC_ADMIN_ROLE")
+GOV_SAFE=$EMERGENCY_REVOKER_ADDRESS
+PAUSER_SAFE=$PAUSER_ADDRESS
+ADMIN=$ADMIN_ADDRESS
+ROOT=0x0000000000000000000000000000000000000000000000000000000000000000
 
-# Step 1: encode the grantRole calldata
-PAUSER_CALLDATA=$(cast calldata "grantRole(bytes32,address)" $PAUSER_ROLE $OPS_SAFE)
-KYC_CALLDATA=$(cast calldata "grantRole(bytes32,address)" $KYC_ADMIN_ROLE $OPS_SAFE)
-
-# Step 2: gov Safe calls TimelockController.schedule(...) for each — see
-#         GovernanceRunbook.md for the schedule/execute lifecycle.
-# Step 3: wait 48h delay
-# Step 4: anyone calls TimelockController.execute(...) for each
-```
-
-The
-[GovernanceRunbook.md](GovernanceRunbook.md)
-documents the schedule → wait → execute lifecycle in full; this
-runbook stops at the timelock-is-live state and hands off to that doc
-for ongoing operations.
-
-### F.2 Verify final role distribution
-
-After F.1 lands and the 48h delay elapses + execute fires:
-
-```bash
-DIAMOND=$(jq -r .diamond deployments/ethereum/addresses.json)
-DEFAULT_ADMIN=0x0000000000000000000000000000000000000000000000000000000000000000
-
-for role in DEFAULT_ADMIN_ROLE ADMIN_ROLE ORACLE_ADMIN_ROLE \
-            RISK_ADMIN_ROLE VAULT_ADMIN_ROLE PAUSER_ROLE \
-            KYC_ADMIN_ROLE; do
-  HASH=$([ "$role" = DEFAULT_ADMIN_ROLE ] && echo $DEFAULT_ADMIN || cast keccak "$role")
+for role in DEFAULT_ADMIN_ROLE ADMIN_ROLE UNPAUSER_ROLE KYC_ADMIN_ROLE \
+            ORACLE_ADMIN_ROLE RISK_ADMIN_ROLE VAULT_ADMIN_ROLE \
+            PAUSER_ROLE EMERGENCY_REVOKER_ROLE; do
+  HASH=$([ "$role" = DEFAULT_ADMIN_ROLE ] && echo $ROOT || cast keccak "$role")
   echo "=== $role ==="
-  echo "  timelock holds: $(cast call $DIAMOND "hasRole(bytes32,address)(bool)" $HASH $TIMELOCK --rpc-url $ETHEREUM_RPC_URL)"
-  echo "  gov Safe holds: $(cast call $DIAMOND "hasRole(bytes32,address)(bool)" $HASH $GOV_SAFE --rpc-url $ETHEREUM_RPC_URL)"
-  echo "  ops Safe holds: $(cast call $DIAMOND "hasRole(bytes32,address)(bool)" $HASH $OPS_SAFE --rpc-url $ETHEREUM_RPC_URL)"
-  echo "  deployer holds: $(cast call $DIAMOND "hasRole(bytes32,address)(bool)" $HASH $DEPLOYER --rpc-url $ETHEREUM_RPC_URL)"
+  for who in TIMELOCK GOV_SAFE PAUSER_SAFE ADMIN; do
+    echo "  $who: $(cast call $DIAMOND "hasRole(bytes32,address)(bool)" $HASH ${!who} --rpc-url $ETHEREUM_RPC_URL)"
+  done
 done
+cast call $DIAMOND "owner()(address)" --rpc-url $ETHEREUM_RPC_URL   # must be $TIMELOCK
 ```
 
 Expected end-state:
 
-| Role | Timelock | Gov Safe | Ops Safe | Deployer |
+| Role | Timelock | Gov Safe | Pauser Safe | Admin EOA |
 |---|---|---|---|---|
 | DEFAULT_ADMIN_ROLE | ✓ | — | — | — |
 | ADMIN_ROLE | ✓ | — | — | — |
+| UNPAUSER_ROLE | ✓ | — | — | — |
+| KYC_ADMIN_ROLE | ✓ | — | — | — |
 | ORACLE_ADMIN_ROLE | ✓ | — | — | — |
 | RISK_ADMIN_ROLE | ✓ | — | — | — |
 | VAULT_ADMIN_ROLE | ✓ | — | — | — |
 | PAUSER_ROLE | — | — | ✓ | — |
-| KYC_ADMIN_ROLE | — | — | ✓ | — |
+| EMERGENCY_REVOKER_ROLE | — | ✓ | — | — |
 | ERC-173 owner | ✓ | — | — | — |
 
-If the deployer column has any ✓, step E was incomplete — go back and
-finish the renounces.
+`WATCHER_ROLE`, `NOTIF_BILLER_ROLE` and `KEEPER_ROLE` stay on the admin
+EOA until the per-bot keys are set up; nothing else may. If the admin
+column has any other ✓, step E did not complete.
 
 ### F.3 Optional: gate execution behind the gov Safe
 
@@ -373,25 +358,17 @@ saves the front-run surface, costs you DoS resilience.
 
 ## G. Rehearse before mainnet
 
-Before any mainnet broadcast in steps D–F, **fully rehearse on
-Sepolia** using the existing testnet Diamonds. Sequence:
+Before any mainnet broadcast in steps D–F, **fully rehearse on a
+testnet** with a fresh Diamond and throwaway Safes (two distinct
+1-of-1 Safes are enough). Run steps D and E exactly as above against
+the testnet RPC, with `TIMELOCK_MIN_DELAY=3600` so the accepts in F.1
+land in an hour. Then:
 
-```bash
-# Use a throwaway 1-of-1 Safe on Base Sepolia for the rehearsal
-TIMELOCK_PROPOSER=0x<test-safe-addr> \
-forge script script/DeployTimelock.s.sol \
-    --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
-
-CONFIRM_HANDOVER=YES \
-forge script script/TransferAdminToTimelock.s.sol \
-    --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
-
-# Verify the deployer is now locked out (cast send any admin op,
-# expect revert)
-# Verify the test Safe can schedule via the Safe Transaction Service
-# Verify execute lands after 48h (or set TIMELOCK_MIN_DELAY=3600 for
-# the rehearsal)
-```
+- confirm the admin EOA is locked out (the `pause()` call in E reverts);
+- schedule an operation from the test governance Safe through the Safe
+  Transaction Service, and cancel it from the test Pauser Safe;
+- schedule it again, let it execute after the delay;
+- run the F.2 readback.
 
 Document the actual gas costs and signer wall-clock times in your
 issue tracker before quoting a mainnet maintenance window.
@@ -410,14 +387,16 @@ Every signer needs to know how to:
    or use the Tenderly transaction simulator to confirm it's not a
    role grant to an attacker address
 3. **Cancel a pending op** — `TimelockController.cancel(bytes32 id)`
-   is a fast path the proposer can take during the 48h window if a
-   signer turns out to have been compromised. Walk every signer
-   through this drill at least once on Sepolia.
+   is a fast path either Safe can take during the 48h window: the
+   governance Safe (the proposer) and the Pauser Safe (the independent
+   canceller, #938). Walk every signer of both Safes through this drill
+   at least once on a testnet.
 
 If signers don't know step 3, the timelock is effectively no
-protection — a stolen signer key + a still-active proposer Safe means
-the attacker can schedule, wait 48h, execute. The other signers MUST
-know to cancel, and MUST be reachable on a 48h timer.
+protection — a captured governance Safe can schedule, wait 48h,
+execute. The Pauser Safe exists so that a veto survives the capture of
+the governance Safe; its signers MUST know to cancel, and MUST be
+reachable on a 48h timer.
 
 ---
 
@@ -425,7 +404,7 @@ know to cancel, and MUST be reachable on a 48h timer.
 
 - [DeployTimelock.s.sol](../../contracts/script/DeployTimelock.s.sol) —
   step D's broadcast target
-- [TransferAdminToTimelock.s.sol](../../contracts/script/TransferAdminToTimelock.s.sol) —
+- [Handover.s.sol](../../contracts/script/Handover.s.sol) —
   step E's broadcast target
 - [AccessControlFacet.sol](../../contracts/src/facets/AccessControlFacet.sol) —
   the `grantRole` / `renounceRole` surface invoked by the handover
@@ -434,5 +413,5 @@ know to cancel, and MUST be reachable on a 48h timer.
 - [GovernanceRunbook.md](GovernanceRunbook.md) — what to do once the
   timelock is live (schedule/execute lifecycle, common ops)
 - [IncidentRunbook.md](IncidentRunbook.md) — pause flow during an
-  incident, including the ops-Safe → `pause()` direct path that
+  incident, including the Pauser Safe → `pause()` direct path that
   bypasses the 48h delay

@@ -182,8 +182,8 @@ implementation. None of this blocks any live deployment (gate is OFF, pre-live).
 ## 8. Resolution (as implemented — Codex #736 r5–r7)
 
 - **Q1 (reveal role):** `revealRiskTermsBump` is gated on **`PAUSER_ROLE`** — the
-  existing off-timelock guardian role that `TransferAdminToTimelock` deliberately
-  does NOT migrate to the 48h timelock (unlike `ADMIN/ORACLE/RISK/VAULT_ADMIN`).
+  existing off-timelock guardian role that the handover (now `Handover.s.sol`)
+  deliberately does NOT move to the 48h timelock (unlike `ADMIN/ORACLE/RISK/VAULT_ADMIN`).
   `RISK_ADMIN_ROLE` could not be used: it IS migrated to the timelock, so a reveal
   queued through it would expose the secret for the delay (r7). The publisher's
   power is bounded — it can only reveal what `ADMIN` already committed, never

@@ -60,7 +60,7 @@ exposes:
 Every setter is:
 
 - **ADMIN_ROLE-gated** via `DiamondAccessControl` → routed through the 48h
-  timelock once `TransferAdminToTimelock` runs.
+  timelock once `Handover.s.sol` runs.
 - **Bounds-checked** against declared maxima: `MAX_FEE_BPS = 5000` (50%),
   `MAX_SLIPPAGE_BPS = 2500` (25%), `MAX_INCENTIVE_BPS = 2000` (20%),
   `MAX_DISCOUNT_BPS = 9000` (90%). Any value above reverts with a typed
@@ -82,11 +82,14 @@ Every setter is:
 - Self-administered: no EOA admin backdoor; changing delay / proposers
   also goes through the timelock.
 
-[`contracts/script/TransferAdminToTimelock.s.sol`](../contracts/script/TransferAdminToTimelock.s.sol)
-transfers the Diamond's `ADMIN_ROLE` + `DEFAULT_ADMIN_ROLE` + LibDiamond
-ownership onto the timelock address, in one multi-step ceremony. Kept
-separate from the timelock deploy so the deployer EOA can reclaim control
-cheaply if the multisig setup is wrong pre-handover.
+[`contracts/script/Handover.s.sol`](../../contracts/script/Handover.s.sol)
+transfers the Diamond's `DEFAULT_ADMIN_ROLE`, the delayed admin roles and
+LibDiamond ownership onto the timelock address, gives `PAUSER_ROLE` to the
+Pauser Safe and the revoke-only `EMERGENCY_REVOKER_ROLE` to the governance
+Safe, in one multi-step ceremony (owner decision D1, #934; #936 retired the
+older `TransferAdminToTimelock.s.sol`). Kept separate from the timelock
+deploy so the deployer EOA can reclaim control cheaply if the multisig
+setup is wrong pre-handover.
 
 ---
 
@@ -212,7 +215,7 @@ Scope:
 - Deploy Gnosis Safe multisig on every target chain (outside our repo — use
   Safe UI). **Threshold: 3-of-5.**
 - Transfer Diamond admin roles to the timelock via
-  `TransferAdminToTimelock.s.sol`.
+  `Handover.s.sol`.
 
 **Timelock configuration**:
 

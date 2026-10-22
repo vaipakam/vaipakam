@@ -23,7 +23,7 @@ Roles defined in `LibAccessControl.sol`:
 | `ORACLE_ADMIN_ROLE` | `keccak256("ORACLE_ADMIN_ROLE")` | Deployer on init | `OracleAdminFacet.setChainlinkRegistry/setUsdChainlinkDenominator/setEthChainlinkDenominator/setWethContract/setUniswapV3Factory/setStableTokenFeed/setSequencerUptimeFeed/setFeedOverride/setTellorOracle/setApi3ServerV1/setDIAOracleV2/setSecondaryOracleMaxDeviationBps/setSecondaryOracleMaxStaleness` |
 | `RISK_ADMIN_ROLE` | `keccak256("RISK_ADMIN_ROLE")` | Deployer on init | `RiskFacet.updateRiskParams` |
 | `VAULT_ADMIN_ROLE` | `keccak256("VAULT_ADMIN_ROLE")` | Deployer on init | `VaultFactoryFacet.upgradeVaultImplementation/setMandatoryVaultUpgrade` |
-| `EMERGENCY_REVOKER_ROLE` | `keccak256("EMERGENCY_REVOKER_ROLE")` | Deployer on init, then rotated to the governance multisig | `AccessControlFacet.emergencyRevokeRole` only — removes a role immediately; never `DEFAULT_ADMIN_ROLE`, never from the Diamond owner |
+| `EMERGENCY_REVOKER_ROLE` | `keccak256("EMERGENCY_REVOKER_ROLE")` | Never granted at init; `Handover.s.sol` grants it to the governance multisig | `AccessControlFacet.emergencyRevokeRole` only — removes a role immediately; never `DEFAULT_ADMIN_ROLE`, never from the Diamond owner |
 
 `DEFAULT_ADMIN_ROLE` is the admin of every other role (see `LibAccessControl.initializeAccessControl`).
 

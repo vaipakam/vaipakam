@@ -102,7 +102,11 @@ import {Deployments} from "./lib/Deployments.sol";
  *                                   DEFAULT_ADMIN_ADDRESS before D1 — the
  *                                   script refuses the old name so a
  *                                   stale .env cannot pass silently.)
- *        PAUSER_ADDRESS           — Pauser Safe address
+ *        PAUSER_ADDRESS           — Pauser Safe address. The Timelock
+ *                                   must already grant it CANCELLER_ROLE
+ *                                   (`DeployTimelock` does, from the same
+ *                                   variable); the script refuses a
+ *                                   Timelock that does not.
  *        CCIP_TOKEN_ADMIN_REGISTRY — optional; the chain's CCIP
  *                                   `TokenAdminRegistry`. When set, the
  *                                   CCT admin for VPFI is rotated to the
@@ -131,6 +135,8 @@ contract Handover is Script {
     ///      for readability since LibAccessControl doesn't re-export
     ///      it (it's the OZ implementation default).
     bytes32 internal constant DEFAULT_ADMIN_ROLE = bytes32(0);
+    /// @dev OpenZeppelin `TimelockController.CANCELLER_ROLE`.
+    bytes32 internal constant CANCELLER_ROLE = keccak256("CANCELLER_ROLE");
 
     /// @dev Roles that get rotated to the Timelock during handover.
     ///      Order matters for the renounce loop: ADMIN renounces them
@@ -247,6 +253,16 @@ contract Handover is Script {
             timelock != governanceSafe && timelock != pauserSafe,
             "timelock must be distinct from both Safes"
         );
+        // The Timelock's independent veto (#938) must be the Pauser Safe
+        // this script hands PAUSER_ROLE to. `DeployTimelock` reads its
+        // canceller from the same PAUSER_ADDRESS, so a mismatch here means
+        // the Timelock was deployed under a different .env, and handing the
+        // Diamond to it would leave no veto anyone has verified (Codex #2642
+        // r1).
+        require(
+            ITimelockRoles(timelock).hasRole(CANCELLER_ROLE, pauserSafe),
+            "timelock does not grant CANCELLER_ROLE to PAUSER_ADDRESS - redeploy it with DeployTimelock"
+        );
 
         console.log("Handover plan");
         console.log("  diamond:       ", diamond);
@@ -294,16 +310,16 @@ contract Handover is Script {
         //     off-chain-bot roles get rotated to per-bot EOAs in a
         //     separate script after Phase-6 keeper-authorization
         //     wiring lands.
-        //     Order: PAUSER, EMERGENCY_REVOKER, then the six Timelock
-        //     roles, then DEFAULT_ADMIN_ROLE LAST (allowed now that the
+        //     ADMIN never held EMERGENCY_REVOKER_ROLE: it is not granted
+        //     at init, only in 3a' above (#934).
+        //     Order: PAUSER, then the six Timelock roles, then DEFAULT_ADMIN_ROLE LAST (allowed now that the
         //     Timelock, not ADMIN, is the Diamond owner).
         IAccessControl(diamond).renounceRole(LibAccessControl.PAUSER_ROLE, admin);
-        IAccessControl(diamond).renounceRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, admin);
         for (uint256 i = tlRoles.length; i > 0; i--) {
             IAccessControl(diamond).renounceRole(tlRoles[i - 1], admin);
         }
         IAccessControl(diamond).renounceRole(DEFAULT_ADMIN_ROLE, admin);
-        console.log("Admin renounced PAUSER + EMERGENCY_REVOKER + Timelock-bound + DEFAULT_ADMIN");
+        console.log("Admin renounced PAUSER + Timelock-bound + DEFAULT_ADMIN");
 
         vm.stopBroadcast();
 
@@ -502,6 +518,12 @@ contract Handover is Script {
 interface IAccessControl {
     function grantRole(bytes32 role, address account) external;
     function renounceRole(bytes32 role, address callerConfirmation) external;
+}
+
+/// @dev OpenZeppelin `TimelockController`'s role read, for the canceller
+///      check before handover.
+interface ITimelockRoles {
+    function hasRole(bytes32 role, address account) external view returns (bool);
 }
 
 interface IOwnership {

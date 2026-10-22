@@ -45,9 +45,19 @@ import {Deployments} from "./lib/Deployments.sol";
  *        - TIMELOCK_MIN_DELAY    : optional, defaults to 172800 (48h)
  *        - TIMELOCK_PROPOSER     : proposer/canceller (multi-sig address)
  *        - TIMELOCK_EXECUTOR     : optional, defaults to address(0) = open
- *        - TIMELOCK_CANCELLER    : independent canceller (the Pauser Safe);
- *                                  required on a Phase-1 mainnet, must
- *                                  differ from the proposer
+ *        - PAUSER_ADDRESS        : the Pauser Safe. It becomes the
+ *                                  Timelock's independent canceller
+ *                                  (#938): it can veto a queued operation
+ *                                  but not propose one. Required, must be
+ *                                  a deployed contract on a Phase-1
+ *                                  mainnet, must differ from the proposer.
+ *                                  There is deliberately no separate
+ *                                  canceller variable: one address names
+ *                                  the Pauser Safe for both this script and
+ *                                  `Handover.s.sol`, so the veto cannot be
+ *                                  given to anything else by a typo, and
+ *                                  the handover re-checks that the Timelock
+ *                                  it hands the Diamond to has it.
  */
 contract DeployTimelock is Script {
     uint256 internal constant DEFAULT_MIN_DELAY = 48 hours;
@@ -57,7 +67,14 @@ contract DeployTimelock is Script {
         uint256 minDelay = vm.envOr("TIMELOCK_MIN_DELAY", DEFAULT_MIN_DELAY);
         address proposer = vm.envAddress("TIMELOCK_PROPOSER");
         address executor = vm.envOr("TIMELOCK_EXECUTOR", address(0));
-        address canceller = vm.envOr("TIMELOCK_CANCELLER", address(0));
+        // The canceller IS the Pauser Safe — read from the same variable
+        // `Handover.s.sol` grants PAUSER_ROLE from, never from a separate
+        // one (Codex #2642 r1).
+        address canceller = vm.envOr("PAUSER_ADDRESS", address(0));
+        require(
+            vm.envOr("TIMELOCK_CANCELLER", address(0)) == address(0),
+            "DeployTimelock: TIMELOCK_CANCELLER is retired - the canceller is PAUSER_ADDRESS; unset it"
+        );
 
         require(proposer != address(0), "DeployTimelock: proposer required");
         require(minDelay >= 1 hours, "DeployTimelock: min delay < 1h");
@@ -77,9 +94,13 @@ contract DeployTimelock is Script {
             require(minDelay >= 48 hours, "DeployTimelock: mainnet min delay < 48h");
             // #938 — a mainnet timelock must have a veto party other than
             // the Safe that queues operations.
-            require(canceller != address(0), "DeployTimelock: mainnet needs TIMELOCK_CANCELLER");
+            require(canceller != address(0), "DeployTimelock: mainnet needs PAUSER_ADDRESS (the canceller)");
+            // A Safe is a contract. An EOA or a mistyped address here would
+            // be a veto nobody can exercise, reported as if one existed.
+            require(canceller.code.length > 0, "DeployTimelock: PAUSER_ADDRESS has no code (not a Safe)");
+            require(proposer.code.length > 0, "DeployTimelock: TIMELOCK_PROPOSER has no code (not a Safe)");
         }
-        require(canceller != proposer, "DeployTimelock: canceller must differ from proposer");
+        require(canceller != proposer, "DeployTimelock: PAUSER_ADDRESS must differ from TIMELOCK_PROPOSER");
 
         address[] memory proposers = new address[](1);
         proposers[0] = proposer;
@@ -91,7 +112,7 @@ contract DeployTimelock is Script {
         console.log("Min delay (s):  ", minDelay);
         console.log("Proposer:       ", proposer);
         console.log("Executor:       ", executor);
-        console.log("Canceller:      ", canceller);
+        console.log("Canceller (Pauser Safe):", canceller);
 
         address[] memory cancellers = new address[](canceller == address(0) ? 0 : 1);
         if (canceller != address(0)) cancellers[0] = canceller;

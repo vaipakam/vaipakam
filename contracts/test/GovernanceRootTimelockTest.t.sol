@@ -91,7 +91,6 @@ contract GovernanceRootTimelockTest is Test {
         OwnershipFacet(address(diamond)).transferOwnership(address(timelock));
 
         ac.renounceRole(LibAccessControl.PAUSER_ROLE, admin);
-        ac.renounceRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, admin);
         for (uint256 i = tlRoles.length; i > 0; --i) ac.renounceRole(tlRoles[i - 1], admin);
         ac.renounceRole(LibAccessControl.KEEPER_ROLE, admin);
         ac.renounceRole(LibAccessControl.WATCHER_ROLE, admin);
@@ -107,8 +106,8 @@ contract GovernanceRootTimelockTest is Test {
         assertTrue(ac.hasRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, governanceSafe));
 
         bytes32[] memory roles = LibAccessControl.grantableRoles();
+        assertFalse(ac.hasRole(LibAccessControl.EMERGENCY_REVOKER_ROLE, admin), "handover signer holds the revoker");
         for (uint256 i; i < roles.length; ++i) {
-            if (roles[i] == LibAccessControl.EMERGENCY_REVOKER_ROLE) continue;
             assertFalse(ac.hasRole(roles[i], governanceSafe), "Safe holds a role beyond the revoker");
             assertFalse(ac.hasRole(roles[i], admin), "handover signer kept a role");
         }

@@ -56,12 +56,9 @@ already implements this guarantee** — it just isn't named "guardian":
 - **Fast-pause (the guardian lever).** `PAUSER_ROLE` can halt the whole
   protocol immediately, with **no timelock delay**
   (`AdminFacet.pause` → `LibPausable`). At handover `PAUSER_ROLE` is held by the
-  **Guardian / ops Safe** (granted via `GrantOpsRoles`), and the deploying
-  EOA's hold on it is **renounced** — `TransferAdminToTimelock.s.sol` lists
-  `PAUSER` among the ops roles that "do NOT migrate to the timelock … the
-  deployer's hold on them must still be renounced here, otherwise the deploy EOA
-  retains PAUSER … which is a hot-wallet hole the `GovernanceHandover.t.sol`
-  invariant catches." `Handover.s.sol:_timelockRoles` deliberately omits
+  **Pauser Safe** (granted by `Handover.s.sol`), and the admin EOA's hold on it
+  is **renounced** in the same script, which `GovernanceHandover.t.sol` checks.
+  `Handover.s.sol:_timelockRoles` deliberately omits
   `PAUSER_ROLE` so it never routes through the timelock. This is the
   detect-to-freeze fast path, on the guardian Safe.
 - **Unpause is the deliberate-reset key.** `UNPAUSER_ROLE` is rotated to the
@@ -94,16 +91,12 @@ granted to a credible, fast-reacting guardian Safe at deploy, and that
 `Handover.s.sol` arranges (its `_timelockRoles` includes `UNPAUSER_ROLE`
 deliberately, and it renounces the deployer's `PAUSER`/`UNPAUSER` holds).
 
-> **Honest gap (tracked as #650):** the *legacy* `TransferAdminToTimelock.s.sol`
-> — which `docs/ops/GovernanceRunbook.md` step 3 still points operators at —
-> migrates only DEFAULT_ADMIN / ADMIN / ORACLE / RISK / VAULT to the timelock
-> and omits `UNPAUSER_ROLE` from both its migration **and** its deployer-renounce
-> set, so a deploy following that path leaves the deployer EOA holding
-> `UNPAUSER_ROLE` (a hot key that can lift any guardian pause). The slow-unpause
-> guarantee above holds for `Handover.s.sol` specifically; reconciling /
-> deprecating the legacy script (and asserting "deployer holds no `UNPAUSER`
-> post-handover" in `GovernanceHandover.t.sol`) is outstanding hardening, not in
-> place today.
+> **Gap closed (#650, #936):** the legacy `TransferAdminToTimelock.s.sol`
+> migrated only DEFAULT_ADMIN / ADMIN / ORACLE / RISK / VAULT and left the
+> deployer EOA holding `UNPAUSER_ROLE`. It and `GrantOpsRoles.s.sol` are
+> retired; `Handover.s.sol` is the only handover, the runbooks point at it, and
+> `GovernanceHandover.t.sol` asserts the deployer holds no `UNPAUSER_ROLE`
+> (nor the emergency revoker) after it.
 
 ## 2. Staged ossification — what freezes, and when
 
@@ -275,6 +268,6 @@ copy policy).
 - Research + verdict: [`Research-404-OssificationRoadmap.md`](Research-404-OssificationRoadmap.md)
 - Governance config + bounded setters: [`GovernanceConfigDesign.md`](GovernanceConfigDesign.md)
 - Risk-appetite knob (bounded-upgradeable example): #394 / `RiskFacet.setMinHealthFactor`
-- Handover wiring: `contracts/script/Handover.s.sol`,
-  `contracts/script/TransferAdminToTimelock.s.sol`
+- Handover wiring: `contracts/script/Handover.s.sol` (the only handover
+  script since #936)
 - Cross-chain guardian pattern this mirrors: `contracts/src/crosschain/GuardianPausable.sol`

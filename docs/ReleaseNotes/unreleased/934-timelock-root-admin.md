@@ -1,4 +1,4 @@
-## Thread — the Timelock is now the only way to change who controls the protocol (PR #TBD)
+## Thread — the Timelock is now the only way to change who controls the protocol (PR #2642)
 
 Owner decision D1 (2026-10-16) is now built. After handover the role root
 (`DEFAULT_ADMIN_ROLE`) sits on the Timelock alongside Diamond ownership and the
@@ -38,9 +38,26 @@ on a Diamond refreshed in place rather than freshly deployed, nobody holds the
 emergency revoker role until the root admin grants it, because the role is
 handed out at initialisation and handover, which do not re-run on a refresh.
 
-Operators: rename `DEFAULT_ADMIN_ADDRESS` to `EMERGENCY_REVOKER_ADDRESS` in the
-deploy `.env` (the handover refuses the old name), and set
-`TIMELOCK_CANCELLER` to the Pauser Safe before a mainnet timelock deploy.
-Nothing changes on the live testnets until their next fresh deploy.
+The emergency revoker role is never granted at initialisation. Only the
+handover gives it out, straight to the governance Safe, so no handover path can
+leave it behind on the deployer's hot key. The Timelock's canceller is taken
+from the same `PAUSER_ADDRESS` setting the handover uses for the Pauser Safe,
+there is no separate setting to mistype, and the handover refuses a Timelock
+whose canceller is not that Safe. On a mainnet both Safes must be deployed
+contracts.
 
-Closes #934, #897, #909, #938, #906.
+There is now one handover procedure. The two older scripts (a separate
+"grant ops roles" step and "transfer admin to timelock") are retired: they split
+the roles differently from the canonical handover, left the deployer holding the
+unpause role, and did not know the new topology. The governance runbook, the
+mainnet multisig setup guide and the Base Sepolia deploy guide now walk the one
+procedure, and the Tenderly ABI files carry the new upgrade event and Timelock
+constructor (#936, #650).
+
+Operators: rename `DEFAULT_ADMIN_ADDRESS` to `EMERGENCY_REVOKER_ADDRESS` in the
+deploy `.env` (the handover refuses the old name). Make sure `PAUSER_ADDRESS` is
+the Pauser Safe before deploying a Timelock, and do not set
+`TIMELOCK_CANCELLER` (the Timelock deploy refuses it). Nothing changes on the
+live testnets until their next fresh deploy.
+
+Closes #934, #897, #909, #938, #906, #936.

@@ -19,9 +19,10 @@ contract AccessControlFacet is DiamondAccessControl {
      * @dev Must be called once during diamond deployment (e.g., in DiamondInit).
      *      Guarded by `LibDiamond.enforceIsContractOwner`, so only the Diamond
      *      owner can invoke it. Grants the caller every role in
-     *      `LibAccessControl.grantableRoles()` (EMERGENCY_REVOKER_ROLE
-     *      included) and wires DEFAULT_ADMIN_ROLE as the admin for every
-     *      other role.
+     *      `LibAccessControl.grantableRoles()` and wires DEFAULT_ADMIN_ROLE
+     *      as the admin for every other role. EMERGENCY_REVOKER_ROLE is
+     *      not granted here; `Handover.s.sol` grants it to the governance
+     *      Safe (#934 / D1).
      *
      *      NOTE: not idempotent — re-calling after ownership has transferred
      *      would hand the caller a fresh superset of roles. Keep invocation
@@ -216,13 +217,12 @@ contract AccessControlFacet is DiamondAccessControl {
      *           storage write that can't revert — but the ordering costs
      *           nothing and survives future surface changes.
      *
-     *      PAUSER_ROLE and KYC_ADMIN_ROLE are NOT special-cased here — both
-     *      transfer to `newAdmin` along with everything else. The mainnet
-     *      pattern in [`MainnetMultisigSetup.md`](../../docs/ops/MainnetMultisigSetup.md)
-     *      §F.1 expects governance to move PAUSER_ROLE + KYC_ADMIN_ROLE
-     *      to a separate ops Safe AFTER this call, via timelock-gated
-     *      grants. If you want PAUSER_ROLE to stay on the source admin,
-     *      keep using the legacy explicit-flow handover instead.
+     *      Every role in `grantableRoles()` moves, PAUSER_ROLE included,
+     *      so this is a whole-Diamond rotation (for example from one
+     *      Timelock to a successor), not the mainnet handover. The mainnet
+     *      handover is `Handover.s.sol`, which splits the roles between the
+     *      Timelock and the Pauser Safe. EMERGENCY_REVOKER_ROLE is not in
+     *      `grantableRoles()` and stays where it is, on the governance Safe.
      *
      *      Sanctions: `_assertNotSanctioned` is intentionally NOT applied
      *      here — this is a privileged governance op, not a user-side
