@@ -2573,6 +2573,11 @@
   },
   {
     "type": "error",
+    "name": "OraclePriceDivergence",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "OracleStaleForDiscount",
     "inputs": [
       {
