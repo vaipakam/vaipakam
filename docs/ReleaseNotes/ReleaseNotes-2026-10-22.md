@@ -1,3 +1,13 @@
+# Release Notes — 2026-10-22
+
+Today the protocol began to book only what arrived. Every token move it records is now measured where the tokens land:
+
+- a flow a user chose refuses a short arrival;
+- a forced close-out (a liquidation, a default or the in-kind fallback) acts on what arrived, puts any shortfall on that loan's own figures and pays the lender first;
+- every fee or share sent to the treasury goes through one host, which records what reached the treasury.
+
+For an ordinary token, which delivers exactly what it sends, nothing changes. The change has not reached the testnets yet: testnet refreshes wait until the current waves of work are done.
+
 ## Thread — The protocol books only what arrived (PR #2622)
 
 Every token move the protocol records is now measured where the tokens land,
@@ -150,3 +160,4 @@ that record nothing.
 Closes #2440. Closes #667. Closes #2623. Addresses #1281 item 011. Out of scope and
 unchanged: the VPFI recycling and reward custody paths, which already measure
 their own deliveries.
+<!-- assembled-fragment: 2440-measured-delivery.md sha256=092d6ad86dc15ba0888bb57c4694af2febf7b554140682974b562d6b13521df1 -->
