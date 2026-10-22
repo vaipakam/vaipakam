@@ -10,16 +10,17 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
  * @title  RewardEpochFacet
- * @notice The TRANSPORT EPOCHS: each old-wire reward delivery holds an untyped
- *         balance that only the obligations whose day it listed may draw from.
- *         This facet carries that ledger's lifecycle after ingress — the
- *         retrospective admission of a rollout-window delivery, a batch's
- *         paged indexing, and the parking and acknowledgment that release a
- *         batch so what remains of its packet becomes classifiable.
+ * @notice The TRANSPORT EPOCHS: each rooted (d6) reward delivery landing on an
+ *         activated custody holds its whole value as an epoch that only the
+ *         obligations whose day it listed may draw from, typed by the split
+ *         its own wire carried. This facet carries that ledger's lifecycle
+ *         after ingress — a batch's chunk-by-chunk indexing, and the parking
+ *         and acknowledgment that release a batch so what remains of its
+ *         packet becomes classifiable.
  *
  *         WHAT THIS FACET OFFERS — every entry is live. Indexing
- *         ({admitLegacyTransportBatch}, {materializeTransportBatchPage}) and
- *         parking ({parkTransportBatchRemainder}) are permissionless; parking is
+ *         ({materializeTransportBatchChunk}) and parking
+ *         ({parkTransportBatchRemainder}) are permissionless; parking is
  *         gated on STATE — every listed day proven closed by the per-day closure
  *         proof (3b-ii-B) and no staging reference standing. The acknowledgment
  *         that RELEASES a parked batch ({acknowledgeTransportBatchRemainder}) is
@@ -27,10 +28,9 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         shut to every caller until the closure proof existed; 3b-ii-B opened
  *         them, #2258.)
  *
- *         The #1944 delivery proofs ({proveDeliveryDayList},
- *         {proveDeliveryDayChunk}) are live and permissionless too: they write a
- *         day's delivered-mark for a packet holding NO batch and never touch a
- *         batch's membership.
+ *         The #1944 delivery proof ({proveDeliveryDayChunk}) is live and
+ *         permissionless too: it writes a day's delivered-mark for a packet
+ *         holding NO batch and never touches a batch's membership.
  *
  *         THE FUNDS FACT: {LibRewardCustody.takeFromReleasedRemainder} refuses
  *         a packet whose batch is not released BEFORE it looks at the
@@ -66,56 +66,19 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         migration the pause exists to permit.
  */
 contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaipakamErrors {
-    /// @notice Index one bounded page of a batch's membership. EVERY ADMITTED
-    ///         BATCH NEEDS THIS, not only an oversize one: size changes how
-    ///         many calls it takes, never whether any is needed.
-    /// @dev    Permissionless, because the authority is the day-list
-    ///         commitment the delivery's own ingress stamped and not the
-    ///         caller: anyone may supply the payload, and nobody can supply a
-    ///         different one.
-    ///
-    ///         ADMISSION WRITES NO MEMBERSHIP AT ALL. Every batch is admitted
-    ///         compactly — a transport payload is immutable, so refusing one
-    ///         at the destination would refuse the same message on every
-    ///         re-execution — which means admission stamps the anchor, the
-    ///         balance and the day COUNT and stops there, leaving
-    ///         `indexedDays` at zero whatever the count. This is the only
-    ///         writer of the membership itself, so a caller who materializes
-    ///         only the batches that exceed `TRANSPORT_DAY_FANOUT_CAP` leaves
-    ///         every ordinary batch permanently un-indexed, and therefore
-    ///         unable to meet the fully-indexed precondition its lifecycle
-    ///         will require. A within-cap batch simply reaches that state in
-    ///         one call instead of several.
-    /// @param  batchId The batch, which is its packet's ingress stamp.
-    /// @param  dayIds  The delivery's WHOLE day list, re-supplied. The
-    ///                 commitment is flat, so the whole list is what proves a
-    ///                 page; only the page's entries are written.
-    /// @return indexedDays The batch's day-index progress after this call.
-    ///                     It is whole when it equals the batch's `dayCount`.
-    function materializeTransportBatchPage(bytes32 batchId, uint256[] calldata dayIds)
-        external
-        nonReentrant
-        returns (uint32 indexedDays)
-    {
-        return LibRewardCustody.materializeTransportBatchPage(
-            LibVaipakam.storageSlot(),
-            batchId,
-            dayIds,
-            new bytes32[](0),
-            new bytes32[](0)
-        );
-    }
-
     /// @notice 3d-1 — index ONE proven chunk of a ROOTED (d6) batch's
     ///         membership: chunk `chunkIndex` of the committed list, with the
     ///         Merkle proof of its indexed leaf. Any order; each chunk once.
     /// @dev    Permissionless — the authority is the root the delivery's own
     ///         ingress stamped. `hints` / `lateHints` are optional (empty =
-    ///         unhinted), per day of the chunk, with the meaning
-    ///         {materializeTransportBatchPageHinted} gives them; a crowded day
-    ///         that trips the unhinted walk cap is indexed with a hint, exactly
-    ///         as a flat-hash page is. The rule is
-    ///         {LibRewardCustody.materializeTransportBatchChunk}.
+    ///         unhinted), per day of the chunk: `hints[i]` is the batch after
+    ///         which this one belongs in day `dayIds[i]`'s ordered list, zero
+    ///         for the head, and `lateHints[i]` names the same for the day's
+    ///         LATE chain, which a link that lands anywhere but the list's tail
+    ///         joins (Codex #2308 r4). Both are verified on chain, so a wrong
+    ///         hint is refused and never mis-orders; they are needed only for a
+    ///         crowded day that trips the unhinted walk cap (Codex #2276 r7).
+    ///         The rule is {LibRewardCustody.materializeTransportBatchChunk}.
     /// @return indexedDays The batch's day-index progress after this call; it
     ///                     is whole when it equals the batch's `dayCount`,
     ///                     which is when every chunk has landed.
@@ -138,69 +101,28 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         );
     }
 
-    /// @notice {materializeTransportBatchPage} with the predecessor named for
-    ///         each day (Codex #2276 r7): `hints[i]` is the batch after which
-    ///         this one belongs in day `dayIds[i]`'s ordered list, zero for the
-    ///         head; verified on chain, so a wrong hint is refused and never
-    ///         mis-orders. Needed only for an epoch indexed after more newer
-    ///         epochs on a day than the unhinted entry's bounded walk covers.
-    ///         `lateHints` — empty, or aligned with `dayIds` — names the same
-    ///         for the day's LATE chain, which a link that lands anywhere but
-    ///         the list's tail joins (Codex #2308 r4): needed only when more
-    ///         late links stand newer than this one than that bounded walk
-    ///         covers; ignored for a link at the tail; verified the same way.
-    function materializeTransportBatchPageHinted(
-        bytes32 batchId,
-        uint256[] calldata dayIds,
-        bytes32[] calldata hints,
-        bytes32[] calldata lateHints
-    ) external nonReentrant returns (uint32 indexedDays) {
-        if (hints.length != dayIds.length || (lateHints.length != 0 && lateHints.length != dayIds.length)) {
-            revert TransportDayListMismatch(batchId, bytes32(0), bytes32(0));
-        }
-        return LibRewardCustody.materializeTransportBatchPage(LibVaipakam.storageSlot(), batchId, dayIds, hints, lateHints);
-    }
-
-    /// @notice #1944 consequence 1 — PROVE that a budget packet holding NO
-    ///         transport batch listed each of `dayIds`, against the FLAT
-    ///         day-list commitment its ingress stamped, so a gate-armed
-    ///         mirror stops holding those days. Repeat-safe per day.
-    /// @dev    WHY a separate step and not ingress: the destination's 300k
-    ///         execution budget is already spent by ingress, so no per-day
-    ///         write can ride the delivery itself. WHY permissionless: the
-    ///         authority is the commitment the delivery's own ingress
-    ///         stamped, not the caller — anyone may supply the list, nobody
-    ///         can supply a different one. WHY a packet holding a batch is
-    ///         refused: its days are already indexed by
-    ///         {materializeTransportBatchPage}/{materializeTransportBatchChunk},
-    ///         and a second mark beside that index would be a second
-    ///         statement of one fact. A disposed packet is refused because its
-    ///         value left and it funds no day.
-    ///
-    ///         NOT `whenNotPaused`, for the facet's stated reason: this
-    ///         records a membership the delivery already committed to and
-    ///         pays nobody. NO VALUE MOVES — the mark is provenance
-    ///         (`LibRewardCustody.DayDeliveryProved`), the delivered value
-    ///         stays in whatever row its ingress put it. The rule is
-    ///         {LibRewardCustody.proveDeliveryDayList}.
-    /// @param  packetHash The packet's ingress stamp.
-    /// @param  dayIds     The delivery's WHOLE day list, re-supplied — the
-    ///                    commitment is flat, so only the whole list proves.
-    function proveDeliveryDayList(bytes32 packetHash, uint256[] calldata dayIds) external nonReentrant {
-        LibRewardCustody.proveDeliveryDayList(LibVaipakam.storageSlot(), packetHash, dayIds);
-    }
-
     /// @notice #1944 consequence 1 — PROVE that a ROOTED (d6) budget packet
     ///         holding NO transport batch — a pre-activation delivery, which
     ///         {materializeTransportBatchChunk} refuses — listed each day of
     ///         chunk `chunkIndex`, by the Merkle proof of that chunk's leaf
     ///         against the root its ingress stamped. Any order; each chunk
     ///         once.
-    /// @dev    The same verifier the batch materializer runs (one body per
-    ///         rule, in {LibRewardCustody}), so a chunk this entry accepts is
-    ///         exactly a chunk the materializer would. Permissionless and NOT
-    ///         `whenNotPaused` for the reasons {proveDeliveryDayList} gives;
-    ///         the same refusals apply. NO VALUE MOVES.
+    /// @dev    WHY a separate step and not ingress: the destination's 300k
+    ///         execution budget is already spent by ingress, so no per-day
+    ///         write can ride the delivery itself. WHY permissionless: the
+    ///         authority is the root the delivery's own ingress stamped, not
+    ///         the caller — anyone may supply a chunk, nobody can supply a
+    ///         different one. The same verifier the batch materializer runs
+    ///         (one body per rule, in {LibRewardCustody}), so a chunk this
+    ///         entry accepts is exactly a chunk the materializer would. A
+    ///         packet holding a batch is refused (its days land through the
+    ///         batch index, and a second mark beside it would be a second
+    ///         statement of one fact), as is a disposed one (its value left).
+    ///
+    ///         NOT `whenNotPaused`, for the facet's stated reason: this records
+    ///         a membership the delivery already committed to and pays nobody.
+    ///         NO VALUE MOVES — the mark is provenance
+    ///         (`LibRewardCustody.DayDeliveryProved`).
     /// @param  packetHash The packet's ingress stamp.
     /// @param  chunkIndex The chunk of the committed list being proven.
     /// @param  dayIds     That chunk's days, in committed order.
@@ -248,23 +170,22 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         must exist and its membership must be whole. 3b-ii adds §5c's
     ///         remaining condition — a batch with outstanding staging
     ///         references cannot be retired — to the same place.
-    /// @param  batchId The batch whose remainder is parked.
-    /// @param  dayIds  The batch's WHOLE day list (checked against its commitment).
+    /// @param  batchId The batch whose remainder is parked. Its day list is
+    ///                 the one its proven chunks indexed, read from storage.
     /// @return checkedDays How many listed days the park has now checked closed.
     /// @return parked      Whether this page completed the park.
     /// @return amount      What was parked (on the completing page).
-    function parkTransportBatchRemainder(bytes32 batchId, uint256[] calldata dayIds)
+    function parkTransportBatchRemainder(bytes32 batchId)
         external
         nonReentrant
         returns (uint32 checkedDays, bool parked, uint256 amount)
     {
-        // 3b-ii-B (#1566; #2258 Reading B) — THE RELEASE GATE, now checkable:
-        // every listed day must be proven closed (its obligations all
-        // terminated — {RewardClosureFacet}) and no staging reference may
-        // stand; the day list is re-supplied against the 3a commitment and the
-        // check is paged with a per-batch cursor like the index was. State,
-        // not the caller, makes the release valid — permissionless.
-        return LibRewardCustody.parkTransportRemainderPage(LibVaipakam.storageSlot(), batchId, dayIds);
+        // 3b-ii-B (#1566; #2258 Reading B) — THE RELEASE GATE: every listed
+        // day must be proven closed (its obligations all terminated —
+        // {RewardClosureFacet}) and no staging reference may stand; the check
+        // is paged with a per-batch cursor. State, not the caller, makes the
+        // release valid — permissionless.
+        return LibRewardCustody.parkTransportRemainderPage(LibVaipakam.storageSlot(), batchId);
     }
 
     /// @notice Record the acknowledgment that RELEASES a batch — ADMIN (3b-ii-B).
@@ -348,9 +269,8 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         this one is how a caller ASKS whether it exists, so it must
     ///         stay callable on an id that does not. A reader with an id of
     ///         unknown provenance therefore calls this first — which is what
-    ///         the conservation invariant and the rollout handler already do,
-    ///         both skipping on a zero `packetHash` before reading anything
-    ///         else.
+    ///         the conservation invariant already does, skipping on a zero
+    ///         `packetHash` before reading anything else.
     /// @return packetHash  The delivery that opened it; zero when no batch was
     ///                     admitted under this id — the same
     ///                     {LibRewardCustody.transportBatchExists} the two
@@ -441,8 +361,7 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         zeros stay an ANSWER, because for a known batch they are one.
     /// @return amount       What is parked NOW; zero when nothing is, and also
     ///                      zero once classification has taken all of it.
-    /// @return dayListHash  The membership that still binds it.
-    /// @return dayCount     How many days that list names.
+    /// @return dayCount     How many days the batch's membership names.
     /// @return acknowledged Whether the acknowledgment has been recorded.
     /// @return debited      CUMULATIVE value classification has taken out of
     ///                      this remainder; never falls.
@@ -451,7 +370,6 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         view
         returns (
             uint256 amount,
-            bytes32 dayListHash,
             uint32 dayCount,
             bool acknowledged,
             uint256 debited
@@ -462,8 +380,8 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
             revert TransportBatchUnknown(batchId);
         }
         LibVaipakam.TransportRemainder storage r = s.transportRemainders[batchId];
-        if (r.batchId == bytes32(0)) return (0, bytes32(0), 0, false, 0);
-        return (r.amount, r.dayListHash, r.dayCount, r.acknowledged, r.debited);
+        if (r.batchId == bytes32(0)) return (0, 0, false, 0);
+        return (r.amount, r.dayCount, r.acknowledged, r.debited);
     }
 
     /// @notice One day's batch MEMBERSHIP index, paginated, with each entry's
@@ -477,8 +395,8 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         `arrivedAt` is returned WITH the page, and that is the point
     ///         (Codex #2232 r3). A batch's position here records which caller
     ///         materialized it first, nothing more: indexing is permissionless
-    ///         and asynchronous, and a rollout packet is admitted long after
-    ///         it landed. So the order a reader wants is never the array's —
+    ///         and asynchronous, and chunks land in any order. So the order a
+    ///         reader wants is never the array's —
     ///         it is each delivery's own recorded arrival, which the ingress
     ///         wrote once and nothing can change. Returning it here is what
     ///         lets design §5c's preparer default (fewest-remaining-member-
@@ -572,8 +490,7 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         batch id on a tie), starting AT `from` (zero: the chain's head),
     ///         with the node the next page starts at (zero: none).
     /// @dev    What a materializer reads to name a verified late predecessor
-    ///         (`lateHints` of {materializeTransportBatchPageHinted} and
-    ///         {materializeTransportBatchChunk}): without it the late chain
+    ///         (`lateHints` of {materializeTransportBatchChunk}): without it the late chain
     ///         could only be walked by the bounded unhinted search, so an epoch
     ///         indexed behind more newer late links than that walk covers could
     ///         never be indexed (Codex #2489 r2). Each page costs its own length;
@@ -629,71 +546,6 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         total = s.transportBatchesByDay[dayId].length;
         cursor = s.transportDayCursorNode[dayId];
-    }
-
-    /// @notice Open the transport epoch of an old-wire packet that landed
-    ///         before this ledger existed.
-    /// @dev    Permissionless, and the authority is the packet's own record —
-    ///         balance and day count are read from it, so a stranger calling
-    ///         this can only make the ledger state what the ingress already
-    ///         wrote. No role gates it for the same reason none gates
-    ///         materialization or parking (Codex #2232 r2): what makes the
-    ///         call valid is STATE, never the caller.
-    ///
-    ///         It does, however, require the COMMITTED DAY LIST, and that is
-    ///         not an authority check.
-    ///
-    ///         NOT the symmetry argument this entry was introduced with, which
-    ///         is RETIRED (Codex #2232 r5/r7): that argument said the list is
-    ///         required because the admission CLOSES a classification gate only
-    ///         a list-holder could reopen. Since
-    ///         {LibRewardCustody.rolloutAdmissionStatus} became the gate's rule
-    ///         too, an owed packet is gated by its own SHAPE from the moment it
-    ///         lands, so this call closes nothing and a justification resting on
-    ///         what it closes is false. It is written out here rather than left
-    ///         standing, because this NatSpec is the public face of a funds gate
-    ///         and a retired rationale read as current is how the conflation
-    ///         behind it survived five rounds.
-    ///
-    ///         The check stays for the reason that does hold: this is the one
-    ///         call that fixes an IMMUTABLE anchor over the protected row, and
-    ///         an anchor bounding a membership nobody can exhibit describes a
-    ///         set nobody can enumerate. It costs a caller nothing it does not
-    ///         already need — {materializeTransportBatchPage} proves the same
-    ///         list against the same commitment, so no route to a release
-    ///         exists without it. The list is not stored, so this is not a
-    ///         second copy of the membership.
-    ///
-    ///         Design §5c records the day-list commitment on every arrival on
-    ///         a wire older than d6 precisely so "a packet landing between 3a
-    ///         and 3b carries authenticated membership 3b can index". Without
-    ///         this entry that is false for the entire 3a-to-3b window: those
-    ///         packets hold untyped value with no epoch bounding it, their
-    ///         committed list is refused as an unknown batch, and their zero
-    ///         `batchId` makes classification skip the gate.
-    ///
-    ///         Its admission is COMPACT, exactly as the ingress's is, so the
-    ///         membership is then built by {materializeTransportBatchPage} —
-    ///         one path afterwards, whichever entry opened the epoch.
-    /// @param  packetHash The packet's ingress stamp, which is its batch's key.
-    /// @param  dayIds     The delivery's WHOLE day list, proved against the
-    ///                    commitment its ingress stamped. Not written — the
-    ///                    membership is still built in pages afterwards.
-    /// @return batchId    The batch's key, equal to the packet's stamp.
-    function admitLegacyTransportBatch(bytes32 packetHash, uint256[] calldata dayIds)
-        external
-        nonReentrant
-        returns (bytes32 batchId)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // The same condition the ingress admits under (Codex #2232 r1): an
-        // epoch and the `Unclassified` protection backing it are two views of
-        // one value, so an epoch must not exist where custody has not
-        // attributed that value. On a configured-but-not-yet-activated
-        // deployment the packet's tokens are Diamond-side and the activation
-        // envelope is what attributes them.
-        if (!LibRewardCustody.active(s)) revert RewardCustodyNotActivated();
-        batchId = LibRewardCustody.admitLegacyTransportBatch(s, packetHash, dayIds);
     }
 
     // ─── Transport epochs PR 3b-ii-A: the draws ─────────────────────────────

@@ -1897,11 +1897,11 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   transport epoch (unchanged: indexing the day's chunk IS the landing);
   `RewardEpochFacet.proveDeliveryDayChunk(packetHash, chunkIndex, dayIds, proof)`
   for a rooted (d6) delivery that holds no epoch (one received before custody
-  activation); `RewardEpochFacet.proveDeliveryDayList(packetHash, dayIds)` for a
-  flat-list (d5 or legacy) delivery. Refusals by name:
-  `DeliveryProofRouteIsBatch` (use the epoch route), `DeliveryProofNotBudget`,
-  `DeliveryPacketDisposed`, `TransportPacketHasNoDayList` (a pre-3a delivery
-  carries no provable list). Each newly proven day emits
+  activation). Every budget delivery is rooted: the mirror receiver refuses any
+  older wire shape (`UnknownRemitWireShape`), so there is no flat-list route.
+  Refusals by name: `IngressPacketUnknown`, `DeliveryProofRouteIsBatch` (use the
+  epoch route), `DeliveryProofNotBudget`, `DeliveryPacketDisposed`, and
+  `TransportChunkAlreadyIndexed` for a chunk already proven. Each newly proven day emits
   `DayDeliveryProved(dayId, packetHash, remitId, route)`; the first delivery to
   list a day stays recorded, and a repeat proof writes nothing. A proof moves no
   value.
@@ -1953,7 +1953,7 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
 On a gate-ARMED mirror the propagation cycle is therefore: finalize the day, remit
 it to every destination, have the keeper (or anyone) PROVE each delivery's day list
 on each mirror (`materializeTransportBatchChunk` for an epoch delivery,
-`proveDeliveryDayChunk` / `proveDeliveryDayList` otherwise), confirm
+`proveDeliveryDayChunk` otherwise), confirm
 `getDayDeliveryState(d).landed` on each mirror, and broadcast in any order — a
 gate-armed mirror holds the day until both the stamp and a proven delivery have
 landed. The ordering paragraphs that follow are the PRE-GATE procedure: they still

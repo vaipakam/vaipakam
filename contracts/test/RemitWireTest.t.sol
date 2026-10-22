@@ -7,18 +7,11 @@ import {RemitWire} from "../src/crosschain/RemitWire.sol";
 import {MerkleFixture} from "./mocks/MerkleFixture.sol";
 
 /// @title RemitWireTest — #1566 transport epochs 3d-1: the d6 wire's codec and
-///        commitment rules, and the one d5 encoder the send and its quote share.
+///        commitment rules.
 contract RemitWireTest is Test {
     function _days(uint256 n) internal pure returns (uint256[] memory d) {
         d = new uint256[](n);
         for (uint256 i; i < n; ++i) d[i] = 100 + i;
-    }
-
-    function test_D5_TheOneEncoder_IsTheWireShape() public pure {
-        uint256[] memory days_ = _days(3);
-        bytes memory viaLib = RemitWire.encodeD5(days_, 7e18, 42, address(0xD1A), 2e18);
-        bytes memory byHand = abi.encode(RemitWire.REMIT_WIRE_TAG_D5, days_, uint256(7e18), uint256(42), address(0xD1A), uint256(2e18));
-        assertEq(keccak256(viaLib), keccak256(byHand), "the shared encoder emits the d5 bytes the receiver decodes");
     }
 
     function test_D6_RoundTrip_CarriesRootExtentSplitAndEra() public pure {
@@ -34,7 +27,7 @@ contract RemitWireTest is Test {
         assertEq(remitter, address(0xD1A));
         assertEq(rec, 4e18);
         assertEq(era, 5, "the era rides as a full word");
-        assertTrue(RemitWire.REMIT_WIRE_TAG_D6 != RemitWire.REMIT_WIRE_TAG_D5 && RemitWire.REMIT_WIRE_TAG_D6 != RemitWire.REMIT_WIRE_TAG_P2, "a new tag per shape");
+        assertTrue(RemitWire.REMIT_WIRE_TAG_D6 != RemitWire.REMIT_WIRE_TAG_P2, "a tag per shape");
     }
 
     function test_D6_Chunking_IsFixedSize_LastChunkShort() public pure {

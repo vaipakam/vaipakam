@@ -50,9 +50,9 @@ function revert(errorName: string, args: readonly unknown[]): ContractFunctionRe
 describe('classifyRevert', () => {
   it('reads "already done" as done, by the decoded error name', () => {
     expect(classifyRevert(revert('TransportChunkAlreadyIndexed', [P1, 2n]))).toEqual({ kind: 'done' });
-    expect(classifyRevert(revert('TransportBatchFullyIndexed', [P1]))).toEqual({ kind: 'done' });
-    expect(classifyRevert(revert('TransportBatchAlreadyAdmitted', [P1]))).toEqual({ kind: 'done' });
-    expect(ALREADY_DONE.size).toBe(3);
+    // The one "already done" revert left: the flat-list page index and the
+    // rollout admission it shared that set with are retired with the pre-d6 wire.
+    expect(ALREADY_DONE.size).toBe(1);
   });
 
   it('names any other revert, and never prints a raw message', () => {
@@ -418,12 +418,9 @@ describe('dayRuns (Codex #2599 r6)', () => {
 });
 
 describe('actionScope (Codex #2599 r4)', () => {
-  it('names only the chunk a chunked proof refused, and every later page for a paged index', () => {
+  it('names only the chunk a refused call covers, on both routes', () => {
     expect(actionScope({ kind: 'proveChunk', packetHash: P1 as never, chunkIndex: 2, dayIds: [12n, 10n, 11n], proof: [] })).toBe('chunk 2, 3 days (days 10–12)');
     expect(actionScope({ kind: 'proveChunk', packetHash: P1 as never, chunkIndex: 0, dayIds: [10n, 12n], proof: [] }), 'a gap is never covered').toBe('chunk 0, 2 days (days 10, 12)');
-    expect(actionScope({ kind: 'indexPage', batchId: P1 as never, dayIds: [5n, 6n, 7n, 8n], indexedFrom: 2 }), 'only the days not yet indexed').toBe(
-      'the days its epoch has not indexed yet, 2 days (days 7–8), from the next page on',
-    );
-    expect(actionScope({ kind: 'proveList', packetHash: P1 as never, dayIds: [1n, 2n] })).toBe('its whole day list, 2 days (days 1–2)');
+    expect(actionScope({ kind: 'indexChunk', batchId: P1 as never, chunkIndex: 1, dayIds: [5n, 6n, 7n, 8n], proof: [] })).toBe('chunk 1, 4 days (days 5–8)');
   });
 });

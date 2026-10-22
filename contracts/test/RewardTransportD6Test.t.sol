@@ -244,24 +244,6 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
         assertEq(_rlens().getIngressPacket(hLive).custodyEra, 2, "filed into the live era");
     }
 
-    /// @dev Security review F2 — a SHORT typed d5 delivery listing a retired era's
-    ///      day is attested WHOLE (the rooted wire's rule): the receiver floors
-    ///      both shares, and a wei under no cap would be value no day could draw.
-    function test_AShortTypedD5Delivery_ForARetiredEra_IsAttestedWhole() public {
-        _transitionTwice();
-        bytes32 id = keccak256("c3-d5-short");
-        _ingress().onRewardBudgetReceived(
-            address(vpfi), 10e18, _days(1, 1), CHAIN_BASE, 35, REMITTER, 2e18, 8e18 - 1, id, true
-        );
-        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
-        (bytes32 packetHash, , , , , ) = _epoch().getTransportBatch(h);
-        assertEq(packetHash, h, "fixture-live: the retired-day branch opened its epoch");
-        LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(h);
-        assertTrue(p.attested, "attested from the wire");
-        assertEq(p.recycledAttested, 2e18, "recycled as delivered");
-        assertEq(p.freshAttested, 8e18, "fresh the rest of what landed, not the floored share");
-    }
-
     /// @dev #1566 PR C revision — a delivery dispatched for an era this chain has
     ///      retired belongs to THAT era and is not held inert: it opens its epoch,
     ///      attested from the wire's split — the era's separately backed, consumable
@@ -284,55 +266,6 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
         assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), liveBefore, "live-fresh untouched");
         assertEq(_row(LibVaipakam.RewardCustodyRow.Unclassified) - unclBefore, 10e18, "under the epoch, unclassified");
         assertGt(_rlens().getReceivedRemit(REMITTER, 33).receivedAt, 0, "the receipt is written");
-    }
-
-    /// @dev An era-less list-bearing delivery carries no era, so it is placed by
-    ///      the days it lists (#1566 PR C revision). One listing a day BEFORE the
-    ///      live era's boundary belongs to the era of its earliest listed day: the
-    ///      WHOLE delivery opens its epoch, typed from the wire's own split, and
-    ///      nothing reaches the live ledgers.
-    function test_AListBearingDelivery_ListingARetiredDay_OpensItsEpoch_InThatDaysEra() public {
-        _transitionTwice();
-        assertGt(_eraF().getCustodyEra(2).boundaryDay, 1, "fixture: day 1 predates the live era");
-        uint256 liveBefore = _row(LibVaipakam.RewardCustodyRow.LiveFresh);
-        uint256[] memory one = _days(1, 1);
-        _ingress().onRewardBudgetReceived(address(vpfi), 4e18, one, CHAIN_BASE, 34, REMITTER, 0, 4e18, keccak256("c3-d5"), true);
-        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("c3-d5")));
-        LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(h);
-        assertEq(p.custodyEra, 0, "the era of its earliest listed day");
-        assertEq(p.freshShare, 0, "recorded as credited to nothing");
-        assertTrue(p.attested, "typed from the wire's own split");
-        assertEq(p.freshAttested, 4e18);
-        assertEq(p.unclassified, 4e18, "the whole delivery, under its epoch");
-        assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), liveBefore, "the typed wire's live credit did not happen");
-        (bytes32 packetHash, uint256 balance, , , , ) = _epoch().getTransportBatch(h);
-        assertEq(packetHash, h, "its epoch is open");
-        assertEq(balance, 4e18);
-    }
-
-    /// @dev The same wire listing only days from the live era's boundary on belongs
-    ///      to the live era and is taken as before; one listing no day names no
-    ///      retired obligation and is taken as before too.
-    function test_AListBearingDelivery_ListingOnlyLiveDays_OrNoDay_IsTakenAsBefore() public {
-        _transitionTwice();
-        uint256 boundary = _eraF().getCustodyEra(2).boundaryDay;
-        uint256 liveBefore = _row(LibVaipakam.RewardCustodyRow.LiveFresh);
-        _ingress().onRewardBudgetReceived(
-            address(vpfi), 4e18, _days(2, boundary), CHAIN_BASE, 35, REMITTER, 0, 4e18, keccak256("c3-d5-live"), true
-        );
-        LibVaipakam.IngressPacket memory p =
-            _rlens().getIngressPacket(keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("c3-d5-live"))));
-        assertEq(p.custodyEra, 2, "placed in the live era by its days");
-        assertEq(p.freshShare, 4e18, "the typed split is recorded");
-        assertEq(p.unclassified, 0, "nothing held");
-        assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh) - liveBefore, 4e18, "credited to the live row as before");
-        uint256[] memory none;
-        _ingress().onRewardBudgetReceived(
-            address(vpfi), 1e18, none, CHAIN_BASE, 36, REMITTER, 0, 1e18, keccak256("c3-d5-undated"), true
-        );
-        p = _rlens().getIngressPacket(keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("c3-d5-undated"))));
-        assertEq(p.custodyEra, 2, "undated value funds the live era");
-        assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh) - liveBefore, 5e18, "credited as before");
     }
 
     // ─── cells ───
@@ -380,11 +313,6 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
             _gates(h), LibRewardCustody.GATE_UNINDEXED | LibRewardCustody.GATE_CONTESTED, "unindexed, and withheld until the list is whole"
         );
         assertGt(_rlens().getReceivedRemit(REMITTER, 11).receivedAt, 0, "the receipt is written");
-
-        // A later Base attestation finds the wire's figures and holds them.
-        RewardReporterFacet(address(diamond)).setRewardMessenger(address(this));
-        vm.expectRevert(abi.encodeWithSelector(IngressPacketAlreadyAttested.selector, h));
-        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 11, 1, 1);
     }
 
     /// @dev Chunks land in any order; each is checked against the root and its
@@ -430,9 +358,6 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
             abi.encodeWithSelector(TransportChunkProofInvalid.selector, h, 0, RemitWire.d6Leaf(0, MerkleFixture.chunk(list, 0, S)))
         );
         _epoch().materializeTransportBatchChunk(h, 0, MerkleFixture.chunk(list, 0, S), MerkleFixture.proof(leaves, 1), none, none);
-        // the flat-hash page is not this batch's route
-        vm.expectRevert(abi.encodeWithSelector(TransportBatchRooted.selector, h));
-        _epoch().materializeTransportBatchPage(h, list);
         // a chunk, once
         _prove(h, list, leaves, 0);
         vm.expectRevert(abi.encodeWithSelector(TransportChunkAlreadyIndexed.selector, h, 0));
@@ -442,12 +367,10 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
         vm.expectRevert(abi.encodeWithSelector(TransportDayListMismatch.selector, h, bytes32(0), bytes32(0)));
         _epoch().materializeTransportBatchChunk(h, 1, MerkleFixture.chunk(list, 1, S), MerkleFixture.proof(leaves, 1), badHints, none);
 
-        // and the chunk route is not a flat-hash batch's
-        uint256[] memory one = _days(1, 1);
-        _ingress().onRewardBudgetReceived(address(vpfi), 1e18, one, CHAIN_BASE, 14, REMITTER, 0, 0, keccak256("flat"), false);
-        bytes32 flat = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("flat")));
-        vm.expectRevert(abi.encodeWithSelector(TransportBatchNotRooted.selector, flat));
-        _epoch().materializeTransportBatchChunk(flat, 0, one, none, none, none);
+        // and a stamp no budget delivery recorded has no root to prove against
+        bytes32 nobody = keccak256("no delivery");
+        vm.expectRevert(abi.encodeWithSelector(TransportBatchNotRooted.selector, nobody));
+        _epoch().materializeTransportBatchChunk(nobody, 0, _days(1, 1), none, none, none);
     }
 
     /// @dev A wire whose extent is not the fixed-size chunking of its element
@@ -508,22 +431,15 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
         assertEq(_rlens().getIngressPacket(h).unclassified, 10e18 - NEED, "and the packet's remainder with it");
     }
 
-    /// @dev The park reads a rooted batch's KEPT list — no list is supplied, and
-    ///      a supplied one is refused by name.
+    /// @dev The park reads a rooted batch's KEPT list — no caller supplies one.
     function test_ARootedEpoch_Parks_FromItsKeptList() public {
         bytes32 h = _d6Whole(2e18, _days(1, 1), 17, keccak256("d6-f"));
-        uint256[] memory none = new uint256[](0);
         vm.expectRevert(abi.encodeWithSelector(TransportDayNotClosed.selector, h, 1));
-        _epoch().parkTransportBatchRemainder(h, none);
+        _epoch().parkTransportBatchRemainder(h);
         _closeDayLocally(1);
         (, , bool closed) = _clo().startDayClosure(1);
         assertTrue(closed, "no obligation on day 1: closes at start");
-        uint256[] memory supplied = _days(1, 1);
-        vm.expectRevert(
-            abi.encodeWithSelector(TransportDayListMismatch.selector, h, bytes32(0), keccak256(abi.encode(supplied)))
-        );
-        _epoch().parkTransportBatchRemainder(h, supplied);
-        (uint32 checked, bool parked, uint256 amount) = _epoch().parkTransportBatchRemainder(h, none);
+        (uint32 checked, bool parked, uint256 amount) = _epoch().parkTransportBatchRemainder(h);
         assertEq(checked, 1);
         assertTrue(parked, "parked from the kept list");
         assertEq(amount, 2e18, "the whole remainder");
@@ -532,7 +448,7 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
 }
 
 /// @notice Before custody activation a rooted delivery takes the TYPED-LEDGER
-///         path exactly as a d5 one does and opens no epoch: its tokens rest
+///         path and opens no epoch: its tokens rest
 ///         with the Diamond and the activation assigns them.
 contract RewardTransportD6PreActivationTest is SetupTest, IVaipakamErrors {
     VPFIToken internal vpfi;
@@ -573,17 +489,15 @@ contract RewardTransportD6PreActivationTest is SetupTest, IVaipakamErrors {
         assertEq(balance, 0);
         assertEq(dayCount, 0);
         (uint256 counted, ) = lens.getDeliveredFreshPosition();
-        assertEq(counted - countedBefore, 10e18, "the fresh component is counted, as a d5 delivery's is");
+        assertEq(counted - countedBefore, 10e18, "the fresh component is counted on the typed ledger");
         LibVaipakam.IngressPacket memory p = lens.getIngressPacket(h);
         assertEq(p.freshShare, 10e18, "the packet records what the ingress credited");
         assertFalse(p.attested, "no epoch, so no caps were attested");
         assertEq(p.dayListRoot, bytes32(uint256(0xC0DE)), "the commitment is still stamped");
         assertEq(p.intendedEra, 0, "and the era a sender stamps before the registry");
         assertGt(lens.getReceivedRemit(REMITTER, 99).receivedAt, 0, "the receipt is written");
-        // Nothing brings it into the ledger before activation: the rollout admission is gated on the
-        // activation itself, ahead of any reading of the packet.
-        uint256[] memory any = new uint256[](2);
-        vm.expectRevert(RewardCustodyNotActivated.selector);
-        RewardEpochFacet(address(diamond)).admitLegacyTransportBatch(h, any);
+        // Nothing brings it into the ledger later either: the d6 ingress is the only entry that
+        // opens an epoch, and only at the packet's own landing.
+        assertEq(p.batchId, bytes32(0), "the packet holds no epoch, now or later");
     }
 }

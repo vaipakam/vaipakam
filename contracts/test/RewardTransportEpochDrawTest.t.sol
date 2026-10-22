@@ -27,6 +27,9 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
+import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
+import {MerkleFixture} from "./mocks/MerkleFixture.sol";
+import {RemitWire} from "../src/crosschain/RemitWire.sol";
 
 /**
  * @title RewardTransportEpochDrawTest
@@ -72,7 +75,6 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      library inlined into the epoch facet.
     event TransportDrawn(bytes32 indexed batchId, uint256 indexed dayId, uint256 fresh, uint256 recycled);
     event TransportDayCursorAdvanced(uint256 indexed dayId, bytes32 cursor);
-    event IngressPacketClassifiedBeyondCaps(bytes32 indexed packetHash, uint256 fresh, uint256 recycled);
 
     function setUp() public {
         setupHelper();
@@ -189,26 +191,96 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         a[1] = d2;
     }
 
-    /// @dev An old-wire (untyped) delivery: opens an epoch, then indexes it.
-    ///      Its split is NOT attested, so no draw may take it yet (Codex #2276
-    ///      r26 P1) — the cells that attest a split of their own start here.
+    /// @dev Every delivery's day list and chunk leaves, by packet, so a cell
+    ///      can index a delivery it landed earlier.
+    mapping(bytes32 => uint256[]) internal _daysOf;
+    mapping(bytes32 => bytes32[]) internal _leavesOf;
+    /// @dev Each delivery's packet, by remit id, for {_attest}.
+    mapping(uint256 => bytes32) internal _packetOfRemit;
+
+    /// @dev A rooted (d6) delivery with the wire split `fresh`:`recycled`
+    ///      (whole: the two add up to `amount`), NOT yet indexed. The d6
+    ///      ingress attests the epoch from that split at landing.
+    function _land(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id, uint256 fresh, uint256 recycled)
+        internal
+        returns (bytes32 h)
+    {
+        bytes32[] memory leaves;
+        (h, leaves) = LibD6Delivery.deliver(
+            address(diamond),
+            LibD6Delivery.Delivery({
+                token: address(vpfi),
+                amount: amount,
+                dayIds: dayIds,
+                sourceChainId: CHAIN_BASE,
+                remitId: remitId,
+                remitter: REMITTER,
+                recycled: recycled,
+                fresh: fresh,
+                messageId: id,
+                era: 0
+            })
+        );
+        _daysOf[h] = dayIds;
+        _leavesOf[h] = leaves;
+        _packetOfRemit[remitId] = h;
+    }
+
+    /// @dev A whole-fresh delivery, NOT yet indexed.
+    function _landFresh(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id)
+        internal
+        returns (bytes32 h)
+    {
+        return _land(amount, dayIds, remitId, id, amount, 0);
+    }
+
+    /// @dev Index every chunk of a landed delivery.
+    function _index(bytes32 h) internal returns (uint32 indexedDays) {
+        bytes32[] memory leaves = _leavesOf[h];
+        for (uint256 c; c < leaves.length; ++c) {
+            indexedDays = LibD6Delivery.indexChunk(address(diamond), h, _daysOf[h], leaves, c);
+        }
+    }
+
+    /// @dev Index chunk `c` of a landed delivery.
+    function _indexChunk(bytes32 h, uint256 c) internal returns (uint32) {
+        return LibD6Delivery.indexChunk(address(diamond), h, _daysOf[h], _leavesOf[h], c);
+    }
+
+    /// @dev Index chunk `c` with predecessor hints.
+    function _indexHinted(bytes32 h, uint256 c, bytes32[] memory hints) internal returns (uint32) {
+        uint256[] memory dayIds = _daysOf[h];
+        return _epoch().materializeTransportBatchChunk(
+            h,
+            c,
+            MerkleFixture.chunk(dayIds, c, RemitWire.D6_CHUNK_DAYS),
+            MerkleFixture.proof(_leavesOf[h], c),
+            hints,
+            new bytes32[](0)
+        );
+    }
+
+    /// @dev An epoch whose split is NOT attested, indexed. No production path
+    ///      reaches this state — the d6 ingress attests every epoch at landing
+    ///      — so the cells that cover the planner's fail-closed withhold stand
+    ///      it in through the raw mutator.
     function _epochRaw(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id)
         internal
         returns (bytes32 h)
     {
-        _ingress().onRewardBudgetReceived(address(vpfi), amount, dayIds, CHAIN_BASE, remitId, REMITTER, 0, 0, id, false);
-        h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
-        _epoch().materializeTransportBatchPage(h, dayIds);
+        h = _landFresh(amount, dayIds, remitId, id);
+        _index(h);
+        _mut().clearPacketAttestedRaw(h);
     }
 
-    /// @dev A DRAWABLE epoch: the raw delivery attested wholly fresh — the
-    ///      standard scene's day is fresh-only.
+    /// @dev A DRAWABLE epoch: wholly fresh — the standard scene's day is
+    ///      fresh-only.
     function _epochOf(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id)
         internal
         returns (bytes32 h)
     {
-        h = _epochRaw(amount, dayIds, remitId, id);
-        _attest(remitId, 1, 0);
+        h = _landFresh(amount, dayIds, remitId, id);
+        _index(h);
     }
 
     /// @dev A FLEXIBLE epoch: both leg rooms the whole balance, through the
@@ -218,11 +290,15 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         internal
         returns (bytes32 h)
     {
-        h = _epochRaw(amount, dayIds, remitId, id);
+        h = _epochOf(amount, dayIds, remitId, id);
         _mut().setPacketAttestedCapsRaw(h, amount, amount);
     }
 
-    /// @dev A DRAWABLE epoch attested with the split `fresh`:`recycled`.
+    /// @dev A DRAWABLE epoch whose caps split what landed `fresh`:`recycled`,
+    ///      each cap the floor of its proportion. Where the floors add up to
+    ///      what landed, the delivery carries that split on its own wire; where
+    ///      they leave a residual (a shape the d6 wire, which states a whole
+    ///      split, never produces) the floored caps are stood in raw.
     function _epochSplit(
         uint256 amount,
         uint256[] memory dayIds,
@@ -231,16 +307,39 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         uint256 fresh,
         uint256 recycled
     ) internal returns (bytes32 h) {
-        h = _epochRaw(amount, dayIds, remitId, id);
-        _attest(remitId, fresh, recycled);
+        (uint256 fc, uint256 rc) = _floorCaps(amount, fresh, recycled);
+        h = _land(amount, dayIds, remitId, id, amount - rc, rc);
+        _index(h);
+        if (fc + rc != amount) _mut().setPacketAttestedCapsRaw(h, fc, rc);
     }
 
-    /// @dev A typed (d5) delivery that is wholly fresh: credits the live row
-    ///      and the delivered ledger, opens no epoch.
-    function _liveOf(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id) internal {
+    function _floorCaps(uint256 amount, uint256 fresh, uint256 recycled)
+        internal
+        pure
+        returns (uint256 fc, uint256 rc)
+    {
+        uint256 total = fresh + recycled;
+        fc = (fresh * amount) / total;
+        rc = (recycled * amount) / total;
+    }
+
+    /// @dev Attest a landed epoch's caps at the proportion `fresh`:`recycled`
+    ///      of what landed — for the cells that stood an unattested epoch in
+    ///      and then attest it.
+    function _attest(uint256 remitId, uint256 fresh, uint256 recycled) internal {
+        bytes32 h = _packetOfRemit[remitId];
+        (uint256 fc, uint256 rc) = _floorCaps(_rlens().getIngressPacket(h).actualReceived, fresh, recycled);
+        _mut().setPacketAttestedCapsRaw(h, fc, rc);
+    }
+
+    /// @dev LIVE fresh funding beside the epochs. On this activated custody
+    ///      every budget delivery opens an epoch, so the live row is fed the
+    ///      way a live-era compensation feeds it (see {relocateFreshIngressRaw}).
+    ///      The day list, remit id and message id are the cell's labels only.
+    function _liveOf(uint256 amount, uint256[] memory, uint256, bytes32) internal {
         uint256 before = _row(LibVaipakam.RewardCustodyRow.LiveFresh);
-        _ingress().onRewardBudgetReceived(address(vpfi), amount, dayIds, CHAIN_BASE, remitId, REMITTER, 0, amount, id, true);
-        assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh) - before, amount, "fixture: the typed delivery is live-fresh");
+        _mut().relocateFreshIngressRaw(amount);
+        assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh) - before, amount, "fixture: live-fresh credited");
     }
 
     function _claim() internal returns (uint256 paid) {
@@ -379,11 +478,9 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      the split spilled that fresh into the shared epoch. Live must pay,
     ///      and the shared epoch must be spared.
     function test_TheOrdinaryTier_IsCreditedPerLeg_NotByItsAggregate() public {
-        _epochRaw(5, _one(1), 91, keccak256("ord-recycled-only"));
-        _attest(91, 0, 5);
+        _epochSplit(5, _one(1), 91, keccak256("ord-recycled-only"), 0, 5);
         vm.warp(vm.getBlockTimestamp() + 1);
         _epochOf(5, _two(1, 2), 92, keccak256("nec-fresh-only"));
-        _attest(92, 5, 0);
         (uint256 tf, uint256 tr, ) =
             _alloc(1, 5, 0, type(uint256).max, 5, 0);
         assertEq(tf + tr, 0, "live pays the fresh leg; no epoch is drawn at all");
@@ -400,11 +497,9 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     function test_TheSplit_IsExact_AndSparesTheLatestEpoch() public {
         bytes32 a = _epochFlex(2, _one(1), 101, keccak256("exact-A"));
         vm.warp(vm.getBlockTimestamp() + 1);
-        bytes32 b = _epochRaw(1, _one(1), 102, keccak256("exact-B"));
-        _attest(102, 1, 0);
+        bytes32 b = _epochSplit(1, _one(1), 102, keccak256("exact-B"), 1, 0);
         vm.warp(vm.getBlockTimestamp() + 1);
-        bytes32 c = _epochRaw(2, _one(1), 103, keccak256("exact-C"));
-        _attest(103, 1, 1);
+        bytes32 c = _epochSplit(2, _one(1), 103, keccak256("exact-C"), 1, 1);
         (uint256 af, uint256 ar) = _plannedLegs(1, 2, 1, a);
         (uint256 bf, uint256 br) = _plannedLegs(1, 2, 1, b);
         (uint256 cf, uint256 cr) = _plannedLegs(1, 2, 1, c);
@@ -652,13 +747,12 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         uint256[] memory days_ = new uint256[](40);
         for (uint256 i; i < 40; ++i) days_[i] = i + 1;
         bytes32 id = keccak256("wide");
-        _ingress().onRewardBudgetReceived(address(vpfi), 10e18, days_, CHAIN_BASE, 1, REMITTER, 0, 0, id, false);
-        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
-        _attest(1, 1, 0);
-        assertEq(_epoch().materializeTransportBatchPage(h, days_), 32, "first page");
+        bytes32 h = _landFresh(10e18, days_, 1, id);
+        assertEq(_indexChunk(h, 0), 16, "first chunk");
+        assertEq(_indexChunk(h, 1), 32, "second chunk");
         (uint256 avail, , uint256 wContested, ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail + wContested, 0, "day 1 sees nothing of a half-indexed epoch");
-        assertEq(_epoch().materializeTransportBatchPage(h, days_), 40, "second page: whole");
+        assertEq(_indexChunk(h, 2), 40, "third chunk: whole");
         (avail, , wContested, ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 0, "a shared epoch is never drawable");
         assertEq(wContested, 10e18, "but whole, it is counted as withheld");
@@ -729,17 +823,11 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(liveArmed, 0, "and the live delivery must fund none of it");
     }
 
-    function _attest(uint256 remitId, uint256 fresh, uint256 recycled) internal {
-        RewardReporterFacet(address(diamond)).setRewardMessenger(address(this));
-        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, remitId, fresh, recycled);
-    }
-
     /// @dev An ATTESTED packet's epoch pays each leg only within that
     ///      component's remaining cap (Codex #2276 r4 P1): 4F/6R of 10, a day
     ///      asking 6F gets 4F from the epoch, and asking 6F/3R gets 4F/3R.
     function test_AnAttestedEpoch_PaysEachLegWithinItsRoom() public {
-        _epochRaw(10e18, _one(1), 7, keccak256("attested"));
-        _attest(7, 4e18, 6e18);
+        _epochSplit(10e18, _one(1), 7, keccak256("attested"), 4e18, 6e18);
         (uint256 tf, uint256 tr, ) = _alloc(1, 6e18, 0, type(uint256).max, 0, 0);
         assertEq(tf, 4e18, "fresh capped at the attested fresh");
         assertEq(tr, 0);
@@ -887,8 +975,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(avail, 0); assertEq(wContested, 10e18, "list unknown: withheld");
         uint256[] memory wide = new uint256[](33);
         for (uint256 i; i < 33; ++i) wide[i] = i + 1;
-        bytes32 w = _epochOf(5e18, wide, 3, keccak256("oversize"));
-        _epoch().materializeTransportBatchPage(w, wide); // the 33rd day: a second index page
+        _epochOf(5e18, wide, 3, keccak256("oversize"));
         (avail, , wContested, ) = _epoch().getTransportCoverageForDay(1);
         assertEq(wContested, 15e18, "oversize: withheld too");
         assertEq(avail, 0);
@@ -901,13 +988,8 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      saturated room admits no further recycled draw.
     function test_AClassificationCorrection_NeverRetypesADrawnLeg() public {
         uint256[] memory d1 = _one(1);
-        _ingress().onRewardBudgetReceived(address(vpfi), 10e18, d1, CHAIN_BASE, 3, REMITTER, 0, 0, keccak256("corr"), false);
-        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("corr")));
-        _mut().unadmitTransportBatchRaw(h);
+        bytes32 h = _epochSplit(10e18, d1, 3, keccak256("corr"), 1, 1); // caps 5e18 fresh / 5e18 recycled
         _mut().classifyPacketPreGateRaw(h, 5e18, 0);
-        assertEq(_epoch().admitLegacyTransportBatch(h, d1), h);
-        _epoch().materializeTransportBatchPage(h, d1);
-        _attest(3, 1, 1); // caps 5e18 fresh / 5e18 recycled on 10e18
         _mut().setTransportBatchConsumedRaw(h, 0, 5e18); // five drawn recycled, within its cap
         _mut().moveClassificationRaw(h, 5e18, true); // the correction: 5F -> 5R
         (uint256 lf, uint256 lr) = _legs(h);
@@ -947,13 +1029,11 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      leads the index.
     function test_TheIndex_IsArrivalOrdered_WhoeverIndexesFirst() public {
         uint256[] memory d1 = _one(1);
-        _ingress().onRewardBudgetReceived(address(vpfi), 1e18, d1, CHAIN_BASE, 11, REMITTER, 0, 0, keccak256("old"), false);
-        bytes32 hOld = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("old")));
+        bytes32 hOld = _landFresh(1e18, d1, 11, keccak256("old"));
         vm.warp(vm.getBlockTimestamp() + 1 hours);
-        _ingress().onRewardBudgetReceived(address(vpfi), 1e18, d1, CHAIN_BASE, 12, REMITTER, 0, 0, keccak256("new"), false);
-        bytes32 hNew = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("new")));
-        _epoch().materializeTransportBatchPage(hNew, d1);
-        _epoch().materializeTransportBatchPage(hOld, d1);
+        bytes32 hNew = _landFresh(1e18, d1, 12, keccak256("new"));
+        _index(hNew);
+        _index(hOld);
         (bytes32[] memory page, , , ) = _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(page.length, 2);
         assertEq(page[0], hOld, "the older arrival leads, whoever indexed first");
@@ -967,8 +1047,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     function test_TheSplit_ServesEachLegFromTheLeastFlexibleEpoch() public {
         _epochFlex(5e18, _one(1), 41, keccak256("flexible"));
         vm.warp(vm.getBlockTimestamp() + 1 hours);
-        _epochRaw(5e18, _one(1), 42, keccak256("fresh-only"));
-        _attest(42, 5e18, 0);
+        _epochSplit(5e18, _one(1), 42, keccak256("fresh-only"), 5e18, 0);
         (uint256 tf, uint256 tr, ) = _alloc(1, 5e18, 5e18, type(uint256).max, 0, 0);
         assertEq(tf, 5e18, "fresh from the epoch that can serve nothing else");
         assertEq(tr, 5e18, "recycled from the flexible one");
@@ -980,8 +1059,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      pay none of it, and the allocation offers the coverage to recycled
     ///      instead of leaving the epoch untouched.
     function test_CapRejectedCoverage_GoesToTheOtherLeg() public {
-        _epochRaw(5e18, _one(1), 51, keccak256("recycled-only"));
-        _attest(51, 0, 5e18);
+        _epochSplit(5e18, _one(1), 51, keccak256("recycled-only"), 0, 5e18);
         (uint256 tf, uint256 tr, ) = _alloc(1, 5e18, 5e18, type(uint256).max, 5e18, 5e18);
         assertEq(tf, 0, "the epoch cannot pay fresh");
         assertEq(tr, 5e18, "so it pays the recycled leg, transport first");
@@ -993,13 +1071,11 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      order.
     function test_TheIndex_BreaksSameBlockTies_ByBatchId() public {
         uint256[] memory d1 = _one(1);
-        _ingress().onRewardBudgetReceived(address(vpfi), 1e18, d1, CHAIN_BASE, 61, REMITTER, 0, 0, keccak256("x"), false);
-        _ingress().onRewardBudgetReceived(address(vpfi), 1e18, d1, CHAIN_BASE, 62, REMITTER, 0, 0, keccak256("y"), false);
-        bytes32 hx = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("x")));
-        bytes32 hy = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("y")));
+        bytes32 hx = _landFresh(1e18, d1, 61, keccak256("x"));
+        bytes32 hy = _landFresh(1e18, d1, 62, keccak256("y"));
         (bytes32 lo, bytes32 hi) = hx < hy ? (hx, hy) : (hy, hx);
-        _epoch().materializeTransportBatchPage(hi, d1);
-        _epoch().materializeTransportBatchPage(lo, d1);
+        _index(hi);
+        _index(lo);
         (bytes32[] memory page, , , ) = _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(page[0], lo, "the smaller id leads, whoever indexed first");
         assertEq(page[1], hi);
@@ -1010,13 +1086,12 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      day indexes both days in ONE call and leads both lists.
     function test_Materialization_LinksALateEpochInConstantWork() public {
         uint256[] memory both = _two(1, 2);
-        _ingress().onRewardBudgetReceived(address(vpfi), 1e18, both, CHAIN_BASE, 70, REMITTER, 0, 0, keccak256("old"), false);
-        bytes32 hOld = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("old")));
+        bytes32 hOld = _landFresh(1e18, both, 70, keccak256("old"));
         vm.warp(vm.getBlockTimestamp() + 1 hours);
         for (uint256 i; i < 70; ++i) {
             _epochOf(1, both, 100 + i, keccak256(abi.encode("newer", i)));
         }
-        assertEq(_epoch().materializeTransportBatchPage(hOld, both), 2, "both days in one call");
+        assertEq(_index(hOld), 2, "both days in one call");
         (bytes32[] memory p1, , uint256 t1, ) = _epoch().getTransportDayBatches(1, 0, 1);
         assertEq(t1, 71);
         assertEq(p1[0], hOld, "at the front of day 1");
@@ -1029,22 +1104,21 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      same epoch links in constant work (Codex #2276 r7 P2).
     function test_Materialization_RefusesAnUnboundedWalk_UnlessHinted() public {
         uint256[] memory d1 = _one(1);
-        _ingress().onRewardBudgetReceived(address(vpfi), 1e18, d1, CHAIN_BASE, 80, REMITTER, 0, 0, keccak256("older"), false);
-        bytes32 hOld = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("older")));
+        bytes32 hOld = _landFresh(1e18, d1, 80, keccak256("older"));
         vm.warp(vm.getBlockTimestamp() + 1 hours);
         for (uint256 i; i < 130; ++i) {
             _epochOf(1, d1, 200 + i, keccak256(abi.encode("newer", i)));
         }
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexWalkExceeded.selector, hOld, 1));
-        _epoch().materializeTransportBatchPage(hOld, d1);
+        _index(hOld);
         bytes32[] memory hints = new bytes32[](1); // zero: at the head
-        assertEq(_epoch().materializeTransportBatchPageHinted(hOld, d1, hints, new bytes32[](0)), 1, "linked with the hint");
+        assertEq(_indexHinted(hOld, 0, hints), 1, "linked with the hint");
         (bytes32[] memory page, , uint256 total, ) = _epoch().getTransportDayBatches(1, 0, 1);
         assertEq(total, 131);
         assertEq(page[0], hOld, "at the front");
         bytes32 wrong = page[0];
         vm.expectRevert();
-        _epoch().materializeTransportBatchPageHinted(hOld, d1, _hintOf(wrong), new bytes32[](0)); // already listed: idempotent, refused as whole
+        _indexHinted(hOld, 0, _hintOf(wrong)); // already indexed: refused
     }
 
     function _hintOf(bytes32 h) internal pure returns (bytes32[] memory a) {
@@ -1057,8 +1131,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      wei records 0 fresh room and 1 recycled room, and the day can fund
     ///      1, not 2.
     function test_TheCoverage_CountsOnlyWhatIsDrawable() public {
-        _epochRaw(2, _one(1), 90, keccak256("two-wei"));
-        _attest(90, 1, 2);
+        _epochSplit(2, _one(1), 90, keccak256("two-wei"), 1, 2);
         (uint256 avail, , , ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 1, "the residual wei is reserved for the disposition path");
     }
@@ -1112,8 +1185,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _mut().userClaimFundingNeedRaw(alice);
         (uint256 needF, uint256 needR) = _dayNeeds(1);
         assertGt(needR, 0, "fixture: a recycled leg");
-        bytes32 h = _epochRaw(needF + needR + 1, _one(1), 2, keccak256("e"));
-        _attest(2, needF, needR);
+        bytes32 h = _epochSplit(needF + needR + 1, _one(1), 2, keccak256("e"), needF, needR);
         _mut().setOutstandingCommitRaw(0, needR);
         assertEq(_claim(), NEED);
         (uint256 lf, uint256 lr) = _legs(h);
@@ -1135,8 +1207,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     function test_ResidualOnlyEpochs_DoNotHoldTheWindow() public {
         _scene(NEED);
         for (uint256 i; i < 64; ++i) {
-            _epochRaw(1, _one(1), 600 + i, keccak256(abi.encode("residual", i)));
-            _attest(600 + i, 1, 1); // one wei at 1:1 floors to 0 fresh / 0 recycled
+            _epochSplit(1, _one(1), 600 + i, keccak256(abi.encode("residual", i)), 1, 1); // one wei at 1:1 floors to 0 fresh / 0 recycled
         }
         vm.warp(vm.getBlockTimestamp() + 1 hours);
         _epochOf(NEED, _one(1), 700, keccak256("funded"));
@@ -1189,7 +1260,6 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         bytes32 one = _epochOf(NEED, _one(1), 51, keccak256("one-day"));
         vm.warp(vm.getBlockTimestamp() + 1);
         bytes32 two = _epochOf(NEED, _two(1, 2), 52, keccak256("two-day"));
-        _attest(52, NEED, 0); // fresh-only
         assertEq(_claim(), NEED);
         (uint256 lf1, ) = _legs(one);
         (uint256 lf2, ) = _legs(two);
@@ -1272,11 +1342,9 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     function test_TheSplit_SparesTheLaterEpoch_WhenEitherLegCouldPay() public {
         bytes32 flex = _epochFlex(1, _one(1), 41, keccak256("tie-flexible"));
         vm.warp(vm.getBlockTimestamp() + 1);
-        bytes32 freshOnly = _epochRaw(1, _one(1), 42, keccak256("tie-fresh-only"));
-        _attest(42, 1, 0);
+        bytes32 freshOnly = _epochSplit(1, _one(1), 42, keccak256("tie-fresh-only"), 1, 0);
         vm.warp(vm.getBlockTimestamp() + 1);
-        bytes32 recycledOnly = _epochRaw(1, _one(1), 43, keccak256("tie-recycled-only"));
-        _attest(43, 0, 1);
+        bytes32 recycledOnly = _epochSplit(1, _one(1), 43, keccak256("tie-recycled-only"), 0, 1);
         (uint256 tf, uint256 tr, ) =
             _alloc(1, 1, 1, type(uint256).max, 0, 0);
         assertEq(tf, 1, "the fresh leg is covered");
@@ -1303,11 +1371,9 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     function test_TheSplit_SparesTheLaterEpoch_WhenBothLegsShareTheNextOne() public {
         bytes32 flex = _epochFlex(1, _one(1), 81, keccak256("joint-flexible"));
         vm.warp(vm.getBlockTimestamp() + 1);
-        bytes32 both = _epochRaw(2, _one(1), 82, keccak256("joint-both"));
-        _attest(82, 1, 1);
+        bytes32 both = _epochSplit(2, _one(1), 82, keccak256("joint-both"), 1, 1);
         vm.warp(vm.getBlockTimestamp() + 1);
-        bytes32 recycledOnly = _epochRaw(1, _one(1), 83, keccak256("joint-recycled-only"));
-        _attest(83, 0, 1);
+        bytes32 recycledOnly = _epochSplit(1, _one(1), 83, keccak256("joint-recycled-only"), 0, 1);
         (uint256 tf, uint256 tr, ) =
             _alloc(1, 1, 2, type(uint256).max, 0, 0);
         assertEq(tf, 1, "the fresh leg is covered");
@@ -1331,8 +1397,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     function test_TheSplit_TakesExclusiveCapacityFirst() public {
         _epochFlex(1, _one(1), 31, keccak256("flexible"));
         vm.warp(vm.getBlockTimestamp() + 1);
-        _epochRaw(2, _one(1), 32, keccak256("exclusive"));
-        _attest(32, 1, 1);
+        _epochSplit(2, _one(1), 32, keccak256("exclusive"), 1, 1);
         (uint256 tf, uint256 tr, ) = _alloc(1, 1, 2, type(uint256).max, 0, 0);
         assertEq(tf, 1, "fresh from the exclusive epoch");
         assertEq(tr, 2, "recycled from both");
@@ -1383,11 +1448,9 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         bytes32 e2 = _epochOf(NEED, d1, 2, keccak256("e2"));
         assertEq(_claim(), NEED, "paid from e1, the older");
         assertEq(_cursor(1), 1, "e1 passed");
-        _ingress().onRewardBudgetReceived(address(vpfi), NEED, d1, CHAIN_BASE, 3, REMITTER, 0, 0, keccak256("late"), false);
-        bytes32 late = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("late")));
+        bytes32 late = _landFresh(NEED, d1, 3, keccak256("late"));
         _mut().setPacketArrivedAtRaw(late, 2); // landed long before e1; written down now
-        _epoch().materializeTransportBatchPage(late, d1);
-        _attest(3, 1, 0);
+        _index(late);
         (bytes32[] memory order, , , uint256 cursor) = _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(cursor, 1, "the cursor did not move back");
         assertEq(order[0], e1);
@@ -1395,14 +1458,13 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(order[2], e2);
         (uint256 avail, , , ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 2 * NEED, "visible and counted");
-        _ingress().onRewardBudgetReceived(address(vpfi), NEED, d1, CHAIN_BASE, 4, REMITTER, 0, 0, keccak256("older"), false);
-        bytes32 older = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("older")));
+        bytes32 older = _landFresh(NEED, d1, 4, keccak256("older"));
         _mut().setPacketArrivedAtRaw(older, 1);
         bytes32[] memory hints = new bytes32[](1); // zero: at the head — inside the passed prefix
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexHintInvalid.selector, older, 1, bytes32(0)));
-        _epoch().materializeTransportBatchPageHinted(older, d1, hints, new bytes32[](0));
+        _indexHinted(older, 0, hints);
         hints[0] = e1; // the cursor may precede an epoch older than itself
-        assertEq(_epoch().materializeTransportBatchPageHinted(older, d1, hints, new bytes32[](0)), 1);
+        assertEq(_indexHinted(older, 0, hints), 1);
         (order, , , cursor) = _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(cursor, 1, "still");
         assertEq(order[1], older, "the older late epoch leads the window, by key");
@@ -1428,12 +1490,11 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         bytes32[] memory hs = new bytes32[](3);
         uint64[3] memory at = [uint64(50), 1, 25];
         for (uint256 i; i < 3; ++i) {
-            _ingress().onRewardBudgetReceived(address(vpfi), 1e18, d1, CHAIN_BASE, 10 + i, REMITTER, 0, 0, keccak256(abi.encode("late", i)), false);
-            hs[i] = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256(abi.encode("late", i))));
+            hs[i] = _landFresh(1e18, d1, 10 + i, keccak256(abi.encode("late", i)));
             _mut().setPacketArrivedAtRaw(hs[i], at[i]);
         }
-        _epoch().materializeTransportBatchPage(hs[0], d1); // arrival 50
-        _epoch().materializeTransportBatchPage(hs[1], d1); // arrival 1, linked second
+        _index(hs[0]); // arrival 50
+        _index(hs[1]); // arrival 1, linked second
         (bytes32[] memory order, , , uint256 cursor) = _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(cursor, 2, "the cursor did not move");
         assertEq(order[2], hs[1], "arrival 1 leads the window");
@@ -1441,12 +1502,12 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         bytes32[] memory hints = new bytes32[](1);
         hints[0] = e0; // passed, and not the cursor
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexHintInvalid.selector, hs[2], 1, e0));
-        _epoch().materializeTransportBatchPageHinted(hs[2], d1, hints, new bytes32[](0));
+        _indexHinted(hs[2], 0, hints);
         hints[0] = bytes32(0); // the head: behind the window
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexHintInvalid.selector, hs[2], 1, bytes32(0)));
-        _epoch().materializeTransportBatchPageHinted(hs[2], d1, hints, new bytes32[](0));
+        _indexHinted(hs[2], 0, hints);
         hints[0] = hs[1]; // arrival 1: the epoch before arrival 25
-        assertEq(_epoch().materializeTransportBatchPageHinted(hs[2], d1, hints, new bytes32[](0)), 1);
+        assertEq(_indexHinted(hs[2], 0, hints), 1);
         (order, , , cursor) = _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(cursor, 2);
         assertEq(order[2], hs[1]);
@@ -1491,35 +1552,19 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(_claim(), NEED, "the next transaction pays the third day");
     }
 
-    /// @dev An attestation that finds a classification already past its cap
-    ///      records the divergence rather than saturating it away (Codex
-    ///      #2276 r15 P1), on Codex's shape: a ten-token rollout packet
-    ///      classified seven recycled before the batch gate, admitted for
-    ///      three, then attested 8F/2R — the recycled excess of five is
-    ///      recorded and exposed, the recycled room is zero, and the epoch's
-    ///      three are fresh-only coverage.
-    function test_AnAttestation_RecordsAClassificationAlreadyPastItsCap() public {
+    /// @dev A classification already past its cap is RECORDED as a divergence
+    ///      rather than saturated away (Codex #2276 r15 P1): a ten-token epoch
+    ///      attested 8F/2R carrying seven recycled classified without the batch
+    ///      gate — the recycled excess of five is exposed, the recycled room is
+    ///      zero, and the epoch's coverage is fresh-only. The view follows the
+    ///      CURRENT classifications through a correction.
+    function test_AClassificationPastItsCap_IsRecorded_AndFollowsCorrections() public {
         uint256[] memory d1 = _one(1);
-        _ingress().onRewardBudgetReceived(address(vpfi), 10e18, d1, CHAIN_BASE, 2, REMITTER, 0, 0, keccak256("roll"), false);
-        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("roll")));
-        _mut().unadmitTransportBatchRaw(h);
+        bytes32 h = _epochSplit(10e18, d1, 2, keccak256("roll"), 8, 2); // caps 8e18 fresh / 2e18 recycled
         _mut().classifyPacketPreGateRaw(h, 0, 7e18);
-        assertEq(_epoch().admitLegacyTransportBatch(h, d1), h);
-        _epoch().materializeTransportBatchPage(h, d1);
-        // BEFORE the split is attested the excess is not knowable, and the lens
-        // must say so rather than report a zero that reads as "within caps"
-        // (Codex #2276) — this packet is about to be shown five over its cap.
-        (bool attBefore, uint256 preF, uint256 preR) =
-            RewardReconciliationFacet(address(diamond)).getPacketClassificationExcess(h);
-        assertFalse(attBefore, "before attestation the excess is not yet knowable");
-        assertEq(preF + preR, 0, "and no figure is offered in its place");
-        RewardReporterFacet(address(diamond)).setRewardMessenger(address(this));
-        vm.expectEmit(true, false, false, true);
-        emit IngressPacketClassifiedBeyondCaps(h, 0, 5e18);
-        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 2, 8, 2); // caps 8e18 fresh / 2e18 recycled on 10e18
         (bool att, uint256 exF, uint256 exR) =
             RewardReconciliationFacet(address(diamond)).getPacketClassificationExcess(h);
-        assertTrue(att, "attested now, so a zero below is a real zero");
+        assertTrue(att, "attested from the wire, so a zero below is a real zero");
         assertEq(exF, 0);
         assertEq(exR, 5e18, "the recycled classification exceeds its cap by five: recorded");
         // A CORRECTION moves the five back to fresh (0F/7R -> 5F/2R against caps
@@ -1537,8 +1582,20 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ReconciliationPacketUnknown.selector, keccak256("nobody")));
         RewardReconciliationFacet(address(diamond)).getPacketClassificationExcess(keccak256("nobody"));
         (uint256 tf, uint256 tr, ) = _alloc(1, 3e18, 3e18, type(uint256).max, 0, 0);
-        assertEq(tf, 3e18, "the epoch's three are fresh room");
+        assertEq(tf, 3e18, "the epoch pays fresh within its room");
         assertEq(tr, 0, "and no recycled room remains under a cap the classification already exceeds");
+    }
+
+    /// @dev Before a split is attested the excess is not knowable, and the lens
+    ///      says so rather than report a zero that reads as "within caps"
+    ///      (Codex #2276). Every d6 epoch is attested at landing, so the
+    ///      unattested state is stood in raw.
+    function test_AnUnattestedPacket_ReportsNoExcessFigure() public {
+        bytes32 h = _epochRaw(10e18, _one(1), 2, keccak256("unattested-excess"));
+        (bool att, uint256 exF, uint256 exR) =
+            RewardReconciliationFacet(address(diamond)).getPacketClassificationExcess(h);
+        assertFalse(att, "the excess is not yet knowable");
+        assertEq(exF + exR, 0, "and no figure is offered in its place");
     }
 
     /// @dev A forfeit's recycled slice is a commitment release and draws no

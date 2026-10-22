@@ -19,6 +19,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
 
 /**
  * @title RewardDeliveredChokepointTest
@@ -115,6 +116,37 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
         _remit().setRewardRemittanceReceiver(address(this));
     }
 
+    /// @dev A budget delivery on the rooted (d6) wire, the only budget shape
+    ///      the remittance receiver accepts, filed in the live era. Returns
+    ///      the packet stamp.
+    function _d6(
+        address token,
+        uint256 amount,
+        uint256[] memory dayIds,
+        uint256 sourceChainId,
+        uint256 remitId,
+        address remitter,
+        uint256 recycled,
+        uint256 fresh,
+        bytes32 messageId
+    ) internal returns (bytes32 h) {
+        (h, ) = LibD6Delivery.deliver(
+            address(diamond),
+            LibD6Delivery.Delivery({
+                token: token,
+                amount: amount,
+                dayIds: dayIds,
+                sourceChainId: sourceChainId,
+                remitId: remitId,
+                remitter: remitter,
+                recycled: recycled,
+                fresh: fresh,
+                messageId: messageId,
+                era: 0
+            })
+        );
+    }
+
     /// @dev A stated-composition delivery for LEGACY day 1 (no `D*` is ever
     ///      installed in this file). Under the retired rule its fresh share
     ///      was `uncounted`; under closure 2 it is `received`.
@@ -123,16 +155,7 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
     {
         uint256[] memory days_ = new uint256[](1);
         days_[0] = 1;
-        _ingress().onRewardBudgetReceived(
-            address(vpfi), fresh + recycled, days_, CHAIN_BASE, remitId, REMITTER, recycled, fresh,
-            bytes32(0),
-            // #1566 transport epochs PR 3b — the wire's own fact, derived
-            // from what this delivery states: a named component could only
-            // have come off a wire that carried the split, and a delivery
-            // naming neither is the untyped legacy/d2 shape whose value the
-            // transport epochs make spendable.
-            fresh != 0 || recycled != 0
-        );
+        _d6(address(vpfi), fresh + recycled, days_, CHAIN_BASE, remitId, REMITTER, recycled, fresh, bytes32(0));
     }
 
     function _seedPayable(address user, uint64 loanId)
@@ -261,9 +284,7 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
 
         uint256[] memory days_ = new uint256[](1);
         days_[0] = 1;
-        _ingress().onRewardBudgetReceived(
-            address(vpfi), 3e18, days_, CHAIN_BASE, 12, REMITTER, 0, 0
-        , bytes32(0), false); // old wire: no split stated
+        _d6(address(vpfi), 3e18, days_, CHAIN_BASE, 12, REMITTER, 0, 0, bytes32(0)); // no share stated
         (counted, uncounted) = _rlens().getDeliveredFreshPosition();
         assertEq(counted, 5e18, "an unstated composition counts nothing");
         assertEq(uncounted, 3e18, "...and lands whole in uncounted");

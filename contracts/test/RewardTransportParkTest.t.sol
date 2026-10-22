@@ -15,6 +15,7 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
 
 /// @title RewardTransportParkTest
 /// @notice 3b-ii-B — the PARK is the release gate: a batch's remainder parks only
@@ -71,13 +72,8 @@ contract RewardTransportParkTest is SetupTest, IVaipakamErrors {
     function _epochOn(uint256 n, uint256 remitId) internal returns (bytes32 h, uint256[] memory list) {
         list = _days(n);
         bytes32 id = keccak256(abi.encode("park-epoch", n, remitId));
-        _ingress().onRewardBudgetReceived(address(vpfi), EPOCH, list, CHAIN_BASE, remitId, REMITTER, 0, 0, id, false);
-        h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
-        while (true) {
-            (, , , uint32 dayCount, uint32 indexedDays, ) = _epoch().getTransportBatch(h);
-            if (indexedDays >= dayCount) break;
-            _epoch().materializeTransportBatchPage(h, list);
-        }
+        (h, ) = LibD6Delivery.deliverFresh(address(diamond), address(vpfi), EPOCH, list, CHAIN_BASE, remitId, REMITTER, id);
+        LibD6Delivery.indexAllDays(address(diamond), h, list);
     }
 
     /// @dev Days 1..n elapse, the chain closes each, and each is proven closed —

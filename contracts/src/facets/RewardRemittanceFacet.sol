@@ -269,12 +269,6 @@ contract RewardRemittanceFacet is
 
     /// @notice #1222 M3 B2-d2 — a mirror dispatched its remit ack toward Base.
     /// @custom:event-category informational/reward-transport
-    /// @notice #1566 transport epochs PR 3a — a reservation's recorded split
-    ///         was dispatched toward the mirror it was sent to.
-    /// @custom:event-category informational/reward-transport
-    event RemitSplitAttestationDispatched(
-        uint256 indexed remitId, bytes32 indexed messageId, uint32 dstChainId, uint256 fresh, uint256 recycled
-    );
     event RemitAckDispatched(
         uint256 indexed remitId,
         bytes32 messageId,
@@ -526,12 +520,6 @@ contract RewardRemittanceFacet is
             // the d6 root commits to exactly these, and a release clears the
             // live per-day mark they would otherwise be rebuilt from.
             r.fundedDayBits = _fundedDayBits(dl.closedDays, dl.fundedDays);
-            // #1566 transport epochs PR 3a — every payload this deployment
-            // builds is the d5 shape, which carries the split, so the mirror
-            // types this packet at ingress and a split attestation for it can
-            // never land. Recorded on the row so the canonical side refuses
-            // one before a fee is paid.
-            LibRewardCustody.markReservationSplitOnWire(r);
             if (st.totalAll == 0) {
                 r.status = 2; // Acked — nothing in flight, terminal.
             } else {
@@ -941,8 +929,8 @@ contract RewardRemittanceFacet is
 
     /**
      * @notice Set (or clear, with `address(0)`) the mirror-side
-     *         {RewardRemittanceReceiver} authorized to call
-     *         {onRewardBudgetReceived} on this (mirror) Diamond.
+     *         {RewardRemittanceReceiver} authorized to call the budget and
+     *         compensation ingresses on this (mirror) Diamond.
      * @dev    ADMIN-only. Base leaves this unset. A non-zero receiver MUST have
      *         code — the ingress trusts this address (it inflates
      *         `rewardBudgetReceivedTotal` + emits the reconciliation record
@@ -1004,50 +992,6 @@ contract RewardRemittanceFacet is
         }
         s.dayDeliveryGateFromDay = fromDay;
         emit DayDeliveryGateArmed(fromDay);
-    }
-
-    // ─── Mirror-side ingress ──────────────────────────────────────────────
-
-
-    // ─── #1566 transport epochs PR 3a — the split attestation (send) ────────
-
-    /**
-     * @notice Dispatch the SPLIT ATTESTATION for `remitId` toward the mirror
-     *         it was sent to: this reservation's recorded `fresh` and
-     *         `recycled` figures, which are the evidence a d2 packet's fresh
-     *         side needs before it can ever be classified fresh (§5c).
-     * @dev    Canonical-only, permissionless and deliberately RE-SENDABLE: the
-     *         content is this Diamond's own record (a caller can neither forge
-     *         nor inflate it), the mirror accepts exactly one, and the caller
-     *         pays the transport fee — so a repeat send is a fee-payer's retry
-     *         lever for a lost message, not a grief. Quote first via
-     *         {RewardRemittanceLensFacet.quoteSplitAttestationFee}; the
-     *         messenger refunds any surplus to `refundAddress`. Refused here,
-     *         before any fee is paid, for a reservation the destination could
-     *         only reject: one whose own wire carried the split, and one that
-     *         moved no value and so wrote no receipt
-     *         ({LibRewardCustody.requireAttestable}, which holds EVERY
-     *         precondition — the canonical role, the messenger, and the
-     *         reservation rules — and is the same call the fee quote makes,
-     *         so a quote can never price what a send would refuse).
-     */
-    function attestRemitSplit(
-        uint256 remitId,
-        address payable refundAddress
-    )
-        external
-        payable
-        nonReentrant
-        whenNotPaused
-        returns (bytes32 messageId)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        (address messenger, LibVaipakam.RemitReservation storage r) =
-            LibRewardCustody.requireAttestable(s, remitId);
-        messageId = IRewardMessenger(messenger).sendSplitAttestation{value: msg.value}(
-            r.dstChainId, address(this), remitId, r.fresh, r.recycled, refundAddress
-        );
-        emit RemitSplitAttestationDispatched(remitId, messageId, r.dstChainId, r.fresh, r.recycled);
     }
 
     // ─── #1222 M3 B2-d2 — mirror-side remit ack ───────────────────────────

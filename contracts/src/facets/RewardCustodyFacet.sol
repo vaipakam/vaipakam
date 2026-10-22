@@ -1312,12 +1312,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
         );
     }
 
-    /// @notice Diamond-internal: {LibRewardCustody.relocateFreshIngress}.
-    function custodyRelocateFreshIngress(uint256 amount) external {
-        _requireDiamondInternal();
-        LibRewardCustody.relocateFreshIngress(LibVaipakam.storageSlot(), amount);
-    }
-
     /// @notice Diamond-internal: {LibRewardCustody.recordIngressPacket}.
     function custodyRecordIngressPacket(
         uint256 sourceChainId,

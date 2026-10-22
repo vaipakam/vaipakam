@@ -38,14 +38,12 @@ contract MockCcipRelay {
     }
 }
 
-/// @dev Stand-in for the mirror Diamond's `onRewardBudgetReceived` ingress —
-///      records the last credit so the test can assert the forward + call.
+/// @dev Stand-in for the mirror Diamond's rooted budget ingress — records the
+///      last credit so the test can assert the forward + call.
 contract MockRewardBudgetIngress is IRewardBudgetIngress {
     address public immutable vpfi;
     uint256 public lastAmount;
     uint256 public lastSourceChainId;
-    uint256 public lastDayCount;
-    uint256 public callCount;
 
     constructor(address vpfi_) {
         vpfi = vpfi_;
@@ -53,52 +51,15 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
 
     uint256 public lastRemitId;
     address public lastRemitter;
-    /// @dev B2-d5 — the recycled component the receiver forwarded, already
-    ///      scaled to what physically landed.
+    /// @dev The recycled component the receiver forwarded, already scaled to
+    ///      what physically landed.
     uint256 public lastRecycledShare;
-    /// @dev #1434 P1-a — the FRESH component the receiver forwarded. Zero
-    ///      whenever the decoded wire generation did not carry the split, so
-    ///      asserting on it is how the tests pin the "unknown composition ⇒
-    ///      no fresh" rule to the receiver rather than to the Diamond.
+    /// @dev #1434 P1-a — the FRESH component the receiver forwarded: what is
+    ///      left of the delivery after the scaled recycled share.
     uint256 public lastFreshShare;
     /// @dev #1566 closure 2 cutover PR 1 — the transport id the receiver
     ///      passed through, the Diamond's ingress stamp.
     bytes32 public lastTransportMessageId;
-    /// @dev #1566 transport epochs PR 3b — whether the receiver said the WIRE
-    ///      carried the split. It is the fact the Diamond cannot recover on
-    ///      its own (a d5 remittance whose components both floored to zero
-    ///      arrives with the same two zeros as a legacy one - NOT a wholly
-    ///      recycled one, which arrives unambiguously as
-    ///      `recycledShare == amount`; Codex #2232 r12), so asserting on it here
-    ///      pins the "the receiver decides the accounting path" rule to the
-    ///      receiver, exactly as `lastFreshShare` pins the composition rule.
-    bool public lastSplitTyped;
-
-    function onRewardBudgetReceived(
-        address token,
-        uint256 amount,
-        uint256[] calldata dayIds,
-        uint256 sourceChainId,
-        uint256 remitId,
-        address remitter,
-        uint256 recycledShare,
-        uint256 freshShare,
-        bytes32 transportMessageId,
-        bool splitTyped
-    ) external override {
-        require(token == vpfi, "ingress: token");
-        lastSplitTyped = splitTyped;
-        lastTransportMessageId = transportMessageId;
-        lastAmount = amount;
-        lastSourceChainId = sourceChainId;
-        lastDayCount = dayIds.length;
-        lastRemitId = remitId;
-        lastRemitter = remitter;
-        lastRecycledShare = recycledShare;
-        lastFreshShare = freshShare;
-        callCount++;
-    }
-
     // 3d-1 — the rooted ingress.
     bytes32 public lastRoot;
     uint256 public lastElementCount;
@@ -195,9 +156,14 @@ contract RewardRemittanceReceiverTest is Test {
             receiver,
             SRC_BASE,
             address(0xBA5E), // sourceSender — receiver ignores it (peer check is on the messenger)
-            abi.encode(_days(1, 2), declaredTotal),
+            _d6Payload(declaredTotal),
             _tokens(address(vpfi), declaredTotal)
         );
+    }
+
+    /// @dev A d6 (rooted) budget payload declaring `total`, wholly fresh.
+    function _d6Payload(uint256 total) internal pure returns (bytes memory) {
+        return RemitWire.encodeD6(bytes32(uint256(1)), 2, 1, total, 0, address(0xD1A), 0, 0);
     }
 
     // ── happy path ───────────────────────────────────────────────────────────
@@ -206,55 +172,22 @@ contract RewardRemittanceReceiverTest is Test {
         _deliver(1_000e18, 1_000e18);
         assertEq(vpfi.balanceOf(address(diamond)), 1_000e18, "diamond funded");
         assertEq(vpfi.balanceOf(address(receiver)), 0, "receiver drained");
-        assertEq(diamond.callCount(), 1, "ingress called once");
+        assertEq(diamond.rootedCalls(), 1, "ingress called once");
         assertEq(diamond.lastAmount(), 1_000e18, "credited amount");
         assertEq(diamond.lastSourceChainId(), SRC_BASE, "source chain");
-        assertEq(diamond.lastDayCount(), 2, "day count");
-        // Legacy 2-tuple payload (all _deliver sends): dual-decoded with
-        // remitId 0 — no ack ever flows for pre-d2 messages.
-        assertEq(diamond.lastRemitId(), 0, "legacy payload yields remitId 0");
+        assertEq(diamond.lastElementCount(), 2, "day count");
     }
 
-    /// @dev #1222 M3 B2-d2 — the widened 4-tuple payload is discriminated
-    ///      from the legacy shape by the leading ABI head word (`dayIds`
-    ///      offset 0x80 vs 0x40) and carries the delivered-backing echo id
-    ///      PLUS the sending deployment's identity (r4 — immutable message
-    ///      data, never the adapter's config-derived sourceSender) through
-    ///      to the Diamond ingress.
-    /// #1566 closure 2 cutover PR 1 — the transport's message id crosses both
+    /// @dev #1566 closure 2 cutover PR 1 — the transport's message id crosses both
     /// seams unchanged: adapter → receiver → Diamond ingress.
     function test_Deliver_ForwardsTheTransportMessageId() public {
         vpfi.mint(address(receiver), 1e18);
         bytes32 id = keccak256("ccip-message-1");
         messenger.relayWithId(
-            receiver, SRC_BASE, address(0xBA5E), abi.encode(_days(1, 2), 1e18), _tokens(address(vpfi), 1e18), id
+            receiver, SRC_BASE, address(0xBA5E), _d6Payload(1e18), _tokens(address(vpfi), 1e18), id
         );
         assertEq(diamond.lastTransportMessageId(), id, "the id reached the Diamond ingress");
-        assertEq(diamond.callCount(), 1);
-    }
-
-    function test_Deliver_WidenedPayloadCarriesRemitIdAndRemitter() public {
-        vpfi.mint(address(receiver), 500e18);
-        messenger.relay(
-            receiver,
-            SRC_BASE,
-            address(0xBA5E),
-            abi.encode(
-                _days(1, 2), uint256(500e18), uint256(77), address(0xD1A)
-            ),
-            _tokens(address(vpfi), 500e18)
-        );
-        assertEq(diamond.callCount(), 1, "ingress called");
-        assertEq(diamond.lastAmount(), 500e18, "credited amount");
-        assertEq(diamond.lastRemitId(), 77, "echo remitId surfaced");
-        assertEq(diamond.lastRemitter(), address(0xD1A), "payload remitter");
-        // B2-d5 — a d2-shaped payload states no recycled share, so the
-        // mirror relocates no custody: the pre-d5 behaviour exactly.
-        assertEq(diamond.lastRecycledShare(), 0, "d2 shape relocates nothing");
-        // #1434 P1-a — and it states no FRESH share either. The two zeros
-        // mean different things and both are correct: nothing is known, so
-        // nothing is claimed in either direction.
-        assertEq(diamond.lastFreshShare(), 0, "d2 shape declares no fresh");
+        assertEq(diamond.rootedCalls(), 1);
     }
 
     /// @dev #1566 transport epochs 3d-1 — the d6 (ROOTED) shape takes its own
@@ -272,7 +205,6 @@ contract RewardRemittanceReceiverTest is Test {
             keccak256("d6-msg")
         );
         assertEq(diamond.rootedCalls(), 1, "the rooted ingress, once");
-        assertEq(diamond.callCount(), 0, "and not the list-bearing one");
         assertEq(diamond.lastAmount(), 500e18);
         assertEq(diamond.lastRoot(), bytes32(uint256(0xBEEF)), "the root surfaces");
         assertEq(diamond.lastElementCount(), 33, "and the extent");
@@ -305,188 +237,26 @@ contract RewardRemittanceReceiverTest is Test {
         assertEq(diamond.lastRecycledShare() + diamond.lastFreshShare(), diamond.lastAmount(), "whole");
     }
 
-    /// @dev #1222 M3 B2-d5 — the THIRD payload layout, discriminated by a
-    ///      leading {RemitWire.REMIT_WIRE_TAG_D5} rather than another rung on
-    ///      the head-offset ladder (0x40 legacy / 0x80 d2). This asserts the
-    ///      new shape surfaces the recycled component and that the two older
-    ///      shapes still decode, surfacing zero — the conservative direction,
-    ///      which is what makes a delayed pre-d5 delivery safe to accept.
-    function test_Deliver_D5PayloadCarriesRecycledShare_OlderShapesDoNot()
-        public
-    {
-        vpfi.mint(address(receiver), 500e18);
-        messenger.relay(
-            receiver,
-            SRC_BASE,
-            address(0xBA5E),
-            abi.encode(
-                RemitWire.REMIT_WIRE_TAG_D5,
-                _days(1, 2),
-                uint256(500e18),
-                uint256(77),
-                address(0xD1A),
-                uint256(120e18)
-            ),
-            _tokens(address(vpfi), 500e18)
-        );
-        assertEq(diamond.lastAmount(), 500e18, "credited amount");
-        assertEq(diamond.lastRemitId(), 77, "remitId still surfaced");
-        assertEq(diamond.lastRemitter(), address(0xD1A), "remitter still surfaced");
-        assertEq(
-            diamond.lastRecycledShare(), 120e18, "recycled share surfaced"
-        );
-        // #1566 transport epochs PR 3b — the d5 wire carried the split.
-        assertTrue(diamond.lastSplitTyped(), "d5: the wire carried the split");
-        // #1434 P1-a — the fresh component is the declared remainder, and it
-        // is stated rather than left for the Diamond to infer.
-        assertEq(diamond.lastFreshShare(), 380e18, "fresh share surfaced");
-
-        // Legacy 0x40 on the same receiver: still decodes, still zero.
-        _deliver(10e18, 10e18);
-        assertEq(diamond.lastRecycledShare(), 0, "legacy shape stays zero");
-        // #1434 P1-a — THE defect this parameter exists to prevent. Inferring
-        // `amount - recycledShare` in the Diamond would make this 10e18: a
-        // delivery of entirely unknown composition booked as entirely fresh.
-        // The receiver is the only party that knows the wire carried no
-        // split, so the receiver is where the honest zero comes from.
-        assertEq(diamond.lastFreshShare(), 0, "legacy declares no fresh");
-        assertEq(diamond.lastAmount(), 10e18, "the delivery itself is intact");
-        // #1566 transport epochs PR 3b — and the receiver states WHICH WIRE
-        // each came off, which is a different fact from what the wire
-        // declared. It decides the delivery's accounting path on the Diamond:
-        // the legacy one opens a transport epoch, the d5 one must not.
-        assertFalse(diamond.lastSplitTyped(), "legacy: the wire carried no split");
-    }
-
-    /// @dev #1566 transport epochs PR 3b — THE case the `splitTyped` flag
-    ///      exists for, and the reason it cannot be inferred downstream: a d5
-    ///      delivery whose components BOTH floor to zero. Declared 1000 with
-    ///      1 recycled, of which 1 lands: 1×1/1000 and 999×1/1000 both floor
-    ///      away, so the Diamond receives two zeros off a wire that carried a
-    ///      split — byte-for-byte what a legacy delivery looks like.
-    ///
-    ///      Inferring "untyped" from the two zeros would open a transport
-    ///      epoch for a delivery whose components were already credited to the
-    ///      shared ledgers, making one delivery spendable twice. The receiver
-    ///      is the only party that saw the wire, so the receiver is where the
-    ///      answer comes from.
-    function test_Deliver_StatesTheWireEvenWhenBothComponentsFloorAway() public {
-        vpfi.mint(address(receiver), 1);
-        messenger.relay(
-            receiver,
-            SRC_BASE,
-            address(0xBA5E),
-            abi.encode(
-                RemitWire.REMIT_WIRE_TAG_D5,
-                _days(1, 2),
-                uint256(1000),
-                uint256(91),
-                address(0xD1A),
-                uint256(1)
-            ),
-            _tokens(address(vpfi), 1000)
-        );
-        assertEq(diamond.lastAmount(), 1, "one wei landed");
-        assertEq(diamond.lastRecycledShare(), 0, "the recycled component floored away");
-        assertEq(diamond.lastFreshShare(), 0, "and so did the fresh one");
-        assertTrue(
-            diamond.lastSplitTyped(),
-            "the wire is still d5, and only the receiver can say so"
-        );
-    }
-
-    /// @dev B2-d5 — the declared recycled share is a component of the
-    ///      DECLARED total, but a fee-on-transfer token can land less than
-    ///      that. Crediting the face value would relocate custody the Diamond
-    ///      never received (and the Diamond's backing assertion would revert
-    ///      the whole arrival), so the share scales to what actually landed.
-    function test_Deliver_ScalesRecycledShareToWhatActuallyLanded() public {
-        // Receiver holds only half the declared total, so `toTransfer` — and
-        // therefore `actualReceived` — is halved.
-        vpfi.mint(address(receiver), 250e18);
-        messenger.relay(
-            receiver,
-            SRC_BASE,
-            address(0xBA5E),
-            abi.encode(
-                RemitWire.REMIT_WIRE_TAG_D5,
-                _days(1, 2),
-                uint256(500e18),
-                uint256(77),
-                address(0xD1A),
-                uint256(200e18)
-            ),
-            _tokens(address(vpfi), 500e18)
-        );
-        assertEq(diamond.lastAmount(), 250e18, "half landed");
-        // 200 × 250/500 = 100, floored — never more than what arrived.
-        assertEq(
-            diamond.lastRecycledShare(),
-            100e18,
-            "recycled share scaled to the delivered fraction"
-        );
-        assertLe(
-            diamond.lastRecycledShare(),
-            diamond.lastAmount(),
-            "scaled share can never exceed the delivery"
-        );
-        // #1434 P1-a — the fresh share scales the same way and also FLOORS.
-        // 300 × 250/500 = 150. Pre-P1-a the rounding dust rode along with
-        // fresh (it was whatever remained); now that the Diamond bounds fresh
-        // explicitly, letting it round up would make it the one term that can
-        // over-state. Both flooring means the two can sum to LESS than the
-        // delivery, never more.
-        assertEq(
-            diamond.lastFreshShare(), 150e18, "fresh share scaled and floored"
-        );
-        assertLe(
-            diamond.lastFreshShare() + diamond.lastRecycledShare(),
-            diamond.lastAmount(),
-            "the two components never over-claim the delivery"
-        );
-    }
-
-    /// @dev The fixture above scales by an exact half, where flooring the
-    ///      fresh share and letting it take the remainder give the SAME
-    ///      answer — so it cannot tell the two apart, and on its own the
-    ///      "both floor" claim would be unverified.
-    ///
-    ///      This one uses a ratio whose floors actually bite. 5 of a declared
-    ///      7 land; the declared split is 3 recycled / 4 fresh.
-    ///        - recycled: floor(3 x 5 / 7) = 2
-    ///        - fresh, FLOORED: floor(4 x 5 / 7) = 2  <- what ships
-    ///        - fresh, as the remainder: 5 - 2 = 3    <- one wei richer
-    ///      Flooring both leaves 1 wei attributed to neither, which the
-    ///      Diamond records as uncounted. Taking the remainder would make
-    ///      fresh the one term that rounds UP, on the exact figure the
-    ///      Diamond treats as an upper bound on payable reward funding.
-    ///      A wei is not the point; the direction is.
-    function test_Deliver_FreshShareFloorsRatherThanTakingTheRemainder()
-        public
-    {
-        vpfi.mint(address(receiver), 5);
-        messenger.relay(
-            receiver,
-            SRC_BASE,
-            address(0xBA5E),
-            abi.encode(
-                RemitWire.REMIT_WIRE_TAG_D5,
-                _days(1, 2),
-                uint256(7),
-                uint256(78),
-                address(0xD1A),
-                uint256(3)
-            ),
-            _tokens(address(vpfi), 7)
-        );
-        assertEq(diamond.lastAmount(), 5, "5 of the declared 7 landed");
-        assertEq(diamond.lastRecycledShare(), 2, "recycled floors to 2");
-        assertEq(diamond.lastFreshShare(), 2, "fresh floors to 2, not 3");
-        assertLt(
-            diamond.lastFreshShare() + diamond.lastRecycledShare(),
-            diamond.lastAmount(),
-            "a wei is deliberately attributed to neither"
-        );
+    /// @dev Every budget shape older than d6 is refused by name, before any
+    ///      token moves: the untagged legacy 2-tuple (head word 0x40), the
+    ///      untagged d2 4-tuple (0x80) and the tagged d5 payload. All three
+    ///      carried a flat day list, and the two untagged ones no split; the
+    ///      Diamond ingress that took them is gone. CCIP records the refusal as
+    ///      a failed message rather than delivering it.
+    function test_Deliver_RefusesEveryPreD6BudgetShape() public {
+        uint256 d5Tag = uint256(keccak256("vaipakam.remit.wire.d5"));
+        bytes[] memory shapes = new bytes[](3);
+        shapes[0] = abi.encode(_days(1, 2), uint256(1e18));
+        shapes[1] = abi.encode(_days(1, 2), uint256(1e18), uint256(77), address(0xD1A));
+        shapes[2] = abi.encode(d5Tag, _days(1, 2), uint256(1e18), uint256(77), address(0xD1A), uint256(1e17));
+        uint256[3] memory heads = [uint256(0x40), uint256(0x80), d5Tag];
+        vpfi.mint(address(receiver), 1e18);
+        for (uint256 i; i < shapes.length; ++i) {
+            vm.expectRevert(abi.encodeWithSelector(RewardRemittanceReceiver.UnknownRemitWireShape.selector, heads[i]));
+            messenger.relay(receiver, SRC_BASE, address(0xBA5E), shapes[i], _tokens(address(vpfi), 1e18));
+        }
+        assertEq(diamond.rootedCalls(), 0, "nothing reached the Diamond");
+        assertEq(vpfi.balanceOf(address(receiver)), 1e18, "and no token moved");
     }
 
     // ── auth / validation reverts ────────────────────────────────────────────
@@ -502,7 +272,7 @@ contract RewardRemittanceReceiverTest is Test {
         receiver.onCrossChainMessage(
             SRC_BASE,
             address(0xBA5E),
-            abi.encode(_days(1, 2), 1e18),
+            _d6Payload(1e18),
             _tokens(address(vpfi), 1e18)
         , bytes32(0));
     }
@@ -516,7 +286,7 @@ contract RewardRemittanceReceiverTest is Test {
                 uint256(0)
             )
         );
-        messenger.relay(receiver, SRC_BASE, address(0xBA5E), abi.encode(_days(1, 2), 1e18), none);
+        messenger.relay(receiver, SRC_BASE, address(0xBA5E), _d6Payload(1e18), none);
     }
 
     function test_Deliver_RevertsOnTokenMismatch() public {
@@ -533,7 +303,7 @@ contract RewardRemittanceReceiverTest is Test {
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            abi.encode(_days(1, 2), 1e18),
+            _d6Payload(1e18),
             _tokens(address(other), 1e18)
         );
     }
@@ -552,7 +322,7 @@ contract RewardRemittanceReceiverTest is Test {
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            abi.encode(_days(1, 2), 1_000e18),
+            _d6Payload(1_000e18),
             _tokens(address(vpfi), 900e18)
         );
     }
@@ -563,7 +333,7 @@ contract RewardRemittanceReceiverTest is Test {
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            abi.encode(_days(1, 2), uint256(0)),
+            _d6Payload(0),
             _tokens(address(vpfi), 0)
         );
     }
@@ -579,64 +349,9 @@ contract RewardRemittanceReceiverTest is Test {
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            abi.encode(_days(1, 2), 1e18),
+            _d6Payload(1e18),
             _tokens(address(vpfi), 1e18)
         );
-    }
-
-    /// @dev #1222 M3 B2-d5 (Codex #1432 r2) — the ROLLOUT-safety property, and
-    ///      the reason the d5 shape leads with a tag instead of extending the
-    ///      head-offset ladder to 0xA0.
-    ///
-    ///      This simulates the pre-upgrade receiver's decoder against a d5
-    ///      payload. The old code branched `head == 0x80 ? 4-tuple : 2-tuple`,
-    ///      so with an 0xA0 ladder it would have taken the LEGACY branch and
-    ///      SUCCEEDED — 0xA0 is a valid in-bounds array offset — silently
-    ///      dropping remitId/remitter/recycledShare and stranding the Base
-    ///      reservation. With the keccak-derived tag as the leading word, that
-    ///      same legacy decode is forced out of bounds and REVERTS, so a
-    ///      not-yet-upgraded mirror fails closed and CCIP re-executes the
-    ///      message after the upgrade. Asserted directly on `abi.decode`
-    ///      because the old bytecode no longer exists to run.
-    function test_D5Payload_IsUndecodableByThePreUpgradeDecoder() public {
-        bytes memory d5 = abi.encode(
-            RemitWire.REMIT_WIRE_TAG_D5,
-            _days(1, 2),
-            uint256(500e18),
-            uint256(77),
-            address(0xD1A),
-            uint256(120e18)
-        );
-
-        // The pre-d5 discriminator would not match, so the old receiver fell
-        // through to the legacy 2-tuple decode. That decode must now fail.
-        uint256 head = abi.decode(this.slice32(d5), (uint256));
-        assertTrue(head != 0x80, "tag must not collide with the d2 shape");
-        assertTrue(head != 0x40, "tag must not collide with the legacy shape");
-        assertGt(head, d5.length, "tag must exceed any real payload length");
-
-        vm.expectRevert();
-        this.decodeLegacy(d5);
-    }
-
-    /// @dev External so the failing `abi.decode` is a callable target for
-    ///      `vm.expectRevert` (an inline decode would abort the test itself).
-    function decodeLegacy(bytes calldata payload)
-        external
-        pure
-        returns (uint256[] memory a, uint256 b)
-    {
-        (a, b) = abi.decode(payload, (uint256[], uint256));
-    }
-
-    /// @dev External calldata slice helper — mirrors the receiver's
-    ///      `payload[:32]` peek.
-    function slice32(bytes calldata payload)
-        external
-        pure
-        returns (bytes memory)
-    {
-        return payload[:32];
     }
 
     function test_Pause_GuardianCanPause_OwnerUnpauses() public {
@@ -648,6 +363,6 @@ contract RewardRemittanceReceiverTest is Test {
         receiver.unpause();
         receiver.unpause(); // owner (this)
         _deliver(5e18, 5e18);
-        assertEq(diamond.callCount(), 1, "resumes after unpause");
+        assertEq(diamond.rootedCalls(), 1, "resumes after unpause");
     }
 }

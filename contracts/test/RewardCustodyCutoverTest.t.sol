@@ -35,6 +35,8 @@ import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol"
 import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
+import {RemitWire} from "../src/crosschain/RemitWire.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
 
@@ -210,28 +212,44 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         expected = _lens().getInteractionHalfPoolForDay(1) + _lens().getInteractionHalfPoolForDay(2);
     }
 
-    /// @dev A stated-composition delivery on a mirror, as the receiver would
-    ///      present it: the tokens are already at the Diamond.
-    function _deliverFresh(uint256 fresh, uint256 recycled, uint256 remitId) internal {
-        _deliverStamped(fresh + recycled, fresh, recycled, remitId, bytes32(0));
-    }
-
-    /// @dev A delivery as the receiver presents it, with an explicit transport
-    ///      id; `amount − fresh − recycled` is the untyped remainder.
+    /// @dev A budget delivery for day 1 as the receiver presents it, on the
+    ///      rooted (d6) wire, the only budget shape the receiver accepts; the
+    ///      tokens are already at the Diamond. On an ACTIVATED custody the split
+    ///      must be whole and the whole delivery lands in `Unclassified` under
+    ///      its transport epoch, attested from the wire. Before activation the
+    ///      stated shares credit the shared ledgers and the rest counts as
+    ///      uncounted.
     function _deliverStamped(uint256 amount, uint256 fresh, uint256 recycled, uint256 remitId, bytes32 id)
         internal
+        returns (bytes32 h)
     {
         uint256[] memory days_ = new uint256[](1);
         days_[0] = 1;
-        _ingress().onRewardBudgetReceived(
-            address(vpfi), amount, days_, CHAIN_BASE, remitId, REMITTER, recycled, fresh, id,
-            // #1566 transport epochs PR 3b — the wire's own fact, derived
-            // from what this delivery states: a named component could only
-            // have come off a wire that carried the split, and a delivery
-            // naming neither is the untyped legacy/d2 shape whose value the
-            // transport epochs make spendable.
-            fresh != 0 || recycled != 0
+        (h, ) = LibD6Delivery.deliver(
+            address(diamond),
+            LibD6Delivery.Delivery({
+                token: address(vpfi),
+                amount: amount,
+                dayIds: days_,
+                sourceChainId: CHAIN_BASE,
+                remitId: remitId,
+                remitter: REMITTER,
+                recycled: recycled,
+                fresh: fresh,
+                messageId: id,
+                era: 0
+            })
         );
+    }
+
+    /// @dev Counted live funding on an activated custody. A budget delivery
+    ///      there opens a transport epoch and credits no live row, so a cell
+    ///      that needs live backing beside its packets stands it in through
+    ///      the same library write a live-era compensation lands through: the
+    ///      tokens move from the Diamond into the holder under the deficit
+    ///      split.
+    function _liveCredit(uint256 amount) internal {
+        _mut().relocateFreshIngressRaw(amount);
     }
 
     /// @dev A compensation delivery for day 3 as the receiver presents it;
@@ -958,64 +976,68 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
 
     // ─── 5. the mirror's ingress ─────────────────────────────────────────────
 
-    /// A mirror's delivery relocates its counted fresh share into the live
-    /// row and its recycled share into the recycled row; the claim then pays
-    /// from the holder.
-    function test_MirrorIngress_RelocatesTheSharesAndTheClaimPaysFromTheHolder() public {
+    /// A mirror's budget delivery on an activated custody lands WHOLE in the
+    /// holder's `Unclassified` row under its transport epoch: neither share
+    /// is credited to the live or recycled row at ingress, because the epoch
+    /// is what the listed days' obligations draw (the draw itself is pinned
+    /// in `RewardTransportEpochDrawTest`). The split the wire states is
+    /// recorded as the packet's attested caps.
+    function test_MirrorIngress_LandsWholeUnderItsEpoch() public {
         _becomeMirror();
         activateRewardCustodyForTest(address(vpfi), 0);
-        (, uint256 expected) = _seedPayable(alice);
-        _seedDiamond(expected + 10e18); // the receiver forwarded the delivery here
-        _deliverFresh(expected + 1e18, 2e18, 7);
-        assertEq(_live(), expected + 1e18, "fresh share relocated as live");
-        assertEq(_recycledRow(), 2e18, "recycled share relocated");
-        assertEq(_held(), expected + 3e18, "both in the holder");
+        _seedDiamond(10e18); // the receiver forwarded the delivery here
+        bytes32 h = _deliverStamped(3e18, 1e18, 2e18, 7, keccak256("mirror-1"));
+        assertEq(_live(), 0, "no live credit at ingress");
+        assertEq(_recycledRow(), 0, "no recycled credit at ingress");
+        assertEq(_unclassified(), 3e18, "the whole delivery is protected");
+        assertEq(_held(), 3e18, "in the holder");
         assertEq(vpfi.balanceOf(address(diamond)), 7e18, "out of the Diamond");
-
-        uint256 holderBefore = _held();
-        vm.prank(alice);
-        (uint256 claimed, , ) = _claim().claimInteractionRewards();
-        assertApproxEqAbs(claimed, expected, 1e6, "paid");
-        assertEq(holderBefore - _held(), claimed, "from the holder");
+        LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(h);
+        assertTrue(p.attested, "attested from the wire");
+        assertEq(p.freshAttested, 1e18);
+        assertEq(p.recycledAttested, 2e18);
+        assertEq(p.freshShare + p.recycledShare, 0, "nothing credited to the shared ledgers");
+        assertTrue(p.batchId != bytes32(0), "it holds a transport epoch");
     }
 
     // ─── 5b. the UNCLASSIFIED ingress attribution (closure 2 cutover PR 1) ──
 
-    /// An untyped arrival is PROTECTED AT INGRESS: on an activated deployment
-    /// the delivery's remainder — what is neither the fresh share nor the
-    /// recycled share — leaves the Diamond's balance for the holder's
+    /// A budget arrival is PROTECTED AT INGRESS: on an activated deployment
+    /// the whole delivery leaves the Diamond's balance for the holder's
     /// `Unclassified` row the moment it lands, the figures that describe the
     /// row move with it, and the packet is recorded under its ingress stamp
     /// with the receipt bound to it.
-    function test_UntypedRemainder_IsProtectedIntoUnclassified_AtIngress() public {
+    function test_BudgetDelivery_IsProtectedIntoUnclassified_AtIngress() public {
         _becomeMirror();
         activateRewardCustodyForTest(address(vpfi), 0);
         _seedDiamond(10e18);
         bytes32 id = keccak256("pkt-1");
         bytes32 h = _packetHash(id);
         vm.expectEmit(true, false, false, true, address(diamond));
-        emit LibRewardCustody.RewardCustodyUnclassifiedCredited(h, LibRewardCustody.PACKET_KIND_BUDGET, 1e18);
-        _deliverStamped(6e18, 3e18, 2e18, 7, id);
+        emit LibRewardCustody.RewardCustodyUnclassifiedCredited(h, LibRewardCustody.PACKET_KIND_BUDGET, 6e18);
+        _deliverStamped(6e18, 4e18, 2e18, 7, id);
 
-        assertEq(_live(), 3e18, "the fresh share is live");
-        assertEq(_recycledRow(), 2e18, "the recycled share relocated");
-        assertEq(_unclassified(), 1e18, "the remainder is protected into Unclassified");
+        assertEq(_live(), 0, "no share is credited live");
+        assertEq(_recycledRow(), 0, "or recycled");
+        assertEq(_unclassified(), 6e18, "the whole delivery is protected into Unclassified");
         assertEq(_held(), 6e18, "the whole landing is in the holder");
         assertEq(vpfi.balanceOf(address(diamond)), 4e18, "and none of it rests in the Diamond");
         (uint256 uncountedHeld, uint256 returnedHeld, uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
-        assertEq(uncountedHeld, 1e18, "the row's uncounted figure");
+        assertEq(uncountedHeld, 6e18, "the row's uncounted figure");
         assertEq(returnedHeld, 0);
         assertEq(reservedHeld, 0);
         (, uint256 uncounted) = _rlens().getDeliveredFreshPosition();
-        assertEq(uncounted, 1e18, "the reconciliation twin still counts it");
+        assertEq(uncounted, 6e18, "the reconciliation twin still counts it");
 
         LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(h);
         assertEq(p.kind, LibRewardCustody.PACKET_KIND_BUDGET, "kind");
         assertEq(p.sourceChainId, CHAIN_BASE, "source");
         assertEq(p.actualReceived, 6e18, "what landed");
-        assertEq(p.freshShare, 3e18);
-        assertEq(p.recycledShare, 2e18);
-        assertEq(p.unclassified, 1e18, "what the packet holds in the row");
+        assertEq(p.freshShare, 0, "the shares credited nothing");
+        assertEq(p.recycledShare, 0);
+        assertEq(p.freshAttested, 4e18, "the wire's split is the attested caps");
+        assertEq(p.recycledAttested, 2e18);
+        assertEq(p.unclassified, 6e18, "what the packet holds in the row");
         assertEq(p.remitter, REMITTER);
         assertEq(p.remitId, 7);
         assertGt(p.arrivedAt, 0, "recorded");
@@ -1025,10 +1047,11 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(rec.srcChainId, CHAIN_BASE);
     }
 
-    /// The same delivery on a deployment whose custody is NOT activated is
-    /// byte-for-byte today's behaviour: the remainder stays in the Diamond's
-    /// balance, no row moves — and the packet is still recorded, since the
-    /// stamp is taken on every deployment.
+    /// A delivery on a deployment whose custody is NOT activated takes the
+    /// typed-ledger path: the stated fresh share is counted, the recycled
+    /// share credits the bucket, the remainder counts as uncounted, all of it
+    /// stays in the Diamond's balance and no row moves. The packet is still
+    /// recorded, since the stamp is taken on every deployment.
     function test_UntypedRemainder_StaysDiamondSide_WhenNotActivated() public {
         _remit().setRewardRemittanceReceiver(address(this));
         _seedDiamond(10e18);
@@ -1213,20 +1236,20 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     /// MIGRATION MODE (design §5c): under the manual pause the receive
     /// ingresses still land — a delivery and a quarantine both reach the
     /// holder — while every consumer is refused; after the unpause the claim
-    /// pays out of what landed.
+    /// pays from the holder. The delivery's epoch lists no indexed day, so the
+    /// live funding the claim pays from is stood in after the unpause.
     function test_MigrationMode_PausedIngressLands_AndPausedConsumersRefuse() public {
         _becomeMirror();
         activateRewardCustodyForTest(address(vpfi), 0);
         (uint256 id, uint256 expected) = _seedPayable(alice);
-        _seedDiamond(expected + 20e18);
+        _seedDiamond(2 * expected + 20e18);
         _admin().pause();
 
         _deliverStamped(expected + 3e18, expected + 1e18, 2e18, 21, keccak256("paused-1"));
-        assertEq(_live(), expected + 1e18, "landed under the pause");
-        assertEq(_recycledRow(), 2e18);
-        assertEq(_unclassified(), 0);
+        assertEq(_unclassified(), expected + 3e18, "landed under the pause");
+        assertEq(_live(), 0);
         _deliverCompensation(4e18, 22, 0, keccak256("paused-2"));
-        assertEq(_unclassified(), 4e18, "the quarantine landed under the pause too");
+        assertEq(_unclassified(), expected + 7e18, "the quarantine landed under the pause too");
 
         vm.prank(alice);
         vm.expectRevert();
@@ -1237,6 +1260,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _sweeper().sweepExpiredInteractionRewards(ids);
 
         _admin().unpause();
+        _liveCredit(expected + 1e18);
         uint256 holderBefore = _held();
         vm.prank(alice);
         (uint256 claimed, , ) = _claim().claimInteractionRewards();
@@ -1252,51 +1276,49 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     function _agg() internal view returns (RewardAggregatorFacet) {
         return RewardAggregatorFacet(address(diamond));
     }
-    /// An untyped (old-wire) delivery: no shares, the whole amount lands in
-    /// the `Unclassified` row on an activated deployment.
+    /// A delivery whose value this section classifies. On an activated
+    /// deployment the whole amount lands in the `Unclassified` row under a
+    /// transport epoch, attested from the wire as ALL RECYCLED, so a fresh
+    /// classification needs the evidence {_evidence} stands in, exactly as an
+    /// untyped arrival needed it. Before activation it states no share, so
+    /// the whole amount counts as uncounted Diamond-side.
     ///
-    /// #1566 transport epochs PR 3b — such a delivery now also opens a
-    /// TRANSPORT EPOCH, and its packet is not classifiable until that epoch is
-    /// released. This section's subject is classification, so the release is
-    /// done here rather than in each test; the gate's own behaviour — refusing
-    /// before the release and admitting after it — is pinned in
+    /// The packet is not classifiable until its epoch is released. This
+    /// section's subject is classification, so the release is done here
+    /// rather than in each test; the gate's own behaviour — refusing before
+    /// the release and admitting after it — is pinned in
     /// `RewardTransportEpochTest`, where it is the subject.
     function _untyped(uint256 amount, uint256 remitId, bytes32 id) internal {
-        _deliverStamped(amount, 0, 0, remitId, id);
+        bool activated = _custody().rewardCustodyActivated();
+        _deliverStamped(amount, 0, activated ? amount : 0, remitId, id);
         _releaseEpoch(_packetHash(id));
     }
-    /// @dev Park a batch's remainder and record the acknowledgment — the two
-    ///      halves of the release, which together are what make an old-wire
-    ///      packet classifiable.
-    /// An untyped delivery that KEEPS its transport epoch — no park, no
-    /// acknowledgment. Section 9's subject is the attestation, and an
-    /// attestation is about a packet whose epoch still stands: it is
-    /// permissionless and may land in either order with the release (design
-    /// §5c), which is exactly why the bound it feeds is derived at use time
-    /// rather than snapshotted.
-    function _untypedHeld(uint256 amount, uint256 remitId, bytes32 id) internal {
-        _deliverStamped(amount, 0, 0, remitId, id);
-    }
+    /// @dev Index the batch's one chunk, then park its remainder and record
+    ///      the acknowledgment — the two halves of the release, which together
+    ///      are what make the packet classifiable.
     function _releaseEpoch(bytes32 batchId) internal {
         RewardEpochFacet ep = RewardEpochFacet(address(diamond));
-        // #1566 transport epochs PR 3b (Codex #2232 r1) — a delivery that
-        // landed before custody was ACTIVATED opens no epoch, so there may be
-        // nothing to release. Section 7 drives both fixtures.
+        // A delivery that landed before custody was ACTIVATED opens no epoch,
+        // so there may be nothing to release. Section 7 drives both fixtures.
         (bytes32 packetHash, , , , , ) = ep.getTransportBatch(batchId);
         if (packetHash == bytes32(0)) return;
-        // #1566 transport epochs PR 3b (Codex #2232 r2) — admission is compact
-        // for every delivery, so the membership is materialized here before the
-        // remainder can be parked. Section 7's deliveries all name one day.
         uint256[] memory one = new uint256[](1);
         one[0] = 1;
-        ep.materializeTransportBatchPage(batchId, one);
+        LibD6Delivery.indexChunk(address(diamond), batchId, one, RemitWire.d6Chunks(one), 0);
         // #2258 — the production release is shut in 3b-i; the classification
         // tests here need a released batch, which only the raw entry gives.
         _mut().releaseTransportBatchRaw(batchId);
     }
-    /// The packet's authenticated fresh figure, as the transport attestation
-    /// would write it (the test-only writer; production has none yet).
+    /// The packet's authenticated fresh figure. On a released epoch the bound
+    /// is derived from the attested caps, so the evidence is written there
+    /// (the rest of what landed attested recycled); a packet that holds no
+    /// epoch reads the wire-typed figure, which is written in both cases.
     function _evidence(bytes32 h, uint256 amount) internal {
+        LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(h);
+        if (p.batchId != bytes32(0)) {
+            uint256 landed = p.actualReceived;
+            _mut().setPacketAttestedCapsRaw(h, amount, landed > amount ? landed - amount : 0);
+        }
         _mut().setPacketFreshAuthenticatedRaw(h, amount);
     }
     function _classify(bytes32 h, uint256 f, uint256 r, bytes32 entryId) internal {
@@ -2090,7 +2112,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(_spentOf(0).recycledInheritable, 0);
         // A fresh outflow, covered by delivered fresh backing, before any
         // fresh classification exists.
-        _deliverStamped(expected + 1e18, expected + 1e18, 0, 53, keccak256("D")); // counted: live backing
+        _liveCredit(expected + 1e18); // counted: live backing
         uint256 claimed = _claimDriven(); // the untyped delivery listed a batch: the slice is driven home first
         assertGt(claimed, 0);
         _untyped(10e18, 54, keccak256("F"));
@@ -2436,7 +2458,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         uint256 dust = expected - claimed; // the claim rounds a few wei below the quote
         assertEq(_live(), dust);
         _seedDiamond(10e18);
-        _deliverStamped(10e18, 10e18, 0, 71, keccak256("D-later")); // an unrelated later credit, counted
+        _liveCredit(10e18); // an unrelated later credit, counted
         assertEq(_live(), 10e18 + dust);
         RewardReconciliationFacet.Spent memory sp = _spentOf(0);
         assertEq(sp.freshSpent, claimed, "still spent: the record does not read the balance");
@@ -2522,7 +2544,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         (uint256 received, ) = _ledger();
         _mut().setArmedFreshLedgerRaw(received, received + 6e18);
         _seedDiamond(6e18);
-        _deliverStamped(6e18, 6e18, 0, 75, keccak256("D-refill"));
+        _liveCredit(6e18); // an unrelated counted credit
         assertEq(_row(LibVaipakam.RewardCustodyRow.Restitution), 6e18, "the row refilled by another credit");
         RewardReconciliationFacet.Spent memory sp = _spentOf(0);
         assertEq(sp.freshAbsorbed, 0, "the released record is not re-absorbed");
@@ -2894,14 +2916,8 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(frontier, 0);
     }
 
-    // ─── 9. the attested split + the day-list commitment (#1566 epochs 3a) ───
+    // ─── 9. the attested split + the day-list commitment ─────────────────────
 
-    /// A mock messenger installed as this Diamond's reward messenger, so a
-    /// split attestation can be delivered exactly as the transport delivers it.
-    function _attestMessenger() internal returns (MockRewardMessenger m) {
-        m = new MockRewardMessenger(address(diamond));
-        _rep().setRewardMessenger(address(m));
-    }
     function _dayCommitment(uint256 day) internal pure returns (bytes32) {
         uint256[] memory one = new uint256[](1);
         one[0] = day;
@@ -2911,156 +2927,65 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         return _rlens().getIngressPacket(_packetHash(id));
     }
 
-    /// PR 3a — every arrival on a wire older than d6 commits to its day list
-    /// in the same transaction as the record: a budget delivery's list, and a
-    /// compensation's one day. An arrival attests nothing by itself.
+    /// Every arrival commits to its day list in the same transaction as the
+    /// record. A budget delivery records the ROOT over its list's chunks, the
+    /// extent and the era its wire names, and on an activated deployment its
+    /// split is attested from that wire. A compensation, which names one day,
+    /// records the flat commitment to it as provenance.
     function test_Ingress_CommitsToItsDayList() public {
         _activatedMirror();
         _seedDiamond(14e18); // the 10 budget delivery below, then the 4 compensation
         bytes32 id = keccak256("dl");
+        uint256[] memory one = new uint256[](1);
+        one[0] = 1;
+        bytes32 root = RemitWire.d6Root(RemitWire.d6Chunks(one));
         vm.expectEmit(true, false, false, true, address(diamond));
-        emit LibRewardCustody.IngressPacketDayListRecorded(_packetHash(id), _dayCommitment(1), 1);
-        _untyped(10e18, 200, id);
+        emit LibRewardCustody.IngressPacketDayListRooted(_packetHash(id), root, 1, 1, 0);
+        _deliverStamped(10e18, 6e18, 4e18, 200, id);
         LibVaipakam.IngressPacket memory p = _pkt(id);
-        assertEq(p.dayListHash, _dayCommitment(1), "the budget delivery's day list");
+        assertEq(p.dayListRoot, root, "the budget delivery's day-list root");
+        assertEq(p.dayListHash, bytes32(0), "and no flat commitment");
         assertEq(p.dayCount, 1);
-        assertFalse(p.attested);
-        assertEq(p.freshAttested + p.recycledAttested, 0);
+        assertEq(p.chunkCount, 1);
+        assertTrue(p.attested, "the split is attested from the wire");
+        assertEq(p.freshAttested, 6e18);
+        assertEq(p.recycledAttested, 4e18);
         bytes32 cid = keccak256("dl-comp");
         _deliverCompensation(4e18, 201, 0, cid);
         p = _pkt(cid);
         assertEq(p.dayListHash, _dayCommitment(3), "the compensation's one day");
+        assertEq(p.dayListRoot, bytes32(0));
         assertEq(p.dayCount, 1);
     }
 
-    /// PR 3a — the attestation persists BOTH caps, scaled to what landed by
-    /// the same proportional flooring the d5 receiver applies, once. It is
-    /// DARK: the bound a classification reads is unchanged, so a fresh
-    /// classification still refuses, and — Codex #2217 r3 — nothing is
-    /// SNAPSHOTTED into the packet's authenticated figure: the caps stay
-    /// immutable and the bound is derived from them at use time, so a late
-    /// attestation is effective whenever the batch lifecycle admits it.
-    function test_Attest_ScalesBothCaps_StaysDarkUntilReleased_AndSnapshotsNothing() public {
+    /// The wire-attested split is DARK until the epoch is released: while the
+    /// epoch stands the packet is not classifiable at all, and nothing is
+    /// SNAPSHOTTED into the packet's authenticated figure (Codex #2217 r3) —
+    /// the caps stay immutable and the bound is derived from them at use
+    /// time. Once released, the bound is the attested fresh cap net of the
+    /// batch's own fresh leg, and a classification past it is refused for
+    /// the reason it always was.
+    function test_AttestedSplit_StaysDarkUntilReleased_AndSnapshotsNothing() public {
         _activatedMirror();
         _seedDiamond(10e18);
-        MockRewardMessenger m = _attestMessenger();
         bytes32 id = keccak256("att");
-        _untypedHeld(10e18, 210, id); // a d2-shaped arrival: a receipt, no split on the wire
-        bytes32 h = _packetHash(id);
-        vm.expectEmit(true, true, true, true, address(diamond));
-        emit LibRewardCustody.IngressPacketSplitAttested(h, REMITTER, 210, 6e18, 4e18);
-        // The source's record: 60/40 of the 100 it sent; 10 landed here.
-        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 210, 60e18, 40e18);
-        LibVaipakam.IngressPacket memory p = _pkt(id);
-        assertTrue(p.attested);
-        assertEq(p.freshAttested, 6e18, "fresh, scaled to what landed");
-        assertEq(p.recycledAttested, 4e18, "recycled, scaled to what landed");
-        assertEq(p.freshAuthenticated, 0, "nothing snapshotted: the bound is derived, not written");
-        assertEq(_authenticated(h), 0, "dark: the derived bound is unchanged");
-        // #1566 transport epochs PR 3b — while the epoch stands the packet is
-        // not classifiable AT ALL, so the refusal here is the epoch gate and
-        // no longer the evidence bound. The evidence refusal is still real and
-        // is reached below, once the release lets a classification get that
-        // far: an attestation lifts no bound by itself, and neither does a
-        // release.
+        bytes32 h = _deliverStamped(10e18, 6e18, 4e18, 210, id);
+        assertEq(_pkt(id).freshAuthenticated, 0, "nothing snapshotted: the bound is derived, not written");
+        assertEq(_authenticated(h), 0, "dark: the derived bound reads nothing yet");
         _admin().pause();
         vm.expectRevert(abi.encodeWithSelector(TransportBatchNotReleased.selector, h, h));
         _recon().classifyLegacyPacket(h, 1e18, 0, keccak256("e-att"));
         _admin().unpause();
-        // Codex #2224 r2 — the source entry is deliberately re-sendable, so an
-        // IDENTICAL retry (a caller who cannot tell whether the first landed)
-        // is a no-op and changes nothing. Only a DIVERGENT second record is
-        // refused: the first attestation is the source's, and a differing one
-        // is a faulty source, never a correction.
-        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 210, 60e18, 40e18);
-        p = _pkt(id);
-        assertEq(p.freshAttested, 6e18, "the identical retry changed nothing");
-        assertEq(p.recycledAttested, 4e18);
-        assertTrue(p.attested);
-        // The same ratio expressed differently is the SAME record, and lands.
-        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 210, 6e18, 4e18);
-        assertEq(_pkt(id).freshAttested, 6e18, "an equivalent record is the same record");
-        vm.expectRevert(abi.encodeWithSelector(IngressPacketAlreadyAttested.selector, h));
-        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 210, 50e18, 50e18);
 
-        // #1566 transport epochs PR 3b — the OTHER side of the seam, which is
-        // what 3a built these two predicates for and could not yet exercise.
-        // Releasing the packet's transport epoch makes the derived bound the
-        // attested cap, NET of the batch's own fresh leg (still zero: no draw
-        // exists until 3b-ii). Nothing was snapshotted along the way, so the
-        // order of attestation and release never mattered — which is the
-        // property the derivation exists to guarantee.
         _releaseEpoch(h);
         assertEq(_authenticated(h), 6e18, "released: the derived bound is the attested cap");
         assertEq(_pkt(id).freshAuthenticated, 0, "and still nothing is snapshotted");
         _admin().pause();
-        // The evidence bound is still a bound, and it is the attested cap:
-        // past it the classification is refused for the reason it always was.
         vm.expectRevert(abi.encodeWithSelector(ReconciliationFreshUnevidenced.selector, h, 7e18, 6e18));
         _recon().classifyLegacyPacket(h, 7e18, 0, keccak256("e-att-over"));
         _recon().classifyLegacyPacket(h, 1e18, 0, keccak256("e-att"));
         _admin().unpause();
         assertEq(_pkt(id).classifiedFresh, 1e18, "the fresh share the evidence now admits");
-    }
-
-    /// PR 3a — a short delivery shrinks BOTH caps and neither underflows:
-    /// 7 landed of a 30 sent as 20 fresh / 10 recycled floors to 4.66 / 2.33.
-    function test_Attest_FloorsBothCapsOnAShortDelivery() public {
-        _activatedMirror();
-        _seedDiamond(7e18);
-        MockRewardMessenger m = _attestMessenger();
-        bytes32 id = keccak256("att-short");
-        _untypedHeld(7e18, 211, id);
-        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 211, 20e18, 10e18);
-        LibVaipakam.IngressPacket memory p = _pkt(id);
-        assertEq(p.freshAttested, (uint256(7e18) * 20) / 30);
-        assertEq(p.recycledAttested, (uint256(7e18) * 10) / 30);
-        assertLe(p.freshAttested + p.recycledAttested, 7e18, "the caps never exceed what landed");
-    }
-
-    /// PR 3a — the refusals, each re-executable and writing nothing: a packet
-    /// whose own wire carried its split; an unknown receipt; a receipt whose
-    /// delivery came from another chain; an empty split; a caller other than
-    /// the messenger; and the canonical send refused on a mirror.
-    function test_Attest_RefusesWhatItCannotAttest() public {
-        _activatedMirror();
-        _seedDiamond(30e18);
-        MockRewardMessenger m = _attestMessenger();
-        bytes32 typed = keccak256("typed");
-        _deliverStamped(10e18, 6e18, 4e18, 220, typed); // d5: the wire carried the split
-        vm.expectRevert(abi.encodeWithSelector(IngressPacketAlreadyTyped.selector, _packetHash(typed)));
-        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 220, 6e18, 4e18);
-        vm.expectRevert(abi.encodeWithSelector(ReceivedRemitNotFound.selector, 999));
-        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 999, 1, 1);
-        bytes32 id = keccak256("att-2");
-        _untypedHeld(10e18, 221, id);
-        // Codex #2224 r6 — an attestation from a chain that is not this
-        // mirror's canonical chain is refused on the RECEIVING-DOMAIN rule,
-        // before any receipt is consulted: messenger authentication proves a
-        // configured peer sent it, never that the peer is the right source
-        // for this kind.
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                SplitAttestationNotFromBase.selector, uint32(CHAIN_BASE) + 1, uint32(CHAIN_BASE)
-            )
-        );
-        m.deliverSplitAttestation(uint32(CHAIN_BASE) + 1, REMITTER, 221, 1, 1);
-        vm.expectRevert(abi.encodeWithSelector(SplitAttestationEmpty.selector, 221));
-        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 221, 0, 0);
-        vm.expectRevert(NotAuthorizedRewardMessenger.selector);
-        _ingress().onRemitSplitAttested(uint32(CHAIN_BASE), REMITTER, 221, 1, 1);
-        vm.expectRevert(NotCanonicalRewardChain.selector);
-        _remit().attestRemitSplit(221, payable(address(this)));
-        assertFalse(_pkt(id).attested, "a refusal wrote nothing");
-    }
-
-    /// PR 3a — attestations flow toward a mirror only: the canonical chain's
-    /// own ingress refuses one.
-    function test_Attest_OnlyAMirrorAcceptsIt() public {
-        _becomeCanonical();
-        MockRewardMessenger m = _attestMessenger();
-        vm.expectRevert(OnlyMirrorRewardChain.selector);
-        m.deliverSplitAttestation(uint32(CHAIN_BASE), REMITTER, 1, 1, 1);
     }
 
     // ─── 6. the transports ───────────────────────────────────────────────────

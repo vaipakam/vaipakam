@@ -18,29 +18,6 @@ import {
 
 /// @dev Records the reward-ingress calls — stands in for a Vaipakam Diamond.
 contract MockRewardDiamond {
-    // #1566 transport epochs PR 3a — split attestation spies.
-    uint32 public lastAttestSrc;
-    address public lastAttestRemitter;
-    uint256 public lastAttestRemitId;
-    uint256 public lastAttestFresh;
-    uint256 public lastAttestRecycled;
-    uint256 public attestCount;
-
-    function onRemitSplitAttested(
-        uint32 src,
-        address remitter,
-        uint256 remitId,
-        uint256 fresh,
-        uint256 recycled
-    ) external {
-        lastAttestSrc = src;
-        lastAttestRemitter = remitter;
-        lastAttestRemitId = remitId;
-        lastAttestFresh = fresh;
-        lastAttestRecycled = recycled;
-        attestCount += 1;
-    }
-
     uint32 public lastReportChain;
     uint256 public lastReportDay;
     uint256 public lastReportLender;
@@ -814,57 +791,20 @@ contract VaipakamRewardFlowTest is Test {
         );
     }
 
-    // ─── #1566 transport epochs PR 3a — the split attestation wire (kind 12) ──
+    // ─── the retired split attestation (kind 12) ─────────────────────────────
 
-    function test_Receive_SplitAttestation_ForwardsToTheMirrorIngress() public {
+    /// Kind 12 was the Base → mirror split attestation, retired with the
+    /// pre-d6 remit wires (generation 7): a stale sender's attestation is
+    /// refused as an unknown kind, and nothing reaches the mirror's ingress.
+    function test_Receive_RetiredSplitAttestation_IsAnUnknownKind() public {
         vm.prank(address(messengerMirror));
+        vm.expectRevert(abi.encodeWithSelector(VaipakamRewardMessenger.UnknownMessageType.selector, uint8(12)));
         rewardMirror.onCrossChainMessage(
             BASE,
             address(rewardBase),
             abi.encode(uint8(12), address(0xBA5E), uint256(7), uint256(60), uint256(40)),
             _empty()
         , bytes32(0));
-        assertEq(diamondMirror.attestCount(), 1);
-        assertEq(uint256(diamondMirror.lastAttestSrc()), uint256(BASE));
-        assertEq(diamondMirror.lastAttestRemitter(), address(0xBA5E));
-        assertEq(diamondMirror.lastAttestRemitId(), 7);
-        assertEq(diamondMirror.lastAttestFresh(), 60);
-        assertEq(diamondMirror.lastAttestRecycled(), 40);
-    }
-
-    function test_Receive_SplitAttestation_RevertOnCanonical() public {
-        vm.prank(address(messengerBase));
-        vm.expectRevert(VaipakamRewardMessenger.AttestationOnCanonical.selector);
-        rewardBase.onCrossChainMessage(
-            MIRROR,
-            address(rewardMirror),
-            abi.encode(uint8(12), address(0xBA5E), uint256(7), uint256(60), uint256(40)),
-            _empty()
-        , bytes32(0));
-    }
-
-    function test_Receive_SplitAttestation_WrongSize_Rejected() public {
-        bytes memory four = abi.encode(uint8(12), address(0xBA5E), uint256(7), uint256(60));
-        vm.prank(address(messengerMirror));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VaipakamRewardMessenger.PayloadSizeMismatch.selector,
-                4 * 32,
-                5 * 32
-            )
-        );
-        rewardMirror.onCrossChainMessage(BASE, address(rewardBase), four, _empty(), bytes32(0));
-    }
-
-    function test_Send_SplitAttestation_EncodesTheKindAndFigures() public {
-        uint256 fee = rewardBase.quoteSendSplitAttestation(uint32(MIRROR), address(diamondBase), 7, 60, 40);
-        vm.deal(address(diamondBase), fee + 1 ether);
-        vm.prank(address(diamondBase));
-        vm.expectEmit(false, true, false, true, address(rewardBase));
-        emit VaipakamRewardMessenger.SplitAttestationSent(bytes32(0), 7, uint32(MIRROR), 60, 40);
-        rewardBase.sendSplitAttestation{value: fee}(
-            uint32(MIRROR), address(diamondBase), 7, 60, 40, payable(owner)
-        );
     }
 
     function test_Receive_BroadcastV2_RevertOnCanonical() public {
