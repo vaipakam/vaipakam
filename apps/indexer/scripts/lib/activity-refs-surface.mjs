@@ -35,161 +35,37 @@ const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
 const ABI_DIR = join(REPO_ROOT, 'packages', 'contracts', 'src', 'abis');
 
 /**
- * Events deliberately NOT reference-scoped, each with a reason.
- *
- * Two kinds of entry, and the difference is honest debt-tracking rather than
- * decoration:
- *
- *   - a plain reason — the event genuinely does not belong on a loan/offer
- *     timeline (a companion payload, an internal bookkeeping breadcrumb).
- *   - a `TODO(#1794)` prefix — the event SHOULD be scoped and is not yet.
- *     These are the real gaps, enumerable with a grep, and each is meant to
- *     leave this list in a later slice. Allowlisting them without the marker
- *     would bury 40-odd real gaps behind the word "deliberately".
- *
- * Keyed `EventName` for both fields, or `EventName.loanId` / `.offerId` to
- * exempt a single field of an event that is mapped for the other.
+ * THE POLICY lives in `src/activityRefsPolicy.json` (#1794) and is read here
+ * and by the runtime (`src/activityRefs.ts`) from that one file, so the rule
+ * this guardrail checks and the rule the indexer runs cannot drift apart.
+ * Until #1794 the guardrail held the policy and the indexer held a separate
+ * hand-written `case` per event; the 60 `TODO(#1794)` entries that used to
+ * sit here were the distance between the two.
  */
+const POLICY_PATH = join(__dirname, '..', '..', 'src', 'activityRefsPolicy.json');
+const POLICY = JSON.parse(readFileSync(POLICY_PATH, 'utf8'));
+
 /**
- * Validated below: every entry must carry a NON-EMPTY reason.
+ * Pairs deliberately NOT reference-scoped: `'<Event>.<field>'` → the reason.
  *
- * Membership-only checks accepted `''` (Codex round-12 P2), which silently turns
- * "deliberately unscoped, and here is why" into "unscoped" — the exact thing the
- * TODO marker exists to prevent, achieved by deleting the text rather than
- * omitting the entry.
+ * Only companion payloads belong here: an event whose primary event in the
+ * same transaction already carries the reference, so scoping both would put
+ * one action on the timeline twice. "Not something a user reads" is NOT a
+ * reason to exempt — the column says which loan an event concerns, and what a
+ * screen shows is decided on `kind` by its consumer.
+ *
+ * Each entry also records the ABI inputs it was granted against
+ * (`NOT_SCOPED_ALIASES`, #1807): when the event's reference inputs change,
+ * the reason may no longer describe them, so `exemptionAliasDrift` reports
+ * the entry until someone restates it.
  */
-export const DELIBERATELY_NOT_SCOPED = {
-  // ── genuinely not loan/offer-scoped ────────────────────────────────────
-  'LoanInitiatedDetails.loanId':
-    'companion payload to LoanInitiated, consumed to build the loans row — the LoanInitiated row already carries the loan reference, so a second row for the same event pair would double-count the timeline',
-  'FeeEntitlementStamped.loanId':
-    'fee-entitlement bookkeeping stamped at accept — an internal accounting record, not an event a user reads on a loan timeline',
-  'FeeEntitlementRepriced.loanId':
-    'twin of FeeEntitlementStamped — governance retune bookkeeping, not user-facing loan activity',
-  'NotificationFeeBilled.loanId':
-    'per-notification billing record — belongs to the notification subsystem, not the loan timeline',
-
-  // ── TODO(#1794): real gaps, awaiting per-slice mapping ─────────────────
-  // Grep `TODO(#1794)` for the live backlog. Ordered roughly by how clearly
-  // user-facing they are, since that is the order the slices should take.
-  // Surfaced by the alias table (Codex round-2 P2) — it carries `oldLoanId` /
-  // `newLoanId` and no exact `loanId`, so it had been outside the guardrail
-  // entirely. Left as a TODO rather than mapped here because the choice is
-  // genuinely ambiguous and deserves a deliberate decision: a refinance leaves
-  // TWO loan records (the old one terminalized Repaid, a new one created), and
-  // `activity_events` has one `loan_id` column. Mapping it to the old loan makes
-  // the row appear on the position the user is leaving; mapping it to the new
-  // one makes it appear on the position they end up with. Both are defensible
-  // and the slice that maps it should say which and why.
-  'LoanRefinanced.loanId':
-    'TODO(#1794) — refinance; needs a decision on old-vs-new loan for the single loan_id column',
-  'LoanSold.loanId': 'TODO(#1794) — direct lender sale; plainly loan-timeline material',
-  'LoanSaleCompleted.loanId': 'TODO(#1794) — listed lender sale completion; plainly loan-timeline material',
-  'LoanSaleOfferLinked.loanId': 'TODO(#1794) — sale listing bound to a loan',
-  'LoanSaleOfferLinked.offerId': 'TODO(#1794) — the same binding, sale-offer side (saleOfferId)',
-  'LoanSaleListingTornDown.loanId': 'TODO(#1794) — sale listing withdrawn',
-  'LoanSaleListingTornDown.offerId': 'TODO(#1794) — listing withdrawn, sale-offer side (saleOfferId)',
-  'LoanPreclosedDirect.loanId': 'TODO(#1794) — borrower early close-out',
-  'LoanObligationTransferred.loanId': 'TODO(#1794) — obligation handover to a replacement borrower',
-  // The offset route. Both entered scope with the round-3 shape derivation: they
-  // name their references `originalLoanId` / `newOfferId`, so the earlier
-  // enumerated alias table could not see either event at all. `chainIndexer.ts`
-  // already handles both for STATE (terminalising the loan, flagging the offset
-  // vehicle) and `flipLoanStatus` even carries a `loanIdOverride` parameter
-  // documented for `OffsetCompleted.originalLoanId` — so the indexer knew about
-  // this naming before the guardrail did.
-  // The two loan-side entries carry the SAME open choice as the refinance: an
-  // offset leaves the original loan and the position that replaces it, against one
-  // loan_id column. The two offer-side entries do not — `newOfferId` is
-  // unambiguously the vehicle offer — so they are ordinary TODOs.
-  'OffsetCompleted.loanId':
-    'TODO(#1794) — offset completed; needs the same original-vs-replacement decision as the refinance for the single loan_id column',
-  'OffsetCompleted.offerId': 'TODO(#1794) — offset completion, vehicle-offer side (newOfferId)',
-  'OffsetOfferCreated.loanId':
-    'TODO(#1794) — offset vehicle offer created; same original-vs-replacement decision as above',
-  'OffsetOfferCreated.offerId': 'TODO(#1794) — the offset vehicle offer itself (newOfferId)',
-  'CollateralAdded.loanId': 'TODO(#1794) — borrower collateral top-up',
-  'PartialCollateralWithdrawn.loanId': 'TODO(#1794) — surplus collateral release',
-  'CollateralConsolidated.loanId': 'TODO(#1794) — collateral consolidation to the NFT holder',
-  'HFLiquidationTriggered.loanId': 'TODO(#1794) — health-factor liquidation; the loans row IS flipped (#1293), only the activity reference is missing',
-  'LiquidationDiscounted.loanId': 'TODO(#1794) — twin of HFLiquidationTriggered',
-  'LoanPartiallyLiquidated.loanId': 'TODO(#1794) — partial liquidation',
-  'LiquidationFallback.loanId': 'TODO(#1794) — liquidation fallback entry',
-  'LiquidationFallbackSplit.loanId': 'TODO(#1794) — split-route liquidation fallback',
-  'LiquidationFallbackOracleUnavailable.loanId': 'TODO(#1794) — fallback taken because the oracle was unavailable',
-  'LoanFallbackPending.loanId': 'TODO(#1794) — fallback episode opened',
-  'LoanCuredFromFallback.loanId': 'TODO(#1794) — fallback episode cured',
-  // Dual-carrying: split per field so mapping one cannot mask a regression on
-  // the other (Codex round-1 P2).
-  'BackstopFilled.loanId': 'TODO(#1794) — backstop fill against a loan',
-  'BackstopFilled.offerId': 'TODO(#1794) — backstop fill, offer side',
-  'BackstopLoanClaimed.loanId': 'TODO(#1794) — backstop claim',
-  'LenderBackstopOptInSet.loanId': 'TODO(#1794) — per-loan backstop opt-in',
-  'BorrowerSurplusClaimed.loanId': 'TODO(#1794) — borrower surplus claim',
-  'ClaimRetryExecuted.loanId': 'TODO(#1794) — claim retry',
-  'SanctionedProceedsLocked.loanId': 'TODO(#1794) — proceeds withheld from a flagged party',
-  'OfferSaleProceedsSplit.loanId': 'TODO(#1794) — proceeds split, loan side',
-  'OfferSaleProceedsSplit.offerId': 'TODO(#1794) — proceeds split, offer side',
-  'IntentMatched.loanId': 'TODO(#1794) — standing-intent match',
-  'IntentMatched.offerId':
-    'TODO(#1794) — standing-intent match, offer side; carries sliceOfferId AND counterpartyOfferId, so the slice must pick one and say why',
-  'SignedOfferFilled.loanId': 'TODO(#1794) — gasless signed offer filled, loan side',
-  'SignedOfferFilled.offerId': 'TODO(#1794) — gasless signed offer filled, offer side',
-  'SignedOfferMatched.loanId': 'TODO(#1794) — gasless signed offer matched',
-  'SignedOfferMatched.offerId':
-    'TODO(#1794) — signed-offer match, offer side; same sliceOfferId / counterpartyOfferId choice as IntentMatched',
-  'AutoDailyDeducted.loanId': 'TODO(#1794) — NFT-rental daily deduction',
-  'AutoExtendBorrowerCapsChanged.loanId': 'TODO(#1794) — borrower auto-extend caps',
-  'AutoExtendLenderCapsChanged.loanId': 'TODO(#1794) — lender auto-extend caps',
-  'AutoRefinanceCapsChanged.loanId': 'TODO(#1794) — auto-refinance caps',
-  'AutoListOptOutCleared.loanId': 'TODO(#1794) — auto-list opt-out cleared',
-  'LoanKeeperEnabled.loanId': 'TODO(#1794) — per-loan keeper authorization',
-  'PrepaySaleListingSynced.loanId': 'TODO(#1794) — sanctions-sync breadcrumb on a loan-keyed listening',
-  'SwapAdapterAttempted.loanId': 'TODO(#1794) — swap adapter attempt',
-  'SwapAdapterSucceeded.loanId': 'TODO(#1794) — swap adapter success',
-  'SwapAllAdaptersFailed.loanId': 'TODO(#1794) — every swap adapter failed',
-  'VPFIDiscountApplied.loanId': 'TODO(#1794) — VPFI fee discount applied',
-  'VPFIYieldFeeDiscountApplied.loanId': 'TODO(#1794) — VPFI yield-fee discount applied',
-
-  // NB: FlashLoanLiquidationCompleted and LoanClaimedAndCompounded are NOT
-  // listed. They exist only in standalone ABIs (FlashLoanLiquidator,
-  // AggregatorAdapterImplementation) that the barrel never spreads into
-  // DIAMOND_ABI, so no log carrying them can reach pluckActivityRefs. They were
-  // phantom backlog admitted by an over-broad directory scan (Codex round-1 P2);
-  // the stale-entry check now flags them if re-added.
-
-  // ── offerId side ───────────────────────────────────────────────────────
-  // Genuinely not offer-scoped: companion payloads whose primary event already
-  // carries the reference, so scoping both would double-count the timeline.
-  // Same rationale as LoanInitiatedDetails above.
-  'OfferCreatedDetails.offerId': 'companion payload to OfferCreated, which is offer-scoped already',
-  // Entered scope with the round-6 tuple traversal: the loan reference is
-  // `fields.refinanceTargetLoanId`, nested in the terms struct. Marked TODO
-  // rather than exempt because it is a genuine question, not a companion-payload
-  // case like the offer side: that id is the loan a refinance offer TARGETS, not
-  // a loan this event happened to. Filing the row under it would put an offer
-  // creation on the target loan's timeline, which may well be what a reader
-  // wants — but that is a product call for the slice that makes it.
-  'OfferCreatedDetails.loanId':
-    'TODO(#1794) — refinance TARGET loan inside the terms tuple; scoping it puts an offer creation on that loan timeline, which needs a deliberate decision',
-  'OfferCanceledDetails.offerId': 'companion payload to OfferCanceled, which is offer-scoped already',
-
-  // TODO(#1794): real gaps on the offer side. NOTE these are NOT the same
-  // question as `check-event-coverage.mjs`'s DELIBERATELY_NOT_HANDLED — that
-  // list is about driving a typed `offers` row, this one is about being findable
-  // on an offer's activity feed. An event can legitimately not mutate the row
-  // and still belong on the timeline, so their reasons do not transfer.
-  'OfferClosed.offerId':
-    'TODO(#1794) — offer-lifecycle terminal, and it IS handled (chainIndexer.ts:1253 flips the row + stamps cancelled_at). Handled but unscoped is the sharpest shape of this bug: the projection is right while the audit trail cannot find the event.',
-  'OfferCreatorFullTariffSet.offerId': 'TODO(#1794) — per-offer fee-tariff opt-in',
-  'OfferKeeperEnabled.offerId': 'TODO(#1794) — per-offer keeper authorization',
-  'OfferBackstopEligibilitySet.offerId': 'TODO(#1794) — per-offer backstop eligibility; no indexer reference at all today',
-  'OfferSaleProceedsCredited.offerId': 'TODO(#1794) — proceeds credited to the borrower vault on a sale',
-  'PostParallelSaleListing.offerId': 'TODO(#1794) — parallel-sale listing posted',
-  'ParallelSaleLockReleased.offerId': 'TODO(#1794) — parallel-sale binding unwound',
-  'PrepaySaleOfferSynced.offerId': 'TODO(#1794) — sanctions-sync breadcrumb on an offer-keyed listing',
-};
-
+export const DELIBERATELY_NOT_SCOPED = Object.fromEntries(
+  Object.entries(POLICY.notScoped).map(([k, v]) => [k, v?.why]),
+);
+/** `'<Event>.<field>'` → the ABI input paths the exemption was granted for. */
+export const NOT_SCOPED_ALIASES = Object.fromEntries(
+  Object.entries(POLICY.notScoped).map(([k, v]) => [k, v?.aliases]),
+);
 
 export const REF_FIELDS = ['loanId', 'offerId'];
 
@@ -263,8 +139,9 @@ export const REF_SHAPE = {
   // The tail must still START uppercase, which is the whole reason a PLURAL is
   // excluded: `loanIds` continues after `loanId` in lower case, so it is an
   // array rather than a single reference and must not be treated as one.
-  loanId: /^[A-Za-z0-9_]*[Ll]oanId(?:[0-9]+)?(?:[A-Z][A-Za-z0-9_]*)?$/,
-  offerId: /^[A-Za-z0-9_]*[Oo]fferId(?:[0-9]+)?(?:[A-Z][A-Za-z0-9_]*)?$/,
+  // The patterns themselves are in the policy file, shared with the runtime.
+  loanId: new RegExp(POLICY.refShape.loanId),
+  offerId: new RegExp(POLICY.refShape.offerId),
 };
 
 /**
@@ -273,10 +150,7 @@ export const REF_SHAPE = {
  * compiled bundle is shape-derivable. Add here with a reason rather than
  * widening the regexes, which would start matching unrelated inputs.
  */
-export const REF_EXTRA_ALIASES = {
-  loanId: [],
-  offerId: [],
-};
+export const REF_EXTRA_ALIASES = POLICY.extraAliases;
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -292,17 +166,9 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * entry, and fails an entry whose pair is no longer carried, no longer
  * multi-alias, or no longer mapped.
  */
-export const INTENDED_REFERENCE_ALIAS = {
-  // #600 — a matcher-driven fill calls acceptOfferInternal(borrowerOfferId),
-  // so the companion OfferAccepted already attributes the loan to the
-  // BORROWER offer; this event is the LENDER offer's only link to its matched
-  // child, and the row is deliberately indexed under it.
-  'OfferMatched.offerId': 'lenderOfferId',
-  // Leg A is the canonical loanId for the activity row (the dashboard's
-  // loan-timeline query keys on this column); legs B and the optional C stay
-  // in args_json for clients that need the full multi-leg payload.
-  'InternalMatchExecuted.loanId': 'loanIdA',
-};
+export const INTENDED_REFERENCE_ALIAS = Object.fromEntries(
+  Object.entries(POLICY.intendedAlias).map(([k, v]) => [k, v?.path]),
+);
 
 /** Does this ABI input name populate `field`? */
 export const isAliasOf = (field, name) =>
@@ -728,35 +594,66 @@ export function deriveActivityRefsSurface() {
     }
   }
 
-  // Every allowlist entry must state a reason (Codex round-12 P2) and be keyed
+  // Every policy entry must state a reason (Codex round-12 P2) and be keyed
   // '<Event>.<field>' (rounds 1 + 20): an event-wide key follows the event
   // through an ABI rename and silently exempts whatever reference it carries
-  // next, while its stated reason still describes the old one.
+  // next, while its stated reason still describes the old one. An exemption
+  // must also name the inputs it was granted for (#1807), and a choice the
+  // input it chooses.
   {
-    const blank = Object.entries(DELIBERATELY_NOT_SCOPED)
-      .filter(([, reason]) => typeof reason !== 'string' || reason.trim() === '')
-      .map(([key]) => key);
-    if (blank.length) {
-      throw new Error(
-        '[activity-refs surface] allowlist entries with no stated reason:\n' +
-          blank.map((k) => `    ${k}`).join('\n') +
-          '\n  An exemption without a reason is an undocumented gap wearing the word\n' +
-          '  "deliberately". Give it a reason, or a TODO(#1794) marker if it is a gap.',
-      );
-    }
-    const wrongShape = Object.keys(DELIBERATELY_NOT_SCOPED).filter((key) => {
+    const problems = [];
+    const keyOk = (key) => {
       const dot = key.indexOf('.');
-      const field = dot === -1 ? null : key.slice(dot + 1);
-      return !field || !REF_FIELDS.includes(field);
-    });
-    if (wrongShape.length) {
+      return dot !== -1 && REF_FIELDS.includes(key.slice(dot + 1));
+    };
+    for (const [key, v] of Object.entries(POLICY.notScoped ?? {})) {
+      if (!keyOk(key)) problems.push(`notScoped ${key} — key must be '<Event>.<${REF_FIELDS.join('|')}>'`);
+      if (typeof v?.why !== 'string' || v.why.trim() === '')
+        problems.push(`notScoped ${key} — no stated reason`);
+      if (!Array.isArray(v?.aliases) || v.aliases.length === 0 || v.aliases.some((a) => typeof a !== 'string' || !a))
+        problems.push(`notScoped ${key} — must list the ABI input path(s) it was granted for`);
+    }
+    for (const [key, v] of Object.entries(POLICY.intendedAlias ?? {})) {
+      if (!keyOk(key)) problems.push(`intendedAlias ${key} — key must be '<Event>.<${REF_FIELDS.join('|')}>'`);
+      if (typeof v?.path !== 'string' || v.path === '') problems.push(`intendedAlias ${key} — no input path`);
+      if (typeof v?.why !== 'string' || v.why.trim() === '')
+        problems.push(`intendedAlias ${key} — no stated reason`);
+    }
+    if (problems.length) {
       throw new Error(
-        '[activity-refs surface] allowlist entries must be keyed\n' +
-          `  '<Event>.<field>' with field one of ${REF_FIELDS.join(' / ')}:\n` +
-          wrongShape.map((k) => `    ${k}`).join('\n'),
+        '[activity-refs surface] malformed entries in src/activityRefsPolicy.json:\n' +
+          problems.map((p) => `    ${p}`).join('\n') +
+          '\n  An exemption or choice without its reason is an undocumented gap.',
       );
     }
   }
 
   return { carries, aliasNames, eventInputs, argShapes, arrayOnlyRefs, abiConflicts };
+}
+
+/**
+ * #1807 — an exemption is bound to the reference inputs it was granted for.
+ * Returns one message per entry whose live inputs differ from the recorded
+ * ones: the event still carries the column, so the entry looks live, but its
+ * reason was written about inputs the event no longer has (or no longer only
+ * has). A human restates the reason against what the event carries now.
+ */
+export function exemptionAliasDrift(surface) {
+  const out = [];
+  for (const [key, recorded] of Object.entries(NOT_SCOPED_ALIASES)) {
+    const [event, field] = key.split('.');
+    if (!surface.carries.get(event)?.has(field)) continue; // dead entry: reported elsewhere
+    const live = new Set(surface.aliasNames.get(event)?.get(field) ?? []);
+    const arrayPath = surface.arrayOnlyRefs.get(key);
+    if (arrayPath) live.add(arrayPath);
+    const a = [...live].sort();
+    const b = [...new Set(recorded)].sort();
+    if (a.join('\u0000') !== b.join('\u0000')) {
+      out.push(
+        `${key} — granted for [${b.join(', ')}] but the event now carries [${a.join(', ')}]; ` +
+          'restate the reason against what it carries now (or map it) and update `aliases`',
+      );
+    }
+  }
+  return out;
 }
