@@ -564,7 +564,9 @@ contract ClaimFacet is
         // (not the rounded-down required-collateral, which could accept a
         // low-decimal slice up to one base unit of value below par).
         // An unpriced pair refuses (`priced` is the availability signal,
-        // never a zero value — #1281 item 027). The comparison is exact: the
+        // never a zero value — #1281 item 027), and a distrusted price
+        // refuses inside `principalEquivalent` with its read's own
+        // divergence error (#666). The comparison is exact: the
         // lender slice is the collateral NEEDED to cover the due, rounded up
         // at entry and at every rescale, so at an unchanged price a solvent
         // slice is worth at least `due` and no rounding tolerance is owed.

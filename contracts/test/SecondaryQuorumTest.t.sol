@@ -674,4 +674,194 @@ contract SecondaryQuorumTest is Test {
         _mockDiaDisagree(); // live (disagrees but reports)
         assertEq(_countLive(), 2, "2 live, 1 unavailable -> 2");
     }
+
+    // ─── #666 — the status read names why a price read failed ─────────
+
+    function _status()
+        internal
+        view
+        returns (OracleFacet.PriceStatus status, uint256 price, uint8 dec)
+    {
+        return OracleFacet(address(diamond)).getAssetPriceStatus(mockAsset);
+    }
+
+    function testPriceStatus_quorumHolds_isPriced() public {
+        _enableTellor();
+        _mockTellorAgree();
+        (OracleFacet.PriceStatus st, uint256 price, uint8 dec) = _status();
+        assertEq(uint8(st), uint8(OracleFacet.PriceStatus.Priced));
+        assertEq(price, CHAINLINK_PRICE_8DEC);
+        assertEq(dec, 8);
+    }
+
+    function testPriceStatus_everyRespondingSecondaryDisagrees_isDivergent() public {
+        _enableTellor();
+        _mockTellorDisagree();
+        _enableApi3();
+        _mockApi3Disagree();
+        (OracleFacet.PriceStatus st, uint256 price, uint8 dec) = _status();
+        assertEq(uint8(st), uint8(OracleFacet.PriceStatus.Divergent), "distrusted, not missing");
+        assertEq(price, 0);
+        assertEq(dec, 0);
+        // The boolean read keeps its meaning: no usable price.
+        (bool ok, , ) = OracleFacet(address(diamond)).tryGetAssetPrice(mockAsset);
+        assertFalse(ok, "tryGetAssetPrice still reports no usable price");
+    }
+
+    function testPriceStatus_noFeed_isUnavailable() public {
+        // The registry has no feed for the asset: there is no price at all.
+        _mockRegistryFeed(mockAsset, address(0));
+        (OracleFacet.PriceStatus st, , ) = _status();
+        assertEq(uint8(st), uint8(OracleFacet.PriceStatus.Unavailable), "missing, not distrusted");
+        (bool ok, , ) = OracleFacet(address(diamond)).tryGetAssetPrice(mockAsset);
+        assertFalse(ok);
+    }
+
+    function testPriceStatus_staleChainlink_isUnavailable() public {
+        // A stale primary answer is a missing price, whatever the
+        // secondaries would have said.
+        _enableTellor();
+        _mockTellorDisagree();
+        vm.warp(block.timestamp + 30 days);
+        (OracleFacet.PriceStatus st, , ) = _status();
+        assertEq(uint8(st), uint8(OracleFacet.PriceStatus.Unavailable));
+    }
+
+    /// @dev The cross-check divergence as `_validatePythCrossCheck` encodes
+    ///      it: the selector and its four words.
+    function _crossCheckDivergence() internal pure returns (bytes memory) {
+        return abi.encodeWithSelector(
+            OracleFacet.OracleCrossCheckDivergence.selector,
+            uint256(2_000_00000000),
+            uint256(2_500_00000000),
+            uint256(2_500),
+            uint256(500)
+        );
+    }
+
+    /// @notice The other distrust the price read raises: the Pyth cross-check
+    ///         of the ETH reference diverged. It is a price the sources
+    ///         disagree about, exactly like the quorum's divergence, and is
+    ///         classified the same way.
+    function testPriceStatus_pythCrossCheckDivergence_isDivergent() public {
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockAsset),
+            _crossCheckDivergence()
+        );
+        (OracleFacet.PriceStatus st, , ) = _status();
+        assertEq(uint8(st), uint8(OracleFacet.PriceStatus.Divergent), "cross-check distrust, not missing");
+    }
+
+    /// @notice A divergence is recognised at its own encoded length, so data
+    ///         that only borrows a divergence selector is not one.
+    function testPriceStatus_divergenceSelectorAtTheWrongLength_isUnavailable() public {
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockAsset),
+            abi.encodeWithSelector(OracleFacet.OracleCrossCheckDivergence.selector)
+        );
+        (OracleFacet.PriceStatus st, , ) = _status();
+        assertEq(uint8(st), uint8(OracleFacet.PriceStatus.Unavailable));
+    }
+
+    // ─── #665 — the Tellor dispute buffer ───────────────────────────────
+
+    function _tellorQueryId() internal pure returns (bytes32) {
+        return keccak256(abi.encode("SpotPrice", abi.encode("weth", "usd")));
+    }
+
+    function testTellorBuffer_readsOnlyValuesOlderThanTheBuffer() public {
+        _enableTellor();
+        _mockTellorAgree();
+        vm.expectCall(
+            mockTellor,
+            abi.encodeWithSignature(
+                "getDataBefore(bytes32,uint256)",
+                _tellorQueryId(),
+                block.timestamp - 20 minutes
+            )
+        );
+        _readPrice();
+    }
+
+    /// @notice The #665 attack: a reporter's own fresh Tellor value would be
+    ///         the one agreeing secondary that overrides a disagreeing one.
+    ///         With the buffer the fresh value is not read, so the
+    ///         disagreement stands and the price is refused; once the value
+    ///         has stood undisputed for the buffer, it counts.
+    function testTellorBuffer_freshSubmissionIsNotConsumed() public {
+        TellorRecordMock tellor = new TellorRecordMock();
+        OracleAdminFacet(address(diamond)).setTellorOracle(address(tellor));
+        _enableApi3();
+        _mockApi3Disagree();
+        tellor.submit(SECONDARY_AGREE_18DEC, block.timestamp);
+
+        vm.expectRevert(OracleFacet.OraclePriceDivergence.selector);
+        OracleFacet(address(diamond)).getAssetPrice(mockAsset);
+
+        // Twenty minutes and one second later the value is past the buffer
+        // and well inside the 1h staleness bound: it is read, and agrees.
+        vm.warp(block.timestamp + 20 minutes + 1);
+        _refreshFeeds();
+        _mockApi3Disagree();
+        (uint256 price, ) = _readPrice();
+        assertEq(price, CHAINLINK_PRICE_8DEC, "the value that stood the buffer forms the quorum");
+    }
+
+    function testTellorBuffer_readsTheNewestValueOutsideTheBuffer() public {
+        TellorRecordMock tellor = new TellorRecordMock();
+        OracleAdminFacet(address(diamond)).setTellorOracle(address(tellor));
+        // An agreeing value 30 minutes old, then a disagreeing one 5 minutes
+        // old: the buffer hides the newer one, so Tellor agrees.
+        tellor.submit(SECONDARY_AGREE_18DEC, block.timestamp - 30 minutes);
+        tellor.submit(SECONDARY_DISAGREE_18DEC, block.timestamp - 5 minutes);
+        (uint256 price, ) = _readPrice();
+        assertEq(price, CHAINLINK_PRICE_8DEC);
+    }
+
+    function testTellorBuffer_youngChainReadsTellorAsUnavailable() public {
+        // A timestamp inside the buffer has no value that old to read; the
+        // probe reports Unavailable instead of underflowing.
+        vm.warp(10 minutes);
+        _refreshFeeds();
+        _enableTellor();
+        _mockTellorDisagree();
+        (uint256 price, ) = _readPrice();
+        assertEq(price, CHAINLINK_PRICE_8DEC, "Tellor unavailable: Chainlink alone");
+    }
+
+    function _refreshFeeds() internal {
+        _mockFeedFull(mockEthUsdFeed, int256(2000e8), 8);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        _mockFeedFull(mockFeed, int256(CHAINLINK_PRICE_8DEC), 8);
+    }
+}
+
+/// @dev A Tellor oracle that keeps its submissions and answers
+///      `getDataBefore` as Tellor does: the newest value reported strictly
+///      before the given time. The query id is ignored (one feed).
+contract TellorRecordMock {
+    struct Entry {
+        uint256 value;
+        uint256 at;
+    }
+
+    Entry[] internal entries;
+
+    function submit(uint256 value, uint256 at) external {
+        entries.push(Entry(value, at));
+    }
+
+    function getDataBefore(bytes32, uint256 timestamp)
+        external
+        view
+        returns (bytes memory value, uint256 timestampRetrieved)
+    {
+        for (uint256 i = entries.length; i > 0; --i) {
+            Entry memory e = entries[i - 1];
+            if (e.at < timestamp) return (abi.encode(e.value), e.at);
+        }
+        return (bytes(""), 0);
+    }
 }

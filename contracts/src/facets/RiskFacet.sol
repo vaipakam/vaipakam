@@ -298,8 +298,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
     /// @notice Oracle quorum unavailable for one or both legs at
     ///         settlement time — `LibFallback.collateralEquivalent`
-    ///         reported the pair unpriced, meaning `tryGetAssetPrice`
-    ///         failed for the principal or collateral asset. The discount math
+    ///         reported the pair unpriced, meaning there is no price for
+    ///         the principal or collateral asset. (A distrusted price
+    ///         refuses by its own read's divergence error,
+    ///         `OraclePriceDivergence` or `OracleCrossCheckDivergence`,
+    ///         #666.) The discount math
     ///         requires both legs priced. The liquidator can retry
     ///         once the oracle clears, or fall back to
     ///         {triggerLiquidation} which has its own oracle-stale
@@ -1602,10 +1605,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibDelivery.pullExact(loan.principalAsset, msg.sender, address(this), totalDebt);
 
         // Compute seizure size at oracle-priced debt-plus-discount-
-        // value. `collateralEquivalent` uses `tryGetAssetPrice` (no
-        // revert on stale) so we can fail-soft here with a precise
-        // `OracleStaleForDiscount` revert rather than bubbling a
-        // generic oracle-feed error. Availability is its `priced` flag,
+        // value. `collateralEquivalent` reports a missing price as
+        // unpriced (no revert on stale) so we can fail-soft here with a
+        // precise `OracleStaleForDiscount` revert rather than bubbling a
+        // generic oracle-feed error; a distrusted price reverts with its
+        // read's own divergence error inside it (#666). Availability is its `priced` flag,
         // never a zero result (#1281 item 027). Rounded down: the
         // liquidator has paid the lender `totalDebt` in full, so the
         // rounding unit stays with the borrower's surplus.

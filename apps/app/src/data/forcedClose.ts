@@ -198,12 +198,16 @@ export interface ForcedCloseInput {
    *  own question is the only way this stays correct when any of those
    *  move. `undefined` = unread. */
   internalMatchCandidate: boolean | undefined;
-  /** Collateral is ILLIQUID per `OracleFacet.checkLiquidity`.
+  /** Collateral is ILLIQUID per `OracleFacet.checkLiquidityOnActiveNetwork`,
+   *  the classifier `triggerDefault` routes on.
    *
-   *  `checkLiquidityOnActiveNetwork` is what `triggerDefault` actually
-   *  routes on; the two are documented as functionally identical and
-   *  both delegate to `_checkLiquidity`, so reading either predicts the
-   *  same branch. `undefined` = unread. */
+   *  Not `checkLiquidity` (#666): the two are no longer interchangeable.
+   *  When the Illiquid verdict would rest on a price the oracle quorum
+   *  distrusts, the settlement classifier reverts (and so does the
+   *  default), while `checkLiquidity` still reads Illiquid. That read
+   *  failing leaves this field `undefined`, so the card states `unknown`
+   *  rather than predicting an in-kind close the chain refuses.
+   *  `undefined` = unread. */
   collateralIlliquid: boolean | undefined;
   /** `RiskFacet.calculateLTV(loanId) > cfgVolatilityLtvThresholdBps()`
    *  — the >110% value collapse that hands the lender the collateral

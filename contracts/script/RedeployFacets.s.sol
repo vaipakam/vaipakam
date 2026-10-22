@@ -27,6 +27,7 @@ import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
+import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
@@ -72,6 +73,9 @@ contract RedeployFacets is Script {
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
     error PredatesSlice3FillLock(address diamond);
+    /// @notice #666 - the target Diamond's OracleFacet predates the three-way
+    ///         price status; see {_requireOraclePriceStatus}.
+    error PredatesOraclePriceStatus(address diamond);
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -107,6 +111,9 @@ contract RedeployFacets is Script {
         _requireVaultHeldFallbackCustody(diamond);
         // #1566 slice 3 - and one from before the fill lock; see {_requireSlice3Diamond}.
         _requireSlice3Diamond(diamond);
+        // #666 - and one whose OracleFacet cannot answer the fallback's
+        // price-status read; see {_requireOraclePriceStatus}.
+        _requireOraclePriceStatus(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -640,6 +647,26 @@ contract RedeployFacets is Script {
             IDiamondLoupe(diamond).facetAddress(SwapToRepayIntentFacet.getIntentCustody.selector)
                 == address(0)
         ) revert PredatesSlice3FillLock(diamond);
+    }
+
+    /// @dev #666 - refuse a Diamond whose OracleFacet does not route
+    ///      `getAssetPriceStatus(address)`. `LibFallback.tryOracleRate` now
+    ///      reads that view to tell a missing price from a distrusted one, and
+    ///      it is inlined into three facets this script reinstalls:
+    ///      FallbackCustodyFacet (the fallback entry), RiskFacet (the
+    ///      discounted liquidation) and ClaimFacet (the backstop par check).
+    ///      This script does not carry OracleFacet, so against an older one
+    ///      every fallback entry, discounted liquidation and backstop absorb
+    ///      would revert `FunctionDoesNotExist`. Refresh the oracle first with
+    ///      `UpgradeOracleFacet.s.sol`, which adds the selector. The selector
+    ///      is read from the compiled facet, so a re-signed view refuses every
+    ///      older Diamond until this marker is reconsidered. Called before the
+    ///      broadcast starts, so a refused run sends nothing.
+    function _requireOraclePriceStatus(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(OracleFacet.getAssetPriceStatus.selector)
+                == address(0)
+        ) revert PredatesOraclePriceStatus(diamond);
     }
 
     function _replace(address facet, bytes4[] memory selectors)

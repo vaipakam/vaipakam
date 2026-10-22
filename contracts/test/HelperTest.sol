@@ -866,7 +866,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](18);
+        selectors = new bytes4[](19);
         selectors[0] = OracleFacet.checkLiquidity.selector;
         selectors[1] = OracleFacet.getAssetPrice.selector;
         selectors[2] = OracleFacet.calculateLTV.selector;
@@ -896,6 +896,8 @@ contract HelperTest {
         selectors[16] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
         // #638 — live-secondary-feed counter for the backstop oracle gate.
         selectors[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
+        // #666 — the price read that tells a missing price from a distrusted one.
+        selectors[18] = OracleFacet.getAssetPriceStatus.selector;
         return selectors;
     }
 

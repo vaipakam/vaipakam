@@ -12,6 +12,8 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
@@ -152,15 +154,80 @@ contract FallbackPricedSplitTest is SetupTest {
     }
 
     /// @notice A genuinely unpriced leg still takes the full-collateral branch
-    ///         and says so.
+    ///         and says so. The price read fails with a missing feed, and the
+    ///         real `OracleFacet.getAssetPriceStatus` classifies it.
     function test_unpricedLeg_isTheFullCollateralBranch() public {
         _seed();
         mockOraclePrice(mockERC20, PAR, 8);
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(OracleFacet.tryGetAssetPrice.selector, mockCollateralERC20),
-            abi.encode(false, uint256(0), uint8(0))
+        _priceRevertsWith(mockCollateralERC20, OracleFacet.NoPriceFeed.selector);
+        _assertFullCollateralBranch();
+    }
+
+    // ── #666: a distrusted price refuses, a missing one does not ────────
+
+    /// @notice A leg whose price exists but which every responding secondary
+    ///         oracle disagrees with is DISTRUSTED, not missing: the fallback
+    ///         entry refuses (`OraclePriceDivergence`) instead of handing the
+    ///         lender the whole collateral, and nothing is written.
+    function test_distrustedCollateralPrice_refusesTheSplit() public {
+        _seed();
+        mockOraclePrice(mockERC20, PAR, 8);
+        _priceRevertsWith(mockCollateralERC20, OracleFacet.OraclePriceDivergence.selector);
+        _assertEntryRefused();
+    }
+
+    /// @notice The same for the principal leg.
+    function test_distrustedPrincipalPrice_refusesTheSplit() public {
+        _seed();
+        mockOraclePrice(mockCollateralERC20, PAR, 8);
+        _priceRevertsWith(mockERC20, OracleFacet.OraclePriceDivergence.selector);
+        _assertEntryRefused();
+    }
+
+    /// @notice The Pyth cross-check's divergence is distrust too, and the
+    ///         refusal carries that read's own error and arguments, so the
+    ///         caller can see which check disagreed.
+    function test_crossCheckDistrust_refusesTheSplitByItsOwnError() public {
+        _seed();
+        mockOraclePrice(mockERC20, PAR, 8);
+        bytes memory crossCheck = abi.encodeWithSelector(
+            OracleFacet.OracleCrossCheckDivergence.selector,
+            uint256(2_000_00000000),
+            uint256(2_500_00000000),
+            uint256(2_500),
+            uint256(500)
         );
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            crossCheck
+        );
+        _assertEntryRefusedWith(crossCheck);
+    }
+
+    /// @notice A leg with NO price decides the split whatever the other leg
+    ///         says: the pair cannot be priced either way, so a distrusted
+    ///         price on the other leg does not hold up the full-collateral
+    ///         branch the missing price already calls for.
+    function test_missingPriceWins_overADistrustedOtherLeg() public {
+        _seed();
+        _priceRevertsWith(mockERC20, OracleFacet.OraclePriceDivergence.selector);
+        _priceRevertsWith(mockCollateralERC20, OracleFacet.StalePriceData.selector);
+        _assertFullCollateralBranch();
+    }
+
+    /// @dev The Diamond's own `getAssetPrice(asset)` reverts with `selector`,
+    ///      so the real status read (`this.getAssetPrice` through the Diamond)
+    ///      sees exactly that failure.
+    function _priceRevertsWith(address asset, bytes4 selector) internal {
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
+            abi.encodeWithSelector(selector)
+        );
+    }
+
+    function _assertFullCollateralBranch() internal {
         vm.recordLogs();
         _enterFallbackViaProducer(LOAN);
         bool unavailable = _emitted(vm.getRecordedLogs());
@@ -169,6 +236,35 @@ contract FallbackPricedSplitTest is SetupTest {
         assertTrue(unavailable, "the oracle-unavailable event is emitted");
         assertEq(lc, COLLATERAL, "the lender takes the whole collateral");
         assertEq(tc + bc, 0, "treasury and borrower take nothing");
+    }
+
+    /// @dev Drives the producer's steps by hand so the revert can be expected
+    ///      on `enterFallback` itself, then checks that the refusal left the
+    ///      loan Active with no snapshot.
+    function _assertEntryRefused() internal {
+        _assertEntryRefusedWith(abi.encodeWithSelector(OracleFacet.OraclePriceDivergence.selector));
+    }
+
+    function _assertEntryRefusedWith(bytes memory refusal) internal {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(LOAN);
+        vm.startPrank(address(diamond));
+        EncumbranceMutateFacet(address(diamond)).releaseCollateralLien(LOAN);
+        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
+            l.borrower, l.collateralAsset, address(diamond), l.collateralAmount
+        );
+        vm.expectRevert(refusal);
+        FallbackCustodyFacet(address(diamond)).enterFallback(LOAN);
+        vm.stopPrank();
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(LOAN).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "the refused entry left the loan Active"
+        );
+        (uint256 lc, uint256 tc, uint256 bc, , , bool active, ) =
+            ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN);
+        assertFalse(active, "no fallback snapshot was written");
+        assertEq(lc + tc + bc, 0, "and no split was recorded");
     }
 }
 

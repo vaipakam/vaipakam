@@ -10,7 +10,8 @@
  *  Two preconditions are asserted from the chain rather than assumed,
  *  and both fail the test loudly if the harness moves:
  *
- *  - the collateral really is LIQUID (`checkLiquidity`), which is what
+ *  - the collateral really is LIQUID (`checkLiquidityOnActiveNetwork`,
+ *    the classifier both the card and `triggerDefault` read), which is what
  *    makes `ready-needs-route` the correct expectation here. `flows.ts`
  *    posts against `MOCKS.liquidToken`; if that ever changes to an
  *    illiquid asset the card lands on the in-kind arm instead, and this
@@ -121,7 +122,7 @@ test('the close-out card tracks the grace boundary for the lender', async ({
   const liquidity = await pub.readContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
-    functionName: 'checkLiquidity',
+    functionName: 'checkLiquidityOnActiveNetwork',
     args: [MOCKS!.liquidToken as `0x${string}`],
   });
   expect(Number(liquidity)).toBe(0); // 0 = Liquid

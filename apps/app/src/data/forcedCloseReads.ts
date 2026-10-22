@@ -120,8 +120,17 @@ export interface ForcedCloseFacts {
  * The calls, in the order the mapper reads them back.
  *
  * `liquidity` is present only when there is an ERC-20 collateral asset to
- * ask about — `checkLiquidity` rejects a zero address outright, and the
- * decision never asks the question for a rental.
+ * ask about — `checkLiquidityOnActiveNetwork` rejects a zero address
+ * outright, and the decision never asks the question for a rental.
+ *
+ * It asks `checkLiquidityOnActiveNetwork`, the classifier `triggerDefault`
+ * routes on, rather than `checkLiquidity` (#666). The two answer alike
+ * except when the classification would rest on an oracle price the quorum
+ * distrusts: the settlement classifier then REVERTS, and so does the
+ * default, where `checkLiquidity` keeps reading Illiquid. Asking the
+ * creation-time question would have the card predict an in-kind close the
+ * chain refuses; asking the settlement one makes that slot fail, so the
+ * card states `unknown`.
  */
 export function forcedCloseReadPlan(input: {
   diamond: `0x${string}`;
@@ -150,7 +159,11 @@ export function forcedCloseReadPlan(input: {
   if (input.collateralAsset !== undefined) {
     plan.push({
       key: 'liquidity',
-      contract: { ...d, functionName: 'checkLiquidity', args: [input.collateralAsset] },
+      contract: {
+        ...d,
+        functionName: 'checkLiquidityOnActiveNetwork',
+        args: [input.collateralAsset],
+      },
     });
   }
   plan.push(
@@ -238,7 +251,7 @@ export function forcedCloseFacts(
   const collateralType = enumField(loan?.collateralAssetType);
 
   // THE LIQUIDITY ANSWER IS ABOUT THE LOAN'S OWN COLLATERAL, OR IT IS NOT
-  // AN ANSWER (#2148 round 2 P2). The asset the plan asked `checkLiquidity`
+  // AN ANSWER (#2148 round 2 P2). The asset the plan asked the liquidity read
   // about comes from the caller — the page's indexed row — while every
   // other loan-scoped call in this aggregate is addressed by loan id. A row
   // that named a different token would make the liquidity slot describe

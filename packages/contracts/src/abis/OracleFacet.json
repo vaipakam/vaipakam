@@ -77,7 +77,7 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "status",
         "type": "uint8",
         "internalType": "enum LibVaipakam.LiquidityStatus"
       }
@@ -114,6 +114,35 @@
       }
     ],
     "outputs": [
+      {
+        "name": "price",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "decimals",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getAssetPriceStatus",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "enum OracleFacet.PriceStatus"
+      },
       {
         "name": "price",
         "type": "uint256",

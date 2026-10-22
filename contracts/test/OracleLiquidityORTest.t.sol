@@ -357,4 +357,164 @@ contract OracleLiquidityORTest is Test {
         LibVaipakam.LiquidityStatus status = OracleFacet(address(diamond)).checkLiquidity(mockWeth);
         assertEq(uint256(status), uint256(LibVaipakam.LiquidityStatus.Liquid));
     }
+
+    // ─── #666 — the forced-close classifier refuses a distrusted verdict ──
+    //
+    // `checkLiquidityOnActiveNetwork` is what the time-based default routes
+    // on: Illiquid means the lender takes the collateral in kind. It must not
+    // return Illiquid because a price is DISTRUSTED (every responding
+    // secondary oracle disagrees with Chainlink); it reverts
+    // `OraclePriceDivergence` instead. A MISSING price or pool stays
+    // Illiquid. `checkLiquidity` keeps the Illiquid reading in every case.
+
+    function _activeNetwork() internal view returns (LibVaipakam.LiquidityStatus) {
+        return OracleFacet(address(diamond)).checkLiquidityOnActiveNetwork(mockAsset);
+    }
+
+    /// @dev The Diamond's `getAssetPrice(asset)` fails with `selector`, as the
+    ///      real quorum or feed read would.
+    function _priceFails(address asset, bytes4 selector) internal {
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset),
+            abi.encodeWithSelector(selector)
+        );
+    }
+
+    function testActiveNetwork_agreesWithCheckLiquidity_whenNothingIsDistrusted() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, LIQUIDITY_PASSING);
+        assertEq(uint256(_activeNetwork()), uint256(LibVaipakam.LiquidityStatus.Liquid));
+        _mockPool(mockUniFactory, mockAsset, 3000, LIQUIDITY_FAILING);
+        assertEq(uint256(_activeNetwork()), uint256(LibVaipakam.LiquidityStatus.Illiquid));
+    }
+
+    function testActiveNetwork_assetPriceDistrusted_refuses() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, LIQUIDITY_PASSING);
+        _priceFails(mockAsset, OracleFacet.OraclePriceDivergence.selector);
+        assertEq(
+            uint256(_checkLiquidity()),
+            uint256(LibVaipakam.LiquidityStatus.Illiquid),
+            "checkLiquidity still reads a distrusted asset as illiquid"
+        );
+        vm.expectRevert(OracleFacet.OraclePriceDivergence.selector);
+        _activeNetwork();
+    }
+
+    function testActiveNetwork_assetPriceMissing_staysIlliquid() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, LIQUIDITY_PASSING);
+        _priceFails(mockAsset, OracleFacet.NoPriceFeed.selector);
+        assertEq(uint256(_checkLiquidity()), uint256(LibVaipakam.LiquidityStatus.Illiquid));
+        assertEq(
+            uint256(_activeNetwork()),
+            uint256(LibVaipakam.LiquidityStatus.Illiquid),
+            "a missing price is still illiquid on the forced-close path"
+        );
+    }
+
+    function testActiveNetwork_quoteDistrustedWithAPool_refuses() public {
+        // The asset's only pool is against WETH (the default quote asset),
+        // and WETH's price is distrusted: the route that would have cleared
+        // is skipped, so the Illiquid verdict is not evidence.
+        _mockPool(mockUniFactory, mockAsset, 3000, LIQUIDITY_PASSING);
+        _priceFails(mockWeth, OracleFacet.OraclePriceDivergence.selector);
+        assertEq(uint256(_checkLiquidity()), uint256(LibVaipakam.LiquidityStatus.Illiquid));
+        vm.expectRevert(OracleFacet.OraclePriceDivergence.selector);
+        _activeNetwork();
+    }
+
+    function testActiveNetwork_quoteDistrustedWithNoPool_staysIlliquid() public {
+        // No pool against the distrusted quote: its price could not have
+        // changed the verdict, so one bad quote asset cannot hold up the
+        // close-out of an asset that never traded against it.
+        _priceFails(mockWeth, OracleFacet.OraclePriceDivergence.selector);
+        assertEq(
+            uint256(_activeNetwork()),
+            uint256(LibVaipakam.LiquidityStatus.Illiquid),
+            "no pool with the distrusted quote: the verdict stands"
+        );
+    }
+
+    /// @notice A quote asset distrusted by the Pyth cross-check refuses the
+    ///         same way, and the refusal is that read's own error.
+    function testActiveNetwork_quoteCrossCheckDistrusted_refusesByItsOwnError() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, LIQUIDITY_PASSING);
+        bytes memory crossCheck = abi.encodeWithSelector(
+            OracleFacet.OracleCrossCheckDivergence.selector,
+            uint256(2_000_00000000),
+            uint256(2_500_00000000),
+            uint256(2_500),
+            uint256(500)
+        );
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockWeth),
+            crossCheck
+        );
+        vm.expectRevert(crossCheck);
+        _activeNetwork();
+    }
+
+    function testActiveNetwork_quoteMissing_staysIlliquid() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, LIQUIDITY_PASSING);
+        _priceFails(mockWeth, OracleFacet.StalePriceData.selector);
+        assertEq(uint256(_activeNetwork()), uint256(LibVaipakam.LiquidityStatus.Illiquid));
+    }
+
+    /// @notice An EMPTY pool against a distrusted quote does not refuse
+    ///         (Codex #2652 r1). Anyone can create one, and it could never
+    ///         have cleared the floor, so the Illiquid verdict stands.
+    function testActiveNetwork_quoteDistrustedWithEmptyPool_staysIlliquid() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, 0);
+        _priceFails(mockWeth, OracleFacet.OraclePriceDivergence.selector);
+        assertEq(
+            uint256(_activeNetwork()),
+            uint256(LibVaipakam.LiquidityStatus.Illiquid),
+            "an empty pool is no route, whatever the quote's price"
+        );
+    }
+
+    /// @notice A pool too shallow to take the floor does not refuse
+    ///         either: its depth fails without the quote's price.
+    function testActiveNetwork_quoteDistrustedWithShallowPool_staysIlliquid() public {
+        _mockPool(mockUniFactory, mockAsset, 3000, LIQUIDITY_FAILING);
+        _priceFails(mockWeth, OracleFacet.OraclePriceDivergence.selector);
+        assertEq(
+            uint256(_activeNetwork()),
+            uint256(LibVaipakam.LiquidityStatus.Illiquid),
+            "a pool too thin for the floor could not have changed the verdict"
+        );
+    }
+
+    /// @notice WETH as the collateral (Codex #2652 r1): its own price gates
+    ///         the classifier like every other asset's. A distrusted WETH
+    ///         price refuses; before #666's gate was hoisted, the WETH branch
+    ///         read Liquid on ETH/USD freshness alone.
+    function testActiveNetwork_wethPriceDistrusted_refuses() public {
+        _priceFails(mockWeth, OracleFacet.OraclePriceDivergence.selector);
+        assertEq(
+            uint256(OracleFacet(address(diamond)).checkLiquidity(mockWeth)),
+            uint256(LibVaipakam.LiquidityStatus.Illiquid),
+            "checkLiquidity reads a distrusted WETH as illiquid"
+        );
+        vm.expectRevert(OracleFacet.OraclePriceDivergence.selector);
+        OracleFacet(address(diamond)).checkLiquidityOnActiveNetwork(mockWeth);
+    }
+
+    /// @notice A missing WETH price is Illiquid, the rule every unpriced
+    ///         asset follows.
+    function testActiveNetwork_wethPriceMissing_isIlliquid() public {
+        _priceFails(mockWeth, OracleFacet.StalePriceData.selector);
+        assertEq(
+            uint256(OracleFacet(address(diamond)).checkLiquidityOnActiveNetwork(mockWeth)),
+            uint256(LibVaipakam.LiquidityStatus.Illiquid)
+        );
+    }
+
+    /// @notice A priced WETH with a fresh ETH/USD feed stays Liquid.
+    function testActiveNetwork_wethPriced_isLiquid() public view {
+        assertEq(
+            uint256(OracleFacet(address(diamond)).checkLiquidityOnActiveNetwork(mockWeth)),
+            uint256(LibVaipakam.LiquidityStatus.Liquid)
+        );
+    }
 }

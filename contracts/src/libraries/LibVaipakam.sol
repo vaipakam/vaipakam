@@ -9667,6 +9667,21 @@ library LibVaipakam {
     /// @dev Default secondary-oracle staleness: 1h.
     uint40 internal constant SECONDARY_ORACLE_MAX_STALENESS_DEFAULT = 3600;
 
+    /// @dev #665 — the Tellor dispute buffer: the Tellor read takes only a
+    ///      value reported at least this long before `block.timestamp`.
+    ///      Anyone can stake as a Tellor reporter and submit a value, and a
+    ///      submission can be disputed afterwards (a disputed value leaves
+    ///      the record). Without the buffer a reporter's own fresh value
+    ///      could be consumed in the block it lands, before anyone could
+    ///      dispute it, and count as the one agreeing secondary. Staleness
+    ///      is still measured from `block.timestamp`, so a Tellor value
+    ///      counts only while it is between this old and the staleness
+    ///      bound old: with the 1h default that is 40 minutes of reports,
+    ///      and a staleness bound set at or below this buffer leaves Tellor
+    ///      unavailable. A constant, not a knob: shortening it would reopen
+    ///      the same-block path it closes.
+    uint256 internal constant TELLOR_DISPUTE_BUFFER = 20 minutes;
+
     // ─── T-033 — Pyth numeraire-redundancy bounds ──────────────────────────
     //
     // Every Pyth knob is governance-tunable but bounded so a
