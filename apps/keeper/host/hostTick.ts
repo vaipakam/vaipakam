@@ -5,13 +5,14 @@
  * shared database records every migration the build carries (#2409). A
  * machine has no deploy step: pulling new code and restarting IS the
  * release. So each tick first asks the database the same question, with the
- * indexer's own gate and migration list (the list the keeper's deploy
- * already verifies against), and declines by name while any migration is
- * missing. It resumes by itself once the indexer has applied them. The gate
+ * shared gate and the shared database's migration list
+ * (`@vaipakam/lib/d1SchemaGate`, #2410 — the list the keeper's deploy already
+ * verifies against), and declines by name while any migration is missing. It
+ * resumes by itself once the indexer has applied them. The gate
  * caches only `current`, so the steady-state cost is one read per process.
  */
 
-import { createSchemaGate, type SchemaCheck } from '../../indexer/src/schemaGate';
+import { createSchemaGate, type SchemaCheck } from '@vaipakam/lib/d1SchemaGate';
 import type { WorkerEnv } from '../src/env';
 import { claimRunnerLease } from '../src/runnerLease';
 import { runKeeperTick } from '../src/tick';
@@ -24,7 +25,7 @@ export interface HostTickDeps {
   /** The process environment, read on every tick. */
   vars: () => Record<string, string | undefined>;
   log: (line: string) => void;
-  /** Injected for tests; defaults to a gate over the indexer's list. */
+  /** Injected for tests; defaults to a gate over the shared database's list. */
   gate?: { check(db: D1Database): Promise<SchemaCheck> };
   /** Injected for tests; defaults to the keeper-private schema gate. */
   privateGate?: { check(priv: D1Database): Promise<PrivateDbCheck> };

@@ -19,8 +19,8 @@
  *        schema before failing: a concurrent indexer deploy may be applying
  *        the same migrations.
  *     2. verify, in the database, that EVERY migration this build carries is
- *        recorded (src/requiredMigrations.json — the list the runtime gate
- *        reads). The outcome is checked, not an exit status.
+ *        recorded (packages/lib/src/sharedD1Migrations.json — the list every
+ *        Worker's runtime gate reads, #2410). The outcome is checked, not an exit status.
  *     3. publish.
  *
  *   node deploy-shared-d1.mjs verify   — the keeper's and agent's `deploy`
@@ -53,7 +53,7 @@ import { applyRetiredDeployment, readRetiredDeploymentsFile, retiredDeploymentsF
 /** apps/indexer — where wrangler.jsonc lives and every wrangler call runs. */
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-const REQUIRED_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'requiredMigrations.json');
+const REQUIRED_PATH = join(ROOT, '..', '..', 'packages', 'lib', 'src', 'sharedD1Migrations.json');
 
 /** How long a `verify` deploy waits for the indexer's deploy to apply. */
 export const VERIFY_WAIT_MS = 10 * 60 * 1000;

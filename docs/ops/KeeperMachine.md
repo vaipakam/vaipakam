@@ -105,6 +105,15 @@ that cannot claim it at all (no runner id, the database unreachable) declines
 too. A holder renews every minute, and a lease it stops renewing expires after
 10 minutes, so a dead machine hands over by itself.
 
+**The schema.** A machine has no deploy step: the update timer's pull and
+restart is the release. So before the lease, each tick checks that every
+migration of the shared database in
+`packages/lib/src/sharedD1Migrations.json` is recorded (the same gate and list
+the indexer and agent use, #2410), and that the keeper's private database is
+current. Until then it logs `[keeper-host] tick declined: D1 migration(s) …
+not applied` (or the private database's own line) and runs nothing; the next
+tick after the indexer's deploy applies them runs normally.
+
 The lease is a guard, not the plan. It cannot tell two runners apart if they
 share a name, and a pass stuck for longer than 10 minutes could overlap a
 successor. So the procedure still holds:

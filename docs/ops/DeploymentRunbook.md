@@ -342,7 +342,10 @@ manual follow-up required when the prerequisites are in place:
    additionally holds scheduled ingest on any route that publishes
    without migrating — including Workers Builds, whose deploy command
    is dashboard config; see `apps/indexer/README.md` for the gate and
-   the recommended Builds setting. **This is the only phase that
+   the recommended Builds setting. The agent's cron and the keeper
+   machine's tick carry the same gate on the same list (#2410), so on
+   those routes too, scheduled work waits for the migrations rather than
+   meeting an older schema. **This is the only phase that
    APPLIES migrations** (D1 Edit; #2409 — one applier, because three
    racing appliers left partial releases). The keeper and agent phases
    run their package deploys in VERIFY mode: read-only, waiting a
