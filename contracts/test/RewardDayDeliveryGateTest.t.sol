@@ -622,12 +622,11 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
     /**
      * @notice Cell 3 -- PROOF BEFORE THE BROADCAST: a delivery proven to list
      *         day 1 lands before Base's stamp does. The day is landed and not
-     *         stamped; before the stamp the claim waits on the pre-existing
-     *         finalization name (not the gate's); the first claim after the
-     *         stamp pays.
-     * @dev    Mutation: let the broadcast clear or ignore a mark written before
-     *         it (an order-dependent landed reader) and the first claim after
-     *         the stamp defers on the gate.
+     *         stamped; before the stamp a claim pays nothing and nothing waits
+     *         on the gate; the first claim after the stamp pays.
+     * @dev    Mutation: let the broadcast clear or ignore a landing recorded
+     *         before it (an order-dependent landed reader) and the claims after
+     *         the stamp defer on the gate.
      */
     function test_1944_3_ProofBeforeTheBroadcast_LandsAnUnstampedDay() public {
         _armGate(1);
@@ -643,15 +642,13 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertTrue(_landedBy(1, h), "stored: the early proof");
         assertFalse(_awaits(2, 1), "an unstamped day never waits");
 
-        // On an activated custody the delivery is an epoch, so the first claim
-        // opens the entry's legacy-slice domain over day 1 and pays nothing:
-        // that is progress the claim commits. The next claim before the stamp
-        // waits on the pre-existing finalization name, not on the gate's.
-        assertEq(_claim(), 0, "the first claim opens the slice's domain and pays nothing");
+        // On an activated custody the delivery is an epoch, and the entry's
+        // pre-arming slice settles through its legacy-slice domain: before the
+        // stamp a claim opens that domain and pays nothing, and so does every
+        // claim until Base prices the day. Nothing waits on the gate.
+        assertEq(_claim(), 0, "a claim before the stamp pays nothing");
+        assertEq(_claim(), 0, "and so does the next one");
         assertEq(vpfi.balanceOf(alice), 0, "nothing moved");
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(InteractionDayGlobalNotFinalized.selector, 1));
-        RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         _broadcastV2(_armedPacket(1));
         g = _gd(1);
@@ -795,7 +792,10 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
 
         uint256 snap = vm.snapshotState();
         _prove(h, _one(1));
+        // The window half pays on the first claim, which also prepares the
+        // legacy slice's domain; the next claim pays the slice.
         uint256 livePaid = _claim();
+        livePaid += _claim();
         assertApproxEqAbs(livePaid, h1, 1e6, "LIVE: proven, the window half and the legacy slice both pay");
         vm.revertToState(snap);
 
@@ -806,7 +806,8 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
 
         _prove(h, _one(1));
         uint256 paid = _claim();
-        assertEq(paid, livePaid, "the held claim pays exactly what the proven-first claim paid");
+        paid += _claim();
+        assertEq(paid, livePaid, "the held claims pay exactly what the proven-first claims paid");
         assertEq(live - _payable(), paid, "out of custody");
     }
 
