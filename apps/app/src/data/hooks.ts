@@ -220,30 +220,36 @@ export interface MyRows<T> {
   rows: T[];
   chainOk: boolean;
   indexerOk: boolean;
+  /** How much of the wallet's current set `rows` is — decided where the
+   *  individual legs are still known (see {@link RowSetState}), because
+   *  the two flags above collapse them: `indexerOk` is false when ANY
+   *  indexed endpoint failed, including one whose leg the chain covered
+   *  (Codex #2663 r2). */
+  rowSet: RowSetState;
 }
 
-/** #2536 — how much of the wallet's current set `rows` is, for a
- *  consumer that derives something from the SET of positions (the token
- *  list behind Approvals or the Vault) and must not present it as whole
- *  when it is not.
+/** #2536 — how much of the wallet's current set a position list is, for
+ *  a consumer that derives something from the SET of positions (the
+ *  token list behind Approvals or the Vault) and must not present it as
+ *  whole when it is not.
  *
- *  - `complete` — the chain leg answered (`chainOk`, which already demands
- *    the held-offer leg on a legacy deploy). Membership is the chain's
- *    call (see the merge rule above), so `rows` is exactly what the
- *    wallet is in this block. The indexer leg adds no row then, only
- *    per-row detail (Positions flags that separately).
- *  - `lagging` — the chain leg did not answer and the indexed fallback
- *    did. Every position is there except anything opened or received
- *    inside the ingest lag, which fills in once the next read lands.
- *  - `partial` — a leg answered by NEITHER source: a legacy deploy whose
- *    held-offer leg is indexer-only, with the indexer down too. Offers
- *    held through a transfer are missing whatever their age, and nothing
- *    fills them in until a source comes back. */
+ *  - `complete` — every leg came from the chain (on a legacy deploy that
+ *    includes the held-offer leg). Membership is the chain's call (see the
+ *    merge rule above), so `rows` is exactly what the wallet is in this
+ *    block. The indexer adds no row then, only per-row detail (Positions
+ *    flags that separately).
+ *  - `lagging` — at least one leg came only from the indexed fallback,
+ *    and every leg answered. Everything is there except what was opened
+ *    or received inside the ingest lag, which appears once it catches up.
+ *  - `partial` — a leg answered from NEITHER source: a legacy deploy whose
+ *    held-offer leg is indexer-only, with that indexed endpoint down too.
+ *    Offers held through a transfer are missing whatever their age, and
+ *    nothing fills them in until a source comes back. */
 export type RowSetState = 'complete' | 'lagging' | 'partial';
 
+/** The state the producing hook decided (see `MyRows.rowSet`). */
 export function rowSetState(data: MyRows<unknown>): RowSetState {
-  if (data.chainOk) return 'complete';
-  return data.indexerOk ? 'lagging' : 'partial';
+  return data.rowSet;
 }
 
 /** The weaker of several lists' states — what a surface built from all
@@ -311,7 +317,13 @@ export function useMyLoansFull() {
     refetchInterval: signalAware(REFRESH_MS),
     queryFn: async (): Promise<MyLoanRows | null> => {
       if (!address)
-        return { rows: [], chainOk: true, indexerOk: true, indexedLoanIds: [] };
+        return {
+          rows: [],
+          chainOk: true,
+          indexerOk: true,
+          rowSet: 'complete',
+          indexedLoanIds: [],
+        };
       const [chainRows, indexedRows] = await Promise.all([
         publicClient
           ? readOwnLoanRowsLive(
@@ -340,6 +352,9 @@ export function useMyLoansFull() {
         rows,
         chainOk: chainRows !== null,
         indexerOk: indexedRows !== null,
+        // One leg: the chain's, or else the indexed fallback's (both
+        // failing returned null above).
+        rowSet: chainRows !== null ? 'complete' : 'lagging',
         indexedLoanIds: (indexedRows ?? []).map((l) => l.loanId),
       };
     },
@@ -456,7 +471,7 @@ export function useMyOffersFull() {
     // blocking click-time preflight instead of tip freshness (§4.1.2).
     refetchInterval: signalAware(REFRESH_MS),
     queryFn: async (): Promise<MyRows<IndexedOffer> | null> => {
-      if (!address) return { rows: [], chainOk: true, indexerOk: true };
+      if (!address) return { rows: [], chainOk: true, indexerOk: true, rowSet: 'complete' };
       const [chainLive, created, held] = await Promise.all([
         publicClient
           ? readOwnOfferRowsLive(
@@ -516,10 +531,23 @@ export function useMyOffersFull() {
       // holder view (heldLegOk false) the held leg is indexer-only,
       // so a freshly transferred listing can lag — the degraded-
       // sources banner must say so rather than pass as fully live.
+      // Row-set state per LEG, before the flags collapse them: on a
+      // legacy deploy the chain covers the created leg and only the held
+      // endpoint fills the held one, so a failed CREATED endpoint costs
+      // nothing there (Codex #2663 r2).
+      const rowSet: RowSetState =
+        chainLive === null
+          ? 'lagging' // both indexed endpoints answered (else null above)
+          : chainLive.heldLegOk
+            ? 'complete'
+            : held !== null
+              ? 'lagging'
+              : 'partial';
       return {
         rows,
         chainOk: chainLive !== null && chainLive.heldLegOk,
         indexerOk,
+        rowSet,
       };
     },
   });
