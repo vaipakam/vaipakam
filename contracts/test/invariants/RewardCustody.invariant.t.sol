@@ -15,7 +15,6 @@ import {RewardCustodyFacet} from "../../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../../src/facets/RewardReconciliationFacet.sol";
 import {RewardRemittanceLensFacet} from "../../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardRemittanceFacet} from "../../src/facets/RewardRemittanceFacet.sol";
-import {RewardIngressFacet} from "../../src/facets/RewardIngressFacet.sol";
 import {RewardEpochFacet} from "../../src/facets/RewardEpochFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
@@ -25,6 +24,7 @@ import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
 import {LibVpfiRecycle} from "../../src/libraries/LibVpfiRecycle.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {MerkleFixture} from "../mocks/MerkleFixture.sol";
+import {LibD6Delivery} from "../helpers/LibD6Delivery.sol";
 import {RemitWire} from "../../src/crosschain/RemitWire.sol";
 
 /**
@@ -632,39 +632,36 @@ contract RewardCustodyHandler is Test {
         uint256 amount = bound(seed, 2, 10_000e18);
         uint256 fresh = bound(uint256(keccak256(abi.encode(seed, "fresh"))), 0, amount);
         _mint(diamond, amount);
-        // A low-level call over calldata built in its own frame: the twelve
-        // arguments of a `try` expression put this frame one slot past the
-        // viaIR stack budget.
-        (bool ok, ) = diamond.call(_d6Calldata(amount, fresh, ++nextRemit));
-        if (ok) {
+        // Through an external self-call, so a refusal is counted rather than
+        // reverting the handler: the ingress call itself is built by the
+        // shared test-side delivery library.
+        try this.deliverD6(amount, fresh, ++nextRemit) {
             ++epochsAdmitted;
             packetHashes.push(keccak256(abi.encode(uint256(8453), ++seqStamped, "seq")));
-        } else {
+        } catch {
             refusals++;
         }
     }
 
-    /// The d6 ingress calldata for a whole-split delivery of `amount` over the
-    /// handler's one day, from Base, with no transport id (the per-source
-    /// sequence stamps it) in the live era.
-    function _d6Calldata(uint256 amount, uint256 fresh, uint256 remitId) internal view returns (bytes memory) {
-        bytes32[] memory leaves = RemitWire.d6Chunks(_dayOne());
-        return abi.encodeCall(
-            RewardIngressFacet.onRewardBudgetReceivedD6,
-            (
-                address(vpfi),
-                amount,
-                RemitWire.d6Root(leaves),
-                1,
-                leaves.length,
-                8453,
-                remitId,
-                address(0xBA5E),
-                amount - fresh,
-                fresh,
-                bytes32(0),
-                0
-            )
+    /// A whole-split d6 delivery of `amount` over the handler's one day, from
+    /// Base, with no transport id (the per-source sequence stamps it), in the
+    /// live era. Self-call only: {budgetIngress} wraps it in a `try`.
+    function deliverD6(uint256 amount, uint256 fresh, uint256 remitId) external {
+        require(msg.sender == address(this), "self only");
+        LibD6Delivery.deliver(
+            diamond,
+            LibD6Delivery.Delivery({
+                token: address(vpfi),
+                amount: amount,
+                dayIds: _dayOne(),
+                sourceChainId: 8453,
+                remitId: remitId,
+                remitter: address(0xBA5E),
+                recycled: amount - fresh,
+                fresh: fresh,
+                messageId: bytes32(0),
+                era: 0
+            })
         );
     }
 
