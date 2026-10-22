@@ -39,19 +39,24 @@ unaffected.
 | **vaipakam-app** | `app.vaipakam.com` | The connected app — wallet connect, the intent-first Home at root (NOT a dashboard), Offer Book, loan flows, Claim Center, the VPFI fee-discount vault at `/vpfi` (deposits and withdrawals for fee tiers only — the app exposes no purchase surface of any kind), plus the wallet-free NFT verifier at `/nft`. NOTE (#1959): `/analytics` and `/protocol-console` ARE now served here — both were ported from the retired `apps/defi` Worker and the marketing site links them here. Test them against this Worker; the earlier instruction not to has been superseded. `/nft-verifier` was the legacy path for the verifier; here it is `/nft`. | No |
 | **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*` (open-CORS reads). **Also writes**: three POST endpoints that write D1, HMAC-authenticated inbound Alchemy webhooks, and authenticated outbound publication of **borrower-authorised, on-chain-bound** Seaport listings to OpenSea (posted with an empty `0x` signature; the vault's ERC-1271 check validates against a hash bound on-chain). | No on-chain key |
 | **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). Also **deletes** diagnostics + support records on a schedule and **publishes** listings via `/opensea/listing`. | **No on-chain transaction key** — but holds `PUSH_CHANNEL_PK`, a real Ethereum key used to sign notifications, whose EOA owns the channel's 50 PUSH stake and gas |
-| **vaipakam-keeper** | (no public domain — internal Worker; **runs no keeper passes** — since #2504 the duties listed here run on the always-on machine, `docs/ops/KeeperMachine.md`, and from #2569 this Worker's `scheduled` handler declines every invocation; it stays deployed as the private database's migration applier) | Active write-to-chain — HF watcher + autonomous liquidation (incl. flash-loan liquidation via a non-Diamond contract), daily oracle snapshot, offer/intent matcher (runs every minute on the machine while the keeper is armed, `apps/keeper/src/passSchedule.ts`), auto-lifecycle extend/roll, keeper-tier writes, commitment batch + report, remit ack, reward-budget remit. See the signing inventory below — and treat it as a floor. | **YES** — sole holder of an ON-CHAIN TRANSACTION key. Not "the only signing key": the agent row above holds `PUSH_CHANNEL_PK`, a real Ethereum key. The qualifier is what makes this inventory usable for threat modelling |
+| **vaipakam-keeper** | (no public domain — internal Worker; **runs no keeper passes** — since #2504 the duties listed here run on the always-on machine, `docs/ops/KeeperMachine.md`, and from #2569 this Worker's `scheduled` handler declines every invocation; it stays deployed as the private database's migration applier) | **The Worker** writes nothing to any chain; it applies the private database's migrations at deploy. **The machine** does the active write-to-chain work — HF watcher + autonomous liquidation (incl. flash-loan liquidation via a non-Diamond contract), daily oracle snapshot, offer/intent matcher (runs every minute on the machine while the keeper is armed, `apps/keeper/src/passSchedule.ts`), auto-lifecycle extend/roll, keeper-tier writes, commitment batch + report, remit ack, reward-budget remit. See the signing inventory below — and treat it as a floor. | **YES, in TWO places with different roles.** The machine's env file (`/etc/vaipakam/keeper.env`) holds the copy every pass signs with. The Worker still binds `KEEPER_PRIVATE_KEY` from the shared Secrets Store and runs nothing with it, but that copy is a live credential all the same. A compromise or rotation scope covers both. No other row in this table holds an ON-CHAIN TRANSACTION key. Not "the only signing key": the agent row above holds `PUSH_CHANNEL_PK`, a real Ethereum key, and the machine holds a copy of that too. The qualifier is what makes this inventory usable for threat modelling |
 
 The split was **designed** around a read/index vs write/act axis. What it
 actually achieves is narrower than that, and narrower than the "strict
 least-privilege" this section used to claim: it places the **on-chain
-signing key** on exactly one Worker. It does **not** isolate the other
+signing key** with exactly one component, the keeper: the always-on
+machine that signs with it, and the keeper Worker, which still binds a copy
+it never uses. It does **not** isolate the other
 two — both bind the same database scope the keeper reads, and both have
 externally visible write effects of their own (see the indexer and agent
 bullets, and #1722). Read the list below as *signing-key placement*, not
 as a privilege boundary:
 
-- `vaipakam-keeper` carries `KEEPER_PRIVATE_KEY` and is the
-  ONLY Worker that signs on-chain transactions. **Eight** modules
+- The keeper (`apps/keeper`) is the ONLY component here that signs
+  on-chain transactions, and since #2504 it signs on the always-on machine
+  with the key in that machine's env file. The `vaipakam-keeper` Worker
+  still binds `KEEPER_PRIVATE_KEY` and signs nothing, because its
+  `scheduled` handler declines every invocation (#2569). **Eight** modules
   sign (`keeper`, `liquidityConfidence`, `matcher`, `autoLifecycle`,
   `dailyOracleSnapshot`, `commitmentReport`, `remitAck`,
   `rewardBudgetRemit`), covering at least thirteen state-changing

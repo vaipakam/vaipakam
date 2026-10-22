@@ -1758,7 +1758,8 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    > hold, then a schedule restore with cron-slot bookkeeping, a propagation
    > window and `wrangler tail`); every one of those actions would now either
    > do nothing or spend a trigger slot on a Worker that declines the tick.
-   > `CloudflareCronSlots.md` keeps the keeper row exactly as it is.
+   > `CloudflareCronSlots.md` lists no keeper row and holds no reservation
+   > for it (#2570); the restore leaves it that way and recreates nothing.
 
    Before anything: confirm the keeper EOA is the address you expect and is
    funded on every chain it submits from.

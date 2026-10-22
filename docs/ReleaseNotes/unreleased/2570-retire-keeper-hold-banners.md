@@ -31,7 +31,10 @@ direction that sends an alert.
 The staging plan and the staging-state checklist no longer tell operators to
 arm the keeper, or give it its signing key and RPCs, on the keeper Worker.
 Those settings are lines in the keeper machine's env file, and a Worker secret
-arms nothing. The flash-loan rollout now checks the contract owner against the
+arms nothing. The staging plan's key inventory now lists both places that hold
+the keeper's signing key: the machine's env file, which the passes sign with,
+and the Worker's unused binding. The watcher smoke test now applies the alert
+credentials to a running keeper before it tests them. The flash-loan rollout now checks the contract owner against the
 key the machine actually signs with, confirms the keeper restarted onto the
 release that carries the new address, and checks that the discount flag is
 literally `true`. The alert-key incident section now searches the keeper

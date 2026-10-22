@@ -2436,6 +2436,12 @@ about the machine.
 
 ### 8c. Smoke test the watcher
 
+The keeper reads its env file only when it starts. If it was already
+running when §8a and §8b put `TG_BOT_TOKEN` and `PUSH_CHANNEL_PK` in
+that file, apply the change first by KeeperMachine §6 ("Apply an
+env-file change"), or this test exercises the old or unset values. A
+keeper first started after both were written (§5 there) needs nothing.
+
 The keeper must be running on its machine (KeeperMachine §5); the
 watcher pass does not check `KEEPER_ENABLED`, so a disarmed keeper
 still sends these alerts. A stopped one sends nothing, so do not read a
