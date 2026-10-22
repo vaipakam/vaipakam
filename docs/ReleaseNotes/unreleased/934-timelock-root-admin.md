@@ -34,7 +34,9 @@ that removal runs can still be vetoed, so getting an operation past the veto
 takes a second delay. The handover also now refuses a Timelock whose proposer
 is not the same Governance Safe that receives the emergency revoker. The Timelock always administers
 itself. The vault-implementation upgrade event now carries the new code's hash
-so reviewers can check a queued upgrade against audited bytecode. The audit
+as the record of what ran. It is emitted when the upgrade executes, so the
+check during the delay is made on the queued operation itself: reviewers read
+the code hash of the implementation address in its calldata. The audit
 intake and the governance docs now say plainly that governance can move vault
 funds through an upgrade, and that the protection is that such a change is
 public and delayed, not that it is impossible.
@@ -45,7 +47,12 @@ watcher key, is now a Timelock operation and waits out the delay; taking a role
 away from a compromised key stays immediate through the emergency revoker. And
 on a Diamond refreshed in place rather than freshly deployed, nobody holds the
 emergency revoker role until the root admin grants it, because only the
-handover hands the role out, and a refresh does not re-run the handover.
+handover hands the role out, and a refresh does not re-run the handover. The
+in-place refresh migrates no role state, so it now refuses, before deploying
+anything, a Diamond whose owner does not hold the root role or where a
+governance Safe named in the deploy settings holds the root directly. That is
+the shape the retired pre-D1 handover left behind, and such a chain reaches
+the new topology only through a fresh deploy.
 
 The emergency revoker role is never granted at initialisation. Only the
 handover gives it out, straight to the governance Safe, so no handover path can

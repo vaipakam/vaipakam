@@ -91,9 +91,15 @@ technical specification.
   DELAYED.** Every one of those levers, and every way to reach them (granting
   a role, rotating the role root, `transferAdmin`, moving ownership), is
   Timelock-only after handover, so it sits in the queue for the full delay
-  — at least 48 hours on mainnet — before it can run. The vault-implementation
-  event carries the new code hash so it can be checked against audited
-  bytecode during that window. The Timelock's delay cannot be lowered below
+  — at least 48 hours on mainnet — before it can run. During that window the
+  check against audited bytecode is done on the QUEUED operation: the new
+  implementation address is in the scheduled calldata, so a reviewer reads
+  its `EXTCODEHASH` and compares it with the audited build. The
+  `VaultImplementationUpgraded` event, which carries the same code hash, is
+  emitted only when the upgrade executes; it is the record of what ran, not
+  a pre-execution check. (The implementation could in principle differ at
+  execution only if it is not yet deployed when queued, so reviewers should
+  refuse to approve an upgrade whose target has no code.) The Timelock's delay cannot be lowered below
   its deploy-time value, and an independent canceller (the Pauser Safe) can
   veto a queued operation — except a single-call operation removing that
   same canceller, which only a proposer or another canceller can cancel,

@@ -30,21 +30,23 @@ that can move user funds — directly or via price/risk inputs — stays behind 
 **timelock** until it is frozen on the published schedule. Two honesty notes on
 that delay and the cancel lever:
 
-- The **48–72h** figure is the *operational deploy commitment*, not a
-  code-enforced floor. `DeployTimelock.s.sol` reads `TIMELOCK_MIN_DELAY` from
-  env (default `172800` = 48h); the OpenZeppelin `TimelockController` enforces
-  whatever value was set at deploy, and changing the delay itself goes through
-  the timelock. The commitment is therefore "deploy with ≥ 48h and never lower
-  it below that without the delay" — verified at the deploy ceremony, not by a
-  hard-coded minimum.
+- The **48–72h** figure is a deploy commitment with a code-enforced floor
+  under it. `DeployTimelock.s.sol` reads `TIMELOCK_MIN_DELAY` from env
+  (default `172800` = 48h) and refuses less than 48h on any chain that is not
+  a known testnet. Once deployed, the Timelock's delay can never be lowered
+  below that deploy-time value (`MIN_DELAY_FLOOR`, #938), even through the
+  Timelock itself; a shorter delay needs a new Timelock.
 - The guardian-pause **halts user flows** during the delay window but does
   **not** cancel a queued upgrade — the diamond-cut path is intentionally left
   callable while paused (it's the incident recovery lever). Cancelling a
-  scheduled timelock op is the **timelock canceller's** lever, and today the
-  canceller **is the proposer** (the governance multisig) — so cancellation
-  assumes the proposer key is not itself the compromised one. An **independent
-  canceller** role (a separate guardian that can cancel but not propose) is a
-  hardening item, not wired today.
+  scheduled timelock op is the **timelock canceller's** lever. Two parties
+  hold it (#938): the proposer (the governance multisig) and an **independent
+  canceller**, the Pauser Safe, which can cancel but not propose. So
+  cancellation no longer assumes the proposer key is uncompromised. The
+  limit: the Pauser Safe cannot cancel a single-call operation that removes
+  it as canceller, so a captured proposer can remove it, but only after one
+  public delay, during which the Pauser Safe can still cancel everything
+  else the proposer has queued.
 
 ## 1. Guardian fast-pause — already in place
 

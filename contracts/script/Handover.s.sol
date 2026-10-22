@@ -260,6 +260,18 @@ contract Handover is Script {
             timelock != governanceSafe && timelock != pauserSafe,
             "timelock must be distinct from both Safes"
         );
+        // Both Safes must be contracts on THIS chain, on every chain and
+        // whichever way the script is invoked (Codex #2642 r9). A role
+        // granted to an address with no Safe behind it is either held by
+        // an ordinary key (the topology this rehearsal exists to validate,
+        // silently replaced) or held by nobody, and the admin renounces
+        // right after. `deploy-*.sh --phase handover` checks the same with
+        // `cast code`; this is the check that cannot be skipped by running
+        // the script directly. The proposer is the governance Safe (bound
+        // by the PROPOSER_ROLE check below), so two checks cover all three
+        // Safe roles.
+        require(governanceSafe.code.length > 0, "EMERGENCY_REVOKER_ADDRESS has no code on this chain (not a Safe)");
+        require(pauserSafe.code.length > 0, "PAUSER_ADDRESS has no code on this chain (not a Safe)");
         // The Timelock's independent veto (#938) must be the Pauser Safe
         // this script hands PAUSER_ROLE to. `DeployTimelock` reads its
         // canceller from the same PAUSER_ADDRESS, so a mismatch here means
