@@ -86,6 +86,9 @@ describe('every handler that reads a chain id asks whether it is served', () => 
     // Needs the chain's config object for the EIP-712 domain, so it asks
     // `chainConfig` and returns the same 503 itself.
     handleSignedOfferPost: 'fails closed through chainConfig',
+    // A one-shot D1-only write: gated on the deployment, not on this
+    // request's RPC resolution (Codex #2653 r2).
+    handleLoanPrepayMatchSource: 'asks chainDeployed (see the write test below)',
   };
   for (const file of ['loanRoutes.ts', 'offerRoutes.ts', 'signedOfferRoutes.ts']) {
     const src = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
@@ -99,6 +102,25 @@ describe('every handler that reads a chain id asks whether it is served', () => 
       });
     }
   }
+
+  it('the match-source write is gated on the deployment, not on this request\'s RPC', async () => {
+    const env = { DB: createSqliteD1(ALL_MIGRATIONS).d1 } as unknown as Env;
+    const post = (chainId: number) =>
+      loanRoutes.handleLoanPrepayMatchSource(
+        new Request(`https://x/loans/1/prepay-match-source?chainId=${chainId}`, { method: 'POST', body: 'not json' }),
+        env,
+        '1',
+      );
+    // Deployed, but no RPC resolved for this request: past the chain gate
+    // (it fails later, on the body), never a 503.
+    const deployed = await post(SERVED);
+    expect(deployed.status).toBe(400);
+    expect(await deployed.json()).toEqual({ error: 'invalid-json' });
+    // No deployment at all: invalid input.
+    const unknown = await post(999_999);
+    expect(unknown.status).toBe(400);
+    expect(await unknown.json()).toEqual({ error: 'unknown-chain' });
+  });
 
   it('no route module keeps a private copy of the guard or the parser', () => {
     for (const file of ['loanRoutes.ts', 'offerRoutes.ts', 'signedOfferRoutes.ts']) {

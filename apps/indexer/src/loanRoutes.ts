@@ -14,7 +14,7 @@
  */
 
 import { type Env } from './env';
-import { chainNotServed, parseChainId, requestedChainId } from './servedChain';
+import { chainDeployed, chainNotServed, parseChainId, requestedChainId } from './servedChain';
 import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
 import {
   type RepairObservationRow,
@@ -1870,10 +1870,13 @@ export async function handleLoanPrepayMatchSource(
   if (chainId === null) {
     return jsonResponse({ error: 'bad-chain-id' }, 400);
   }
-  // A match source for a chain this Worker does not index could never be
-  // matched against its listing, so it is refused like a read (#1140).
-  const notServed = chainNotServed(env, chainId);
-  if (notServed) return notServed;
+  // A match source for a chain the protocol is not deployed on is invalid
+  // input (#1140). Deliberately NOT the served-chain guard (Codex #2653 r2):
+  // this write is fired once, best-effort, and needs only D1, so a transient
+  // RPC-secret failure must not discard it. See `chainDeployed`.
+  if (!chainDeployed(chainId)) {
+    return jsonResponse({ error: 'unknown-chain' }, 400);
+  }
 
   let body: unknown;
   try {

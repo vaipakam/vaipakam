@@ -26,11 +26,16 @@
  * longer indexed would otherwise be served as a live snapshot).
  *
  * Routes outside that rule, and why:
+ *  - `POST /loans/:id/prepay-match-source` is a D1-only, one-shot WRITE, so
+ *    it asks `chainDeployed` instead (see there): a transient RPC failure
+ *    must not throw the breadcrumb away.
  *  - `/metrics/recycling` is dispatched BEFORE `resolveEnv` (it must not
  *    read the Secrets Store), so served-ness cannot be computed there.
  *  - `/metrics/loop-closure` belongs to the reward surface; its owners
- *    decide its posture. It is not changed here.
+ *    decide its posture (#2654, together with `/metrics/recycling`). It
+ *    is not changed here.
  */
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { type Env, getChainConfigs } from './env';
 
 /** The chain a route assumes when the request names none. Kept as it has
@@ -59,6 +64,18 @@ export function chainServed(env: Env, chainId: number): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether the protocol is deployed on `chainId`, by this build's deployment
+ * artifact: a fact of the build, not of this request. For a D1-only WRITE
+ * (Codex #2653 r2). Served-ness depends on this request's RPC resolution,
+ * and a transient Secrets Store failure reads as "not served", so gating a
+ * one-shot, best-effort write on it would lose the write for good. A read
+ * that misses on a transient failure is simply retried; a write is not.
+ */
+export function chainDeployed(chainId: number): boolean {
+  return !!getDeployment(chainId);
 }
 
 /**
