@@ -222,7 +222,10 @@ runs half of it on old code:
   (`RefreshAllFacetsInPlace`, `RefreshChangedFacetsInPlace`) refuse to cross
   the boundary while any ERC-1155 loan is open
   (`OpenErc1155RentalAcrossPerRentalRows`); close those rentals first, or
-  fresh-deploy.
+  fresh-deploy. That check is taken before the run's own pause, so it holds
+  only if no accept can land after it: the crossing runs only under the
+  operator's manual pause, already in force
+  (`PerRentalRowsCrossingNeedsManualPause` otherwise).
 
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place

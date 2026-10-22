@@ -45,7 +45,9 @@ is never blocked on that. An older vault keeps an ERC-1155 rental's record
 under its renter rather than its loan, and the new writes would never find
 it, so the in-place refreshes refuse to cross this change while any ERC-1155
 rental is open: such rentals are closed first, or the chain gets a fresh
-deploy. The curated partial refresh refuses a Diamond
+deploy. Because a new rental could otherwise open between that check and
+the refresh, the crossing runs only while the operator has already paused
+the platform. The curated partial refresh refuses a Diamond
 from before this change rather than leave a rental half on the old routes.
 
 Closes #902.

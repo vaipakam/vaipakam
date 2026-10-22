@@ -282,6 +282,11 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///         has an ERC-1155 rental open; see {_requireNoOpenErc1155RentalAcross902}.
     error OpenErc1155RentalAcrossPerRentalRows(address diamond, uint256 loanId);
 
+    /// @notice #902 - the target Diamond predates the per-rental renter rows and
+    ///         is not under the manual pause, so a scan for open ERC-1155
+    ///         rentals would not stay true until the cuts land.
+    error PerRentalRowsCrossingNeedsManualPause(address diamond);
+
     /// @dev Page size for the open-loan walk in {_requireNoOpenErc1155RentalAcross902}.
     uint256 private constant OPEN_LOAN_PAGE = 200;
 
@@ -295,10 +300,23 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///      cross by fresh deploy. A Diamond that already routes
     ///      `vaultSetRentalUser` is past the boundary and is not walked. Called
     ///      before any facet is deployed, so a refused run sends nothing.
+    ///
+    ///      The walk is a read taken before the run's own pause, so on its own
+    ///      it would not hold: an accept landing between the walk and that
+    ///      pause opens the very rental it looked for. A crossing therefore
+    ///      runs only under the operator's MANUAL pause, already in force when
+    ///      the walk is taken (an auto-pause window lapses by itself, so it
+    ///      does not count). Every accept entry point is `whenNotPaused`, so no
+    ///      rental can open between the walk and the cuts, and both refreshes
+    ///      leave a Diamond they found paused paused. What the walk cannot
+    ///      exclude is an Unpauser lifting that pause mid-run, which is an
+    ///      operator action rather than a race any borrower can win.
     function _requireNoOpenErc1155RentalAcross902(address diamond) internal view {
         if (IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.vaultSetRentalUser.selector) != address(0)) {
             return;
         }
+        (bool manual,,,) = LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
+        if (!manual) revert PerRentalRowsCrossingNeedsManualPause(diamond);
         for (uint256 offset;; offset += OPEN_LOAN_PAGE) {
             uint256[] memory ids = MetricsFacet(diamond).getActiveLoansPaginated(offset, OPEN_LOAN_PAGE);
             for (uint256 i; i < ids.length; ++i) {

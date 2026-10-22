@@ -15,6 +15,7 @@ import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {LibPausable} from "../../src/libraries/LibPausable.sol";
 import {RefreshAllFacetsInPlace} from "../../script/RefreshAllFacetsInPlace.s.sol";
 
 /**
@@ -227,9 +228,22 @@ contract RefreshChangedFacetsTest is Test {
 
     address internal _hostOfRentalRoute;
 
+    /// @dev Set the manual pause flag (the slot's low byte), as an operator's
+    ///      `AdminFacet.pause()` would, leaving the rest of the slot alone.
+    function _pauseManually() internal {
+        bytes32 raw = vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION);
+        vm.store(diamond, LibPausable.PAUSABLE_STORAGE_POSITION, raw | bytes32(uint256(1)));
+    }
+
     /// @dev Make the Diamond read as pre-#902 (no `vaultSetRentalUser` route)
-    ///      with `ids` open, each carrying `assetType`.
+    ///      with `ids` open, each carrying `assetType`, under the operator's
+    ///      manual pause that a crossing requires.
     function _pre902WithOpen(uint256[] memory ids, LibVaipakam.AssetType assetType) internal {
+        _pre902WithOpenUnpaused(ids, assetType);
+        _pauseManually();
+    }
+
+    function _pre902WithOpenUnpaused(uint256[] memory ids, LibVaipakam.AssetType assetType) internal {
         vm.mockCall(
             diamond,
             abi.encodeWithSelector(IDiamondLoupe.facetAddress.selector, VaultFactoryFacet.vaultSetRentalUser.selector),
@@ -264,6 +278,21 @@ contract RefreshChangedFacetsTest is Test {
     }
 
     /// Open loans of any other kind do not hold the boundary.
+    /// An unpaused pre-#902 Diamond is refused before the walk (Codex #2657
+    /// r4): a walk taken while accepts are open could be falsified by an
+    /// accept landing before the run's own pause. Refused even with no
+    /// ERC-1155 loan open, since that is exactly what the walk cannot pin.
+    function test_902_UnpausedAcrossTheBoundary_RefusesBeforeTheWalk() public {
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 4;
+        _pre902WithOpenUnpaused(ids, LibVaipakam.AssetType.ERC721);
+        Guard902Harness h = new Guard902Harness();
+        vm.expectRevert(
+            abi.encodeWithSelector(RefreshAllFacetsInPlace.PerRentalRowsCrossingNeedsManualPause.selector, diamond)
+        );
+        h.check(diamond);
+    }
+
     function test_902_OpenNon1155LoansAcrossTheBoundary_Pass() public {
         uint256[] memory ids = new uint256[](1);
         ids[0] = 4;
