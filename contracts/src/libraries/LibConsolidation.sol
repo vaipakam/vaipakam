@@ -144,7 +144,7 @@ library LibConsolidation {
         s.consolidationMoveFromUser = stored;
         (address movedAsset, uint256 movedAmount) = isLenderSide
             ? _moveLenderHeld(s, loan, loanId, stored, current, toProxy)
-            : _moveBorrowerCollateral(s, loan, stored, current, toProxy);
+            : _moveBorrowerCollateral(s, loan, loanId, stored, current, toProxy);
         s.consolidationMoveFromUser = address(0);
 
         // 7. Mutate the anchor + append-only index (dup-protected) + metrics.
@@ -300,6 +300,7 @@ library LibConsolidation {
     function _moveBorrowerCollateral(
         LibVaipakam.Storage storage s,
         LibVaipakam.Loan storage loan,
+        uint256 loanId,
         address stored,
         address current,
         address toProxy
@@ -309,7 +310,19 @@ library LibConsolidation {
         if (t == LibVaipakam.AssetType.ERC20) {
             amount = loan.collateralAmount;
             if (amount == 0) return (asset, 0);
-            _moveERC20(stored, current, asset, amount, toProxy);
+            uint256 credited = _moveERC20(stored, current, asset, amount, toProxy);
+            // #2440 — outcome 3 of {LibDelivery} in every flow, voluntary or
+            // forced: this relocates the borrower side's own backing between
+            // that side's vaults and pays nobody. A collateral that delivers
+            // less than it sends shrinks this position, never another: the
+            // loan's collateral and its (already re-keyed) lien fall to what
+            // the holder's vault holds, and the calling flow's health-factor
+            // and LTV checks run on that figure.
+            if (credited < amount) {
+                LibEncumbrance.decrementCollateralLien(loanId, amount - credited);
+                loan.collateralAmount = credited;
+                amount = credited;
+            }
         } else if (t == LibVaipakam.AssetType.ERC721) {
             amount = 1;
             _moveNFT(s, stored, asset, loan.collateralTokenId, 1, toProxy, true);
@@ -349,19 +362,31 @@ library LibConsolidation {
         // principal asset. (NFT-rental lender positions are excluded upstream,
         // so the prepay-asset case does not reach here.)
         asset = loan.principalAsset;
-        _moveERC20(stored, current, asset, amount, toProxy);
+        // #2440 — outcome 3 of {LibDelivery} in every flow: the lender side's
+        // own parked proceeds following its position to the current holder.
+        // The held claim follows what the holder's vault received, and the
+        // reservations re-keyed beside it in step 5 never exceed it.
+        uint256 credited = _moveERC20(stored, current, asset, amount, toProxy);
+        if (credited < amount) {
+            s.heldForLender[loanId] = credited;
+            LibEncumbrance.capLenderHeldReservations(loanId, current, asset, credited);
+        }
+        amount = credited;
     }
 
     /// @dev ERC-20 vault→vault: withdraw from `stored` (decrements its tracked
     ///      balance) to `toProxy`, then record the deposit under `current`.
+    ///      #2440 — records and returns what `toProxy` received (measured by
+    ///      the withdraw), never more than `amount`; the caller shrinks the
+    ///      ledger it moved to match.
     function _moveERC20(
         address stored,
         address current,
         address asset,
         uint256 amount,
         address toProxy
-    ) private {
-        VaultFactoryFacet(address(this)).vaultWithdrawERC20(
+    ) private returns (uint256 credited) {
+        credited = VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             stored,
             asset,
             toProxy,
@@ -370,7 +395,7 @@ library LibConsolidation {
         VaultFactoryFacet(address(this)).recordVaultDepositERC20(
             current,
             asset,
-            amount
+            credited
         );
     }
 

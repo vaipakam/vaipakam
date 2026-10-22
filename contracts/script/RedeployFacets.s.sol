@@ -25,6 +25,7 @@ import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
+import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
@@ -212,6 +213,12 @@ contract RedeployFacets is Script {
         // rides the same cut as those callers. On a pre-#2472 Diamond its one
         // selector is unrouted and partitions to an Add below.
         SwapAttemptFacet swapAttemptFacet = new SwapAttemptFacet();
+        // #2440 - the treasury fee host. Defaulted, Preclose, Refinance,
+        // EarlyWithdrawal and RepayPeriodic move every fee into the treasury by
+        // self-calling it, so it rides the same cut as those callers. On a
+        // pre-#2440 Diamond its two selectors are unrouted and partition to an
+        // Add below.
+        TreasuryFeeFacet treasuryFeeFacet = new TreasuryFeeFacet();
 
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("RiskSplitLiquidation: ", address(riskSplitLiquidationFacet));
@@ -231,6 +238,7 @@ contract RedeployFacets is Script {
         console.log("EncumbranceMutate:    ", address(encumbranceMutateFacet));
         console.log("FallbackCustodyFacet: ", address(fallbackCustodyFacet));
         console.log("SwapAttemptFacet:     ", address(swapAttemptFacet));
+        console.log("TreasuryFeeFacet:     ", address(treasuryFeeFacet));
 
         // #394 (Codex #647 rounds 5+7) — the runtime HF-floor knob selectors
         // need an Add on a PRE-#394 diamond (not yet routed → Replace reverts on
@@ -362,6 +370,9 @@ contract RedeployFacets is Script {
         // #2472 - the swap-attempt host, from the one list the deploy cuts.
         (bytes4[] memory saToAdd, bytes4[] memory saToReplace) =
             _partitionByRouting(diamond, FacetSelectors.swapAttempt());
+        // #2440 - the treasury fee host, from the one list the deploy cuts.
+        (bytes4[] memory tfToAdd, bytes4[] memory tfToReplace) =
+            _partitionByRouting(diamond, FacetSelectors.treasuryFee());
 
         uint256 nExtra =
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
@@ -381,7 +392,8 @@ contract RedeployFacets is Script {
             (profToRemove.length > 0 ? 1 : 0) +
             (rpToRemove.length > 0 ? 1 : 0) +
             (fcToAdd.length > 0 ? 1 : 0) + (fcToReplace.length > 0 ? 1 : 0) +
-            (saToAdd.length > 0 ? 1 : 0) + (saToReplace.length > 0 ? 1 : 0);
+            (saToAdd.length > 0 ? 1 : 0) + (saToReplace.length > 0 ? 1 : 0) +
+            (tfToAdd.length > 0 ? 1 : 0) + (tfToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](9 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
@@ -546,6 +558,13 @@ contract RedeployFacets is Script {
         if (saToAdd.length > 0) {
             cuts[idx++] = _add(address(swapAttemptFacet), saToAdd);
         }
+        // #2440 - and the treasury fee host, in the same cut for the same reason.
+        if (tfToReplace.length > 0) {
+            cuts[idx++] = _replace(address(treasuryFeeFacet), tfToReplace);
+        }
+        if (tfToAdd.length > 0) {
+            cuts[idx++] = _add(address(treasuryFeeFacet), tfToAdd);
+        }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
@@ -574,6 +593,8 @@ contract RedeployFacets is Script {
         console.log("  FallbackCustody selectors repl.: ", fcToReplace.length);
         console.log("  SwapAttempt selectors added:     ", saToAdd.length);
         console.log("  SwapAttempt selectors repl.:     ", saToReplace.length);
+        console.log("  TreasuryFee selectors added:     ", tfToAdd.length);
+        console.log("  TreasuryFee selectors repl.:     ", tfToReplace.length);
     }
 
     /// @dev #1566 S2b - the fallback-custody boundary. From S2b the fallback

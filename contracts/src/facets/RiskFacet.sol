@@ -8,6 +8,7 @@ import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
@@ -735,11 +736,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // move-out-exempt withdraw so a borrower flagged after init doesn't brick
         // the liquidation (collateral pushed OUT to the already-screened swap
         // recipients; the flagged party loses custody).
-        LibSanctionedLock.vaultWithdrawERC20MoveOut(
+        // #2440 — a forced close-out acts on what arrived: the loan's collateral
+        // becomes what reached the Diamond, so the quote, the sale and a
+        // fallback entry all use that figure and a short delivery is never made
+        // up from the Diamond's other balance.
+        loan.collateralAmount = LibSanctionedLock.pullToDiamond(
             LibVaipakam.storageSlot(),
             loan.borrower,
             loan.collateralAsset,
-            address(this),
             loan.collateralAmount
         );
         // #658 (Codex #680 P2) — the eager consolidation stamped the holder at
@@ -810,9 +814,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // Tiered KYC check for liquidator based on bonus value (README §16).
         _assertLiquidatorKyc(loan.principalAsset, bonus);
 
-        // Liquidation bonus transferred to liquidator immediately.
+        // Liquidation bonus transferred to liquidator immediately. #2440 — a
+        // bonus books nobody by what arrives (LibDelivery outcome 3); refused
+        // only if it cost the Diamond more than it sent.
         if (bonus > 0) {
-            IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);
+            LibDelivery.pushOut(loan.principalAsset, msg.sender, bonus);
         }
 
         // Waterfall (L-g #1009): bonus (keeper incentive) is paid first, then
@@ -856,16 +862,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         }
 
         // Treasury receives the (subordinated) handling fee + interest fee.
-        uint256 toTreasury = handlingFee + treasuryInterestFee;
-        if (toTreasury > 0) {
-            IERC20(loan.principalAsset).safeTransfer(s.treasury, toTreasury);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, handlingFee + treasuryInterestFee);
 
         // Lender's proceeds deposited into lender's vault for claim. #821 —
         // vault-lock so a flagged stored lender doesn't brick the liquidation
         // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance).
-        LibSanctionedLock.depositLocked(
+        // #2440 — the claim names what the vault received.
+        lenderProceeds = LibSanctionedLock.depositLocked(
             s, loan.lender, loanId, loan.principalAsset, lenderProceeds
         );
         // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
@@ -892,7 +896,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
         // Borrower surplus: any proceeds remaining after bonus + treasury + lender debt
         if (borrowerSurplus > 0) {
-            LibSanctionedLock.depositLocked(
+            // #2440 — the claim names what the vault received.
+            borrowerSurplus = LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
             );
             // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
@@ -1136,11 +1141,15 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // manual refund needed. #821 (Codex #832 r3 P1) — move-out-exempt so a
         // borrower flagged after init doesn't brick the partial liquidation
         // (collateral pushed OUT to screened swap recipients).
-        LibSanctionedLock.vaultWithdrawERC20MoveOut(
+        // #2440 — a forced close-out acts on what arrived: the vault gives up
+        // the whole slice (its tracked balance and the loan's collateral fall
+        // by `swappedCollateral`), and the quote and the sale use what reached
+        // the Diamond, so a short delivery is never made up from the Diamond's
+        // other balance.
+        uint256 sliceReceived = LibSanctionedLock.pullToDiamond(
             LibVaipakam.storageSlot(),
             loan.borrower,
             loan.collateralAsset,
-            address(this),
             swappedCollateral
         );
         // #658 (Codex #680 P2) — re-stamp the holder's VPFI tier/staking after
@@ -1153,7 +1162,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             address(this),
             loan.collateralAsset,
             loan.principalAsset,
-            swappedCollateral
+            sliceReceived
         );
         uint256 maxSlippageBps = LibVaipakam.cfgMaxLiquidationSlippageBps();
         uint256 minOutputAmount = (expectedProceeds *
@@ -1170,7 +1179,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             loanId,
             loan.collateralAsset,
             loan.principalAsset,
-            swappedCollateral,
+            sliceReceived,
             minOutputAmount,
             address(this),
             adapterCalls
@@ -1196,7 +1205,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         _assertLiquidatorKyc(loan.principalAsset, bonus);
 
         if (bonus > 0) {
-            IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);
+            // #2440 — outcome 3, as in {triggerLiquidation}.
+            LibDelivery.pushOut(loan.principalAsset, msg.sender, bonus);
         }
 
         // 2% handling fee on the slice's proceeds. Capped so bonus +
@@ -1239,12 +1249,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         if (principalRepaid >= loan.principal) revert PartialFullyClosedUseFull();
 
         // Treasury receipt — single transfer, same as full.
-        address treasury = s.treasury;
-        uint256 toTreasury = handlingFee + treasuryInterestFee;
-        if (toTreasury > 0) {
-            IERC20(loan.principalAsset).safeTransfer(treasury, toTreasury);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, handlingFee + treasuryInterestFee);
 
         // Lender's share goes directly to their vault. We deliberately
         // do NOT write `s.lenderClaims[loanId]` — claims are reserved
@@ -1279,17 +1285,31 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         //
         // `deliveredThroughAt` is 0: this payout settles no interest period, and
         // the host's NatSpec asks for 0 from such callers.
+        //
+        // #2440 — a partial liquidation leaves the loan ACTIVE and books this
+        // payout as received in full: the interest settled from it, the
+        // principal it retires, and the accrual restart below. So, like the
+        // rest of this all-or-nothing call (see the function's NatSpec), it is
+        // refused unless the lender-position holder (or the frozen holder's
+        // vault) received all of `lenderProceeds`. (The host itself refuses a
+        // short arrival at the holder's wallet; the check here covers the
+        // frozen holder's vault.) The close-out that acts on
+        // what arrived is the FULL liquidation, which stays open: a keeper
+        // turned away here calls {triggerLiquidation}.
         if (lenderProceeds > 0) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
-                    loanId,
-                    loan.principalAsset,
-                    lenderProceeds,
-                    uint256(0)
+            LibDelivery.requireFull(loan.principalAsset, lenderProceeds, abi.decode(
+                LibFacet.crossFacetCallReturn(
+                    abi.encodeWithSelector(
+                        EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
+                        loanId,
+                        loan.principalAsset,
+                        lenderProceeds,
+                        uint256(0)
+                    ),
+                    bytes4(0)
                 ),
-                bytes4(0)
-            );
+                (uint256)
+            ));
         }
 
         // #395 (Codex r1 P1 #2) — snapshot the PRE-partial position value
@@ -1557,11 +1577,15 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
-        // Debt — same shape as atomic path.
-        uint256 currentBorrowBalance = LibEntitlement.currentBorrowBalance(loan);
-        uint256 endTime = loan.startTime + loan.durationDays * 1 days;
-        uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
-        uint256 totalDebt = currentBorrowBalance + lateFee;
+        // Debt — same shape as atomic path. Scoped so the intermediates leave
+        // the stack frame before the settlement below (viaIR budget).
+        uint256 totalDebt;
+        {
+            uint256 lateFee = LibVaipakam.calculateLateFee(
+                loanId, loan.startTime + loan.durationDays * 1 days
+            );
+            totalDebt = LibEntitlement.currentBorrowBalance(loan) + lateFee;
+        }
         uint256 interestPortion = totalDebt - loan.principal;
 
         // Pull `totalDebt` of principal-asset from msg.sender. The
@@ -1571,11 +1595,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // this entry-point. `nonReentrant` on the outer entry-point
         // prevents a malicious-token transferFrom from re-entering the
         // discount path.
-        IERC20(loan.principalAsset).safeTransferFrom(
-            msg.sender,
-            address(this),
-            totalDebt
-        );
+        // #2440 — the debt is forwarded to the lender at `totalDebt`, so it must
+        // have arrived in full; a short arrival is refused by name rather than
+        // made up from tokens the Diamond holds for others.
+        LibDelivery.pullExact(loan.principalAsset, msg.sender, address(this), totalDebt);
 
         // Compute seizure size at oracle-priced debt-plus-discount-
         // value. `collateralEquivalent` uses `tryGetAssetPrice` (no
@@ -1617,14 +1640,12 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         );
         uint256 lenderProceeds = totalDebt - treasuryInterestFee;
 
-        address treasury = s.treasury;
-        if (treasuryInterestFee > 0) {
-            IERC20(loan.principalAsset).safeTransfer(treasury, treasuryInterestFee);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, treasuryInterestFee);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, treasuryInterestFee);
 
         // Lender's proceeds to their vault. #821 — vault-lock for a flagged lender.
-        LibSanctionedLock.depositLocked(
+        // #2440 — the claim names what the vault received.
+        lenderProceeds = LibSanctionedLock.depositLocked(
             s, loan.lender, loanId, loan.principalAsset, lenderProceeds
         );
         // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are

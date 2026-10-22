@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
@@ -21,8 +22,6 @@ import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol"
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title PrepayListingFacet
@@ -420,7 +419,9 @@ contract PrepayListingFacet is
         // round-2 `OfferConsumedBySale` gate in `_acceptOffer`
         // rejects the reentrant accept.
         s.offerConsumedBySale[uint256(offerId)] = true;
-        SafeERC20.safeTransfer(IERC20(principalAsset), vaultAddr, amount);
+        // #2440 — the tracked balance and the event record what the vault
+        // received.
+        amount = LibDelivery.pushMeasured(principalAsset, vaultAddr, amount);
         LibVaipakam.recordVaultDeposit(borrower, principalAsset, amount);
         emit OfferSaleProceedsCredited(offerId, borrower, principalAsset, amount);
     }
@@ -512,17 +513,15 @@ contract PrepayListingFacet is
         // it back (the revert-loses-the-marker failure the sync is designed around).
         LibVaipakam.assertRecipientNotBarred(lenderHolder);
         address treasury = s.treasury;
-        SafeERC20.safeTransfer(IERC20(principalAsset), lenderHolder, lenderLeg);
-        SafeERC20.safeTransfer(IERC20(principalAsset), treasury, treasuryLeg);
-        // Codex round-5 P2 #3 — every treasury-fee site MUST pair the
-        // transfer with `LibFacet.recordTreasuryAccrual` so the
-        // `treasuryBalances` invariant holds (the Diamond-as-treasury
-        // deploy pattern only credits the accrual lane to the
-        // accountant, not to an external recipient). Without this,
-        // accept-then-sold loans's treasury cut would land at the
-        // configured treasury address but NOT be reflected in
-        // `treasuryBalances` for downstream analytics + payroll.
-        LibFacet.recordTreasuryAccrual(principalAsset, treasuryLeg);
+        // #2440 — the loan settles below as if the lender received all of
+        // `lenderLeg`, so the leg must arrive in full. A short arrival is
+        // refused, which reverts the whole Seaport fill (the buyer's funds are
+        // never committed) and leaves the default path open.
+        LibDelivery.pushExact(principalAsset, lenderHolder, lenderLeg);
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet). The
+        // accrual is what Codex round-5 P2 #3 required at every treasury-fee
+        // site; the one fee leg now pairs it with the transfer itself.
+        LibFacet.transferToTreasury(principalAsset, treasuryLeg);
 
         // Codex round-9 P1 #2 + round-10 P1 — route the remainder to
         // the CURRENT borrower-position NFT holder (mirrors the loan-
@@ -547,8 +546,12 @@ contract PrepayListingFacet is
         uint256 remainder;
         unchecked { remainder = amount - lenderLeg - treasuryLeg; }
         if (remainder > 0) {
-            SafeERC20.safeTransfer(IERC20(principalAsset), remainderVault, remainder);
-            LibVaipakam.recordVaultDeposit(remainderRecipient, principalAsset, remainder);
+            // #2440 — the tracked balance records what the vault received.
+            LibVaipakam.recordVaultDeposit(
+                remainderRecipient,
+                principalAsset,
+                LibDelivery.pushMeasured(principalAsset, remainderVault, remainder)
+            );
         }
 
         // Codex round-10 P2 #2 + round-11 P1 — BLOCK fills while a

@@ -80,7 +80,10 @@ abstract contract DiamondFacetNames {
     ///      entry, retry swap and disposal hosted once).
     ///      94 → 95 with `SwapAttemptFacet` (#2472 — each failover swap
     ///      attempt in a frame of its own, so a partial fill unwinds alone).
-    function cutFacetNames() internal pure returns (string[95] memory) {
+    ///      95 → 96 with `TreasuryFeeFacet` (#2440 — every fee drawn from a
+    ///      payer's wallet or a user's vault into the treasury, measured and
+    ///      accrued once).
+    function cutFacetNames() internal pure returns (string[96] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -197,6 +200,8 @@ abstract contract DiamondFacetNames {
             "FallbackCustodyFacet",
             // #2472 - the swap-attempt host every failover seller self-calls.
             "SwapAttemptFacet",
+            // #2440 - the treasury fee host every fee-charging facet self-calls.
+            "TreasuryFeeFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",

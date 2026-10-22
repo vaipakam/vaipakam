@@ -53,6 +53,8 @@ import RiskMatchLiquidationFacetABI from './RiskMatchLiquidationFacet.json';
 import FallbackCustodyFacetABI from './FallbackCustodyFacet.json';
 // #2472 — the swap-attempt host (each failover swap attempt in its own frame).
 import SwapAttemptFacetABI from './SwapAttemptFacet.json';
+// #2440 — the treasury fee host (every fee drawn from a wallet or a vault).
+import TreasuryFeeFacetABI from './TreasuryFeeFacet.json';
 import RiskSplitLiquidationFacetABI from './RiskSplitLiquidationFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
@@ -204,6 +206,7 @@ export {
   RiskMatchLiquidationFacetABI,
   FallbackCustodyFacetABI,
   SwapAttemptFacetABI,
+  TreasuryFeeFacetABI,
   RiskSplitLiquidationFacetABI,
   ClaimFacetABI,
   OracleFacetABI,

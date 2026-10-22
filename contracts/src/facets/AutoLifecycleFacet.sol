@@ -8,6 +8,7 @@ import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibKeeperReward} from "../libraries/LibKeeperReward.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -17,8 +18,6 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {FeeEntitlementFacet} from "./FeeEntitlementFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
@@ -904,39 +903,28 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 treasuryShare
     ) internal {
         // 1. Withdraw the full accrued interest from the borrower's
-        //    vault to the diamond itself.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                borrowerNftOwner,
-                principalAsset,
-                address(this),
-                lenderShare + treasuryShare
-            ),
+        //    vault to the diamond itself. #2440 — a consented extension, not
+        //    a forced close-out: refused unless all of it arrived, so the
+        //    lender and the treasury are never paid out of the Diamond's
+        //    other balance.
+        LibFacet.vaultWithdrawExact(
+            borrowerNftOwner,
+            principalAsset,
+            address(this),
+            lenderShare + treasuryShare,
             IVaipakamErrors.VaultWithdrawFailed.selector
         );
-        // 2. Forward treasury share + record accrual.
-        if (treasuryShare > 0) {
-            SafeERC20.safeTransfer(
-                IERC20(principalAsset),
-                LibFacet.getTreasury(),
-                treasuryShare
-            );
-            LibFacet.recordTreasuryAccrual(principalAsset, treasuryShare);
-        }
+        // 2. Forward treasury share + record accrual. #2440 — measured,
+        //    accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(principalAsset, treasuryShare);
         // 3. Push lender share into the lender's vault.
         address lenderVault = LibFacet.getOrCreateVault(lenderNftOwner);
         if (lenderShare > 0) {
-            SafeERC20.safeTransfer(
-                IERC20(principalAsset),
-                lenderVault,
-                lenderShare
-            );
-            LibVaipakam.recordVaultDeposit(
-                lenderNftOwner,
-                principalAsset,
-                lenderShare
-            );
+            // #2440 — the extension re-terms the loan as if the lender received
+            // all of `lenderShare`, and it is consented, not forced, so a short
+            // arrival is refused like step 1's withdrawal.
+            LibDelivery.pushExact(principalAsset, lenderVault, lenderShare);
+            LibVaipakam.recordVaultDeposit(lenderNftOwner, principalAsset, lenderShare);
         }
     }
 

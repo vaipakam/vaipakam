@@ -523,19 +523,6 @@ contract ClaimFacet is
         // permissionless close-out path (`claimAsLender` proper) never calls it.
         LibBackstopOracleGate.assertCoverage(c);
 
-        // Par-guard — compare the lender slice's oracle VALUE directly (not the
-        // rounded-down required-collateral, which could accept a low-decimal slice
-        // up to one base unit of value below par). `sliceValue == 0` ⇒ oracle
-        // unavailable ⇒ refuse. Tolerate only 1 PRINCIPAL wei (sub-economic) for
-        // the snapshot's integer-division rounding, so a solvent absorb isn't
-        // spuriously rejected while an underwater slice still reverts.
-        uint256 sliceValue = LibFallback.principalEquivalent(
-            address(this), snap.lenderCollateral, c, p
-        );
-        if (sliceValue == 0 || sliceValue + 1 < due) {
-            revert BackstopUndercollateralized();
-        }
-
         // Absorb-cash + cap accounting. The exposure counter tracks cash spent on
         // collateral NOT yet resold; released only on realized-cash sale (§5.1).
         if (s.backstopAbsorbCash[p][c] < due) {
@@ -562,11 +549,26 @@ contract ClaimFacet is
         //    BOTH holders; the burned lender side no-ops, the live borrower side is
         //    stamped).
         //    `absorbed` is the slice the host actually moved (its return value),
-        //    never a snapshot field re-read afterwards. The par guard above priced
-        //    the same slice: the host reads the snapshot and never mutates it.
+        //    never a snapshot field re-read afterwards.
         uint256 absorbed = _disposeFallbackCustody(
             loanId, vault, LibFallbackCustody.Move.ToBackstop
         );
+
+        // Par-guard — compare the oracle VALUE of the slice the backstop vault
+        // actually RECEIVED (#2440: a collateral that delivers less than it
+        // sends makes `absorbed` smaller than the snapshot's slice, and the
+        // treasury's cash must buy what arrived, not what was sent) directly
+        // (not the rounded-down required-collateral, which could accept a
+        // low-decimal slice up to one base unit of value below par).
+        // `sliceValue == 0` ⇒ oracle unavailable ⇒ refuse. Tolerate only 1
+        // PRINCIPAL wei (sub-economic) for the snapshot's integer-division
+        // rounding, so a solvent absorb isn't spuriously rejected while an
+        // underwater slice still reverts. The revert unwinds the whole absorb,
+        // the disposal above included.
+        uint256 sliceValue = LibFallback.principalEquivalent(address(this), absorbed, c, p);
+        if (sliceValue == 0 || sliceValue + 1 < due) {
+            revert BackstopUndercollateralized();
+        }
         // Track the warehoused collateral so `sweepBackstopAbsorbCollateral`
         // can never reach seeded absorb CASH sharing the same vault/token.
         if (absorbed > 0) s.backstopWarehousedCollateral[c] += absorbed;
@@ -592,17 +594,11 @@ contract ClaimFacet is
         LibEncumbrance.releaseActiveHeld(loanId, loan.lender);
 
         // Pay the lender (current NFT owner) CASH = lenderPrincipalDue from the
-        // backstop vault's absorb-cash balance.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                vault,
-                p,
-                nftOwner,
-                due
-            ),
-            VaultWithdrawFailed.selector
-        );
+        // backstop vault's absorb-cash balance. #2440 — the lender claim is
+        // marked cash-satisfied above, so the cash must arrive in full; the
+        // absorb is optional, and a short payment refuses it, leaving the
+        // lender the ordinary claim.
+        LibFacet.vaultWithdrawExact(vault, p, nftOwner, due, VaultWithdrawFailed.selector);
 
         // Release any heldForLender (prior partial-rescue proceeds) from the
         // lender's OWN vault reservation to the NFT owner — its existing balance,
@@ -964,14 +960,18 @@ contract ClaimFacet is
             }
         }
 
-        // Claimable if there's a recorded amount, or heldForLender funds, or an NFT rental to return,
-        // or an NFT collateral claim (for ERC-20 loans defaulting into NFT collateral).
+        // Claimable if a close-out recorded a claim, or heldForLender funds, or an NFT rental to
+        // return, or an NFT collateral claim (for ERC-20 loans defaulting into NFT collateral).
         // `claim` + the already-claimed guard were resolved at the top
         // of this function; re-read nothing here.
-        bool hasHeld = s.heldForLender[loanId] > 0;
-        bool hasRentalNft = loan.assetType != LibVaipakam.AssetType.ERC20;
-        bool hasNftCollateralClaim = claim.assetType != LibVaipakam.AssetType.ERC20;
-        if (claim.amount == 0 && !hasHeld && !hasRentalNft && !hasNftCollateralClaim) revert NothingToClaim();
+        //
+        // #2440 — a RECORDED claim is keyed on its asset, not its amount. A
+        // forced close-out books what arrived, so a token that delivered
+        // nothing leaves a written claim of zero; the claim must still run, or
+        // the lender NFT, the intent release and the settle below could never
+        // happen. Only a claim no close-out wrote (asset unset) is nothing to
+        // claim. {_lenderSideOpen} is the same rule the borrower's claim reads.
+        if (!_lenderSideOpen(s, loanId, loan)) revert NothingToClaim();
 
         // Lender position-NFT ownership was already verified at the top
         // of this function (before the claim-time fallback resolution).
@@ -1558,20 +1558,17 @@ contract ClaimFacet is
         // Note: the borrower LIF rebate is paid out in the same tx above, so
         // it doesn't gate the Settled transition — once the borrower's
         // claimAsBorrower has run, every borrower-side payout has cleared.
-        LibVaipakam.ClaimInfo storage lenderClaim = s.lenderClaims[loanId];
-        bool lenderHasHeld = s.heldForLender[loanId] > 0;
-        bool lenderHasRentalNft = loan.assetType != LibVaipakam.AssetType.ERC20;
-        bool lenderHasNftCollateralClaim = lenderClaim.assetType != LibVaipakam.AssetType.ERC20;
-        bool lenderFullyClaimed = lenderClaim.claimed;
-        bool lenderHasNothing = lenderClaim.amount == 0 && !lenderHasHeld && !lenderHasRentalNft && !lenderHasNftCollateralClaim;
-        bool willSettle = lenderFullyClaimed || lenderHasNothing;
+        // #2440 — "has nothing" is {_lenderSideOpen}'s rule, the one the
+        // lender's own claim reads: a written claim of zero (a forced close-out
+        // that received nothing) still has to run, so it keeps the loan open.
+        bool willSettle = s.lenderClaims[loanId].claimed || !_lenderSideOpen(s, loanId, loan);
         // #585 — for an InternalMatched loan the lender side is now closed
         // through the standard lender claim path: the match records the
         // matched proceeds as a `lenderClaims` row owed to the current
         // lender-position holder (`claimAsLender` accepts InternalMatched).
         // So the natural settle predicate above composes correctly — a
         // borrower claim settles the loan only once the lender has claimed
-        // (`lenderFullyClaimed`) or genuinely has nothing. The #577
+        // or genuinely has nothing. The #577
         // unconditional `willSettle = false` override (which deferred the
         // close until this lender-side lifecycle existed) is therefore
         // removed: keeping it would now wrongly strand a fully-claimed loan
@@ -1593,6 +1590,28 @@ contract ClaimFacet is
     }
 
     // ─── Internal Helpers ─────────────────────────────────────────────────────
+
+    /// @dev #2440 — whether the lender side of `loanId` still has a claim to
+    ///      run: a claim a close-out recorded (keyed on its asset, so a forced
+    ///      close-out that received nothing still leaves one), funds held for
+    ///      the lender, an NFT rental to return, or an NFT collateral claim.
+    ///      The lender's claim refuses with `NothingToClaim` when this is
+    ///      false, and the borrower's claim settles the loan only once it is
+    ///      false or the lender has claimed, so both sides read one rule and a
+    ///      lender whose close-out received nothing can still close the
+    ///      position (burn the NFT, release the intent's exposure, settle).
+    function _lenderSideOpen(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.Loan storage loan
+    ) private view returns (bool) {
+        LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
+        return claim.asset != address(0) ||
+            claim.amount > 0 ||
+            s.heldForLender[loanId] > 0 ||
+            loan.assetType != LibVaipakam.AssetType.ERC20 ||
+            claim.assetType != LibVaipakam.AssetType.ERC20;
+    }
 
     /// @dev Resolves a pending fallback snapshot at claim time. When
     ///      `retryCalls` is non-empty and no retry has yet been tried,
@@ -1684,7 +1703,9 @@ contract ClaimFacet is
         } else {
             // The lender slice goes into the STORED lender's vault, where the
             // lender claim's payout withdraws it to the verified NFT owner.
-            _disposeFallbackCustody(loanId, loan.lender, LibFallbackCustody.Move.ToLender);
+            // #2440 — the claim names the slice the vault received.
+            s.lenderClaims[loanId].amount =
+                _disposeFallbackCustody(loanId, loan.lender, LibFallbackCustody.Move.ToLender);
         }
         snap.active = false;
         // Partial-match / no-match / retry-swap: the (scaled) residual is
@@ -1788,17 +1809,16 @@ contract ClaimFacet is
             borrowerGets = rem - treasuryGets;
         }
 
-        if (treasuryGets > 0) {
-            IERC20(loan.principalAsset).safeTransfer(s.treasury, treasuryGets);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, treasuryGets);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, treasuryGets);
 
         if (lenderGets > 0) {
             // #821 (Codex #832 r4 P1) — vault-lock so a flagged stored lender
             // doesn't brick the retry distribution (T-051 — the Diamond-side
             // transfer ticks protocolTrackedVaultBalance so the eventual
             // claimAsLender's vaultWithdrawERC20 doesn't underflow).
-            LibSanctionedLock.depositLocked(
+            // #2440 — the claim below names what the vault received.
+            lenderGets = LibSanctionedLock.depositLocked(
                 s, loan.lender, loanId, loan.principalAsset, lenderGets
             );
             // #998 S10 (#1006) — no per-site marker: the fail-closed freeze of a
@@ -1810,7 +1830,8 @@ contract ClaimFacet is
         if (borrowerGets > 0) {
             // #821 (Codex #832 r4 P1) — vault-lock the borrower residual so a
             // flagged stored borrower doesn't brick the retry distribution.
-            LibSanctionedLock.depositLocked(
+            // #2440 — the claim below names what the vault received.
+            borrowerGets = LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.principalAsset, borrowerGets
             );
             // #661 (Codex #674 P1) — the FallbackPending retry is a FOURTH
@@ -1910,6 +1931,10 @@ contract ClaimFacet is
     ///         `!claimed && (amount > 0 || assetType != ERC20 ||
     ///                      heldForLender > 0 || hasRentalNftReturn)`
     ///      — mirroring the guards in `claimAsLender` / `claimAsBorrower`.
+    ///      On the LENDER side a recorded claim is also actionable at a zero
+    ///      `amount` (`asset != address(0)`, #2440): a forced close-out books
+    ///      what arrived, so one that received nothing leaves a claim of zero
+    ///      that still closes the position.
     ///      Phase 5 adds the borrower LIF rebate; query
     ///      {getBorrowerLifRebate} for that lane.
     function getClaimable(

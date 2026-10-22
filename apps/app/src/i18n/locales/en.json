@@ -1609,6 +1609,8 @@
         "loan": "Loan",
         "prepaidBufferBack": "Your prepaid buffer back",
         "repaidFunds": "Repaid funds",
+        "nothingRecovered": "Nothing was recovered for this position — claiming closes it",
+        "nothingRecordedYet": "Nothing recorded for you so far",
         "recoveryNotComparable": "This is what the default settlement recovered. How it compares with what the loan still owed when it defaulted isn’t available to the app, so no shortfall is shown.",
         "compareInKind": "This is the collateral itself, not a cash amount — what it is worth depends on its market value.",
         "owedAtDefault": "When it defaulted, the loan still owed {{total}}: {{principal}} principal plus {{charges}} in interest and late fees.",

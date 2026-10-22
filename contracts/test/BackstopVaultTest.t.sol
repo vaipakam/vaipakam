@@ -23,6 +23,8 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
+import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 /**
  * @title  BackstopVaultTest
@@ -668,5 +670,103 @@ contract BackstopVaultTest is SetupTest {
         assertEq(swept, residue, "swept == residue");
         assertEq(afterBal, before + residue, "treasury credited the residue");
         assertEq(ERC20(mockERC20).balanceOf(vault), 0, "vault drained");
+    }
+
+    // ─── 8. Measured forwards to the treasury (#2440) ─────────────────────────
+
+    /// @dev Switch on a 1% charge on transfers OUT of `sender` only, keeping the
+    ///      token's balances (the mock appends its fields after ERC20Mock's).
+    function _chargeTransfersFrom(address token, address sender) internal {
+        vm.etch(token, address(new FeeOnTransferERC20Mock("FoT", "FOT", 18)).code);
+        FeeOnTransferERC20Mock(token).setFeeBps(100);
+        FeeOnTransferERC20Mock(token).setChargedSender(sender);
+    }
+
+    /// @dev What the logs say `from` delivered to `to` of `token` (the mock
+    ///      emits the delivered figure, and the charge as a burn).
+    function _delivered(Vm.Log[] memory logs, address token, address from, address to)
+        internal
+        pure
+        returns (uint256 total)
+    {
+        bytes32 sig = keccak256("Transfer(address,address,uint256)");
+        for (uint256 i; i < logs.length; i++) {
+            Vm.Log memory l = logs[i];
+            if (
+                l.emitter == token && l.topics.length == 3 && l.topics[0] == sig
+                    && address(uint160(uint256(l.topics[1]))) == from
+                    && address(uint160(uint256(l.topics[2]))) == to
+            ) total += abi.decode(l.data, (uint256));
+        }
+    }
+
+    /// @dev Idle capital returned to the treasury is credited with what reached
+    ///      the Diamond: a token that charges the vault's forward leaves the
+    ///      charge with the backstop, never on the treasury's books.
+    function test_withdrawBackstopToTreasury_creditsWhatReachedTheDiamond() public {
+        uint256 amount = 1_000 ether;
+        _chargeTransfersFrom(mockERC20, vault);
+        uint256 before = TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20);
+        uint256 diamondBefore = ERC20(mockERC20).balanceOf(address(diamond));
+
+        vm.prank(owner);
+        BackstopFacet(address(diamond)).withdrawBackstopToTreasury(
+            mockERC20, mockCollateralERC20, amount
+        );
+
+        uint256 arrived = ERC20(mockERC20).balanceOf(address(diamond)) - diamondBefore;
+        assertEq(arrived, amount - amount / 100, "fixture: the forward was charged 1%");
+        assertEq(
+            TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20),
+            before + arrived,
+            "treasury credited what arrived"
+        );
+    }
+
+    /// @dev A residue sweep credits what reached the Diamond.
+    function test_sweepBackstopToken_creditsWhatReachedTheDiamond() public {
+        FeeOnTransferERC20Mock fot = new FeeOnTransferERC20Mock("FoT", "FOT", 18);
+        fot.mint(vault, 100 ether);
+        fot.setFeeBps(100);
+
+        vm.prank(owner);
+        uint256 swept = BackstopFacet(address(diamond)).sweepBackstopToken(address(fot));
+
+        assertEq(swept, 99 ether, "returns what arrived");
+        assertEq(fot.balanceOf(address(diamond)), 99 ether, "fixture: the Diamond holds 99");
+        assertEq(
+            TreasuryFacet(address(diamond)).getTreasuryBalance(address(fot)),
+            99 ether,
+            "treasury credited what arrived"
+        );
+        assertEq(fot.balanceOf(vault), 0, "vault drained");
+    }
+
+    /// @dev A resolved loan's proceeds are credited with what reached the
+    ///      Diamond, and the claim event names that same figure.
+    function test_backstopClaim_creditsWhatReachedTheDiamond() public {
+        (uint256 offerId, ) = _eligibleOffer();
+        vm.prank(makeAddr("poker"));
+        uint256 loanId = BackstopFacet(address(diamond)).backstopFill(offerId);
+        address borrower = LoanFacet(address(diamond)).getLoanDetails(loanId).borrower;
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+
+        _chargeTransfersFrom(mockERC20, vault);
+        uint256 before = TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20);
+        vm.recordLogs();
+        vm.prank(owner);
+        BackstopFacet(address(diamond)).backstopClaim(loanId, new LibSwap.AdapterCall[](0));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        uint256 arrived = _delivered(logs, mockERC20, vault, address(diamond));
+        uint256 charged = _delivered(logs, mockERC20, vault, address(0));
+        assertGe(arrived + charged, PRINCIPAL, "fixture: the vault forwarded at least the principal");
+        assertGt(charged, 0, "fixture: the forward was charged");
+        assertEq(
+            TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20),
+            before + arrived,
+            "treasury credited what arrived, not what the vault sent"
+        );
     }
 }

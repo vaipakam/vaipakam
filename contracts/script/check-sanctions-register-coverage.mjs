@@ -71,6 +71,10 @@ const ALLOWLIST = {
     'new-lender cross-payer funding on the lender-SALE path; same Tier-1-screened-at-entry rationale as depositForNewLender',
   'ClaimFacet.sol::_distributeRetryProceeds':
     'retry-swap distribution helper — writes both lanes but BOTH callers register both holders in the same tx: _claimViaBackstopImpl terminalizes FallbackPending→Defaulted immediately after this call, and _resolveFallbackIfActive is called by _claimAsLenderImpl which records both holders at its top (recordSanctionsFrozenClaimantBoth) + terminalizes',
+  'ClaimFacet.sol::_resolveFallbackIfActive':
+    '#2440 failed-retry branch resizes the FallbackPending lender claim row to the slice its vault actually received; the row was registered at fallback ENTRY (enterFallback terminalizes Active→FallbackPending, recording both holders) and the only caller, _claimAsLenderImpl, records both holders again at its top (recordSanctionsFrozenClaimantBoth) and terminalizes in the same tx',
+  'FallbackCustodyFacet.sol::_absorbCustodyShortfall':
+    '#2440 failed-retry restore came back short; resizes BOTH FallbackPending claim rows to their shrunken snapshot slices (no new payout). The rows were registered at fallback ENTRY (enterFallback terminalizes), and its only path (retryFallbackSwap) is reached solely via ClaimFacet._retryFallbackSwap, whose two callers register both holders in the same tx (_claimViaBackstopImpl terminalizes; _claimAsLenderImpl records both + terminalizes)',
   'RiskMatchLiquidationFacet.sol::_retainInternalMatchResidual':
     'internal-match over-collateralized residual helper — its only caller (_settleFallbackOrTransitionPostMatch Active-full branch) terminalizes Active→InternalMatched (registers both holders) BEFORE this borrowerClaims write in the same tx',
 };

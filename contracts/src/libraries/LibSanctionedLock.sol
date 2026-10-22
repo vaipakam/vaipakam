@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
+import {LibDelivery} from "./LibDelivery.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {LibERC721} from "./LibERC721.sol";
@@ -99,25 +100,40 @@ library LibSanctionedLock {
     ///      several withdrawals — or the ERC-721/1155 variants — must share one
     ///      exemption span. Reverts `VaultWithdrawFailed` on a failed withdraw,
     ///      matching the inline call sites this replaces.
+    ///      #2440 — returns what `recipient` received, never more than
+    ///      `amount` (measured by the withdraw itself). A forced close-out
+    ///      pulling into the Diamond acts on that figure ({pullToDiamond}).
     function vaultWithdrawERC20MoveOut(
         LibVaipakam.Storage storage s,
         address payer,
         address asset,
         address recipient,
         uint256 amount
-    ) internal {
+    ) internal returns (uint256 delivered) {
         s.consolidationMoveFromUser = payer;
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                payer,
-                asset,
-                recipient,
-                amount
-            ),
-            IVaipakamErrors.VaultWithdrawFailed.selector
+        delivered = LibFacet.vaultWithdrawDelivered(
+            payer, asset, recipient, amount, IVaipakamErrors.VaultWithdrawFailed.selector
         );
         s.consolidationMoveFromUser = address(0);
+    }
+
+    /// @dev #2440 — outcome 2 of {LibDelivery} for a FORCED close-out: moves
+    ///      `amount` of `payer`'s `asset` out of their vault into the Diamond
+    ///      (under the move-out exemption) and returns what arrived, never
+    ///      more than `amount`. The vault always sends `amount`, but a token
+    ///      that delivers less than it sends makes the arrival smaller. Every
+    ///      forced close-out that pulls into the Diamond to sell or forward
+    ///      spends only the returned figure, so a shortfall reduces that
+    ///      loan's own sale, payout or fallback split and is never drawn from
+    ///      the Diamond's other balance, which other ledgers own. The
+    ///      close-out never stalls on it.
+    function pullToDiamond(
+        LibVaipakam.Storage storage s,
+        address payer,
+        address asset,
+        uint256 amount
+    ) internal returns (uint256 received) {
+        received = vaultWithdrawERC20MoveOut(s, payer, asset, address(this), amount);
     }
 
     /// @dev Clear the pin and, when `recipient` is sanctions-flagged, emit the
@@ -183,22 +199,45 @@ library LibSanctionedLock {
     ///      vault-to-vault / NFT and the caller needs the vault address.
     ///      A zero `amount` is a no-op (no vault is force-created, nothing is
     ///      transferred, no event) — matching the prior `if (amount > 0)` guards.
+    ///      #2440 — outcome 2 of {LibDelivery} (a FORCED flow): records and
+    ///      returns what the vault actually received
+    ///      ({LibDelivery.pushMeasured}), never more than `amount`. A caller
+    ///      that writes a ledger beside the credit (a claim, a lien, a custody
+    ///      row) writes the returned figure, so the ledger never names tokens
+    ///      the vault does not hold. A VOLUNTARY flow uses
+    ///      {depositLockedInFull} instead.
     function depositLocked(
         LibVaipakam.Storage storage s,
         address owner,
         uint256 loanId,
         address asset,
         uint256 amount
-    ) internal {
-        if (amount == 0) return;
+    ) internal returns (uint256 credited) {
+        if (amount == 0) return 0;
         s.sanctionedDepositExemptUser = owner;
         address vault = LibFacet.getOrCreateVault(owner);
         s.sanctionedDepositExemptUser = address(0);
-        IERC20(asset).safeTransfer(vault, amount);
-        LibVaipakam.recordVaultDeposit(owner, asset, amount);
+        credited = LibDelivery.pushMeasured(asset, vault, amount);
+        LibVaipakam.recordVaultDeposit(owner, asset, credited);
         if (LibVaipakam.isSanctionedAddress(owner)) {
-            emit SanctionedProceedsLocked(loanId, owner, asset, amount);
+            emit SanctionedProceedsLocked(loanId, owner, asset, credited);
         }
+    }
+
+    /// @dev #2440 — {depositLocked} for a VOLUNTARY flow (outcome 1 of
+    ///      {LibDelivery}: a repayment, a swap-to-repay, a sale): the party
+    ///      credited is booked as paid in full, so the deposit is refused
+    ///      unless the vault received all of `amount`. The Diamond's own push
+    ///      is measured here even when the hop into the Diamond was measured
+    ///      already, because a token can charge one hop and not the other.
+    function depositLockedInFull(
+        LibVaipakam.Storage storage s,
+        address owner,
+        uint256 loanId,
+        address asset,
+        uint256 amount
+    ) internal {
+        LibDelivery.requireFull(asset, amount, depositLocked(s, owner, loanId, asset, amount));
     }
 
     /// @dev Cross-PAYER variant of {depositLocked}: parks a close-out payoff that
@@ -226,8 +265,8 @@ library LibSanctionedLock {
         s.sanctionedDepositExemptUser = owner;
         address vault = LibFacet.getOrCreateVault(owner);
         s.sanctionedDepositExemptUser = address(0);
-        // slither-disable-next-line arbitrary-send-erc20
-        IERC20(asset).safeTransferFrom(payer, vault, amount);
+        // #1281-011 — a wallet-funded payoff: refused unless it arrived in full.
+        LibDelivery.pullExact(asset, payer, vault, amount);
         LibVaipakam.recordVaultDeposit(owner, asset, amount);
         if (LibVaipakam.isSanctionedAddress(owner)) {
             emit SanctionedProceedsLocked(loanId, owner, asset, amount);
@@ -246,6 +285,12 @@ library LibSanctionedLock {
     ///      the receive-side exemption is pinned around the vault resolution (a
     ///      flagged `owner`'s EXISTING vault resolves without minting a new proxy).
     ///      Emits the lock event when `owner` is flagged. Zero `amount` is a no-op.
+    ///      #2440 — `fromUser`'s vault sends `amount`, and `owner`'s vault is
+    ///      credited with, and the call returns, what actually arrived
+    ///      (measured by the withdraw), so a ledger written beside it never
+    ///      names tokens `owner`'s vault lacks. A forced caller books the
+    ///      returned figure; a voluntary one refuses a short return
+    ///      ({LibDelivery.requireFull}).
     function depositLockedFromVault(
         LibVaipakam.Storage storage s,
         address fromUser,
@@ -253,32 +298,21 @@ library LibSanctionedLock {
         uint256 loanId,
         address asset,
         uint256 amount
-    ) internal {
-        if (amount == 0) return;
+    ) internal returns (uint256 credited) {
+        if (amount == 0) return 0;
         // Receive side: resolve `owner`'s EXISTING vault behind the pin.
         s.sanctionedDepositExemptUser = owner;
         address ownerVault = LibFacet.getOrCreateVault(owner);
         s.sanctionedDepositExemptUser = address(0);
         // From side: withdraw `fromUser`'s prepay into `owner`'s vault behind the
         // move-out exemption (so a flagged `fromUser` doesn't brick the service).
-        s.consolidationMoveFromUser = fromUser;
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                fromUser,
-                asset,
-                ownerVault,
-                amount
-            ),
-            IVaipakamErrors.VaultWithdrawFailed.selector
-        );
-        s.consolidationMoveFromUser = address(0);
+        credited = vaultWithdrawERC20MoveOut(s, fromUser, asset, ownerVault, amount);
         // Tick `owner`'s tracked balance (the funds now sit in their vault), the
         // same bookkeeping `LibFacet.depositForNewLender` does for a Diamond
         // `safeTransfer` into a vault.
-        LibVaipakam.recordVaultDeposit(owner, asset, amount);
+        LibVaipakam.recordVaultDeposit(owner, asset, credited);
         if (LibVaipakam.isSanctionedAddress(owner)) {
-            emit SanctionedProceedsLocked(loanId, owner, asset, amount);
+            emit SanctionedProceedsLocked(loanId, owner, asset, credited);
         }
     }
 

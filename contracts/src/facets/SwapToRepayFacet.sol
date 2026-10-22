@@ -8,6 +8,7 @@ import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
@@ -294,12 +295,12 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // Diamond for the swap). The window is NARROW — closed inside the
         // helper BEFORE `swapWithFailoverUpTo` runs, so the receive-side exemption
         // is never open across the untrusted adapter call (Codex #986 r3).
-        LibSanctionedLock.vaultWithdrawERC20MoveOut(
-            s,
-            loan.borrower,
+        // #2440 — the borrower chose this close-out, so a short arrival is
+        // refused: the sale never spends the Diamond's other balance.
+        LibDelivery.requireFull(
             loan.collateralAsset,
-            address(this),
-            sellAmount
+            sellAmount,
+            LibSanctionedLock.pullToDiamond(s, loan.borrower, loan.collateralAsset, sellAmount)
         );
 
         (bool success, uint256 outputAmount, uint256 adapterUsed, uint256 actualCollateralConsumed) =
@@ -343,11 +344,8 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
 
         // ── Settlement waterfall — diamond-held proceeds pattern
         //    (Codex round-1 P1 #3 — mirrors RiskFacet:702-712) ────────
-        address treasury = LibFacet.getTreasury();
-        if (plan.treasuryShare > 0) {
-            IERC20(loan.principalAsset).safeTransfer(treasury, plan.treasuryShare);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, plan.treasuryShare);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, plan.treasuryShare);
 
         // #954 (§1.1) — deposit the lender proceeds behind the receive-side
         // sanctions exemption (so a lender flagged after init doesn't brick the
@@ -417,7 +415,10 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             // share semantics), so the move-out exemption — which emits no
             // `SanctionedProceedsLocked` — is the right one.
             LibSanctionedLock.beginMoveOut(s, loan.borrower);
-            IERC20(loan.collateralAsset).safeTransfer(
+            // #2440 — refused unless the vault got all of it back, so the
+            // re-lien and the borrower's claim match what the vault holds.
+            LibDelivery.pushExact(
+                loan.collateralAsset,
                 LibFacet.getOrCreateVault(loan.borrower),
                 partialFillRefund
             );

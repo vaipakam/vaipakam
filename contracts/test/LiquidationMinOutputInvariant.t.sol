@@ -10,6 +10,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
 import {LibFallback} from "../src/libraries/LibFallback.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 
 /**
  * @title LiquidationMinOutputInvariant
@@ -51,13 +52,7 @@ contract LiquidationMinOutputInvariantTest is RiskFacetTest {
 
         // Let the cross-facet vault withdraw no-op so we don't need to
         // round-trip through the per-user vault proxy for this test.
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -135,13 +130,7 @@ contract LiquidationMinOutputInvariantTest is RiskFacetTest {
             ),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector
-            ),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),

@@ -554,6 +554,69 @@ contract PartialRefreshRoutingTest is Test {
         assertTrue(hostAfterReplace != hostAfterAdd, "the second pass replaced it with its own deploy");
     }
 
+    /// @dev Remove the #2440 treasury fee host from the Diamond, the shape a
+    ///      Diamond from before #2440 presents to the curated scripts.
+    function _unrouteTreasuryFeeHost() internal returns (bytes4[] memory sels) {
+        sels = FacetSelectors.treasuryFee();
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: sels
+        });
+        vm.prank(deployer);
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
+        for (uint256 i; i < sels.length; ++i) {
+            assertEq(IDiamondLoupe(diamond).facetAddress(sels[i]), address(0), "fixture-live: the host is unrouted");
+        }
+    }
+
+    /// @notice #2440 — `RedeployFacets` reinstalls facets that charge fees
+    ///         into the treasury (DefaultedFacet, PrecloseFacet, RefinanceFacet,
+    ///         EarlyWithdrawalFacet, RepayPeriodicFacet), and each of them now
+    ///         moves every fee through a self-call into `TreasuryFeeFacet`. A
+    ///         Diamond from before #2440 routes no such host, so the script must
+    ///         ADD it; without it every fee would revert `FunctionDoesNotExist`.
+    /// @dev    Run twice, so both the Add and the Replace branch of the routing
+    ///         partition execute, and the whole two-selector surface must land
+    ///         on one host each time.
+    function test_RedeployFacets_RoutesTheTreasuryFeeHost_OnPre2440Diamond() public {
+        bytes4[] memory sels = _unrouteTreasuryFeeHost();
+
+        RedeployFacets first = new RedeployFacets();
+        first.runWith(diamond, DEPLOYER_KEY);
+        _assertSingleHost(sels, "TreasuryFeeFacet");
+        address hostAfterAdd = IDiamondLoupe(diamond).facetAddress(sels[0]);
+
+        RedeployFacets second = new RedeployFacets();
+        second.runWith(diamond, DEPLOYER_KEY);
+        _assertSingleHost(sels, "TreasuryFeeFacet");
+        assertTrue(
+            IDiamondLoupe(diamond).facetAddress(sels[0]) != hostAfterAdd,
+            "the second pass replaced it with its own deploy"
+        );
+    }
+
+    /// @notice #2440 — `ReplaceStaleFacets` reinstalls `OfferAcceptFeeFacet`,
+    ///         whose borrower-LIF charge moves the treasury's cut through the
+    ///         same host, so it must ADD the host on a pre-#2440 Diamond too.
+    function test_ReplaceStaleFacets_RoutesTheTreasuryFeeHost_OnPre2440Diamond() public {
+        bytes4[] memory sels = _unrouteTreasuryFeeHost();
+
+        ReplaceStaleFacets first = new ReplaceStaleFacets();
+        first.runWith(diamond, DEPLOYER_KEY);
+        _assertSingleHost(sels, "TreasuryFeeFacet");
+        address hostAfterAdd = IDiamondLoupe(diamond).facetAddress(sels[0]);
+
+        ReplaceStaleFacets second = new ReplaceStaleFacets();
+        second.runWith(diamond, DEPLOYER_KEY);
+        _assertSingleHost(sels, "TreasuryFeeFacet");
+        assertTrue(
+            IDiamondLoupe(diamond).facetAddress(sels[0]) != hostAfterAdd,
+            "the second pass replaced it with its own deploy"
+        );
+    }
+
     // ─── Shared assertions ────────────────────────────────────────────
 
     /// @dev Assert every selector is routed AND they all share one host. A

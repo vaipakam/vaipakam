@@ -37,6 +37,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 
 /**
  * @title  FeeEntitlementFacetTest
@@ -416,9 +417,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         vm.mockCall(address(diamond),
             abi.encodeWithSelector(RepayFacet.calculateRepaymentAmount.selector),
             abi.encode(PRINCIPAL + 10 ether));
-        vm.mockCall(address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond),
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
             abi.encode(uint256(2e18)));
@@ -1422,9 +1421,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         // replays on identical plumbing without a `clearMockedCalls` (which is
         // GLOBAL and would take out the shared oracle mocks with it).
         deal(mockERC20, address(diamond), 5_000 ether);
-        vm.mockCall(address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond),
             abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector),
             abi.encode(true));

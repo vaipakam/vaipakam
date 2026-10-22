@@ -17,6 +17,7 @@ import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
+import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -116,6 +117,12 @@ contract ReplaceStaleFacets is DeployDiamond {
         // sale block, so it quotes an accept as fine and the transaction
         // reverts — the preview/accept divergence #1503 exists to remove.
         OfferPreviewFacet offerPreviewFacet = new OfferPreviewFacet();
+        // #2440 — the refreshed borrower-LIF charge (OfferAcceptFeeFacet) moves
+        // the treasury's cut by a self-call into this host. A Diamond from
+        // before #2440 routes no such selector, so refreshing the fee facet
+        // without it would revert every fee-bearing accept
+        // `FunctionDoesNotExist`. Deployed alongside; partitioned below.
+        TreasuryFeeFacet treasuryFeeFacet = new TreasuryFeeFacet();
 
         console.log("OfferFacet:          ", address(offerCreateFacet));
         console.log("OfferAcceptFacet:    ", address(offerAcceptFacet));
@@ -127,6 +134,7 @@ contract ReplaceStaleFacets is DeployDiamond {
         console.log("OracleAdminFacet:    ", address(oracleAdminFacet));
         console.log("RiskPreviewFacet:    ", address(riskPreviewFacet));
         console.log("OfferPreviewFacet:   ", address(offerPreviewFacet));
+        console.log("TreasuryFeeFacet:    ", address(treasuryFeeFacet));
 
         // T-068: RewardReporterFacet is intentionally NOT refreshed here.
         // The LayerZero→CCIP migration changed its selector SET (removed
@@ -156,13 +164,13 @@ contract ReplaceStaleFacets is DeployDiamond {
         // the inherited `DeployDiamond` getter that defines what the Diamond
         // routes, so the surface cannot be partial (#778/#779).
         //
-        // Ten facets, so at most two cuts each, plus TWO retired-selector
-        // Removes (#2459 r4's previewIntent; #2489's tariff setter) — 22 at most
-        // (Codex #2489 r12: a 21-slot array would panic on a fully mixed stale
+        // Eleven facets, so at most two cuts each, plus TWO retired-selector
+        // Removes (#2459 r4's previewIntent; #2489's tariff setter) — 24 at most
+        // (Codex #2489 r12: a short array would panic on a fully mixed stale
         // Diamond before diamondCut ran); empty partitions are skipped and the
         // staging array is trimmed to what was actually used (a zero-selector
         // cut reverts).
-        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](22);
+        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](24);
         uint256 n;
         n = _appendPartitioned(
             staging, n, diamond, address(offerCreateFacet), _getOfferCreateSelectors()
@@ -205,6 +213,11 @@ contract ReplaceStaleFacets is DeployDiamond {
             diamond,
             address(offerAcceptFeeFacet),
             _getOfferAcceptFeeSelectors()
+        );
+        // #2440 — the fee host the refreshed LIF charge self-calls, in the same
+        // cut so no block sees the new charge without it.
+        n = _appendPartitioned(
+            staging, n, diamond, address(treasuryFeeFacet), _getTreasuryFeeSelectors()
         );
         // #394 (Codex #647 round-3) — the carved-out numeraire/PAD/periodic
         // selectors go to the NumeraireConfigFacet address, NOT ConfigFacet's:

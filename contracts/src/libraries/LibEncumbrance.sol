@@ -362,6 +362,43 @@ library LibEncumbrance {
         notifyTierExclusion(loanId, true);
     }
 
+    /// @notice #2440 — keep an ACTIVE loan's lender-side reservations within
+    ///         what is now held for the lender. A move of `heldForLender` whose
+    ///         token delivered less than it sent (consolidation into the
+    ///         position holder's vault) leaves the held figure below the
+    ///         reservations re-keyed beside it, which would lock that much of
+    ///         the holder's unrelated balance and overstate its VPFI tier
+    ///         exclusion. Releases the excess — the active-held reservation
+    ///         first, then the lender-proceeds one — from `holder`'s aggregate
+    ///         (where the re-key already put both). Only a reservation recorded
+    ///         under `asset` counts. No-op when the reservations fit.
+    function capLenderHeldReservations(
+        uint256 loanId,
+        address holder,
+        address asset,
+        uint256 held
+    ) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 activeHeld =
+            s.heldForLenderEncumberedAsset[loanId] == asset ? s.heldForLenderEncumbered[loanId] : 0;
+        uint256 proceeds =
+            s.lenderProceedsEncumberedAsset[loanId] == asset ? s.lenderProceedsEncumbered[loanId] : 0;
+        if (activeHeld + proceeds <= held) return;
+        uint256 excess = activeHeld + proceeds - held;
+        _decrementAggregate(holder, asset, 0, excess);
+        uint256 take = excess < activeHeld ? excess : activeHeld;
+        if (take > 0) {
+            s.heldForLenderEncumbered[loanId] = activeHeld - take;
+            if (take == activeHeld) s.heldForLenderEncumberedAsset[loanId] = address(0);
+            excess -= take;
+        }
+        if (excess > 0) {
+            s.lenderProceedsEncumbered[loanId] = proceeds - excess;
+            if (excess == proceeds) s.lenderProceedsEncumberedAsset[loanId] = address(0);
+        }
+        notifyTierExclusion(loanId, true);
+    }
+
     /// @notice Migrate the active-held reservation `oldLender → newUser` when the
     ///         lender position moves (consolidation / sale) and the held follows.
     ///         Moves ONLY the aggregate; the per-loan record is loan-keyed and

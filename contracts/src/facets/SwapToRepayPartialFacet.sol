@@ -9,6 +9,7 @@ import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
@@ -248,14 +249,13 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // here so a full release would leave the residual collateral
         // unprotected from other ERC20 withdraw surfaces.
         _decrementLienAtSwapToRepayPartial(loanId, collateralSwapAmount);
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                loan.borrower,
-                loan.collateralAsset,
-                address(this),
-                collateralSwapAmount
-            ),
+        // #2440 — the borrower chose this repayment, so a short arrival is
+        // refused: the sale never spends the Diamond's other balance.
+        LibFacet.vaultWithdrawExact(
+            loan.borrower,
+            loan.collateralAsset,
+            address(this),
+            collateralSwapAmount,
             VaultWithdrawFailed.selector
         );
 
@@ -274,7 +274,10 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // Refund partial-fill leftover collateral to borrower vault.
         uint256 partialFillRefund = collateralSwapAmount - actualCollateralConsumed;
         if (partialFillRefund > 0) {
-            IERC20(loan.collateralAsset).safeTransfer(
+            // #2440 — refused unless the vault got all of it back, so the
+            // re-lien and the loan's collateral match what the vault holds.
+            LibDelivery.pushExact(
+                loan.collateralAsset,
                 LibFacet.getOrCreateVault(loan.borrower),
                 partialFillRefund
             );
@@ -347,11 +350,8 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         }
 
         // ── Settle waterfall — diamond-held pattern ──────────────────
-        address treasury = LibFacet.getTreasury();
-        if (treasuryShare > 0) {
-            IERC20(loan.principalAsset).safeTransfer(treasury, treasuryShare);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, treasuryShare);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, treasuryShare);
 
         // Codex round-3 P1 #1 + round-4 P1 #3 — pay the lender directly
         // on the partial path, but route to the CURRENT lender-side NFT
@@ -372,7 +372,11 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // `repayPartial`'s Tier-1 screen on the discretionary payout.
         LibVaipakam._assertNotSanctioned(currentLenderHolder);
         uint256 lenderTotal = lenderShare + partialPrincipal;
-        IERC20(loan.principalAsset).safeTransfer(currentLenderHolder, lenderTotal);
+        // #2440 — the loan is booked below as repaid by `partialPrincipal` and
+        // paid through now, and this is the borrower's own choice, so the
+        // payout must reach the lender in full; a short arrival is refused, as
+        // `repayPartial`'s lender payout is.
+        LibDelivery.pushExact(loan.principalAsset, currentLenderHolder, lenderTotal);
 
         // Any leftover principal (above accrued + partialPrincipal) →
         // current borrower-NFT holder's EOA directly (Codex round-4
@@ -386,10 +390,11 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
             // #954 (§1.3) — same Tier-1 discretionary screen on the borrower
             // surplus payee; the must-complete escape is `swapToRepayFull`.
             LibVaipakam._assertNotSanctioned(currentBorrowerHolder);
-            IERC20(loan.principalAsset).safeTransfer(
-                currentBorrowerHolder,
-                surplus
-            );
+            // #2440 — a payment to a wallet that books the surplus as paid: a
+            // reading at a wallet is trusted only to refuse (LibDelivery,
+            // WHERE A READING CAN BE TRUSTED), so a short arrival is refused,
+            // as the full route's surplus payout is.
+            LibDelivery.pushExact(loan.principalAsset, currentBorrowerHolder, surplus);
         }
 
         // ── Loan state updates ───────────────────────────────────────

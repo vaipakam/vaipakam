@@ -1,0 +1,165 @@
+{
+  "$comment": "Every ERC-20 move written in src/ outside src/libraries/LibDelivery.sol, with the reason it may skip the library (#2440). Read by contracts/script/check-measured-delivery.mjs, which fails on an unlisted move, a changed count, or a stale entry. Keyed <file>:<Contract>.<function>.",
+  "sites": [
+    {
+      "site": "src/AggregatorAdapterImplementation.sol:AggregatorAdapterImplementation.sweepToPrincipal",
+      "moves": 1,
+      "reason": "Principal-only sweep of the adapter's own raw balance to its single principal. It books nothing: the balance is outside totalAssets, so whatever arrives is simply the principal's."
+    },
+    {
+      "site": "src/BackstopVaultImplementation.sol:BackstopVaultImplementation.claimInteractionRewardsToDiamond",
+      "moves": 1,
+      "reason": "VPFI interaction-rewards forwarder. VPFI reward custody is outside #2440's scope (owned by the reward-custody work); VPFI is the protocol's own token and charges no transfer fee. The backstop's other forwards to the treasury are measured (LibDelivery.pushMeasured)."
+    },
+    {
+      "site": "src/RewardCustodyHolder.sol:RewardCustodyHolder.release",
+      "moves": 1,
+      "reason": "The reward-custody holder's Diamond-only release. The Diamond side measures each release (LibRewardCustody). Reward custody is outside #2440's scope."
+    },
+    {
+      "site": "src/VaipakamVaultImplementation.sol:VaipakamVaultImplementation.depositERC20",
+      "moves": 1,
+      "reason": "Vault primitive with no caller in src/: every deposit into a vault is a LibDelivery move by the Diamond straight to the vault's address. Owner-only."
+    },
+    {
+      "site": "src/VaipakamVaultImplementation.sol:VaipakamVaultImplementation.withdrawERC20",
+      "moves": 1,
+      "reason": "Vault primitive behind its Diamond-only gate. Its callers, VaultFactoryFacet.vaultWithdrawERC20 and the stuck-token recovery, measure what the recipient received and refuse a move that cost the vault more than it sent."
+    },
+    {
+      "site": "src/adapters/AggregatorAdapterBase.sol:AggregatorAdapterBase._returnUnspent",
+      "moves": 1,
+      "reason": "Swap adapter leg. Every adapter call runs inside a LibSwap attempt that the Diamond measures as a whole from its own balances, and an attempt that delivers less than it reported is unwound and the next route tried (#2472, SwapAttemptFacet)."
+    },
+    {
+      "site": "src/adapters/AggregatorAdapterBase.sol:AggregatorAdapterBase.execute",
+      "moves": 2,
+      "reason": "Swap adapter leg. Every adapter call runs inside a LibSwap attempt that the Diamond measures as a whole from its own balances, and an attempt that delivers less than it reported is unwound and the next route tried (#2472, SwapAttemptFacet)."
+    },
+    {
+      "site": "src/adapters/BalancerV2Adapter.sol:BalancerV2Adapter.execute",
+      "moves": 2,
+      "reason": "Swap adapter leg. Every adapter call runs inside a LibSwap attempt that the Diamond measures as a whole from its own balances, and an attempt that delivers less than it reported is unwound and the next route tried (#2472, SwapAttemptFacet)."
+    },
+    {
+      "site": "src/adapters/UniV3Adapter.sol:UniV3Adapter.execute",
+      "moves": 2,
+      "reason": "Swap adapter leg. Every adapter call runs inside a LibSwap attempt that the Diamond measures as a whole from its own balances, and an attempt that delivers less than it reported is unwound and the next route tried (#2472, SwapAttemptFacet)."
+    },
+    {
+      "site": "src/crosschain/BuybackRemittanceReceiver.sol:BuybackRemittanceReceiver.onCrossChainMessage",
+      "moves": 1,
+      "reason": "Cross-chain receiver forwarding a CCIP-delivered token to the Diamond. It reads the Diamond's balance around its own move and books the measured figure (actualReceived). VPFI recycling and reward transport, outside #2440's scope."
+    },
+    {
+      "site": "src/crosschain/CcipMessenger.sol:CcipMessenger._ccipReceive",
+      "moves": 1,
+      "reason": "CCIP messenger forwarding delivered tokens to the registered handler, which measures what reached the Diamond. Cross-chain transport, outside #2440's scope."
+    },
+    {
+      "site": "src/crosschain/CcipMessenger.sol:CcipMessenger._pullTokens",
+      "moves": 1,
+      "reason": "CCIP messenger pulling a protocol sender's tokens for the router to lock or burn. It books nothing at the messenger. Cross-chain transport, outside #2440's scope."
+    },
+    {
+      "site": "src/crosschain/RewardRemittanceReceiver.sol:RewardRemittanceReceiver._deliverTokens",
+      "moves": 1,
+      "reason": "Cross-chain receiver forwarding a CCIP-delivered token to the Diamond. It reads the Diamond's balance around its own move and books the measured figure (actualReceived). VPFI recycling and reward transport, outside #2440's scope."
+    },
+    {
+      "site": "src/crosschain/VpfiReturnReceiver.sol:VpfiReturnReceiver._handleRepatReturn",
+      "moves": 1,
+      "reason": "Cross-chain receiver forwarding a CCIP-delivered token to the Diamond. It reads the Diamond's balance around its own move and books the measured figure (actualReceived). VPFI recycling and reward transport, outside #2440's scope."
+    },
+    {
+      "site": "src/crosschain/VpfiReturnReceiver.sol:VpfiReturnReceiver._handleStrandedReturn",
+      "moves": 1,
+      "reason": "Cross-chain receiver forwarding a CCIP-delivered token to the Diamond. It reads the Diamond's balance around its own move and books the measured figure (actualReceived). VPFI recycling and reward transport, outside #2440's scope."
+    },
+    {
+      "site": "src/facets/ClaimFacet.sol:ClaimFacet.claimAsBorrower",
+      "moves": 1,
+      "reason": "VPFI LIF rebate payout on the grandfathered peg-custody path (#1352): a recorded rebate paid in VPFI, the protocol's own token, which charges no transfer fee. VPFI fee custody is outside #2440's scope."
+    },
+    {
+      "site": "src/facets/RepatriationFacet.sol:RepatriationFacet.sendStrandedReturn",
+      "moves": 1,
+      "reason": "VPFI repatriation of a stranded return. VPFI recycling is outside #2440's scope (owned by the recycling work)."
+    },
+    {
+      "site": "src/facets/RewardClaimFacet.sol:RewardClaimFacet._deliverFromDiamond",
+      "moves": 1,
+      "reason": "VPFI reward claim paid to the claimant's wallet (a payout of a recorded claim books nobody by what arrives). Reward custody is outside #2440's scope."
+    },
+    {
+      "site": "src/facets/VaultFactoryFacet.sol:VaultFactoryFacet.vaultCreditFromDiamondERC20",
+      "moves": 1,
+      "reason": "Credit of a VPFI reward or rebate into a user's vault. Every caller passes VPFI (LibVPFIDiscount, LibRewardStaging, RewardClaimFacet), the protocol's own token, which charges no transfer fee. VPFI reward paths are outside #2440's scope."
+    },
+    {
+      "site": "src/keeper/FlashLoanLiquidator.sol:FlashLoanLiquidator.receiveFlashLoan",
+      "moves": 1,
+      "reason": "Standalone keeper liquidator repaying its flash loan from its own balance. Not protocol custody and books nothing in the protocol; keeper code is owned by the keeper work."
+    },
+    {
+      "site": "src/keeper/FlashLoanLiquidator.sol:FlashLoanLiquidator.withdraw",
+      "moves": 1,
+      "reason": "Owner withdrawal of the standalone keeper liquidator's own balance. Not protocol custody and books nothing in the protocol; keeper code is owned by the keeper work."
+    },
+    {
+      "site": "src/libraries/LibKeeperReward.sol:LibKeeperReward._safeTransfer",
+      "moves": 1,
+      "reason": "Low-level VPFI keeper-reward transfer; its caller takes the recipient's balance delta as the success signal. Keeper rewards are owned by the keeper work, outside #2440's scope."
+    },
+    {
+      "site": "src/libraries/LibRewardCustody.sol:LibRewardCustody.pullFromCaller",
+      "moves": 1,
+      "reason": "Reward-custody funding pull into the holder. It reads the holder's balance around the move and books what arrived. Reward custody is outside #2440's scope."
+    },
+    {
+      "site": "src/libraries/LibRewardCustody.sol:LibRewardCustody.relocateToHolderUncredited",
+      "moves": 1,
+      "reason": "Reward-custody move from the Diamond into the holder. It reads both balances around the move and books what arrived. Reward custody is outside #2440's scope."
+    },
+    {
+      "site": "src/libraries/LibRewardStaging.sol:LibRewardStaging._payFromDiamond",
+      "moves": 1,
+      "reason": "VPFI reward claim paid to the claimant's wallet (a payout of a recorded claim books nobody by what arrives). Reward custody is outside #2440's scope."
+    },
+    {
+      "site": "src/libraries/LibServiceCapacity.sol:LibServiceCapacity._chargeArmingFee",
+      "moves": 1,
+      "reason": "Service-capacity arming fee pulled from the operator into the Diamond; the recycle-bucket credit it feeds measures the ingress by balance delta itself (creditServiceCapacityArmingFee)."
+    },
+    {
+      "site": "src/libraries/LibServiceCapacity.sol:LibServiceCapacity._pull",
+      "moves": 1,
+      "reason": "Service-capacity deposit pull, measured on the destination and refused unless all of it arrived (ServiceCapacityMoveUnverified)."
+    },
+    {
+      "site": "src/libraries/LibVPFIDiscount.sol:LibVPFIDiscount.creditBorrowerLifRebateToVault",
+      "moves": 1,
+      "reason": "VPFI LIF rebate on the grandfathered peg-custody path (#1352), in VPFI, the protocol's own token, which charges no transfer fee. VPFI fee custody is outside #2440's scope."
+    },
+    {
+      "site": "src/libraries/LibVPFIDiscount.sol:LibVPFIDiscount.forfeitBorrowerLif",
+      "moves": 1,
+      "reason": "VPFI LIF forfeit to the treasury on the grandfathered peg-custody path (#1352), in VPFI, the protocol's own token, which charges no transfer fee. VPFI fee custody is outside #2440's scope."
+    },
+    {
+      "site": "src/libraries/LibVPFIDiscount.sol:LibVPFIDiscount.settleBorrowerLifProper",
+      "moves": 1,
+      "reason": "VPFI LIF treasury share on the grandfathered peg-custody path (#1352), in VPFI, the protocol's own token, which charges no transfer fee. VPFI fee custody is outside #2440's scope."
+    },
+    {
+      "site": "src/libraries/LibVpfiRecycle.sol:LibVpfiRecycle.debitRepatriationSurplus",
+      "moves": 1,
+      "reason": "VPFI recycling release on the pre-holder path. VPFI recycling is outside #2440's scope (owned by the recycling work)."
+    },
+    {
+      "site": "src/seaport/CollateralListingExecutor.sol:CollateralListingExecutor.sweepStrayTokens",
+      "moves": 1,
+      "reason": "Owner-only recovery of tokens stranded on the listing executor. It books nothing, so there is no figure a reading would protect."
+    }
+  ]
+}

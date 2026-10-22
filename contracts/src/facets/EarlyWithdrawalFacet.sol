@@ -15,6 +15,7 @@ import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
 import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -817,10 +818,10 @@ contract EarlyWithdrawalFacet is
 
             uint256 toLiam = proceeds - liamCost;
             if (toLiam > 0) {
-                IERC20(loan.principalAsset).safeTransfer(
-                    originalLender,
-                    toLiam
-                );
+                // #2440 — a voluntary sale: the seller's net is refused unless
+                // it all arrived, so the seller floor checked above is what
+                // the seller actually receives.
+                LibDelivery.pushExact(loan.principalAsset, originalLender, toLiam);
             }
             LibFacet.transferToTreasury(loan.principalAsset, treasuryCut);
             if (saleShortfall > 0) {
@@ -1204,15 +1205,16 @@ contract EarlyWithdrawalFacet is
         address payAsset = loan.assetType == LibVaipakam.AssetType.ERC20
             ? loan.principalAsset
             : loan.prepayAsset;
+        // #2440 — a voluntary sale: both hops are refused unless all of the
+        // held amount arrived, so `heldForLender` keeps naming exactly what
+        // the buyer's vault holds and nothing is drawn from the Diamond's
+        // other balance.
         s.consolidationMoveFromUser = originalLender;
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                originalLender,
-                payAsset,
-                address(this),
-                priorHeldSale
-            ),
+        LibFacet.vaultWithdrawExact(
+            originalLender,
+            payAsset,
+            address(this),
+            priorHeldSale,
             VaultWithdrawFailed.selector
         );
         s.consolidationMoveFromUser = address(0);
@@ -1222,9 +1224,7 @@ contract EarlyWithdrawalFacet is
         if (loan.principalAsset == s.vpfiToken) {
             _restampVpfiParty(originalLender, originalLender == newLender);
         }
-        LibSanctionedLock.depositLocked(
-            s, newLender, loanId, payAsset, priorHeldSale
-        );
+        LibSanctionedLock.depositLockedInFull(s, newLender, loanId, payAsset, priorHeldSale);
         if (loan.principalAsset == s.vpfiToken) {
             _restampVpfiParty(newLender, false);
         }

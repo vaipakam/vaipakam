@@ -307,6 +307,28 @@ describe('lenderPayoutWhat', () => {
     );
     expect(lenderPayoutWhat({ ...base, kind: 'proper' })).toBe(labels.repaidFunds);
   });
+
+  // #2440 — a forced close-out that received nothing records a claim of zero.
+  // It pays nothing and closes the position: said so, never described as the
+  // collateral, the repaid principal, or "repaid funds".
+  it('says a claim recorded at zero recovered nothing', () => {
+    const zero = { ...base, recordedZero: true, principalPlusInterest: '5 USDC + interest' };
+    for (const kind of ['proper', 'default'] as const) {
+      const what = lenderPayoutWhat({ ...zero, kind });
+      expect(what).toBe(labels.nothingRecovered);
+      expect(what).not.toContain('1 WETH');
+    }
+    expect(lenderPayoutWhat({ ...zero, kind: 'fallback' })).toBe(labels.provisionalAmount(labels.nothingRecordedYet));
+  });
+
+  it('still states held proceeds beside a claim recorded at zero', () => {
+    for (const kind of ['proper', 'default'] as const) {
+      expect(lenderPayoutWhat({ ...base, kind, recordedZero: true, held: known('3 USDC') })).toBe(labels.heldFor('3 USDC'));
+    }
+    expect(lenderPayoutWhat({ ...base, kind: 'fallback', recordedZero: true, held: known('3 USDC') })).toBe(
+      labels.provisionalAmount(labels.heldFor('3 USDC')),
+    );
+  });
 });
 
 describe('rentalPayoutWhat', () => {

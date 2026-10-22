@@ -37,8 +37,10 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
+import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -151,7 +153,7 @@ contract RepayFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](19);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](20);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -261,6 +263,16 @@ contract RepayFacetTest is Test {
             facetAddress: address(new SwapAttemptFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSwapAttemptFacetSelectors()
+        });
+        // #2440 - every fee-charging facet (Repay, Preclose, Refinance,
+        // EarlyWithdrawal, Defaulted, RepayPeriodic, OfferAcceptFee) moves a
+        // fee into the treasury by a self-call into TreasuryFeeFacet. A
+        // hand-built Diamond that cuts any of them must cut this host too, or
+        // the fee reverts FunctionDoesNotExist at that self-call.
+        cuts[19] = IDiamondCut.FacetCut({
+            facetAddress: address(new TreasuryFeeFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -422,12 +434,18 @@ contract RepayFacetTest is Test {
             address(diamond), borrower, borrowerPk, offerId
         );
 
+        _createRentalLoan(10);
+    }
+
+    /// @dev An NFT rental of `mockNft721` #1 at `dailyFee` per day for 30 days,
+    ///      prepaid in `mockERC20`.
+    function _createRentalLoan(uint256 dailyFee) internal returns (uint256 loanId) {
         vm.prank(lender);
-        uint256 offerId2 = OfferCreateFacet(address(diamond)).createOffer(
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Lender,
                 lendingAsset: mockNft721,
-                amount: 10,
+                amount: dailyFee,
                 interestRateBps: 500,
                 collateralAsset: mockERC20,
                 collateralAmount: 1500,
@@ -443,7 +461,7 @@ contract RepayFacetTest is Test {
                 allowsPartialRepay: true,
                 allowsPrepayListing: false,
                 allowsParallelSale: false,
-                amountMax: 10,
+                amountMax: dailyFee,
                 interestRateBpsMax: 500,
                 collateralAmountMax: 1500,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
@@ -454,8 +472,8 @@ contract RepayFacetTest is Test {
             })
         );
 
-        uint256 loanId2 = LibAcceptTestSigner.signAndAccept(
-            address(diamond), borrower, borrowerPk, offerId2
+        loanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower, borrowerPk, offerId
         );
     }
 
@@ -1592,21 +1610,12 @@ contract RepayFacetTest is Test {
     /// @dev Tests repayPartial NFT "Treasury share failed" path.
     ///      First vaultWithdrawERC20 (lender share) succeeds; second (treasury share) fails.
     function testRepayPartialNFTTreasuryShareFails() public {
-        helperOfferLoan();
-        // NFT loan loanId=2; first call is lender share, second is treasury share.
-        // We need lender share to succeed but treasury share to fail.
-        // Get borrower's vault address used in the call args:
-        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
-        // We mock by counting: first call succeeds (lender share to lender addr), second reverts.
-        // Can differentiate by the `to` parameter: lender vs treasury.
-        // lender address is lender, treasury is address(diamond).
-        // Mock lender share call to succeed specifically (to=lender)
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrower, mockERC20, lender),
-            abi.encode(true)
-        );
-        // Mock treasury share call to fail (to=address(diamond)/treasury)
+        // #2440 — a zero treasury share makes no treasury call, so the rental
+        // fee must be large enough to leave one: 100/day -> 2 to the treasury.
+        uint256 rentalId = _createRentalLoan(100);
+        // Every vault withdrawal delivers in full, except the treasury share
+        // (to = address(diamond), the treasury in this suite), which fails.
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCallRevert(
             address(diamond),
             abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrower, mockERC20, address(diamond)),
@@ -1614,7 +1623,7 @@ contract RepayFacetTest is Test {
         );
         vm.prank(borrower);
         vm.expectRevert(bytes("treasury fail"));
-        RepayFacet(address(diamond)).repayPartial(2, 1);
+        RepayFacet(address(diamond)).repayPartial(rentalId, 1);
         vm.clearMockedCalls();
     }
 
@@ -1649,24 +1658,21 @@ contract RepayFacetTest is Test {
     /// @dev Tests autoDeductDaily "Treasury deduct failed" path.
     ///      First vaultWithdrawERC20 (lender share) succeeds; second (treasury share) fails.
     function testAutoDeductDailyTreasuryDeductFails() public {
-        helperOfferLoan();
+        // #2440 — a zero treasury share makes no treasury call, so the rental
+        // fee must be large enough to leave one: 100/day -> 2 to the treasury.
+        uint256 rentalId = _createRentalLoan(100);
         vm.warp(block.timestamp + 1 days);
 
-        address borrowerAddr = borrower;
-        // First call: lender share (to=lender) → succeed
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrowerAddr, mockERC20, lender),
-            abi.encode(true)
-        );
-        // Second call: treasury share (to=address(diamond)) → fail
+        // Every vault withdrawal delivers in full, except the treasury share
+        // (to = address(diamond), the treasury in this suite), which fails.
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrowerAddr, mockERC20, address(diamond)),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrower, mockERC20, address(diamond)),
             "treasury fail"
         );
         vm.expectRevert(bytes("treasury fail"));
-        RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(rentalId);
         vm.clearMockedCalls();
     }
 

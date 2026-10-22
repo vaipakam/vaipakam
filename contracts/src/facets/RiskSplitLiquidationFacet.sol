@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
@@ -15,8 +16,6 @@ import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -56,7 +55,6 @@ contract RiskSplitLiquidationFacet is
     DiamondPausable,
     IVaipakamErrors
 {
-    using SafeERC20 for IERC20;
 
     // These three errors + the event mirror {RiskFacet}'s declarations
     // one-for-one (same selectors / topic0) so the relocated body and its
@@ -184,11 +182,20 @@ contract RiskSplitLiquidationFacet is
         // P1) — move-out-exempt so a borrower flagged after init doesn't brick
         // the split liquidation (collateral pushed OUT to the already-screened
         // swap recipients).
-        LibSanctionedLock.vaultWithdrawERC20MoveOut(
+        // #2440 — a forced close-out acts on what arrived: the loan's collateral
+        // becomes what reached the Diamond, and the split must sum to that
+        // figure. A short delivery is never made up from the Diamond's other
+        // balance. Splits sized for the recorded amount revert on the sum
+        // check, whose `SplitSumMismatch(sum, inputAmount)` names the figure
+        // that arrived; legs quoted for that figure settle, and the
+        // single-route liquidation sells what arrived either way. The legs are
+        // NOT rescaled here: a split leg is an aggregator quote for a fixed
+        // amount and is held to spend exactly its `splitAmount`, so a rescaled
+        // leg would revert in the adapter instead.
+        loan.collateralAmount = LibSanctionedLock.pullToDiamond(
             LibVaipakam.storageSlot(),
             loan.borrower,
             loan.collateralAsset,
-            address(this),
             loan.collateralAmount
         );
         // #658 (Codex #680 P2) — the eager consolidation stamped the holder at
@@ -255,7 +262,9 @@ contract RiskSplitLiquidationFacet is
             revert KYCRequired();
 
         if (bonus > 0) {
-            IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);
+            // #2440 — a bonus books nobody by what arrives (LibDelivery
+            // outcome 3); refused only if it cost the Diamond more than it sent.
+            LibDelivery.pushOut(loan.principalAsset, msg.sender, bonus);
         }
 
         // Waterfall (L-g #1009) — identical to {RiskFacet.triggerLiquidation}:
@@ -290,15 +299,13 @@ contract RiskSplitLiquidationFacet is
             lenderProceeds = allocated;
         }
 
-        uint256 toTreasury = handlingFee + treasuryInterestFee;
-        if (toTreasury > 0) {
-            IERC20(loan.principalAsset).safeTransfer(s.treasury, toTreasury);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, handlingFee + treasuryInterestFee);
         // #821 — vault-lock the lender's share through the receive-side exemption
         // so a flagged stored lender doesn't brick the liquidation; the proceeds
         // park locked behind the claim-side freeze (self-guards a zero amount).
-        LibSanctionedLock.depositLocked(
+        // #2440 — the claim names what the vault received.
+        lenderProceeds = LibSanctionedLock.depositLocked(
             s, loan.lender, loanId, loan.principalAsset, lenderProceeds
         );
         // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
@@ -320,7 +327,8 @@ contract RiskSplitLiquidationFacet is
             );
         }
         if (borrowerSurplus > 0) {
-            LibSanctionedLock.depositLocked(
+            // #2440 — the claim names what the vault received.
+            borrowerSurplus = LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
             );
             // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are

@@ -103,9 +103,14 @@ export function useClaimPayoutText(
     why = loan.role === 'lender' ? labels.whyRentalEnded : labels.whyRentalClosed;
   } else if (loan.role === 'lender') {
     const kind = properClose ? 'proper' : loan.status === 'fallback_pending' ? 'fallback' : 'default';
+    // #2440 — a fungible claim a close-out recorded at ZERO (the token
+    // delivered nothing): an amount, not "the collateral itself".
+    const recordedZero =
+      loan.claim.asset !== null && loan.claim.amount === 0n && loan.claim.assetType === AssetType.ERC20;
     what = lenderPayoutWhat({
       kind,
       base,
+      recordedZero,
       nftClaim: nftClaimLabel(loan.claim),
       held,
       principalPlusInterest: principalMeta.data
@@ -146,7 +151,9 @@ export function useClaimPayoutText(
         // #2373 r2 — from the RAW claim, not from whether the amount could
         // be formatted yet: a cash recovery whose symbol is still loading
         // is not "the collateral itself".
-        inKind: loan.claim.amount === 0n,
+        // #2440 — a claim recorded at zero is a recovery of nothing, not
+        // the collateral.
+        inKind: loan.claim.amount === 0n && !recordedZero,
         // #2374 — what the protocol recorded the loan owed at default, and
         // the recovery in the same asset (null when the claim pays another).
         owed: loan.claim.owedAtDefault,
@@ -273,6 +280,10 @@ export function rentalPayoutWhat(args: {
 export function lenderPayoutWhat(args: {
   kind: 'proper' | 'fallback' | 'default';
   base: LaneAmount | null;
+  /** #2440 — the claim row names its asset and an amount of zero: a forced
+   *  close-out that received nothing. The claim pays nothing and closes the
+   *  position, and the payout says so. */
+  recordedZero?: boolean;
   nftClaim: string | null;
   held: LaneAmount | null;
   /** A proper close with no amount named: principal + interest, described. */
@@ -288,9 +299,13 @@ export function lenderPayoutWhat(args: {
   if (args.kind === 'proper') {
     if (named || unnamedAmount) return joinLanes([named ?? unnamedAmount, heldLane]);
     if (heldLane) return joinLanes([heldLane]);
+    if (args.recordedZero) return labels.nothingRecovered;
     return args.principalPlusInterest ?? labels.repaidFunds;
   }
   if (args.kind === 'fallback') {
+    if (args.recordedZero && !named && !unnamedAmount && !heldLane) {
+      return labels.provisionalAmount(labels.nothingRecordedYet);
+    }
     // #2373 r7 (P1) — the gross collateral describes the claim only when
     // NOTHING else is recorded. A partial internal match can scale the
     // lender's slice to zero and leave the proceeds held (ClaimFacet keeps
@@ -304,6 +319,7 @@ export function lenderPayoutWhat(args: {
   }
   if (named) return labels.recoveredFromDefault(named, heldLane ? ` + ${heldLane}` : '');
   if (unnamedAmount || heldLane) return joinLanes([unnamedAmount, heldLane]);
+  if (args.recordedZero) return labels.nothingRecovered;
   return labels.defaultRecovery(args.collateral);
 }
 

@@ -3,8 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -44,7 +43,6 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *      not sit behind a governance timer.
  */
 contract PayrollFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessControl, IVaipakamErrors {
-    using SafeERC20 for IERC20;
 
     // ─── Events ──────────────────────────────────────────────────────────
 
@@ -241,7 +239,10 @@ contract PayrollFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessC
 
         // CEI — record the withdrawal before the transfer.
         st.withdrawn += amount;
-        IERC20(st.asset).safeTransfer(st.beneficiary, amount);
+        // #2440 — a payout of a recorded entitlement books nobody by what
+        // arrives (LibDelivery outcome 3); refused only if it cost the Diamond
+        // more than it sent.
+        LibDelivery.pushOut(st.asset, st.beneficiary, amount);
         emit SalaryWithdrawn(streamId, st.beneficiary, amount);
     }
 

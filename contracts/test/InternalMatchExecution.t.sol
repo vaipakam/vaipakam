@@ -187,6 +187,44 @@ contract InternalMatchExecutionTest is SetupTest {
         assertEq(uint8(bAfter.status), uint8(LibVaipakam.LoanStatus.InternalMatched));
     }
 
+    /// @notice #2440 — one user on both sides: the lender of A is the
+    ///         borrower of B, so leg X moves B's collateral from that user's
+    ///         vault into the same vault. The move cannot raise the vault's
+    ///         balance, and it must still count as delivered in full: A's debt
+    ///         clears by what leg X paid, exactly as for two separate users.
+    ///         Read as a zero delivery, A's borrower would lose the Y
+    ///         collateral leg Y takes while A's debt barely moved.
+    function test_2440_sameUserBothSides_bothCleared() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, lender, mockCollateralERC20, 1000, mockERC20, 1000);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+
+        address uVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        address bLenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lenderB);
+        uint256 bLenderYBefore = IERC20(mockCollateralERC20).balanceOf(bLenderVault);
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        LibVaipakam.Loan memory aAfter = _getLoan(LOAN_A);
+        LibVaipakam.Loan memory bAfter = _getLoan(LOAN_B);
+        assertEq(aAfter.principal, 0, "A's debt cleared by leg X");
+        assertEq(uint8(aAfter.status), uint8(LibVaipakam.LoanStatus.InternalMatched));
+        assertEq(bAfter.principal, 0, "B's debt cleared by leg Y");
+        assertEq(uint8(bAfter.status), uint8(LibVaipakam.LoanStatus.InternalMatched));
+        // Leg X: the lender share (990) stayed in the vault and is now the
+        // user's as A's lender; only the incentive left.
+        assertEq(IERC20(mockERC20).balanceOf(uVault), 990, "the lender share stayed in the vault");
+        assertEq(
+            VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(lender, mockERC20),
+            990,
+            "and is tracked as the user's"
+        );
+        assertEq(IERC20(mockERC20).balanceOf(matcher), 10);
+        assertEq(IERC20(mockCollateralERC20).balanceOf(bLenderVault) - bLenderYBefore, 990);
+    }
+
     /// @notice #691 — the multi-loan internal match EAGERLY CONSOLIDATES a
     ///         transferred participating position to its current NFT holder
     ///         BEFORE settling, so the position's effects (anchor, lien, reward,

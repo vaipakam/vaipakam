@@ -614,14 +614,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // could double-spend committed funds. True vault-first
         // requires an invariant-preserving locked-balance tracking
         // shape that's out of scope here.
-        if (treasuryFee > 0) {
-            IERC20(oldLoan.principalAsset).safeTransferFrom(
-                currentBorrowerNftOwner,
-                LibFacet.getTreasury(),
-                treasuryFee
-            );
-            LibFacet.recordTreasuryAccrual(oldLoan.principalAsset, treasuryFee);
-        }
+        // #1281-011 — the one payer -> treasury pull (refuses a short arrival).
+        LibFacet.transferFromPayerToTreasury(currentBorrowerNftOwner, oldLoan.principalAsset, treasuryFee);
 
         // Route lender's share to old lender's vault via the cross-
         // payer chokepoint so the protocolTrackedVaultBalance

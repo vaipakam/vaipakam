@@ -147,17 +147,8 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
         if (initiationFee > 0) {
             uint256 matcherCut = LibOfferMatch.matcherShareOf(initiationFee);
             uint256 treasuryCut = initiationFee - matcherCut;
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    lender,
-                    lendingAsset,
-                    LibFacet.getTreasury(),
-                    treasuryCut
-                ),
-                TreasuryTransferFailed.selector
-            );
-            LibFacet.recordTreasuryAccrual(lendingAsset, treasuryCut);
+            // #2440 — the treasury accrues what reached it.
+            LibFacet.vaultFeeToTreasury(lender, lendingAsset, treasuryCut);
             if (matcherCut > 0) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
@@ -176,15 +167,16 @@ contract OfferAcceptFeeFacet is IVaipakamErrors {
             }
         }
 
-        // Deliver the net principal (principal − fee) to the borrower.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                lender,
-                lendingAsset,
-                borrower,
-                effectivePrincipal - initiationFee
-            ),
+        // Deliver the net principal (principal − fee) to the borrower. #2440 —
+        // the loan records the borrower as owing all of `effectivePrincipal`,
+        // so the net principal must arrive in full: a lending asset that
+        // delivers less than it sends is refused at acceptance, as the
+        // collateral is (the platform does not support such tokens).
+        LibFacet.vaultWithdrawExact(
+            lender,
+            lendingAsset,
+            borrower,
+            effectivePrincipal - initiationFee,
             VaultWithdrawFailed.selector
         );
     }

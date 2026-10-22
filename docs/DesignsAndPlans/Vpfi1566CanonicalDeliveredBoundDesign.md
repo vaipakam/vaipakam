@@ -1414,7 +1414,12 @@ durable rather than a snapshot of one moment.
 >   read, never mutated, the amounts are returned, and a zero row
 >   short-circuits. Retry: the pull checks the Diamond's balance delta exactly
 >   (`FallbackRetryShortDelivery`), the soft-fail adapter loop is kept, and a
->   failed retry restores vault, row and lien in the same transaction. The
+>   failed retry restores vault, row and lien in the same transaction.
+>   *(Superseded by #2440: the retry no longer refuses a short pull. Like every
+>   forced close-out it acts on what reached the Diamond, and a failed retry
+>   that restores less than it pulled absorbs the difference from the
+>   borrower's slice first, then the treasury's, then the lender's, so the row
+>   still equals the snapshot. `FallbackRetryShortDelivery` is deleted.)* The
 >   backstop absorb warehouses the lender slice that dispose returned; the old
 >   re-lien would double-lien and is deleted. Cure by top-up and the
 >   full-repayment cure move no tokens: the lien already covers the fallback

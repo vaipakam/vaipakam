@@ -328,6 +328,8 @@ FACETS=(
   "FallbackCustodyFacet"
   # #2472 -- the swap-attempt host every failover seller self-calls.
   "SwapAttemptFacet"
+  # #2440 -- the treasury fee host every fee-charging facet self-calls.
+  "TreasuryFeeFacet"
   "RiskSplitLiquidationFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"

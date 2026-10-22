@@ -4,6 +4,9 @@ out/
 # The storage-layout guard's own build (script/storage-layout-guard.mjs).
 cache-storage-layout/
 out-storage-layout/
+# The measured-delivery check's own build (script/check-measured-delivery.mjs).
+cache-measured-delivery/
+out-measured-delivery/
 
 # Ignores development broadcast logs
 /broadcast

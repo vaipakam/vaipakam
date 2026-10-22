@@ -1502,6 +1502,8 @@
         "loan": "대출",
         "prepaidBufferBack": "선불 버퍼 반환",
         "repaidFunds": "상환된 자금",
+        "nothingRecovered": "이 포지션에서 회수된 것이 없습니다 — 청구하면 포지션이 종료됩니다",
+        "nothingRecordedYet": "아직 기록된 금액이 없습니다",
         "recoveryNotComparable": "이것은 부도 정산으로 회수된 금액입니다. 부도 당시 대출이 아직 갚아야 했던 금액은 앱에서 알 수 없으므로 부족액은 표시하지 않습니다.",
         "compareInKind": "이것은 현금이 아니라 담보 자체이며, 가치는 시장 가격에 따라 달라집니다.",
         "owedAtDefault": "부도 당시 대출은 아직 {{total}}을(를) 갚아야 했습니다: 원금 {{principal}}에 이자와 연체료 {{charges}}.",

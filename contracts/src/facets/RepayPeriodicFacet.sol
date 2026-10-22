@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -11,11 +12,9 @@ import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -50,7 +49,6 @@ import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
  *                                   auto-liquidating collateral on shortfall.
  */
 contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
-    using SafeERC20 for IERC20;
 
     /// @notice Emitted when auto daily deduct is triggered for an NFT rental.
     /// @param loanId The ID of the loan.
@@ -197,8 +195,6 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             }
         }
 
-        address treasury = LibFacet.getTreasury();
-
         // #569 D-1 (2026-06-13) — NFT rentals carry no collateral lien
         // (D-2 forbids VPFI as a rental prepay asset, so the prepay pool
         // has no side-door drain to protect against). No decrement here.
@@ -233,19 +229,9 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         );
 
         // #1383 — a yield-fee discount can drive `treasuryShare` to 0 on the
-        // VPFI-payment path; `vaultWithdrawERC20(..., 0)` is a harmless no-op, so
-        // this stays unconditional as before.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                loan.borrower,
-                loan.prepayAsset,
-                treasury,
-                treasuryShare
-            ),
-            TreasuryTransferFailed.selector
-        );
-        LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryShare);
+        // VPFI-payment path; the fee leg skips a zero amount. #2440 — the
+        // treasury accrues what reached it.
+        LibFacet.vaultFeeToTreasury(loan.borrower, loan.prepayAsset, treasuryShare);
 
         // Pass-2 D1 (#1188) — do NOT decrement `durationDays`. The term tuple
         // (`startTime + durationDays`) is the FIXED maturity every default/
@@ -606,15 +592,16 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         _decrementLienAtPeriodicAutoLiq(loanId, toSell);
 
         // Withdraw collateral to Diamond for swap (mirrors the HF-
-        // liquidation withdraw shape).
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                loan.borrower,
-                loan.collateralAsset,
-                address(this),
-                toSell
-            ),
+        // liquidation withdraw shape). #2440 — a forced close-out acts on
+        // what arrived: the vault gives up the whole slice (its tracked
+        // balance and the loan's collateral fall by `toSell`), and the quote
+        // and the sale use what reached the Diamond, so a short delivery is
+        // never made up from the Diamond's other balance.
+        uint256 sliceReceived = LibFacet.vaultWithdrawDelivered(
+            loan.borrower,
+            loan.collateralAsset,
+            address(this),
+            toSell,
             VaultWithdrawFailed.selector
         );
         // #658 PR-B — re-stamp the holder's VPFI tier/staking after the
@@ -631,7 +618,7 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             address(this),
             loan.collateralAsset,
             loan.principalAsset,
-            toSell
+            sliceReceived
         );
         uint256 minOutput = (expectedProceeds *
             (LibVaipakam.BASIS_POINTS - maxSlippageBps)) /
@@ -641,7 +628,7 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             loanId,
             loan.collateralAsset,
             loan.principalAsset,
-            toSell,
+            sliceReceived,
             minOutput,
             address(this),
             adapterCalls
@@ -680,13 +667,12 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // lender → lender's vault (bookkeeping mirrors PartialRepaid
         // accounting on the lender side).
         if (bonus > 0) {
-            IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);
+            // #2440 — a bonus books nobody by what arrives (LibDelivery
+            // outcome 3); refused only if it cost the Diamond more than it sent.
+            LibDelivery.pushOut(loan.principalAsset, msg.sender, bonus);
         }
-        if (handlingFee > 0) {
-            address treasury = LibFacet.getTreasury();
-            IERC20(loan.principalAsset).safeTransfer(treasury, handlingFee);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, handlingFee);
-        }
+        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
+        LibFacet.transferToTreasury(loan.principalAsset, handlingFee);
         if (lenderProceeds > 0) {
             // #658 PR-B (Codex #685 P1) — route to the CURRENT lender-position
             // holder, not the stale `loan.lender`: the eager consolidation above
@@ -699,7 +685,16 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             // encumber + marker) when the holder is registry-flagged. Hosted on
             // `EncumbranceMutateFacet` so the registry-aware freeze machinery stays
             // out of this EIP-170-tight facet; the host resolves `ownerOf` itself.
-            LibFacet.crossFacetCall(
+            //
+            // #2440 — `lenderProceeds` becomes what the host reports, so the
+            // `interestSettled` credit, the over-buffer signal and the event
+            // below name tokens the lender actually has. A payout to the
+            // holder's WALLET is refused unless it arrived in full (a wallet
+            // reading is trusted only to refuse: its owner could forward the
+            // tokens on mid-transfer and be paid again); a frozen holder's
+            // share credited to the stored lender's VAULT acts on what arrived
+            // there, and the difference stays in the borrower's obligation.
+            lenderProceeds = abi.decode(LibFacet.crossFacetCallReturn(
                 abi.encodeWithSelector(
                     EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
                     loanId,
@@ -732,7 +727,7 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
                     lenderProceeds >= shortfall ? boundary : 0
                 ),
                 bytes4(0)
-            );
+            ), (uint256));
             // #408 / #410 / #413 (2026-06-12) — credit
             // `interestSettled` by the interest just forwarded to the
             // lender so a later full repay / preclose nets the

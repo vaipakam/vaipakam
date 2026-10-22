@@ -47,6 +47,7 @@ import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
+import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
@@ -57,6 +58,8 @@ import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
+import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
 
 /**
  * @title EarlyWithdrawalFacetTest
@@ -249,7 +252,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // reads to prove a torn-down vehicle drops out of the open-position view.
         MetricsFacet metricsFacet = new MetricsFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](34);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](35);
         cuts[25] = IDiamondCut.FacetCut({
             facetAddress: address(metricsFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -356,6 +359,16 @@ contract EarlyWithdrawalFacetTest is Test {
             facetAddress: address(new SwapAttemptFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSwapAttemptFacetSelectors()
+        });
+        // #2440 - every fee-charging facet (Repay, Preclose, Refinance,
+        // EarlyWithdrawal, Defaulted, RepayPeriodic, OfferAcceptFee) moves a
+        // fee into the treasury by a self-call into TreasuryFeeFacet. A
+        // hand-built Diamond that cuts any of them must cut this host too, or
+        // the fee reverts FunctionDoesNotExist at that self-call.
+        cuts[34] = IDiamondCut.FacetCut({
+            facetAddress: address(new TreasuryFeeFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -855,7 +868,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     function testSellLoanViaBuyOfferSuccess() public {
         // Mock cross-facet calls
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -868,6 +881,43 @@ contract EarlyWithdrawalFacetTest is Test {
         // Loan lender should now be newLender
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
+    }
+
+    /// @dev #2440 (Codex r2) — the direct sale is voluntary: the seller's net
+    ///      (`toLiam`) is refused unless it all arrives, so the seller floor is
+    ///      what the seller actually receives. Only transfers out of the Diamond
+    ///      are charged, so the refusal names exactly that payout. Kills: an
+    ///      unmeasured payout that completes the sale with the seller short.
+    function testSellLoanViaBuyOffer_SellerNetShort_Refused() public {
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+
+        uint256 snap = vm.snapshotState();
+        uint256 seller0 = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 net = ERC20(mockERC20).balanceOf(lender) - seller0;
+        assertGt(net, 0, "fixture: the seller is paid a net");
+        vm.revertToState(snap);
+
+        _chargeFeeOutOfDiamond();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.TokenDeliveryShort.selector, mockERC20, net, net - (net * 100) / 10_000
+            )
+        );
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev The fee-on-transfer switch for the two seller-net cells: etched
+    ///      over the live mock (it only appends state), 1%, charged only on
+    ///      transfers out of the Diamond.
+    function _chargeFeeOutOfDiamond() internal {
+        vm.etch(mockERC20, address(new FeeOnTransferERC20Mock("FoT", "FOT", 18)).code);
+        FeeOnTransferERC20Mock(mockERC20).setFeeBps(100);
+        FeeOnTransferERC20Mock(mockERC20).setChargedSender(address(diamond));
     }
 
     /// @dev #1503 item 25 — a lender migration must carry the position-token →
@@ -888,7 +938,7 @@ contract EarlyWithdrawalFacetTest is Test {
             "precondition: creation indexed the seller's token"
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.prank(lender);
@@ -935,7 +985,7 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      state revert, since a snapshot restores EVM state and says nothing
     ///      about cheatcode mocks.
     function _mockSaleSideEffects() internal {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
     }
@@ -3662,6 +3712,36 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev #2440 (audit sweep) — the listed sale's completion is voluntary
+    ///      too: the seller's net is refused unless it all arrives, as the
+    ///      direct sale's is. Kills: an unmeasured payout that settles the sale
+    ///      with the seller below the floor they listed at.
+    function testListedSale_SellerNetShort_Refused() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = _fundedBuyer("fotBuyer");
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        uint256 snap = vm.snapshotState();
+        uint256 seller0 = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+        uint256 net = ERC20(mockERC20).balanceOf(lender) - seller0;
+        assertGt(net, 0, "fixture: the seller is paid a net");
+        vm.revertToState(snap);
+
+        _chargeFeeOutOfDiamond();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.TokenDeliveryShort.selector, mockERC20, net, net - (net * 100) / 10_000
+            )
+        );
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
     /// @dev LEGACY vehicles — accepted BEFORE this upgrade — were counted into
     ///      the metrics layer at initiation, so their terminal must keep taking
     ///      the ordinary decrementing transition (and keep emitting the #1792
@@ -3862,7 +3942,7 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -3931,7 +4011,7 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -3984,7 +4064,7 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -4033,7 +4113,7 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -4139,7 +4219,7 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "burn fail");
 
         vm.prank(lender);
@@ -4182,7 +4262,7 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), abi.encode(true));
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "mint fail");
 
@@ -4275,7 +4355,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 useFullTermInterest: false
             })
         );
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -4664,7 +4744,7 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -4710,7 +4790,7 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "burn fail");
 
@@ -4921,7 +5001,7 @@ contract EarlyWithdrawalFacetTest is Test {
         _setupTempLoan(2);
 
         // Mock all cross-facet calls
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5048,7 +5128,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(newLender);
         VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5082,7 +5162,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5124,7 +5204,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         // First burn (live loan lender NFT) succeeds via mockCall
         // But subsequent burns fail
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         // First burnNFT for live loan lender NFT must succeed, but temp loan burns must fail
         // Since we can't easily differentiate, mock all burns to fail
@@ -5149,7 +5229,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5172,7 +5252,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5253,7 +5333,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5291,7 +5371,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         // All burn calls fail
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "burn fail");
@@ -5315,7 +5395,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5334,7 +5414,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         // Mock getOrCreateUserVault for new lender
         address newLenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5373,7 +5453,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         // Track burn calls: first burn (live loan lender NFT) succeeds, second (temp lender) succeeds,
@@ -5408,7 +5488,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "mint fail");
 
@@ -5431,7 +5511,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setupTempLoanWithCollateral(2, mockERC20, 500 ether);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5460,7 +5540,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // Actually, we need the vault withdraw for temp collateral to fail.
         // Since we can't easily distinguish calls, mock all to succeed first, then for the
         // specific (originalLender, collateralAsset, originalLender, 500 ether) call, revert.
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCallRevert(
             address(diamond),
             abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, lender, mockERC20, lender, 500 ether),
@@ -5489,7 +5569,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.getOrCreateUserVault.selector), abi.encode(address(0x123)));
@@ -5557,7 +5637,7 @@ contract EarlyWithdrawalFacetTest is Test {
         TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5627,7 +5707,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
@@ -5659,7 +5739,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
@@ -5688,7 +5768,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5749,7 +5829,7 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5805,7 +5885,7 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5833,7 +5913,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5864,7 +5944,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // Set heldForLender > 0 so _transferToNewLenderVault is called (mapping — layout-independent)
         TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -5904,7 +5984,7 @@ contract EarlyWithdrawalFacetTest is Test {
             TestMutatorFacet(address(diamond)).setLoan(2, l);
         }
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         // ERC721 collateral release fails
@@ -5940,7 +6020,7 @@ contract EarlyWithdrawalFacetTest is Test {
             TestMutatorFacet(address(diamond)).setLoan(2, l);
         }
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         // ERC1155 collateral release fails
@@ -5965,7 +6045,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -6291,7 +6371,7 @@ contract EarlyWithdrawalFacetTest is Test {
         TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -6330,7 +6410,7 @@ contract EarlyWithdrawalFacetTest is Test {
         TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
         _setupTempLoan(2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
@@ -7209,7 +7289,7 @@ contract EarlyWithdrawalFacetTest is Test {
             "fixture must sit AT the boundary, not safely above it"
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.prank(lender);
@@ -7291,7 +7371,7 @@ contract EarlyWithdrawalFacetTest is Test {
         mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
         mockPrice(mockCollateralERC20, 0.01e8, 8);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.expectRevert(
@@ -7311,7 +7391,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function test_sale_refusedWhenPrincipalLegIsCurrentlyUnpriceable() public {
         mockLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.expectRevert(
@@ -7347,7 +7427,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // The market underneath it has degraded.
         mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.expectRevert(
@@ -7376,7 +7456,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // The live reading stays Liquid (set in setUp), so the snapshot is the
         // only thing objecting — and it objects for a reason that matters.
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.expectRevert(
@@ -7484,7 +7564,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(owner);
         RiskFacet(address(diamond)).setMinHealthFactor(LibVaipakam.MIN_HEALTH_FACTOR - 0.1e18);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.prank(lender);
@@ -7580,7 +7660,7 @@ contract EarlyWithdrawalFacetTest is Test {
         (uint8 code, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
         assertEq(code, 0, "a cheaper inherited fee must stay admissible");
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.prank(lender);

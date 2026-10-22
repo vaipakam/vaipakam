@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -278,7 +279,9 @@ contract BackstopFacet is
         address proxy = VaultFactoryFacet(address(this)).getOrCreateUserVault(
             vault
         );
-        IERC20(lend).safeTransfer(proxy, amount);
+        // #2440 — the tracked balance, the intent lien and the event record
+        // what the backstop vault received (the treasury gave up `amount`).
+        amount = LibDelivery.pushMeasured(lend, proxy, amount);
         LibVaipakam.recordVaultDeposit(vault, lend, amount);
         LibEncumbrance.lienIntentCapital(vault, lend, coll, amount);
         // #625 WI-2a — the backstop seeds intent capital DIRECTLY (not via
@@ -307,7 +310,9 @@ contract BackstopFacet is
         if (s.treasury != address(this)) revert TreasuryNotDiamond();
         uint256 returned = BackstopVaultImplementation(vault)
             .withdrawIdleToDiamond(lend, coll, amount);
-        // Diamond-side record (the vault forwarded the raw tokens to the Diamond).
+        // Diamond-side record. #2440 — `returned` is what reached the Diamond
+        // (the vault measures its forward), so the treasury is credited with
+        // tokens it actually holds.
         if (returned > 0) s.treasuryBalances[lend] += returned;
         emit BackstopWithdrawnToTreasury(lend, coll, returned);
     }
@@ -509,6 +514,9 @@ contract BackstopFacet is
             address collateralAsset,
             uint256 collateralRecovered
         ) = BackstopVaultImplementation(vault).executeClaim(loanId, retryCalls);
+        // #2440 — both figures are what reached the Diamond (the vault measures
+        // each forward), so the credits and the events name tokens the treasury
+        // actually holds.
         if (principalRecovered > 0) {
             s.treasuryBalances[principalAsset] += principalRecovered;
         }
@@ -541,6 +549,7 @@ contract BackstopFacet is
             token,
             address(this)
         );
+        // #2440 — what reached the Diamond (the vault measures its forward).
         if (amount > 0) s.treasuryBalances[token] += amount;
         emit BackstopTokenSwept(token, amount);
     }
@@ -695,7 +704,9 @@ contract BackstopFacet is
         address proxy = VaultFactoryFacet(address(this)).getOrCreateUserVault(
             vault
         );
-        IERC20(principal).safeTransfer(proxy, amount);
+        // #2440 — the tracked balance, the absorb bucket and the event record
+        // what the backstop vault received (the treasury gave up `amount`).
+        amount = LibDelivery.pushMeasured(principal, proxy, amount);
         // Record the tracked deposit but DO NOT lien — this is free absorb cash,
         // not intent capital.
         LibVaipakam.recordVaultDeposit(vault, principal, amount);
@@ -723,14 +734,17 @@ contract BackstopFacet is
         if (amount > bucket) revert TreasuryInsufficient();
         s.backstopAbsorbCash[principal][collateral] = bucket - amount;
         // Pull the free cash from the vault back to the Diamond (treasury custody).
-        VaultFactoryFacet(address(this)).vaultWithdrawERC20(
+        // #2440 — the treasury is credited with what reached the Diamond: the
+        // bucket gave up `amount`, and a token's own charge on the move is the
+        // treasury's, never drawn from the Diamond's other holdings.
+        uint256 received = VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             vault,
             principal,
             address(this),
             amount
         );
-        s.treasuryBalances[principal] += amount;
-        emit BackstopAbsorbWithdrawn(principal, collateral, amount);
+        s.treasuryBalances[principal] += received;
+        emit BackstopAbsorbWithdrawn(principal, collateral, received);
     }
 
     /// @notice Sweep WAREHOUSED absorb collateral out of the backstop vault (e.g.
@@ -755,7 +769,8 @@ contract BackstopFacet is
         uint256 warehoused = s.backstopWarehousedCollateral[collateral];
         if (amount > warehoused) revert BackstopAbsorbCollateralInsufficient();
         s.backstopWarehousedCollateral[collateral] = warehoused - amount;
-        VaultFactoryFacet(address(this)).vaultWithdrawERC20(
+        // #2440 — what `to` received; the treasury credit below books that.
+        uint256 received = VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             vault,
             collateral,
             to,
@@ -767,7 +782,7 @@ contract BackstopFacet is
         // can't claim (it only sweeps tracked `treasuryBalances`). Mirrors the
         // other backstop recovery paths.
         if (to == address(this) && s.treasury == address(this)) {
-            s.treasuryBalances[collateral] += amount;
+            s.treasuryBalances[collateral] += received;
         }
         emit BackstopAbsorbCollateralSwept(collateral, to, amount);
     }

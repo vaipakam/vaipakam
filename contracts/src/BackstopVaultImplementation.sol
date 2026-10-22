@@ -10,6 +10,7 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {LibVaipakam} from "./libraries/LibVaipakam.sol";
 import {LibSwap} from "./libraries/LibSwap.sol";
+import {LibDelivery} from "./libraries/LibDelivery.sol";
 
 /**
  * @title  IBackstopDiamond
@@ -192,6 +193,14 @@ contract BackstopVaultImplementation is
      *      BEFORE the claim (the principal forward below would otherwise corrupt a
      *      same-asset collateral delta). The facet has already verified the loan is
      *      a backstop-originated loan (`lender == this`).
+     *
+     *      #2440 — each forward is measured where it lands, and the two
+     *      `*Recovered` figures are what REACHED THE DIAMOND, not what this vault
+     *      sent: the facet credits them to `treasuryBalances`, and a token that
+     *      delivers less than it sends must not leave the treasury's books ahead
+     *      of the Diamond's balance (the difference would come out of tokens the
+     *      Diamond holds for users). This vault and the Diamond are both protocol
+     *      custody, so the reading is trusted (see LibDelivery).
      */
     function executeClaim(
         uint256 loanId,
@@ -217,18 +226,23 @@ contract BackstopVaultImplementation is
             ? IERC20(collateralAsset).balanceOf(address(this))
             : 0;
         IBackstopDiamond(diamond).claimAsLenderWithRetry(loanId, retryCalls);
-        principalRecovered =
+        uint256 principalReceived =
             IERC20(principalAsset).balanceOf(address(this)) - principalBefore;
-        if (principalRecovered > 0) {
-            IERC20(principalAsset).safeTransfer(diamond, principalRecovered);
+        if (principalReceived > 0) {
+            principalRecovered =
+                LibDelivery.pushMeasured(principalAsset, diamond, principalReceived);
         }
         // Only forward the collateral leg when it is a DISTINCT token; a
         // same-asset loan already counted the whole delta as `principalRecovered`.
         if (distinctCollateral) {
-            collateralRecovered =
+            uint256 collateralReceived =
                 IERC20(collateralAsset).balanceOf(address(this)) - collateralBefore;
-            if (collateralRecovered > 0) {
-                IERC20(collateralAsset).safeTransfer(diamond, collateralRecovered);
+            if (collateralReceived > 0) {
+                collateralRecovered = LibDelivery.pushMeasured(
+                    collateralAsset,
+                    diamond,
+                    collateralReceived
+                );
             }
         }
     }
@@ -238,6 +252,8 @@ contract BackstopVaultImplementation is
      *         Diamond (treasury) for recording by the facet.
      * @dev onlyOwner. `withdrawLenderIntentCapital` returns the un-lent capital to
      *      the vault as a raw balance; the delta is forwarded to the Diamond.
+     *      #2440 — returns what reached the Diamond, which the facet credits to
+     *      the treasury (see {executeClaim}).
      */
     function withdrawIdleToDiamond(
         address lend,
@@ -246,8 +262,8 @@ contract BackstopVaultImplementation is
     ) external onlyOwner returns (uint256 returned) {
         uint256 before = IERC20(lend).balanceOf(address(this));
         IBackstopDiamond(diamond).withdrawLenderIntentCapital(lend, coll, amount);
-        returned = IERC20(lend).balanceOf(address(this)) - before;
-        if (returned > 0) IERC20(lend).safeTransfer(diamond, returned);
+        uint256 received = IERC20(lend).balanceOf(address(this)) - before;
+        if (received > 0) returned = LibDelivery.pushMeasured(lend, diamond, received);
     }
 
     /**
@@ -284,14 +300,16 @@ contract BackstopVaultImplementation is
      * @notice Recover a raw ERC20 balance to `to` (the Diamond/treasury).
      * @dev onlyOwner. For any residue that lands raw on the vault (e.g. a VPFI
      *      matcher kickback). The facet records the treasury credit.
+     *      #2440 — returns what `to` received, which is the figure the facet
+     *      credits (it passes the Diamond as `to`; see {executeClaim}).
      */
     function sweepToken(address token, address to)
         external
         onlyOwner
         returns (uint256 bal)
     {
-        bal = IERC20(token).balanceOf(address(this));
-        if (bal > 0) IERC20(token).safeTransfer(to, bal);
+        uint256 held = IERC20(token).balanceOf(address(this));
+        if (held > 0) bal = LibDelivery.pushMeasured(token, to, held);
     }
 
     /**

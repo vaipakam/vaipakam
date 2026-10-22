@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibSanctionedLock} from "./LibSanctionedLock.sol";
+import {LibDelivery} from "./LibDelivery.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -71,7 +72,11 @@ library LibCloseoutFreeze {
         LibVaipakam.Loan storage loan,
         uint256 lenderDue
     ) internal {
-        LibSanctionedLock.depositLocked(
+        // #2440 — every caller is a VOLUNTARY swap-to-repay (the full route and
+        // a filled intent), so the deposit is refused unless the lender's vault
+        // received all of `lenderDue`: the loan closes on that figure, and the
+        // claim and the reservation name it.
+        LibSanctionedLock.depositLockedInFull(
             s, loan.lender, loanId, loan.principalAsset, lenderDue
         );
         // #998 S10 (#1006) — freeze the lender payout fail-closed if the CURRENT
@@ -128,11 +133,14 @@ library LibCloseoutFreeze {
         // paying the surplus straight to their EOA and bypassing the claim-side
         // fail-closed gate entirely. `mustFreezeParty` stays frozen on a prior
         // confirmation while the oracle is down.
+        // #2440 — every caller is a VOLUNTARY swap-to-repay (the full route and
+        // a filled intent), so the surplus is refused unless it all arrived, on
+        // either branch: the claim and the reservation below name `surplus`.
         if (!LibSanctionedLock.mustFreezeParty(s, currentHolder)) {
-            IERC20(loan.principalAsset).safeTransfer(currentHolder, surplus);
+            LibDelivery.pushExact(loan.principalAsset, currentHolder, surplus);
             return;
         }
-        LibSanctionedLock.depositLocked(
+        LibSanctionedLock.depositLockedInFull(
             s, loan.borrower, loanId, loan.principalAsset, surplus
         );
         // #998 S10 (#1006) — the surplus is frozen precisely because
@@ -225,8 +233,28 @@ library LibCloseoutFreeze {
     /// @notice Class B — pay-or-freeze an Active-loan lender share whose funds are
     ///         sitting in the DIAMOND (e.g. periodic-interest auto-liquidation
     ///         proceeds, freshly swapped into the Diamond). Clean/never-confirmed
-    ///         holder → direct `safeTransfer` (unchanged behaviour). Frozen holder
-    ///         → `depositLocked` (Diamond → stored lender vault) + the shared park.
+    ///         holder → direct transfer. Frozen holder → `depositLocked` (Diamond
+    ///         → stored lender vault) + the shared park.
+    /// @dev    #2440 — the two branches read a delivery in different places,
+    ///         and only one of them is a place a reading can be trusted
+    ///         (LibDelivery, WHERE A READING CAN BE TRUSTED):
+    ///         - CLEAN: the payout goes to the holder's WALLET, whose owner can
+    ///           lower the reading while the transfer runs (a receiving hook
+    ///           can forward the tokens on). Booking such a reading would leave
+    ///           the rest owed to that owner, who could then be paid again. So
+    ///           a short arrival is REFUSED here, in every flow (the periodic
+    ///           auto-liquidation included), and a full payout returns
+    ///           `amount` and moves the paid-through mark.
+    ///         - FROZEN: the payout is credited to the stored lender's VAULT,
+    ///           which is custody. That branch acts on what arrived and returns
+    ///           it; the CALLER decides what a short return means. The periodic
+    ///           auto-liquidation credits the loan by the returned figure, so
+    ///           the difference stays owed on the loan; a partial HF
+    ///           liquidation refuses it, since it books the payout as received
+    ///           in full on a loan that stays open.
+    /// @return delivered `amount` on the clean branch (anything less was
+    ///         refused); what the stored lender's vault received on the frozen
+    ///         branch, never more than `amount`.
     function freezeOrPayActiveLenderResident(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -234,15 +262,16 @@ library LibCloseoutFreeze {
         address asset,
         uint256 amount,
         uint256 deliveredThroughAt
-    ) internal {
-        if (amount == 0) return;
+    ) internal returns (uint256 delivered) {
+        if (amount == 0) return 0;
         // Resolve the CURRENT lender-position holder here (the loan is Active, so
         // the lender NFT is live and `ownerOf` holds) — the intended payee AND the
         // party the fail-closed marker keys on. Resolving inside the helper keeps
         // the `ownerOf` + `IERC721` weight out of the EIP-170-tight caller facets.
         address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
-            IERC20(asset).safeTransfer(lenderRecipient, amount);
+            // #2440 — a wallet reading is trusted only to refuse (see @dev).
+            LibDelivery.pushExact(asset, lenderRecipient, amount);
             // #1503 item 28 — the lender is now PAID THROUGH the boundary of the
             // period this payout settles, so a later sale must not forfeit that
             // stretch a second time. Advanced on THIS branch only: the freeze
@@ -255,10 +284,11 @@ library LibCloseoutFreeze {
             if (deliveredThroughAt > s.lenderInterestDeliveredThroughAt[loanId]) {
                 LibEntitlement.stampInterestDelivered(s, loanId, deliveredThroughAt);
             }
-            return;
+            return amount;
         }
-        LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, amount);
-        _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, amount);
+        // #2440 — park what the vault received.
+        delivered = LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, amount);
+        _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, delivered);
     }
 
     /// @notice Class B — pay-or-freeze an Active-loan lender share funded by a
@@ -278,8 +308,9 @@ library LibCloseoutFreeze {
         if (amount == 0) return;
         address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
-            // slither-disable-next-line arbitrary-send-erc20
-            IERC20(asset).safeTransferFrom(payer, lenderRecipient, amount);
+            // #1281-011 — the lender is recorded as paid through now, so the
+            // payment must have arrived in full; a short arrival is refused.
+            LibDelivery.pullExact(asset, payer, lenderRecipient, amount);
             // #1503 item 28 (Codex #1801 r4 P1) — DELIVERED, so the seller is
             // paid through NOW. Unlike the resident-payout helper this one needs
             // no boundary parameter: every caller pays interest accrued to the
@@ -311,6 +342,12 @@ library LibCloseoutFreeze {
     /// @dev    Both branches arm the move-out exemption around the withdraw (the
     ///         payer LOSES custody either way) — Tier-2 servicing must not brick a
     ///         `fromUser` flagged after init.
+    ///         #2440 — every caller books this share as paid in full (a rental
+    ///         day by `autoDeductDaily`, the lender's share of a rental repay or
+    ///         preclose), so both branches refuse a delivery that fell short
+    ///         ({LibDelivery.requireFull}). A rental whose prepay token starts
+    ///         charging on transfer therefore stops being serviced and settles
+    ///         through the time-based default, which acts on what arrives.
     function freezeOrPayActiveLenderFromVault(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -322,8 +359,12 @@ library LibCloseoutFreeze {
         if (amount == 0) return;
         address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
-            LibSanctionedLock.vaultWithdrawERC20MoveOut(
-                s, fromUser, asset, lenderRecipient, amount
+            LibDelivery.requireFull(
+                asset,
+                amount,
+                LibSanctionedLock.vaultWithdrawERC20MoveOut(
+                    s, fromUser, asset, lenderRecipient, amount
+                )
             );
             // #1503 item 28 — DELIVERED, paid through now. Same reasoning as the
             // from-payer helper above, including why the freeze branch below does
@@ -333,8 +374,12 @@ library LibCloseoutFreeze {
             }
             return;
         }
-        LibSanctionedLock.depositLockedFromVault(
-            s, fromUser, loan.lender, loanId, asset, amount
+        LibDelivery.requireFull(
+            asset,
+            amount,
+            LibSanctionedLock.depositLockedFromVault(
+                s, fromUser, loan.lender, loanId, asset, amount
+            )
         );
         _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, amount);
     }

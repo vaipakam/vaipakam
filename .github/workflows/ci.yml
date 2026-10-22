@@ -349,8 +349,9 @@ jobs:
           # contracts/script/storage-layout-guard.mjs is in here because its
           # tests live in packages/contracts (where viem can cross-check its
           # Keccak), and are run by THIS job — so an edit to the guard alone
-          # must still run them (#1274 / #2092).
-          WORKSPACES_RE='^(apps/|packages/|contracts/script/storage-layout-guard\.mjs$|.*\.(jsonc|json)$|.*wrangler[^/]*\.toml$|ops/offchain-data-warm/src/|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
+          # must still run them (#1274 / #2092). The same holds for
+          # contracts/script/check-measured-delivery.mjs (#2440).
+          WORKSPACES_RE='^(apps/|packages/|contracts/script/storage-layout-guard\.mjs$|contracts/script/check-measured-delivery\.mjs$|.*\.(jsonc|json)$|.*wrangler[^/]*\.toml$|ops/offchain-data-warm/src/|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
           if echo "$CHANGED" | grep -Eq "$WORKSPACES_RE"; then
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
           else

@@ -110,9 +110,9 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **ProfileFacet**       | User country (sanctions), KYC verification                                  |
 | **AdminFacet**         | Treasury, 0x proxy, allowance target config                                 |
 
-**Refresh-together families (#1566 slices 2–3, #2472).** Three facet sets each
-carry one behaviour across a self-call or a fill, so refreshing a subset runs half
-of it on old code:
+**Refresh-together families (#1566 slices 2–3, #2472, #2440).** Each facet set
+below carries one behaviour across a self-call or a fill, so refreshing a subset
+runs half of it on old code:
 
 - **FallbackCustodyFacet + RiskFacet + DefaultedFacet + ClaimFacet +
   AddCollateralFacet + RepayFacet + RiskMatchLiquidationFacet.** From S2a, Risk,
@@ -152,6 +152,40 @@ of it on old code:
   and sending a liquidation into the in-kind fallback. `RefreshAllFacetsInPlace`
   and `RedeployFacets` both carry the host. This family is ordinary in-place
   refresh material; the fresh-deploy rule below is about the #1566 slices only.
+
+- **TreasuryFeeFacet + every facet that moves anything into the treasury
+  (#2440).** Each fee drawn from a payer's wallet or a user's vault goes
+  through a self-call to `collectFeeFromPayer` / `collectFeeFromVault`, and
+  each treasury share the Diamond already holds from a settlement goes through
+  `collectFeeFromDiamond` (`LibFacet.transferToTreasury`). The host measures
+  what the treasury received and records the accrual once (a wallet fee is
+  refused unless it all arrived; a vault fee or a held share is accrued as it
+  arrived). The family is every facet whose code reaches those helpers,
+  directly or through an inlined library: AutoLifecycleFacet, ClaimFacet,
+  DefaultedFacet, EarlyWithdrawalFacet, EarlyWithdrawalDirectFacet,
+  IntentDispatchFacet (the intent settlement), OfferAcceptFeeFacet,
+  PrecloseFacet, PrepayListingFacet, RefinanceFacet, RepayFacet,
+  RepayPeriodicFacet, RiskFacet, RiskMatchLiquidationFacet and
+  RiskSplitLiquidationFacet (the VPFI LIF settle or forfeit), SwapToRepayFacet
+  and SwapToRepayPartialFacet. Find it again with a grep for those three
+  helpers plus `settleBorrowerLifProper` / `forfeitBorrowerLif`, not from this
+  list. A caller refreshed without the host reverts `FunctionDoesNotExist` on
+  every fee or share it moves (a hard revert, never a skipped fee).
+  `RefreshAllFacetsInPlace`, `RedeployFacets` and `ReplaceStaleFacets` all
+  carry the host; ordinary in-place refresh material. The backstop vault's
+  returns to the treasury are measured in `BackstopVaultImplementation`, its
+  own UUPS contract: they reach a chain only through `upgradeBackstopVault`,
+  not through any facet refresh.
+
+- **VaultFactoryFacet + every facet that withdraws from a vault (#2440).**
+  `vaultWithdrawERC20` now returns what the recipient received, and every
+  caller compiled against it decodes that return, including the plain
+  high-level calls that ignore it. A caller refreshed onto a Diamond whose
+  VaultFactoryFacet predates #2440 reverts on every vault withdrawal, because
+  the old route returns no data (a hard revert, never a misread amount). The
+  set is effectively every facet that moves ERC-20s out of a vault, so refresh
+  VaultFactoryFacet in the same cut as any of them. All three refresh scripts
+  carry it.
 
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place
@@ -263,6 +297,19 @@ not the hosts #2308 moved their walks onto, so a claim reverted
 `FunctionDoesNotExist` mid-flow. When you split a facet or host a walk on a new
 one, grep the tests for `_buildCuts` / their own `FacetCut[]` lists, not only
 `HelperTest` and `SetupTest`.
+
+**Stub the vault withdrawal with `MockVaultWithdraw.deliversAll(diamond)`,
+never with a selector-wide `abi.encode(true)` mock** (#2440).
+`vaultWithdrawERC20` returns what the recipient received, and the protocol
+books that figure, so `abi.encode(true)` now reads as ONE WEI delivered: a
+voluntary flow refuses `TokenDeliveryShort` and a forced one books one wei,
+often with the test still green. The helper (`test/helpers/MockVaultWithdraw.sol`)
+answers "everything asked for arrived, nothing moved", and it is switched by a
+`vm.mockCall`, so `vm.clearMockedCalls()` turns it off and a later
+`vm.mockCall` / `vm.mockCallRevert` on `vaultWithdrawERC20` still wins. Do not
+swap it for `vm.mockFunction`: that outranks both, survives
+`clearMockedCalls`, and hides the call from `vm.expectCall`. An exact-argument
+mock of the route must return the amount it stands for, not `true`.
 
 ## Deploy-sanity suite + `predeploy-check.sh`
 

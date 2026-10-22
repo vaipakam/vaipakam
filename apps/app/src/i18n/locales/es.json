@@ -1502,6 +1502,8 @@
         "loan": "Préstamo",
         "prepaidBufferBack": "Devolución de tu colchón prepagado",
         "repaidFunds": "Fondos reembolsados",
+        "nothingRecovered": "No se recuperó nada para esta posición — reclamarla la cierra",
+        "nothingRecordedYet": "Nada registrado a tu favor por ahora",
         "recoveryNotComparable": "Esto es lo que recuperó la liquidación por impago. La app no tiene cuánto debía aún el préstamo cuando entró en impago, así que no se muestra ninguna pérdida.",
         "compareInKind": "Esto es la propia garantía, no una cantidad en efectivo: lo que vale depende de su valor de mercado.",
         "owedAtDefault": "Cuando entró en impago, el préstamo aún debía {{total}}: {{principal}} de principal más {{charges}} en intereses y recargos por demora.",

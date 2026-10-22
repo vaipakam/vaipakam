@@ -1324,14 +1324,14 @@ contract OfferAcceptFacet is
                 // completion fails, so escrowed proceeds cannot be left stranded.
                 // The seller still receives the full sale price net of what they
                 // already owed.
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        lender,
-                        offer.lendingAsset,
-                        address(this),
-                        effectivePrincipal
-                    ),
+                // #2440 — a voluntary accept: refused unless the whole price
+                // reached the Diamond, so the escrow never names more than it
+                // holds.
+                LibFacet.vaultWithdrawExact(
+                    lender,
+                    offer.lendingAsset,
+                    address(this),
+                    effectivePrincipal,
                     VaultWithdrawFailed.selector
                 );
                 // Inlined rather than held in a local: this viaIR frame is already

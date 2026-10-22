@@ -339,6 +339,28 @@ describe('probeClaim — what the loan owed at default (#2374)', () => {
   });
 });
 
+describe('probeClaim — a lender claim recorded at zero (#2440)', () => {
+  const repaidLender = { ...borrowerLoan, role: 'lender', status: 'repaid', lendingAsset: USDC } as unknown as PositionLoan;
+
+  it('lists it: a close-out that received nothing still has to run to close the position', async () => {
+    const r = await probeClaim(
+      client({ ownerOf: ME, getClaimable: [USDC, 0n, false, 0n, 0n, 0n, 0n, false] }),
+      DIAMOND,
+      ME,
+      repaidLender,
+    );
+    expect(r.kind).toBe('claimable');
+    expect(r.kind === 'claimable' && r.loan.claim).toMatchObject({ asset: USDC, amount: 0n });
+  });
+
+  it('is still nothing to claim when no close-out recorded one, or it was claimed', async () => {
+    for (const row of [emptyClaimable, [USDC, 0n, true, 0n, 0n, 0n, 0n, false]]) {
+      const r = await probeClaim(client({ ownerOf: ME, getClaimable: row }), DIAMOND, ME, repaidLender);
+      expect(r.kind).toBe('none');
+    }
+  });
+});
+
 describe('probeClaim — what internal matching cleared (#2427)', () => {
   const matchedLoan = {
     ...borrowerLoan,

@@ -38,6 +38,23 @@ interface IVaipakamErrors {
     error VaultWithdrawFailed();
     error VaultDepositFailed();
     error VaultTransferFailed();
+    /// @notice #2440 / #667 — a token move delivered less than was
+    ///         requested: the receiving balance rose by `received`, below
+    ///         `requested` (a fee-on-transfer, rounding or rebasing token).
+    ///         Raised where the protocol would otherwise book the requested
+    ///         amount: any wallet-funded payment, every hop of a voluntary
+    ///         flow, and a payment to a user's wallet that books a party as
+    ///         paid, in any flow (a reading at a wallet is trusted only to
+    ///         refuse). A forced close-out crediting the protocol's own
+    ///         custody acts on what arrived instead (see {LibDelivery}).
+    error TokenDeliveryShort(address token, uint256 requested, uint256 received);
+    /// @notice #2440 — a move out of the protocol's custody (the Diamond, or
+    ///         a user's vault) cost that sender `debited`, more than the
+    ///         `sent` it was asked to send (a token that charges its sender on
+    ///         top of the transfer). The excess would come out of tokens that
+    ///         custody holds for someone else, so the move is refused in every
+    ///         flow.
+    error TokenOverDebit(address token, uint256 sent, uint256 debited);
     /// @dev Stuck-token recovery: caller passed an `amount` greater
     ///      than `max(0, balanceOf(vault, token) - tracked)`. The
     ///      cap is the load-bearing safety property — recovery can

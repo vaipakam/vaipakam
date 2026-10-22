@@ -124,6 +124,10 @@ export interface DeploymentFacets {
    *  frame, so a partial or short-delivered attempt unwinds alone. Optional:
    *  a chain deployed before it has no such key. */
   swapAttemptFacet?: HexAddress;
+  /** #2440 - the treasury fee host: every fee drawn from a payer's wallet or
+   *  a user's vault into the treasury is moved, measured and accrued there.
+   *  Optional: a chain deployed before it has no such key. */
+  treasuryFeeFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

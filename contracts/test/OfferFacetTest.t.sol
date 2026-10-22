@@ -9,6 +9,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
+import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {LibUserVault} from "../src/libraries/LibUserVault.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -62,6 +63,7 @@ import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 
 contract OfferFacetTest is Test {
     VaipakamDiamond diamond;
@@ -132,7 +134,7 @@ contract OfferFacetTest is Test {
         HelperTest helperTest = new HelperTest();
 
         // Prepare cuts for required facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](13);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](14);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(new OfferCreateFacet()),
             action: IDiamondCut.FacetCutAction.Add,
@@ -151,6 +153,13 @@ contract OfferFacetTest is Test {
             facetAddress: address(new OfferAcceptFeeFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: getOfferAcceptFeeFacetSelectors()
+        });
+        // #2440 — that charge moves the treasury's cut through a self-call into
+        // the treasury fee host, so it needs its cut too.
+        cuts[13] = IDiamondCut.FacetCut({
+            facetAddress: address(new TreasuryFeeFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(new ProfileFacet()),
@@ -1671,11 +1680,7 @@ contract OfferFacetTest is Test {
 
         // user1 (US) accepts as lender; user2 (FR) is borrower — US<->FR allowed
         // mock vault withdraw (principal from lender vault to borrower) and initiateLoan
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(LoanFacet.initiateLoan.selector),
@@ -2076,11 +2081,7 @@ contract OfferFacetTest is Test {
             })
         );
 
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCallRevert(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
@@ -2857,7 +2858,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
 
         // Mock the downstream calls so acceptOffer completes
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(10)));
 
         deal(mockERC20, user2, 200);
@@ -2923,7 +2924,7 @@ contract OfferFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(user1, LibVaipakam.KYCTier.Tier2);
         ProfileFacet(address(diamond)).updateKYCTier(user2, LibVaipakam.KYCTier.Tier2);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(11)));
 
         vm.prank(user2);
@@ -3099,7 +3100,7 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(5)));
 
         uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
@@ -3159,7 +3160,7 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(6)));
 
         uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
@@ -3695,7 +3696,7 @@ contract OfferFacetTest is Test {
         );
 
         // Mock vaultWithdrawERC20 to succeed but initiateLoan to revert
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), "loan fail");
 
         deal(mockERC20, user2, 2000);
@@ -3905,7 +3906,7 @@ contract OfferFacetTest is Test {
         collateralNft.approve(address(diamond), 99);
 
         // Mock vaultWithdrawERC20 for principal transfer and initiateLoan
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(1)));
 
         uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
@@ -3961,7 +3962,7 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         collateral1155.setApprovalForAll(address(diamond), true);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(1)));
 
         uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
@@ -4073,7 +4074,7 @@ contract OfferFacetTest is Test {
         );
 
         // Cancel: should unlock ERC20 prepay (amount*days + 5% buffer)
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        MockVaultWithdraw.deliversAll(address(diamond));
 
         vm.prank(user2);
         OfferCancelFacet(address(diamond)).cancelOffer(offerId);
