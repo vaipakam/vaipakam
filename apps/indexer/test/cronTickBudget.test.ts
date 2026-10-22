@@ -5,7 +5,8 @@
  *
  *  - The listing sweep ASKS the live budget before each row, so a tick ingest
  *    has already spent does not start one. Behavioural, against a real schema.
- *  - The snapshot and the sweep run AFTER ingest has settled. That is a
+ *  - The snapshot and the sweep run AFTER ingest has settled, one after the
+ *    other in one queue, so neither's check races the other's spend. That is a
  *    property of where the calls sit in `scheduled()`, which no test of either
  *    pass alone can establish, so it is checked structurally — the same way
  *    `offerCollateralRange.test.ts` pins where the heal lanes run.
@@ -78,24 +79,31 @@ describe('the cron tick runs ingest first (#2194)', () => {
   const src = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
   const tick = src.slice(src.indexOf('async scheduled('), src.indexOf('async fetch('));
 
-  it('registers the snapshot and the sweep behind the settled ingest', () => {
+  it('queues the snapshot and the sweep behind the settled ingest, one after the other', () => {
     const settled = tick.indexOf('const ingestSettled = Promise.allSettled(ingest);');
     expect(settled).toBeGreaterThan(-1);
+    // One serial queue, seeded with the settled ingest: each consumer's
+    // `affords` check then sees what the earlier ones spent (#2647 r1).
+    expect(tick).toContain('let afterIngest: Promise<unknown> = ingestSettled;');
+    expect(tick).toContain('afterIngest = afterIngest.then(pass, pass);');
+    // Nothing else starts directly off the settled ingest — a second
+    // `ingestSettled.then(` would be a consumer running beside the queue.
+    expect(tick.split('ingestSettled.then(').length - 1).toBe(0);
+    let last = settled;
     for (const call of ['captureBackingSnapshot(resolved', 'sweepUnpublishedListings(resolved']) {
       const at = tick.indexOf(call);
-      expect(at, call).toBeGreaterThan(settled);
-      // The nearest registration before the call is a `.then` on the settled
-      // ingest, not a bare `runPass(` of the call itself.
+      expect(at, call).toBeGreaterThan(last);
+      // The nearest registration before the call is the queue.
       const before = tick.slice(0, at);
-      expect(before.lastIndexOf('ingestSettled.then(')).toBeGreaterThan(before.lastIndexOf(`runPass(\n        ${call}`));
-      expect(before.lastIndexOf('ingestSettled.then(')).toBeGreaterThan(settled);
+      expect(before.lastIndexOf('afterIngestPass(')).toBeGreaterThan(before.lastIndexOf('runPass('));
+      last = at;
     }
   });
 
   it('asks the budget before the snapshot', () => {
     const at = tick.indexOf('captureBackingSnapshot(resolved');
     const gate = tick.lastIndexOf('affords(budget, BACKING_SNAPSHOT_COST)', at);
-    expect(gate).toBeGreaterThan(tick.indexOf('ingestSettled.then('));
+    expect(gate).toBeGreaterThan(tick.lastIndexOf('afterIngestPass(', at));
   });
 
   it('charges the Durable Object pings to the internal meter', () => {

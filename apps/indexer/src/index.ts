@@ -297,6 +297,20 @@ export default {
     }
     ingest.forEach(runPass);
     const ingestSettled = Promise.allSettled(ingest);
+    // ONE QUEUE for everything that spends what ingest left (#2647 r1). A
+    // pass's `affords` check is only true while nothing else is spending, so
+    // two consumers each started off `ingestSettled` could both pass their
+    // check on the same headroom and then overspend it together (13 left:
+    // the snapshot's 7 and a sweep row's 7 both fit, and both ran). Chaining
+    // each consumer behind the previous one makes every check see what the
+    // earlier ones actually spent. A consumer that fails still releases the
+    // queue — its own `.catch` handles it, and the queue continues on
+    // `allSettled` semantics.
+    let afterIngest: Promise<unknown> = ingestSettled;
+    const afterIngestPass = (pass: () => unknown): void => {
+      afterIngest = afterIngest.then(pass, pass);
+      runPass(afterIngest);
+    };
 
     // #1525 — capture the retained-reserve backing snapshot for ONE chain
     // per tick, round-robin by scheduled minute. Not a fan-out over every
@@ -326,23 +340,21 @@ export default {
       const tickMinutes = doIngestEnabled(env) ? DO_PATH_CADENCE_MINUTES : 1;
       const ordinal = Math.floor(minute / tickMinutes);
       const target = backingChains[Math.abs(ordinal) % backingChains.length];
-      runPass(
-        ingestSettled.then(() => {
-          if (!affords(budget, BACKING_SNAPSHOT_COST)) {
-            // eslint-disable-next-line no-console
-            console.warn(
-              `[indexer] backing snapshot for chain ${target.id} skipped this tick: ` +
-                `ingest left too little of the invocation's allowance. Its next turn captures it.`,
-            );
-            return;
-          }
-          return captureBackingSnapshot(resolved, target.id, tickMinutes).catch((err) => {
-            // One chain's RPC blip must not wedge the tick.
-            // eslint-disable-next-line no-console
-            console.error(`[indexer] backing snapshot failed for ${target.id}:`, err);
-          });
-        }),
-      );
+      afterIngestPass(() => {
+        if (!affords(budget, BACKING_SNAPSHOT_COST)) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[indexer] backing snapshot for chain ${target.id} skipped this tick: ` +
+              `ingest left too little of the invocation's allowance. Its next turn captures it.`,
+          );
+          return;
+        }
+        return captureBackingSnapshot(resolved, target.id, tickMinutes).catch((err) => {
+          // One chain's RPC blip must not wedge the tick.
+          // eslint-disable-next-line no-console
+          console.error(`[indexer] backing snapshot failed for ${target.id}:`, err);
+        });
+      });
     }
 
     runPass(
@@ -373,15 +385,13 @@ export default {
     // ingest — so it stays on. (Routing the global sweep per-chain THROUGH the
     // DO remains a nice-to-have follow-up, no longer a correctness gate.)
     //
-    // #2194 — after ingest, like the snapshot, and it asks the live budget
-    // before each row (`sweepUnpublishedListings`).
-    runPass(
-      ingestSettled.then(() =>
-        sweepUnpublishedListings(resolved, budget).catch((err) => {
-          // eslint-disable-next-line no-console
-          console.error('[indexer] sweepUnpublishedListings pass failed:', err);
-        }),
-      ),
+    // #2194 — in the post-ingest queue, behind the snapshot, and it asks the
+    // live budget before each row (`sweepUnpublishedListings`).
+    afterIngestPass(() =>
+      sweepUnpublishedListings(resolved, budget).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[indexer] sweepUnpublishedListings pass failed:', err);
+      }),
     );
     // WHAT THE TICK ACTUALLY SPENT, once every pass has settled. `allSettled`
     // rather than `all`: a failed pass still spent what it spent, and the
