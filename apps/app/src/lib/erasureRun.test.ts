@@ -3,9 +3,10 @@
  * report that survives the reload a wallet can force. Also the library's
  * fourth step (`disconnectLast`), which is what makes that reload harmless.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eraseMyDataFully, type FullEraseResult } from './dataRights';
 import {
+  KEPT_REPORT_WINDOW_MS,
   REPORT_KEY,
   dismissErasureReport,
   getErasureRun,
@@ -196,21 +197,91 @@ describe('runErasure (#2038)', () => {
 });
 
 describe('a report kept across a wallet-forced reload (#2035)', () => {
-  it('is kept only while the reload-prone connection closes, then removed', async () => {
-    let keptDuringClose: string | undefined;
-    const port = connectedPort('coinbaseWalletSDK', async () => {
-      keptDuringClose = session.get(REPORT_KEY);
-    });
+  it('stays kept for a bounded window after a teardown that did not reload, then is removed', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let keptDuringClose: string | undefined;
+      const port = connectedPort('coinbaseWalletSDK', async () => {
+        keptDuringClose = session.get(REPORT_KEY);
+      });
+      await runErasure({
+        wallet: port,
+        resetLanguage: () => {},
+        resetPreferences: () => {},
+      });
+      expect(keptDuringClose).toBeDefined();
+      // The teardown resolving is not proof that no reload is coming
+      // (WalletLink reloads after an un-awaited disconnect), so the copy
+      // outlives the run...
+      expect(session.has(REPORT_KEY)).toBe(true);
+      const run = getErasureRun();
+      expect(run.phase === 'done' && run.report.reloadedDuringLast).toBe(false);
+      // ...and a reload that lands late, inside the window, still shows it.
+      reloadErasureRunForTests();
+      const after = getErasureRun();
+      expect(after.phase === 'done' && after.report.reloadedDuringLast).toBe(true);
+      expect(session.has(REPORT_KEY)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('is removed at the end of the window when no reload comes', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await runErasure({
+        wallet: connectedPort('coinbaseWalletSDK'),
+        resetLanguage: () => {},
+        resetPreferences: () => {},
+      });
+      expect(session.has(REPORT_KEY)).toBe(true);
+      vi.advanceTimersByTime(KEPT_REPORT_WINDOW_MS - 1);
+      expect(session.has(REPORT_KEY)).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(session.has(REPORT_KEY)).toBe(false);
+      // The report on screen is unaffected: only the kept copy goes.
+      expect(getErasureRun().phase).toBe('done');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('is removed when the report is dismissed', async () => {
     await runErasure({
-      wallet: port,
+      wallet: connectedPort('coinbaseWalletSDK'),
       resetLanguage: () => {},
       resetPreferences: () => {},
     });
-    expect(keptDuringClose).toBeDefined();
-    // No reload came, so nothing is left behind.
+    expect(session.has(REPORT_KEY)).toBe(true);
+    dismissErasureReport();
     expect(session.has(REPORT_KEY)).toBe(false);
-    const run = getErasureRun();
-    expect(run.phase === 'done' && run.report.reloadedDuringLast).toBe(false);
+    reloadErasureRunForTests();
+    expect(getErasureRun().phase).toBe('idle');
+  });
+
+  it('is never kept for a wallet that does not reload', async () => {
+    await runErasure({
+      wallet: connectedPort('metaMask'),
+      resetLanguage: () => {},
+      resetPreferences: () => {},
+    });
+    expect(session.has(REPORT_KEY)).toBe(false);
+  });
+
+  it('is refused once the window has passed, or when stamped in the future', async () => {
+    await runErasure({
+      wallet: connectedPort('coinbaseWalletSDK'),
+      resetLanguage: () => {},
+      resetPreferences: () => {},
+    });
+    const raw = session.get(REPORT_KEY);
+    expect(raw).toBeDefined();
+    if (raw === undefined) return;
+    const keptAt = (JSON.parse(raw) as { keptAt: number }).keptAt;
+    expect(parseKeptReport(raw, keptAt)).not.toBeNull();
+    expect(parseKeptReport(raw, keptAt + KEPT_REPORT_WINDOW_MS)).not.toBeNull();
+    expect(parseKeptReport(raw, keptAt + KEPT_REPORT_WINDOW_MS + 1)).toBeNull();
+    expect(parseKeptReport(raw, keptAt - 1)).toBeNull();
   });
 
   it('is shown after a reload, with the last step marked unknown, and taken out as it is read', async () => {
@@ -243,5 +314,10 @@ describe('a report kept across a wallet-forced reload (#2035)', () => {
     expect(parseKeptReport('not json')).toBeNull();
     expect(parseKeptReport('{}')).toBeNull();
     expect(parseKeptReport(JSON.stringify({ total: 'seven' }))).toBeNull();
+    // The pre-window shape (a bare report, no envelope) is refused too.
+    expect(parseKeptReport(JSON.stringify({ total: 1 }))).toBeNull();
+    expect(
+      parseKeptReport(JSON.stringify({ keptAt: 'now', report: { total: 1 } })),
+    ).toBeNull();
   });
 });

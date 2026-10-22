@@ -498,7 +498,7 @@ const copySource = {
        page reloaded during it; it does not know the step's outcome, so it
        claims neither. Additive and outcome-neutral. */
     eraseWalletReloaded:
-      'One wallet connection reloads the page as it closes, so it was closed last, after everything else had been erased — and the page reloaded during that step. If your wallet still lists this site as connected, disconnect it there.',
+      'One wallet connection reloads the page as it closes, so it was closed last, after everything else had been erased — and the page reloaded during that step or shortly after it. If your wallet still lists this site as connected, disconnect it there.',
     /* Round 14 P2: ordinary storage could not be VERIFIED, but the wallet
        store was reachable and gave up records. `eraseBlocked` says nothing
        was removed, which contradicts a non-zero count; this reports what was

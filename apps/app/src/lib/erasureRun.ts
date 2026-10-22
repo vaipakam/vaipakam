@@ -20,14 +20,19 @@
  * WHY A REPORT CAN OUTLIVE A RELOAD (#2035). Closing a reload-prone wallet
  * connection reloads the page, and nothing can stop it. That teardown runs
  * last, after everything the erasure counts; just before it, the report as it
- * stands is kept in this tab's `sessionStorage` under `REPORT_KEY`, and it is
- * removed again the moment the teardown returns without a reload. If the
- * page does reload, the next load of this module takes the report back out
- * and shows it. This is a write made after an erasure, and it is justified
- * narrowly: it holds counts and outcome flags only — nothing about the
- * wallet, the user or what was erased — it exists only while a reload is
- * pending, it is removed on the first read, and `sessionStorage` dies with
- * the tab. The alternative is the outcome the page exists to prevent: a
+ * stands is kept in this tab's `sessionStorage` under `REPORT_KEY`. The
+ * teardown returning is NOT proof that no reload is coming (Codex #2670 r1):
+ * Coinbase's WalletLink path fires the provider's disconnect without
+ * awaiting it and reloads only once its relay connection is destroyed, after
+ * the teardown has already resolved. So the kept copy is not removed when
+ * the teardown returns; it carries the time it was kept and lives for a
+ * bounded window (`KEPT_REPORT_WINDOW_MS`). A load inside the window takes
+ * it out and shows it; a load after it, a timer at its end, a dismissal and
+ * the next erasure each remove it. This is a write made after an erasure,
+ * and it is justified narrowly: it holds counts and outcome flags only —
+ * nothing about the wallet, the user or what was erased — it lives only
+ * across the window a reload can land in, it is removed on the first read,
+ * and `sessionStorage` dies with the tab. The alternative is the outcome the page exists to prevent: a
  * reload that returns the user to a blank page with no word on what
  * happened.
  */
@@ -63,6 +68,11 @@ export type ErasureRunState =
 /** Where a report waits out a reload. Under `app.`, so an erasure reaches it. */
 export const REPORT_KEY = 'app.dataRights.erasureReport';
 
+/** How long after the reload-prone teardown starts a reload is still
+ *  attributed to it. The SDK reloads once a network round trip completes;
+ *  a load later than this is the user's own and gets no report. */
+export const KEPT_REPORT_WINDOW_MS = 30_000;
+
 const IDLE: ErasureRunState = { phase: 'idle' };
 let state: ErasureRunState = takeKeptReport() ?? IDLE;
 const listeners = new Set<() => void>();
@@ -83,6 +93,7 @@ export function getErasureRun(): ErasureRunState {
 
 /** Clear a finished report, so a new confirmation starts from nothing. */
 export function dismissErasureReport(): void {
+  dropKeptReport();
   if (state.phase === 'done') setState(IDLE);
 }
 
@@ -158,17 +169,13 @@ export async function runErasure<C>(deps: ErasureDeps<C>): Promise<void> {
 
   const closeLast = plan.last;
   let erased: FullEraseResult;
-  let kept = false;
   try {
     erased = await eraseMyDataFully({
       hasLiveSession,
       disconnect: plan.first,
       disconnectLast: closeLast
         ? (interim) =>
-            closeLast(() => {
-              keepReport(measure(interim));
-              kept = true;
-            })
+            closeLast(() => keepReport(measure(interim)))
         : undefined,
     });
   } catch (error) {
@@ -177,9 +184,9 @@ export async function runErasure<C>(deps: ErasureDeps<C>): Promise<void> {
     setState(IDLE);
     throw error;
   } finally {
+    // The kept copy, if any, is NOT dropped here: the reload can still be
+    // on its way (see the header). Its window and its timer remove it.
     openGate();
-    // No reload came: the kept copy is not needed, and must not linger.
-    if (kept) dropKeptReport();
   }
   setState({ phase: 'done', report: measure(erased) });
   deps.resetPreferences();
@@ -212,16 +219,24 @@ function session(): Storage | null {
   }
 }
 
+let keptExpiry: ReturnType<typeof setTimeout> | undefined;
+
 function keepReport(report: ErasureReport): void {
   try {
-    session()?.setItem(REPORT_KEY, JSON.stringify(report));
+    session()?.setItem(REPORT_KEY, JSON.stringify({ keptAt: Date.now(), report }));
   } catch {
     // Storage refused: the report survives only if no reload comes, which
     // is the behaviour before #2035 and nothing worse.
+    return;
   }
+  // A tab that never reloads must not keep it past the window.
+  clearTimeout(keptExpiry);
+  keptExpiry = setTimeout(dropKeptReport, KEPT_REPORT_WINDOW_MS);
 }
 
 function dropKeptReport(): void {
+  clearTimeout(keptExpiry);
+  keptExpiry = undefined;
   try {
     session()?.removeItem(REPORT_KEY);
   } catch {
@@ -247,16 +262,28 @@ function takeKeptReport(): ErasureRunState | null {
 /**
  * Read a kept report back, strictly. Anything malformed is dropped rather
  * than shown: a report the page cannot vouch for is worse than none, and the
- * holding figure on the page still says what is stored now.
+ * holding figure on the page still says what is stored now. So is one kept
+ * outside the reload window, before or after `now`: a load that late was
+ * not caused by the teardown.
  */
-export function parseKeptReport(raw: string): ErasureReport | null {
-  let value: unknown;
+export function parseKeptReport(raw: string, now: number = Date.now()): ErasureReport | null {
+  let envelope: unknown;
   try {
-    value = JSON.parse(raw);
+    envelope = JSON.parse(raw);
   } catch {
     return null;
   }
-  const v = value as Record<string, unknown> | null;
+  const e = envelope as { keptAt?: unknown; report?: unknown } | null;
+  if (
+    !e ||
+    typeof e.keptAt !== 'number' ||
+    !Number.isFinite(e.keptAt) ||
+    now < e.keptAt ||
+    now - e.keptAt > KEPT_REPORT_WINDOW_MS
+  ) {
+    return null;
+  }
+  const v = e.report as Record<string, unknown> | null;
   const isNum = (x: unknown) => typeof x === 'number' && Number.isFinite(x);
   const isBool = (x: unknown) => typeof x === 'boolean';
   const db = v?.indexedDb as Record<string, unknown> | undefined;

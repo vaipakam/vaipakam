@@ -264,7 +264,7 @@
       "eraseSessionHeld": "Die gespeicherte Wallet-Sitzung konnte nicht gelöscht werden und liegt möglicherweise weiterhin auf diesem Gerät. Das Löschen der Websitedaten in den Browsereinstellungen entfernt sie.",
       "eraseWalletHeld": "Die Wallet hat sich nicht getrennt, sodass diese Website weiterhin mit ihr verbunden ist. Trennen Sie die Verbindung direkt in Ihrer Wallet und löschen Sie dann erneut.",
       "eraseWalletReconnecting": "Ihre Wallet war noch dabei, sich erneut mit dieser Website zu verbinden, daher konnte sie noch nicht getrennt werden, und sie meldet Sie möglicherweise wieder an, sobald sie fertig ist. Löschen Sie danach erneut — oder trennen Sie die Verbindung direkt in Ihrer Wallet.",
-      "eraseWalletReloaded": "Eine Wallet-Verbindung lädt die Seite beim Schließen neu, daher wurde sie zuletzt geschlossen, nachdem alles andere gelöscht war — und die Seite wurde während dieses Schritts neu geladen. Wenn Ihre Wallet diese Website noch als verbunden anzeigt, trennen Sie sie dort.",
+      "eraseWalletReloaded": "Eine Wallet-Verbindung lädt die Seite beim Schließen neu, daher wurde sie zuletzt geschlossen, nachdem alles andere gelöscht war — und die Seite wurde während dieses Schritts oder kurz danach neu geladen. Wenn Ihre Wallet diese Website noch als verbunden anzeigt, trennen Sie sie dort.",
       "eraseStoresUnreadable": "Dieser Browser ließ die App die Sitzungsspeicherung der Wallet nicht öffnen, daher kann dort Gespeichertes weiterhin auf diesem Gerät liegen. Das Löschen der Websitedaten in den Browsereinstellungen entfernt es."
     },
     "killSwitch": {

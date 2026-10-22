@@ -2914,10 +2914,15 @@ is the borrower's own money.
   reloads straight after an erasure returns the user to a blank screen, and
   on this page the report is the point — so the report as it stands just
   before that last step is kept for this tab alone, holding only counts and
-  outcomes, and is shown again after the reload and then discarded. It must
-  claim nothing about the step that was interrupted: the page says the step
-  ran last and the page reloaded during it, and tells the user how to check
-  their wallet.
+  outcomes, and is shown again after the reload and then discarded. The
+  connection reporting itself closed is NOT proof that no reload is coming
+  (the reload can follow a moment later), so the kept copy lives for a short
+  bounded window rather than ending with the step, and is removed when the
+  window ends, when the report is dismissed, or when it is read; a copy
+  found after the window is discarded unread. It must claim nothing about
+  the step that was interrupted: the page says the step ran last and the
+  page reloaded during it or shortly after it, and tells the user how to
+  check their wallet.
 - **A wallet that is still reconnecting is waited for, not reported as
   refusing.** While the app restores a wallet connection from a previous
   visit, there is no connection yet that can be closed, and the restore

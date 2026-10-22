@@ -264,7 +264,7 @@
       "eraseSessionHeld": "Wallet का संग्रहित session साफ़ नहीं किया जा सका, इसलिए वह अब भी इस डिवाइस पर हो सकता है। अपने browser की settings से site data हटाने पर वह हट जाएगा।",
       "eraseWalletHeld": "Wallet disconnect नहीं हुआ, इसलिए यह साइट अब भी उससे जुड़ी है। अपने wallet से सीधे disconnect करें, फिर दोबारा हटाएँ।",
       "eraseWalletReconnecting": "आपका wallet अभी भी इस साइट से दोबारा जुड़ रहा था, इसलिए उसे अभी disconnect नहीं किया जा सका, और पूरा होने पर वह आपको फिर से sign in कर सकता है। ऐसा होने के बाद दोबारा हटाएँ — या अपने wallet से सीधे disconnect करें।",
-      "eraseWalletReloaded": "एक wallet connection बंद होते समय पेज को reload करता है, इसलिए उसे सबसे आख़िर में बंद किया गया, जब बाक़ी सब कुछ हटाया जा चुका था — और उसी चरण के दौरान पेज reload हो गया। अगर आपका wallet अब भी इस साइट को जुड़ा हुआ दिखाता है, तो उसे वहीं से disconnect करें।",
+      "eraseWalletReloaded": "एक wallet connection बंद होते समय पेज को reload करता है, इसलिए उसे सबसे आख़िर में बंद किया गया, जब बाक़ी सब कुछ हटाया जा चुका था — और उसी चरण के दौरान या उसके कुछ ही देर बाद पेज reload हो गया। अगर आपका wallet अब भी इस साइट को जुड़ा हुआ दिखाता है, तो उसे वहीं से disconnect करें।",
       "eraseStoresUnreadable": "इस browser ने ऐप को wallet के session storage खोलने नहीं दिया, इसलिए वहाँ रखा डेटा अब भी इस डिवाइस पर हो सकता है। अपने browser की settings से site data हटाने पर वह हट जाएगा।"
     },
     "killSwitch": {
