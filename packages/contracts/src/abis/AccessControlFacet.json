@@ -27,6 +27,19 @@
   },
   {
     "type": "function",
+    "name": "EMERGENCY_REVOKER_ROLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
     "name": "KYC_ADMIN_ROLE",
     "inputs": [],
     "outputs": [
@@ -397,8 +410,30 @@
   },
   {
     "type": "error",
+    "name": "CannotEmergencyRevokeFromOwner",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CannotEmergencyRevokeRootAdmin",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CannotRemoveOwnerRootAdmin",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

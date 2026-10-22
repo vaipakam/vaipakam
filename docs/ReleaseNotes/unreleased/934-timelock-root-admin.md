@@ -30,6 +30,14 @@ intake and the governance docs now say plainly that governance can move vault
 funds through an upgrade, and that the protection is that such a change is
 public and delayed, not that it is impossible.
 
+Two operational consequences follow from putting the root on the Timelock.
+Giving a role to a new key after handover, for example a replacement keeper or
+watcher key, is now a Timelock operation and waits out the delay; taking a role
+away from a compromised key stays immediate through the emergency revoker. And
+on a Diamond refreshed in place rather than freshly deployed, nobody holds the
+emergency revoker role until the root admin grants it, because the role is
+handed out at initialisation and handover, which do not re-run on a refresh.
+
 Operators: rename `DEFAULT_ADMIN_ADDRESS` to `EMERGENCY_REVOKER_ADDRESS` in the
 deploy `.env` (the handover refuses the old name), and set
 `TIMELOCK_CANCELLER` to the Pauser Safe before a mainnet timelock deploy.
