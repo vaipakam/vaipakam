@@ -1451,6 +1451,80 @@ contract RepayFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid));
     }
 
+    // ─── #901: rent is never billed past the agreed term ────────────────────
+    // loanId 2 (helperOfferLoan): NFT rental, daily fee 10, 30-day term,
+    // pro-rata ⇒ prepay 300, buffer 15, grace 3 days. The rent and the late
+    // fee both leave the borrower's vault (the refund stays there), so the
+    // vault's drop across `repayLoan` is exactly the rent + fee charged.
+
+    /// @dev A rental with no daily deductions, repaid 2 days late (inside
+    ///      grace), owes its whole term (30 × 10 = 300) plus the late fee
+    ///      (10 × 30 × 2% = 6). Pre-fix it billed 32 rent days (320 + 6 = 326
+    ///      > prepay 300 + buffer 15) and reverted `InsufficientPrepay`,
+    ///      leaving default as the only way out.
+    function test_901_rentalRepaidInGrace_billsRentOnlyToTheTerm() public {
+        helperOfferLoan();
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        uint256 vaultBefore = ERC20Mock(mockERC20).balanceOf(borrowerVault);
+
+        vm.warp(block.timestamp + 32 days + 1);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(2);
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid), "in-grace repay settles");
+        assertEq(
+            vaultBefore - ERC20Mock(mockERC20).balanceOf(borrowerVault),
+            306,
+            "rent capped at the term (300) + late fee (6); the 9 left is the refund"
+        );
+    }
+
+    /// @dev Same, after 10 daily deductions: the close owes only the 20
+    ///      remaining term days (200) plus the fee on that remaining rent
+    ///      (10 × 20 × 2% = 4). Pre-fix it billed 32 − 10 = 22 days
+    ///      (220 + 4 = 224 > prepay 200 + buffer 15) and reverted.
+    function test_901_partlyDeductedRentalRepaidInGrace_owesOnlyRemainingTerm() public {
+        helperOfferLoan();
+        uint256 start = LoanFacet(address(diamond)).getLoanDetails(2).startTime;
+        for (uint256 d = 0; d < 10; d++) {
+            vm.warp(start + (d + 1) * 1 days);
+            RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
+        }
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        uint256 vaultBefore = ERC20Mock(mockERC20).balanceOf(borrowerVault);
+
+        vm.warp(start + 32 days + 1);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(2);
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Repaid), "in-grace repay settles");
+        assertEq(
+            vaultBefore - ERC20Mock(mockERC20).balanceOf(borrowerVault),
+            204,
+            "remaining 20 term days (200) + late fee (4)"
+        );
+    }
+
+    /// @dev In-term behaviour is unchanged: a close at day 5 owes the 5
+    ///      elapsed days (50) and no late fee.
+    function test_901_rentalRepaidInTerm_owesElapsedDaysOnly() public {
+        helperOfferLoan();
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        uint256 vaultBefore = ERC20Mock(mockERC20).balanceOf(borrowerVault);
+
+        vm.warp(block.timestamp + 5 days + 1);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(2);
+
+        assertEq(
+            vaultBefore - ERC20Mock(mockERC20).balanceOf(borrowerVault),
+            50,
+            "5 elapsed days, no fee"
+        );
+    }
+
     /// @dev Tests calculateRepaymentAmount ERC20 loan past endTime (late fee branch).
     function testCalculateRepaymentAmountERC20LateFee() public {
         helperOfferLoan();

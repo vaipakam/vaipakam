@@ -10814,6 +10814,30 @@ library LibVaipakam {
         return consumed >= uint256(loan.durationDays) ? 0 : uint256(loan.durationDays) - consumed;
     }
 
+    /// @notice #901 — the rental days that have ACCRUED and are not yet paid,
+    ///         as of now: days elapsed since `startTime`, capped at the agreed
+    ///         term, minus the days already consumed (`consumedRentalDays`).
+    /// @dev    The single rule for in-term rent owed at a close. Rent is never
+    ///         billed past the agreed term: a rental closed after maturity owes
+    ///         at most its remaining prepaid days, and the overdue time is
+    ///         charged as the rental late fee (drawn from the buffer), not as
+    ///         extra rent days — so a fully-overdue rental consumes exactly its
+    ///         whole remaining prepayment. Without the cap, a rental repaid
+    ///         inside grace with days left undeducted billed more days than the
+    ///         prepayment funds and reverted `InsufficientPrepay`, leaving
+    ///         default as the only way out. Days prepaid ahead of time by a
+    ///         rental partial (`lastDeductTime` in the future) count as
+    ///         consumed, so they read as zero owed rather than underflowing.
+    ///         Never exceeds `remainingRentalDays`.
+    function accruedUnpaidRentalDays(Loan storage loan) internal view returns (uint256) {
+        uint256 st = uint256(loan.startTime);
+        uint256 elapsed = block.timestamp > st ? (block.timestamp - st) / 1 days : 0;
+        uint256 term = uint256(loan.durationDays);
+        if (elapsed > term) elapsed = term;
+        uint256 consumed = consumedRentalDays(loan);
+        return elapsed > consumed ? elapsed - consumed : 0;
+    }
+
     /// @notice #641 — a loan's interest-accrual ORIGIN: the dedicated
     ///         `interestAccrualStart` clock (re-stamped by a partial WITHOUT
     ///         moving the term/maturity), falling back to the immutable
