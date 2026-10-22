@@ -209,12 +209,15 @@ runs half of it on old code:
   OfferAcceptFacet (origination, right after `initiateLoan` returns the loan
   id), RepayPeriodicFacet, RepayFacet, PrecloseFacet and DefaultedFacet. The retired `vaultSetNFTUser` /
   `vaultSetNFTUser1155` routes are gone, so a writer refreshed without the
-  route reverts `FunctionDoesNotExist`, and an ERC-1155 rental in a vault
-  still on the old implementation is refused at accept. `RedeployFacets`
-  carries neither RepayFacet nor the vault implementation and refuses a
-  Diamond that does not already route `vaultSetRentalUser`; cross it by fresh
-  deploy, or by `RefreshAllFacetsInPlace` plus `UpgradeVaultImplementation`
-  with each lender vault upgraded.
+  route reverts `FunctionDoesNotExist`. The route upgrades a lender vault
+  stamped below `currentVaultVersion` to the current template before it
+  writes, so no lender has to upgrade first, but the TEMPLATE itself must
+  already be the #902 implementation: with an older template every ERC-1155
+  rental step reverts. `RedeployFacets` carries neither RepayFacet nor the
+  vault implementation and refuses a Diamond that does not already route
+  `vaultSetRentalUser`; cross it by fresh deploy, or by
+  `UpgradeVaultImplementation` and `RefreshAllFacetsInPlace` in one paused
+  window.
 
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place

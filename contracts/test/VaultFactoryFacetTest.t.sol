@@ -444,6 +444,54 @@ contract VaultFactoryFacetTest is Test {
         vm.stopPrank();
     }
 
+    /// @dev A lender vault left on an implementation without
+    ///      `setRental1155` (a pre-#902 vault after an in-place facet refresh)
+    ///      is upgraded to the current template by the rental step itself, so
+    ///      an accept or a close never waits on the lender upgrading. The stub
+    ///      stands in for the old implementation: it carries the upgrade entry
+    ///      and nothing else, so the fixture is asserted live first.
+    function test_902_staleVaultIsUpgradedBeforeARentalStep() public {
+        address proxy = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        address nft = makeAddr("erc1155");
+        _seedRental(1, user1, nft, 7, LibVaipakam.AssetType.ERC1155, 3);
+        LegacyVaultWithout1155Rows legacy = new LegacyVaultWithout1155Rows();
+        vm.prank(address(diamond));
+        UUPSUpgradeable(proxy).upgradeToAndCall(address(legacy), "");
+        vm.prank(address(diamond));
+        (bool ok, ) = proxy.call(
+            abi.encodeWithSelector(
+                VaipakamVaultImplementation.setRental1155.selector, nft, uint256(7), uint256(1), user2, uint64(1), uint256(3)
+            )
+        );
+        assertFalse(ok, "fixture-live: the legacy vault has no per-rental rows");
+
+        VaipakamVaultImplementation current = new VaipakamVaultImplementation();
+        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(current));
+
+        uint64 exp = uint64(block.timestamp + 10 days);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, user2, exp);
+
+        assertEq(
+            address(uint160(uint256(vm.load(proxy, ERC1967_IMPLEMENTATION_SLOT)))),
+            address(current),
+            "the vault now runs the current template"
+        );
+        (uint256 userVersion, uint256 currentVersion, , ) = VaultFactoryFacet(address(diamond)).getVaultVersionInfo(user1);
+        assertEq(userVersion, currentVersion, "the vault's version stamp is current");
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), 3, "the rental is recorded");
+
+        // A current vault is not upgraded again; the close goes through on it.
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).vaultSetRentalUser(1, address(0), 0);
+        assertEq(VaultFactoryFacet(address(diamond)).vaultGetNFTQuantity(user1, nft, 7), 0, "the close went through");
+        assertEq(
+            address(uint160(uint256(vm.load(proxy, ERC1967_IMPLEMENTATION_SLOT)))),
+            address(current),
+            "still the current template"
+        );
+    }
+
     /// @dev A token's active rentals are bounded, so every close walks a
     ///      bounded list. The bound refuses only an ADDED row: a close or an
     ///      expiry refresh at the bound still goes through, a close frees a
@@ -1153,4 +1201,13 @@ contract VaultFactoryFacetTest is Test {
         address result = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
         assertEq(result, vault, "Should return existing vault without reverting");
     }
+}
+
+/// @dev The ERC-1967 implementation slot of a vault proxy.
+bytes32 constant ERC1967_IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+/// @dev Stands in for a vault implementation that predates #902: it can be
+///      upgraded away from, and has no `setRental1155`.
+contract LegacyVaultWithout1155Rows is UUPSUpgradeable {
+    function _authorizeUpgrade(address) internal override {}
 }

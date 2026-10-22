@@ -37,11 +37,12 @@ by.
 
 Rollout: the change spans the vault implementation and every facet that
 touches a rental, so it reaches a chain by a fresh deploy, or by the
-all-facets refresh together with the vault-implementation upgrade. On the
-in-place route each lender's vault must also be upgraded before its next
-ERC-1155 rental (an un-upgraded vault refuses that rental's accept), and an
-ERC-1155 rental opened before the upgrade keeps its old one-unit record
-until that record expires. The curated partial refresh refuses a Diamond
+all-facets refresh together with the vault-implementation upgrade, in one
+paused window. Lenders do not have to upgrade their own vaults: the first
+rental step that reaches a vault on an older version upgrades it to the
+current implementation, so an accept, a repayment, a default or a handover
+is never blocked on that. An ERC-1155 rental opened before the upgrade
+keeps its old one-unit record until that record expires. The curated partial refresh refuses a Diamond
 from before this change rather than leave a rental half on the old routes.
 
 Closes #902.

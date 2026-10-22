@@ -332,7 +332,17 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address proxy = s.userVaipakamVaults[user];
         if (proxy == address(0)) revert NoVault();
+        _upgradeVault(s, user, proxy);
+    }
 
+    /// @dev Points `user`'s vault `proxy` at the current shared template and
+    ///      stamps the current version. The one upgrade step, shared by
+    ///      {upgradeUserVault} and the rental route's catch-up.
+    function _upgradeVault(
+        LibVaipakam.Storage storage s,
+        address user,
+        address proxy
+    ) private {
         // Call UUPS upgradeToAndCall on the proxy
         (bool success, ) = proxy.call(
             abi.encodeWithSelector(
@@ -1379,7 +1389,11 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      *      as its own row keyed by `loanId` with the loan's `quantity`, so
      *      concurrent rentals of the same token from one vault coexist and
      *      closing one leaves the others' rights in place. `renter == 0`
-     *      revokes this rental only. Reverts `NotRentalLoan` for an ERC-20
+     *      revokes this rental only. A lender vault stamped below
+     *      `currentVaultVersion` is first upgraded to the current template
+     *      (the same step {upgradeUserVault} lets anyone take), so a vault
+     *      left on a pre-#902 implementation cannot block a rental's accept or
+     *      close. Reverts `NotRentalLoan` for an ERC-20
      *      loan, `NoVault` if the lender has no vault, or bubbles the vault's
      *      revert (else `ProxyCallFailed("Set rental user failed")`), which
      *      includes the vault's `TooManyConcurrentRentals` when a new ERC-1155
@@ -1401,6 +1415,12 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         address lender = loan.lender;
         address proxy = s.userVaipakamVaults[lender];
         if (proxy == address(0)) revert NoVault();
+        // A vault on an older implementation is brought to the current one
+        // first, so no rental step (a close included) depends on its lender
+        // having upgraded since the facets were refreshed.
+        if (s.vaultVersion[lender] < s.currentVaultVersion) {
+            _upgradeVault(s, lender, proxy);
+        }
         address nftContract = loan.principalAsset;
         uint256 tokenId = loan.tokenId;
 

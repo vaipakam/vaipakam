@@ -368,7 +368,8 @@ contract ReplaceStaleFacets is DeployDiamond {
     ///      (RepayFacet, RepayPeriodicFacet, PrecloseFacet, DefaultedFacet),
     ///      which this curated set does not carry, still call the retired
     ///      setters. Run across the boundary, every rental close would revert,
-    ///      and an ERC-1155 rental's accept would revert in an un-upgraded vault.
+    ///      and an ERC-1155 rental's accept would revert while the shared vault
+    ///      template predates the per-rental rows.
     ///      Crossing it is a fresh deploy, or the all-facets refresh with the
     ///      vault-implementation upgrade. The marker is the routing of
     ///      `vaultSetRentalUser`, which #902 introduced. Called before the
