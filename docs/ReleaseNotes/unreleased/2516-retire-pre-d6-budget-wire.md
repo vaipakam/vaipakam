@@ -15,10 +15,12 @@ is now refused as an unknown message kind on the mirror), the flat-list day
 writer, the flat-list proof for a delivery that holds no epoch, the
 retrospective admission of an older delivery into the epoch ledger, and the
 budget ingress for the flat-list wire. The receiver and the reward messenger
-both move to generation 7. A rooted delivery is attested by its own wire on
-arrival, and its days land in exactly two ways, both one proven chunk at a time
-against the root: indexed into its transport epoch when it holds one, or proven
-for the day-delivery gate when it arrived before custody activation.
+both move to generation 7. On a chain whose reward custody is activated, a rooted
+delivery is attested by its own wire on arrival and opens a transport epoch;
+before activation it is booked to the typed ledger from the split it carries.
+Either way its days land one proven chunk at a time against the root: indexed
+into its transport epoch when it holds one, or proven for the day-delivery gate
+when it arrived before custody activation.
 Compensation deliveries are unaffected.
 
 The keeper's delivery-proof pass drops its flat route to match. It lists as work

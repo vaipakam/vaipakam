@@ -1183,7 +1183,7 @@ current `tokens`. A configured capacity that looks adequate can still fail
 delivery — because the two directions are configured differently, or
 because a bucket is currently DEPLETED and has not refilled.
 A Base send can consume the outbound side and then be rejected or delayed by the
-mirror's inbound limiter, and Step 5 is waiting on `RewardBudgetReceived` against
+mirror's inbound limiter, and Step 5 is waiting on `RewardBudgetRootReceived` against
 an immutable `D*`. Read both states, both directions, per lane, and check present
 `tokens` as well as configured capacity.
 
@@ -2085,7 +2085,7 @@ dark.)*
 **Source order is not delivery order.** The messenger sets
 `allowOutOfOrderExecution: true`, so sending the remit first does not guarantee
 it ARRIVES first — and it is the arrival that funds the mirror, while the
-broadcast opens its claim gate. Wait for each mirror's `RewardBudgetReceived`
+broadcast opens its claim gate. Wait for each mirror's `RewardBudgetRootReceived`
 before broadcasting to it, rather than treating the send order as sufficient.
 
 **And that wait is a convention you keep, not an order you enforce — the
@@ -2093,7 +2093,7 @@ broadcast is PERMISSIONLESS.** `broadcastGlobal` and `broadcastGlobalTo` are
 `onlyCanonical`, and that modifier checks `isCanonicalRewardChain` — a property
 of the CHAIN, not of the caller. Any account on Base willing to pay the CCIP fee
 can broadcast a finalized day. So between finalizing the day and the last
-`RewardBudgetReceived` landing, a third party can open every mirror's claim gate
+`RewardBudgetRootReceived` landing, a third party can open every mirror's claim gate
 against a budget that has not arrived, and no amount of operator discipline
 prevents it. **While #1566 is undeployed on that mirror this is a fund-loss path,
 not an empty-balance revert** — see the containment note below; an earlier
@@ -2191,7 +2191,7 @@ remittance and receipt run over the SEPARATE `crossChainMessenger` /
 
 1. pause the reward messenger;
 2. finalize the candidate day, remit to every destination, confirm every
-   `RewardBudgetReceived` — all while it stays paused, and none of it blocked by
+   `RewardBudgetRootReceived` — all while it stays paused, and none of it blocked by
    the pause;
 3. unpause, then broadcast.
 
@@ -2362,7 +2362,7 @@ contain now, not a hazard scheduled for the ceremony.
 **One exception, and without it the wait never ends.** If the chosen day
 allocates zero budget to a destination, `remitRewardBudget` closes it locally,
 emits `RewardBudgetRemitted` with a zero message id and returns **without sending
-a CCIP payload** — so that mirror will never emit `RewardBudgetReceived`. Waiting
+a CCIP payload** — so that mirror will never emit `RewardBudgetRootReceived`. Waiting
 for one there burns the propagation window and can run past an immutable `D*`.
 A THIRD case sits between those two, and the fan-out advice above does not
 reach it: if the chosen pre-`D*` day was grace- or force-finalized without a
