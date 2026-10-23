@@ -223,7 +223,9 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   NFTMinted: { label: 'Position NFT minted', category: 'other', priority: 5 },
   OfferCreatedDetails: { label: 'Offer created', category: 'offer', priority: 10 },
   OfferCanceledDetails: { label: 'Offer cancelled', category: 'offer', priority: 10 },
-  UserVaultCreated: { label: 'Vault created', category: 'other', priority: 50 },
+  // Created lazily inside a wallet's first offer, accept or deposit, before
+  // that action's own event: low, so the action represents the row (#2708 r1).
+  UserVaultCreated: { label: 'Vault created', category: 'other', priority: 8 },
   TermsAccepted: { label: 'Terms of use accepted', category: 'other', priority: 40 },
   TokenDisowned: { label: 'Unsolicited tokens disowned', category: 'other', priority: 40 },
   StuckERC20Recovered: { label: 'Stuck tokens recovered', category: 'other', priority: 60 },
@@ -245,7 +247,10 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   RewardEntryExpiryArmed: { label: 'Reward entered its final notice period', category: 'other', priority: 40 },
   RewardEntryExpiryBegun: { label: 'Unclaimed reward returning to the rewards programme', category: 'other', priority: 44 },
   RewardEntryExpired: { label: 'Unclaimed reward returned to the rewards programme', category: 'other', priority: 46 },
-  StagingDelivered: { label: 'Rewards settled for a day', category: 'other', priority: 55 },
+  // Also emitted for a share set apart for a flagged wallet (its venue is the
+  // held balance), beside RewardSanctionsHeldApart: below it, so the row says
+  // the reward was set aside, never that it was delivered (#2708 r1).
+  StagingDelivered: { label: 'Rewards settled for a day', category: 'other', priority: 45 },
   RewardSanctionsHeldApart: { label: 'Rewards set aside while this wallet is flagged', category: 'other', priority: 50 },
   RewardSanctionsHeldReleased: { label: 'Set-aside rewards ready to claim', category: 'other', priority: 55 },
   StagingClaimantForfeited: { label: 'Rewards forfeited while this wallet is flagged', category: 'other', priority: 50 },

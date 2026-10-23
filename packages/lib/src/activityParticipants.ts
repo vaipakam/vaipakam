@@ -175,7 +175,15 @@ const LOCAL_NOT_A_PARTY: ReadonlyMap<string, Readonly<Record<string, string>>> =
 >([
   ['Approval', { approved: 'the address approved for one position NFT' }],
   ['ApprovalForAll', { operator: 'the operator approved for every position NFT' }],
-  ['StuckERC20Recovered', { admin: 'the admin role that signed the recovery' }],
+  // Two definitions share the name (an admin recovery, and the user's own
+  // declared recovery); the rule is keyed by name, so both are classified.
+  [
+    'StuckERC20Recovered',
+    {
+      admin: 'the admin role that signed the recovery',
+      declaredSource: 'the address the user declared sent the tokens',
+    },
+  ],
   // A keeper being permitted or refused is configured, not acting.
   ['KeeperActionsUpdated', { keeper: 'the keeper being permitted' }],
   ['KeeperRevoked', { keeper: 'the keeper being refused' }],

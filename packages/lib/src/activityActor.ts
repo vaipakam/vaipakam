@@ -39,23 +39,15 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
   // T-086 Round-8 (#358) §19.7 + Codex round-19 P2 #3 — Scenario A
   // terminal. The event carries (offerId, executor); `executor` is
   // the protocol's Seaport-conformant executor singleton (never a
-  // real user), so it's useless as the `actor` filter target. The
-  // BORROWER (= offer creator) is who needs to see this row when
-  // querying `/activity?actor=<wallet>`. We rely on the
-  // `recordActivityEvents` enrichment pass having put the
-  // `creator` field into `args` (looked up from the `offers`
-  // table) before this mapper runs — `actor = creator` then
-  // makes server-side per-wallet filters surface the sold row to
-  // the borrower as expected. The `executor` address stays in
-  // `args.executor`; it is never a participant (#2703,
-  // `activityParticipants.ts`).
-  [
-    'OfferConsumedBySale',
-    (args) =>
-      (args.creator as string | undefined)?.toLowerCase() ??
-      (args.executor as string)?.toLowerCase() ??
-      null,
-  ],
+  // real user), so it is never the actor. The BORROWER (= offer
+  // creator) is who needs to see this row. We rely on the
+  // `recordActivityEvents` enrichment pass having put the `creator`
+  // field into `args` (looked up from the `offers` table) before this
+  // mapper runs. When that lookup found nothing (an offer created in
+  // the same batch), the row is filed with no actor rather than under
+  // the executor contract (#2708 r1): its offer reference still files
+  // it on the offer's timeline.
+  ['OfferConsumedBySale', (args) => (args.creator as string | undefined)?.toLowerCase() ?? null],
   // #193 / Codex round-2 P2 — denormalize the actor (= creator;
   // OfferMutateFacet's access gate guarantees msg.sender ==
   // offer.creator) + offerId so per-offer and per-wallet
@@ -144,13 +136,14 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
   ['Transfer', arg('to')],
   // T-086 step 12 — prepay-listing events. The on-chain payloads
   // use slightly different field names: Posted carries `lister`,
-  // Updated carries `lister`, Canceled carries `caller`,
-  // PrepayCollateralSaleSettled carries `executor`. The loan_id is
-  // present on all four. Codex P2 round-2 on PR #304.
+  // Updated carries `lister`, Canceled carries `caller`. The loan_id is
+  // present on all of them. Codex P2 round-2 on PR #304.
+  // `PrepayCollateralSaleSettled` carries only `executor`, the protocol's
+  // sale executor contract (its `msg.sender`), so it has no actor (#2708
+  // r1); the loan reference files it on the loan's timeline.
   ['PrepayListingPosted', arg('lister')],
   ['PrepayListingUpdated', arg('lister')],
   ['PrepayListingCanceled', arg('caller')],
-  ['PrepayCollateralSaleSettled', arg('executor')],
   // T-086 Round-6 / Block D (#345) — atomic match-rotation event.
   // The borrower (msg.sender) clicked Match; `matcher` is the
   // canonical actor for activity-feed purposes.
@@ -177,6 +170,9 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
   // (`SwapToRepayIntentForceCancelled`, whose `source` is the Diamond). Each
   // is a consequence of the call that produced it, whose own row carries
   // the actor. Their loan references are still filed (`activityRefs.ts`).
+  // An actor is always a participant (`activityParticipants.ts`), so no
+  // entry here may read an address that rule classes as never a party (a
+  // protocol contract, an asset, the treasury); its test enforces that.
 ]);
 
 /** The wallet one decoded event is filed under, or null for none. */

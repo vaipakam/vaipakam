@@ -8,4 +8,6 @@ The rule lives in the shared library beside the rule the history service already
 
 Thirty kinds the rule admits now have a plain-language name in all ten app languages. They cover a wallet's own settings and consents, lending intents, vault creation and token recovery, terms acceptance, perks, reward claim windows and expiry, and reward delivery. The funds consequences for a flagged wallet (rewards set aside or forfeited, and set-aside rewards becoming claimable) use the in-app flagged wording only, with no list or provider named.
 
+The history service no longer files two events under the protocol's sale executor contract: a settled collateral sale, and a sold offer whose creator could not be looked up. Both are still filed under their loan or offer. A wallet's first offer is named by the offer, not by the vault created inside it, and a reward share set aside for a flagged wallet is named as set aside, not as delivered.
+
 One gap remains and is tracked as #2707. Risk-access consents that are recorded against a wallet's vault, not the wallet itself, are not shown yet. They never reached the page before either. Closes #2703.

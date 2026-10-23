@@ -281,6 +281,29 @@ describe('coalesceByTx', () => {
     expect(rows[0].hiddenCount).toBe(2);
   });
 
+  // #2708 r1 — a wallet's first offer creates its vault lazily, before the
+  // offer's own event: the offer represents the row, not the vault.
+  it('names a first offer by the offer, not the vault created inside it', () => {
+    const rows = coalesceByTx([
+      ev({ kind: 'UserVaultCreated', logIndex: 0 }),
+      ev({ kind: 'OfferCreated', logIndex: 1, offerId: 3 }),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('Offer created');
+    expect(rows[0].event.offerId).toBe(3);
+  });
+
+  // #2708 r1 — a share set apart for a flagged wallet also emits the generic
+  // delivery event (venue: the held balance); the row says it was set aside.
+  it('names a set-apart reward share by the set-aside, not the delivery', () => {
+    const rows = coalesceByTx([
+      ev({ kind: 'RewardSanctionsHeldApart', logIndex: 0 }),
+      ev({ kind: 'StagingDelivered', logIndex: 1 }),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('Rewards set aside while this wallet is flagged');
+  });
+
   // #2374 / #2426 r4 — the owed-at-default record never represents a
   // transaction: a default or fallback entry is labelled by the default (or
   // by the status change, as before the record existed).

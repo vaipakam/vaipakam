@@ -21,14 +21,24 @@ const isAddress = (p: Param) => p.type === 'address' || p.type === 'address[]';
 const tupleHasAddress = (p: Param): boolean =>
   Array.isArray(p.components) && p.components.some((c) => isAddress(c) || tupleHasAddress(c));
 
-/** Every Diamond event that carries an address, by name (first definition). */
+/**
+ * Every Diamond event that carries an address, by name. The rule is keyed by
+ * name, so an overloaded name (two definitions) is checked as the union of
+ * its definitions' inputs: every address any of them carries is classified.
+ */
 const EVENTS: Map<string, readonly Param[]> = (() => {
-  const out = new Map<string, readonly Param[]>();
+  const out = new Map<string, Param[]>();
   for (const item of DIAMOND_ABI_VIEM as Abi) {
     if (item.type !== 'event') continue;
     const inputs = (item as AbiEvent).inputs as readonly Param[];
-    if (!inputs.some((i) => isAddress(i) || tupleHasAddress(i))) continue;
-    if (!out.has(item.name)) out.set(item.name, inputs);
+    const merged = out.get(item.name) ?? [];
+    for (const p of inputs) {
+      if (!merged.some((m) => m.name === p.name && m.type === p.type)) merged.push(p);
+    }
+    out.set(item.name, merged);
+  }
+  for (const [name, inputs] of out) {
+    if (!inputs.some((i) => isAddress(i) || tupleHasAddress(i))) out.delete(name);
   }
   return out;
 })();
@@ -122,6 +132,26 @@ describe('activityParticipants — every address in the Diamond ABI is classifie
       }
     }
     expect(open).toEqual([]);
+  });
+
+  it('classifies every definition of an overloaded event name', () => {
+    // `StuckERC20Recovered` has two definitions; the second carries
+    // `declaredSource`, which a first-definition-only read never saw.
+    expect(EVENTS.get('StuckERC20Recovered')?.some((p) => p.name === 'declaredSource')).toBe(true);
+  });
+
+  it('no actor reads an address the rule classes as never a party', () => {
+    // An actor is always a participant, so an actor read from a protocol
+    // contract (a sale executor) would put that contract on a wallet's page.
+    const bad: string[] = [];
+    for (const kind of actorAttributedKinds()) {
+      const inputs = EVENTS.get(kind);
+      if (!inputs) continue;
+      const actor = actorInput(kind, inputs);
+      const local = LOCAL_NOT_A_PARTY.get(kind) ?? {};
+      if (actor && (NOT_A_PARTY.has(actor) || Object.hasOwn(local, actor))) bad.push(`${kind}.${actor}`);
+    }
+    expect(bad).toEqual([]);
   });
 
   it('each listed party is a top-level address input of its kind', () => {
