@@ -17,7 +17,7 @@
     "e2e:anvil:mesh": "vitest run --config e2e/vitest.mesh.config.ts",
     "bench:cpu": "tsx bench/passCpu.ts",
     "start:host": "tsx host/main.ts",
-    "build:host": "esbuild host/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/keeper-host.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\""
+    "build:host": "esbuild host/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/keeper-host.mjs --metafile=dist/keeper-host.meta.json --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\""
   },
   "dependencies": {
     "@vaipakam/contracts": "workspace:*",

@@ -6,9 +6,13 @@
 #
 #   1. fetches the deploy branch into root's own checkout, so no other
 #      account can redirect where the code comes from;
-#   2. stops if `current` is already that commit's release;
+#   2. stops if `current` is already that commit's release, or if nothing
+#      that commit changed can reach what the keeper runs: the running
+#      release records the files its bundle was made from, and
+#      build-inputs.mjs compares the two commits against them (#2651);
 #   3. exports exactly that commit with `git archive` and builds it with
-#      that commit's own build.sh in a throwaway sandbox: a fresh dynamic
+#      that commit's own build.sh, at idle CPU and IO priority so the keeper
+#      always comes first, in a throwaway sandbox: a fresh dynamic
 #      user that cannot read
 #      the env file or write the releases, keeps nothing once it ends (so no
 #      build can leave tooling behind for the next), and runs the new bundle
@@ -115,6 +119,13 @@ install_kit() {
   # recorded as installed only after this.
   systemctl daemon-reload
   place "$dir/update.sh" "$ROOT/update.sh" 755 || true
+  # The comparison the next run makes before it builds. A kit from before it
+  # existed takes the copy away, so that run builds, as it always did.
+  if [ -f "$dir/build-inputs.mjs" ]; then
+    place "$dir/build-inputs.mjs" "$ROOT/build-inputs.mjs" 644 || true
+  else
+    rm -f "$ROOT/build-inputs.mjs"
+  fi
 }
 # Record that <commit>'s kit is installed and loaded.
 record_kit() {
@@ -178,6 +189,29 @@ if [ "$(readlink -f "$ROOT/current" 2>/dev/null || true)" = "$release" ]; then
   exit 0
 fi
 
+# A commit that changes nothing the running release was built from (its
+# INPUTS), nor the kit, nor anything that decides how those files are read,
+# would build that release's bundle again, byte for byte: build-inputs.mjs
+# says which, and why. Most merges to the branch are such a commit, and a
+# build is the heaviest thing this machine does (#2651). `checked` remembers
+# the last pair compared, so a branch that moves only in other places is
+# compared, and logged, once per commit rather than every run. Anything the
+# comparison cannot read is a build.
+if [ -n "$running" ] && [ -f "$ROOT/build-inputs.mjs" ]; then
+  pair="$running $target"
+  if [ "$(cat "$ROOT/checked" 2>/dev/null || true)" = "$pair" ]; then
+    exit 0
+  fi
+  verdict="$(/usr/local/bin/node "$ROOT/build-inputs.mjs" decide "$REPO" "$running" "$target" "$ROOT/current/INPUTS" 2>/dev/null || true)"
+  if [ "$verdict" = skip ]; then
+    log "$target changes nothing the keeper is built from; staying on $running"
+    echo "$pair" > "$ROOT/checked.new"
+    mv -Tf "$ROOT/checked.new" "$ROOT/checked"
+    exit 0
+  fi
+  log "${verdict:-build: the comparison gave no answer}"
+fi
+
 log "building $BRANCH at $target"
 tmp="$WORK/build"
 mkdir -m 700 "$tmp"
@@ -209,7 +243,7 @@ systemd-run --quiet --wait --pipe --collect \
   -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes \
   -p NoNewPrivileges=yes -p ProtectKernelTunables=yes -p ProtectKernelModules=yes \
   -p ProtectControlGroups=yes -p RestrictNamespaces=yes -p LockPersonality=yes \
-  -p Nice=10 \
+  -p Nice=19 -p CPUWeight=1 -p IOWeight=1 -p IOSchedulingClass=idle \
   /usr/bin/env -i \
   HOME=/tmp/home \
   COREPACK_HOME=/tmp/corepack \
@@ -226,6 +260,13 @@ fi
 
 incoming="$(mktemp -d "$ROOT/releases/.incoming.XXXXXX")"
 install -m 644 -o root -g root "$built" "$incoming/keeper-host.mjs"
+# What the bundle was made from, for the comparison above. Root only reads it
+# as a list of paths, and a release without one (a commit from before
+# build-inputs.mjs) simply makes the next commit build.
+inputs="$tmp/out/INPUTS"
+if [ -f "$inputs" ] && [ ! -L "$inputs" ]; then
+  install -m 644 -o root -g root "$inputs" "$incoming/INPUTS"
+fi
 echo "$target" > "$incoming/SOURCE_COMMIT"
 chmod 755 "$incoming"
 restart=yes

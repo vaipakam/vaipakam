@@ -82,14 +82,36 @@ describe('host deploy kit paths', () => {
     // Ephemeral: no cache survives a build, so no build can plant tooling.
     expect(update).not.toContain('CacheDirectory');
     expect(update).toContain('-p PrivateTmp=yes');
-    // The build sees only the variables update.sh names.
-    expect(update).toMatch(/-p Nice=10 \\\n  \/usr\/bin\/env -i \\$/m);
+    // The build sees only the variables update.sh names, and runs at idle
+    // priority so the keeper always comes first (#2651).
+    expect(update).toMatch(/-p Nice=19 -p CPUWeight=1 -p IOWeight=1 -p IOSchedulingClass=idle \\\n  \/usr\/bin\/env -i \\$/m);
     // One fixed name, so two builds cannot run at once.
     expect(update).toMatch(/--unit=vaipakam-keeper-build \\$/m);
     expect(update).toContain('-p ProtectSystem=strict');
     expect(update).toContain('release="$ROOT/releases/$target"');
     expect(update).toContain('systemctl try-restart --no-block vaipakam-keeper.service');
     expect(read('vaipakam-keeper-update.service')).toContain('ExecStart=/opt/vaipakam-keeper/update.sh');
+  });
+
+  it('runs the updater behind the keeper, and builds only a commit that can change it (#2651)', () => {
+    const unit = read('vaipakam-keeper-update.service');
+    for (const line of ['Nice=19', 'CPUWeight=1', 'IOWeight=1', 'IOSchedulingClass=idle']) {
+      expect(unit).toMatch(new RegExp(`^${line}$`, 'm'));
+    }
+    expect(pkg.scripts['build:host']).toContain('--metafile=dist/keeper-host.meta.json');
+    const build = read('build.sh');
+    expect(build).toContain('build-inputs.mjs record \\\n  apps/keeper/dist/keeper-host.meta.json apps/keeper > "$out_dir/INPUTS"');
+    // Recorded before the bundle is handed over.
+    expect(build.indexOf('"$out_dir/INPUTS"')).toBeLessThan(build.indexOf('"$out_dir/keeper-host.mjs"'));
+    const update = read('update.sh');
+    expect(update).toContain('place "$dir/build-inputs.mjs" "$ROOT/build-inputs.mjs" 644');
+    expect(update).toContain('decide "$REPO" "$running" "$target" "$ROOT/current/INPUTS"');
+    expect(update).toContain('if [ "$verdict" = skip ]; then');
+    expect(update).toContain('install -m 644 -o root -g root "$inputs" "$incoming/INPUTS"');
+    // The comparison runs after the fetch and before any build.
+    const decide = update.indexOf('build-inputs.mjs" decide');
+    expect(decide).toBeGreaterThan(update.indexOf('git -C "$REPO" fetch'));
+    expect(decide).toBeLessThan(update.indexOf('systemd-run'));
   });
 
   it('keeps what the keeper runs root-owned, and never starts the keeper from the install', () => {
