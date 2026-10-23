@@ -26,6 +26,7 @@ import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
 
@@ -72,7 +73,13 @@ contract ReplaceStaleFacets is DeployDiamond {
         // Same env-var-prefix normalisation as RedeployFacets — read
         // from deployments/<chain>/addresses.json with chain-prefixed
         // env fallback rather than the bare DIAMOND_ADDRESS.
+        // #2092 item 1 — refuse code that drops a storage-layout fact this
+        // chain records, before anything is broadcast (needs `--ffi`), and
+        // record the layout once the cut is in. Here rather than in {runWith},
+        // so the in-process test entry needs no ffi.
+        StorageLayoutRecord.requireAppendOnly("ReplaceStaleFacets");
         runWith(Deployments.readDiamond(), deployerKey);
+        StorageLayoutRecord.record();
     }
 
     /**

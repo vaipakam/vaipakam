@@ -5,6 +5,7 @@ import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {RefreshAllFacetsInPlace, IOwnable} from "./RefreshAllFacetsInPlace.s.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
@@ -99,10 +100,18 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
     /// @notice The changed set the last run found, as printed.
     string public lastChangedKeys;
 
+    /// @dev #2092 item 1 — the storage-layout refusal and the record write sit
+    ///      in this env entry rather than in {_refreshChanged}, so
+    ///      {refreshChangedWith} (the test entry) needs no ffi. The refusal runs
+    ///      before the first transaction; the run needs `--ffi`. A run that
+    ///      finds nothing changed still records: the chain then provably runs
+    ///      this checkout's code, so the record only grows.
     function refreshChanged() external {
+        StorageLayoutRecord.requireAppendOnly("RefreshChangedFacetsInPlace");
         _refreshChanged(
             Deployments.readDiamond(), vm.envUint("ADMIN_PRIVATE_KEY"), vm.envOr("EXPECT_CHANGED", string(""))
         );
+        StorageLayoutRecord.record();
     }
 
     /// @notice Parameterised entry — same body as {refreshChanged}, with the

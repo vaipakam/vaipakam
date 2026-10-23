@@ -630,6 +630,13 @@ test('the command line is parsed strictly', () => {
   assert.throws(() => parseArgs(['write', '--base', 'b.json']), /write takes no/);
   assert.throws(() => parseArgs(['verify']), /usage/);
   assert.throws(() => parseArgs([]), /usage/);
+  // #2092 item 1: `record` writes a chain's record and compares nothing.
+  assert.deepEqual(parseArgs(['record', '--to', 'deployments/x/storage-layout.json']), { mode: 'record', to: 'deployments/x/storage-layout.json' });
+  assert.throws(() => parseArgs(['record']), /record needs --to/);
+  assert.throws(() => parseArgs(['record', '--to']), /needs a value/);
+  assert.throws(() => parseArgs(['record', '--to', 'r.json', '--base', 'b.json']), /record takes no --base/);
+  assert.throws(() => parseArgs(['check', '--base', 'b.json', '--to', 'r.json']), /--to applies only to record/);
+  assert.throws(() => parseArgs(['write', '--to', 'r.json']), /--to applies only to record/);
 });
 
 // ─── The committed files ─────────────────────────────────────────────────

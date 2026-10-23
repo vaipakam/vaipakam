@@ -111,6 +111,7 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 
 contract DeployDiamond is Script, ArtifactRootBase {
     // ── Deployed addresses (logged at the end) ──────────────────────────
@@ -125,13 +126,30 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @notice Operator entry point — reads `ADMIN_ADDRESS`,
     ///         `TREASURY_ADDRESS`, `DEPLOYER_PRIVATE_KEY` from env and
     ///         delegates to `runWith(...)`. Foundry's `forge script
-    ///         DeployDiamond --broadcast` invokes this.
+    ///         DeployDiamond --ffi --broadcast` invokes this.
+    ///
+    /// @dev    #2092 item 1 — a run that writes the deployment artifact also
+    ///         writes the chain's storage-layout record
+    ///         (`deployments/<slug>/storage-layout.json`), the layout every
+    ///         later in-place refresh of this Diamond is checked against
+    ///         ({StorageLayoutRecord}). Both guard calls go through ffi, so
+    ///         such a run needs `--ffi`. The precondition runs FIRST, before
+    ///         any transaction and before any artifact write: a run without
+    ///         `--ffi`, or from a checkout whose golden layout is stale, is
+    ///         refused while nothing has changed, rather than after
+    ///         `addresses.json` already names the new Diamond. A dry run and a
+    ///         `forge test` deploy write no artifact and call neither.
+    ///         `runWith` carries neither call, so the test-side deploys that
+    ///         use it need no ffi.
     function run() external virtual {
+        bool writes = Deployments.artifactWritesEnabled();
+        if (writes) StorageLayoutRecord.requireCurrentGolden("DeployDiamond");
         runWith(
             vm.envAddress("ADMIN_ADDRESS"),
             vm.envAddress("TREASURY_ADDRESS"),
             vm.envUint("DEPLOYER_PRIVATE_KEY")
         );
+        if (writes) StorageLayoutRecord.record();
     }
 
 

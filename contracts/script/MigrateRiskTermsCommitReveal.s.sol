@@ -7,6 +7,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 
 /**
  * @title MigrateRiskTermsCommitReveal
@@ -58,6 +59,9 @@ contract MigrateRiskTermsCommitReveal is Script {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address diamond = Deployments.readDiamond();
         console.log("Diamond:", diamond);
+        // #2092 item 1 — refuse code that drops a storage-layout fact this
+        // chain records, before anything is broadcast (needs `--ffi`).
+        StorageLayoutRecord.requireAppendOnly("MigrateRiskTermsCommitReveal");
 
         IDiamondLoupe loupe = IDiamondLoupe(diamond);
 
@@ -119,6 +123,7 @@ contract MigrateRiskTermsCommitReveal is Script {
         console.log("Legacy bump selectors removed:", nRemove);
         console.log("Commit/reveal selectors replaced:", nReplace);
         console.log("Commit/reveal selectors added:   ", nAdd);
+        StorageLayoutRecord.record();
     }
 
     /// @dev Count selectors in `sels` whose routed-state matches `wantRouted`.

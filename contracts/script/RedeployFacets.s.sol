@@ -29,6 +29,7 @@ import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
 
@@ -86,7 +87,13 @@ contract RedeployFacets is Script {
         // env fallback. Replaces the previous unprefixed `DIAMOND_ADDRESS`
         // env which was inconsistent with sibling scripts and risked
         // broadcasting against the wrong Diamond if env state was stale.
+        // #2092 item 1 — refuse code that drops a storage-layout fact this
+        // chain records, before anything is broadcast (needs `--ffi`), and
+        // record the layout once the cut is in. Here rather than in {runWith},
+        // so the in-process test entry needs no ffi.
+        StorageLayoutRecord.requireAppendOnly("RedeployFacets");
         runWith(Deployments.readDiamond(), deployerKey);
+        StorageLayoutRecord.record();
     }
 
     /**
