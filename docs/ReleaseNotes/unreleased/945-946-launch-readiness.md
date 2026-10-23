@@ -42,17 +42,14 @@ VPFI pool from Chainlink's token registry for the token the Diamond itself
 records, rather than trusting a pool address from the deploy files. A production launch also
 refuses while the deploy key still holds any Diamond role, not only the
 unpause role.
-A Diamond that is already unpaused is recorded as launched only on
-evidence: on a production chain the Timelock must report the launch
-operation executed, and on a testnet no answered requirement may be unmet.
-Any other unpause makes the launch step refuse instead of recording it,
-and the deploy scripts record the launch from that same evidence rather
-than from whether the Diamond happens to be unpaused. Once a Diamond has
-launched, the launch step never offers to unpause it again: a later pause
-is an incident and is lifted through incident response. On a testnet,
-where the admin launches directly and leaves no such record, the admin
-unpauses only a Diamond that has not been paused since it was created,
-unless the operator explicitly confirms it never went live. The readiness
+A Diamond is recorded as launched only on evidence, the Diamond's own
+record of its first unpause (described below), and on a production chain
+that record must name the Timelock. Any other unpause makes the launch step
+refuse instead of recording it, and the deploy scripts record the launch
+from that same evidence rather than from whether the Diamond happens to be
+unpaused. Once a Diamond has launched, the launch step never offers to
+unpause it again: a later pause is an incident and is lifted through
+incident response. The readiness
 report printed by the verify phases now reaches the same verdict the
 launch would, handover included. On
 a testnet no answered requirement may be unmet and the admin unpauses
@@ -65,13 +62,24 @@ is stated rather than turned into a failure. After a launch, the scripts say
 whether the Diamond is paused now: one launched and then paused for an
 incident is reported as launched and paused, never as live.
 
-The search for launch evidence looks back a fixed 256 pause transitions.
-Every pause counts as one, even on a Diamond already paused, so an unbounded
-search could be made to run out of gas by anyone holding the pause role,
-and revoking that role would not undo it. Past the window, when nothing is
-found, the launch step says it cannot tell whether the Diamond launched and
-refuses, until the operator names the epoch of the executed launch proposal
-or states that it never launched.
+The Diamond now records its own launch: the first time its birth pause is
+lifted, it stores who lifted it and when, and never changes that record
+again. The launch step reads whether a Diamond has launched from that
+record. Before, it rebuilt the Timelock operation it expected, which a later
+build of the launch gate, a different registry or admin address, or a
+Pauser repeatedly re-pausing to inflate the pause count could all hide; a
+launched Diamond under an incident pause could then have been offered a
+second launch. On a production chain the record must name the Timelock, so
+a Diamond first unpaused by anyone else is refused and named. A testnet
+Diamond paused again before it ever went live no longer needs the operator
+to confirm it never launched: the record says so.
+
+The cross-chain readiness check now reads every lane of the VPFI pool, not
+just whether one exists. Each lane's inbound and outbound rate limits must
+be enabled and inside the bounds the rate governor enforces. A lane wired
+without its limits (for example when the limits transaction failed after
+the lane was added) carries no cap at all, so it refuses the launch, and the
+Timelock's launch also fails if a limit is switched off during the wait.
 
 Because the Diamond now stays paused until launch, the two risk settings
 (per-asset risk parameters and the loan-admission health-factor floor) no
@@ -82,7 +90,20 @@ its governance delay.
 
 The testnet configure phase now also sets the admin's test sanctions list as
 the Diamond's oracle (#946), so a testnet launch passes the sanctions check.
+
+The launch report and the verify verdict count the admin key only when the
+admin's private key is actually supplied, as the launch itself does, so they
+never predict an admin unpause the launch could not make.
 On mainnet the sanctions source is still waiting on the #2443 adder-host
 decision, so a mainnet launch refuses until that is settled, by design.
+
+The launch checks do not cover per-asset risk parameters, and the launch
+step now says so on every run. No deploy phase sets them and there is no
+declared list of collateral assets to check, so a chain can pass every check
+while each ERC-20 collateral still has a zero loan-to-value cap, which
+refuses every liquid loan (loans against illiquid assets and NFTs are
+unaffected). Until asset onboarding is designed (#2696, owner decision
+2026-10-23), governance sets those parameters through Timelock proposals
+before scheduling the launch.
 
 Closes #945. Closes #946.

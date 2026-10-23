@@ -65,8 +65,7 @@ interface ILaunchTimelock {
  *        - **Known testnet**: no requirement may be NOT MET; one the chain
  *          cannot answer is printed as NOT CHECKED (a rehearsal may lack part
  *          of the stack). The admin key unpauses directly while it holds
- *          `UNPAUSER_ROLE` and the Diamond is still at its birth pause epoch
- *          ({BIRTH_EPOCH}); after a rehearsal handover the Timelock batch is
+ *          `UNPAUSER_ROLE`; after a rehearsal handover the Timelock batch is
  *          printed instead, exactly as on production, and needs every
  *          requirement met because the gate inside it does.
  *        - **Local Anvil (31337)**: every requirement is printed and an unmet
@@ -76,21 +75,21 @@ interface ILaunchTimelock {
  *          this step and see what a real chain would refuse.
  *
  *      One decision ({decide}) drives the run, the report and the evidence
- *      check, so the three cannot disagree. Launch evidence is read FIRST,
- *      paused or not: once the Timelock reports this checkout's launch
- *      operation DONE at some pause epoch, the Diamond has launched, and a
- *      pause it is under now is an incident — no second unpause is
- *      proposed or broadcast. An already-unpaused Diamond is never recorded
- *      as launched on trust: on production without that evidence it went
- *      live outside this step and the run refuses; on a testnet every
- *      answered requirement must still be met; local anvil just reports it.
- *      A testnet admin launch leaves no such evidence, so the admin key
- *      unpauses only a Diamond still at its birth epoch: any pause since
- *      then may be an incident after a launch, which the chain cannot tell
- *      from a pause before one, and the run refuses unless the operator
- *      names that epoch in `LAUNCH_ACK_PAUSE_EPOCH`. The deploy wrappers
- *      record the phase only when `requireLaunched()` passes, never from
- *      the pause bit.
+ *      check, so the three cannot disagree. The launch is read FIRST, paused
+ *      or not, and from the Diamond itself: its pause library records who
+ *      first lifted its birth pause, and when (`LibPausable`, written once).
+ *      A Diamond with that record has launched, and a pause it is under now
+ *      is an incident — no second unpause is proposed or broadcast. The
+ *      record does not depend on this checkout (a later LaunchGate build, a
+ *      changed registry or admin address) or on how far later pauses moved
+ *      the pause epoch, so neither can make a launched Diamond look
+ *      unlaunched. On production the first unpause must have been the
+ *      Timelock's; one by anyone else went live outside this step and the
+ *      run refuses. An unpaused Diamond with no record predates the record:
+ *      production refuses it, a testnet counts it as launched only while no
+ *      answered requirement is NOT MET, local anvil reports it. The deploy
+ *      wrappers record the phase only when `requireLaunched()` passes, never
+ *      from the pause bit.
  *
  *      Run (`deploy-{mainnet,testnet}.sh <slug> --phase launch` does this):
  *        forge script script/Launch.s.sol --rpc-url $RPC [--broadcast]
@@ -106,15 +105,6 @@ interface ILaunchTimelock {
  *        ADMIN_PRIVATE_KEY — the admin key; unused (and optional) on
  *            production, where only its address is read to prove it holds
  *            no role. ADMIN_ADDRESS is accepted instead there.
- *        LAUNCH_ACK_PAUSE_EPOCH — optional: the operator's statement that a
- *            paused Diamond never went live, naming the pause epoch the
- *            refusal printed. Read where the chain cannot tell: an admin
- *            launch after a pause since birth, and a pause epoch beyond the
- *            launch-evidence search ({EVIDENCE_SCAN_EPOCHS}).
- *        LAUNCH_OPERATION_EPOCH — optional: the epoch an executed launch
- *            proposal names (the proposal prints it as call 2's epoch). The
- *            evidence search reads it as well as its own window, so a
- *            launch older than the window is still found.
  */
 contract Launch is Script {
     /// @notice What a launch run did.
@@ -122,15 +112,6 @@ contract Launch is Script {
         AlreadyLive,
         Unpaused,
         TimelockProposalPrinted
-    }
-
-    /// @notice What the launch-evidence search found.
-    enum Evidence {
-        None,
-        Found,
-        /// @dev The pause epoch is past the search window and nothing was
-        ///      found inside it, so whether it launched cannot be read.
-        Undetermined
     }
 
     /// @notice What a launch run would do on this chain now.
@@ -151,26 +132,7 @@ contract Launch is Script {
         LibLaunchReadiness.Check[] checks;
         /// @dev The pause epoch now; an unpause this run makes is bound to it.
         uint64 epoch;
-        /// @dev The decision refused because whether the Diamond launched
-        ///      cannot be read ({Evidence.Undetermined}).
-        bool launchUnknown;
     }
-
-    /// @notice The pause epoch a Diamond is born with: its constructor's
-    ///         pause is its one transition. A Diamond still at it has never
-    ///         been unpaused, so it has never launched.
-    uint64 public constant BIRTH_EPOCH = 1;
-
-    /// @notice How many pause epochs back the launch-evidence search reads.
-    /// @dev Every `pause()` counts as a transition, even on a Diamond
-    ///      already paused, so a Pauser can raise the epoch at will. An
-    ///      unbounded search would let that make every launch, report and
-    ///      evidence check run out of gas, and revoking the Pauser would not
-    ///      undo it. Past this window the decision does not guess: it
-    ///      refuses until the operator names the launch's epoch
-    ///      (`LAUNCH_OPERATION_EPOCH`) or states that it never launched
-    ///      (`LAUNCH_ACK_PAUSE_EPOCH`).
-    uint64 public constant EVIDENCE_SCAN_EPOCHS = 256;
 
     function run() external returns (Outcome) {
         uint256 adminKey = vm.envOr("ADMIN_PRIVATE_KEY", uint256(0));
@@ -196,9 +158,8 @@ contract Launch is Script {
     ///         fail: verify runs before the handover, when a production
     ///         launch still refuses by design.
     function requireLaunchable() external view {
-        address admin = _adminFromEnv();
         Decision memory d = decide(
-            Deployments.readDiamond(), _registryFromEnv(), Deployments.readTimelockOptional(), admin, admin != address(0)
+            Deployments.readDiamond(), _registryFromEnv(), Deployments.readTimelockOptional(), _adminFromEnv(), _adminKeyGiven()
         );
         if (d.path == Path.Refuse) revert(d.reason);
     }
@@ -208,17 +169,21 @@ contract Launch is Script {
     ///         the launch's own decision — readiness, the handover, the gate
     ///         and the launch evidence — so it never calls a deployment
     ///         launchable that the launch would refuse. Returns whether a
-    ///         launch run would proceed, or has already launched. The admin
-    ///         key is assumed to be supplied when its address is known.
+    ///         launch run would proceed, or has already launched. Like the
+    ///         run, it counts the admin key only when `ADMIN_PRIVATE_KEY` is
+    ///         set: a known address alone cannot unpause.
     function report() external view returns (bool ready) {
         address diamond = Deployments.readDiamond();
-        address admin = _adminFromEnv();
         Decision memory d =
-            decide(diamond, _registryFromEnv(), Deployments.readTimelockOptional(), admin, admin != address(0));
+            decide(diamond, _registryFromEnv(), Deployments.readTimelockOptional(), _adminFromEnv(), _adminKeyGiven());
         console.log("Launch readiness (report only)");
         console.log("  paused:", AdminFacet(diamond).paused());
         console.log("  pause epoch:", uint256(d.epoch));
+        (address liveBy, uint64 liveAt) = firstUnpause(diamond);
+        if (liveBy == address(0)) console.log("  first unpaused: never");
+        else console.log(string.concat("  first unpaused by ", vm.toString(liveBy), " at ", vm.toString(uint256(liveAt))));
         _printChecks(d.checks);
+        _printNotChecked();
         console.log("  launch gate:", LaunchGateDeployment.predicted());
         console.log(LaunchGateDeployment.isDeployed() ? "    deployed" : "    NOT deployed");
         ready = d.path != Path.Refuse;
@@ -248,6 +213,7 @@ contract Launch is Script {
 
         Decision memory d = decide(diamond, tokenAdminRegistry, timelock, admin, adminKey != 0);
         _printChecks(d.checks);
+        _printNotChecked();
         if (d.path == Path.Refuse) revert(d.reason);
         if (d.path == Path.Launched) {
             console.log(d.reason);
@@ -270,28 +236,19 @@ contract Launch is Script {
 
     /// @notice What a launch run on this chain would do now, and why.
     /// @dev In order:
-    ///      1. Launch evidence first, paused or not: the Timelock reports
-    ///         this checkout's launch operation DONE at some earlier pause
-    ///         epoch. The Diamond HAS launched, and a pause it is under now
-    ///         is an incident: lifting it is incident response, never a
-    ///         second launch, so nothing is proposed or unpaused. The search
-    ///         reads {EVIDENCE_SCAN_EPOCHS} epochs back; past that, where
-    ///         the absence of evidence would lead to an unpause or a
-    ///         proposal, the run refuses rather than guess.
-    ///      2. Unpaused with no evidence: production refuses (it went live
-    ///         outside the launch step); a testnet counts it as launched only
-    ///         while no answered requirement is NOT MET; local anvil counts
-    ///         it.
-    ///      3. Paused with no evidence: the readiness checks decide, then who
-    ///         unpauses. The admin key unpauses directly (never on
-    ///         production) only while the pause epoch is still
-    ///         {BIRTH_EPOCH}. A Diamond with any pause history since birth may
-    ///         have launched and then been paused for an incident, which the
-    ///         chain cannot tell apart from a pause before launch, so the run
-    ///         refuses rather than guess; `LAUNCH_ACK_PAUSE_EPOCH` set to the
-    ///         printed epoch is the operator's statement that it never went
-    ///         live. A Timelock proposal is printed at any epoch: it waits out
-    ///         the delay under review, and it states the pause history.
+    ///      1. The launch record first, paused or not ({firstUnpause}): a
+    ///         Diamond whose birth pause was ever lifted HAS launched, and a
+    ///         pause it is under now is an incident: lifting it is incident
+    ///         response, never a second launch, so nothing is proposed or
+    ///         unpaused. On production the first unpause must have been the
+    ///         Timelock's, or the run refuses.
+    ///      2. Unpaused with no record (a Diamond older than the record):
+    ///         production refuses; a testnet counts it as launched only while
+    ///         no answered requirement is NOT MET; local anvil counts it.
+    ///      3. Paused with no record — it has never been live: the readiness
+    ///         checks decide, then who unpauses. The admin key unpauses
+    ///         directly (never on production); otherwise the Timelock
+    ///         proposal is printed.
     /// @param adminKeyGiven Whether the run holds the admin's private key.
     function decide(address diamond, address tokenAdminRegistry, address timelock, address admin, bool adminKeyGiven)
         public
@@ -304,36 +261,47 @@ contract Launch is Script {
         bool paused = AdminFacet(diamond).paused();
         d.epoch = pauseEpoch(diamond);
 
-        Evidence evidence = _launchEvidence(diamond, tokenAdminRegistry, timelock, admin, d.epoch);
-        if (evidence == Evidence.Found) {
+        (address liveBy,) = firstUnpause(diamond);
+        if (liveBy != address(0)) {
+            if (production && liveBy != timelock) {
+                d.reason = string.concat(
+                    "Launch: the Diamond was first unpaused by ",
+                    vm.toString(liveBy),
+                    ", not the Timelock - it went live outside the launch step; investigate before anything records a launch"
+                );
+                return d;
+            }
             d.path = Path.Launched;
-            d.reason = paused
-                ? "launched by the Timelock's launch operation, and PAUSED now: lifting that pause is incident response (GovernanceRunbook), not a launch"
-                : "launched by the Timelock's launch operation, and unpaused now";
-            return d;
-        }
-        // Only where the missing evidence would lead somewhere: a paused
-        // Diamond (an unpause or a proposal next) and production (which
-        // reads evidence for an unpaused one too).
-        if (
-            evidence == Evidence.Undetermined && (paused || production)
-                && vm.envOr("LAUNCH_ACK_PAUSE_EPOCH", uint256(0)) != d.epoch
-        ) {
-            console.log("  pause epoch now:", uint256(d.epoch));
-            d.launchUnknown = true;
-            d.reason =
-                "Launch: the pause epoch is past the launch-evidence search window and no launch operation was found in it, so whether this Diamond launched is UNKNOWN. Set LAUNCH_OPERATION_EPOCH to the epoch an executed launch proposal names; if it never launched, set LAUNCH_ACK_PAUSE_EPOCH to the epoch printed above";
+            d.reason = string.concat(
+                "first unpaused by ",
+                vm.toString(liveBy),
+                paused
+                    ? ", and PAUSED now: lifting that pause is incident response (GovernanceRunbook), not a launch"
+                    : ", and unpaused now"
+            );
+            // A testnet admin unpause outside this step leaves the same record
+            // as one through it, so a live testnet Diamond still has to meet
+            // every answered requirement to count as launched. (On production
+            // the record is the Timelock's, whose gate read them at execution.)
+            if (!paused && !production && !local) {
+                d.checks = LibLaunchReadiness.check(diamond, tokenAdminRegistry);
+                if (!LibLaunchReadiness.noneUnmet(d.checks)) {
+                    d.path = Path.Refuse;
+                    d.reason =
+                        "Launch: the Diamond is unpaused but a readiness check is NOT MET - it went live before it was ready; complete the phase named above, then re-run";
+                }
+            }
             return d;
         }
 
         if (!paused) {
             if (production) {
                 d.reason =
-                    "Launch: the Timelock has not executed this checkout's launch operation - the Diamond went live outside the launch step, the launch used a different LaunchGate build, registry or admin address, or it has not launched; investigate before anything records a launch";
+                    "Launch: the Diamond is unpaused but carries no first-unpause record - it predates the launch record or went live outside the launch step; investigate before anything records a launch";
                 return d;
             }
             d.path = Path.Launched;
-            d.reason = "the Diamond is unpaused now; no Timelock launch operation is recorded for it (an admin-key launch leaves none)";
+            d.reason = "unpaused now, with no first-unpause record (a Diamond older than the record)";
             if (local) return d;
             d.checks = LibLaunchReadiness.check(diamond, tokenAdminRegistry);
             if (!LibLaunchReadiness.noneUnmet(d.checks)) {
@@ -360,12 +328,6 @@ contract Launch is Script {
         bool adminHolds = admin != address(0) && IRoleTable(diamond).hasRole(LibAccessControl.UNPAUSER_ROLE, admin);
 
         if (!production && adminHolds && adminKeyGiven) {
-            if (d.epoch != BIRTH_EPOCH && vm.envOr("LAUNCH_ACK_PAUSE_EPOCH", uint256(0)) != d.epoch) {
-                console.log("  pause epoch now:", uint256(d.epoch));
-                d.reason =
-                    "Launch: the Diamond has been paused since its birth pause, so it may have launched and be paused for an incident - lifting that is incident response, not a launch. If it never went live, re-run with LAUNCH_ACK_PAUSE_EPOCH set to the epoch printed above";
-                return d;
-            }
             d.path = Path.AdminUnpause;
             return d;
         }
@@ -443,11 +405,19 @@ contract Launch is Script {
         (,,, epoch) = LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
     }
 
+    /// @notice Who first lifted `diamond`'s birth pause, and when: its launch.
+    ///         Zero `by` means it has never been live. Read from storage like
+    ///         the epoch; written once by the pause library.
+    function firstUnpause(address diamond) public view returns (address by, uint64 at) {
+        (by, at) = LibPausable.decodeFirstUnpauseSlot(vm.load(diamond, LibPausable.FIRST_UNPAUSE_SLOT));
+    }
+
     /// @notice Reverts unless `diamond` has launched, by the launch decision
-    ///         ({decide}): on production the Timelock's DONE launch operation
-    ///         at some pause epoch (a later incident pause does not hide it);
-    ///         on a testnet an unpaused Diamond with no answered requirement
-    ///         NOT MET; on local anvil an unpaused Diamond.
+    ///         ({decide}): its first-unpause record (on production, the
+    ///         Timelock's; a later incident pause does not hide it), or, for
+    ///         a Diamond older than the record, an unpaused Diamond with no
+    ///         answered requirement NOT MET on a testnet, or unpaused on
+    ///         local anvil.
     /// @return evidence What the launch evidence is, and whether the Diamond
     ///         is paused now: a launched Diamond under an incident pause is
     ///         not live, and the wrappers must not say it is.
@@ -459,50 +429,24 @@ contract Launch is Script {
         Decision memory d = decide(diamond, tokenAdminRegistry, timelock, admin, false);
         if (d.path == Path.Launched) return d.reason;
         _printChecks(d.checks);
-        // An unpaused Diamond the decision refuses names why, and so does one
-        // whose launch cannot be read; a paused one otherwise simply has not
-        // launched, whatever a launch run would do next.
+        // An unpaused Diamond the decision refuses names why; a paused one
+        // with no record simply has not launched, whatever a launch run would
+        // do next.
+        (address liveBy,) = firstUnpause(diamond);
         revert(
-            AdminFacet(diamond).paused() && !d.launchUnknown ? "Launch: the Diamond has not launched" : d.reason
-        );
-    }
-
-    /// @dev Whether the Timelock reports this checkout's launch operation
-    ///      DONE at an epoch before `epoch`: the epoch the operator names
-    ///      (`LAUNCH_OPERATION_EPOCH`), then the last {EVIDENCE_SCAN_EPOCHS}.
-    ///      `Undetermined` when the window does not reach epoch 0 and nothing
-    ///      was found: an older launch is then possible and unread.
-    function _launchEvidence(
-        address diamond,
-        address tokenAdminRegistry,
-        address timelock,
-        address admin,
-        uint64 epoch
-    ) internal view returns (Evidence) {
-        if (timelock == address(0) || timelock.code.length == 0 || admin == address(0)) return Evidence.None;
-        uint256 named = vm.envOr("LAUNCH_OPERATION_EPOCH", type(uint256).max);
-        if (named < epoch && _launchDoneAt(diamond, tokenAdminRegistry, timelock, admin, uint64(named))) {
-            return Evidence.Found;
-        }
-        uint64 floor = epoch > EVIDENCE_SCAN_EPOCHS ? epoch - EVIDENCE_SCAN_EPOCHS : 0;
-        for (uint64 e = epoch; e > floor; --e) {
-            if (_launchDoneAt(diamond, tokenAdminRegistry, timelock, admin, e - 1)) return Evidence.Found;
-        }
-        return floor == 0 ? Evidence.None : Evidence.Undetermined;
-    }
-
-    function _launchDoneAt(address diamond, address tokenAdminRegistry, address timelock, address admin, uint64 epoch)
-        internal
-        view
-        returns (bool)
-    {
-        return ILaunchTimelock(timelock).isOperationDone(
-            launchOperationId(diamond, tokenAdminRegistry, admin, epoch, timelock)
+            AdminFacet(diamond).paused() && liveBy == address(0) ? "Launch: the Diamond has not launched" : d.reason
         );
     }
 
     function _registryFromEnv() internal view returns (address) {
         return vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0));
+    }
+
+    /// @dev Whether the run holds the admin's private key: a known
+    ///      `ADMIN_ADDRESS` alone cannot unpause, so it never makes the
+    ///      report or the verdict expect an admin unpause.
+    function _adminKeyGiven() internal view returns (bool) {
+        return vm.envOr("ADMIN_PRIVATE_KEY", uint256(0)) != 0;
     }
 
     function _adminFromEnv() internal view returns (address) {
@@ -518,6 +462,14 @@ contract Launch is Script {
                 )
             );
         }
+    }
+
+    /// @dev What the readiness checks do NOT cover, stated so a green list
+    ///      is never read as "ready to lend" (owner decision 2026-10-23).
+    function _printNotChecked() internal pure {
+        console.log("  [NOT A CHECK] per-asset risk parameters - no deploy phase sets them and no asset list exists");
+        console.log("    to check; until governance sets them, every ERC-20 collateral has a zero LTV cap and");
+        console.log("    liquid loans are refused (illiquid/NFT loans are not). Tracked in #2696.");
     }
 
     function _printTimelockProposal(
@@ -547,13 +499,7 @@ contract Launch is Script {
         console.log("    admin key:", admin);
         console.log("  call 2: diamond.unpauseIfPauseEpoch(epoch), epoch:", uint256(epoch));
         console.log("    reverts if a pause or auto-pause is recorded before execution; propose again then");
-        console.log("    keep this epoch: once executed, LAUNCH_OPERATION_EPOCH set to it finds this launch");
-        console.log("    however far later pauses move the epoch");
-        if (epoch != BIRTH_EPOCH) {
-            console.log("  NOTE: the Diamond has been paused since its birth pause. No launch operation of this");
-            console.log("    checkout is DONE, but confirm it never went live before scheduling: if it did, this");
-            console.log("    pause is an incident and lifting it is incident response, not a launch.");
-        }
+        console.log("    the Diamond records this first unpause (who, when); later pauses are incidents");
         console.log("  1. The Governance Safe calls the Timelock with:");
         console.log("     to:  ", timelock);
         console.logBytes(

@@ -6,6 +6,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 
 import {RateLimiter} from "@chainlink/contracts-ccip/contracts/libraries/RateLimiter.sol";
+import {VpfiPoolRateBounds} from "./VpfiPoolRateBounds.sol";
 
 /**
  * @title ITokenPoolRateLimit — the slice of a CCIP `TokenPool` this
@@ -67,15 +68,18 @@ contract VpfiPoolRateGovernor is
 {
     // ─── ET-008 bounds (compile-time) ───────────────────────────────────────
 
+    // The values live in `VpfiPoolRateBounds`, which the launch readiness
+    // check reads too, so the two can never disagree.
+
     /// @notice Minimum token-bucket capacity (max burst) — 10,000 VPFI.
-    uint128 public constant MIN_RATE_LIMIT_CAPACITY = 10_000 ether;
+    uint128 public constant MIN_RATE_LIMIT_CAPACITY = VpfiPoolRateBounds.MIN_CAPACITY;
     /// @notice Maximum token-bucket capacity — 10,000,000 VPFI, far under
     ///         the 230M global VPFI cap.
-    uint128 public constant MAX_RATE_LIMIT_CAPACITY = 10_000_000 ether;
+    uint128 public constant MAX_RATE_LIMIT_CAPACITY = VpfiPoolRateBounds.MAX_CAPACITY;
     /// @notice Minimum refill rate — 1 VPFI/s.
-    uint128 public constant MIN_RATE_LIMIT_RATE = 1 ether;
+    uint128 public constant MIN_RATE_LIMIT_RATE = VpfiPoolRateBounds.MIN_RATE;
     /// @notice Maximum refill rate — 5,000 VPFI/s.
-    uint128 public constant MAX_RATE_LIMIT_RATE = 5_000 ether;
+    uint128 public constant MAX_RATE_LIMIT_RATE = VpfiPoolRateBounds.MAX_RATE;
 
     // ─── Storage ────────────────────────────────────────────────────────────
 

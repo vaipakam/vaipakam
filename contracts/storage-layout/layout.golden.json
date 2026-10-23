@@ -301,6 +301,8 @@
     "L|pausable|0|17|uint64|pauseTransitions",
     "L|pausable|0|1|uint64|pausedUntilTimestamp",
     "L|pausable|0|9|uint64|lastPauseBoundaryAt",
+    "L|pausable|1|0|address|firstUnpausedBy",
+    "L|pausable|1|20|uint64|firstUnpausedAt",
     "L|reentrancy-guard|0|0|uint256|status",
     "L|uups:AggregatorAdapterImplementation|0|0|address|diamond",
     "L|uups:AggregatorAdapterImplementation|1|0|address|authorizedPrincipal",

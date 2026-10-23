@@ -19,16 +19,43 @@ import {LaunchGateDeployment} from "../../script/lib/LaunchGateDeployment.sol";
 import {LaunchGate} from "../../src/governance/LaunchGate.sol";
 import {VaipakamTimelock} from "../../src/governance/VaipakamTimelock.sol";
 
-/// @dev A CCIP pool stand-in: only `getSupportedChains()` is read.
+/// @dev A CCIP pool stand-in: its lanes, and each lane's rate-limiter
+///      buckets (enabled at the starting values by default).
 contract LaunchMockPool {
+    /// @dev CCIP's `RateLimiter.TokenBucket`, field for field.
+    struct Bucket {
+        uint128 tokens;
+        uint32 lastUpdated;
+        bool isEnabled;
+        uint128 capacity;
+        uint128 rate;
+    }
+
     uint64[] internal lanes;
+    mapping(uint64 => mapping(bool => Bucket)) internal buckets;
 
     function setLanes(uint64[] memory l) external {
         lanes = l;
+        for (uint256 i; i < l.length; ++i) {
+            buckets[l[i]][true] = Bucket(50_000 ether, 0, true, 50_000 ether, 6 ether);
+            buckets[l[i]][false] = Bucket(50_000 ether, 0, true, 50_000 ether, 6 ether);
+        }
+    }
+
+    function setLimit(uint64 lane, bool inbound, bool enabled, uint128 capacity, uint128 rate) external {
+        buckets[lane][inbound] = Bucket(capacity, 0, enabled, capacity, rate);
     }
 
     function getSupportedChains() external view returns (uint64[] memory) {
         return lanes;
+    }
+
+    function getCurrentInboundRateLimiterState(uint64 lane) external view returns (Bucket memory) {
+        return buckets[lane][true];
+    }
+
+    function getCurrentOutboundRateLimiterState(uint64 lane) external view returns (Bucket memory) {
+        return buckets[lane][false];
     }
 }
 
@@ -418,7 +445,11 @@ contract LaunchTest is Test {
         address registry = _registryWithLane();
         vm.expectRevert(
             bytes(
-                "Launch: the Timelock has not executed this checkout's launch operation - the Diamond went live outside the launch step, the launch used a different LaunchGate build, registry or admin address, or it has not launched; investigate before anything records a launch"
+                string.concat(
+                    "Launch: the Diamond was first unpaused by ",
+                    vm.toString(admin),
+                    ", not the Timelock - it went live outside the launch step; investigate before anything records a launch"
+                )
             )
         );
         launcher.launch(diamond, registry, timelock, admin, 0);
@@ -569,7 +600,7 @@ contract LaunchTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 LaunchGate.LaunchNotReady.selector,
-                "CCIP lanes wired",
+                "CCIP lanes wired and rate-limited",
                 "NOT CHECKED",
                 "no CCIP TokenAdminRegistry given (CCIP_TOKEN_ADMIN_REGISTRY), so the VPFI pool is unknown"
             )
@@ -637,14 +668,18 @@ contract LaunchTest is Test {
         AdminFacet(diamond).pause();
         assertEq(
             launcher.checkLaunched(diamond, registry, address(tl), admin),
-            "launched by the Timelock's launch operation, and PAUSED now: lifting that pause is incident response (GovernanceRunbook), not a launch",
+            string.concat(
+                "first unpaused by ",
+                vm.toString(address(tl)),
+                ", and PAUSED now: lifting that pause is incident response (GovernanceRunbook), not a launch"
+            ),
             "an incident-paused Diamond is reported launched, never live"
         );
         vm.prank(address(tl));
         AdminFacet(diamond).unpause();
         assertEq(
             launcher.checkLaunched(diamond, registry, address(tl), admin),
-            "launched by the Timelock's launch operation, and unpaused now"
+            string.concat("first unpaused by ", vm.toString(address(tl)), ", and unpaused now")
         );
     }
 
@@ -780,8 +815,10 @@ contract LaunchTest is Test {
 
     // ─── Round 4 (Codex #2686 r4) ────────────────────────────────────
 
-    function test_DeployLeavesTheBirthEpoch() public view {
-        assertEq(launcher.pauseEpoch(diamond), launcher.BIRTH_EPOCH());
+    function test_DeployLeavesNoLaunchRecord() public view {
+        (address by, uint64 at) = launcher.firstUnpause(diamond);
+        assertEq(by, address(0));
+        assertEq(at, 0);
     }
 
     /// @dev Launched through the Timelock, then paused for an incident: a
@@ -799,37 +836,31 @@ contract LaunchTest is Test {
         assertTrue(AdminFacet(diamond).paused(), "the incident pause stands");
     }
 
-    /// @dev A testnet Diamond the admin launched and a guardian then paused:
-    ///      nothing on chain records the admin's launch, so the run cannot
-    ///      tell this from a pause before launch and refuses to unpause.
-    function test_Testnet_AdminWillNotLiftAPauseAfterBirth() public {
+    /// @dev A testnet Diamond the admin launched and then paused: the
+    ///      Diamond records the admin's launch, so a re-run reports it and
+    ///      never lifts the pause.
+    function test_Testnet_AdminWillNotLiftAPauseAfterLaunch() public {
         vm.chainId(84532);
         _configure();
         launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
         vm.prank(admin);
         AdminFacet(diamond).pause();
-        vm.expectRevert(
-            bytes(
-                "Launch: the Diamond has been paused since its birth pause, so it may have launched and be paused for an incident - lifting that is incident response, not a launch. If it never went live, re-run with LAUNCH_ACK_PAUSE_EPOCH set to the epoch printed above"
-            )
-        );
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        Launch.Outcome o = launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        assertEq(uint8(o), uint8(Launch.Outcome.AlreadyLive));
         assertTrue(AdminFacet(diamond).paused());
+        (address by,) = launcher.firstUnpause(diamond);
+        assertEq(by, admin);
     }
 
-    /// @dev Paused again before it ever launched: the operator states it
-    ///      never went live by naming the epoch, and the admin unpauses.
-    function test_Testnet_AckedEpochLetsTheAdminLaunch() public {
+    /// @dev Paused again before it ever went live: there is no record, so
+    ///      the chain itself says it never launched and the admin unpauses
+    ///      with no acknowledgement needed.
+    function test_Testnet_PausedAgainBeforeLaunchStillLaunches() public {
         vm.chainId(84532);
         _configure();
         vm.prank(admin);
         AdminFacet(diamond).pause();
-        uint64 epoch = _epoch();
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("LAUNCH_ACK_PAUSE_EPOCH", vm.toString(uint256(epoch)));
         Launch.Outcome o = launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("LAUNCH_ACK_PAUSE_EPOCH", "0");
         assertEq(uint8(o), uint8(Launch.Outcome.Unpaused));
         assertFalse(AdminFacet(diamond).paused());
     }
@@ -870,15 +901,10 @@ contract LaunchTest is Test {
         launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
     }
 
-    // ─── Round 5 (Codex #2686 r5): a bounded launch-evidence search ─────
+    // ─── Round 5/6 (Codex #2686): the launch is the Diamond's own record ──
 
-    string private constant LAUNCH_UNKNOWN =
-        "Launch: the pause epoch is past the launch-evidence search window and no launch operation was found in it, so whether this Diamond launched is UNKNOWN. Set LAUNCH_OPERATION_EPOCH to the epoch an executed launch proposal names; if it never launched, set LAUNCH_ACK_PAUSE_EPOCH to the epoch printed above";
-
-    /// @dev Every `pause()` is a transition, even on a paused Diamond, so a
-    ///      Pauser can push the epoch past any search window.
-    function _inflateEpoch(address pauser) internal {
-        uint256 n = uint256(launcher.EVIDENCE_SCAN_EPOCHS()) + 8;
+    /// @dev Every `pause()` counts as a transition, even on a paused Diamond.
+    function _inflateEpoch(address pauser, uint256 n) internal {
         vm.startPrank(pauser);
         for (uint256 i; i < n; ++i) {
             AdminFacet(diamond).pause();
@@ -886,70 +912,112 @@ contract LaunchTest is Test {
         vm.stopPrank();
     }
 
-    /// @dev A launch older than the window, buried under an inflated epoch:
-    ///      the run cannot read it, so it neither proposes a second unpause
-    ///      nor calls the Diamond unlaunched. Naming the launch's epoch finds
-    ///      it again.
+    /// @dev However far a Pauser pushes the epoch after the launch, the
+    ///      record still says launched: nothing is searched.
     function test_Production_InflatedEpochDoesNotHideALaunch() public {
         (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
         _execute(tl, registry, epoch);
-        _inflateEpoch(_guardian(tl));
-
+        _inflateEpoch(_guardian(tl), 300);
         Launch.Decision memory d = launcher.decide(diamond, registry, address(tl), admin, false);
-        assertEq(uint8(d.path), uint8(Launch.Path.Refuse));
-        assertTrue(d.launchUnknown);
-        vm.expectRevert(bytes(LAUNCH_UNKNOWN));
-        launcher.checkLaunched(diamond, registry, address(tl), admin);
-        vm.expectRevert(bytes(LAUNCH_UNKNOWN));
-        launcher.launch(diamond, registry, address(tl), admin, 0);
-
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("LAUNCH_OPERATION_EPOCH", vm.toString(uint256(epoch)));
-        string memory evidence = launcher.checkLaunched(diamond, registry, address(tl), admin);
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("LAUNCH_OPERATION_EPOCH", vm.toString(type(uint256).max));
-        assertEq(
-            evidence,
-            "launched by the Timelock's launch operation, and PAUSED now: lifting that pause is incident response (GovernanceRunbook), not a launch"
-        );
+        assertEq(uint8(d.path), uint8(Launch.Path.Launched));
+        Launch.Outcome o = launcher.launch(diamond, registry, address(tl), admin, 0);
+        assertEq(uint8(o), uint8(Launch.Outcome.AlreadyLive));
         assertTrue(AdminFacet(diamond).paused(), "the incident pause stands");
     }
 
-    /// @dev Inflated before it ever launched: the operator's statement that
-    ///      it never went live (the epoch, acknowledged) lets the run print
-    ///      the proposal; without it the run refuses.
-    function test_Production_InflatedEpochBeforeLaunchNeedsTheAck() public {
+    /// @dev Inflated before it ever launched: still no record, so the run
+    ///      proposes the launch at the epoch it reads, with no acknowledgement.
+    function test_Production_InflatedEpochBeforeLaunchStillProposes() public {
         vm.chainId(8453);
         _configure();
         address registry = _registryWithLane();
         VaipakamTimelock tl = _realTimelock();
         _handOverUnpause(address(tl));
-        _inflateEpoch(_guardian(tl));
-
-        vm.expectRevert(bytes(LAUNCH_UNKNOWN));
-        launcher.launch(diamond, registry, address(tl), admin, 0);
-
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("LAUNCH_ACK_PAUSE_EPOCH", vm.toString(uint256(_epoch())));
+        _inflateEpoch(_guardian(tl), 300);
         Launch.Outcome o = launcher.launch(diamond, registry, address(tl), admin, 0);
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        vm.setEnv("LAUNCH_ACK_PAUSE_EPOCH", "0");
         assertEq(uint8(o), uint8(Launch.Outcome.TimelockProposalPrinted));
         assertTrue(AdminFacet(diamond).paused());
     }
 
-    /// @dev Inside the window nothing changes: a launch a few epochs back is
-    ///      found by the search alone.
-    function test_Production_LaunchInsideTheWindowNeedsNoHint() public {
-        (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
-        _execute(tl, registry, epoch);
-        address guardian = _guardian(tl);
-        vm.startPrank(guardian);
-        for (uint256 i; i < 10; ++i) {
-            AdminFacet(diamond).pause();
-        }
-        vm.stopPrank();
+    /// @dev Launched by a Timelock operation this checkout did not build (a
+    ///      plain governance unpause, as a later LaunchGate build or registry
+    ///      would also make it): the record still says launched, so a later
+    ///      incident pause is never offered a second launch.
+    function test_Production_LaunchRecordDoesNotDependOnTheBatch() public {
+        (VaipakamTimelock tl, address registry,) = _scheduledLaunch();
+        address[] memory targets = new address[](1);
+        targets[0] = diamond;
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodeCall(AdminFacet.unpause, ());
+        vm.prank(PROPOSER);
+        tl.scheduleBatch(targets, new uint256[](1), payloads, bytes32(0), bytes32("plain"), 2 days);
+        vm.warp(block.timestamp + 2 days);
+        tl.executeBatch(targets, new uint256[](1), payloads, bytes32(0), bytes32("plain"));
+        vm.prank(_guardian(tl));
+        AdminFacet(diamond).pause();
         Launch.Decision memory d = launcher.decide(diamond, registry, address(tl), admin, false);
         assertEq(uint8(d.path), uint8(Launch.Path.Launched));
+        (address by,) = launcher.firstUnpause(diamond);
+        assertEq(by, address(tl));
+    }
+
+    function _pool(address registry) internal view returns (LaunchMockPool) {
+        return LaunchMockPool(LaunchMockRegistry(registry).getPool(VPFI));
+    }
+
+    /// @dev A lane landed with its limiter disabled (the state a wiring run
+    ///      leaves when the limits transaction failed): the gate refuses.
+    function test_Gate_RefusesALaneWithADisabledLimiter() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        _pool(registry).setLimit(1, false, false, 50_000 ether, 6 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchGate.LaunchNotReady.selector,
+                "CCIP lanes wired and rate-limited",
+                "NOT MET",
+                "a lane's OUTBOUND rate limit is disabled or outside the governor's bounds: run the ccip-wire phase's rate limits"
+            )
+        );
+        LaunchGate(LaunchGateDeployment.predicted()).assertReady(diamond, registry, admin);
+    }
+
+    /// @dev Enabled but with a capacity past the governor's ceiling: as good
+    ///      as no cap, and refused the same way.
+    function test_Gate_RefusesALimiterOutsideTheBounds() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        _pool(registry).setLimit(1, true, true, type(uint128).max, 6 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchGate.LaunchNotReady.selector,
+                "CCIP lanes wired and rate-limited",
+                "NOT MET",
+                "a lane's INBOUND rate limit is disabled or outside the governor's bounds: run the ccip-wire phase's rate limits"
+            )
+        );
+        LaunchGate(LaunchGateDeployment.predicted()).assertReady(diamond, registry, admin);
+    }
+
+    /// @dev A limiter disabled during the delay: the launch reverts on
+    ///      execution and the Diamond stays paused.
+    function test_Production_LimiterDisabledDuringDelayRevertsTheLaunch() public {
+        (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
+        _pool(registry).setLimit(1, true, false, 0, 0);
+        (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
+            launcher.launchBatch(diamond, registry, admin, epoch);
+        bytes32 salt = launcher.launchSalt(diamond);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchGate.LaunchNotReady.selector,
+                "CCIP lanes wired and rate-limited",
+                "NOT MET",
+                "a lane's INBOUND rate limit is disabled or outside the governor's bounds: run the ccip-wire phase's rate limits"
+            )
+        );
+        tl.executeBatch(targets, values, payloads, bytes32(0), salt);
+        assertTrue(AdminFacet(diamond).paused());
     }
 }

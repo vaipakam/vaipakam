@@ -54,6 +54,18 @@ library LibPausable {
         // even within one block, which a second-resolution timestamp cannot
         // tell apart — refuses it. Packs into this same slot (bytes 17..24).
         uint64 pauseTransitions;
+        // #945 (Codex #2686 r6 P1) — who first lifted a pause, and when: the
+        // Diamond's first moment live. A Diamond is born paused, so this is
+        // its launch; any later pause is an incident, never a second launch.
+        // Written once, by the first {unpause} that clears an active pause,
+        // and never changed after, so the launch tooling reads the launch
+        // from the Diamond itself rather than reconstructing it from the
+        // Timelock operation it expects (which a changed LaunchGate build or
+        // an inflated pause epoch would hide). Zero `firstUnpausedBy` means
+        // it has never been live. Next slot: the address in bytes 0..19,
+        // the timestamp in bytes 20..27.
+        address firstUnpausedBy;
+        uint64 firstUnpausedAt;
     }
 
     /// @custom:event-category informational/admin
@@ -134,6 +146,18 @@ library LibPausable {
         transitions = uint64(word >> 136);
     }
 
+    /// @dev The raw slot after the first: the first-unpause record.
+    bytes32 internal constant FIRST_UNPAUSE_SLOT = bytes32(uint256(PAUSABLE_STORAGE_POSITION) + 1);
+
+    /// @dev Decode the raw {FIRST_UNPAUSE_SLOT} — the ONE implementation of
+    ///      that layout for the deploy scripts, which read it with `vm.load`
+    ///      as they read the epoch. Zero `by` means never live.
+    function decodeFirstUnpauseSlot(bytes32 raw) internal pure returns (address by, uint64 at) {
+        uint256 word = uint256(raw);
+        by = address(uint160(word));
+        at = uint64(word >> 160);
+    }
+
     /// @dev The MANUAL pause only — an auto-pause window does not qualify.
     ///      For a ceremony or migration whose safety depends on service NOT
     ///      resuming until someone decides it should (#1566 slice 4 PR A,
@@ -170,6 +194,10 @@ library LibPausable {
         if (wasPaused) {
             ps.lastPauseBoundaryAt = SafeCast.toUint64(block.timestamp);
             ++ps.pauseTransitions;
+            if (ps.firstUnpausedBy == address(0)) {
+                ps.firstUnpausedBy = msg.sender;
+                ps.firstUnpausedAt = SafeCast.toUint64(block.timestamp);
+            }
         }
         emit Unpaused(msg.sender);
     }

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibAccessControl} from "../libraries/LibAccessControl.sol";
+import {VpfiPoolRateBounds} from "../crosschain/VpfiPoolRateBounds.sol";
 
 /// @dev The Diamond reads the launch requirements need. Declared here rather
 ///      than imported from the facets so the readiness rule depends on the
@@ -58,6 +59,11 @@ library LibLaunchReadiness {
     ///      implementation answers well inside it; the bound keeps one
     ///      misbehaving registration from consuming the whole execution.
     uint256 internal constant PROBE_GAS = 200_000;
+
+    /// @dev The most lanes the CCIP check reads. Every lane costs two probes,
+    ///      so the bound keeps the gate's execution bounded; a pool with more
+    ///      is reported NOT CHECKED rather than read in part.
+    uint256 internal constant MAX_LANES = 32;
 
     /// @notice One readiness requirement and what the chain said about it.
     struct Check {
@@ -229,12 +235,17 @@ library LibLaunchReadiness {
     }
 
     /// @dev The VPFI pool CCIP actually routes through needs at least one
-    ///      lane, so the per-lane rate limits the mainnet gate requires can
-    ///      exist. The pool is the one the `TokenAdminRegistry` maps the
-    ///      Diamond's own VPFI token to: a stale or look-alike pool address
-    ///      from an artifact can never stand in for it.
+    ///      lane, and EVERY lane must carry the rate limits the mainnet gate
+    ///      requires: inbound and outbound enabled, with capacity and refill
+    ///      rate inside the `VpfiPoolRateGovernor` bounds. A lane whose
+    ///      limiter is disabled moves tokens with no cap at all (CCIP skips
+    ///      a disabled bucket), which is the state a wiring run leaves when
+    ///      the lane landed and its limits did not (Codex #2686 r6). The
+    ///      pool is the one the `TokenAdminRegistry` maps the Diamond's own
+    ///      VPFI token to: a stale or look-alike pool address from an
+    ///      artifact can never stand in for it.
     function _ccipLanes(address diamond, address registry) private view returns (Check memory c) {
-        c.label = "CCIP lanes wired";
+        c.label = "CCIP lanes wired and rate-limited";
         if (registry == address(0)) {
             c.detail = "no CCIP TokenAdminRegistry given (CCIP_TOKEN_ADMIN_REGISTRY), so the VPFI pool is unknown";
             return c;
@@ -268,11 +279,69 @@ library LibLaunchReadiness {
             c.detail = "getSupportedChains() unreadable on the registry's VPFI pool";
             return c;
         }
+        if (lanes == 0) {
+            c.checkable = true;
+            c.detail = "the registry's VPFI pool has no lane: run the ccip-wire phase";
+            return c;
+        }
+        if (lanes > MAX_LANES) {
+            c.detail = "the registry's VPFI pool has more lanes than the check reads";
+            return c;
+        }
+        // Decoded as full words, which cannot revert once the shape above is
+        // checked; each word is then range-checked as a chain selector.
+        uint256[] memory selectors = abi.decode(ret, (uint256[]));
+        for (uint256 i; i < lanes; ++i) {
+            uint256 word = selectors[i];
+            if (word > type(uint64).max) {
+                c.detail = "getSupportedChains() returned a value that is no chain selector";
+                return c;
+            }
+            for (uint256 dir; dir < 2; ++dir) {
+                (bool readable, bool bounded) = _laneLimited(pool, uint64(word), dir == 0);
+                if (!readable) {
+                    c.detail = "a lane's rate-limiter state is unreadable on the registry's VPFI pool";
+                    return c;
+                }
+                if (!bounded) {
+                    c.checkable = true;
+                    c.detail = dir == 0
+                        ? "a lane's INBOUND rate limit is disabled or outside the governor's bounds: run the ccip-wire phase's rate limits"
+                        : "a lane's OUTBOUND rate limit is disabled or outside the governor's bounds: run the ccip-wire phase's rate limits";
+                    return c;
+                }
+            }
+        }
         c.checkable = true;
-        c.met = lanes != 0;
-        c.detail = c.met
-            ? "the registry's VPFI pool has at least one lane"
-            : "the registry's VPFI pool has no lane: run the ccip-wire phase";
+        c.met = true;
+        c.detail = "every lane of the registry's VPFI pool is rate-limited both ways within the governor's bounds";
+    }
+
+    /// @dev Reads one lane's current token bucket (`TokenBucket`: tokens,
+    ///      lastUpdated, isEnabled, capacity, rate — five static words) and
+    ///      whether it is enabled with capacity and rate inside the
+    ///      governor's bounds. Read word by word so a malformed answer is
+    ///      reported, never a revert of the whole check.
+    function _laneLimited(address pool, uint64 chainSelector, bool inbound)
+        private
+        view
+        returns (bool readable, bool bounded)
+    {
+        (bool ok, bytes memory ret) = pool.staticcall{gas: PROBE_GAS}(
+            abi.encodeWithSignature(
+                inbound ? "getCurrentInboundRateLimiterState(uint64)" : "getCurrentOutboundRateLimiterState(uint64)",
+                chainSelector
+            )
+        );
+        if (!ok || ret.length != 160) return (false, false);
+        (, , uint256 enabled, uint256 capacity, uint256 rate) =
+            abi.decode(ret, (uint256, uint256, uint256, uint256, uint256));
+        if (enabled > 1) return (false, false);
+        readable = true;
+        bounded = enabled == 1 && capacity >= VpfiPoolRateBounds.MIN_CAPACITY
+            && capacity <= VpfiPoolRateBounds.MAX_CAPACITY
+            && rate >= VpfiPoolRateBounds.MIN_RATE
+            && rate <= VpfiPoolRateBounds.MAX_RATE;
     }
 
     /// @dev Whether `adapter` is a contract that answers `adapterName()`

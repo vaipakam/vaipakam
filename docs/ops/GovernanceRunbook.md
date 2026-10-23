@@ -586,13 +586,23 @@ even for the gap between the deploy and the handover.
    requirements off the chain (treasury, a sanctions oracle that answers
    `isSanctioned`, the Diamond's own oracle pricing WETH from the ETH
    reference feed right now, an enabled swap adapter that answers `adapterName()`,
-   a CCIP lane on the VPFI pool) and refuses unless every one is met, the
+   a CCIP lane on the VPFI pool, with every lane's inbound and outbound
+   rate limits enabled and inside the `VpfiPoolRateGovernor` bounds) and
+   refuses unless every one is met, the
    Timelock holds `UNPAUSER_ROLE`, and the admin key holds no Diamond role
    at all. It broadcasts nothing. The VPFI pool is not taken from the
    deploy artifact: the step reads it from the chain's CCIP
    `TokenAdminRegistry` (`CCIP_TOKEN_ADMIN_REGISTRY`) for the VPFI token
    the Diamond records, so the lane check is about the pool CCIP actually
    routes through.
+
+   **Not among the checks: per-asset risk parameters.** No deploy phase sets
+   them and there is no declared asset list for a check to read, so a
+   Diamond can pass every check with each ERC-20 collateral at a zero LTV
+   cap, refusing every liquid loan (illiquid/NFT loans still work). The step
+   prints this as `[NOT A CHECK]`. Until #2696 adds asset onboarding,
+   governance sets them through Timelock proposals (`updateRiskParams`
+   works while the Diamond is paused) before scheduling the launch.
 3. It prints the Timelock `scheduleBatch(...)` call. The batch has two
    calls: `LaunchGate.assertReady(diamond, tokenAdminRegistry, adminKey)`,
    then `diamond.unpauseIfPauseEpoch(epoch)`. The governance Safe proposes
@@ -617,28 +627,21 @@ even for the gap between the deploy and the handover.
    decided before an incident never clears the incident's pause. That
    operation can never execute; once the incident is closed, re-run the
    launch phase for a fresh proposal at the new epoch.
-6. Re-run the launch phase. It records the launch only when the Timelock
-   reports a launch operation done (it searches the last 256 epochs, so a
-   later incident pause does not hide it). If the Diamond is unpaused and
-   no launch operation is done, something unpaused it outside this step:
-   the phase refuses, and that is an incident to investigate, not a
-   launch. Write down the epoch the executed proposal named.
-
-   The search is bounded because every `pause()` counts as a transition,
-   even on a Diamond that is already paused, so a Pauser (or a compromised
-   Pauser Safe) could otherwise push the epoch so far that every launch run
-   and report runs out of gas. Past the window, if nothing is found, the
-   step says whether it launched is UNKNOWN and refuses rather than guess.
-   Then re-run with `LAUNCH_OPERATION_EPOCH` set to the epoch the executed
-   proposal named, or, if the Diamond never launched, with
-   `LAUNCH_ACK_PAUSE_EPOCH` set to the epoch the refusal printed.
-7. The launch step looks for that evidence before anything else, paused or
-   not. Once the launch operation is done, a re-run during a later incident
-   pause reports "launched, and PAUSED now" and prints no proposal: the
+6. Re-run the launch phase. It reads the launch from the Diamond itself:
+   the pause library records who first lifted the birth pause, and when,
+   once and never again. On production that must be the Timelock; if anyone
+   else first unpaused it, the phase names them and refuses, and that is an
+   incident to investigate, not a launch. The record does not depend on the
+   checkout running the step (a later LaunchGate build, a different registry
+   or admin address) or on how far later pauses moved the pause epoch, so
+   neither can make a launched Diamond look unlaunched.
+7. The launch step reads that record before anything else, paused or not.
+   Once it exists, a re-run during a later incident pause reports "first
+   unpaused by <Timelock>, and PAUSED now" and prints no proposal: the
    launch step never offers a second unpause. The deploy scripts repeat
    that line, so a launched Diamond under an incident pause is never
-   reported as live. Lift an incident pause
-   through "Incident response — unpause" below.
+   reported as live. Lift an incident pause through "Incident response —
+   unpause" below.
 
 The Pauser Safe can cancel the queued launch like any other operation.
 
