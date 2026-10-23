@@ -326,8 +326,10 @@ journalctl -u vaipakam-keeper --grep 'chains resolved:' -n 1 --no-pager
 Neither line reads the Diamond's own discount-path switch (Step 3);
 that is read per loan.
 
-Each skipped loan also logs `flash-loan-skip not-armed:` with the
-reason. Neither line echoes the value.
+On a chain with a route, each loan skipped because the chain is not
+armed also logs `flash-loan-skip not-armed:` with the reason. A chain
+with no route logs nothing per loan; the start-up line is where that
+shows. No line echoes the setting's value.
 
 **Why a separate keeper-side flag rather than reading the
 on-chain flag every tick**: cost. An on-chain read every tick ×
@@ -479,9 +481,12 @@ Probably the `liquidator` slot in `flashLoanProviders.ts`
 wasn't populated (Step 4 skipped), or the chain's entry has no
 `aaveV3Pool` or `balancerV2Vault` (the testnet entries ship empty), or
 the machine has not deployed the commit that populated them, or the
-chain is not armed. The keeper
-logs `flash-loan-skip not-armed:` with the reason for each loan it
-skips on that account. Verify on the machine:
+chain is not armed. A missing liquidator or provider is named only by
+the start-up line: the branch checks its route first and returns
+without a per-loan line, so as not to log for every loan on every
+chain that has none. Once the route exists, each loan skipped because
+the chain is not armed logs `flash-loan-skip not-armed:` with the
+reason. Verify on the machine:
 
 ```bash
 # How the keeper read the setting, from the parser the passes use, and
@@ -491,7 +496,8 @@ skips on that account. Verify on the machine:
 # at all (RPC and deployment present), from the latest tick. See Step 5.
 journalctl -u vaipakam-keeper --grep 'discount path:' -n 1 --no-pager
 journalctl -u vaipakam-keeper --grep 'chains resolved:' -n 1 --no-pager
-# Per-loan skips, once a distressed loan has reached the branch:
+# Per-loan not-armed skips, on a chain whose route exists, once a
+# distressed loan has reached the branch:
 journalctl -u vaipakam-keeper --since -10min | grep -m3 'flash-loan-skip not-armed'
 
 # Confirm the running release carries the address. Search for the

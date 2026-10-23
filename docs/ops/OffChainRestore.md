@@ -545,7 +545,6 @@ then deploy.
       | `REWARD_DELIVERY_PROOF_ENABLED` | delivery pass skips — epoch days stay unindexed (their value funds nothing a claim can find) and an armed delivery gate holds every funded day | indexing every mirror delivery's epoch days and proving no-epoch day lists (#1944) |
       | `REWARD_SANCTIONS_KEEPER_ENABLED` | sanctions-hold observer skips — a held reward claimant goes unobserved, so its hold (and the custody-activation block it carries) can run past its window | observing held claimants, the owner settlement and resolving their held staging records (#2450) |
       | `REWARD_DAY_CLOSE_ENABLED` | day-close pass skips — no reward day is reported, finalized or broadcast unless someone makes those calls by hand, so the remit pass has no finalized day to fund and mirror users cannot claim | closing each elapsed reward day on every chain, finalizing it on Base and broadcasting it to the mirrors (#2612) |
-      | `DISCOUNT_PATH_CHAIN_IDS` | the flash-loan discount branch skips on every chain; the partial / split / atomic branches still run | the discounted, flash-loan-funded liquidation on each chain it names that also has a FlashLoanLiquidator (none today; #2633, sizing #2697). A chain list, not `true`; ships empty |
       | `REWARD_HORIZON_HEARTBEAT_ENABLED` | horizon heartbeat skips — no reward's claim-horizon clock is observed, so an armed horizon expires nothing and files no final notice (the safe direction: nothing is reaped) | touching every live reward entry about every 12 hours so its executable-time clock advances (#2517) |
 
       The keeper's ops alert channel, `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID`, is
@@ -559,6 +558,15 @@ then deploy.
       `SPLIT_*` / `PARTIAL_LIQ_*` set) belong in that record too; unlike the
       four above, those have safe defaults, so an omission degrades tuning
       rather than turning a duty off.
+
+      `DISCOUNT_PATH_CHAIN_IDS` is a plain var, not a secret, so it can be
+      read back, but it ARMS something and belongs in the record by value:
+      the chains on which the flash-loan discount branch of the liquidator
+      runs (#2633). Unset, that branch skips on every chain and the partial
+      / split / atomic branches still run. It is a chain list, not `true`,
+      ships empty, and does anything only on a chain that also has a
+      FlashLoanLiquidator (none today; sizing #2697). It is cleared with the
+      flags in §7a step 3B and re-armed only by the owner's decision.
 
       **Do NOT set them here.** They arm signing against a database §§4–6
       have not restored: a matcher or liquidator pass reading half-imported
