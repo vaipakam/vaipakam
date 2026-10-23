@@ -1,4 +1,7 @@
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   coalesceByTx,
   legText,
@@ -94,31 +97,66 @@ describe('activity feed labels are translatable (extraction guard)', () => {
     }
   });
 
-  // Codex #1343 r1 — the label set must cover every event kind the
-  // indexer attributes to a wallet's OWN feed (pluckActivityRefs in
-  // apps/indexer/src/chainIndexer.ts); an attributed kind absent here
-  // renders humanized English in every locale. This list mirrors that
-  // switch's cases — add a kind here (and a label above) whenever the
-  // indexer starts attributing a new event to the activity feed.
-  it('covers every indexer-attributed activity kind', () => {
-    const ATTRIBUTED = [
-      'BackstopAbsorbedLoan', 'BorrowerFundsClaimed', 'BorrowerLifRebateClaimed',
-      'IntentLoanRolled', 'InteractionRewardsClaimed', 'InternalMatchExecuted',
-      'LenderFundsClaimed', 'LoanDefaulted', 'LoanExtended', 'LoanInitiated',
-      'LoanLiquidated', 'LoanRepaid', 'LoanSettled', 'LoanSettlementBreakdown',
-      'OfferAccepted', 'OfferCanceled', 'OfferConsumedBySale', 'OfferCreated',
-      'OfferMatched', 'OfferModified', 'PartialRepaid', 'PeriodicInterestAutoLiquidated',
-      'PeriodicInterestSettled', 'PeriodicSlippageOverBuffer', 'PrepayCollateralSaleSettled',
-      'PrepayListingCanceled', 'PrepayListingMatched', 'PrepayListingPosted',
-      'PrepayListingUpdated', 'RepayPartialPeriodAdvanced', 'RewardDeliveredToVault',
-      'SwapToRepayExecuted', 'SwapToRepayIntentCancelled', 'SwapToRepayIntentCommitted',
-      'SwapToRepayIntentFilled', 'SwapToRepayIntentForceCancelled', 'SwapToRepayPartialExecuted',
-      'Transfer', 'VPFIDepositedToVault', 'VPFIWithdrawnFromVault', 'VaultVpfiDebited',
-      'FallbackCustodyMoved', 'SwapToRepayIntentLotPulled', 'RewardEntryForfeitSettled',
-    ];
-    for (const kind of ATTRIBUTED) {
-      expect(ACTIVITY_LABELS[kind], `no activity label for indexer kind ${kind}`).toBeDefined();
+  // #2658 — the label set covers every event the indexer files under a
+  // loan or an offer, DERIVED from the compiled Diamond ABI and the
+  // indexer's own reference policy rather than kept as a hand list. #1794
+  // made the indexer file every such event by one rule, so a wallet's
+  // Activity page receives them through its loan ids; a hand list here
+  // (Codex #1343 r1's) fell behind that rule by forty-odd kinds, each of
+  // which then rendered a generated English name in every locale.
+  //
+  // The match is the policy's own `refShape` on a scalar integer input, at
+  // any depth of a named tuple. It errs towards MORE kinds than the indexer
+  // files (an event whose candidates the indexer leaves unresolved is still
+  // required here), never fewer. The only kinds excused are those whose
+  // every reference the policy lists as `notScoped`: companion payloads
+  // whose primary event carries the reference.
+  it('labels every event the indexer files under a loan or offer', () => {
+    const policy = JSON.parse(
+      fs.readFileSync(
+        fileURLToPath(new URL('../../../indexer/src/activityRefsPolicy.json', import.meta.url)),
+        'utf8',
+      ),
+    ) as { refShape: Record<'loanId' | 'offerId', string>; notScoped: Record<string, unknown> };
+    const shape = {
+      loanId: new RegExp(policy.refShape.loanId),
+      offerId: new RegExp(policy.refShape.offerId),
+    };
+    type Input = { name?: string; type: string; indexed?: boolean; components?: readonly Input[] };
+    const refFields = (inputs: readonly Input[]): Set<'loanId' | 'offerId'> => {
+      const out = new Set<'loanId' | 'offerId'>();
+      for (const i of inputs) {
+        if (i.components) {
+          if (!/\]$/.test(i.type) && !i.indexed) refFields(i.components).forEach((f) => out.add(f));
+        } else if (/^u?int(\d+)?$/.test(i.type)) {
+          for (const f of ['loanId', 'offerId'] as const) if (shape[f].test(i.name ?? '')) out.add(f);
+        }
+      }
+      return out;
+    };
+    const filed = new Set<string>();
+    for (const item of DIAMOND_ABI_VIEM as readonly { type: string; name?: string; inputs?: readonly Input[] }[]) {
+      if (item.type !== 'event' || !item.name || !item.inputs) continue;
+      const fields = [...refFields(item.inputs)].filter(
+        (f) => !Object.hasOwn(policy.notScoped, `${item.name}.${f}`),
+      );
+      if (fields.length > 0) filed.add(item.name);
     }
+    // The derivation must find the long-mapped core, or it is reading nothing.
+    expect(filed.has('LoanRepaid')).toBe(true);
+    expect(filed.has('OfferCreated')).toBe(true);
+    const missing = [...filed].filter((k) => ACTIVITY_LABELS[k] === undefined).sort();
+    expect(missing, 'event kinds filed under a loan or offer with no Activity label').toEqual([]);
+  });
+
+  // Not filed under a loan (its number is not always a loan), but it names
+  // the recipient, so it reaches that wallet's page through the address
+  // match. Its label follows the sanctions copy rule: the in-app wording
+  // only ("while this wallet is flagged"), no list or provider named.
+  it('labels the flagged-share event with the in-app wording only', () => {
+    const label = ACTIVITY_LABELS.SanctionedProceedsLocked?.label ?? '';
+    expect(label).toContain('while this wallet is flagged');
+    expect(label).not.toMatch(/sanction|OFAC|Chainalysis|RedStone|oracle/i);
   });
 });
 

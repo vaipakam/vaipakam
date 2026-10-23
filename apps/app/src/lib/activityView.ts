@@ -145,6 +145,64 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // #1566 — a forfeited reward entry settled (shown on its owner's feed and
   // its loan's timeline).
   RewardEntryForfeitSettled: { label: 'Rewards forfeited', category: 'other', priority: 50 },
+  // #2658 — every other event the indexer files under a loan or offer
+  // (#1794 files them from the ABI by one rule, so they reach the wallet's
+  // feed through its loan ids). None is hidden: each is something that
+  // happened on the chain to the wallet's loan or offer, and the page
+  // shows what it knows. Book-keeping and companion events carry a LOW
+  // priority (below the unmapped default of 20) so they ride inside the
+  // row of the action that emitted them as "+N more" and never represent
+  // it; an outcome (a liquidation, a failed sale, a claim) outranks the
+  // status edge and the swap attempts its transaction also emits.
+  // `LoanStatusChanged` keeps the default priority it had while unmapped.
+  // The guard in activityView.test.ts derives the set from the ABI.
+  AutoDailyDeducted: { label: 'Daily rental fee paid', category: 'loan-repay', priority: 50 },
+  AutoExtendBorrowerCapsChanged: { label: 'Automatic extension limits updated', category: 'loan-modify', priority: 40 },
+  AutoExtendLenderCapsChanged: { label: 'Automatic extension limits updated', category: 'loan-modify', priority: 40 },
+  AutoListOptOutCleared: { label: 'Automatic grace-period listing turned back on', category: 'loan-modify', priority: 40 },
+  AutoRefinanceCapsChanged: { label: 'Automatic refinance limits updated', category: 'loan-modify', priority: 40 },
+  BackstopFilled: { label: 'Funded by the backstop', category: 'loan-open', priority: 60 },
+  BackstopLoanClaimed: { label: 'Backstop recovery claimed', category: 'loan-close', priority: 80 },
+  // Paid inside the borrower's claim, before its own event: below the claim
+  // (92) so the claim represents the row; its value is still a leg of it.
+  BorrowerSurplusClaimed: { label: 'Surplus claimed', category: 'loan-close', priority: 60 },
+  ClaimRetryExecuted: { label: 'Collateral sale retried', category: 'loan-close', priority: 70 },
+  CollateralConsolidated: { label: 'Collateral consolidated', category: 'collateral', priority: 30 },
+  FeeEntitlementRepriced: { label: 'Fee terms updated', category: 'loan-modify', priority: 8 },
+  FeeEntitlementStamped: { label: 'Fee terms recorded', category: 'loan-open', priority: 8 },
+  HFLiquidationTriggered: { label: 'Liquidation triggered', category: 'loan-default', priority: 86 },
+  IntentMatched: { label: 'Order matched', category: 'loan-open', priority: 78 },
+  IntentPriorityFill: { label: 'Priority credit used for a fill', category: 'loan-open', priority: 30 },
+  LenderBackstopOptInSet: { label: 'Backstop exit choice updated', category: 'loan-modify', priority: 45 },
+  LiquidationDiscounted: { label: 'Liquidated at a discount', category: 'loan-default', priority: 89 },
+  LiquidationFallback: { label: 'Collateral sale failed', category: 'loan-default', priority: 84 },
+  LiquidationFallbackOracleUnavailable: { label: 'Collateral sale failed: no price available', category: 'loan-default', priority: 84 },
+  LiquidationFallbackSplit: { label: 'Collateral split recorded', category: 'loan-default', priority: 12 },
+  LoanCuredFromFallback: { label: 'Loan restored by adding collateral', category: 'collateral', priority: 85 },
+  LoanFallbackPending: { label: 'Settlement pending after a failed sale', category: 'loan-default', priority: 87 },
+  LoanKeeperEnabled: { label: 'Keeper permission updated', category: 'loan-modify', priority: 40 },
+  LoanPartiallyLiquidated: { label: 'Loan partly liquidated', category: 'loan-default', priority: 88 },
+  LoanSaleListingTornDown: { label: 'Loan sale listing removed', category: 'loan-modify', priority: 45 },
+  LoanStatusChanged: { label: 'Loan status updated', category: 'other', priority: 20 },
+  NotificationFeeBilled: { label: 'Notification fee charged', category: 'other', priority: 30 },
+  OfferBackstopEligibilitySet: { label: 'Backstop eligibility set', category: 'offer', priority: 40 },
+  OfferCreatorFullTariffSet: { label: 'Fee choice recorded for the offer', category: 'offer', priority: 12 },
+  OfferKeeperEnabled: { label: 'Keeper permission updated', category: 'offer', priority: 40 },
+  OfferSaleProceedsCredited: { label: 'Sale proceeds credited to the vault', category: 'offer', priority: 60 },
+  OfferSaleProceedsSplit: { label: 'Sale proceeds split', category: 'loan-close', priority: 75 },
+  ParallelSaleLockReleased: { label: 'Collateral sale listing released', category: 'offer', priority: 45 },
+  PartialCollateralWithdrawn: { label: 'Collateral partly withdrawn', category: 'collateral', priority: 75 },
+  PostParallelSaleListing: { label: 'Collateral sale listing posted', category: 'offer', priority: 55 },
+  PrepaySaleListingSynced: { label: 'Collateral sale listing rechecked', category: 'loan-modify', priority: 15 },
+  PrepaySaleOfferSynced: { label: 'Sale offer rechecked', category: 'offer', priority: 15 },
+  SanctionedProceedsLocked: { label: 'Share held in the vault while this wallet is flagged', category: 'loan-close', priority: 30 },
+  SwapAdapterAttempted: { label: 'Swap route tried', category: 'other', priority: 6 },
+  SwapAdapterSucceeded: { label: 'Swap route used', category: 'other', priority: 6 },
+  SwapAllAdaptersFailed: { label: 'Every swap route failed', category: 'loan-default', priority: 14 },
+  TierExclusionUpdated: { label: 'VPFI held for a loan, left out of the discount tier', category: 'other', priority: 12 },
+  VPFIDiscountApplied: { label: 'Fee discount applied (paid in VPFI)', category: 'loan-open', priority: 12 },
+  VPFIYieldFeeDiscountApplied: { label: 'Yield fee discount applied (paid in VPFI)', category: 'loan-close', priority: 12 },
+  VaultRentalUpdated: { label: 'Rental access updated', category: 'loan-modify', priority: 12 },
   // Low-priority book-keeping — never represents a transaction alone.
   Transfer: { label: 'Transfer', category: 'other', priority: 5 },
   Approval: { label: 'Approval', category: 'other', priority: 5 },
