@@ -129,11 +129,26 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         delegates to `runWith(...)`. Foundry's `forge script
     ///         DeployDiamond --ffi --broadcast` invokes this (the storage-layout
     ///         record in {runWith} needs `--ffi`).
+    /// @dev    #947 — when `ADMIN_PRIVATE_KEY` is also set (every deploy
+    ///         wrapper requires it), `ADMIN_ADDRESS` must be that key's
+    ///         address. Step 6 moves every role and the Diamond's ownership
+    ///         to `ADMIN_ADDRESS` and the deployer then renounces everything,
+    ///         so a mistyped address would leave the new Diamond owned by a
+    ///         key nobody running the deploy holds. Checked before anything
+    ///         is deployed.
     function run() external virtual {
-        runWith(
-            vm.envAddress("ADMIN_ADDRESS"),
-            vm.envAddress("TREASURY_ADDRESS"),
-            vm.envUint("DEPLOYER_PRIVATE_KEY")
+        address admin = vm.envAddress("ADMIN_ADDRESS");
+        requireAdminIsKey(admin, vm.envOr("ADMIN_PRIVATE_KEY", uint256(0)));
+        runWith(admin, vm.envAddress("TREASURY_ADDRESS"), vm.envUint("DEPLOYER_PRIVATE_KEY"));
+    }
+
+    /// @notice #947 — refuses an admin address that is not the address of
+    ///         the admin key the operator supplied. A zero key means none
+    ///         was supplied and nothing can be compared.
+    function requireAdminIsKey(address admin, uint256 adminKey) public pure {
+        require(
+            adminKey == 0 || vm.addr(adminKey) == admin,
+            "DeployDiamond: ADMIN_ADDRESS is not the address of ADMIN_PRIVATE_KEY - fix the typo before every role is handed to it"
         );
     }
 
@@ -207,6 +222,20 @@ contract DeployDiamond is Script, ArtifactRootBase {
         uint256 deployerKey
     ) public virtual {
         address deployerAddr = vm.addr(deployerKey);
+
+        // #947 — Step 6 hands every role and the ERC-173 ownership to
+        // `admin`, then the deployer renounces everything, with nothing in
+        // between to undo it. So the admin is checked here, before anything
+        // is deployed: the zero address would leave the Diamond with no
+        // owner and no role holder at all. On a production chain the admin
+        // must also be a different key from the deployer: the runbook's
+        // topology is a throwaway deployer that ends with no role, and an
+        // admin equal to it skips the Step 6 handover entirely.
+        require(admin != address(0), "DeployDiamond: admin is the zero address - every role and the ownership would be lost");
+        require(
+            admin != deployerAddr || !Deployments.requiresProductionGovernance(),
+            "DeployDiamond: on a production chain the admin must not be the deployer key"
+        );
 
         // #2070 r27 P1 — a live broadcast carrying DEPLOY_SKIP_ARTIFACTS is
         // refused HERE, before anything is deployed: the simulation fails, so

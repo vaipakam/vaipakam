@@ -14,6 +14,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
@@ -2932,10 +2933,14 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(buyer);
         OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
 
-        // Governance raises the floor above the seller's existing vault.
-        (uint256 sellerVersion,,,) =
+        // Governance ships a new vault version and raises the floor to it,
+        // above the seller's existing vault. The floor cannot be set above
+        // the current version (#2363), so the version is bumped first.
+        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(new VaipakamVaultImplementation()));
+        (uint256 sellerVersion, uint256 currentVersion,,) =
             VaultFactoryFacet(address(diamond)).getVaultVersionInfo(lender);
-        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(sellerVersion + 1);
+        assertGt(currentVersion, sellerVersion, "fixture: the seller's vault is below the new version");
+        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(currentVersion);
 
         vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
         vm.prank(buyer);

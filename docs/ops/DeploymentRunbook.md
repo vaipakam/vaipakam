@@ -1367,7 +1367,7 @@ push picks them up.
 | Gas snapshot reviewed (`.gas-snapshot` diff, operator-local) | `forge snapshot --diff` |
 | `CLAUDE.md`, `remappings.txt` unchanged since audit | `git status` |
 | Release commit tagged | `git tag -s vX.Y.Z && git push --tags` |
-| `ADMIN_ADDRESS` env = timelock contract (**not** an EOA on mainnet) | see `AdminKeysAndPause.md` |
+| `ADMIN_ADDRESS` env = the address of `ADMIN_PRIVATE_KEY` (the deploy-time admin; the `handover` phase later moves every role to the Timelock and the Safes). Never zero, and on a production chain never the deployer key: `DeployDiamond` refuses all three before deploying anything (#947) | see `AdminKeysAndPause.md` |
 | `TREASURY_ADDRESS` env = multisig safe | review on Safe UI |
 | `PRIVATE_KEY` deployer is a hot key, revoked post-deploy | see step 6 |
 | Target chain RPC matches intended network id | `cast chain-id --rpc-url $RPC` |
@@ -1384,7 +1384,7 @@ If any check fails → **do not broadcast**.
 
 1. Set envs:
    ```bash
-   export ADMIN_ADDRESS=0x...        # timelock for mainnet, EOA only for testnets
+   export ADMIN_ADDRESS=0x...        # the deploy-time admin; must be the address of ADMIN_PRIVATE_KEY when that is set (#947)
    export TREASURY_ADDRESS=0x...     # multisig
    export PRIVATE_KEY=0x...          # hot deployer key (DEPLOYER_ADDRESS)
    export RPC_URL=https://...

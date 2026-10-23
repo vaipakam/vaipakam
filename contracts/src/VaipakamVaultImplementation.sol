@@ -28,7 +28,9 @@ import {IListingExecutorValidator} from "./seaport/IListingExecutorValidator.sol
  *      For ERC721 rentals: Vault calls setUser without necessarily holding the NFT (assumes operator approval).
  *      For ERC1155: Holds tokens, calls setUser if the contract supports IERC4907 (try-catch to handle non-support).
  *      Custom errors for gas efficiency. No reentrancy as asset ops are atomic.
- *      Initialize sets owner to Diamond. Expand for Phase 2 (e.g., multi-asset batches).
+ *      A proxy's initialize sets its owner to the Diamond; the implementation itself
+ *      is never initialized (its constructor disables that, #905).
+ *      Expand for Phase 2 (e.g., multi-asset batches).
  */
 contract VaipakamVaultImplementation is
     UUPSUpgradeable,
@@ -148,9 +150,27 @@ contract VaipakamVaultImplementation is
     }
 
     /**
-     * @notice Initializes the vault implementation.
-     * @dev Sets the owner to the Diamond proxy. Called on deployment.
-     *      Uses initializer modifier to prevent re-init.
+     * @notice Locks the implementation contract itself (#905).
+     * @dev Only a proxy is ever initialized. The implementation's own
+     *      storage is never used, so its initializer is disabled at
+     *      construction: nobody can call `initialize` on it to become its
+     *      owner, whatever path deployed it, and with no owner nobody can
+     *      reach `_authorizeUpgrade` on it either. This used to depend on
+     *      every deployer remembering to initialize the template in the
+     *      same transaction; `upgradeVaultImplementation` checks only that
+     *      the new implementation has code, so a template deployed without
+     *      that step was open to whoever called first.
+     * @custom:oz-upgrades-unsafe-allow constructor
+     */
+    constructor() {
+        _disableInitializers();
+    }
+
+    /**
+     * @notice Initializes one user's vault proxy.
+     * @dev Sets the owner to the Diamond. Called once, by the factory, in
+     *      the proxy's construction ({VaultFactoryFacet.getOrCreateUserVault}).
+     *      Never callable on the implementation itself (see the constructor).
      */
     function initialize(
         address diamondAddress,
