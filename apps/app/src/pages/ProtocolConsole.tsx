@@ -2,13 +2,22 @@
  * Protocol Console — public, read-only view of the governance-tunable
  * parameters the indexer publishes (#1959).
  *
- * A SUBSET, AND IT SAYS SO. This renders what `getProtocolConfigBundle`
- * exposes; lifecycle and automation switches, the grace schedule,
- * sanctions-oracle configuration and several risk controls are not in
- * that snapshot. The lede states this outright, because an incomplete
- * view asserting completeness is worse than an incomplete one — it
- * stops the reader looking further. Widening the published set is
- * tracked separately (#2071).
+ * A SUBSET, AND IT SAYS SO. This renders the configuration bundle plus
+ * every protocol-wide setting with a single-value getter (#2071). Settings
+ * that differ per asset or per chain, the reward and recycling settings,
+ * and a few protocol-wide ones readable only inside a multi-value getter
+ * (#2680) are not here. The lede says so, because an incomplete view
+ * asserting completeness is worse than an incomplete one, and
+ * `protocolConsoleDocCoverage.ts` records, for every setting in the
+ * canonical reference, whether it is shown and if not why — a check fails
+ * when the reference gains one this page has not accounted for.
+ *
+ * THE SNAPSHOT WHILE IT IS CURRENT, THE CHAIN OTHERWISE (#2074). The
+ * indexer's snapshot is read first; when it is missing, behind, undated,
+ * unlabelled or incomplete the page reads the same values from the
+ * contracts (`protocolConsoleRead.ts`), and the provenance line says which
+ * source it used and why. A snapshot that is not current is shown only
+ * when that read fails too, and then with its warnings.
  *
  * WHY IT LIVES HERE. `/protocol-console` was served by the retired
  * `apps/defi` and was the second of two surfaces the #1854 cutover did
@@ -44,12 +53,22 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { copy } from '../content/copy';
 import { SlidersHorizontal, RefreshCw, ExternalLink, AlertTriangle } from 'lucide-react';
+import { usePublicClient } from 'wagmi';
+import { hexToString, type Hex } from 'viem';
 import {
   fetchProtocolKnobs,
   CLOCK_SKEW_ALLOWANCE_SEC,
   type ProtocolKnobSnapshot,
+  type ProtocolKnobValues,
 } from '../data/indexer';
 import { resolveSnapshotAge } from '../data/snapshotAge';
+import {
+  loadProtocolConsole,
+  readProtocolConsoleLive,
+  type ConsoleReading,
+  type SnapshotGap,
+} from '../data/protocolConsoleRead';
+import { CONSOLE_SECTIONS, type ConsoleRow } from '../data/protocolConsoleRows';
 import { useActiveChain } from '../chain/useActiveChain';
 import { exactAmountString, localeDecimalString, localeNumber } from '../lib/format';
 import { VPFI_DECIMALS } from '../data/vpfi';
@@ -110,7 +129,78 @@ function makeFormatters(locale: string | undefined) {
     return localeDecimalString(v, locale);
   }
 
-  return { bps, seconds, plain, exactDecimal };
+  const ZERO_ADDRESS = /^0x0{40}$/i;
+  const ZERO_WORD = /^0x0{64}$/i;
+
+  /** #2071 — one row's value, written the way its format says. A value
+   *  the source did not report is `—`, which the row marks "not reported";
+   *  a value that IS reported but unset says "not set", never a dash. */
+  function rowValue(row: ConsoleRow, values: ProtocolKnobValues): string {
+    const v = values[row.key];
+    if (v === undefined) return '—';
+    const str = String(v);
+    switch (row.format) {
+      case 'bps':
+        return bps(str);
+      case 'seconds':
+        return seconds(str);
+      case 'secondsOrDefault':
+        return str === '0' ? copy.protocolConsole.unsetDefault : seconds(str);
+      case 'days':
+        return plain(str, ` ${copy.protocolConsole.days}`);
+      case 'flag':
+        return flag(typeof v === 'boolean' ? v : undefined);
+      case 'pause':
+        return typeof v !== 'boolean' ? '—' : v ? copy.protocolConsole.paused : copy.protocolConsole.running;
+      case 'address':
+        return ZERO_ADDRESS.test(str) ? copy.protocolConsole.notSet : str;
+      case 'bytes32':
+        return ZERO_WORD.test(str) ? copy.protocolConsole.notSet : str;
+      case 'symbol': {
+        const text = symbolText(str);
+        return text === null ? copy.protocolConsole.notSet : text;
+      }
+      case 'wad':
+        return exactDecimal(exactAmountString(BigInt(str), 18));
+      case 'numeraireAmount': {
+        const amount = exactDecimal(exactAmountString(BigInt(str), 18));
+        const sym = values.numeraireSymbol === undefined ? null : symbolText(values.numeraireSymbol);
+        return sym === null ? copy.protocolConsole.numeraireUnits(amount) : `${amount} ${sym}`;
+      }
+    }
+  }
+
+  return { bps, exactDecimal, rowValue };
+}
+
+/** A symbol packed into 32 bytes, or null when it is empty or not text. */
+function symbolText(word: string): string | null {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(word)) return null;
+  try {
+    // With a size, viem trims the trailing zero bytes itself.
+    const text = hexToString(word as Hex, { size: 32 });
+    return /^[\x20-\x7e]+$/.test(text) ? text : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Why the page read the chain instead of the snapshot, in the reader's words. */
+function chainWhy(gap: SnapshotGap): string {
+  switch (gap) {
+    case 'missing':
+      return copy.protocolConsole.chainWhyMissing;
+    case 'known-stale':
+      return copy.protocolConsole.chainWhyKnownStale;
+    case 'undated':
+      return copy.protocolConsole.chainWhyUndated;
+    case 'old':
+      return copy.protocolConsole.chainWhyOld;
+    case 'unlabelled':
+      return copy.protocolConsole.chainWhyUnlabelled;
+    case 'incomplete':
+      return copy.protocolConsole.chainWhyIncomplete;
+  }
 }
 
 /** Snapshot age, against a caller-supplied ticking clock (never
@@ -157,11 +247,14 @@ export function ProtocolConsole() {
   // resolution, honouring VITE_DEFAULT_CHAIN_ID.
   const { readChain } = useActiveChain();
   const chainId = readChain.chainId;
+  // #2074 — the same chain's public client, for the direct read the page
+  // falls back to when the snapshot is not current. No wallet involved.
+  const publicClient = usePublicClient({ chainId });
   // ROUND 65 P2 — number formatting follows the APP's language, not the
   // device's. `LanguageRemount` re-keys the tree on a change, so these
   // formatters are rebuilt with it.
   const { i18n } = useTranslation();
-  const { bps, seconds, plain, exactDecimal } = makeFormatters(i18n.resolvedLanguage);
+  const { bps, exactDecimal, rowValue } = makeFormatters(i18n.resolvedLanguage);
   // Ticks, so the snapshot age below advances instead of freezing at
   // whenever React last rendered.
   const nowSec = useNowSec();
@@ -181,11 +274,10 @@ export function ProtocolConsole() {
   // Being exact about what this flag is, because the fix should not be
   // mistaken for more than it is: `/config` is a PUBLIC, keyless,
   // open-CORS endpoint — the same one the transparency dashboard reads
-  // and any third party may call. The flag decides whether THIS
-  // DEPLOYMENT PRESENTS the values, not whether they can be obtained.
-  // Anyone who wants them can still query the indexer directly. So this
-  // is the page keeping its own word, not an access-control boundary,
-  // and it must not be described as one.
+  // and any third party may call — and the contracts are public too. The
+  // flag decides whether THIS DEPLOYMENT PRESENTS the values, not whether
+  // they can be obtained. So this is the page keeping its own word, not
+  // an access-control boundary, and it must not be described as one.
   const knobs = useQuery({
     queryKey: ['protocol-knobs', chainId],
     enabled: isProtocolConsolePublic(),
@@ -206,11 +298,22 @@ export function ProtocolConsole() {
     // `idleAware` is how every polling surface here honours "pause while
     // hidden, back off while abandoned, catch up on focus".
     refetchInterval: idleAware(180_000),
-    queryFn: () => fetchProtocolKnobs(chainId),
+    // #2074 — the snapshot while it can stand in for the chain, the
+    // contracts otherwise. `loadProtocolConsole` makes that call and
+    // records which source answered and why.
+    queryFn: () =>
+      loadProtocolConsole({
+        fetchSnapshot: () => fetchProtocolKnobs(chainId),
+        readChain: () => {
+          if (!publicClient) throw new Error('no client for this chain');
+          return readProtocolConsoleLive(publicClient, readChain.diamondAddress);
+        },
+        nowSec: () => Math.floor(Date.now() / 1000),
+      }),
   });
 
-  const snap: ProtocolKnobSnapshot | null = knobs.data ?? null;
-  const unavailable = knobs.isError || (knobs.isSuccess && snap === null);
+  const reading: ConsoleReading | null = knobs.data ?? null;
+  const unavailable = knobs.isError;
 
   if (!isProtocolConsolePublic()) {
     return (
@@ -228,7 +331,14 @@ export function ProtocolConsole() {
     );
   }
 
-  const v = snap?.values;
+  // The snapshot, when the snapshot is what is shown. A snapshot that
+  // could stand in for the chain carries none of the warnings below; they
+  // fire only for one shown because the chain read failed too.
+  const snap: ProtocolKnobSnapshot | null = reading?.source === 'snapshot' ? reading.snap : null;
+  const fallbackGap = reading?.source === 'snapshot' ? (reading.chainReadFailed ?? null) : null;
+  const v: ProtocolKnobValues | undefined =
+    reading === null ? undefined : reading.source === 'chain' ? reading.values : reading.snap.values;
+  const labelsUnavailable = snap?.labelsUnavailable === true;
   // A snapshot older than a day means the refresh rail is wedged. Saying
   // so is the point of the console; quietly rendering day-old governance
   // parameters as current would be the failure this guard exists for.
@@ -243,38 +353,31 @@ export function ProtocolConsole() {
   const stale = ageState === 'stale';
   // UNDATED IS NOT FRESH (review round 3 P2). `fetchProtocolKnobs`
   // deliberately accepts a response with no `updatedAt`, and that case
-  // was neither `stale` nor `unavailable` — so an old or malformed
-  // worker could present indefinitely old governance parameters beneath
-  // copy calling them current, with no qualification at all. The wire
-  // type's own comment requires callers to surface this timestamp.
-  // Silence about age is the one thing this page must not do: it exists
-  // so a reader knows what they are looking at.
+  // must not read as current. Silence about age is the one thing this
+  // page must not do: it exists so a reader knows what they are looking
+  // at.
   //
   // ZERO IS A SENTINEL, NOT A TIMESTAMP (review round 8 P2).
   // `markStaleBelow` zeroes `updated_at` when a catch-up scan saw a
   // governance event the row predates, and the endpoint emits
-  // `stale: true` alongside it. Zero is a real `number`, so it fell
-  // through as a capture time and the provenance sentence read "taken
-  // 56 years ago" — a confident, precise, entirely invented figure on
-  // the page whose whole claim is that its numbers can be trusted.
-  // The honest reading of the sentinel is that the capture time is
-  // UNKNOWN and the values are known-behind, which is what `undated`
-  // already says.
+  // `stale: true` alongside it. The honest reading of the sentinel is
+  // that the capture time is UNKNOWN and the values are known-behind.
   //
   // AND KNOWN-STALE IS NOT MERELY UNDATED (review round 10 P2). The
   // indexer sets `stale` when a catch-up scan saw a governance event
   // this snapshot predates. That is a positive verdict — the values ARE
   // behind — and strictly stronger than "we cannot tell how old this
-  // is". Folding it into `undated` had the page say the values "may be
-  // current" about values it had been told are not.
+  // is".
   const knownStale = snap?.stale === true;
   //
   // AND A FUTURE STAMP BELONGS HERE, NOT UNDER `stale` (round 38 P2).
   // It is a capture time that cannot be one, so the age is unknown —
-  // the same thing a missing stamp means and the same advice. The copy
-  // says "no usable timestamp" rather than "no timestamp" precisely
-  // because it now speaks for both arrivals.
+  // the same thing a missing stamp means and the same advice.
   const undated = !knownStale && ageState === 'unusable-stamp';
+  // #2074 — older than the indexer's regular refresh but not yet a day:
+  // the day-old banner says nothing yet, and the page must not imply the
+  // snapshot is current when it could not check it against the chain.
+  const old = fallbackGap === 'old' && !stale;
 
   return (
     <div className="pc-page">
@@ -301,12 +404,21 @@ export function ProtocolConsole() {
         </p>
       )}
 
+      {/* #2074 — the snapshot below was not current and the contracts
+          could not be read in its place. Said first, so every warning
+          after it reads as a reason the values may be behind. */}
+      {fallbackGap !== null && (
+        <p className="pc-stale" role="status">
+          <AlertTriangle aria-hidden="true" /> {copy.protocolConsole.chainReadFailed}
+        </p>
+      )}
+
       {/* ROUND 65 P2 — a snapshot EXISTS and its numbers cannot be
           trusted to their names. Distinct from `unavailable`, which says
           nothing is there: here the age, the block and the staleness
           verdict below are all real and worth reading, and the values
           are withheld deliberately rather than missing. */}
-      {snap?.labelsUnavailable && (
+      {labelsUnavailable && (
         <p className="pc-unavailable" role="status">
           <AlertTriangle aria-hidden="true" />{' '}
           {copy.protocolConsole.labelsUnavailable}
@@ -331,40 +443,29 @@ export function ProtocolConsole() {
         </p>
       )}
 
-      {!unavailable && !snap?.labelsUnavailable && v && (
+      {old && (
+        <p className="pc-stale" role="status">
+          <AlertTriangle aria-hidden="true" /> {copy.protocolConsole.oldSnapshot}
+        </p>
+      )}
+
+      {!unavailable && !labelsUnavailable && v && (
         <>
-          <section className="pc-section" aria-labelledby="pc-fees">
-            <h2 id="pc-fees">{copy.protocolConsole.feesHeading}</h2>
-            <Row label={copy.protocolConsole.treasuryFee} value={bps(v.treasuryFeeBps)} note={copy.protocolConsole.treasuryFeeHint} />
-            <Row label={copy.protocolConsole.loanInitiationFee} value={bps(v.loanInitiationFeeBps)} note={copy.protocolConsole.loanInitiationFeeHint} />
-            <Row label={copy.protocolConsole.liquidationHandlingFee} value={bps(v.liquidationHandlingFeeBps)} />
-            <Row label={copy.protocolConsole.matcherFee} value={bps(v.lifMatcherFeeBps)} />
-          </section>
-
-          <section className="pc-section" aria-labelledby="pc-risk">
-            <h2 id="pc-risk">{copy.protocolConsole.riskHeading}</h2>
-            <Row label={copy.protocolConsole.maxSlippage} value={bps(v.maxLiquidationSlippageBps)} />
-            <Row label={copy.protocolConsole.maxIncentive} value={bps(v.maxLiquidatorIncentiveBps)} />
-            <Row
-              label={copy.protocolConsole.volatilityLtv}
-              value={bps(v.volatilityLtvThresholdBps)}
-              note={copy.protocolConsole.volatilityLtvHint}
-            />
-            <Row label={copy.protocolConsole.rentalBuffer} value={bps(v.rentalBufferBps)} />
-          </section>
-
-          <section className="pc-section" aria-labelledby="pc-limits">
-            <h2 id="pc-limits">{copy.protocolConsole.limitsHeading}</h2>
-            <Row label={copy.protocolConsole.autoPause} value={seconds(v.autoPauseDurationSeconds)} />
-            <Row label={copy.protocolConsole.maxOfferDuration} value={plain(v.maxOfferDurationDays, ` ${copy.protocolConsole.days}`)} />
-          </section>
-
-          <section className="pc-section" aria-labelledby="pc-flags">
-            <h2 id="pc-flags">{copy.protocolConsole.flagsHeading}</h2>
-            <Row label={copy.protocolConsole.rangeAmount} value={flag(v.rangeAmountEnabled)} />
-            <Row label={copy.protocolConsole.rangeRate} value={flag(v.rangeRateEnabled)} />
-            <Row label={copy.protocolConsole.partialFill} value={flag(v.partialFillEnabled)} />
-          </section>
+          {/* #2071 — every section and row comes from one list, which the
+              coverage check holds against the canonical knob reference. */}
+          {CONSOLE_SECTIONS.map((section) => (
+            <section key={section.id} className="pc-section" aria-labelledby={section.id}>
+              <h2 id={section.id}>{copy.protocolConsole[section.heading]}</h2>
+              {section.rows.map((row) => (
+                <Row
+                  key={row.key}
+                  label={copy.protocolConsole[row.label]}
+                  value={rowValue(row, v)}
+                  note={row.hint && copy.protocolConsole[row.hint]}
+                />
+              ))}
+            </section>
+          ))}
 
           <section className="pc-section" aria-labelledby="pc-tiers">
             <h2 id="pc-tiers">{copy.protocolConsole.tiersHeading}</h2>
@@ -392,15 +493,10 @@ export function ProtocolConsole() {
                   value={copy.protocolConsole.tierValue(
                     // BASE UNITS IN, TOKEN UNITS OUT (review round 5 P2),
                     // WITHOUT ROUNDING (round 8 P2). `tierThresholds`
-                    // arrives as 18-decimal VPFI base-unit STRINGS, so
-                    // rendering `t` directly printed an integer with
-                    // eighteen extra digits. The first fix routed it
-                    // through `formatTokenAmount`, which goes via `Number`
-                    // and caps at four fraction digits — fine for a
-                    // balance, wrong for a governance parameter: a
-                    // threshold is an arbitrary `uint256` a person chose,
-                    // and a page that exists so figures can be checked
-                    // must not quietly round the figure being checked.
+                    // arrives as 18-decimal VPFI base-unit STRINGS, and a
+                    // threshold is an arbitrary `uint256` a person chose:
+                    // a page that exists so figures can be checked must
+                    // not quietly round the figure being checked.
                     // `exactAmountString` is `formatUnits` with no
                     // numeric round-trip.
                     exactDecimal(exactAmountString(BigInt(t), VPFI_DECIMALS)),
@@ -413,17 +509,21 @@ export function ProtocolConsole() {
         </>
       )}
 
-      {/* ROUND 66 P2 — OUTSIDE the value-label guard.
-          The provenance was nested inside it, so an available snapshot
-          that arrived without labels lost its block and its age — the
-          exact two facts the round-65 fix retained in order to disclose
-          them, and which `labelsUnavailable` tells the reader are "still
-          accurate" a few lines above. A surface that names a disclosure
-          and then withholds it is worse than one that never claimed it.
-          It is gated on `snap` alone: the sentence describes where the
-          reading came from and when, which is knowable for every
-          snapshot the page holds, labelled or not. */}
-      {!unavailable && snap && (
+      {/* ROUND 66 P2 — OUTSIDE the value-label guard, so a snapshot that
+          arrived without labels still states its block and its age.
+
+          #2074 — and it names the source. A chain read states its block,
+          when it was taken, and why the snapshot was not used. */}
+      {reading?.source === 'chain' && (
+        <p className="pc-provenance">
+          {copy.protocolConsole.chainProvenance(
+            localeNumber(Number(reading.blockNumber), i18n.resolvedLanguage),
+            ageText(reading.readAtSec, nowSec),
+          )}{' '}
+          {chainWhy(reading.why)}
+        </p>
+      )}
+      {snap && (
         <p className="pc-provenance">
           {copy.protocolConsole.provenance}
           {typeof snap.sourceBlock === 'number'

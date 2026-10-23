@@ -138,7 +138,7 @@ const copySource = {
     protocolConsole: {
       title: 'Protocol console — Vaipakam',
       description:
-        'Current values for the protocol parameters the public indexer publishes — fees, thresholds, durations, and feature flags — read-only and open to anyone.',
+        'Current values for the protocol-wide settings governance can change — fees, risk and price-oracle limits, durations, switches and the treasury — read-only and open to anyone.',
     },
     // Wallet-gated, per-user surfaces — carried for the browser tab
     // title only; SeoMeta marks all of these noindex.
@@ -6064,7 +6064,7 @@ const copySource = {
   protocolConsole: {
     title: 'Protocol console',
     lede: tmpl(
-      'Current values for the protocol parameters the public indexer publishes for chain {{chain}} — fees, thresholds, durations and feature flags. Not every governance-tunable setting is published here yet, so read this as a subset rather than the full picture; the parameter reference lists them all. Public and read-only — no wallet needed, and no controls here change anything. Governance changes go through the timelock, not this page.',
+      'Current values for the protocol-wide settings governance can change on chain {{chain}}: fees, risk and price-oracle limits, durations, switches and the treasury. They come from the public indexer’s snapshot while it is current, and straight from the contracts when it is not; the line at the bottom of the page says which. Settings that differ per asset or per chain, and the reward and recycling settings, are not shown here, and a few protocol-wide ones are not yet; the parameter reference lists them all. Public and read-only — no wallet needed, and no controls here change anything. Governance changes go through the timelock, not this page.',
       ['chain'],
     ),
     refresh: 'Refresh',
@@ -6077,7 +6077,14 @@ const copySource = {
     hiddenBody:
       'Parameter visibility is turned off on this deployment, so the live values are not shown here. This is a display setting only — the parameters themselves are on-chain and readable by anyone directly from the contracts.',
     unavailable:
-      'No configuration snapshot is available for this chain. Nothing is inferred from that — it means the value is unknown here, not that it is unset on-chain.',
+      'Neither the public indexer’s snapshot nor the contracts on this chain could be read just now. Nothing is inferred from that — the values are unknown here, not unset on-chain.',
+    /* #2074 — the snapshot was not current, so the page tried the contracts
+       directly, and that failed too. What follows is the snapshot, with
+       whatever warnings it carries. */
+    chainReadFailed:
+      'The indexer’s snapshot below is not current, and reading the contracts directly failed, so it is the latest account this page can give. Treat its values as possibly out of date.',
+    oldSnapshot:
+      'This snapshot is older than the indexer’s regular refresh, so it may be missing a recent governance change.',
     /* Round 65 P2 — the state between "here are the values" and "there is
        no snapshot", which used to be reported as the latter.
 
@@ -6127,6 +6134,25 @@ const copySource = {
     volatilityLtv: 'Volatility LTV threshold',
     volatilityLtvHint: 'LTV at which the volatility collapse rule applies.',
     rentalBuffer: 'NFT rental buffer',
+    minHealthFactor: 'Loan-admission health-factor floor',
+    minHealthFactorHint:
+      'The health factor a new loan must clear when it opens. Open loans keep the floor they opened under.',
+    swapToRepaySlippage: 'Swap-to-repay max slippage',
+    rateModel: 'Quote-time rate model',
+    rateModelHint: 'The contract that suggests rates when offers are quoted. Not set means none is in use.',
+    rateModelMaxDeviation: 'Rate-model max deviation',
+    oraclesHeading: 'Price oracles',
+    secondaryOracleMaxDeviation: 'Secondary-oracle max deviation',
+    secondaryOracleMaxStaleness: 'Secondary-oracle max staleness',
+    pythOracle: 'Pyth oracle',
+    pythOracleHint: 'Cross-checks the main price reading. Not set means the cross-check is off.',
+    pythFeedId: 'Pyth cross-check feed id',
+    pythMaxStaleness: 'Pyth max staleness',
+    pythMaxDeviation: 'Pyth cross-check max deviation',
+    pythConfidenceMax: 'Pyth confidence ceiling',
+    sequencerUptimeFeed: 'Sequencer uptime feed',
+    sequencerUptimeFeedHint:
+      'On a layer-2 chain, holds prices back while the sequencer is down. Not set means there is no such guard.',
     limitsHeading: 'Limits and timing',
     autoPause: 'Auto-pause duration',
     maxOfferDuration: 'Max offer duration',
@@ -6134,6 +6160,36 @@ const copySource = {
     rangeAmount: 'Range amount offers',
     rangeRate: 'Range rate offers',
     partialFill: 'Partial fill',
+    periodicHeading: 'Periodic interest',
+    periodicInterest: 'Periodic interest payments',
+    finerCadenceMinPrincipal: 'Minimum principal for shorter payment periods',
+    finerCadenceMinPrincipalHint:
+      'Above this principal a lender may choose interest periods shorter than the mandatory one.',
+    preNotifyDays: 'Advance reminder',
+    preNotifyDaysHint: 'How many days before an interest checkpoint or a maturity date reminders go out.',
+    numeraire: 'Reference currency',
+    numeraireRotation: 'Reference-currency change',
+    numeraireRotationHint: 'Whether governance may switch the reference currency.',
+    automationHeading: 'Automation',
+    autoLend: 'Auto-lend',
+    autoRefinance: 'Auto-refinance',
+    autoExtend: 'Auto-extend',
+    keepers: 'Keepers',
+    paused: 'paused',
+    running: 'running',
+    crossChainHeading: 'Cross-chain reporting',
+    rewardGrace: 'Day-close grace window',
+    rewardGraceHint:
+      'How long a day’s cross-chain accounting may wait for a chain’s report before it is closed without it.',
+    treasuryHeading: 'Treasury',
+    treasuryAddress: 'Treasury address',
+    notSet: 'not set',
+    // #2681 — the getter returns zero when governance never set the
+    // window, and the protocol then uses its built-in default. The page
+    // does not repeat that default's figure: it would be a contract
+    // constant copied into the app, free to drift.
+    unsetDefault: 'not set, so the protocol’s built-in default applies',
+    numeraireUnits: tmpl('{{amount}} (reference-currency units)', ['amount']),
     tiersHeading: 'VPFI discount tiers',
     tiers: 'Tiers',
     tierThreshold: tmpl('Tier {{n}} threshold', ['n']),
@@ -6165,6 +6221,24 @@ const copySource = {
       ', with no usable timestamp on it — so how current these values are is unknown',
     provenanceTail:
       '. The same endpoint is keyless and open-CORS, so you can verify any figure here independently rather than taking this page’s word for it.',
+    /* #2074 — the figures came from the contracts, not the snapshot. Says
+       when and at which block, then why the snapshot was not used. */
+    chainProvenance: tmpl(
+      'Read directly from the contracts on this chain at block {{block}}, {{age}}. Any figure here can be checked by calling the same contract on a public block explorer.',
+      ['block', 'age'],
+    ),
+    chainWhyMissing:
+      'The public indexer had no configuration snapshot for this chain, or could not be reached, so this page read the contracts instead.',
+    chainWhyKnownStale:
+      'The indexer’s snapshot was known to be out of date, so this page read the contracts instead.',
+    chainWhyUndated:
+      'The indexer’s snapshot carried no usable timestamp, so this page read the contracts instead.',
+    chainWhyOld:
+      'The indexer’s snapshot was older than its regular refresh, so this page read the contracts instead.',
+    chainWhyUnlabelled:
+      'The indexer’s snapshot arrived without the names this page needs, so this page read the contracts instead.',
+    chainWhyIncomplete:
+      'The indexer’s snapshot did not cover every setting shown here, so this page read the contracts instead.',
     bpsValue: tmpl('{{pct}}% ({{bps}} bps)', ['pct', 'bps']),
     hoursValue: tmpl('{{h}} h ({{s}}s)', ['h', 's']),
     minutesValue: tmpl('{{m}} min ({{s}}s)', ['m', 's']),

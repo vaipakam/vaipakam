@@ -318,6 +318,31 @@
       "values": {
         "fr": "Mode strict"
       }
+    },
+    "copy.protocolConsole.keepers": {
+      "reason": "\"Keepers\" is the term the Spanish and French bundles already use for the protocol's automation bots — the keeper-permissions surfaces read \"Permisos de keepers\" / \"Permissions de keepers\" and use the bare noun throughout — so the Protocol Console row names the same thing in the same word. Rendering it differently on one page would leave readers unsure the two are the same bots.",
+      "source": "Keepers",
+      "locales": [
+        "es",
+        "fr"
+      ]
+    },
+    "copy.protocolConsole.pythOracle": {
+      "reason": "French 'Oracle Pyth' is the correct rendering of 'Pyth oracle': 'oracle' is the French word, Pyth is a provider name that is not translated, and the noun-then-name order is French grammar. The guard cannot tell that from a rearranged English phrase; the accepted French is recorded below so rewording it retires this entry.",
+      "source": "Pyth oracle",
+      "locales": [
+        "fr"
+      ],
+      "values": {
+        "fr": "Oracle Pyth"
+      }
+    },
+    "copy.protocolConsole.treasuryHeading": {
+      "reason": "\"Treasury\" is the German bundle's settled loanword for the protocol treasury — the same page's fee row reads \"Treasury-Gebühr\" and the lede says \"die Treasury\" — so the section heading uses the same word rather than a synonym the rest of the page does not.",
+      "source": "Treasury",
+      "locales": [
+        "de"
+      ]
     }
   }
 }

@@ -21,6 +21,11 @@
 
 import { type Address, type PublicClient, getAbiItem, toFunctionSelector } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import {
+  abiOutputNames as abiOutputNamesOf,
+  readProtocolKnobGetters,
+  type ProtocolKnobRead,
+} from '@vaipakam/lib/protocolKnobs';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import type { Env } from './env';
 import { jsonResponse } from './offerRoutes';
@@ -107,6 +112,23 @@ const CONFIG_EVENT_NAMES: ReadonlySet<string> = new Set([
   'ZeroExProxySet',
   'AllowanceTargetSet',
   'SanctionsOracleSet',
+  // #2071 — setters of the single-output settings published beside the
+  // bundle (`PROTOCOL_KNOB_GETTERS`). `setSequencerUptimeFeed` emits
+  // nothing, so that one value reaches the snapshot on the backstop.
+  'MinHealthFactorSet',
+  'SecondaryOracleMaxDeviationBpsSet',
+  'SecondaryOracleMaxStalenessSet',
+  'PythOracleSet',
+  'PythNumeraireFeedIdSet',
+  'PythMaxStalenessSecondsSet',
+  'PythNumeraireMaxDeviationBpsSet',
+  'PythConfidenceMaxBpsSet',
+  'RewardReporterConfigUpdated',
+  'PeriodicInterestEnabledSet',
+  'NumeraireSwapEnabledSet',
+  'NumeraireUpdated',
+  'MinPrincipalForFinerCadenceSet',
+  'PreNotifyDaysSet',
 ]);
 
 /** Backstop refresh age: config flips are event-driven within one scan
@@ -187,20 +209,12 @@ export function serializeTuple(values: readonly unknown[]): string {
  * labels have to come from the same artefact the read came from.
  *
  * Returns null if the getter or any output name is missing, which
- * suppresses the labelled view rather than guessing at it.
+ * suppresses the labelled view rather than guessing at it. The rule lives
+ * in `@vaipakam/lib/protocolKnobs`, shared with the connected app's
+ * chain read of the same bundle (#2074).
  */
 export function abiOutputNames(functionName: string): readonly string[] | null {
-  const entry = (DIAMOND_ABI_VIEM as readonly unknown[]).find(
-    (e): e is { type: string; name: string; outputs?: readonly { name?: string }[] } =>
-      typeof e === 'object' &&
-      e !== null &&
-      (e as { type?: string }).type === 'function' &&
-      (e as { name?: string }).name === functionName,
-  );
-  const outputs = entry?.outputs;
-  if (!outputs || outputs.length === 0) return null;
-  const names = outputs.map((o) => o.name ?? '');
-  return names.every((n) => n.length > 0) ? names : null;
+  return abiOutputNamesOf(DIAMOND_ABI_VIEM, functionName);
 }
 
 /** The facet this build's deployment artifact records as the host of each
@@ -259,6 +273,30 @@ function storedNames(json: string | null | undefined): readonly string[] | null 
     return Array.isArray(names) && names.length > 0 && names.every((n) => typeof n === 'string' && n.length > 0)
       ? (names as string[])
       : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The settings stored beside the tuples (#2071), or null when the column
+ *  is empty or does not hold the shape the refresh writes. */
+function storedKnobs(json: string | null | undefined): ProtocolKnobRead | null {
+  if (!json) return null;
+  try {
+    const k = JSON.parse(json) as { values?: unknown; unreported?: unknown };
+    const values = k.values;
+    const unreported = k.unreported;
+    if (
+      typeof values !== 'object' ||
+      values === null ||
+      Array.isArray(values) ||
+      !Object.values(values).every((v) => typeof v === 'string' || typeof v === 'boolean') ||
+      !Array.isArray(unreported) ||
+      !unreported.every((u) => typeof u === 'string')
+    ) {
+      return null;
+    }
+    return { values: values as ProtocolKnobRead['values'], unreported: unreported as string[] };
   } catch {
     return null;
   }
@@ -359,7 +397,7 @@ export async function maybeRefreshProtocolConfig(opts: {
       chainId: opts.chainId,
       blockNumber: opts.blockNumber,
     };
-    const [bundle, flags, graceBuckets, bundleAbiBound, flagsAbiBound] = await Promise.all([
+    const [bundle, flags, graceBuckets, bundleAbiBound, flagsAbiBound, knobs] = await Promise.all([
       opts.client.readContract({
         address: opts.diamond,
         abi: DIAMOND_ABI_VIEM,
@@ -425,6 +463,24 @@ export async function maybeRefreshProtocolConfig(opts: {
       // at this block? Never throws; false withholds the names below.
       abiDescribesChainGetter({ ...readAt, functionName: 'getProtocolConfigBundle' }),
       abiDescribesChainGetter({ ...readAt, functionName: 'getMasterFlags' }),
+      // #2071 — the single-output settings the bundle does not carry, in one
+      // batched call at the same block. Isolated like the grace read: a
+      // failure stores NULL (the route then serves none of them, and the
+      // connected app reads them from the chain), never a previous row's
+      // values under this row's block.
+      readProtocolKnobGetters({
+        client: opts.client,
+        diamond: opts.diamond,
+        abi: DIAMOND_ABI_VIEM,
+        blockNumber: opts.blockNumber,
+      }).catch((err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[configSnapshot] knob read failed for chain ${opts.chainId} (stored as unknown)`,
+          err,
+        );
+        return null;
+      }),
     ]);
 
     // A transient grace-read failure normally PRESERVES the existing
@@ -446,13 +502,14 @@ export async function maybeRefreshProtocolConfig(opts: {
     await opts.env.DB.prepare(
       `INSERT INTO protocol_config
          (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at,
-          bundle_names_json, master_flags_names_json)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8, ?9)
+          bundle_names_json, master_flags_names_json, knob_values_json)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8, ?9, ?10)
        ON CONFLICT (chain_id) DO UPDATE SET
          bundle_json = excluded.bundle_json,
          master_flags_json = excluded.master_flags_json,
          bundle_names_json = excluded.bundle_names_json,
          master_flags_names_json = excluded.master_flags_names_json,
+         knob_values_json = excluded.knob_values_json,
          grace_buckets_json = CASE WHEN ?7 = 1 THEN NULL
            ELSE COALESCE(excluded.grace_buckets_json, protocol_config.grace_buckets_json) END,
          source_block = excluded.source_block,
@@ -469,6 +526,7 @@ export async function maybeRefreshProtocolConfig(opts: {
         invalidateGrace ? 1 : 0,
         bundleNames === null ? null : JSON.stringify(bundleNames),
         flagNames === null ? null : JSON.stringify(flagNames),
+        knobs === null ? null : JSON.stringify(knobs),
       )
       .run();
   } catch (err) {
@@ -522,27 +580,31 @@ export async function handleConfigSnapshot(
       updated_at: number;
       bundle_names_json?: string | null;
       master_flags_names_json?: string | null;
+      knob_values_json?: string | null;
     };
-    let row: Row | null;
-    try {
-      row = await env.DB.prepare(
-        `SELECT bundle_json, master_flags_json, source_block, updated_at,
-                bundle_names_json, master_flags_names_json
-         FROM protocol_config WHERE chain_id = ?`,
-      )
-        .bind(chainId)
-        .first<Row>();
-    } catch (err) {
-      // A database migration 0067 has not reached yet (the route must
-      // tolerate the previous schema): serve the row with no captured
-      // names, which withholds the labelled view below.
-      if (!/no such column/i.test(String(err))) throw err;
-      row = await env.DB.prepare(
-        `SELECT bundle_json, master_flags_json, source_block, updated_at
-         FROM protocol_config WHERE chain_id = ?`,
-      )
-        .bind(chainId)
-        .first<Row>();
+    // The route must tolerate the previous schema while a migration has not
+    // reached the database yet: each step drops the columns the newest
+    // migration added (0069, then 0067), so a missing later column never
+    // costs what an earlier one already provides.
+    const columnSets = [
+      'bundle_names_json, master_flags_names_json, knob_values_json',
+      'bundle_names_json, master_flags_names_json',
+      '',
+    ];
+    let row: Row | null = null;
+    for (let i = 0; i < columnSets.length; i++) {
+      const extra = columnSets[i] ? `, ${columnSets[i]}` : '';
+      try {
+        row = await env.DB.prepare(
+          `SELECT bundle_json, master_flags_json, source_block, updated_at${extra}
+           FROM protocol_config WHERE chain_id = ?`,
+        )
+          .bind(chainId)
+          .first<Row>();
+        break;
+      } catch (err) {
+        if (i === columnSets.length - 1 || !/no such column/i.test(String(err))) throw err;
+      }
     }
     if (!row) return jsonResponse({ chainId, available: false });
     const bundle = JSON.parse(row.bundle_json) as unknown[];
@@ -553,8 +615,16 @@ export async function handleConfigSnapshot(
     // this build's names would attach real values to the wrong fields. A
     // row captured before the names were recorded serves no labelled view
     // until the next capture writes them.
-    const values = labelTuple(bundle, storedNames(row.bundle_names_json));
+    const bundleValues = labelTuple(bundle, storedNames(row.bundle_names_json));
     const flags = labelTuple(masterFlags, storedNames(row.master_flags_names_json));
+    // #2071 — the settings read beside the bundle at the same block join the
+    // named `values` object, and the ones the chain did not answer are named
+    // in `unreported`, so "not reported" is stated rather than inferred from
+    // a missing key. Served only beside a labelled bundle: `values` is absent
+    // when the bundle's labels cannot be trusted, and a partial `values`
+    // would read as a labelled snapshot that happens to lack fields.
+    const knobs = bundleValues ? storedKnobs(row.knob_values_json) : null;
+    const values = bundleValues ? { ...bundleValues, ...(knobs?.values ?? {}) } : null;
     return jsonResponse({
       chainId,
       available: true,
@@ -564,6 +634,7 @@ export async function handleConfigSnapshot(
       // absent key reads as "not available here"; `{}` would read as
       // "this snapshot has no fields", which is false.
       ...(values ? { values } : {}),
+      ...(knobs ? { unreported: knobs.unreported } : {}),
       ...(flags ? { flags } : {}),
       sourceBlock: row.source_block,
       updatedAt: row.updated_at,

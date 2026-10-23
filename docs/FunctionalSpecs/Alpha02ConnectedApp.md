@@ -46,9 +46,8 @@ Two surfaces exist to be read by people who have not connected anything,
 including people who never will.
 
 - An analytics view reports the deployment's loan and offer counts, and a
-  protocol console reports the current value of the governance-tunable
-  parameters the public indexer publishes — a bounded subset, not the
-  whole catalogue. Both are read-only. Neither offers any control that changes
+  protocol console reports the current value of the protocol-wide settings
+  governance can change — a bounded subset, not the whole catalogue. Both are read-only. Neither offers any control that changes
   protocol state; parameter changes are a governance action elsewhere.
 - Both render fully without a wallet, and both are reachable by direct
   link from outside the app. They resolve their chain the same way every
@@ -126,13 +125,39 @@ including people who never will.
 - The protocol console reports each parameter against its own name, and
   never by inferring which value belongs to which name from ordering.
 - The console states that it shows a subset rather than implying it is
-  complete. Settings that exist but are not published — lifecycle and
-  automation switches, the grace schedule, sanctions-oracle
-  configuration and several risk controls among them — are absent, and
-  a reader is pointed at the full parameter reference rather than left
-  to infer that what is shown is all there is. An incomplete view that
-  asserts completeness is worse than an incomplete view, because it
-  stops the reader looking further.
+  complete, and it names what is left out: settings that differ per asset
+  or per chain, the reward and recycling settings, and a few protocol-wide
+  settings not yet shown. A reader is pointed at the full parameter
+  reference rather than left to infer that what is shown is all there is.
+  An incomplete view that asserts completeness is worse than an incomplete
+  view, because it stops the reader looking further.
+- Every protocol-wide setting the parameter reference lists is accounted
+  for: either the console shows its current value, or the omission has a
+  recorded reason (it differs per asset or chain, it is a fixed constant,
+  it belongs to the rewards and recycling surfaces, it is off on this
+  deployment, the contracts expose no way to read it, or it is not shown
+  yet). A setting added to the reference without either is a defect the
+  build catches, so the console cannot silently fall behind the reference.
+  Within that, the fees, the risk and price-oracle limits, the periodic
+  interest and reference-currency settings, the automation switches and
+  the keeper pause, the cross-chain reporting window and the treasury
+  address are shown.
+- A setting that is unset is reported as unset, never as a figure or a
+  blank. Where an unset setting means the protocol falls back to a built-in
+  default, the console says that the default applies rather than quoting
+  the default's value.
+- The console shows the public indexer's snapshot only while that snapshot
+  can stand in for the chain: it is dated, recent enough that the indexer's
+  regular refresh is still running, not known to be behind a governance
+  change, labelled, and complete for every setting the page shows. In any
+  other case the console reads the same values directly from the contracts,
+  all at one block, and its provenance line says so, names the block and
+  when it was read, and gives the reason the snapshot was not used.
+- A snapshot that is not current is shown only when the direct read fails
+  too. The console then says the contracts could not be read and that the
+  values may be out of date, alongside whatever the snapshot's own
+  warnings are. With neither source readable, the console says the values
+  are unknown, not unset.
 - An operator may hide the live parameter values on a deployment. In
   that state the console says so plainly, and does not direct the reader
   to any resource that the same setting has also withheld.

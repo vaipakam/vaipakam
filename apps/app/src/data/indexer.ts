@@ -8,6 +8,7 @@
  * field shapes in sync with the worker.
  */
 
+import type { ProtocolKnobKey } from '@vaipakam/lib/protocolKnobs';
 import type { SignedOrderWire } from '../lib/signedOffer';
 
 const TIMEOUT_MS = 4_000;
@@ -972,7 +973,40 @@ export interface ProtocolKnobValues {
   rangeAmountEnabled?: boolean;
   rangeRateEnabled?: boolean;
   partialFillEnabled?: boolean;
+  // #2071 — the single-output settings read beside the bundle
+  // (`PROTOCOL_KNOB_GETTERS` in `@vaipakam/lib/protocolKnobs`, which both the
+  // indexer and this app's chain read use). Integers as decimal strings,
+  // addresses and 32-byte ids as hex text.
+  minHealthFactor?: string;
+  maxSwapToRepaySlippageBps?: string;
+  rateModel?: string;
+  rateModelMaxDeviationBps?: string;
+  secondaryOracleMaxDeviationBps?: string;
+  secondaryOracleMaxStalenessSeconds?: string;
+  pythOracle?: string;
+  pythCrossCheckFeedId?: string;
+  pythMaxStalenessSeconds?: string;
+  pythCrossCheckMaxDeviationBps?: string;
+  pythConfidenceMaxBps?: string;
+  sequencerUptimeFeed?: string;
+  rewardGraceSeconds?: string;
+  periodicInterestEnabled?: boolean;
+  numeraireSwapEnabled?: boolean;
+  numeraireSymbol?: string;
+  minPrincipalForFinerCadence?: string;
+  preNotifyDays?: string;
+  autoLendEnabled?: boolean;
+  autoRefinanceEnabled?: boolean;
+  autoExtendEnabled?: boolean;
+  keepersPaused?: boolean;
+  treasury?: string;
 }
+
+/** Compile-time proof that every setting the shared reader publishes is
+ *  declared above: adding a getter to `PROTOCOL_KNOB_GETTERS` without a
+ *  field here fails the typecheck instead of arriving untyped. */
+type UndeclaredKnobKeys = Exclude<ProtocolKnobKey, keyof ProtocolKnobValues>;
+export const KNOB_KEYS_DECLARED: [UndeclaredKnobKeys] extends [never] ? true : never = true;
 
 export interface ProtocolKnobSnapshot {
   values: ProtocolKnobValues;
@@ -991,6 +1025,11 @@ export interface ProtocolKnobSnapshot {
    *  age, the staleness verdict — while telling the reader nothing is
    *  there. `values` is empty here; everything else still applies. */
   labelsUnavailable?: boolean;
+  /** #2071 — the settings the snapshot asked the chain for and got no
+   *  answer to. `undefined` when the snapshot carries no such list (an
+   *  older indexer, or a row whose settings read failed): then it is not
+   *  known which of the settings it would have reported. */
+  unreported?: string[];
   flags: Record<string, boolean>;
   sourceBlock?: number;
   /** Unix SECONDS. Callers MUST surface this — see `protocolConfigFresh`. */
@@ -1007,6 +1046,7 @@ export async function fetchProtocolKnobs(
   const res = await getJson<{
     available?: boolean;
     values?: ProtocolKnobValues;
+    unreported?: unknown;
     flags?: Record<string, boolean>;
     sourceBlock?: number;
     updatedAt?: number;
@@ -1021,6 +1061,10 @@ export async function fetchProtocolKnobs(
     // showing.
     values: res.values ?? {},
     labelsUnavailable: res.values === undefined,
+    unreported:
+      Array.isArray(res.unreported) && res.unreported.every((u) => typeof u === 'string')
+        ? (res.unreported as string[])
+        : undefined,
     flags: res.flags ?? {},
     sourceBlock: res.sourceBlock,
     updatedAt: res.updatedAt,
