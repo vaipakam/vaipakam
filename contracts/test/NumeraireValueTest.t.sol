@@ -299,6 +299,14 @@ contract NumeraireValueRiskTest is SetupTest {
         );
     }
 
+    /// @dev The one LTV rule: floored, full precision, so a debt value whose
+    ///      plain product with BASIS_POINTS would overflow still yields its LTV.
+    function test_ltvRule() public pure {
+        assertEq(LibRiskMath.ltvBps(1, 3), 3333, "floored");
+        // 1e74 x 1e4 alone would overflow.
+        assertEq(LibRiskMath.ltvBps(1e74, 2e74), 5000, "large legs");
+    }
+
     /// @dev A token whose `decimals()` cannot be read is refused by name.
     function test_unreadableDecimalsAreRefused() public {
         vm.mockCallRevert(mockCollateralERC20, abi.encodeWithSignature("decimals()"), "");

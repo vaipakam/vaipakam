@@ -73,6 +73,19 @@ library LibRiskMath {
         hf = Math.mulDiv(riskAdjusted, LibVaipakam.HF_SCALE, debtValue);
     }
 
+    /// @notice The runtime loan-to-value rule, in BPS, from a loan's two 1e18
+    ///         numeraire leg values: `⌊D·BPS / C⌋`, at full precision (#2419).
+    ///         The single home of the ratio `RiskFacet` and
+    ///         `PartialWithdrawalFacet` gate on. `collateralValue` must be
+    ///         nonzero; each caller handles a zero collateral first (the
+    ///         risk reads refuse it by name, the withdrawal simulation reads
+    ///         it as an unbounded LTV).
+    /// @param debtValue       Debt value, rounded up (1e18 numeraire).
+    /// @param collateralValue Collateral value, rounded down (1e18 numeraire).
+    function ltvBps(uint256 debtValue, uint256 collateralValue) internal pure returns (uint256) {
+        return Math.mulDiv(debtValue, LibVaipakam.BASIS_POINTS, collateralValue);
+    }
+
     /// @notice Smallest collateral amount (in collateral-asset native
     ///         units, NOT USD) that satisfies HF >= 1.5 against the
     ///         given lending amount. Lender-side gate at offer create.

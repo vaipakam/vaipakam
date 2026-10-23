@@ -356,7 +356,8 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         uint256 collateralValueUsd
     ) internal pure returns (uint256) {
         if (collateralValueUsd == 0) return type(uint256).max;
-        return (ctx.borrowValueUsd * LibVaipakam.BASIS_POINTS) / collateralValueUsd;
+        // The runtime rule, at full precision, as `RiskFacet.calculateLTV` (#2419).
+        return LibRiskMath.ltvBps(ctx.borrowValueUsd, collateralValueUsd);
     }
 
     // `_simulateHF` + `_simulateLTV` (previously here) removed in #148

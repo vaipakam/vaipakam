@@ -314,8 +314,30 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // live network exposes a swap path for the collateral. When the
         // active-network check returns Illiquid we drop into the full-
         // collateral-transfer branch below instead of attempting a swap.
-        LibVaipakam.LiquidityStatus liquidity = OracleFacet(address(this))
-            .checkLiquidityOnActiveNetwork(loan.collateralAsset);
+        //
+        // #2419 — for a loan liquid on both legs at origination the PAIR is
+        // probed first (`tryOracleRate`), BEFORE the live classifier: when a
+        // leg has no usable price the route is already the unpriced fallback
+        // (see the route note below), whatever the other leg says — the
+        // missing-price rule wins over a distrusted other leg (owner
+        // decision 2026-10-22, #666) — so the classifier, which refuses a
+        // distrusted collateral price, is not consulted. A priced pair with a
+        // distrusted leg reverts inside the probe (#666).
+        bool liquidLoan =
+            loan.assetType == LibVaipakam.AssetType.ERC20 &&
+            loan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
+            loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid;
+        bool unpricedPair;
+        if (liquidLoan) {
+            (bool pairPriced, ) = LibFallback.tryOracleRate(
+                address(this), loan.collateralAsset, loan.principalAsset
+            );
+            unpricedPair = !pairPriced;
+        }
+        // Not read for an unpriced pair: that route needs no market check.
+        LibVaipakam.LiquidityStatus liquidity = unpricedPair
+            ? LibVaipakam.LiquidityStatus.Illiquid
+            : OracleFacet(address(this)).checkLiquidityOnActiveNetwork(loan.collateralAsset);
 
         // Terminal NFT status for this default — README §7: "Loan Defaulted" or
         // "Loan Liquidated". Each branch below sets the appropriate label.
@@ -350,7 +372,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             //    the LTV read and the sale floor value both legs, and the
             //    shared valuation rule refuses a missing or zero price. When
             //    the pair cannot be priced (`tryOracleRate`: a missing or zero
-            //    price on either leg) the default skips the LTV read and the
+            //    price, or unreadable decimals, on either leg) the default skips the LTV read and the
             //    swap and enters the fallback directly, exactly as a failed
             //    swap would — a sale with no oracle floor is not attempted,
             //    the default still completes (lender first), and the
@@ -365,21 +387,14 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             //    illiquid and defaults in kind (the branch below), whatever
             //    the live probe says now; it never reaches risk math.
             // A DISTRUSTED price reverts the whole default instead (#666:
-            // refuse and retry once the feeds agree).
-            bool liquidLoan =
-                loan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
-                loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid;
+            // refuse and retry once the feeds agree), except where the other
+            // leg has no usable price at all, where the unpriced route wins.
+            // `liquidLoan` / `unpricedPair` were settled above, before the
+            // live classifier ran.
             bool isLtvCollapsed;
-            bool unpricedPair;
-            if (liquidLoan) {
-                (bool pairPriced, ) = LibFallback.tryOracleRate(
-                    address(this), loan.collateralAsset, loan.principalAsset
-                );
-                unpricedPair = !pairPriced;
-                if (pairPriced && liquidity == LibVaipakam.LiquidityStatus.Liquid) {
-                    isLtvCollapsed = RiskFacet(address(this)).calculateLTV(loanId)
-                        > LibVaipakam.cfgVolatilityLtvThresholdBps();
-                }
+            if (liquidLoan && !unpricedPair && liquidity == LibVaipakam.LiquidityStatus.Liquid) {
+                isLtvCollapsed = RiskFacet(address(this)).calculateLTV(loanId)
+                    > LibVaipakam.cfgVolatilityLtvThresholdBps();
             }
 
             if (

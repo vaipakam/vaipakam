@@ -458,7 +458,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // down, so the legs themselves already err toward the lender. Do
         // NOT change this division to ceilDiv without retuning the
         // `maxLTVBps` thresholds.
-        ltv = Math.mulDiv(borrowedValueNumeraire, LibVaipakam.BASIS_POINTS, collateralValueNumeraire);
+        ltv = LibRiskMath.ltvBps(borrowedValueNumeraire, collateralValueNumeraire);
     }
 
     /**
@@ -525,7 +525,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         (uint256 borrowValueNumeraire, uint256 collateralValueNumeraire) = _computeNumeraireValues(loan);
         if (collateralValueNumeraire == 0) revert ZeroCollateral();
 
-        uint256 ltv = Math.mulDiv(borrowValueNumeraire, LibVaipakam.BASIS_POINTS, collateralValueNumeraire);
+        uint256 ltv = LibRiskMath.ltvBps(borrowValueNumeraire, collateralValueNumeraire);
 
         // PR2 of internal-match work: read snapshotted per-tier
         // liquidation threshold from the loan instead of the retired
