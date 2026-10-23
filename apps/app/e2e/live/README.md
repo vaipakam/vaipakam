@@ -53,6 +53,31 @@ SITE_URL=https://<the-deployed-worker>.workers.dev \
 - `FAUCET_JSON` — optional deployments artifact for the faucet mock
   token addresses (defaults to the live Base Sepolia set).
 
+## A surface is judged only once it has rendered (#2111, #2180)
+
+A fixed wait cannot tell "rendered nothing" from "had not rendered yet".
+Under a loaded batch several checks sampled a route's own "Loading…"
+placeholder and reported it as the page; each passed standalone minutes
+later. `readiness.mjs` is the one rule for this. It classifies the app
+shell's `#main-content` as `unmounted`, `empty`, `loading` (every piece of
+text belongs to a spinner-bearing `.empty-state`, which is the route's
+Suspense fallback or a page still showing only its own loading state),
+`unreadable`, or `rendered`. A drive calls `awaitSurface(page)` before it
+judges a route, and a route that never renders within
+`ROUTE_READY_TIMEOUT_MS` is **not observed**: the check is recorded as not
+checked and the run is BLOCKED, never FAIL and never PASS. Positive evidence
+gathered elsewhere (a bundle missing a string, a write the page attempted)
+is still reported.
+
+`rendered` does not mean every card on the page has finished its reads; a
+scenario that depends on a chain-backed card still waits for that card
+itself. There is no separate verdict for "not observed": in this harness
+BLOCKED already means "did not complete, so its surfaces are not fully
+reviewed" (`verdictContract.mjs`).
+
+Today `live-role-journeys.mjs` (every scenario) and
+`live-recover-locales.mjs` (each locale) use it.
+
 ## Scripts
 
 | Script | What it verifies live |

@@ -93,6 +93,7 @@ import {
   requireSiteUrl,
   CHAINS,
 } from './driver.mjs';
+import { awaitSurface, notReadyReason, NotObserved } from './readiness.mjs';
 
 // Entry-point guard: this driver reads `SITE` directly, before any guarded
 // driver function runs, so without this an omitted SITE_URL surfaces as an
@@ -1169,6 +1170,14 @@ for (const roleKey of wanted) {
     let unverifiable = false;
     try {
       const wantPath = await navigate(page, s.route);
+      // READY BEFORE JUDGED (#2111, #2180 Root A). The settle below is a
+      // fixed wait, and a fixed wait cannot tell "rendered nothing" from
+      // "had not rendered yet": under a loaded batch V3, V5 and V7 sampled
+      // the route's own "Loading…" placeholder and reported it as the page.
+      // The shared readiness rule waits for the route to render first; a
+      // route that never does is UNVERIFIED (not observed), never a FAIL.
+      const surface = await awaitSurface(page);
+      if (!surface.ready) throw new NotObserved(notReadyReason(surface));
       // Per-scenario settle: a surface whose state arrives from an async
       // chain/config read needs longer than one that renders from props.
       // A scenario may replace it with a bounded poll (see R1).
@@ -1228,7 +1237,13 @@ for (const roleKey of wanted) {
         unverifiable = r.unverified === true;
       }
     } catch (err) {
-      actual = `ERROR: ${String(err.message || err).slice(0, 120)}`;
+      if (err instanceof NotObserved) {
+        unverifiable = true;
+        actual = err.message;
+        note = 'the route never rendered within the deadline, so this scenario verified nothing; re-run it, standalone if the batch is loaded';
+      } else {
+        actual = `ERROR: ${String(err.message || err).slice(0, 120)}`;
+      }
     }
     if (unverifiable) unverified += 1;
     else if (!ok) hardFail += 1;

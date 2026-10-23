@@ -62,6 +62,7 @@ import { launch, requireSiteUrl, SITE} from './driver.mjs';
 // misclassify a configuration mistake as a product FAIL.
 requireSiteUrl();
 import { splitBlocked } from './readOnlyFindings.mjs';
+import { awaitSurface, notReadyReason, ROUTE_READY_TIMEOUT_MS } from './readiness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LOCALES_DIR = path.join(HERE, '..', '..', 'src', 'i18n', 'locales');
@@ -244,7 +245,7 @@ async function probe(page, code) {
   // and a predicate satisfied by "an h1 exists" would sample that and
   // report a healthy deployment as broken (Codex #1590 r1). Waiting for
   // the expected title means a slow load reads as slow, not as failed.
-  await page
+  const settled = await page
     .waitForFunction(
       (want) => {
         // Same rule as `langMatches`, evaluated in the page (which has
@@ -261,15 +262,29 @@ async function probe(page, code) {
         );
       },
       { code, title: expected['copy.recover.title'] },
-      { timeout: 30_000 },
+      { timeout: ROUTE_READY_TIMEOUT_MS },
     )
-    .catch(() => {});
+    .then(
+      () => true,
+      () => false,
+    );
 
   page.off('response', onResponse);
   await Promise.all(bodyReads);
 
+  // A WAIT THAT EXPIRED ON A PAGE THAT NEVER RENDERED OBSERVED NOTHING
+  // (#2111, #2180 Root A). Under a loaded batch `zh` reported "locale chunk
+  // never fetched; h1 empty" and passed standalone minutes later: the page
+  // had not rendered yet, so nothing about its language was seen. When the
+  // wait expired and the routed surface is still not rendered, only POSITIVE
+  // evidence is judged — a fetched bundle missing an expected string — and
+  // everything that depends on the page having rendered is not observed.
+  // A page that DID render, in the wrong language, is still judged below.
+  const surface = settled ? { ready: true } : await awaitSurface(page, { timeoutMs: 0 });
+  const notReady = surface.ready ? null : notReadyReason(surface);
+
   if (chunkBody === null) {
-    problems.push('locale chunk never fetched (or did not look like a bundle)');
+    if (!notReady) problems.push('locale chunk never fetched (or did not look like a bundle)');
   } else {
     for (const key of ASSERTED_KEYS) {
       if (!chunkBody.includes(expected[key])) {
@@ -277,6 +292,8 @@ async function probe(page, code) {
       }
     }
   }
+
+  if (notReady) return { lang: '?', dir: '?', h1: '', problems, notReady };
 
   // ---- layer 2: what actually rendered
   const lang = await page.evaluate(() => document.documentElement.lang || '');
@@ -299,7 +316,7 @@ async function probe(page, code) {
     );
   }
 
-  return { lang, dir, h1, problems };
+  return { lang, dir, h1, problems, notReady: null };
 }
 
 /** Print every observed row; returns how many had problems. */
@@ -447,6 +464,10 @@ for (const code of LOCALES) {
     for (const b of violations) {
       row.problems.push(`read-only violation: ${b.reason} → ${b.url}`);
     }
+    // Not observed only when nothing positive was found: a bundle missing a
+    // string or a write the page attempted is evidence whether or not the
+    // page went on to render, and a "not checked" row would hide it.
+    if (row.notReady && row.problems.length === 0) row.blocked = row.notReady;
     rows.push(row);
   } catch (err) {
     rows.push(
