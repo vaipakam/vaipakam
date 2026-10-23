@@ -312,6 +312,19 @@ const FRIENDLY_ERROR_BY_NAME: Record<string, string> = {
     "An offset is open on this loan, so a refinance can't go ahead. The borrower has to cancel the offset first.",
   RefinanceRequestNotLive:
     'This refinance request can no longer be accepted: it has been taken, cancelled or has expired, or the loan no longer fits it.',
+  // #1810 — a sale listing records a minimum for the seller and a ceiling on
+  // what is already set aside for the lender. The LISTING refuses when the
+  // figures it would record are worse for the seller than the ones they
+  // reviewed; a SALE refuses when the loan has since moved past them. Each
+  // copy says that nothing happened and what to do next.
+  ListingFloorBelowReviewed:
+    'The minimum this listing would guarantee you has dropped since you reviewed it (time has passed, or the loan has changed). Nothing was listed. Review the listing again to see the current figure.',
+  ListingHeldAboveReviewed:
+    'More has been set aside for the lender on this loan since you reviewed the listing. Nothing was listed. Review the listing again to see the current figures.',
+  SaleBelowSellerFloor:
+    "This listing can't be bought any more: the loan has changed since it was listed (for example, part of it was repaid), so the sale would pay the seller less than the minimum their listing guarantees. Nothing was taken. The seller can cancel it and list again.",
+  SaleAboveHeldCeiling:
+    "This listing can't be bought any more: more has been set aside for the lender on this loan since it was listed, beyond what the listing allows. Nothing was taken. The seller can cancel it and list again.",
   AmountMustBePositive: 'Enter an amount greater than zero.',
   AmountMaxMustBePositive: 'Enter a maximum amount greater than zero.',
   CollateralMustBePositive: 'Enter a collateral amount greater than zero.',
@@ -670,6 +683,12 @@ export const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0xfd916a6f': 'SalePositionNotConsolidatable()',
   '0xf3e9b780': 'SaleVehicleNotMatchable()',
   '0x236f6aa6': 'SaleVehicleImmutable()',
+  // #1810 — the seller bounds a listing records (#1812) and the binding of
+  // those bounds to what the seller reviewed.
+  '0x0681b723': 'ListingFloorBelowReviewed(uint256,uint256)',
+  '0xfff1caa4': 'ListingHeldAboveReviewed(uint256,uint256)',
+  '0x12de31e0': 'SaleBelowSellerFloor(uint256,uint256)',
+  '0xb7ea2f98': 'SaleAboveHeldCeiling(uint256,uint256)',
 
   // ── Partial withdrawal ────────────────────────────────────────────────
   '0xfd7850ad': 'AmountTooHigh()',

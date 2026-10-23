@@ -1,17 +1,23 @@
 /**
  * Lender Option-2 sale — list the position at the seller's own rate
- * (EarlyWithdrawalFacet.createLoanSaleOffer). A buyer accepting the
- * listing pays the seller the full outstanding principal and the
- * settlement (max of accrued-by-then or the rate shortfall) is
- * pulled from the SELLER's wallet inside the buyer's transaction —
- * so listing REQUIRES a standing approval sized to the bounded worst
- * case, and the pending card watches it (a short approval makes
- * every accept revert, invisibly).
+ * (EarlyWithdrawalFacet.createLoanSaleOfferBound, #1810). A buyer accepting the
+ * listing pays the outstanding principal into escrow, and the completion in
+ * the same transaction deducts the settlement (the larger of the interest the
+ * seller gives up and the rate top-up owed to the buyer) before paying the
+ * rest to the seller (net settlement, #1659). Nothing is drawn from the
+ * seller's wallet, so listing asks for no token approval (#2674).
  *
  * Listing LOCKS the lender position NFT (LockReason
  * EarlyWithdrawalSale) until the sale completes or the listing is
  * cancelled — disclosed before confirmation, per the FunctionalSpecs
  * lock-disclosure rule.
+ *
+ * #1810 — the listing records a guaranteed minimum for the seller and a
+ * ceiling on what is already set aside for the lender. Both are quoted from
+ * the chain (`data/sellerBoundsQuote.ts`) and shown before the seller
+ * agrees, and the listing is sent BOUND to the figures reviewed, so the chain
+ * refuses it rather than record worse ones (a partial repayment, or time
+ * passing, between the review and the listing transaction).
  */
 /**
  * Feature gate — issue #951: the cross-facet reentrancy bug that made
@@ -22,10 +28,14 @@
  * the post-cut Diamond (it was ReentrancyGuardReentrantCall before).
  *
  * PER-CHAIN on purpose: on a chain WITHOUT the cut (e.g. BNB Testnet,
- * still in the deployments bundle) the flow would mine the standing
- * settlement approval and only THEN hit the old reverting listing
- * call — gas burned, best-effort revoke. Add a chain here only after
- * running the catch-up cut on it and re-verifying the simulation.
+ * still in the deployments bundle) every listing would be refused. Add a
+ * chain here only after running the catch-up cut on it and re-verifying the
+ * simulation.
+ *
+ * #1810 adds two selectors the flow now needs on the same chains:
+ * `quoteSellerBounds` and `createLoanSaleOfferBound`. Both were loupe-checked
+ * as routed on Base Sepolia and Arb Sepolia on 2026-10-23; a chain added here
+ * must route them too.
  */
 const LOAN_SALE_LISTING_CHAINS: ReadonlySet<number> = new Set([
   84532, // Base Sepolia — #959 cut 2026-07-04, sim-verified
@@ -35,7 +45,7 @@ export function loanSaleListingEnabled(chainId: number): boolean {
   return LOAN_SALE_LISTING_CHAINS.has(chainId);
 }
 import { useMemo, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import {
   BaseError,
@@ -48,7 +58,7 @@ import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
-import { ensureAllowance, revokeAllowance } from '../contracts/erc20';
+import { TxNotSettledError } from '../contracts/ownReceipt';
 import {
   assertAssetNotPausedLive,
   assertPositionNftHeldLive,
@@ -56,10 +66,15 @@ import {
 import {
   LOAN_STATUS_ACTIVE,
   MIN_SALE_LISTING_SECONDS,
+  loanEndTimeOf,
   readLoanLive,
   type LoanLive,
 } from '../contracts/loanLive';
-import { saleSettlementBound, saleSettlementNow } from '../data/loanSalePending';
+import { saleSettlementNow } from '../data/loanSalePending';
+import {
+  readSellerBoundsQuote,
+  type SellerBoundsQuote,
+} from '../data/sellerBoundsQuote';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import type { IndexedLoan } from '../data/indexer';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
@@ -68,6 +83,24 @@ import { ConfirmReceipt } from './ConfirmReceipt';
 import { SimulationPreview } from './SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
 import type { TokenMeta } from '../contracts/erc20';
+
+/** The failures that say the figures a seller reviewed no longer hold (#1810):
+ *  the listing would record a lower minimum, or more already set aside for
+ *  the lender, than they agreed to — or it mined reverted, so which of its
+ *  checks moved is unknown. */
+function reviewedBoundsMoved(err: unknown): boolean {
+  // A listing that MINED reverted carries no decoded revert data (the write
+  // reports it as `TxNotSettledError`), so its reason cannot be read here.
+  // Whatever it was, the chain moved between the review and the block, so the
+  // reviewed figures are no longer known to hold: treat it the same way.
+  if (err instanceof TxNotSettledError) return err.reason === 'reverted';
+  if (!(err instanceof BaseError)) return false;
+  const revert = err.walk(
+    (e) => e instanceof ContractFunctionRevertedError,
+  ) as ContractFunctionRevertedError | null;
+  const name = revert?.data?.errorName;
+  return name === 'ListingFloorBelowReviewed' || name === 'ListingHeldAboveReviewed';
+}
 
 export function LoanSaleFlow({
   row,
@@ -89,8 +122,8 @@ export function LoanSaleFlow({
   /** Hands the created listing's offer id to the page-owned state. */
   onListed: (offerId: string) => void;
   /** SHARED lender-block write lock (also held by the instant-exit
-   *  card): two exits racing each other would grant the standing
-   *  approval and then revert the listing when the other sale mines. */
+   *  card): two exits racing each other would revert the listing when
+   *  the other sale mines. */
   busy: boolean;
   setBusy: (b: boolean) => void;
 }) {
@@ -120,27 +153,63 @@ export function LoanSaleFlow({
   const rateBps = isPositiveDecimal(rateInput) ? percentToBps(rateInput) : null;
   const rateValid = rateBps !== null && rateBps > 0 && rateBps <= MAX_INTEREST_BPS;
 
+  // #1810 — the seller's guaranteed minimum and the held ceiling, quoted live
+  // for the rate and window on the form. Refreshed while the form is open
+  // because the floor drifts down as interest builds; the review then FREEZES
+  // the figures it shows (`reviewed`), since those are what the listing is
+  // bound to.
+  const maturity = loanEndTimeOf(live);
+  const quote = useQuery({
+    queryKey: [
+      'sellerBoundsQuote',
+      walletChain?.chainId,
+      row.loanId,
+      rateBps,
+      listingSeconds.toString(),
+      maturity.toString(),
+    ],
+    enabled: Boolean(publicClient) && Boolean(walletChain) && rateValid,
+    refetchInterval: 60_000,
+    queryFn: () =>
+      readSellerBoundsQuote(publicClient!, walletChain!.diamondAddress, {
+        loanId: row.loanId,
+        saleRateBps: BigInt(rateBps!),
+        listingSeconds,
+        maturity,
+      }),
+  });
+  // A quote is usable only while it is current: a failed refresh keeps the
+  // previous figures in `data`, and those no longer describe the listing.
+  const liveQuote: SellerBoundsQuote | null =
+    quote.data !== undefined && !quote.isError ? quote.data : null;
+  const [reviewed, setReviewed] = useState<SellerBoundsQuote | null>(null);
+
   // #1028 item 2 — advisory pre-sign dry run of the exact listing
-  // calldata. All three args exist pre-sign; built only once consent
+  // calldata. All its args exist pre-sign; built only once consent
   // is ticked (the contract checks it, and previewing consent=false
-  // would just show that revert). NO allowance downgrade here (round
-  // 1): the listing tx itself neither reads nor spends the standing
-  // settlement allowance — that approval serves a LATER buyer
-  // acceptance, is granted alongside the listing, and is disclosed
-  // by the receipt's approvalNote — so a "passed" verdict is
-  // accurate for what this signature actually sends.
+  // would just show that revert). The listing needs no approval, so a
+  // "passed" verdict is accurate for what this signature sends.
   const simTx = useMemo((): TxSimInput | null => {
-    if (!walletChain || rateBps === null || !rateValid || !consent) return null;
+    if (!walletChain || rateBps === null || !rateValid || !consent || !reviewed) {
+      return null;
+    }
     return {
       to: walletChain.diamondAddress,
       data: encodeFunctionData({
         abi: DIAMOND_ABI_VIEM,
-        functionName: 'createLoanSaleOffer',
-        args: [BigInt(row.loanId), rateBps, consent, listingSeconds],
+        functionName: 'createLoanSaleOfferBound',
+        args: [
+          BigInt(row.loanId),
+          rateBps,
+          consent,
+          listingSeconds,
+          reviewed.minSellerNet,
+          reviewed.maxHeld,
+        ],
       }),
       value: 0n,
     };
-  }, [walletChain, rateBps, rateValid, consent, row.loanId, listingSeconds]);
+  }, [walletChain, rateBps, rateValid, consent, row.loanId, listingSeconds, reviewed]);
 
   const sym = principalMeta.symbol;
   const dec = principalMeta.decimals;
@@ -154,23 +223,30 @@ export function LoanSaleFlow({
   // Same guard EarlyExitFlow got in r8; this component is its sibling and I
   // fixed only the one the finding named.
   const quoteUnavailable = live.lenderForfeitFrom === undefined;
-  const bound =
-    rateBps !== null && !quoteUnavailable
-      ? saleSettlementBound(live, BigInt(rateBps))
-      : null;
   const nowCost =
     rateBps !== null && !quoteUnavailable
       ? saleSettlementNow(live, BigInt(rateBps))
       : null;
-  const boundStr =
-    bound !== null ? `${formatTokenAmountExact(bound, dec)} ${sym}` : null;
-  const principalStr = `${formatTokenAmountExact(live.principal, dec)} ${sym}`;
 
-  // No review-void on the bound figure: it is quoted as an upper
-  // bound ("up to X") and only SHRINKS between reviews (the padded
-  // accrual leg is time-invariant; the shortfall leg decays), so a
-  // 60s refetch tick must not keep collapsing an open review the
-  // user is reading. Rate edits DO void it (below).
+  // ONE way into the review and one way out of a stale one (Codex #2673 r1).
+  // Consent always covers exactly the figures frozen with it, so opening a
+  // review clears it. A stale review also drops the cached quote — the
+  // figures that just failed — so Review stays unavailable until the current
+  // figures have been read, rather than re-offering the same refusal.
+  function openReview(q: SellerBoundsQuote) {
+    setConsent(false);
+    setReviewed(q);
+    onOpenConfirm();
+  }
+
+  function closeStaleReview() {
+    setConsent(false);
+    setReviewed(null);
+    onCloseConfirm();
+    void queryClient.resetQueries({
+      queryKey: ['sellerBoundsQuote', walletChain?.chainId, row.loanId],
+    });
+  }
 
   async function submit() {
     // #1028 — a sale listing creates and locks a NEW offer: it rides
@@ -182,14 +258,22 @@ export function LoanSaleFlow({
       return;
     }
     if (!address || !walletChain || !walletClient || !publicClient) return;
-    if (rateBps === null) return;
+    if (rateBps === null || !reviewed) return;
+    // #1961 — this flow lives on `/positions/:loanId`, which the Terms gate
+    // exempts so a held user can repay; the listing is NOT an exit, so
+    // `useDiamondWrite` would refuse it at submission. Say so before the
+    // live reads rather than after them.
+    const termsForFlow = termsVerdict();
+    if (termsForFlow !== 'ok') {
+      setError(
+        termsForFlow === 'unknown'
+          ? copy.errors.termsCheckUnavailable
+          : copy.errors.termsNotAccepted,
+      );
+      return;
+    }
     setBusy(true);
     setError(null);
-    // Tracks whether THIS attempt granted the settlement approval, so
-    // an abandoned/reverted listing step can unwind it (no dangling
-    // payoff-sized authorization behind a pristine form).
-    let approvalGranted = false;
-    let approvalToken: `0x${string}` | null = null;
     try {
       // Tier-1 — the listing routes the buyer's principal to the
       // seller; re-screen live.
@@ -225,10 +309,8 @@ export function LoanSaleFlow({
       // createLoanSaleOffer reverts at/past maturity, and ALSO when less
       // than the minimum listing window (1 hour) remains before maturity —
       // `_boundListingExpiry` clamps every window at maturity and refuses a
-      // clamped window below the minimum. Fail plainly here, BEFORE the
-      // standing approval is granted: without this, the approval tx would
-      // mine and then the guaranteed-to-revert listing tx (plus a revoke
-      // unwind) would follow (Codex #1505 r2).
+      // clamped window below the minimum. Fail plainly here rather than
+      // send a listing that is certain to be refused (Codex #1505 r2).
       const maturityTs =
         liveLoan.startTime + liveLoan.durationDays * 86_400n;
       if (latestBlock.timestamp >= maturityTs) {
@@ -239,22 +321,30 @@ export function LoanSaleFlow({
         setError(copy.errors.saleListingTooCloseToMaturity);
         return;
       }
-      // Codex #1505 r5 — simulate the EXACT listing call before granting
-      // the standing approval. The listing itself never touches the
-      // allowance (settlement is pulled inside the buyer's accept
-      // transaction), so the simulation is faithful without it — and it
-      // deterministically catches every listing refusal the explicit
-      // checks above can't see (the one-day relist cooldown, a live
-      // offset offer on the loan, a non-consolidatable position) before
-      // a payoff-sized approval mines for a doomed transaction. The
-      // cooldown gets dedicated copy carrying WHEN relisting opens
-      // (the contract surfaces it in the error for exactly this).
+      // Codex #1505 r5 — simulate the EXACT listing call before asking
+      // the wallet to sign. It deterministically catches every listing
+      // refusal the explicit checks above can't see (the one-day relist
+      // cooldown, a live offset offer on the loan, a non-consolidatable
+      // position). The cooldown gets dedicated copy carrying WHEN relisting
+      // opens (the contract surfaces it in the error for exactly this).
+      //
+      // #1810 — it is the BOUND listing that is simulated, with the figures
+      // the seller reviewed, so a minimum that has already moved (a partial
+      // repayment, or the review left open past the quote's allowance) is
+      // caught here too, before anything is signed.
       try {
         await publicClient.simulateContract({
           address: walletChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
-          functionName: 'createLoanSaleOffer',
-          args: [BigInt(row.loanId), rateBps, consent, listingSeconds],
+          functionName: 'createLoanSaleOfferBound',
+          args: [
+            BigInt(row.loanId),
+            rateBps,
+            consent,
+            listingSeconds,
+            reviewed.minSellerNet,
+            reviewed.maxHeld,
+          ],
           account: address,
         });
       } catch (simErr) {
@@ -270,6 +360,9 @@ export function LoanSaleFlow({
             cooldownUntil = revert.data.args[0];
           }
         }
+        // The reviewed figures no longer hold: close the review so the next
+        // one shows the current figures; the error says why.
+        if (reviewedBoundsMoved(simErr)) closeStaleReview();
         setError(
           cooldownUntil !== null
             ? copy.errors.saleRelistCooldownActive(
@@ -279,78 +372,13 @@ export function LoanSaleFlow({
         );
         return;
       }
-      // The standing settlement approval — full interest-window
-      // accrual plus a re-accrual pad, or the shortfall if larger
-      // (see saleSettlementBound; the pending card's watch + restore
-      // cover a listing that outlives the pad). Set BEFORE the
-      // listing exists so there is no window where a buyer's accept
-      // reverts on a short allowance.
-      const liveBound = saleSettlementBound(liveLoan, BigInt(rateBps));
-      // Only a MINED approve tx arms the unwind — when the wallet
-      // already held a sufficient allowance (ensureAllowance returns
-      // null), that allowance belongs to some other live arrangement
-      // (a pending refinance, a user-managed grant) and a failed
-      // listing step must not zero it out from under that flow.
-      // #1961 — refuse BEFORE the allowance, not after. This flow lives
-      // on `/positions/:loanId`, which the Terms gate exempts so a held
-      // user can repay; its Diamond write is NOT an exit, so
-      // `useDiamondWrite` would reject it — but only once the user had
-      // paid for an approval they cannot use. Same defect Codex found
-      // on `/vpfi`, the desk ticket and the desk amend; swept here
-      // rather than waiting for it to be reported a fourth time.
-      const termsForFlow = termsVerdict();
-      if (termsForFlow !== 'ok') {
-        throw new Error(
-          termsForFlow === 'unknown'
-            ? copy.errors.termsCheckUnavailable
-            : copy.errors.termsNotAccepted,
-        );
-      }
-      const approvalTx = await ensureAllowance({
-        publicClient,
-        walletClient,
-        token: liveLoan.principalAsset,
-        owner: address,
-        spender: walletChain.diamondAddress,
-        amount: liveBound,
-      });
-      approvalGranted = approvalTx !== null;
-      approvalToken = liveLoan.principalAsset;
-      // Codex #1505 r3 — the approval can take blocks to mine, so a loan
-      // that sat just above the minimum window at the preflight can slip
-      // under it by the time the approval receipt lands. Recheck chain time
-      // AFTER ensureAllowance: bail (and unwind a just-granted approval)
-      // instead of sending a listing `_boundListingExpiry` is now
-      // guaranteed to reject.
-      if (approvalGranted) {
-        const postApproval = await publicClient.getBlock({
-          blockTag: 'latest',
-        });
-        if (
-          maturityTs - postApproval.timestamp <
-          MIN_SALE_LISTING_SECONDS
-        ) {
-          try {
-            await revokeAllowance({
-              publicClient,
-              walletClient,
-              token: liveLoan.principalAsset,
-              owner: address,
-              spender: walletChain.diamondAddress,
-            });
-          } catch {
-            // The too-close error below stays the surfaced failure; the
-            // wallet's approvals view is the remedy for a stuck revoke.
-          }
-          setError(copy.errors.saleListingTooCloseToMaturity);
-          return;
-        }
-      }
-      const { receipt } = await write('createLoanSaleOffer', [
+      const { receipt } = await write('createLoanSaleOfferBound', [
         BigInt(row.loanId),
         rateBps,
         consent,
         listingSeconds,
+        reviewed.minSellerNet,
+        reviewed.maxHeld,
       ]);
       const linked = parseEventLogs({
         abi: DIAMOND_ABI_VIEM,
@@ -364,23 +392,9 @@ export function LoanSaleFlow({
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
     } catch (err) {
       setError(captureTxError(err));
-      // The listing never landed but the settlement approval mined —
-      // best-effort unwind (mirrors the refinance flow's rule): a
-      // second rejection just leaves the wallet's approvals view as
-      // the remedy, with the error banner already showing.
-      if (approvalGranted && approvalToken) {
-        try {
-          await revokeAllowance({
-            publicClient,
-            walletClient,
-            token: approvalToken,
-            owner: address,
-            spender: walletChain.diamondAddress,
-          });
-        } catch {
-          // Leave the submit error as the surfaced failure.
-        }
-      }
+      // Mined after the reviewed figures stopped holding (the transaction
+      // took longer than the quote allows, or the loan moved meanwhile).
+      if (reviewedBoundsMoved(err)) closeStaleReview();
     } finally {
       setBusy(false);
     }
@@ -403,6 +417,7 @@ export function LoanSaleFlow({
             onChange={(e) => {
               setRateInput(e.target.value.trim());
               setConsent(false); // consent covers what was reviewed
+              setReviewed(null);
               onCloseConfirm(); // edited terms void the open review
             }}
             aria-label={copy.loanSale.rateLabel}
@@ -416,6 +431,7 @@ export function LoanSaleFlow({
             onChange={(e) => {
               setListingDays(Number(e.target.value));
               setConsent(false); // consent covers what was reviewed
+              setReviewed(null);
               onCloseConfirm(); // edited terms void the open review
             }}
             aria-label={copy.loanSale.windowLabel}
@@ -431,6 +447,29 @@ export function LoanSaleFlow({
       <p className="field-hint" style={{ marginTop: 8 }}>
         {copy.loanSale.windowNote}
       </p>
+      {/* #1810 — the guaranteed minimum for THIS rate and window, read live. */}
+      {rateValid ? (
+        liveQuote ? (
+          <>
+            <p className="field-hint" style={{ marginTop: 8 }}>
+              {copy.loanSale.floorQuote(formatTokenAmountExact(liveQuote.minSellerNet, dec), sym)}
+            </p>
+            {liveQuote.maxHeld > 0n ? (
+              <p className="field-hint" style={{ marginTop: 8 }}>
+                {copy.loanSale.heldQuote(formatTokenAmountExact(liveQuote.maxHeld, dec), sym)}
+              </p>
+            ) : null}
+          </>
+        ) : quote.isError ? (
+          <div className="banner banner-warn" role="alert" style={{ marginTop: 8 }}>
+            <span className="banner-body">{copy.loanSale.floorUnavailable}</span>
+          </div>
+        ) : (
+          <p className="field-hint" style={{ marginTop: 8 }}>
+            {copy.loanSale.floorLoading}
+          </p>
+        )
+      ) : null}
       {rateBps !== null && BigInt(rateBps) > live.interestRateBps ? (
         <p className="field-hint" style={{ marginTop: 8 }}>
           {copy.loanSale.sweetenNote}
@@ -447,12 +486,23 @@ export function LoanSaleFlow({
           type="button"
           className="btn btn-secondary"
           style={{ marginTop: 12 }}
-          disabled={busy || !walletReady || !rateValid || quoteUnavailable || flowDisabled('post-offer')}
-          onClick={onOpenConfirm}
+          disabled={
+            busy ||
+            !walletReady ||
+            !rateValid ||
+            quoteUnavailable ||
+            !liveQuote ||
+            flowDisabled('post-offer')
+          }
+          onClick={() => {
+            // The review shows, and the listing is bound to, the figures on
+            // screen at this moment.
+            if (liveQuote) openReview(liveQuote);
+          }}
         >
           {copy.loanSale.action}
         </button>
-      ) : boundStr && nowCost !== null ? (
+      ) : nowCost !== null && reviewed ? (
         <div style={{ marginTop: 16 }}>
           <label className="cluster" style={{ marginBottom: 12, alignItems: 'flex-start' }}>
             <input
@@ -470,9 +520,16 @@ export function LoanSaleFlow({
             onConfirm={() => void submit()}
             disabled={!walletReady || !consent || quoteUnavailable || flowDisabled('post-offer')}
             data={{
-              youReceive: copy.loanSale.receiptYouReceive(principalStr),
+              youReceive: [
+                copy.loanSale.receiptFloor(formatTokenAmountExact(reviewed.minSellerNet, dec), sym),
+                reviewed.maxHeld > 0n
+                  ? copy.loanSale.heldQuote(formatTokenAmountExact(reviewed.maxHeld, dec), sym)
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(' '),
               youLock: copy.loanSale.receiptLock,
-              youMayOwe: `${copy.loanSale.receiptYouMayOwe(formatTokenAmountExact(nowCost, dec), sym)} ${copy.loanSale.approvalNote(boundStr)}`,
+              youMayOwe: copy.loanSale.receiptYouMayOwe(formatTokenAmountExact(nowCost, dec), sym),
               youCanLose: copy.loanSale.receiptCanLose,
               fees: copy.loanSale.receiptFees,
               whenThisEnds: copy.loanSale.receiptEnds,

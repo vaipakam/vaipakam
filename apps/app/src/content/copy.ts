@@ -1171,8 +1171,8 @@ const copySource = {
       'We couldn’t read the running loan behind this listing, and the review must show its real numbers — signing stays paused until it succeeds.',
     saleLoanNotActive:
       'The loan behind this listing is no longer active, so this purchase can’t complete. Nothing was sent or approved.',
-    saleSellerNotCovered:
-      'The seller’s standing settlement approval no longer covers completing this sale, so the purchase would fail on the blockchain. Nothing was sent or approved — the seller needs to restore their approval (their listing card shows a restore action).',
+    saleSettlementExceedsPayment:
+      'Completing this sale would take more in settlement than the buyer’s payment covers, so the purchase would fail on the blockchain. Nothing was sent or approved — the seller can cancel the listing and list it again at a lower rate.',
     saleMaturityPassed:
       'This loan has reached its due date — the position can no longer be bought. Nothing was sent or approved.',
     saleBought: 'Position bought',
@@ -1810,9 +1810,9 @@ const copySource = {
   approvals: {
     title: 'Standing token approvals',
     blurb:
-      'These are the spending permissions your wallet has granted Vaipakam’s contract for tokens your loans and offers touch. Some flows set them on purpose (a refinance request’s payoff, a sale listing’s settlement); anything left over from an abandoned attempt can be removed here.',
+      'These are the spending permissions your wallet has granted Vaipakam’s contract for tokens your loans and offers touch. Some flows set them on purpose (such as a refinance request’s payoff); anything left over from an abandoned attempt can be removed here.',
     revokeWarning:
-      'Careful: if a live refinance request or sale listing depends on a token’s approval, revoking it makes that flow fail until you restore it from its card — the card will warn you within moments.',
+      'Careful: if a live request on one of your loans depends on a token’s approval, revoking it makes that flow fail until you restore it from its card — the card will warn you within moments.',
     scopeNote:
       'This list covers tokens seen in your Vaipakam loans and offers on this network. Approvals granted to other apps or for other tokens aren’t shown — your wallet’s own token-approvals view remains the complete picture.',
     none: 'No standing approvals to Vaipakam found for your known tokens.',
@@ -3199,70 +3199,98 @@ const copySource = {
   loanSale: {
     // Review-receipt / hint lines (extracted from LoanSaleFlow.tsx +
     // LoanSalePendingCard.tsx inline templates).
-    receiptYouReceive: tmpl(
-      '{{principal}} — the full outstanding amount, paid to your wallet the moment a buyer accepts.',
-      ['principal'],
-    ),
+    // #2674 — net settlement (#1659): the settlement is deducted from the
+    // buyer's payment, so nothing is drawn from the seller's wallet and the
+    // listing sets no approval.
     receiptYouMayOwe: tmpl(
-      'At acceptance, the settlement is pulled from your wallet: the LARGER of the interest built up by then or the rate difference for the remaining term — never both. Right now that would be ~{{amount}} {{sym}}.',
+      'Nothing from your wallet. When a buyer accepts, the settlement is taken out of their payment before the rest reaches you: the LARGER of the interest built up by then or the rate difference for the remaining term — never both. Right now that would be ~{{amount}} {{sym}}.',
       ['amount', 'sym'],
     ),
-    allowanceShortDetail: tmpl(
-      '(a buyer’s acceptance would pull ~{{amount}} {{symbol}} right now)',
-      ['amount', 'symbol'],
-    ),
-    consentLabel: 'I understand the lock, the settlement pull, and the standing approval below and agree to them.',
+    consentLabel: 'I understand the lock and the settlement taken out of the buyer’s payment, and agree to them.',
     receiptLock: 'Your lender position NFT, until the sale completes or the listing ends. Cancelling releases it in one step; after the listing expires, a small cleanup transaction (which anyone — you, or a helper bot — can send, even while the protocol is paused) releases it. Nothing else.',
-    receiptCanLose: 'If your balance or the standing approval goes short, a buyer’s acceptance simply fails — nothing is taken, but the listing sits unfillable until you restore it or cancel.',
+    receiptCanLose: 'Nothing in your wallet is at stake. A buyer’s attempt is refused, and nothing moves, if the settlement would be larger than their payment or a sale would break the figures the listing records; the listing then sits unfillable until you cancel it.',
     receiptFees: 'The protocol’s cut comes out of the settlement figure — nothing beyond it.',
     receiptEnds: 'When a buyer accepts (everything settles in their transaction), when you cancel the listing, or when it expires — at the end of your chosen window, or at the loan’s due date, whichever comes first. An expired listing can’t be bought any more; your NFT then unlocks with the cancel action or a cleanup transaction anyone can send.',
     title: 'List this position for sale',
     blurb:
-      'Set the yearly rate a buyer would earn for the loan’s remaining time and list your position publicly. When a buyer accepts, you receive the full outstanding amount in that same transaction. (If a matching offer above already pays enough, the instant exit is simpler — listing is for naming your own price and waiting.)',
+      'Set the yearly rate a buyer would earn for the loan’s remaining time and list your position publicly. When a buyer accepts, you’re paid in that same transaction: the buyer’s payment, less the settlement. (If a matching offer above already pays enough, the instant exit is simpler — listing is for naming your own price and waiting.)',
     rateLabel: 'Yearly rate the buyer earns',
     windowLabel: 'Listing window',
     windowOption: tmpl('{{days}} days', ['days']),
     windowNote:
-      'Every listing expires on its own: at the end of your chosen window, or at the loan’s due date, whichever comes first. Once a listing ends without a sale — you cancel, or it expires and is cleaned up — this loan can’t be listed again for a day: a breathing space for the borrower, whose early-close and collateral-withdrawal options are held while a listing stands. (Partial repayments are never held — the outstanding amount can shrink while your listing is live, in which case a pending buyer simply re-signs for the smaller position.)',
+      'Every listing expires on its own: at the end of your chosen window, or at the loan’s due date, whichever comes first. Once a listing ends without a sale — you cancel, or it expires and is cleaned up — this loan can’t be listed again for a day: a breathing space for the borrower, whose early-close and collateral-withdrawal options are held while a listing stands. (Partial repayments are never held. If the borrower repays part of the loan while your listing is live, a sale would pay you less than the minimum below, so buyers’ attempts are refused; cancel and list again at the new terms.)',
+    // #1810 — the seller's guaranteed minimum, quoted from the chain for the
+    // rate and window on the form. It is the figure the listing records and
+    // is bound to, so the copy states it as a guarantee, names what it is net
+    // of, and says why it can sit a little below today's figure. The
+    // settlement is deducted from the buyer's payment (net settlement, #1659),
+    // not pulled from the seller's wallet.
+    floorQuote: tmpl(
+      'If a buyer takes this listing at any time before it ends, you come out with at least {{amount}} {{sym}}: what the buyer pays, less the settlement (the larger of the interest you give up and the rate top-up owed to the buyer), which is taken out of that payment before it reaches you. It allows for the time your listing takes to confirm, so it can sit slightly below today’s figure.',
+      ['amount', 'sym'],
+    ),
+    // #1810 — money already set aside for the lender transfers with the
+    // position. Shown only when there is some.
+    heldQuote: tmpl(
+      '{{amount}} {{sym}} already set aside for the lender on this loan goes to the buyer with the position, not to you.',
+      ['amount', 'sym'],
+    ),
+    floorLoading: 'Reading the minimum this listing would guarantee you…',
+    floorUnavailable:
+      'The minimum this listing would guarantee you couldn’t be read right now, so the position can’t be listed until it can. Try again shortly.',
+    receiptFloor: tmpl(
+      'At least {{amount}} {{sym}} once the settlement is taken, if a buyer takes it at any time before the listing ends. The listing records this minimum, and is refused rather than made if it would record less.',
+      ['amount', 'sym'],
+    ),
     action: 'Review listing',
     confirm: 'Confirm — list my position',
     // Spec rule (WebsiteReadme "borrower preclose flow" analog): the
     // NFT lock must be disclosed BEFORE confirmation.
     lockWarning:
       'Listing locks your lender position NFT — it can’t be transferred until the sale completes or the listing ends (cancelling unlocks it in one step; after expiry, a cleanup transaction anyone can send does). Your claim rights are unaffected.',
-    approvalNote: tmpl(
-      `Listing sets a standing approval of up to {{amount}} — sized to cover settling the sale any time through the loan’s term plus a month’s headroom (the larger of interest built up by acceptance or the rate difference). Only the actual amount is pulled, in the buyer’s own transaction; if the listing somehow outlives the headroom, the listing card warns and offers to top the approval up.`,
-      ['amount'],
-    ),
     sweetenNote:
-      'A rate above the loan’s own rate attracts buyers faster, but the difference for the remaining term comes out of your wallet at completion.',
+      'A rate above the loan’s own rate attracts buyers faster, but the difference for the remaining term is deducted from what the buyer pays you.',
     done:
-      'Position listed. When a buyer accepts, the sale settles automatically — keep the standing approval (and enough balance for the settlement figure) in place until then, or cancel the listing below.',
+      'Position listed. When a buyer accepts, the sale settles in their transaction and you’re paid their payment less the settlement — there’s nothing to keep in place meanwhile. You can cancel the listing below.',
     pending: tmpl(
-      `Sale listing #{{offerId}} is live and your lender NFT is locked while it stands. When a buyer accepts, you’re paid the outstanding amount and the settlement is pulled in the same transaction.`,
+      `Sale listing #{{offerId}} is live and your lender NFT is locked while it stands. When a buyer accepts, you’re paid in the same transaction: the buyer’s payment, less the settlement.`,
       ['offerId'],
     ),
     pendingNoId:
       'This position is listed for sale (listed from another device, so cancelling here isn’t available — cancel where it was listed). Your lender NFT is locked while the listing stands.',
-    allowanceShort:
-      'The standing settlement approval (or your wallet balance) no longer covers what a buyer’s acceptance would pull — the sale would fail right now. Restore it below or cancel the listing.',
-    restore: 'Restore the settlement approval',
-    restored: 'Settlement approval restored — the listing can complete again.',
+    // #1848 — what the listing's own record says about whether a buyer can
+    // still take it. Shown only when that record was read.
+    openUntil: tmpl('Open to buyers until {{date}}.', ['date']),
+    expiredUnsold: tmpl(
+      'This listing ended on {{date}} without a buyer, so no one can buy it now. Your lender NFT stays locked until the listing is cleared: cancel it here, or anyone can send the cleanup transaction.',
+      ['date'],
+    ),
+    // When this card has no cancel control (the listing's id or the
+    // holder check could not be confirmed here), the copy names none.
+    expiredUnsoldNoCancel: tmpl(
+      'This listing ended on {{date}} without a buyer, so no one can buy it now. Your lender NFT stays locked until the listing is cleared, which anyone can do by sending the cleanup transaction.',
+      ['date'],
+    ),
+    acceptedCompleting:
+      'A buyer has taken this listing and the sale hasn’t finished settling yet.',
+    // #2673 r3 — the last check failed, so the card states nothing drawn
+    // from the listing's record and says why.
+    staleRecord:
+      'This is the listing as of the last successful check. The latest check failed, so the app can’t say right now whether a buyer has taken it, whether it has expired, or whether the loan has settled. It will check again shortly.',
+    // #1810 — why a live listing can stop filling. The app cannot read the
+    // figures a listing recorded yet (no view exposes them), so this says so
+    // rather than implying it checked (the view is #2672).
+    boundsNote:
+      'When a listing is made, it records the least you can come out with and how much is already set aside for the lender. If the loan changes before a buyer takes it so that a sale would break either figure — for example, the borrower repays part of the loan — buyers’ attempts are refused, and you can cancel and list again at the new terms. The app can’t read the figures recorded for this listing yet, so it can’t tell you whether that has happened. (Listings made before this protection existed recorded no figures and sell as before.)',
     cancel: 'Cancel listing',
     cancelled:
-      'Listing cancelled — your lender NFT is unlocked and the settlement approval was removed (if you have other listings or requests using the same token, restore their approvals from their cards). The loan continues unchanged.',
-    cancelledRevokeFailed:
-      'Listing cancelled and your lender NFT unlocked. The standing settlement approval couldn’t be removed automatically — you can revoke it from your wallet’s token-approvals view.',
+      'Listing cancelled — your lender NFT is unlocked and the loan continues unchanged. (Listings made with an earlier version of the app also set a token approval. If one is still in place, you can remove it from your wallet’s token-approvals view.)',
     cancelSoon:
       'Cancellation opens a few minutes after listing — try again shortly.',
-    restoreAborted:
-      'This listing is no longer standing (sold, cancelled, or unlocked) — nothing was approved. Refresh to see the latest state.',
     loanSettledWhileListed:
-      'This loan has settled, so the sale listing can never complete — cancel it to unlock your lender NFT and remove the standing approval.',
-    fundingUnknown:
-      'We couldn’t identify this listing’s offer record from this device, so we can’t verify its settlement funding here — manage it from the device that listed it, or keep a generous approval and balance in place.',
+      'This loan has settled, so the sale listing can never complete — cancel it to unlock your lender NFT.',
     ended:
-      'Your sale listing is no longer active. If a buyer accepted it, the payout is already in your wallet and the settlement was pulled via the standing approval; any remaining approval can be revoked from your wallet’s token-approvals view.',
+      'Your sale listing is no longer active. If a buyer accepted it, your payout (their payment, less the settlement) is already in your wallet.',
     // Issue #951 — the on-chain listing entry point is broken; the
     // form is feature-gated off until the contract fix lands.
     listingUnavailable:

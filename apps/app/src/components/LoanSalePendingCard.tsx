@@ -4,49 +4,40 @@
  * the strategy-card gates, so it survives data hiccups, mode
  * switches, and being listed from another device. Cancel needs the
  * offer id (device-local marker, live-verified); without it the card
- * still shows the lock, the funding watch, and the restore action.
+ * still shows the lock.
  *
- * Shares the PAGE's busy lock: its writes touch the same token
- * allowance the repay-family flows manage.
+ * There is nothing to fund and nothing to restore (#2674): a buyer's
+ * acceptance escrows the buyer's payment and the settlement is deducted
+ * from it before the rest reaches the seller (net settlement, #1659).
+ *
+ * Shares the PAGE's busy lock, so a cancel cannot overlap another
+ * write the page is sending for this loan.
  */
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { usePublicClient, useWalletClient } from 'wagmi';
+import { useWalletClient } from 'wagmi';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
-import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
-import { ensureAllowance, revokeAllowance, type TokenMeta } from '../contracts/erc20';
+import { useDiamondWrite } from '../contracts/diamond';
 import {
-  BASIS_POINTS,
-  SECONDS_PER_YEAR,
-  readLoanLive,
-  sellerEconomics,
-} from '../contracts/loanLive';
-import {
-  LOCK_EARLY_WITHDRAWAL_SALE,
-  saleSettlementBound,
+  saleListingCardView,
   type LoanSalePendingState,
 } from '../data/loanSalePending';
-import { formatTokenAmountExact } from '../lib/format';
+import { formatDateTime } from '../lib/format';
 
 export function LoanSalePendingCard({
-  loanId,
-  lenderTokenId,
   state,
-  principalAsset,
-  principalMeta,
+  stale,
   busy,
   setBusy,
   onCleared,
   onDone,
 }: {
-  loanId: number;
-  /** For the restore-time lock re-check. */
-  lenderTokenId: string;
   state: LoanSalePendingState;
-  principalAsset: `0x${string}`;
-  principalMeta: TokenMeta | undefined;
+  /** The latest poll failed, so `state` is the last answer, not a current
+   *  one. The card then states nothing drawn from the listing's record. */
+  stale: boolean;
   busy: boolean;
   setBusy: (b: boolean) => void;
   onCleared: () => void;
@@ -54,43 +45,24 @@ export function LoanSalePendingCard({
    *  its result must outlive it. */
   onDone: (message: string) => void;
 }) {
-  const { address, walletChain, onSupportedChain } = useActiveChain();
+  const { onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
-  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
-  const termsVerdict = useTermsBlockNonExitWrites();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
-
-  const walletReady =
-    onSupportedChain && Boolean(walletClient) && Boolean(publicClient);
-  const underfunded = state.allowanceShort || state.balanceShort;
+  const walletReady = onSupportedChain && Boolean(walletClient);
+  const view = saleListingCardView(state, stale);
+  // The cancel control's own gate, so the copy never names a control that
+  // is not on the card (Codex #2673 r1).
+  const canCancel = Boolean(state.offerId) && state.isHolder;
 
   async function cancelListing() {
-    if (!state.offerId || !address || !walletChain || !walletClient || !publicClient) {
-      return;
-    }
+    if (!state.offerId || !walletReady) return;
     setBusy(true);
     setError(null);
     try {
       await write('cancelOffer', [BigInt(state.offerId)]);
-      // Revoke BEFORE clearing the marker: clearing unmounts this
-      // card, and the second wallet prompt (the revoke) must never
-      // appear context-free after its explaining UI vanished.
-      let message: string = copy.loanSale.cancelled;
-      try {
-        await revokeAllowance({
-          publicClient,
-          walletClient,
-          token: principalAsset,
-          owner: address,
-          spender: walletChain.diamondAddress,
-        });
-      } catch {
-        message = copy.loanSale.cancelledRevokeFailed;
-      }
-      onDone(message);
+      onDone(copy.loanSale.cancelled);
       onCleared();
       void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
@@ -101,108 +73,54 @@ export function LoanSalePendingCard({
     }
   }
 
-  async function restore() {
-    // #1961 review round 8 P1 — RESTORE is not cancellation.
-    //
-    // I left these cards alone last round on the reasoning that their
-    // only Diamond write is `cancelOffer`, an exit, so their allowance
-    // must serve the cancel. That was wrong: the allowance serves THIS
-    // control, which re-funds a pending refinance / offset / sale so a
-    // counterparty can complete it. There is no later Diamond write to
-    // refuse, so the write gate never sees it — a wallet that had
-    // declined the Terms could restore its own funding and let somebody
-    // else create the exposure. Cancelling needs no approval and stays
-    // available.
-    const termsForRestore = termsVerdict();
-    if (termsForRestore !== 'ok') {
-      setError(
-        termsForRestore === 'unknown'
-          ? copy.errors.termsCheckUnavailable
-          : copy.errors.termsNotAccepted,
-      );
-      return;
-    }
-    if (!address || !walletChain || !walletClient || !publicClient) return;
-    setBusy(true);
-    setError(null);
-    try {
-      // Verify the listing still stands before re-granting the
-      // settlement approval — a completed/cancelled listing must not
-      // get a fresh dangling authorization.
-      const [lock, liveLoan] = await Promise.all([
-        publicClient.readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'positionLock',
-          args: [BigInt(lenderTokenId)],
-        }) as Promise<number | bigint>,
-        readLoanLive(publicClient, walletChain.diamondAddress, loanId),
-      ]);
-      if (Number(lock) !== LOCK_EARLY_WITHDRAWAL_SALE) {
-        setError(copy.loanSale.restoreAborted);
-        void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
-        return;
-      }
-      // Past the original pad the static bound can sit BELOW what a
-      // buyer's accept now pulls — restore must always clear the
-      // live requirement plus fresh growth margin, or the red banner
-      // returns on the next tick behind a false success message.
-      const rate = state.saleRateBps ?? liveLoan.interestRateBps;
-      const bound = saleSettlementBound(liveLoan, rate);
-      const liveNow = sellerEconomics(liveLoan, rate).cost;
-      const growthMargin =
-        (liveLoan.principal * liveLoan.interestRateBps * 30n * 86_400n) /
-        (SECONDS_PER_YEAR * BASIS_POINTS);
-      const target = liveNow + growthMargin > bound ? liveNow + growthMargin : bound;
-      await ensureAllowance({
-        publicClient,
-        walletClient,
-        token: liveLoan.principalAsset,
-        owner: address,
-        spender: walletChain.diamondAddress,
-        amount: target,
-      });
-      setDone(copy.loanSale.restored);
-      void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
-    } catch (err) {
-      setError(captureTxError(err));
-    } finally {
-      setBusy(false);
-    }
-  }
+  const listingLine = state.offerId
+    ? copy.loanSale.pending(state.offerId)
+    : copy.loanSale.pendingNoId;
 
   return (
     <section className="card">
       <h3>{copy.loanSale.title}</h3>
       <div className="banner banner-warn" role="status">
         <span className="banner-body">
-          {!state.loanActive
+          {/* #1848 — what the listing's own record says, when it was read
+              and is current, REPLACES the pre-acceptance text rather than
+              sitting under it. */}
+          {view === 'settled'
             ? copy.loanSale.loanSettledWhileListed
-            : state.offerId
-              ? copy.loanSale.pending(state.offerId)
-              : copy.loanSale.pendingNoId}
+            : view === 'accepted'
+              ? copy.loanSale.acceptedCompleting
+              : view === 'expired'
+                ? (canCancel
+                    ? copy.loanSale.expiredUnsold
+                    : copy.loanSale.expiredUnsoldNoCancel)(
+                    formatDateTime(Number(state.expiresAt)),
+                  )
+                : listingLine}
         </span>
       </div>
-      {state.listed && state.loanActive && state.isHolder && !state.fundingKnown ? (
-        <div className="banner banner-warn" role="alert" style={{ marginTop: 12 }}>
-          <span className="banner-body">{copy.loanSale.fundingUnknown}</span>
-        </div>
+      {view === 'stale' ? (
+        <p className="field-hint" style={{ marginTop: 8 }}>
+          {copy.loanSale.staleRecord}
+        </p>
       ) : null}
-      {underfunded ? (
-        <div className="banner banner-danger" role="alert" style={{ marginTop: 12 }}>
-          <span className="banner-body">
-            {copy.loanSale.allowanceShort}{' '}
-            {principalMeta
-              ? copy.loanSale.allowanceShortDetail(
-                  formatTokenAmountExact(state.requiredNow, principalMeta.decimals),
-                  principalMeta.symbol,
-                )
-              : null}
-          </span>
-        </div>
+      {view === 'open' || view === 'unread' ? (
+        // Open, or unread (listed from another device): the note applies
+        // either way; the end time is stated only when it was read.
+        <>
+          {view === 'open' && state.expiresAt !== null && state.expiresAt !== 0n ? (
+            <p className="field-hint" style={{ marginTop: 8 }}>
+              {copy.loanSale.openUntil(formatDateTime(Number(state.expiresAt)))}
+            </p>
+          ) : null}
+          {/* #1810 — why a live listing can stop filling, and what the app
+              cannot see about it yet. */}
+          <p className="field-hint" style={{ marginTop: 8 }}>
+            {copy.loanSale.boundsNote}
+          </p>
+        </>
       ) : null}
-      <div className="cluster" style={{ marginTop: 12 }}>
-        {state.offerId && state.isHolder ? (
+      {canCancel ? (
+        <div className="cluster" style={{ marginTop: 12 }}>
           <button
             type="button"
             className="btn btn-secondary"
@@ -213,27 +131,12 @@ export function LoanSalePendingCard({
           >
             {copy.loanSale.cancel}
           </button>
-        ) : null}
-        {state.allowanceShort && state.isHolder ? (
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={busy || !walletReady}
-            onClick={() => void restore()}
-          >
-            {copy.loanSale.restore}
-          </button>
-        ) : null}
-      </div>
-      {state.offerId && state.isHolder && !state.cancelUnlocked ? (
+        </div>
+      ) : null}
+      {canCancel && !state.cancelUnlocked ? (
         <p className="field-hint" style={{ marginTop: 8 }}>
           {copy.loanSale.cancelSoon}
         </p>
-      ) : null}
-      {done ? (
-        <div className="banner banner-info" role="status" style={{ marginTop: 12 }}>
-          <span className="banner-body">{done}</span>
-        </div>
       ) : null}
       {error ? (
         <div className="banner banner-danger" role="alert" style={{ marginTop: 12 }}>
