@@ -3227,9 +3227,11 @@ const copySource = {
     // #1810 — the seller's guaranteed minimum, quoted from the chain for the
     // rate and window on the form. It is the figure the listing records and
     // is bound to, so the copy states it as a guarantee, names what it is net
-    // of, and says why it can sit a little below today's figure.
+    // of, and says why it can sit a little below today's figure. The
+    // settlement is deducted from the buyer's payment (net settlement, #1659),
+    // not pulled from the seller's wallet.
     floorQuote: tmpl(
-      'If a buyer takes this listing at any time before it ends, you come out with at least {{amount}} {{sym}}: what the buyer pays you, less the settlement pulled from your wallet. It allows for the time your listing takes to confirm, so it can sit slightly below today’s figure.',
+      'If a buyer takes this listing at any time before it ends, you come out with at least {{amount}} {{sym}}: what the buyer pays, less the settlement (the larger of the interest you give up and the rate top-up owed to the buyer), which is taken out of that payment before it reaches you. It allows for the time your listing takes to confirm, so it can sit slightly below today’s figure.',
       ['amount', 'sym'],
     ),
     // #1810 — money already set aside for the lender transfers with the

@@ -4053,7 +4053,8 @@ Its intended behaviour, as the test oracle for this surface:
   The form must also state the seller's guaranteed minimum for the
   rate and window on it: the least the seller comes out with if a
   buyer takes the listing at any moment before it ends (what the buyer
-  pays, less the settlement pulled from the seller), read from the
+  pays, less the settlement, which is deducted from that payment
+  before it reaches the seller), read from the
   protocol's own quote rather than recomputed by the app, and — when
   there is any — the balance already set aside for the lender that
   goes to the buyer with the position rather than to the seller. The
