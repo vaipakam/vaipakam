@@ -1,4 +1,4 @@
-## Thread — Loan risk values carried at 1e18 numeraire precision (PR #<n>)
+## Thread — Loan risk values carried at 1e18 numeraire precision (PR #2690)
 
 Every value the protocol computes for a loan leg is now expressed in the
 active numeraire with eighteen decimal places, through one shared rule, instead
