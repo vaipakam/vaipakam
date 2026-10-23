@@ -93,6 +93,9 @@ export const THREE_VERDICT_DRIVERS = new Set([
   'live-desk-history-terms.mjs',
   'live-position-observe.mjs',
   'live-rate-desk.mjs',
+  'live-pwa.mjs',
+  // Exits 2 when Chromium cannot start or the site cannot be loaded at
+  // all: nothing about the worker or the manifest was observed (#2687).
   'live-recover.mjs',
   // Exits 2 when a locale bundle lacks a key it is asked to assert —
   // a missing PRECONDITION in the repo, not a product regression. It

@@ -90,7 +90,7 @@ export ADMIN_ADDRESS="$ADMIN_ADDR"
 export TREASURY_ADDRESS="$TREASURY_ADDR"
 
 echo "[1/6] DeployDiamond"
-forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
+forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --ffi --broadcast --slow
 
 # Stamp the REAL diamond-creation block into addresses.json.
 #

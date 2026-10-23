@@ -8,6 +8,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 
 /**
  * @title  UpgradeVaultImplementation
@@ -33,7 +34,8 @@ import {Deployments} from "./lib/Deployments.sol";
  *         cannot front-run the (constructor-less, non-`_disableInitializers`)
  *         template's `initialize`. `upgradeVaultImplementation` itself only
  *         checks `code.length != 0`; it neither initialises nor validates
- *         storage-layout compatibility — that is the operator's responsibility.
+ *         storage-layout compatibility. This script does the latter (#2092):
+ *         see STORAGE SAFETY below.
  *
  * @dev    LAZY vs FORCED PROXY UPGRADE
  *         `upgradeVaultImplementation` only re-points the SHARED template and
@@ -53,6 +55,10 @@ import {Deployments} from "./lib/Deployments.sol";
  *         insert / reorder / type change would silently corrupt live vault
  *         state — do a fresh deploy in that case. Per owner policy (2026-06-19)
  *         this in-place path is TESTNET-ONLY; mainnet rollouts are always fresh.
+ *         Since #2092 the script refuses such a change itself: it runs the
+ *         storage-layout guard against the chain's record
+ *         (`deployments/<slug>/storage-layout.json`) before broadcasting, and
+ *         rewrites the record after the retarget. Run it with `--ffi`.
  *
  *         Env:
  *           - DEPLOYER_PRIVATE_KEY : deployer — deploys + initialises the impl,
@@ -70,7 +76,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *         Usage (from contracts/, on main) — run once per chain. Use `--slow`:
  *         the admin owner is EIP-7702-delegated on at least Base Sepolia, and a
  *         delegated account may have only one in-flight tx (no gapped nonces).
- *           forge script script/UpgradeVaultImplementation.s.sol --sig "run()" \
+ *           forge script script/UpgradeVaultImplementation.s.sol --sig "run()" --ffi \
  *             --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
  *           # then the same with $ARB_SEPOLIA_RPC_URL
  */
@@ -105,6 +111,13 @@ contract UpgradeVaultImplementation is Script {
             oldImpl != address(0),
             "UpgradeVaultImplementation: vault template uninitialised (run initializeVaultImplementation first)"
         );
+
+        // #2092 item 1 — the vault template is a UUPS root of the storage
+        // guard: refuse code that drops a layout fact this chain records,
+        // before anything is broadcast (needs `--ffi`). This replaces the
+        // operator-only precondition the STORAGE SAFETY note above used to
+        // leave to judgement.
+        StorageLayoutRecord.requireAppendOnly("UpgradeVaultImplementation", diamond);
 
         // OPTIONAL eager per-user upgrade list. Default = none (lazy upgrade).
         address[] memory users = vm.envOr("VAULT_UPGRADE_USERS", ",", new address[](0));
@@ -153,6 +166,7 @@ contract UpgradeVaultImplementation is Script {
         // addresses.json stale vs the live diamond. The eager loop is a
         // best-effort convenience, not part of recording the template bump.
         Deployments.writeVaultImpl(newImpl);
+        StorageLayoutRecord.record(diamond);
 
         // ── Optional: eagerly upgrade the known dev-wallet vaults ──
         // `upgradeUserVault` is permissionless; the deployer signs. Each call

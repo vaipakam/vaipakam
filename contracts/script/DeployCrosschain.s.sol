@@ -27,6 +27,7 @@ import {VpfiReturnSender} from "../src/crosschain/VpfiReturnSender.sol";
 import {VpfiReturnReceiver} from "../src/crosschain/VpfiReturnReceiver.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 
 /// @dev The slice of OZ/Chainlink `Ownable2Step` this script drives — the
 ///      CCIP `TokenPool` is `Ownable2Step`, so a fresh pool is owned by
@@ -80,7 +81,9 @@ interface IOwnable2Step {
  *
  *         Usage:
  *           forge script script/DeployCrosschain.s.sol \
- *             --rpc-url $RPC_URL --broadcast -vvv
+ *             --rpc-url $RPC_URL --ffi --broadcast -vvv
+ *         (`--ffi` runs the storage-layout guard, #2092; without it the run
+ *         reverts before its first transaction.)
  */
 contract DeployCrosschain is Script {
     function run() external {
@@ -90,6 +93,13 @@ contract DeployCrosschain is Script {
         address rmnProxy = vm.envAddress("CCIP_RMN_PROXY");
         uint256 destGasLimit = vm.envOr("CCIP_DEST_GAS_LIMIT", uint256(400_000));
         address diamond = Deployments.readDiamond();
+        // #2092 — the proxies this run deploys join the code the chain's
+        // storage-layout record governs, so the record must already hold
+        // this checkout's layout (checked here, before any transaction), and
+        // it is rewritten with its anchor at the end. Only a run that writes
+        // its artifact checks: a dry run sends nothing, and on a fresh chain
+        // it has no record to check against yet.
+        if (Deployments.artifactWritesEnabled()) StorageLayoutRecord.requireAppendOnly("DeployCrosschain", diamond);
 
         bool canonical = block.chainid == 8453 || block.chainid == 84532;
         // Canonical Base stores `baseChainId = 0` (it is its own base);
@@ -295,6 +305,8 @@ contract DeployCrosschain is Script {
         }
 
         console.log("");
+        StorageLayoutRecord.record(diamond);
+
         console.log("Crosschain deploy complete.");
         console.log("Next: ConfigureCcip.s.sol (lanes, channels, peers, rate limits).");
     }

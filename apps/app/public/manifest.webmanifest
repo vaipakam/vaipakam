@@ -1,0 +1,59 @@
+{
+  "id": "/",
+  "name": "Vaipakam",
+  "short_name": "Vaipakam",
+  "description": "Lend, borrow and rent NFTs directly with other people. Your assets stay in your own vault on the blockchain.",
+  "lang": "en",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#4f46e5",
+  "categories": [
+    "finance"
+  ],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Offer Book",
+      "url": "/offers",
+      "description": "Browse open lending and borrowing offers"
+    },
+    {
+      "name": "My positions",
+      "url": "/positions",
+      "description": "Your loans, rentals and the positions you hold"
+    },
+    {
+      "name": "VPFI discounts",
+      "url": "/vpfi",
+      "description": "VPFI in your vault and the protocol fee discount it gives"
+    },
+    {
+      "name": "Alerts",
+      "url": "/settings",
+      "description": "Set up alerts for your loans, in Settings"
+    }
+  ],
+  "prefer_related_applications": false
+}

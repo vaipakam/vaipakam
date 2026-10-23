@@ -144,7 +144,8 @@ import {
 } from './subrequestBudget';
 import { schemaDeclineNotice, schemaGate } from './schemaGate';
 import { adoptDeployment, describeAdoption, isAdoptedEpoch } from './deploymentEpoch';
-import { activityRefs } from './activityRefs';
+import { activityRefs } from '@vaipakam/lib/activityRefs';
+import { activityActor } from '@vaipakam/lib/activityActor';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -6825,8 +6826,9 @@ export async function recordActivityEvents(
       const id = Number((args as Record<string, unknown>).offerId as bigint);
       const creator = creatorByOfferId.get(id);
       if (creator) {
-        // Add `creator` so the dapp's `indexedToActivityEvent`
-        // address-walk surfaces the borrower in participants.
+        // Add `creator` so the actor rule files the row under the
+        // borrower, who is then its participant on the Activity page
+        // (`@vaipakam/lib/activityParticipants`, #2703).
         args = { ...args, creator };
       }
     }
@@ -7422,196 +7424,15 @@ export function _verifiedParticipantStatements(
 /// The activity row's actor, loan and offer for one decoded event. Exported
 /// for the activity-refs tests, which execute it for every compiled event.
 /// The loan and offer come from the event's ABI by one rule (#1794,
-/// `activityRefs.ts`), so a new event with a `loanId` is filed under its loan
-/// without anyone remembering to add a case; only the actor is per-event.
+/// `@vaipakam/lib/activityRefs`), so a new event with a `loanId` is filed
+/// under its loan without anyone remembering to add a case; only the actor is
+/// per-event (`@vaipakam/lib/activityActor`). Both live in the shared library
+/// (#2658) because the app's Activity labels must cover what they file.
 export function pluckActivityRefs(
   eventName: string,
   args: Record<string, unknown>,
 ): { actor: string | null; loanId: number | null; offerId: number | null } {
   return { actor: activityActor(eventName, args), ...activityRefs(eventName, args) };
-}
-
-/// The wallet an activity row is filed under, per event. ONLY the actor is
-/// decided here: the loan and offer references come from the event's ABI by
-/// one rule (`activityRefs.ts`, #1794), so an event needs a case below only
-/// when it has a meaningful actor. An event with no case files with a NULL
-/// actor and its references intact.
-function activityActor(eventName: string, args: Record<string, unknown>): string | null {
-  switch (eventName) {
-    case 'OfferCreated':
-      return (args.creator as string)?.toLowerCase() ?? null;
-    case 'OfferAccepted':
-      return (args.acceptor as string)?.toLowerCase() ?? null;
-    case 'OfferMatched':
-      // The row's offer is the LENDER offer (#600) — see `intendedAlias` in
-      // activityRefsPolicy.json. The actor is the matcher.
-      return (args.matcher as string)?.toLowerCase() ?? null;
-    case 'OfferCanceled':
-      return (args.creator as string)?.toLowerCase() ?? null;
-    case 'OfferConsumedBySale':
-      // T-086 Round-8 (#358) §19.7 + Codex round-19 P2 #3 — Scenario A
-      // terminal. The event carries (offerId, executor); `executor` is
-      // the protocol's Seaport-conformant executor singleton (never a
-      // real user), so it's useless as the `actor` filter target. The
-      // BORROWER (= offer creator) is who needs to see this row when
-      // querying `/activity?actor=<wallet>`. We rely on the
-      // `recordActivityEvents` enrichment pass having put the
-      // `creator` field into `args` (looked up from the `offers`
-      // table) before this mapper runs — `actor = creator` then
-      // makes server-side per-wallet filters surface the sold row to
-      // the borrower as expected. The `executor` address stays in
-      // `args.executor` for the unfiltered Activity feed's
-      // address-walk participant derivation.
-      return (args.creator as string | undefined)?.toLowerCase() ??
-          (args.executor as string)?.toLowerCase() ??
-          null;
-    case 'OfferModified':
-      // #193 / Codex round-2 P2 — denormalize the actor (= creator;
-      // OfferMutateFacet's access gate guarantees msg.sender ==
-      // offer.creator) + offerId so per-offer and per-wallet
-      // activity filters surface modify events alongside the other
-      // offer-mutation rows. Without this mapping the event lands
-      // in activity_events with NULL refs and falls out of the
-      // dashboard's offer-timeline + wallet-history queries.
-      return (args.creator as string)?.toLowerCase() ?? null;
-    case 'LoanInitiated':
-      return (args.borrower as string)?.toLowerCase() ?? null;
-    case 'LoanRepaid':
-      return (args.repayer as string)?.toLowerCase() ?? null;
-    // T-092 Phase 3 (#503) Codex round-4 P2 — `caller` is the
-    // address that initiated the extension (the keeper, or the
-    // borrower-NFT owner extending directly). Indexed on-chain so
-    // `pluckActivityRefs` can return it as the activity actor.
-    // Without this, `?actor=...` filters would miss direct
-    // borrower self-extensions because `DecodedLog` doesn't store
-    // `msg.sender`.
-    case 'LoanExtended':
-      return (args.caller as string)?.toLowerCase() ?? null;
-    // T-090 Sub 2 — `borrower` is `msg.sender` (current borrower-NFT
-    // owner), the load-bearing authority root for the swap-to-repay
-    // surface (see SwapToRepayFacet round-3 P2 #1).
-    case 'SwapToRepayExecuted':
-    case 'SwapToRepayPartialExecuted':
-      return (args.borrower as string)?.toLowerCase() ?? null;
-    // T-090 v1.1 (#389) Sub 2 (#417) — borrower-attributed events.
-    case 'SwapToRepayIntentCommitted':
-      return (args.committedBy as string)?.toLowerCase() ?? null;
-    case 'SwapToRepayIntentCancelled':
-      return (args.cancelledBy as string)?.toLowerCase() ?? null;
-    // `Filled` attributed to the borrower who originated the
-    // commit, NOT the Fusion solver who actually submitted the
-    // fill tx (Codex round-1 PR #421 P2 — the Activity feed's
-    // close-out row must reach the connected borrower, otherwise
-    // they lose visibility of their own successful repay). The
-    // `committedBy` field on `args` is stashed by the indexer
-    // dispatcher BEFORE the row delete that releases it — see the
-    // `SwapToRepayIntentFilled` branch in `processLoanLogs`.
-    case 'SwapToRepayIntentFilled':
-      return (args.committedBy as string)?.toLowerCase() ?? null;
-    // #1566 slice 3 — the fill's pre-hook took the committed lot out of the
-    // borrower's vault, inside the fill. Actor = the borrower whose vault it
-    // left; the fill's own `SwapToRepayIntentFilled` represents the transaction.
-    case 'SwapToRepayIntentLotPulled':
-      return (args.borrower as string)?.toLowerCase() ?? null;
-    // #1566 slice 2 — one row per move of a loan's vault-held fallback
-    // custody (entry, each settlement slice, a retry's pull and restore, a
-    // match leg, the return to the pledge). Actor = the counterparty the move
-    // names; the action that moved it (liquidation, claim, cure, match)
-    // represents the transaction.
-    case 'FallbackCustodyMoved':
-      return (args.counterparty as string)?.toLowerCase() ?? null;
-    case 'BackstopAbsorbedLoan':
-      // #630 backstop Role B — surface the cash buyout on the loan timeline and
-      // the lender's activity feed. Actor = the paid lender-NFT owner.
-      return (args.lenderNftOwner as string)?.toLowerCase() ?? null;
-    case 'IntentLoanRolled':
-      // #393 v1-d.2 auto-roll. When the borrower hasn't claimed yet the loan
-      // stays Repaid, so this is the only signal the lender side closed (the
-      // proceeds were re-liened into the owner's intent capital and the lender
-      // NFT burned). Actor = the intent owner whose loan rolled, so it surfaces
-      // on `/activity?actor=<wallet>`.
-      return (args.owner as string)?.toLowerCase() ?? null;
-    case 'InternalMatchExecuted':
-      // Leg A is the row's loan (see `intendedAlias` in
-      // activityRefsPolicy.json). Actor is the matcher (msg.sender of the
-      // entry-point call).
-      return (args.matcher as string)?.toLowerCase() ?? null;
-    case 'LenderFundsClaimed':
-    case 'BorrowerFundsClaimed':
-    case 'BorrowerLifRebateClaimed':
-      return (args.claimant as string)?.toLowerCase() ?? null;
-    // T-034 PR2 — settler / advancer is the meaningful actor.
-    case 'PeriodicInterestSettled':
-    case 'PeriodicInterestAutoLiquidated':
-      return (args.settler as string)?.toLowerCase() ?? null;
-    case 'RepayPartialPeriodAdvanced':
-      return (args.advancedBy as string)?.toLowerCase() ?? null;
-    case 'VPFIDepositedToVault':
-    case 'VPFIWithdrawnFromVault':
-    // RL-2 (#1303) — reward loop-closure events: actor = the wallet whose
-    // claim / vault the VPFI moved through, so the Activity feed's
-    // per-wallet filter surfaces them (the ledger itself lives in the
-    // dedicated reward_* tables, not args_json).
-    case 'InteractionRewardsClaimed':
-    case 'RewardDeliveredToVault':
-    case 'VaultVpfiDebited':
-      return (args.user as string)?.toLowerCase() ?? null;
-    // #1566 — one settled chunk of a forfeited reward entry (the loan sweep or
-    // the flagged-owner sweep). Actor = the entry's owner; loan = the loan it
-    // accrued on, so the forfeit shows on that loan's timeline.
-    case 'RewardEntryForfeitSettled':
-      return (args.user as string)?.toLowerCase() ?? null;
-    case 'Transfer':
-      // Position-NFT lifecycle. The "actor" for activity-feed filter
-      // purposes is the recipient (`to`) — that's the wallet that
-      // gained ownership and most likely cares to see the event in
-      // their feed. The sender (`from`) appears in args_json; a
-      // future enhancement could surface a second row per Transfer
-      // keyed on `from` if the per-wallet feed needs to show
-      // "outgoing" transfers explicitly.
-      return (args.to as string)?.toLowerCase() ?? null;
-    // T-086 step 12 — prepay-listing events. The on-chain payloads
-    // use slightly different field names: Posted carries `lister`,
-    // Updated carries `lister`, Canceled carries `caller`,
-    // PrepayCollateralSaleSettled carries `executor`. The loan_id is
-    // present on all four. Codex P2 round-2 on PR #304.
-    case 'PrepayListingPosted':
-    case 'PrepayListingUpdated':
-      return (args.lister as string)?.toLowerCase() ?? null;
-    case 'PrepayListingCanceled':
-      return (args.caller as string)?.toLowerCase() ?? null;
-    case 'PrepayCollateralSaleSettled':
-      return (args.executor as string)?.toLowerCase() ?? null;
-    // T-086 Round-6 / Block D (#345) — atomic match-rotation event.
-    // The borrower (msg.sender) clicked Match; `matcher` is the
-    // canonical actor for activity-feed purposes.
-    case 'PrepayListingMatched':
-      return (args.matcher as string)?.toLowerCase() ?? null;
-    // #2550 / #2559 — a fill the solver's capacity would have refused went
-    // through on the intent owner's priority-routing credit. The row belongs on
-    // the loan the fill opened and on the owner's feed, whose credit it spent.
-    case 'IntentPriorityFill':
-      return (args.owner as string)?.toLowerCase() ?? null;
-    // #2342 — a closed loan's owed VPFI entering or leaving a vault owner's
-    // fee-tier exclusion. The row belongs on the loan's timeline, and on
-    // the vault owner's feed while it charges them. `vaultOwner` is the zero
-    // address when the side stops excluding anything, which names no wallet,
-    // so the actor is left NULL rather than filed under 0x0.
-    case 'TierExclusionUpdated': {
-      const owner = (args.vaultOwner as string | undefined)?.toLowerCase();
-      return owner && owner !== '0x0000000000000000000000000000000000000000'
-            ? owner
-            : null;
-    }
-    // No case, so no actor, by design for: a status edge (`LoanStatusChanged`),
-    // a settlement or default record (`LoanSettled`, `LoanDefaulted`,
-    // `LoanLiquidated`, `OwedAt*Recorded`, …) and a system-triggered cancel
-    // (`SwapToRepayIntentForceCancelled`, whose `source` is the Diamond). Each
-    // is a consequence of the call that produced it, whose own row carries
-    // the actor. Their loan references are still filed (`activityRefs.ts`).
-    default:
-      return null;
-  }
 }
 
 /** JSON-serialize an event's args bag, coercing bigints to strings.

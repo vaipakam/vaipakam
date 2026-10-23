@@ -361,13 +361,20 @@ export function AppShell() {
               on `/settings`, which is inside the gate (review round 3).
               The gate card now renders its own picker rather than the
               comment asserting one that was not reachable. */}
-          <ErrorBoundary resetKey={pathname + search}>
-            <LegalGate>
-              <Suspense fallback={<EmptyState icon={LoaderCircle} title={copy.chrome.loading} />}>
-                <Outlet />
-              </Suspense>
-            </LegalGate>
-          </ErrorBoundary>
+          {/* #2180 — the ROUTED region, marked so a reader can tell it from
+              the shell's own banners above it (a live drive judges whether
+              the route has rendered, and a banner's text is not the route's).
+              `display: contents` keeps the layout exactly as if the wrapper
+              were not there. */}
+          <div data-route-outlet="" style={{ display: 'contents' }}>
+            <ErrorBoundary resetKey={pathname + search}>
+              <LegalGate>
+                <Suspense fallback={<EmptyState icon={LoaderCircle} title={copy.chrome.loading} />}>
+                  <Outlet />
+                </Suspense>
+              </LegalGate>
+            </ErrorBoundary>
+          </div>
         </main>
       </div>
 

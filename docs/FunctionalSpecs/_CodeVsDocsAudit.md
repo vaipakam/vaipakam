@@ -1246,3 +1246,63 @@ kind cannot be identified.
 
 This is not code being transcribed into the spec. The intent changed first,
 in the issue, and both the spec and the code follow it.
+
+## The day-close grace window reads as zero when it was never set (#2681, 2026-10-23)
+
+The parameter reference describes the reward grace window as a setting with a
+built-in default of four hours that governance may change. The contracts'
+read for it returns the stored value as it is, so on a deployment where
+governance never set it the answer is zero, while the window the protocol
+actually applies is the four-hour default. A reader taking the read at its
+word would conclude the window is zero.
+
+**Candidate bug in the code, not the doc.** The doc states the intent: the
+setting has a default and the read should report what is in force. The fix
+belongs in the contracts and is filed as #2681. Until it lands, the protocol
+console does not repeat the contract's zero: it reports the documented
+four-hour default and says the window is not set, so that default applies.
+The figure comes from the parameter reference, not from the contract, and
+is held in one place in the app that names this entry; once #2681 makes the
+read report the window in force, that copy goes.
+
+**Status:** open, tracked by #2681.
+
+## The connected app is not installable (#2687, 2026-10-23)
+
+The website spec's PWA requirements say the dApp should be installable from
+the browser, with a manifest whose shortcuts reach Offer Book, My Loans,
+VPFI Vault and Alerts, and a production-only service worker that never
+caches live data. The connected app has no manifest and no service worker.
+
+The only manifest in the tree was a leftover on the marketing site from the
+retired app. The marketing site never linked it; the retired app linked its
+own copy on its own host, removed with that app. None of its shortcuts
+reached what it named: the marketing site reads an unknown first path
+segment as a language, so they landed on marketing pages. One was a "Buy
+VPFI" shortcut to the retired purchase route, which the site redirects to
+its VPFI information page. #1742 deletes it. That changes nothing about installability, since
+nothing could install it, but it removes a file that described the removed
+purchase surface.
+
+**Candidate gap in the code, not the doc.** The spec states the intent, and
+the shortcut list it names has no purchase entry. The work is filed as
+#2687.
+
+**Resolution (#2687, 2026-10-23).** The connected app now links a web
+manifest with the four shortcuts the spec names (Offer Book, My positions
+for My Loans, VPFI, and Alerts, which live in Settings), and a production
+build registers a service worker that caches only this build's static shell
+files and answers nothing else: no page load, no cross-origin request, no
+request with a query string.
+
+One point is a reading of the spec rather than a copy of it. The spec asks
+navigational HTML to "prefer a network-first strategy". Network-first
+usually means a cached page is served when the network fails. The app does
+not do that: a page load always goes to the network, offline included,
+because a cached page would run an old build against contract addresses
+and interfaces it cannot know are retired. The spec's stated purpose, that
+a deploy replaces the shell on the next load, holds more strongly this way,
+and the spec now says so in its own words. If an offline page is wanted
+later, it has to be a page that runs no app code.
+
+**Status:** resolved by #2687.

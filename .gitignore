@@ -84,6 +84,8 @@ graphify-out/
 contracts/deployments/*/.markers/
 contracts/deployments/*/.history/
 contracts/deployments/*/addresses.prior-rehearsal.*.json
+contracts/deployments/*/storage-layout.prior-rehearsal.*.json
+contracts/deployments/*/storage-layout.anchor.prior-rehearsal.*.json
 # `--fresh` (deploy-testnet.sh / deploy-mainnet.sh) archives the
 # prior chain state — addresses.json + deployment_source.json +
 # .markers + .history + addresses.prior-rehearsal.* — into a single

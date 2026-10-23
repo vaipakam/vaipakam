@@ -219,6 +219,8 @@ itself an error.
   compiled and that the tree is complete. Node is a required dependency there,
   like python3 for step 2c: a gate that skips a storage check when an
   interpreter is missing is the failure #2092 describes.
+- **Every deploy and in-place change**, against the chain's own record. See
+  "The deploy-time refusal" below.
 - **CI, contracts-fast.** The job fetches the base commit's golden file (the PR
   base, or the pre-push tip on `main`) and passes it as `STORAGE_LAYOUT_BASE`,
   so the append-only comparison runs before merge. A base without a golden file
@@ -236,16 +238,130 @@ Changing a contract's storage therefore means running
 `node contracts/script/storage-layout-guard.mjs write` (it builds first) and
 committing the golden file with the change.
 
-## Not in this change: the deploy-time refusal (#2092 item 1)
+## The deploy-time refusal (#2092 item 1)
 
 CI stops a break from merging unnoticed. It cannot stop a refresh of a chain
-whose Diamond was deployed from older code than the base. That needs each
-chain's own record. The follow-up records the golden ledger at every deploy and
-refresh in `contracts/deployments/<slug>/`. It then makes the in-place scripts
-(`RefreshAllFacetsInPlace`, `RedeployFacets`, `ReplaceStaleFacets`,
-`UpgradeVaultImplementation`) refuse a target whose recorded ledger is not
-included in the new one, after applying declared renames. It never applies
-acknowledgements.
+whose code is older than the PR's base, because a chain does not run `main`: it
+runs whatever last reached it. So each chain carries its own record,
+`contracts/deployments/<slug>/storage-layout.json`, a copy of the golden ledger
+as it stood when code last reached that chain.
+
+**Who writes it.** `DeployDiamond.run()` writes it at the end of every deploy
+that writes the deployment artifact, and every in-place script below rewrites
+it after its change. A dry run writes no record, like it writes no artifact.
+The guard writes the file (`storage-layout-guard.mjs record --to <file>`), and
+that mode refuses a stale golden file, so a record always describes the code
+being deployed. A fresh deploy wrapper (`deploy-testnet.sh`,
+`deploy-mainnet.sh`, and `deploy-chain.sh --fresh`) moves the old record and
+anchor aside with the old `addresses.json`.
+
+**The record is bound to the live chain.** A record is a file in one
+checkout, and a chain can be changed from another: a refresh whose new record
+was never committed, or two branches that each start from the same record and
+add different fields at the same free slot. Checked only against its own
+checkout's file, the second of those refreshes would pass and reinterpret the
+first one's storage. So beside the record sits its anchor,
+`storage-layout.anchor.json`, written with it: the Diamond, a fingerprint of
+every code location the record governs, and the record's own hash. The record
+covers the Diamond's namespaces and every UUPS root, so the fingerprint covers
+the Diamond itself, the facet its `diamondCut` routes to (installed by the
+constructor outside the loupe's registry, so read by selector), the other
+facets (the loupe's address list), the vault and aggregator-adapter
+templates, and every EIP-1967 proxy the chain reaches with the implementation
+it points at: every address in `addresses.json` (outside `.facets`), every
+satellite the Diamond names, and the `messenger()` each of those trusts. The
+proxies are found rather than listed, so a new one cannot be left out by
+forgetting to name it. A fingerprint over the facets alone let a receiver
+upgraded by an interrupted refresh pass as unchanged (Codex #2684 r2). The
+fingerprint also hashes the runtime code at every one of those addresses,
+because an address is not an identity for code: a broadcast whose simulation
+wrote the anchor but never sent leaves it naming addresses another checkout
+can fill with different bytecode from the same deployer nonce (Codex #2684
+r4). The parts are written beside the fingerprint so a refusal can say which code
+moved. A change is refused unless the live chain still matches the anchor and
+the record is the one the anchor names, so a chain changed from
+elsewhere fails here instead of being checked against a record that no longer
+describes it. Two runs racing from different checkouts can both pass before
+either broadcasts, and nothing off-chain can close that, so these scripts are
+run one at a time per chain. `AnchorStorageLayoutRecord.s.sol` writes an anchor
+on its own, for a chain's one-time seed and for recovery after a change reached
+a chain without recording; it refuses unless the operator sets
+`ANCHOR_RECORD_DESCRIBES_CHAIN=true`, because writing one asserts that the
+record describes what the chain runs.
+
+**Never `forge script --resume` a guarded script** (Codex #2684 r3). Resume
+sends a saved plan without executing the script, so neither the check nor the
+record runs: a plan saved by a dry run, or one whose chain changed after it was
+simulated, would go out unchecked. No code in the script can refuse it, since
+none of it runs, so a resume counts as a change sent from outside these
+scripts, like a `cast send`. The checked recovery after a guarded run stopped
+part-way is: confirm from the run's broadcast journal and the loupe that the
+chain runs only that run's partial change; re-anchor with
+`AnchorStorageLayoutRecord.s.sol` from the same commit; run the script again
+normally. The in-place scripts work out what is left to change from the chain
+itself, and the re-run checks it before sending. A fresh `DeployDiamond` is not
+an in-place change (a new Diamond has no storage to break), so resuming its
+own interrupted broadcast stays the way to finish that Diamond.
+
+**Who checks it.** Every script that changes deployed code in place runs
+`storage-layout-guard.mjs check --base <record>` before its first transaction
+and refuses on a non-zero exit: `RefreshAllFacetsInPlace`,
+`RefreshChangedFacetsInPlace`, `RedeployFacets`, `ReplaceStaleFacets`,
+`UpgradeOracleFacet`, `MigrateRiskTermsCommitReveal` and
+`UpgradeVaultImplementation`. `DeployVPFIToken` and `DeployCrosschain` run it
+too, and rewrite the pair after: the proxies they add are code the record
+governs, so the record must already hold the layout they are deployed with,
+and the anchor must list them, or the first refresh after a fresh deploy would
+refuse. They check only on a run that writes its artifact, since a dry run
+sends nothing and a fresh chain's dry run has no record yet. It is the same command CI runs, so declared
+renames apply and acknowledgements never do: an acknowledged break means no
+chain may be upgraded in place across it. A chain with no record is refused,
+because the layout it runs is unknown. `DeployDiamond` runs the plain `check`
+first, so a deploy from a checkout with a stale golden file is refused before
+anything is sent, rather than failing at the record after `addresses.json`
+already names the new Diamond.
+
+**Inside each script, through `--ffi`** (owner decision 2026-10-23). The
+refusal sits where the code change happens, so no entry point reaches a chain
+around it. Each script calls the guard through `vm.tryFfi`, so these scripts
+are run with `--ffi`, and a run without it is refused before its first
+transaction. `foundry.toml` enables neither ffi nor a read of
+`storage-layout/`: it is part of CI's forge cache key (#2603), and the flag
+belongs on these invocations only. The checks sit in each script's one
+body (its `runWith` where it has one), so selecting a function with `--sig`
+cannot skip them. They skip themselves under `forge test`, which has no ffi
+and no chain, and for a run whose artifact root is redirected to a scratch
+directory, which is allowed only on Anvil or under test and so holds no live
+chain's record. The wrappers that run these scripts pass `--ffi`.
+
+**Why over-recording is safe.** Every comparison is set inclusion (record ⊆
+new layout). A record claiming more than a chain runs can only refuse more. So
+a record written by a simulation whose broadcast then failed is safe, a curated
+refresh may record the whole tree, and a facet-only refresh may record the
+UUPS roots too. A record claiming less than the chain runs is the dangerous
+direction, which is why a missing record refuses rather than skips.
+
+**Seeded for the live testnets.** Base Sepolia, Arbitrum Sepolia and BNB
+testnet were deployed on 2026-10-17 and 2026-10-18 and refreshed on
+2026-10-19. Main at each of those points is included in #2600's golden ledger
+(measured, #2092 comment of 2026-10-20), #2600's ledger is included in today's
+(checked with `check --base` when the records were written), and no break has
+been acknowledged since. Their records are therefore today's ledger, anchored to each Diamond as it
+ran when the records were written. Ethereum
+Sepolia and OP Sepolia are retired and carry no record, so a refresh of either
+is refused.
+
+**What it does not cover.**
+
+- A cut or upgrade sent outside these scripts: `cast`, a Safe transaction
+  built by `multicallDeploy` (a pure payload builder), or a governance
+  proposal. Mainnet takes fresh deploys only (owner decision O1 = A), so no
+  in-place path exists there today; when one is built after launch (decision
+  D5), its proposal builder must run the same check.
+- The record is written in forge's pre-send simulation, like `addresses.json`,
+  so it can describe a change whose broadcast then failed part-way. That is
+  over-recording, which the paragraph above shows is safe; the operator still
+  has to read the broadcast journal to learn what the chain runs.
 
 ## Decisions answered here
 

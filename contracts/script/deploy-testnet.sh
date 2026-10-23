@@ -725,7 +725,7 @@ archive_chain_state() {
   # Move every chain-state file/dir we know about. The `2>/dev/null`
   # tolerates missing entries (e.g. .history/ may not exist on a
   # half-failed deploy).
-  for entry in addresses.json deployment_source.json .markers .history; do
+  for entry in addresses.json deployment_source.json storage-layout.json storage-layout.anchor.json .markers .history; do
     if [ -e "$deploy_dir/$entry" ]; then
       mv "$deploy_dir/$entry" "$archive/" 2>/dev/null || true
     fi
@@ -1008,7 +1008,10 @@ EOF
   # left as misleading knobs. A transient RPC 5xx on send aborts the phase; the
   # recovery is to re-run it — with `--broadcast --resume` forge replays the
   # saved broadcast and skips already-landed txs, or (on a --fresh testnet run)
-  # simply re-run the phase from a clean state.
+  # simply re-run the phase from a clean state. `--resume` is for DeployDiamond
+  # only: DeployVPFIToken and DeployCrosschain run the storage-layout check
+  # (#2092), and a resume sends their saved plan without running it. Re-run
+  # those instead (on a --fresh testnet run, from a clean state).
   # Arbitrum L2-block override (#853 Codex P2). On Arbitrum `block.number`
   # returns the L1 block; the artifact writer uses `ArbSys(0x64).arbBlockNumber()`
   # for the real L2 block, but forge's SIMULATION doesn't emulate that precompile,
@@ -1054,7 +1057,7 @@ EOF
     || { echo "ERROR: could not mark the live publication in archive-manifest.json (another deploy on $CHAIN_SLUG may be in progress — check for a live forge child before live-begin --force)" >&2; exit 1; }
   export VAIPAKAM_LIVE_PUBLICATION_TOKEN="$LIVE_PUB_TOKEN"
   echo "[2] DeployDiamond.s.sol"
-  forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+  forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --ffi --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
 
   echo
   echo "[3] DeployTimelock.s.sol"
@@ -1088,7 +1091,7 @@ EOF
     echo
     echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
     VPFI_TOKEN_FRESH="$FRESH" \
-      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --ffi --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
   fi
 
   # DeployCrosschain.s.sol deploys the whole T-068 CCIP stack for this
@@ -1101,7 +1104,7 @@ EOF
   # phase — there is no per-adapter setRateLimits step any more.
   echo
   echo "[4] DeployCrosschain.s.sol  (CCIP cross-chain stack)"
-  forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+  forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --ffi --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
 
   # ── Master-flag flip (testnet ergonomics) ───────────────────────
   # Range Orders Phase 1 governance-gated kill switches default

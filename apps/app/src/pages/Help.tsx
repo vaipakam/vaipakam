@@ -11,6 +11,7 @@ import { supportMailto } from '../data/support';
 import { ADVANCED_USER_GUIDE_STUCK_TOKENS_URL } from '../lib/externalLinks';
 import { formatDate } from '../lib/format';
 import { useActiveChain } from '../chain/useActiveChain';
+import { SUPPORTED_CHAINS } from '../chain/chains';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 
 // UX2-008 — the live fee read (`useProtocolFees` → the Diamond ABI) is
@@ -39,6 +40,7 @@ export function Help() {
     copy.help.faq.claimCenter,
     copy.help.faq.wrongNetwork,
     copy.help.faq.nftVerifier,
+    copy.help.faq.fakeVerifier,
   ];
   const buildHash = import.meta.env.VITE_BUILD_HASH as string | undefined;
   const buildTime = import.meta.env.VITE_BUILD_TIME as string | undefined;
@@ -127,6 +129,31 @@ export function Help() {
         ) : (
           feeFallback
         )}
+        {/* #745 — the canonical contract per network. The fake-verifier
+            answer above points here: a token's name and picture can be
+            copied, its contract address cannot. Full addresses, never
+            shortened, since a lookalike can differ anywhere. Read from the
+            deployments bundle, so no ABI and no network read. */}
+        <section id="contracts" className="card">
+          <h3>{copy.help.contractsTitle}</h3>
+          <p style={{ marginTop: 0 }}>{copy.help.contractsLede}</p>
+          <dl className="receipt" style={{ margin: 0 }}>
+            {SUPPORTED_CHAINS.map((c) => (
+              <div key={c.chainId} className="receipt-row">
+                <dt>{c.name}</dt>
+                <dd style={{ overflowWrap: 'anywhere' }}>
+                  <a
+                    href={`${c.blockExplorer}/address/${c.diamondAddress}`}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    <code>{c.diamondAddress}</code>
+                  </a>
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </section>
         {/* T-054 — the stuck-token explainer, the ONLY in-app path to
             /recover (the page is deliberately unlisted; reading this
             first is the dust-poisoning safety gate). */}

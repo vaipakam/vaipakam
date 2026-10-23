@@ -640,6 +640,36 @@ node contracts/script/storage-layout-guard.mjs write   # builds src/, then write
   slot is a parameter, never another pointer in the same file.
 - **Facets declare no state variables.** The guard refuses one that does.
 
+**Each chain carries its own record** (#2092 item 1):
+`contracts/deployments/<slug>/storage-layout.json`, the golden ledger as it
+stood when code last reached that chain, plus `storage-layout.anchor.json`,
+which binds it to every code location the record governs: the Diamond, its
+diamondCut facet and the rest of the facet list, the
+vault and adapter templates, and every UUPS proxy the chain reaches (found from
+`addresses.json` and the Diamond's satellites, never listed by hand), and the
+runtime code hash at each of them, since an address alone does not identify
+the code there. Commit the
+two together; a refresh from a checkout whose pair is out of date is refused.
+`DeployDiamond` writes them, `DeployVPFIToken` and `DeployCrosschain` check and
+rewrite them (the proxies they add are governed code), and
+every in-place script (`RefreshAllFacetsInPlace`, `RefreshChangedFacetsInPlace`,
+`RedeployFacets`, `ReplaceStaleFacets`, `UpgradeOracleFacet`,
+`MigrateRiskTermsCommitReveal`, `UpgradeVaultImplementation`) runs
+`check --base <record>` before its first transaction, refuses on failure, on a
+missing record or on an anchor the live chain no longer matches, and rewrites
+the pair afterwards. They call the guard
+through `vm.tryFfi`, so **run them with `--ffi`** (the wrappers do); a run
+without it is refused before anything is sent. The calls sit in each script's
+`runWith` body so `--sig` cannot skip them; the library skips itself under
+`forge test` and for a redirected artifact root. **Never `forge script
+--resume` one of these scripts**: resume sends the saved plan without running
+the script, so neither check runs. After one stops part-way, confirm from its
+broadcast journal that the chain runs only that partial change, re-anchor with
+`AnchorStorageLayoutRecord.s.sol` from the same commit, and run it again. Do
+not enable ffi or a `storage-layout/` read in `foundry.toml` (#2603). A new script that changes
+deployed code in place calls `StorageLayoutRecord.requireAppendOnly` and
+`record` the same way.
+
 ## Conventions
 
 - Interest rates and fees use **basis points** (BPS, 1/10000)

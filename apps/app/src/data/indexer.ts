@@ -8,6 +8,7 @@
  * field shapes in sync with the worker.
  */
 
+import type { ProtocolKnobKey } from '@vaipakam/lib/protocolKnobs';
 import type { SignedOrderWire } from '../lib/signedOffer';
 
 const TIMEOUT_MS = 4_000;
@@ -293,6 +294,13 @@ export interface IndexedLoan {
    *  through `initiatedTerms`. */
   initRateBps?: number | null;
   initDurationDays?: number | null;
+  /** #1142 — the tenor market this loan is a fill of: its agreed duration
+   *  when the indexer has confirmed the agreed terms, `null` when it has not
+   *  (the loan is in no market, since any tenor would be a guess). The key
+   *  the candles and the market-scoped tape select on. Absent on a row that
+   *  did not come from the indexer's loan routes; the desk reads absent as
+   *  "in no market". */
+  marketDurationDays?: number | null;
   collateralAmount: string;
   assetType: number;
   collateralAssetType: number;
@@ -363,6 +371,24 @@ export interface RecentLoansPage {
   chainId: number;
   loans: IndexedLoan[];
   nextBefore: number | null;
+  /** The scope the page was read under, as the worker applied it.
+   *  `placement` names the rule that chose the tenor (#1142); null when
+   *  no tenor was asked for. A market-scoped reader requires it: an empty
+   *  page has no row from which to tell a scoped answer from an unscoped
+   *  one. */
+  scope?: RecentLoansScope | null;
+  /** #1142 — on a page scoped to one full (pair, tenor) market: loans on
+   *  the PAIR, all time, that no tenor market holds (agreed terms
+   *  unconfirmed), capped like the candles' count. Null otherwise. */
+  unplaced?: UnplacedCount | null;
+}
+
+export interface RecentLoansScope {
+  lendingAsset: string | null;
+  collateralAsset: string | null;
+  durationDays: number | null;
+  placement: string | null;
+  excludeSaleVehicles: boolean;
 }
 
 /** Cross-status recent loans, optionally market-scoped server-side —
@@ -407,8 +433,14 @@ export interface RateCandleBucket {
   fills: number;
   /** Total principal as a decimal STRING in the lending asset's raw
    *  base units — format with the token's decimals metadata, same as
-   *  every other indexer amount field. */
+   *  every other indexer amount field. Sums only the fills whose
+   *  principal is recorded. */
   principalTotal: string;
+  /** #1142 — fills whose principal is NOT recorded and so is left out of
+   *  `principalTotal`; above zero the total is a floor. Required: a bucket
+   *  without it cannot say whether its total is complete, so the desk treats
+   *  such a response as unavailable. */
+  unrecordedPrincipalFills: number;
 }
 
 export interface RateCandlesResponse {
@@ -418,6 +450,18 @@ export interface RateCandlesResponse {
    *  dropped older fills (the OLDEST candles are missing, never recent
    *  ones). Optional so a not-yet-redeployed Worker parses fine. */
   truncated?: boolean;
+  /** #1142 — loans on this PAIR in the range (any tenor) that no tenor
+   *  market holds, because their agreed terms are not confirmed. Required: a
+   *  response without it cannot say whether the drawn fills are everything,
+   *  so the desk treats it as unavailable. */
+  unplaced: UnplacedCount;
+}
+
+/** #1142 — the candle response's unplaced disclosure. The server stops
+ *  counting at a cap; `capped: true` means MORE than `count` such loans. */
+export interface UnplacedCount {
+  count: number;
+  capped: boolean;
 }
 
 /** Executed-rate candles for one (pair, tenor) market — the Rate Desk
@@ -554,6 +598,11 @@ export interface IndexedActivityEvent {
 export interface ActivityPage {
   chainId: number;
   events: IndexedActivityEvent[];
+  /** #2643 — repaired loans' endings, merged into the page's order, when
+   *  asked for with `repairObservations`. Raw: read it only through
+   *  `readRepairObservations` (`lib/repairObservation.ts`), which treats
+   *  null, absent and malformed alike as NOT KNOWN. */
+  repairObservations?: unknown;
   nextBefore: string | null;
 }
 
@@ -563,12 +612,16 @@ export interface ActivityPage {
  *  and filter client-side by participation, like apps/defi does. */
 export function fetchActivity(
   chainId: number,
-  opts: { actor?: string; limit?: number; before?: string } = {},
+  opts: { actor?: string; limit?: number; before?: string; repairObservations?: boolean } = {},
 ): Promise<ActivityPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
   if (opts.actor) params.set('actor', opts.actor.toLowerCase());
   if (opts.limit) params.set('limit', String(opts.limit));
   if (opts.before) params.set('before', opts.before);
+  // #2643 — opt-in: the merged entries take page slots, so only a caller
+  // that renders them asks. The indexer serves them only on an unfiltered
+  // feed (no actor, offer or kind), which is how Activity reads it.
+  if (opts.repairObservations) params.set('repairObservations', '1');
   return getJson<ActivityPage>(`/activity?${params}`);
 }
 
@@ -972,7 +1025,42 @@ export interface ProtocolKnobValues {
   rangeAmountEnabled?: boolean;
   rangeRateEnabled?: boolean;
   partialFillEnabled?: boolean;
+  // #2071 — the single-output settings read beside the bundle
+  // (`PROTOCOL_KNOB_GETTERS` in `@vaipakam/lib/protocolKnobs`, which both the
+  // indexer and this app's chain read use). Integers as decimal strings,
+  // addresses and 32-byte ids as hex text.
+  minHealthFactor?: string;
+  maxSwapToRepaySlippageBps?: string;
+  rateModel?: string;
+  rateModelMaxDeviationBps?: string;
+  secondaryOracleMaxDeviationBps?: string;
+  secondaryOracleMaxStalenessSeconds?: string;
+  pythOracle?: string;
+  pythCrossCheckFeedId?: string;
+  pythMaxStalenessSeconds?: string;
+  pythCrossCheckMaxDeviationBps?: string;
+  pythConfidenceMaxBps?: string;
+  sequencerUptimeFeed?: string;
+  rewardGraceSeconds?: string;
+  periodicInterestEnabled?: boolean;
+  numeraireSwapEnabled?: boolean;
+  numeraireSymbol?: string;
+  ethNumeraireFeed?: string;
+  minPrincipalForFinerCadence?: string;
+  preNotifyDays?: string;
+  autoLendEnabled?: boolean;
+  autoRefinanceEnabled?: boolean;
+  autoExtendEnabled?: boolean;
+  keepersPaused?: boolean;
+  lenderIntentEnabled?: boolean;
+  treasury?: string;
 }
+
+/** Compile-time proof that every setting the shared reader publishes is
+ *  declared above: adding a getter to `PROTOCOL_KNOB_GETTERS` without a
+ *  field here fails the typecheck instead of arriving untyped. */
+type UndeclaredKnobKeys = Exclude<ProtocolKnobKey, keyof ProtocolKnobValues>;
+export const KNOB_KEYS_DECLARED: [UndeclaredKnobKeys] extends [never] ? true : never = true;
 
 export interface ProtocolKnobSnapshot {
   values: ProtocolKnobValues;
@@ -991,6 +1079,11 @@ export interface ProtocolKnobSnapshot {
    *  age, the staleness verdict — while telling the reader nothing is
    *  there. `values` is empty here; everything else still applies. */
   labelsUnavailable?: boolean;
+  /** #2071 — the settings the snapshot asked the chain for and got no
+   *  answer to. `undefined` when the snapshot carries no such list (an
+   *  older indexer, or a row whose settings read failed): then it is not
+   *  known which of the settings it would have reported. */
+  unreported?: string[];
   flags: Record<string, boolean>;
   sourceBlock?: number;
   /** Unix SECONDS. Callers MUST surface this — see `protocolConfigFresh`. */
@@ -999,6 +1092,12 @@ export interface ProtocolKnobSnapshot {
    *  event a catch-up scan already saw. Distinct from an unknown age —
    *  it is a positive statement that the values are out of date. */
   stale?: boolean;
+  /** #2071 (Codex #2683 r7) — on a stale snapshot, the block of the
+   *  governance event that staled it, when the indexer recorded one. A
+   *  read of the chain from an earlier block cannot have seen that change,
+   *  so it is no fresher than the snapshot. `undefined` when the row was
+   *  marked stale before the indexer recorded the boundary. */
+  staleAtBlock?: number;
 }
 
 export async function fetchProtocolKnobs(
@@ -1007,10 +1106,12 @@ export async function fetchProtocolKnobs(
   const res = await getJson<{
     available?: boolean;
     values?: ProtocolKnobValues;
+    unreported?: unknown;
     flags?: Record<string, boolean>;
     sourceBlock?: number;
     updatedAt?: number;
     stale?: boolean;
+    staleAtBlock?: unknown;
   }>(`/config/${chainId}`);
   if (!res || res.available !== true) return null;
   return {
@@ -1021,6 +1122,10 @@ export async function fetchProtocolKnobs(
     // showing.
     values: res.values ?? {},
     labelsUnavailable: res.values === undefined,
+    unreported:
+      Array.isArray(res.unreported) && res.unreported.every((u) => typeof u === 'string')
+        ? (res.unreported as string[])
+        : undefined,
     flags: res.flags ?? {},
     sourceBlock: res.sourceBlock,
     updatedAt: res.updatedAt,
@@ -1031,5 +1136,12 @@ export async function fetchProtocolKnobs(
     // page showing its undated copy, which says the values may be
     // current; they are known not to be.
     stale: res.stale === true,
+    staleAtBlock:
+      res.stale === true &&
+      typeof res.staleAtBlock === 'number' &&
+      Number.isSafeInteger(res.staleAtBlock) &&
+      res.staleAtBlock >= 0
+        ? res.staleAtBlock
+        : undefined,
   };
 }

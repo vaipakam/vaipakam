@@ -14,3 +14,11 @@ Type=oneshot
 ExecStart=/opt/vaipakam-keeper/update.sh
 # A build on a small machine can take a while.
 TimeoutStartSec=1800
+# Never ahead of the keeper (#2651). On this machine a deploy that competed
+# with it for CPU or disk pushed its passes past their run deadlines. The
+# build itself runs in its own unit, which update.sh starts at the same
+# priority.
+Nice=19
+CPUWeight=1
+IOWeight=1
+IOSchedulingClass=idle

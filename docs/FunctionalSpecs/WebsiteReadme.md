@@ -284,6 +284,8 @@ PWA requirements:
 - the web app manifest should include Vaipakam branding, app icons, theme color, and shortcuts for high-frequency destinations such as Offer Book, My Loans, VPFI Vault, and Alerts
 - the production service worker may cache only the static app shell with a stale-while-revalidate strategy
 - navigational HTML should prefer a network-first strategy so newly deployed app bundles replace stale PWA-controlled pages on the next load
+- the strictest reading of network-first applies to the connected app: a page load is never answered from a service-worker cache, not even when the network is down. A stored page would run the build that was current when it was stored, with that build's contract addresses and interfaces, and the app has no way to tell it is old. An offline visitor sees the browser's own offline page instead of an old app that could build transactions against retired contracts
+- a static shell file is cached only when it is one of this build's files (hashed build output, the manifest, its icons, the logo), and each build's files are kept under that build's own name; a new build removes earlier builds' files when it takes over. An HTML answer to a file request is the host's page fallback, not that file, and is never stored
 - dynamic data including RPC responses, subgraph reads, `/quote/*` worker responses, and transaction-preview responses must bypass service-worker caching so on-chain state is never stale
 - the service worker should register only in production builds and should fail safely on browsers that do not support service workers
 

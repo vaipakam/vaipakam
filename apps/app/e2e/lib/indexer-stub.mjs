@@ -214,6 +214,10 @@ async function mapLoan(id) {
     lendingAsset: l.principalAsset,
     collateralAsset: l.collateralAsset,
     durationDays: n(l.durationDays),
+    // #1142 — the tenor market the loan is a fill of. The fork reads terms
+    // from chain and its loans are never extended, so the agreed tenor is
+    // the live one and every loan is placed.
+    marketDurationDays: n(l.durationDays),
     tokenId: s(l.tokenId),
     collateralTokenId: s(l.collateralTokenId),
     lenderTokenId: s(l.lenderTokenId),
@@ -277,6 +281,9 @@ function foldRateCandles(rows, intervalSec) {
       close: acc.close,
       fills: acc.fills,
       principalTotal: acc.principalTotal.toString(),
+      // The fork's terms are read from chain, so every fill here is
+      // recorded (#1142) — the worker's provenance fields are all zero.
+      unrecordedPrincipalFills: 0,
     }));
 }
 
@@ -1095,7 +1102,12 @@ async function handler(req, res) {
           rateBps: l.interestRateBps,
           principal: BigInt(l.principal || '0'),
         }));
-      return json(200, { chainId: CHAIN_ID, buckets: foldRateCandles(fills, intervalSec) });
+      return json(200, {
+        chainId: CHAIN_ID,
+        buckets: foldRateCandles(fills, intervalSec),
+        // Fork terms are read from chain, so every loan is placed (#1142).
+        unplaced: { count: 0, capped: false },
+      });
     }
 
     // GET /loans/by-participant?chainId=&wallet=&limit=&before= — Rate

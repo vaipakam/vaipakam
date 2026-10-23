@@ -9,6 +9,8 @@ import {
   SPARSE_FILLS_THRESHOLD,
   WHITESPACE_SLOT_CAP,
   chartEmptyKind,
+  bucketsStateProvenance,
+  readUnplacedCount,
   fillPointsFromTape,
   isSparseTape,
   newestPrint,
@@ -26,6 +28,7 @@ function bucket(partial: Partial<RateCandleBucket> & { t: number }): RateCandleB
     close: 520,
     fills: 1,
     principalTotal: '1000000000000000000',
+    unrecordedPrincipalFills: 0,
     ...partial,
   };
 }
@@ -50,6 +53,12 @@ describe('totalFills / isSparseTape', () => {
 });
 
 describe('newestPrint', () => {
+  const fill = (loanId: number, startAt: number, rateBps: number | null): TapeFillLike => ({
+    loanId,
+    startAt,
+    rateBps,
+    principal: null,
+  });
   const buckets = [
     bucket({ t: 1_000, close: 510 }),
     bucket({ t: 2_000, close: 525 }),
@@ -61,63 +70,143 @@ describe('newestPrint', () => {
 
   it('uses the newest bucket close when the tape is empty', () => {
     expect(newestPrint(buckets, null)).toEqual({
+      source: 'bucket',
       rateBps: 525,
       at: 2_000,
-      source: 'bucket',
     });
   });
 
   it('prefers a tape fill at least as fresh as the newest bucket', () => {
     // A fill inside (or after) the newest bucket carries the exact
     // time — the 60 s-cached candle response may not include it yet.
-    expect(newestPrint(buckets, { rateBps: 530, at: 2_500 })).toEqual({
+    expect(newestPrint(buckets, fill(7, 2_500, 530))).toEqual({
+      source: 'tape',
       rateBps: 530,
       at: 2_500,
-      source: 'tape',
+      loanId: 7,
     });
   });
 
   it('keeps the bucket close when the tape fill is older', () => {
-    expect(newestPrint(buckets, { rateBps: 400, at: 1_500 })).toEqual({
+    expect(newestPrint(buckets, fill(7, 1_500, 400))).toEqual({
+      source: 'bucket',
       rateBps: 525,
       at: 2_000,
-      source: 'bucket',
     });
   });
 
   it('falls back to the tape when candles are unavailable/empty', () => {
-    expect(newestPrint([], { rateBps: 505, at: 900 })).toEqual({
+    expect(newestPrint([], fill(7, 900, 505))).toEqual({
+      source: 'tape',
       rateBps: 505,
       at: 900,
-      source: 'tape',
+      loanId: 7,
     });
+  });
+
+  it('reports a newer fill with no recorded rate as such, not an older close (#1142)', () => {
+    expect(newestPrint(buckets, fill(42, 2_500, null))).toEqual({
+      source: 'tape',
+      rateBps: null,
+      at: 2_500,
+      loanId: 42,
+    });
+  });
+
+  it('keeps the loan id of an unrecorded print so the header can name it (#1142)', () => {
+    const print = newestPrint([], fill(42, 900, null));
+    expect(print?.source === 'tape' ? print.loanId : null).toBe(42);
   });
 });
 
 describe('chartEmptyKind (#1139 — never-filled vs empty-in-range copy)', () => {
-  it('range=all earns the market copy when the tape cannot disprove it', () => {
-    expect(chartEmptyKind('all', undefined)).toBe('market');
-    expect(chartEmptyKind('all', null)).toBe('market');
-    expect(chartEmptyKind('all', [])).toBe('market');
+  const NOW = 100 * 86_400;
+  const at = (daysAgo: number) => ({ startAt: NOW - daysAgo * 86_400 });
+  const T = (fills: { startAt: number }[], unplacedEver = 0) => ({
+    fills,
+    unplaced: { count: unplacedEver },
   });
 
-  it('a tape-proven fill NEVER earns the market copy — even at range=all (round-4: 60 s candle-cache skew after a first fill)', () => {
-    // The candle response is still empty (60 s cache) but the tape —
-    // and hence the last-fill header — already shows the fill; the
-    // body must not claim "no fills yet" against its own header.
-    expect(chartEmptyKind('all', [{}])).toBe('range');
-    expect(chartEmptyKind('7d', [{}])).toBe('range');
-    expect(chartEmptyKind('30d', [{}, {}])).toBe('range');
+  it('range=all earns the market copy when the tape cannot disprove it', () => {
+    expect(chartEmptyKind('all', undefined, 0, NOW)).toBe('market');
+    expect(chartEmptyKind('all', null, 0, NOW)).toBe('market');
+    expect(chartEmptyKind('all', T([]), 0, NOW)).toBe('market');
+  });
+
+  it('a tape fill inside the range means the empty series is stale: catching up, never a claim about the period', () => {
+    // Candle-cache skew: the tape (and the last-fill header) already shows
+    // the fill; the body must not claim "none" against its own header.
+    expect(chartEmptyKind('all', T([at(200)]), 0, NOW)).toBe('catchingUp');
+    expect(chartEmptyKind('7d', T([at(1)]), 0, NOW)).toBe('catchingUp');
+    expect(chartEmptyKind('30d', T([at(40), at(2)]), 0, NOW)).toBe('catchingUp');
+  });
+
+  it('a tape fill older than the range proves the market filled, so only the period copy fits', () => {
+    expect(chartEmptyKind('7d', T([at(8)]), 0, NOW)).toBe('range');
+    expect(chartEmptyKind('30d', T([at(31), at(45)]), 0, NOW)).toBe('range');
   });
 
   it('a narrower range with a confirmed-empty tape is a never-filled market', () => {
-    expect(chartEmptyKind('7d', [])).toBe('market');
-    expect(chartEmptyKind('30d', [])).toBe('market');
+    expect(chartEmptyKind('7d', T([]), 0, NOW)).toBe('market');
+    expect(chartEmptyKind('30d', T([]), 0, NOW)).toBe('market');
   });
 
   it('a narrower range is range-scoped when the tape is unknown', () => {
-    expect(chartEmptyKind('7d', null)).toBe('range'); // tape unavailable
-    expect(chartEmptyKind('30d', undefined)).toBe('range'); // tape loading
+    expect(chartEmptyKind('7d', null, 0, NOW)).toBe('range'); // tape unavailable
+    expect(chartEmptyKind('30d', undefined, 0, NOW)).toBe('range'); // tape loading
+  });
+});
+
+describe('unplaced loans (#1142 — counted, never placed under a guessed tenor)', () => {
+  const NOW = 100 * 86_400;
+  const T = (fills: { startAt: number }[], unplacedEver = 0) => ({
+    fills,
+    unplaced: { count: unplacedEver },
+  });
+
+  it('an empty series on a pair with unplaced loans claims neither "never filled" nor "none in this period"', () => {
+    expect(chartEmptyKind('all', T([]), 2, NOW)).toBe('unplaced');
+    expect(chartEmptyKind('7d', null, 1, NOW)).toBe('unplaced');
+    expect(chartEmptyKind('30d', T([{ startAt: NOW - 40 * 86_400 }]), 3, NOW)).toBe('unplaced');
+  });
+
+  it('a confirmed-empty tape whose pair has unplaced loans OUTSIDE the range is not a never-filled market', () => {
+    // The candle count (in range) is zero; the tape's all-time one is not.
+    expect(chartEmptyKind('7d', T([], 2), 0, NOW)).toBe('unplaced');
+  });
+
+  it('a tape-proven fill in the range outranks the unplaced copy (Codex #2689 r5)', () => {
+    expect(chartEmptyKind('30d', T([{ startAt: NOW - 86_400 }], 3), 3, NOW)).toBe('catchingUp');
+  });
+
+  it('reads the count and whether the server stopped counting', () => {
+    expect(readUnplacedCount({ count: 4, capped: false })).toEqual({ count: 4, capped: false });
+    expect(readUnplacedCount({ count: 0, capped: false })).toEqual({ count: 0, capped: false });
+    expect(readUnplacedCount({ count: 1000, capped: true })).toEqual({ count: 1000, capped: true });
+  });
+
+  it('fails closed on an absent or malformed disclosure, so the hook reports the chart unavailable', () => {
+    // Absent is NOT "none": a response that does not say what it left out
+    // cannot be shown as complete.
+    expect(readUnplacedCount(undefined)).toBeNull();
+    expect(readUnplacedCount(null)).toBeNull();
+    expect(readUnplacedCount(4)).toBeNull();
+    expect(readUnplacedCount({ count: -1, capped: false })).toBeNull();
+    expect(readUnplacedCount({ count: 1.5, capped: false })).toBeNull();
+    expect(readUnplacedCount({ count: '2', capped: false })).toBeNull();
+    expect(readUnplacedCount({ count: 2 })).toBeNull();
+    expect(readUnplacedCount([{ t: 0, fills: 1 }])).toBeNull();
+  });
+
+  it('accepts buckets only when each states its unrecorded amounts', () => {
+    const b = (fills: unknown, u: unknown) => ({ t: 0, fills, unrecordedPrincipalFills: u });
+    expect(bucketsStateProvenance([])).toBe(true);
+    expect(bucketsStateProvenance([b(3, 0), b(2, 2)])).toBe(true);
+    expect(bucketsStateProvenance([b(3, 0), { t: 0, fills: 1 }])).toBe(false);
+    expect(bucketsStateProvenance([b(2, 3)])).toBe(false);
+    expect(bucketsStateProvenance([b(2, -1)])).toBe(false);
+    expect(bucketsStateProvenance([b(2, '0')])).toBe(false);
+    expect(bucketsStateProvenance([null])).toBe(false);
   });
 });
 
@@ -127,10 +216,10 @@ describe('sparse-mode per-fill markers from the tape (#1139)', () => {
   function tapeFill(
     loanId: number,
     startAt: number,
-    rateBps = 500,
-    principal = '1000',
+    rateBps: number | null = 500,
+    principal: string | null = '1000',
   ): TapeFillLike {
-    return { loanId, startAt, interestRateBps: rateBps, principal };
+    return { loanId, startAt, rateBps, principal };
   }
 
   it('mirrors the worker interval enum', () => {
@@ -174,9 +263,9 @@ describe('sparse-mode per-fill markers from the tape (#1139)', () => {
         tapeFill(1, 100, 500, '10'),
       ];
       expect(fillPointsFromTape(buckets, tape, H)).toEqual([
-        { t: 100, rateBps: 500, fills: 1, principalTotal: '10' },
-        { t: 200, rateBps: 600, fills: 1, principalTotal: '20' },
-        { t: H + 5, rateBps: 700, fills: 1, principalTotal: '30' },
+        { t: 100, rateBps: 500, fills: 1, principalTotal: '10', unrecordedPrincipalFills: 0 },
+        { t: 200, rateBps: 600, fills: 1, principalTotal: '20', unrecordedPrincipalFills: 0 },
+        { t: H + 5, rateBps: 700, fills: 1, principalTotal: '30', unrecordedPrincipalFills: 0 },
       ]);
     });
 
@@ -185,7 +274,7 @@ describe('sparse-mode per-fill markers from the tape (#1139)', () => {
       const tape = [tapeFill(9, 100, 700, '5'), tapeFill(7, 100, 400, '3')];
       expect(fillPointsFromTape(buckets, tape, H)).toEqual([
         // Loan 7 executed first → loan 9's rate is the last print.
-        { t: 100, rateBps: 700, fills: 2, principalTotal: '8' },
+        { t: 100, rateBps: 700, fills: 2, principalTotal: '8', unrecordedPrincipalFills: 0 },
       ]);
     });
 
@@ -193,7 +282,7 @@ describe('sparse-mode per-fill markers from the tape (#1139)', () => {
       const buckets = [bucket({ t: 0, fills: 1 })];
       const tape = [tapeFill(1, 100, 500, '10'), tapeFill(2, 5 * H, 900, '99')];
       expect(fillPointsFromTape(buckets, tape, H)).toEqual([
-        { t: 100, rateBps: 500, fills: 1, principalTotal: '10' },
+        { t: 100, rateBps: 500, fills: 1, principalTotal: '10', unrecordedPrincipalFills: 0 },
       ]);
     });
 
@@ -203,6 +292,24 @@ describe('sparse-mode per-fill markers from the tape (#1139)', () => {
       expect(fillPointsFromTape([], [tapeFill(1, 100)], H)).toBeNull();
       const bad = [tapeFill(1, 100), tapeFill(2, 200, 500, 'not-a-number')];
       expect(fillPointsFromTape(buckets, bad, H)).toBeNull();
+    });
+
+    it('returns null (bucket fallback) when a covered fill has no confirmed rate (#1142)', () => {
+      const buckets = [bucket({ t: 0, fills: 2 })];
+      expect(fillPointsFromTape(buckets, [tapeFill(1, 100), tapeFill(2, 200, null)], H)).toBeNull();
+    });
+
+    it('keeps a fill whose amount alone is unrecorded as its own marker, counting the amount (Codex #2689 r5)', () => {
+      const buckets = [bucket({ t: 0, fills: 3 })];
+      const tape = [
+        tapeFill(3, 200, 650, null),
+        tapeFill(2, 100, 600, null),
+        tapeFill(1, 100, 500, '10'),
+      ];
+      expect(fillPointsFromTape(buckets, tape, H)).toEqual([
+        { t: 100, rateBps: 600, fills: 2, principalTotal: '10', unrecordedPrincipalFills: 1 },
+        { t: 200, rateBps: 650, fills: 1, principalTotal: '0', unrecordedPrincipalFills: 1 },
+      ]);
     });
 
     it('folds principals as BigInt past 2^53', () => {
