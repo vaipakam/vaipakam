@@ -112,7 +112,15 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
-          version: stable
+          # PINNED, not `stable` (#2603). Foundry v1.8.4 stopped reusing the
+          # `forge build --skip test` artifacts in a later `forge test`: after a
+          # cold step-1 build, the deploy-sanity compile takes 469 files on
+          # v1.8.4-v1.8.6 against 33 on v1.8.3 and earlier (measured on CI, one
+          # probe per version). The 469-file unit loses the runner. Every job
+          # that compiles the contracts uses this one version, so CI cannot drift
+          # off it when `stable` moves. Move the pin only to a version that still
+          # compiles 33 files in that step.
+          version: v1.8.3
 
       # Same content-based cache key as `ci.yml` — release branches share
       # the same artifact lineage as main branches, so warm hits from
