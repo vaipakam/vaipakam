@@ -1742,7 +1742,15 @@
       "takeBid": "Prestar a este",
       "rowPrefills": "Toca una tasa para precargar el ticket. Tomar la punta del libro pasa por la misma revisión guiada que Pedir prestado/Prestar.",
       "tapeTitle": "Préstamos recientes",
-      "tapeEmpty": "Aún no hay préstamos acordados para este par.",
+      "tapeEmpty": "Todavía no se han acordado préstamos a este plazo.",
+      "tapeEmptyUnplaced": "Todavía no hay préstamos con condiciones confirmadas a este plazo.",
+      "tapeUnplacedNote_zero": "{{count}} préstamos de este par no se muestran en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
+      "tapeUnplacedNote_one": "{{count}} préstamo de este par no se muestra en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
+      "tapeUnplacedNote_two": "{{count}} préstamos de este par no se muestran en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
+      "tapeUnplacedNote_few": "{{count}} préstamos de este par no se muestran en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
+      "tapeUnplacedNote_many": "{{count}} préstamos de este par no se muestran en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
+      "tapeUnplacedNote_other": "{{count}} préstamos de este par no se muestran en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
+      "tapeUnplacedNoteCapped": "Más de {{floor, number}} préstamos de este par no se muestran en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
       "tapeUnavailable": "No pudimos cargar los préstamos recientes ahora mismo.",
       "match": {
         "matchable": "Emparejable a {{rate}}",
@@ -1785,7 +1793,7 @@
         "loading": "Cargando gráfico…",
         "lastFill": "última acordada: {{rate}} · {{ago}}",
         "lastFillNone": "aún no hay préstamos acordados",
-        "empty": "Aún no hay préstamos acordados para este par — el gráfico solo muestra tasas que la gente realmente acordó.",
+        "empty": "Todavía no se han acordado préstamos a este plazo — el gráfico solo muestra tasas que la gente realmente acordó.",
         "emptyRange": "No hay préstamos acordados en este periodo — prueba uno más largo.",
         "unavailable": "No pudimos cargar el historial de tasas ahora mismo.",
         "retry": "Reintentar",
@@ -1810,7 +1818,18 @@
         "tooltipFills_other": "{{count}} préstamos",
         "mobileBook": "Libro",
         "mobileChart": "Gráfico",
-        "mobileViewLabel": "Vista de mesa"
+        "mobileViewLabel": "Vista de mesa",
+        "tooltipPrincipalFloor": "al menos {{amount}} (importe no registrado para {{count}})",
+        "tooltipPrincipalUnrecorded": "importe no registrado",
+        "emptyUnplaced": "No hay préstamos con condiciones confirmadas a este plazo en este periodo.",
+        "unplacedNote_zero": "{{count}} préstamos de este par en este periodo no aparecen en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
+        "unplacedNote_one": "{{count}} préstamo de este par en este periodo no aparece en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
+        "unplacedNote_two": "{{count}} préstamos de este par en este periodo no aparecen en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
+        "unplacedNote_few": "{{count}} préstamos de este par en este periodo no aparecen en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
+        "unplacedNote_many": "{{count}} préstamos de este par en este periodo no aparecen en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
+        "unplacedNote_other": "{{count}} préstamos de este par en este periodo no aparecen en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
+        "unplacedNoteCapped": "Más de {{floor, number}} préstamos de este par en este período no se muestran en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
+        "emptyCatchingUp": "El gráfico aún no incluye los préstamos más recientes. Se actualiza cada minuto."
       },
       "history": {
         "tab": "Historial",
@@ -1953,7 +1972,9 @@
         "daysLeft": "{{days}} d restantes",
         "daysOverdue": "{{days}} d de retraso",
         "partialRepayOk": " · reembolso parcial permitido"
-      }
+      },
+      "fillTermsNotRecorded": "no registrado",
+      "fillTermsNotRecordedTitle": "Préstamo #{{loanId}}: no se pudieron confirmar los términos acordados de este préstamo a partir de su registro de apertura, así que no se muestran."
     },
     "tariff": {
       "optInTitle": "Tarifa VPFI completa (opcional)",

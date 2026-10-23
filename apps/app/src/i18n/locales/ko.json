@@ -1742,7 +1742,15 @@
       "takeBid": "이것에 대출",
       "rowPrefills": "금리를 탭하면 티켓이 미리 채워집니다. 오더북 최상단을 취하는 것도 차입/대출과 동일한 안내형 검토를 거칩니다.",
       "tapeTitle": "최근 대출",
-      "tapeEmpty": "이 쌍에서는 아직 합의된 대출이 없습니다.",
+      "tapeEmpty": "이 기간으로는 아직 체결된 대출이 없습니다.",
+      "tapeEmptyUnplaced": "이 기간으로는 아직 조건이 확인된 대출이 없습니다.",
+      "tapeUnplacedNote_zero": "이 쌍의 대출 {{count}}건은 합의된 조건이 개시 기록으로 확인되지 않아 어떤 기간에도 표시되지 않습니다.",
+      "tapeUnplacedNote_one": "이 쌍의 대출 {{count}}건은 합의된 조건이 개시 기록으로 확인되지 않아 어떤 기간에도 표시되지 않습니다.",
+      "tapeUnplacedNote_two": "이 쌍의 대출 {{count}}건은 합의된 조건이 개시 기록으로 확인되지 않아 어떤 기간에도 표시되지 않습니다.",
+      "tapeUnplacedNote_few": "이 쌍의 대출 {{count}}건은 합의된 조건이 개시 기록으로 확인되지 않아 어떤 기간에도 표시되지 않습니다.",
+      "tapeUnplacedNote_many": "이 쌍의 대출 {{count}}건은 합의된 조건이 개시 기록으로 확인되지 않아 어떤 기간에도 표시되지 않습니다.",
+      "tapeUnplacedNote_other": "이 쌍의 대출 {{count}}건은 합의된 조건이 개시 기록으로 확인되지 않아 어떤 기간에도 표시되지 않습니다.",
+      "tapeUnplacedNoteCapped": "이 쌍의 대출 중 {{floor, number}}건을 넘는 대출은 합의된 조건이 개시 기록으로 확인되지 않아 어떤 기간에도 표시되지 않습니다.",
       "tapeUnavailable": "지금은 최근 대출을 불러올 수 없습니다.",
       "match": {
         "matchable": "{{rate}}에서 matchable",
@@ -1785,7 +1793,7 @@
         "loading": "차트를 불러오는 중…",
         "lastFill": "최근 합의: {{rate}} · {{ago}}",
         "lastFillNone": "아직 합의된 대출 없음",
-        "empty": "이 쌍에서는 아직 합의된 대출이 없습니다 — 차트에는 실제로 합의된 이율만 표시됩니다.",
+        "empty": "이 기간으로는 아직 체결된 대출이 없습니다 — 차트는 실제로 합의된 금리만 보여줍니다.",
         "emptyRange": "이 기간에 합의된 대출이 없습니다 — 더 긴 기간을 선택해 보세요.",
         "unavailable": "지금 금리 이력을 불러올 수 없습니다.",
         "retry": "다시 시도",
@@ -1810,7 +1818,18 @@
         "tooltipFills_other": "대출 {{count}}건",
         "mobileBook": "오더북",
         "mobileChart": "차트",
-        "mobileViewLabel": "데스크 보기"
+        "mobileViewLabel": "데스크 보기",
+        "tooltipPrincipalFloor": "최소 {{amount}} ({{count}}건은 금액 미기록)",
+        "tooltipPrincipalUnrecorded": "금액 미기록",
+        "emptyUnplaced": "이 기간에 이 대출 기간으로 조건이 확인된 대출이 없습니다.",
+        "unplacedNote_zero": "이 기간 이 페어의 대출 {{count}}건은 합의 조건이 개시 기록으로 확인되지 않아 어떤 대출 기간에도 표시하지 않습니다.",
+        "unplacedNote_one": "이 기간 이 페어의 대출 {{count}}건은 합의 조건이 개시 기록으로 확인되지 않아 어떤 대출 기간에도 표시하지 않습니다.",
+        "unplacedNote_two": "이 기간 이 페어의 대출 {{count}}건은 합의 조건이 개시 기록으로 확인되지 않아 어떤 대출 기간에도 표시하지 않습니다.",
+        "unplacedNote_few": "이 기간 이 페어의 대출 {{count}}건은 합의 조건이 개시 기록으로 확인되지 않아 어떤 대출 기간에도 표시하지 않습니다.",
+        "unplacedNote_many": "이 기간 이 페어의 대출 {{count}}건은 합의 조건이 개시 기록으로 확인되지 않아 어떤 대출 기간에도 표시하지 않습니다.",
+        "unplacedNote_other": "이 기간 이 페어의 대출 {{count}}건은 합의 조건이 개시 기록으로 확인되지 않아 어떤 대출 기간에도 표시하지 않습니다.",
+        "unplacedNoteCapped": "이 기간 이 쌍의 대출 중 {{floor, number}}건을 넘는 대출은 합의된 조건이 개시 기록으로 확인되지 않아 어떤 기간에도 표시되지 않습니다.",
+        "emptyCatchingUp": "차트에 아직 최신 대출이 반영되지 않았습니다. 매분 갱신됩니다."
       },
       "history": {
         "tab": "이력",
@@ -1953,7 +1972,9 @@
         "daysLeft": "{{days}}일 남음",
         "daysOverdue": "{{days}}일 연체",
         "partialRepayOk": " · 부분 상환 가능"
-      }
+      },
+      "fillTermsNotRecorded": "기록 없음",
+      "fillTermsNotRecordedTitle": "대출 #{{loanId}}: 개시 기록에서 이 대출의 합의 조건을 확인할 수 없어 표시하지 않습니다."
     },
     "tariff": {
       "optInTitle": "VPFI 전액 수수료 (선택)",

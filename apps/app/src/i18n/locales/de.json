@@ -1742,7 +1742,15 @@
       "takeBid": "Zu diesem Satz verleihen",
       "rowPrefills": "Tippen Sie auf einen Zinssatz, um das Ticket vorab auszufüllen. Das Annehmen der Buchspitze durchläuft dieselbe geführte Prüfung wie „Leihen“ und „Verleihen“.",
       "tapeTitle": "Neueste Kredite",
-      "tapeEmpty": "Für dieses Paar wurden noch keine Kredite vereinbart.",
+      "tapeEmpty": "Für diese Laufzeit wurden noch keine Kredite vereinbart.",
+      "tapeEmptyUnplaced": "Für diese Laufzeit gibt es noch keine Kredite mit bestätigten Konditionen.",
+      "tapeUnplacedNote_zero": "{{count}} Kredite für dieses Paar werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
+      "tapeUnplacedNote_one": "{{count}} Kredit für dieses Paar wird unter keiner Laufzeit angezeigt, weil seine vereinbarten Konditionen nicht aus seinem Eröffnungsdatensatz bestätigt sind.",
+      "tapeUnplacedNote_two": "{{count}} Kredite für dieses Paar werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
+      "tapeUnplacedNote_few": "{{count}} Kredite für dieses Paar werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
+      "tapeUnplacedNote_many": "{{count}} Kredite für dieses Paar werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
+      "tapeUnplacedNote_other": "{{count}} Kredite für dieses Paar werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
+      "tapeUnplacedNoteCapped": "Mehr als {{floor, number}} Kredite für dieses Paar werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
       "tapeUnavailable": "Wir konnten die neuesten Kredite gerade nicht laden.",
       "match": {
         "matchable": "Matchbar bei {{rate}}",
@@ -1785,7 +1793,7 @@
         "loading": "Chart wird geladen…",
         "lastFill": "zuletzt vereinbart: {{rate}} · {{ago}}",
         "lastFillNone": "noch keine Kredite vereinbart",
-        "empty": "Für dieses Paar wurden noch keine Kredite vereinbart — das Diagramm zeigt nur Zinsen, die tatsächlich vereinbart wurden.",
+        "empty": "Für diese Laufzeit wurden noch keine Kredite vereinbart — das Diagramm zeigt nur Zinsen, die tatsächlich vereinbart wurden.",
         "emptyRange": "In diesem Zeitraum wurden keine Kredite vereinbart — versuchen Sie einen längeren.",
         "unavailable": "Der Zinsverlauf konnte gerade nicht geladen werden.",
         "retry": "Erneut versuchen",
@@ -1810,7 +1818,18 @@
         "tooltipFills_other": "{{count}} Kredite",
         "mobileBook": "Buch",
         "mobileChart": "Chart",
-        "mobileViewLabel": "Desk-Ansicht"
+        "mobileViewLabel": "Desk-Ansicht",
+        "tooltipPrincipalFloor": "mindestens {{amount}} (Betrag für {{count}} nicht erfasst)",
+        "tooltipPrincipalUnrecorded": "Betrag nicht erfasst",
+        "emptyUnplaced": "Keine Kredite mit bestätigten Konditionen bei dieser Laufzeit in diesem Zeitraum.",
+        "unplacedNote_zero": "{{count}} Kredite für dieses Paar in diesem Zeitraum werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
+        "unplacedNote_one": "{{count}} Kredit für dieses Paar in diesem Zeitraum wird unter keiner Laufzeit angezeigt, weil seine vereinbarten Konditionen nicht aus seinem Eröffnungsdatensatz bestätigt sind.",
+        "unplacedNote_two": "{{count}} Kredite für dieses Paar in diesem Zeitraum werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
+        "unplacedNote_few": "{{count}} Kredite für dieses Paar in diesem Zeitraum werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
+        "unplacedNote_many": "{{count}} Kredite für dieses Paar in diesem Zeitraum werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
+        "unplacedNote_other": "{{count}} Kredite für dieses Paar in diesem Zeitraum werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
+        "unplacedNoteCapped": "Mehr als {{floor, number}} Kredite für dieses Paar in diesem Zeitraum werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
+        "emptyCatchingUp": "Das Diagramm ist noch nicht auf dem Stand der neuesten Kredite. Es wird jede Minute aktualisiert."
       },
       "history": {
         "tab": "Verlauf",
@@ -1953,7 +1972,9 @@
         "daysLeft": "{{days}} Tg. übrig",
         "daysOverdue": "{{days}} Tg. überfällig",
         "partialRepayOk": " · Teilrückzahlung möglich"
-      }
+      },
+      "fillTermsNotRecorded": "nicht erfasst",
+      "fillTermsNotRecordedTitle": "Darlehen #{{loanId}}: Die vereinbarten Bedingungen dieses Darlehens ließen sich nicht anhand seines Eröffnungseintrags bestätigen und werden daher nicht angezeigt."
     },
     "tariff": {
       "optInTitle": "Volle VPFI-Gebühr (optional)",

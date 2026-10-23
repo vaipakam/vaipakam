@@ -4201,7 +4201,28 @@ const copySource = {
     rowPrefills:
       'Tap a rate to pre-fill the ticket. Taking the top of the book goes through the same guided review as Borrow/Lend.',
     tapeTitle: 'Recent loans',
-    tapeEmpty: 'No loans agreed yet for this pair.',
+    // #1142 — a fill whose agreed terms the indexer cannot confirm. The
+    // live terms are a different figure (an extension or repayment changes
+    // them), so they are never shown in their place.
+    fillTermsNotRecorded: 'not recorded',
+    fillTermsNotRecordedTitle: tmpl(
+      'Loan #{{loanId}}: the agreed terms of this loan could not be confirmed from its opening record, so they are not shown.',
+      ['loanId'],
+    ),
+    // #1142 — the tape is one (pair, tenor) market, so "none" is claimed at
+    // this duration only; with loans on the pair whose tenor is unknown, only
+    // "none confirmed" is.
+    tapeEmpty: 'No loans agreed yet at this duration.',
+    tapeEmptyUnplaced: 'No loans with confirmed terms at this duration yet.',
+    tapeUnplacedNote: tmpl(
+      '{{count}} loans on this pair are not shown under any duration, because their agreed terms are not confirmed from their opening record.',
+      ['count'],
+      { one: '{{count}} loan on this pair is not shown under any duration, because its agreed terms are not confirmed from its opening record.' },
+    ),
+    tapeUnplacedNoteCapped: tmpl(
+      'More than {{floor, number}} loans on this pair are not shown under any duration, because their agreed terms are not confirmed from their opening record.',
+      ['floor'],
+    ),
     tapeUnavailable: 'We couldn’t load recent loans right now.',
     // #1131 slice B — the crossable-band previewMatch strip. Shown ONLY
     // when the contract's own previewMatch says Ok (§5.2 honesty rule:
@@ -4303,8 +4324,28 @@ const copySource = {
       // range-scoped line, even at range = all (the 60 s candle-cache
       // skew window after a first fill). See chartEmptyKind.
       empty:
-        'No loans agreed yet for this pair — the chart only shows rates people actually agreed.',
+        'No loans agreed yet at this duration — the chart only shows rates people actually agreed.',
       emptyRange: 'No loans agreed in this period — try a longer one.',
+      // #1142 — the pair has loans in range whose agreed terms are not
+      // confirmed, so no duration holds them and one may belong here. The
+      // empty line claims only what is known; `unplacedNote` gives the count.
+      emptyUnplaced: 'No loans with confirmed terms at this duration in this period.',
+      // The tape already shows a loan in this period that the chart's last
+      // refresh did not include; no claim about the period holds until the
+      // chart catches up (Codex #2689 r5).
+      emptyCatchingUp:
+        'The chart has not caught up with the newest loans yet. It refreshes every minute.',
+      unplacedNote: tmpl(
+        '{{count}} loans on this pair in this period are not shown under any duration, because their agreed terms are not confirmed from their opening record.',
+        ['count'],
+        { one: '{{count}} loan on this pair in this period is not shown under any duration, because its agreed terms are not confirmed from its opening record.' },
+      ),
+      // The server stops counting at a cap; past it the line says "more
+      // than" rather than presenting the cap as the count.
+      unplacedNoteCapped: tmpl(
+        'More than {{floor, number}} loans on this pair in this period are not shown under any duration, because their agreed terms are not confirmed from their opening record.',
+        ['floor'],
+      ),
       unavailable: 'We couldn’t load the rate history right now.',
       retry: 'Retry',
       quotedMid: 'middle rate',
@@ -4328,6 +4369,12 @@ const copySource = {
       rangeLabel: 'Period shown',
       attribution: 'Charts by TradingView',
       tooltipFills: tmpl('{{count}} loans', ['count'], { one: '{{count}} loan' }),
+      // #1142 — the bucket total leaves out loans whose amount is not recorded.
+      tooltipPrincipalFloor: tmpl(
+        'at least {{amount}} (amount not recorded for {{count}})',
+        ['amount', 'count'],
+      ),
+      tooltipPrincipalUnrecorded: 'amount not recorded',
       mobileBook: 'Book',
       mobileChart: 'Chart',
       mobileViewLabel: 'Desk view',

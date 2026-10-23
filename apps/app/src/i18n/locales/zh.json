@@ -1742,7 +1742,15 @@
       "takeBid": "出借给此项",
       "rowPrefills": "点击利率可预填 ticket。吃掉簿顶会经过与借入/出借相同的引导式审核。",
       "tapeTitle": "近期贷款",
-      "tapeEmpty": "该交易对还没有达成的贷款。",
+      "tapeEmpty": "此期限下尚未达成任何贷款。",
+      "tapeEmptyUnplaced": "此期限下尚无条款已确认的贷款。",
+      "tapeUnplacedNote_zero": "该交易对的 {{count}} 笔贷款未显示在任何期限下，因为其约定条款未经开立记录确认。",
+      "tapeUnplacedNote_one": "该交易对的 {{count}} 笔贷款未显示在任何期限下，因为其约定条款未经开立记录确认。",
+      "tapeUnplacedNote_two": "该交易对的 {{count}} 笔贷款未显示在任何期限下，因为其约定条款未经开立记录确认。",
+      "tapeUnplacedNote_few": "该交易对的 {{count}} 笔贷款未显示在任何期限下，因为其约定条款未经开立记录确认。",
+      "tapeUnplacedNote_many": "该交易对的 {{count}} 笔贷款未显示在任何期限下，因为其约定条款未经开立记录确认。",
+      "tapeUnplacedNote_other": "该交易对的 {{count}} 笔贷款未显示在任何期限下，因为其约定条款未经开立记录确认。",
+      "tapeUnplacedNoteCapped": "该交易对中超过 {{floor, number}} 笔贷款未显示在任何期限下，因为其约定条款未经开立记录确认。",
       "tapeUnavailable": "暂时无法加载近期贷款。",
       "match": {
         "matchable": "可按 {{rate}} 匹配",
@@ -1785,7 +1793,7 @@
         "loading": "正在加载图表…",
         "lastFill": "最近达成：{{rate}} · {{ago}}",
         "lastFillNone": "尚未达成任何贷款",
-        "empty": "这个交易对还没有达成的贷款——图表只显示人们实际达成的利率。",
+        "empty": "此期限下尚未达成任何贷款——图表只显示实际约定的利率。",
         "emptyRange": "这段时间内没有达成的贷款——试试更长的时段。",
         "unavailable": "当前无法加载利率历史。",
         "retry": "重试",
@@ -1810,7 +1818,18 @@
         "tooltipFills_other": "{{count}} 笔贷款",
         "mobileBook": "簿",
         "mobileChart": "图表",
-        "mobileViewLabel": "利率台视图"
+        "mobileViewLabel": "利率台视图",
+        "tooltipPrincipalFloor": "至少 {{amount}}（{{count}} 笔金额未记录）",
+        "tooltipPrincipalUnrecorded": "金额未记录",
+        "emptyUnplaced": "此期间该期限下没有条款已确认的贷款。",
+        "unplacedNote_zero": "此期间该交易对有 {{count}} 笔贷款的约定条款未能由其开立记录确认，因此未在任何期限下显示。",
+        "unplacedNote_one": "此期间该交易对有 {{count}} 笔贷款的约定条款未能由其开立记录确认，因此未在任何期限下显示。",
+        "unplacedNote_two": "此期间该交易对有 {{count}} 笔贷款的约定条款未能由其开立记录确认，因此未在任何期限下显示。",
+        "unplacedNote_few": "此期间该交易对有 {{count}} 笔贷款的约定条款未能由其开立记录确认，因此未在任何期限下显示。",
+        "unplacedNote_many": "此期间该交易对有 {{count}} 笔贷款的约定条款未能由其开立记录确认，因此未在任何期限下显示。",
+        "unplacedNote_other": "此期间该交易对有 {{count}} 笔贷款的约定条款未能由其开立记录确认，因此未在任何期限下显示。",
+        "unplacedNoteCapped": "此期间该交易对中超过 {{floor, number}} 笔贷款未显示在任何期限下，因为其约定条款未经开立记录确认。",
+        "emptyCatchingUp": "图表尚未包含最新的贷款。它每分钟刷新一次。"
       },
       "history": {
         "tab": "历史",
@@ -1953,7 +1972,9 @@
         "daysLeft": "剩 {{days}} 天",
         "daysOverdue": "逾期 {{days}} 天",
         "partialRepayOk": " · 支持部分还款"
-      }
+      },
+      "fillTermsNotRecorded": "未记录",
+      "fillTermsNotRecordedTitle": "贷款 #{{loanId}}：无法根据其开立记录确认这笔贷款的约定条款，因此不予显示。"
     },
     "tariff": {
       "optInTitle": "VPFI 全额费率（可选）",

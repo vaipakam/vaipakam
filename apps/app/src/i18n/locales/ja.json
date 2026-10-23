@@ -1742,7 +1742,15 @@
       "takeBid": "これに貸す",
       "rowPrefills": "レートをタップするとチケットに事前入力されます。ブック最上位を取る場合も、借りる/貸すと同じガイド付きレビューを通ります。",
       "tapeTitle": "最近のローン",
-      "tapeEmpty": "このペアではまだローンが成立していません。",
+      "tapeEmpty": "この期間設定ではまだローンが成立していません。",
+      "tapeEmptyUnplaced": "この期間設定では、条件が確認されたローンはまだありません。",
+      "tapeUnplacedNote_zero": "このペアのローン {{count}} 件は、合意条件が開始時の記録で確認できないため、どの期間設定にも表示していません。",
+      "tapeUnplacedNote_one": "このペアのローン {{count}} 件は、合意条件が開始時の記録で確認できないため、どの期間設定にも表示していません。",
+      "tapeUnplacedNote_two": "このペアのローン {{count}} 件は、合意条件が開始時の記録で確認できないため、どの期間設定にも表示していません。",
+      "tapeUnplacedNote_few": "このペアのローン {{count}} 件は、合意条件が開始時の記録で確認できないため、どの期間設定にも表示していません。",
+      "tapeUnplacedNote_many": "このペアのローン {{count}} 件は、合意条件が開始時の記録で確認できないため、どの期間設定にも表示していません。",
+      "tapeUnplacedNote_other": "このペアのローン {{count}} 件は、合意条件が開始時の記録で確認できないため、どの期間設定にも表示していません。",
+      "tapeUnplacedNoteCapped": "このペアのローンのうち {{floor, number}} 件を超えるものは、合意条件が開始時の記録で確認できないため、どの期間設定にも表示していません。",
       "tapeUnavailable": "今は最近のローンを読み込めませんでした。",
       "match": {
         "matchable": "{{rate}} でマッチ可能",
@@ -1785,7 +1793,7 @@
         "loading": "チャート読み込み中…",
         "lastFill": "直近の合意：{{rate}} · {{ago}}",
         "lastFillNone": "まだ合意されたローンはありません",
-        "empty": "このペアではまだローンが成立していません。チャートには、実際に合意されたレートだけが表示されます。",
+        "empty": "この期間設定ではまだローンが成立していません。チャートには、実際に合意されたレートだけが表示されます。",
         "emptyRange": "この期間に成立したローンはありません。もっと長い期間をお試しください。",
         "unavailable": "現在レート履歴を読み込めませんでした。",
         "retry": "再試行",
@@ -1810,7 +1818,18 @@
         "tooltipFills_other": "{{count}} 件のローン",
         "mobileBook": "ブック",
         "mobileChart": "チャート",
-        "mobileViewLabel": "デスク表示"
+        "mobileViewLabel": "デスク表示",
+        "tooltipPrincipalFloor": "{{amount}} 以上（{{count}} 件は金額が未記録）",
+        "tooltipPrincipalUnrecorded": "金額は未記録",
+        "emptyUnplaced": "この期間、この期間設定で条件が確認済みのローンはありません。",
+        "unplacedNote_zero": "この期間のこのペアのローン {{count}} 件は、合意条件が開始時の記録で確認できないため、どの期間設定にも表示していません。",
+        "unplacedNote_one": "この期間のこのペアのローン {{count}} 件は、合意条件が開始時の記録で確認できないため、どの期間設定にも表示していません。",
+        "unplacedNote_two": "この期間のこのペアのローン {{count}} 件は、合意条件が開始時の記録で確認できないため、どの期間設定にも表示していません。",
+        "unplacedNote_few": "この期間のこのペアのローン {{count}} 件は、合意条件が開始時の記録で確認できないため、どの期間設定にも表示していません。",
+        "unplacedNote_many": "この期間のこのペアのローン {{count}} 件は、合意条件が開始時の記録で確認できないため、どの期間設定にも表示していません。",
+        "unplacedNote_other": "この期間のこのペアのローン {{count}} 件は、合意条件が開始時の記録で確認できないため、どの期間設定にも表示していません。",
+        "unplacedNoteCapped": "この期間のこのペアのローンのうち {{floor, number}} 件を超えるものは、合意した条件が開始時の記録で確認されていないため、どの期間にも表示されていません。",
+        "emptyCatchingUp": "チャートにはまだ最新のローンが反映されていません。1分ごとに更新されます。"
       },
       "history": {
         "tab": "履歴",
@@ -1953,7 +1972,9 @@
         "daysLeft": "残り {{days}}日",
         "daysOverdue": "{{days}}日 超過",
         "partialRepayOk": " · 一部返済可"
-      }
+      },
+      "fillTermsNotRecorded": "記録なし",
+      "fillTermsNotRecordedTitle": "ローン #{{loanId}}：このローンの合意条件を開始時の記録から確認できなかったため、表示していません。"
     },
     "tariff": {
       "optInTitle": "VPFI フル料金（任意）",

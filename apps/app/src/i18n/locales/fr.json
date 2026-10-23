@@ -1742,7 +1742,15 @@
       "takeBid": "Prêter à ceci",
       "rowPrefills": "Appuyez sur un taux pour préremplir le ticket. Prendre le haut du carnet passe par le même examen guidé qu'Emprunter/Prêter.",
       "tapeTitle": "Prêts récents",
-      "tapeEmpty": "Aucun prêt convenu pour cette paire pour l’instant.",
+      "tapeEmpty": "Aucun prêt n’a encore été conclu pour cette durée.",
+      "tapeEmptyUnplaced": "Aucun prêt aux conditions confirmées pour cette durée pour l’instant.",
+      "tapeUnplacedNote_zero": "{{count}} prêts sur cette paire ne sont affichés sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
+      "tapeUnplacedNote_one": "{{count}} prêt sur cette paire n’est affiché sous aucune durée, car ses conditions convenues ne sont pas confirmées par son enregistrement d’ouverture.",
+      "tapeUnplacedNote_two": "{{count}} prêts sur cette paire ne sont affichés sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
+      "tapeUnplacedNote_few": "{{count}} prêts sur cette paire ne sont affichés sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
+      "tapeUnplacedNote_many": "{{count}} prêts sur cette paire ne sont affichés sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
+      "tapeUnplacedNote_other": "{{count}} prêts sur cette paire ne sont affichés sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
+      "tapeUnplacedNoteCapped": "Plus de {{floor, number}} prêts sur cette paire ne sont affichés sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
       "tapeUnavailable": "Nous n’avons pas pu charger les prêts récents pour le moment.",
       "match": {
         "matchable": "Appariable à {{rate}}",
@@ -1785,7 +1793,7 @@
         "loading": "Chargement du graphique…",
         "lastFill": "dernier taux convenu : {{rate}} · {{ago}}",
         "lastFillNone": "aucun prêt convenu pour l’instant",
-        "empty": "Aucun prêt convenu pour cette paire pour l’instant — le graphique n’affiche que les taux réellement convenus.",
+        "empty": "Aucun prêt n’a encore été conclu pour cette durée — le graphique n’affiche que les taux réellement convenus.",
         "emptyRange": "Aucun prêt convenu sur cette période — essayez une période plus longue.",
         "unavailable": "Impossible de charger l'historique des taux pour le moment.",
         "retry": "Réessayer",
@@ -1810,7 +1818,18 @@
         "tooltipFills_other": "{{count}} prêts",
         "mobileBook": "Carnet",
         "mobileChart": "Graphique",
-        "mobileViewLabel": "Vue bureau"
+        "mobileViewLabel": "Vue bureau",
+        "tooltipPrincipalFloor": "au moins {{amount}} (montant non enregistré pour {{count}})",
+        "tooltipPrincipalUnrecorded": "montant non enregistré",
+        "emptyUnplaced": "Aucun prêt aux conditions confirmées pour cette durée sur cette période.",
+        "unplacedNote_zero": "{{count}} prêts de cette paire sur cette période n’apparaissent sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
+        "unplacedNote_one": "{{count}} prêt de cette paire sur cette période n’apparaît sous aucune durée, car ses conditions convenues ne sont pas confirmées par son enregistrement d’ouverture.",
+        "unplacedNote_two": "{{count}} prêts de cette paire sur cette période n’apparaissent sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
+        "unplacedNote_few": "{{count}} prêts de cette paire sur cette période n’apparaissent sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
+        "unplacedNote_many": "{{count}} prêts de cette paire sur cette période n’apparaissent sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
+        "unplacedNote_other": "{{count}} prêts de cette paire sur cette période n’apparaissent sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
+        "unplacedNoteCapped": "Plus de {{floor, number}} prêts sur cette paire pendant cette période ne sont affichés sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
+        "emptyCatchingUp": "Le graphique n’inclut pas encore les prêts les plus récents. Il se met à jour chaque minute."
       },
       "history": {
         "tab": "Historique",
@@ -1953,7 +1972,9 @@
         "daysLeft": "{{days}} j restants",
         "daysOverdue": "{{days}} j de retard",
         "partialRepayOk": " · remboursement partiel possible"
-      }
+      },
+      "fillTermsNotRecorded": "non enregistré",
+      "fillTermsNotRecordedTitle": "Prêt n° {{loanId}} : les conditions convenues de ce prêt n’ont pas pu être confirmées à partir de son enregistrement d’ouverture, elles ne sont donc pas affichées."
     },
     "tariff": {
       "optInTitle": "Tarif VPFI complet (facultatif)",
