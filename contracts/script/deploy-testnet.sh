@@ -1745,8 +1745,10 @@ phase_handover_gate() {
 # NOT CHECKED. The admin key then unpauses; after a rehearsal handover the
 # Timelock holds UNPAUSER_ROLE and the phase prints its gated batch instead
 # (LaunchGate.assertReady then unpauseIfPauseEpoch), which needs every
-# check met and the admin key to hold no role. The lane check reads the
-# VPFI pool from CCIP_TOKEN_ADMIN_REGISTRY. An
+# check met and the admin key to hold no role. The CCIP checks read the
+# VPFI pool from CCIP_TOKEN_ADMIN_REGISTRY and compare it with the
+# artifact's vpfiTokenPool, and its lanes with CCIP_LANE_CHAIN_IDS
+# (resolved per chain, as ccip-wire does): exactly that set. An
 # already-unpaused Diamond is recorded only while no answered check is NOT
 # MET; Launch.s.sol refuses otherwise.
 phase_launch() {
@@ -1754,6 +1756,10 @@ phase_launch() {
   echo "═══════════════════════════════════════════════════════════════"
   echo "deploy-testnet.sh — launch  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
+
+  # The launch declares the lane set the VPFI pool must carry EXACTLY
+  # (Codex #2686 r7): the same per-chain list the ccip-wire phase wired.
+  resolve_ccip_lane_chain_ids "$CCIP_SLUG" || exit 1
 
   CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol \
     --rpc-url "$RPC" --broadcast --slow
@@ -2255,6 +2261,8 @@ phase_verify() {
   else
     echo "  ✓ paused, as it must be until --phase launch"
   fi
+  # The lane set the launch declares, resolved as --phase launch does.
+  resolve_ccip_lane_chain_ids "$CCIP_SLUG" || exit 1
   # The same readiness list --phase launch enforces, reported here so a
   # green verify never implies a launch would pass. A NOT MET line (the
   # sanctions oracle above all, #946) is printed, not hidden; the launch

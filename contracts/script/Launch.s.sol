@@ -7,7 +7,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {Deployments} from "./lib/Deployments.sol";
-import {LibLaunchReadiness} from "../src/governance/LibLaunchReadiness.sol";
+import {LibLaunchReadiness, ILaunchReadableDiamond} from "../src/governance/LibLaunchReadiness.sol";
 import {LaunchGate} from "../src/governance/LaunchGate.sol";
 import {LaunchGateDeployment} from "./lib/LaunchGateDeployment.sol";
 
@@ -98,10 +98,17 @@ interface ILaunchTimelock {
  *        CHAIN_SLUG or ADDRESSES_JSON_PATH — the artifact (`diamond`,
  *            `timelock`). The gate is not read from it: its address follows
  *            from this checkout's bytecode (`LaunchGateDeployment`).
+ *            The artifact's `vpfiTokenPool` is the declared VPFI pool.
  *        CCIP_TOKEN_ADMIN_REGISTRY — the chain's CCIP TokenAdminRegistry.
  *            The VPFI pool is read from it for the Diamond's own VPFI
- *            token; unset leaves the lane check NOT CHECKED, which a
- *            production or Timelock launch refuses.
+ *            token and compared with the declared one; unset leaves both
+ *            CCIP checks NOT CHECKED, which a production or Timelock launch
+ *            refuses.
+ *        CCIP_LANE_CHAIN_IDS — the chain ids of every lane the VPFI pool
+ *            must carry, exactly (the deploy wrappers resolve
+ *            `CCIP_LANE_CHAIN_IDS_<SLUG>` into it). Unset declares no lane:
+ *            NOT CHECKED while the Diamond records a VPFI token, met as
+ *            not applicable on a deployment with none (`--skip-vpfi`).
  *        ADMIN_PRIVATE_KEY — the admin key; unused (and optional) on
  *            production, where only its address is read to prove it holds
  *            no role. ADMIN_ADDRESS is accepted instead there.
@@ -136,8 +143,9 @@ contract Launch is Script {
 
     function run() external returns (Outcome) {
         uint256 adminKey = vm.envOr("ADMIN_PRIVATE_KEY", uint256(0));
+        address diamond_ = Deployments.readDiamond();
         return launch(
-            Deployments.readDiamond(), _registryFromEnv(), Deployments.readTimelockOptional(), _adminFromEnv(), adminKey
+            diamond_, declaredFromEnv(diamond_), Deployments.readTimelockOptional(), _adminFromEnv(), adminKey
         );
     }
 
@@ -147,8 +155,9 @@ contract Launch is Script {
     ///         It prints the evidence, and whether the Diamond is paused now,
     ///         on a line starting `launched:` that the wrappers repeat.
     function requireLaunched() external view {
+        address diamond_ = Deployments.readDiamond();
         string memory evidence =
-            checkLaunched(Deployments.readDiamond(), _registryFromEnv(), Deployments.readTimelockOptional(), _adminFromEnv());
+            checkLaunched(diamond_, declaredFromEnv(diamond_), Deployments.readTimelockOptional(), _adminFromEnv());
         console.log(string.concat("launched: ", evidence));
     }
 
@@ -158,8 +167,9 @@ contract Launch is Script {
     ///         fail: verify runs before the handover, when a production
     ///         launch still refuses by design.
     function requireLaunchable() external view {
+        address diamond_ = Deployments.readDiamond();
         Decision memory d = decide(
-            Deployments.readDiamond(), _registryFromEnv(), Deployments.readTimelockOptional(), _adminFromEnv(), _adminKeyGiven()
+            diamond_, declaredFromEnv(diamond_), Deployments.readTimelockOptional(), _adminFromEnv(), _adminKeyGiven()
         );
         if (d.path == Path.Refuse) revert(d.reason);
     }
@@ -175,7 +185,7 @@ contract Launch is Script {
     function report() external view returns (bool ready) {
         address diamond = Deployments.readDiamond();
         Decision memory d =
-            decide(diamond, _registryFromEnv(), Deployments.readTimelockOptional(), _adminFromEnv(), _adminKeyGiven());
+            decide(diamond, declaredFromEnv(diamond), Deployments.readTimelockOptional(), _adminFromEnv(), _adminKeyGiven());
         console.log("Launch readiness (report only)");
         console.log("  paused:", AdminFacet(diamond).paused());
         console.log("  pause epoch:", uint256(d.epoch));
@@ -196,12 +206,13 @@ contract Launch is Script {
     /// @notice Takes the launch decision ({decide}) and acts on it: unpauses
     ///         with the admin key, prints the Timelock proposal, reports a
     ///         launch that already happened, or refuses with the reason.
-    /// @param tokenAdminRegistry The chain's CCIP TokenAdminRegistry, or zero.
+    /// @param declared What the chain must match ({declaredFromEnv}): the
+    ///        CCIP registry and the declared WETH, VPFI pool and lanes.
     /// @param admin The admin key's address: the Timelock batch re-checks
     ///        that it holds no Diamond role, so every Timelock path needs it.
     /// @param adminKey The admin's private key, or zero when the run must
     ///        not (or cannot) broadcast. Never used on a production chain.
-    function launch(address diamond, address tokenAdminRegistry, address timelock, address admin, uint256 adminKey)
+    function launch(address diamond, LibLaunchReadiness.Declared memory declared, address timelock, address admin, uint256 adminKey)
         public
         returns (Outcome)
     {
@@ -211,7 +222,7 @@ contract Launch is Script {
         console.log("  diamond: ", diamond);
         console.log("  mode:    ", production ? "production (Timelock unpauses)" : local ? "local anvil" : "testnet");
 
-        Decision memory d = decide(diamond, tokenAdminRegistry, timelock, admin, adminKey != 0);
+        Decision memory d = decide(diamond, declared, timelock, admin, adminKey != 0);
         _printChecks(d.checks);
         _printNotChecked();
         if (d.path == Path.Refuse) revert(d.reason);
@@ -220,7 +231,7 @@ contract Launch is Script {
             return Outcome.AlreadyLive;
         }
         if (d.path == Path.TimelockProposal) {
-            _printTimelockProposal(diamond, tokenAdminRegistry, timelock, admin, d.epoch);
+            _printTimelockProposal(diamond, declared, timelock, admin, d.epoch);
             return Outcome.TimelockProposalPrinted;
         }
         if (local && !LibLaunchReadiness.noneUnmet(d.checks)) {
@@ -250,7 +261,7 @@ contract Launch is Script {
     ///         directly (never on production); otherwise the Timelock
     ///         proposal is printed.
     /// @param adminKeyGiven Whether the run holds the admin's private key.
-    function decide(address diamond, address tokenAdminRegistry, address timelock, address admin, bool adminKeyGiven)
+    function decide(address diamond, LibLaunchReadiness.Declared memory declared, address timelock, address admin, bool adminKeyGiven)
         public
         view
         returns (Decision memory d)
@@ -284,7 +295,7 @@ contract Launch is Script {
             // every answered requirement to count as launched. (On production
             // the record is the Timelock's, whose gate read them at execution.)
             if (!paused && !production && !local) {
-                d.checks = LibLaunchReadiness.check(diamond, tokenAdminRegistry);
+                d.checks = LibLaunchReadiness.check(diamond, declared);
                 if (!LibLaunchReadiness.noneUnmet(d.checks)) {
                     d.path = Path.Refuse;
                     d.reason =
@@ -303,7 +314,7 @@ contract Launch is Script {
             d.path = Path.Launched;
             d.reason = "unpaused now, with no first-unpause record (a Diamond older than the record)";
             if (local) return d;
-            d.checks = LibLaunchReadiness.check(diamond, tokenAdminRegistry);
+            d.checks = LibLaunchReadiness.check(diamond, declared);
             if (!LibLaunchReadiness.noneUnmet(d.checks)) {
                 d.path = Path.Refuse;
                 d.reason =
@@ -312,7 +323,7 @@ contract Launch is Script {
             return d;
         }
 
-        d.checks = LibLaunchReadiness.check(diamond, tokenAdminRegistry);
+        d.checks = LibLaunchReadiness.check(diamond, declared);
         if (production && !LibLaunchReadiness.allMet(d.checks)) {
             d.reason =
                 "Launch: a production Diamond is unpaused only when every readiness check is met (NOT MET and NOT CHECKED both refuse)";
@@ -365,7 +376,7 @@ contract Launch is Script {
     ///         every requirement and that `deployKey` holds no role, then the
     ///         Diamond is unpaused only if the pause epoch is still `epoch`.
     ///         Both calls land in one execution or neither does.
-    function launchBatch(address diamond, address tokenAdminRegistry, address deployKey, uint64 epoch)
+    function launchBatch(address diamond, LibLaunchReadiness.Declared memory declared, address deployKey, uint64 epoch)
         public
         pure
         returns (address[] memory targets, uint256[] memory values, bytes[] memory payloads)
@@ -374,7 +385,7 @@ contract Launch is Script {
         values = new uint256[](2);
         payloads = new bytes[](2);
         targets[0] = LaunchGateDeployment.predicted();
-        payloads[0] = abi.encodeCall(LaunchGate.assertReady, (diamond, tokenAdminRegistry, deployKey));
+        payloads[0] = abi.encodeCall(LaunchGate.assertReady, (diamond, declared, deployKey));
         targets[1] = diamond;
         payloads[1] = abi.encodeCall(AdminFacet.unpauseIfPauseEpoch, (epoch));
     }
@@ -382,13 +393,13 @@ contract Launch is Script {
     /// @notice The Timelock's id for this chain's launch operation at `epoch`.
     function launchOperationId(
         address diamond,
-        address tokenAdminRegistry,
+        LibLaunchReadiness.Declared memory declared,
         address deployKey,
         uint64 epoch,
         address timelock
     ) public view returns (bytes32) {
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launchBatch(diamond, tokenAdminRegistry, deployKey, epoch);
+            launchBatch(diamond, declared, deployKey, epoch);
         return ILaunchTimelock(timelock).hashOperationBatch(targets, values, payloads, bytes32(0), launchSalt(diamond));
     }
 
@@ -421,12 +432,12 @@ contract Launch is Script {
     /// @return evidence What the launch evidence is, and whether the Diamond
     ///         is paused now: a launched Diamond under an incident pause is
     ///         not live, and the wrappers must not say it is.
-    function checkLaunched(address diamond, address tokenAdminRegistry, address timelock, address admin)
+    function checkLaunched(address diamond, LibLaunchReadiness.Declared memory declared, address timelock, address admin)
         public
         view
         returns (string memory evidence)
     {
-        Decision memory d = decide(diamond, tokenAdminRegistry, timelock, admin, false);
+        Decision memory d = decide(diamond, declared, timelock, admin, false);
         if (d.path == Path.Launched) return d.reason;
         _printChecks(d.checks);
         // An unpaused Diamond the decision refuses names why; a paused one
@@ -438,8 +449,33 @@ contract Launch is Script {
         );
     }
 
-    function _registryFromEnv() internal view returns (address) {
-        return vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0));
+    /// @notice What this chain's launch declares it must match
+    ///         ({LibLaunchReadiness.Declared}), from the sources the deploy
+    ///         itself wired from, never read back from the configuration
+    ///         under test:
+    ///           - the CCIP registry: `CCIP_TOKEN_ADMIN_REGISTRY`;
+    ///           - the VPFI pool: the artifact's `vpfiTokenPool`, the pool
+    ///             the handover gate proves Timelock-owned and bound to the
+    ///             registry;
+    ///           - the lanes: `CCIP_LANE_CHAIN_IDS` (the deploy wrappers
+    ///             resolve the per-chain `CCIP_LANE_CHAIN_IDS_<SLUG>` into
+    ///             it), as CCIP chain selectors;
+    ///           - the WETH: the one configured now, which the proposal
+    ///             names for the Safe to verify against the chain's official
+    ///             bridge registry (no on-chain record says which token is
+    ///             the chain's bridged WETH9). The gate then refuses any
+    ///             other.
+    function declaredFromEnv(address diamond) public view returns (LibLaunchReadiness.Declared memory d) {
+        d.tokenAdminRegistry = vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0));
+        d.vpfiPool = Deployments.readVpfiTokenPoolOptional();
+        uint256[] memory ids = vm.envOr("CCIP_LANE_CHAIN_IDS", ",", new uint256[](0));
+        d.lanes = new uint64[](ids.length);
+        for (uint256 i; i < ids.length; ++i) {
+            d.lanes[i] = Deployments.ccipSelectorForChainId(ids[i]);
+        }
+        try ILaunchReadableDiamond(diamond).getWethContract() returns (address w) {
+            d.weth = w;
+        } catch {}
     }
 
     /// @dev Whether the run holds the admin's private key: a known
@@ -474,7 +510,7 @@ contract Launch is Script {
 
     function _printTimelockProposal(
         address diamond,
-        address tokenAdminRegistry,
+        LibLaunchReadiness.Declared memory declared,
         address timelock,
         address admin,
         uint64 epoch
@@ -482,21 +518,30 @@ contract Launch is Script {
         address gate = LaunchGateDeployment.predicted();
         ILaunchTimelock tl = ILaunchTimelock(timelock);
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launchBatch(diamond, tokenAdminRegistry, admin, epoch);
+            launchBatch(diamond, declared, admin, epoch);
         bytes32 salt = launchSalt(diamond);
         uint256 delay = tl.getMinDelay();
-        bytes32 id = launchOperationId(diamond, tokenAdminRegistry, admin, epoch, timelock);
+        bytes32 id = launchOperationId(diamond, declared, admin, epoch, timelock);
 
         string memory state = tl.isOperationDone(id)
             ? "DONE"
             : tl.isOperationReady(id) ? "READY to execute" : tl.isOperationPending(id) ? "PENDING (delay running)" : "not scheduled";
 
         console.log("The first unpause is a Timelock batch. Operation state:", state);
-        console.log("  call 1: LaunchGate.assertReady(diamond, tokenAdminRegistry, adminKey)");
+        console.log("  call 1: LaunchGate.assertReady(diamond, declared, adminKey)");
         console.log("    re-reads every check above, and that the admin key holds no role, when executed");
         console.log("    gate:", gate);
-        console.log("    tokenAdminRegistry:", tokenAdminRegistry);
         console.log("    admin key:", admin);
+        console.log("    declared - REVIEW each value before signing; the gate refuses anything else:");
+        console.log("      tokenAdminRegistry:", declared.tokenAdminRegistry);
+        console.log("      VPFI pool (the artifact's vpfiTokenPool, checked by the handover gate):", declared.vpfiPool);
+        console.log("      CCIP lane selectors (CCIP_LANE_CHAIN_IDS), exactly:", declared.lanes.length);
+        for (uint256 i; i < declared.lanes.length; ++i) {
+            console.log("        ", uint256(declared.lanes[i]));
+        }
+        console.log("      WETH:", declared.weth);
+        console.log("        verify it against the chain's official bridge registry: the bridged WETH9,");
+        console.log("        never the wrapped native token (OracleAdminFacet.setWethContract policy)");
         console.log("  call 2: diamond.unpauseIfPauseEpoch(epoch), epoch:", uint256(epoch));
         console.log("    reverts if a pause or auto-pause is recorded before execution; propose again then");
         console.log("    the Diamond records this first unpause (who, when); later pauses are incidents");

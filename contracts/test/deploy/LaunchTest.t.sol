@@ -17,6 +17,7 @@ import {HandoverPlan} from "../../script/lib/HandoverPlan.sol";
 import {DeployLaunchGate} from "../../script/DeployLaunchGate.s.sol";
 import {LaunchGateDeployment} from "../../script/lib/LaunchGateDeployment.sol";
 import {LaunchGate} from "../../src/governance/LaunchGate.sol";
+import {LibLaunchReadiness} from "../../src/governance/LibLaunchReadiness.sol";
 import {VaipakamTimelock} from "../../src/governance/VaipakamTimelock.sol";
 
 /// @dev A CCIP pool stand-in: its lanes, and each lane's rate-limiter
@@ -105,6 +106,14 @@ contract LaunchMockTimelock {
 ///      a swap adapter, it must NOT count.
 contract LaunchCodeStub {}
 
+/// @dev A WETH stand-in: a contract answering `decimals()` with 18, as every
+///      chain's bridged WETH9 does.
+contract LaunchWethStub {
+    function decimals() external pure returns (uint8) {
+        return 18;
+    }
+}
+
 /// @dev A price feed stand-in: answers `decimals()` and `latestRoundData()`
 ///      with a price.
 contract LaunchFeedStub {
@@ -189,10 +198,10 @@ contract LaunchTest is Test {
     address internal constant PROPOSER = address(0x5AFE);
     address internal constant TREASURY = address(0xBEEF);
     address internal constant VPFI = address(0xF1F1);
-    address internal constant WETH = address(0xE7E7);
 
     address internal diamond;
     address internal admin;
+    address internal weth;
     Launch internal launcher;
 
     function setUp() public {
@@ -204,6 +213,7 @@ contract LaunchTest is Test {
         diamond = script.diamond();
         launcher = new Launch();
         new DeployLaunchGate().deploy(DEPLOYER_KEY);
+        weth = address(new LaunchWethStub());
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────
@@ -216,7 +226,7 @@ contract LaunchTest is Test {
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         VPFITokenFacet(diamond).setVPFIToken(VPFI);
-        OracleAdminFacet(diamond).setWethContract(WETH);
+        OracleAdminFacet(diamond).setWethContract(weth);
         vm.stopPrank();
     }
 
@@ -229,7 +239,27 @@ contract LaunchTest is Test {
         pool.setLanes(l);
         LaunchMockRegistry registry = new LaunchMockRegistry();
         registry.setPool(VPFI, address(pool));
+        wiredPool[address(registry)] = address(pool);
         return address(registry);
+    }
+
+    /// @dev What `_registryWithLane` wired, recorded test-side so `_d` makes
+    ///      no external call (it is evaluated between `vm.expectRevert` and
+    ///      the call under test).
+    mapping(address => address) internal wiredPool;
+
+    /// @dev What a launch declares for `registry`: the pool and lane
+    ///      `_registryWithLane` wired for it (nothing for a registry built by
+    ///      hand), and the fixture's WETH. The tests below that probe a
+    ///      mismatch build their own.
+    function _d(address registry) internal view returns (LibLaunchReadiness.Declared memory d) {
+        d.tokenAdminRegistry = registry;
+        d.weth = weth;
+        d.vpfiPool = wiredPool[registry];
+        if (d.vpfiPool != address(0)) {
+            d.lanes = new uint64[](1);
+            d.lanes[0] = 1;
+        }
     }
 
     function _epoch() internal view returns (uint64) {
@@ -270,14 +300,14 @@ contract LaunchTest is Test {
 
     /// @dev Unconfigured, as a mock rig is: warned about, then unpaused.
     function test_Local_UnpausesDespiteUnmetChecks() public {
-        Launch.Outcome o = launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        Launch.Outcome o = launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
         assertEq(uint8(o), uint8(Launch.Outcome.Unpaused));
         assertFalse(AdminFacet(diamond).paused());
     }
 
     function test_AlreadyLive_IsLeftAlone() public {
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
-        Launch.Outcome o = launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
+        Launch.Outcome o = launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
         assertEq(uint8(o), uint8(Launch.Outcome.AlreadyLive));
     }
 
@@ -290,7 +320,7 @@ contract LaunchTest is Test {
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
         assertTrue(AdminFacet(diamond).paused());
     }
 
@@ -304,7 +334,7 @@ contract LaunchTest is Test {
         AdminFacet(diamond).setSwapAdapterDisabled(adapter, true);
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
     }
 
     /// @dev No CCIP registry given leaves the lane check NOT CHECKED, which
@@ -312,7 +342,7 @@ contract LaunchTest is Test {
     function test_Testnet_ConfiguredUnpausesByAdmin() public {
         vm.chainId(84532);
         _configure();
-        Launch.Outcome o = launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        Launch.Outcome o = launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
         assertEq(uint8(o), uint8(Launch.Outcome.Unpaused));
         assertFalse(AdminFacet(diamond).paused());
     }
@@ -323,7 +353,7 @@ contract LaunchTest is Test {
         LaunchMockRegistry registry = new LaunchMockRegistry();
         registry.setPool(VPFI, address(new LaunchMockPool()));
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, address(registry), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(registry)), address(0), admin, ADMIN_KEY);
     }
 
     function test_Testnet_AfterHandover_PrintsTimelockProposal() public {
@@ -331,7 +361,7 @@ contract LaunchTest is Test {
         _configure();
         address timelock = address(new LaunchMockTimelock());
         _handOverUnpause(timelock);
-        Launch.Outcome o = launcher.launch(diamond, _registryWithLane(), timelock, admin, ADMIN_KEY);
+        Launch.Outcome o = launcher.launch(diamond, _d(_registryWithLane()), timelock, admin, ADMIN_KEY);
         assertEq(uint8(o), uint8(Launch.Outcome.TimelockProposalPrinted));
         assertTrue(AdminFacet(diamond).paused(), "printing a proposal unpauses nothing");
     }
@@ -348,7 +378,7 @@ contract LaunchTest is Test {
                 "Launch: a production Diamond is unpaused only when every readiness check is met (NOT MET and NOT CHECKED both refuse)"
             )
         );
-        launcher.launch(diamond, address(0), timelock, admin, 0);
+        launcher.launch(diamond, _d(address(0)), timelock, admin, 0);
     }
 
     function test_Production_RefusesBeforeHandover() public {
@@ -357,7 +387,7 @@ contract LaunchTest is Test {
         address timelock = address(new LaunchMockTimelock());
         address registry = _registryWithLane();
         vm.expectRevert(bytes("Launch: the Timelock does not hold UNPAUSER_ROLE - run the handover and its gate first"));
-        launcher.launch(diamond, registry, timelock, admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(registry), timelock, admin, ADMIN_KEY);
         assertTrue(AdminFacet(diamond).paused());
     }
 
@@ -374,7 +404,7 @@ contract LaunchTest is Test {
         vm.expectRevert(
             bytes("Launch: the admin key still holds a Diamond role - the handover is not complete")
         );
-        launcher.launch(diamond, registry, timelock, admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(registry), timelock, admin, ADMIN_KEY);
     }
 
     /// @dev Fully ready and handed over: the proposal is printed, nothing is
@@ -384,7 +414,7 @@ contract LaunchTest is Test {
         _configure();
         address timelock = address(new LaunchMockTimelock());
         _handOverUnpause(timelock);
-        Launch.Outcome o = launcher.launch(diamond, _registryWithLane(), timelock, admin, ADMIN_KEY);
+        Launch.Outcome o = launcher.launch(diamond, _d(_registryWithLane()), timelock, admin, ADMIN_KEY);
         assertEq(uint8(o), uint8(Launch.Outcome.TimelockProposalPrinted));
         assertTrue(AdminFacet(diamond).paused());
     }
@@ -396,7 +426,7 @@ contract LaunchTest is Test {
         _handOverUnpause(timelock);
         address registry = _registryWithLane();
         vm.expectRevert(bytes("Launch: set ADMIN_ADDRESS so the run can prove the admin key holds no role"));
-        launcher.launch(diamond, registry, timelock, address(0), 0);
+        launcher.launch(diamond, _d(registry), timelock, address(0), 0);
     }
 
     // ─── The swap route is a real adapter (Codex #2686 r1) ───────────
@@ -405,7 +435,7 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
-        OracleAdminFacet(diamond).setWethContract(WETH);
+        OracleAdminFacet(diamond).setWethContract(weth);
         AdminFacet(diamond).addSwapAdapter(adapter);
         vm.stopPrank();
     }
@@ -414,21 +444,21 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         _configureWithAdapter(address(0xEEEE));
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
     }
 
     function test_Testnet_RefusesAContractThatIsNoAdapter() public {
         vm.chainId(84532);
         _configureWithAdapter(address(new LaunchCodeStub()));
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
     }
 
     function test_Testnet_RefusesANamelessAdapter() public {
         vm.chainId(84532);
         _configureWithAdapter(address(new LaunchNamelessAdapter()));
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
     }
 
     // ─── An unpause is recorded only on evidence (Codex #2686 r1) ────
@@ -452,7 +482,7 @@ contract LaunchTest is Test {
                 )
             )
         );
-        launcher.launch(diamond, registry, timelock, admin, 0);
+        launcher.launch(diamond, _d(registry), timelock, admin, 0);
     }
 
     function test_Testnet_RefusesAnUnreadyDiamondAlreadyUnpaused() public {
@@ -464,7 +494,7 @@ contract LaunchTest is Test {
                 "Launch: the Diamond is unpaused but a readiness check is NOT MET - it went live before it was ready; complete the phase named above, then re-run"
             )
         );
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
     }
 
     function test_Testnet_TimelockPathRefusesANotCheckedPool() public {
@@ -477,7 +507,7 @@ contract LaunchTest is Test {
                 "Launch: a Timelock launch needs every readiness check met - the LaunchGate inside the batch refuses NOT CHECKED too"
             )
         );
-        launcher.launch(diamond, address(0), timelock, admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), timelock, admin, ADMIN_KEY);
     }
 
     function test_Production_RefusesWithoutTheGate() public {
@@ -492,7 +522,7 @@ contract LaunchTest is Test {
                 "Launch: the LaunchGate is not deployed at its address - run script/DeployLaunchGate.s.sol (the contracts phase does)"
             )
         );
-        launcher.launch(diamond, registry, timelock, admin, 0);
+        launcher.launch(diamond, _d(registry), timelock, admin, 0);
     }
 
     // ─── The Timelock re-checks readiness when it executes (Codex #2686 r1)
@@ -507,7 +537,7 @@ contract LaunchTest is Test {
 
     function _schedule(VaipakamTimelock tl, address registry, uint64 epoch) internal {
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launcher.launchBatch(diamond, registry, admin, epoch);
+            launcher.launchBatch(diamond, _d(registry), admin, epoch);
         bytes32 salt = launcher.launchSalt(diamond);
         vm.prank(PROPOSER);
         tl.scheduleBatch(targets, values, payloads, bytes32(0), salt, 2 days);
@@ -515,7 +545,7 @@ contract LaunchTest is Test {
 
     function _execute(VaipakamTimelock tl, address registry, uint64 epoch) internal {
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launcher.launchBatch(diamond, registry, admin, epoch);
+            launcher.launchBatch(diamond, _d(registry), admin, epoch);
         tl.executeBatch(targets, values, payloads, bytes32(0), launcher.launchSalt(diamond));
     }
 
@@ -528,7 +558,7 @@ contract LaunchTest is Test {
         registry = _registryWithLane();
         tl = _realTimelock();
         _handOverUnpause(address(tl));
-        Launch.Outcome printed = launcher.launch(diamond, registry, address(tl), admin, 0);
+        Launch.Outcome printed = launcher.launch(diamond, _d(registry), address(tl), admin, 0);
         assertEq(uint8(printed), uint8(Launch.Outcome.TimelockProposalPrinted));
         epoch = _epoch();
         _schedule(tl, registry, epoch);
@@ -548,13 +578,13 @@ contract LaunchTest is Test {
         address adapter = address(new LaunchAdapterStub());
         AdminFacet(diamond).addSwapAdapter(adapter);
         VPFITokenFacet(diamond).setVPFIToken(VPFI);
-        OracleAdminFacet(diamond).setWethContract(WETH);
+        OracleAdminFacet(diamond).setWethContract(weth);
         vm.stopPrank();
         address registry = _registryWithLane();
         VaipakamTimelock tl = _realTimelock();
         _handOverUnpause(address(tl));
 
-        Launch.Outcome printed = launcher.launch(diamond, registry, address(tl), admin, 0);
+        Launch.Outcome printed = launcher.launch(diamond, _d(registry), address(tl), admin, 0);
         assertEq(uint8(printed), uint8(Launch.Outcome.TimelockProposalPrinted));
         uint64 epoch = _epoch();
         _schedule(tl, registry, epoch);
@@ -566,7 +596,7 @@ contract LaunchTest is Test {
         vm.prank(address(tl));
         AdminFacet(diamond).setSwapAdapterDisabled(adapter, true);
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launcher.launchBatch(diamond, registry, admin, epoch);
+            launcher.launchBatch(diamond, _d(registry), admin, epoch);
         bytes32 salt = launcher.launchSalt(diamond);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -584,9 +614,9 @@ contract LaunchTest is Test {
         _execute(tl, registry, epoch);
         assertFalse(AdminFacet(diamond).paused());
 
-        Launch.Outcome o = launcher.launch(diamond, registry, address(tl), admin, 0);
+        Launch.Outcome o = launcher.launch(diamond, _d(registry), address(tl), admin, 0);
         assertEq(uint8(o), uint8(Launch.Outcome.AlreadyLive));
-        launcher.checkLaunched(diamond, registry, address(tl), admin);
+        launcher.checkLaunched(diamond, _d(registry), address(tl), admin);
     }
 
     /// @dev Configured, handed over to a mock Timelock, and the gate passes;
@@ -596,16 +626,16 @@ contract LaunchTest is Test {
         address timelock = address(new LaunchMockTimelock());
         _handOverUnpause(timelock);
         LaunchGate gate = LaunchGate(LaunchGateDeployment.predicted());
-        gate.assertReady(diamond, _registryWithLane(), admin);
+        gate.assertReady(diamond, _d(_registryWithLane()), admin);
         vm.expectRevert(
             abi.encodeWithSelector(
                 LaunchGate.LaunchNotReady.selector,
-                "CCIP lanes wired and rate-limited",
+                "VPFI routes through the declared pool",
                 "NOT CHECKED",
                 "no CCIP TokenAdminRegistry given (CCIP_TOKEN_ADMIN_REGISTRY), so the VPFI pool is unknown"
             )
         );
-        gate.assertReady(diamond, address(0), admin);
+        gate.assertReady(diamond, _d(address(0)), admin);
     }
 
     // ─── Round 3 (Codex #2686 r3) ────────────────────────────────────
@@ -626,7 +656,7 @@ contract LaunchTest is Test {
         vm.prank(_guardian(tl));
         AdminFacet(diamond).pause();
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launcher.launchBatch(diamond, registry, admin, epoch);
+            launcher.launchBatch(diamond, _d(registry), admin, epoch);
         bytes32 salt = launcher.launchSalt(diamond);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.PauseEpochMoved.selector, epoch, epoch + 1));
         tl.executeBatch(targets, values, payloads, bytes32(0), salt);
@@ -641,7 +671,7 @@ contract LaunchTest is Test {
         vm.prank(address(tl));
         AccessControlFacet(diamond).grantRole(LibAccessControl.PAUSER_ROLE, admin);
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launcher.launchBatch(diamond, registry, admin, epoch);
+            launcher.launchBatch(diamond, _d(registry), admin, epoch);
         bytes32 salt = launcher.launchSalt(diamond);
         vm.expectRevert(
             abi.encodeWithSelector(LaunchGate.DeployKeyHoldsRole.selector, admin, LibAccessControl.PAUSER_ROLE)
@@ -655,7 +685,7 @@ contract LaunchTest is Test {
         LaunchGate gate = LaunchGate(LaunchGateDeployment.predicted());
         address registry = _registryWithLane();
         vm.expectRevert(LaunchGate.NoDeployKey.selector);
-        gate.assertReady(diamond, registry, address(0));
+        gate.assertReady(diamond, _d(registry), address(0));
     }
 
     /// @dev A launched production Diamond paused and unpaused again for an
@@ -667,7 +697,7 @@ contract LaunchTest is Test {
         vm.prank(_guardian(tl));
         AdminFacet(diamond).pause();
         assertEq(
-            launcher.checkLaunched(diamond, registry, address(tl), admin),
+            launcher.checkLaunched(diamond, _d(registry), address(tl), admin),
             string.concat(
                 "first unpaused by ",
                 vm.toString(address(tl)),
@@ -678,7 +708,7 @@ contract LaunchTest is Test {
         vm.prank(address(tl));
         AdminFacet(diamond).unpause();
         assertEq(
-            launcher.checkLaunched(diamond, registry, address(tl), admin),
+            launcher.checkLaunched(diamond, _d(registry), address(tl), admin),
             string.concat("first unpaused by ", vm.toString(address(tl)), ", and unpaused now")
         );
     }
@@ -686,16 +716,16 @@ contract LaunchTest is Test {
     function test_Production_CheckLaunchedRefusesBeforeExecution() public {
         (VaipakamTimelock tl, address registry,) = _scheduledLaunch();
         vm.expectRevert(bytes("Launch: the Diamond has not launched"));
-        launcher.checkLaunched(diamond, registry, address(tl), admin);
+        launcher.checkLaunched(diamond, _d(registry), address(tl), admin);
     }
 
     function test_Testnet_CheckLaunchedRefusesAPausedDiamond() public {
         vm.chainId(84532);
         _configure();
         vm.expectRevert(bytes("Launch: the Diamond has not launched"));
-        launcher.checkLaunched(diamond, address(0), address(0), admin);
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
-        launcher.checkLaunched(diamond, address(0), address(0), admin);
+        launcher.checkLaunched(diamond, _d(address(0)), address(0), admin);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
+        launcher.checkLaunched(diamond, _d(address(0)), address(0), admin);
     }
 
     function test_Testnet_RefusesARegistryWithNoPoolForVpfi() public {
@@ -703,7 +733,7 @@ contract LaunchTest is Test {
         _configure();
         address registry = address(new LaunchMockRegistry());
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, registry, address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(registry), address(0), admin, ADMIN_KEY);
     }
 
     /// @dev A lane-wired pool registered for some OTHER token does not stand
@@ -718,7 +748,7 @@ contract LaunchTest is Test {
         LaunchMockRegistry registry = new LaunchMockRegistry();
         registry.setPool(address(0xD00D), address(pool));
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, address(registry), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(registry)), address(0), admin, ADMIN_KEY);
     }
 
     function test_Testnet_RefusesWithoutAVpfiToken() public {
@@ -730,7 +760,7 @@ contract LaunchTest is Test {
         vm.stopPrank();
         address registry = _registryWithLane();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, registry, address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(registry), address(0), admin, ADMIN_KEY);
     }
 
     function test_Testnet_RefusesAFeedWithoutDecimals() public {
@@ -738,11 +768,11 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchDecimalLessFeed()));
-        OracleAdminFacet(diamond).setWethContract(WETH);
+        OracleAdminFacet(diamond).setWethContract(weth);
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
     }
 
     function test_Testnet_RefusesAFeedWithAnOutOfRangeRound() public {
@@ -750,11 +780,11 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchWideRoundFeed()));
-        OracleAdminFacet(diamond).setWethContract(WETH);
+        OracleAdminFacet(diamond).setWethContract(weth);
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
     }
 
     // ─── Every role leaves the admin key (Codex #2686 r2) ────────────
@@ -770,7 +800,7 @@ contract LaunchTest is Test {
         AccessControlFacet(diamond).grantRole(LibAccessControl.RISK_ADMIN_ROLE, admin);
         address registry = _registryWithLane();
         vm.expectRevert(bytes("Launch: the admin key still holds a Diamond role - the handover is not complete"));
-        launcher.launch(diamond, registry, timelock, admin, 0);
+        launcher.launch(diamond, _d(registry), timelock, admin, 0);
     }
 
     // ─── Contracts are probed, not just found (Codex #2686 r2) ───────
@@ -780,11 +810,11 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new LaunchCodeStub()));
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
-        OracleAdminFacet(diamond).setWethContract(WETH);
+        OracleAdminFacet(diamond).setWethContract(weth);
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
     }
 
     function test_Testnet_RefusesAFeedThatIsNoFeed() public {
@@ -792,11 +822,11 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCodeStub()));
-        OracleAdminFacet(diamond).setWethContract(WETH);
+        OracleAdminFacet(diamond).setWethContract(weth);
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
     }
 
     function test_Testnet_RefusesAFeedWithNoPrice() public {
@@ -806,11 +836,11 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
         OracleAdminFacet(diamond).setEthUsdFeed(address(feed));
-        OracleAdminFacet(diamond).setWethContract(WETH);
+        OracleAdminFacet(diamond).setWethContract(weth);
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
     }
 
     // ─── Round 4 (Codex #2686 r4) ────────────────────────────────────
@@ -829,9 +859,9 @@ contract LaunchTest is Test {
         _execute(tl, registry, epoch);
         vm.prank(_guardian(tl));
         AdminFacet(diamond).pause();
-        Launch.Decision memory d = launcher.decide(diamond, registry, address(tl), admin, false);
+        Launch.Decision memory d = launcher.decide(diamond, _d(registry), address(tl), admin, false);
         assertEq(uint8(d.path), uint8(Launch.Path.Launched));
-        Launch.Outcome o = launcher.launch(diamond, registry, address(tl), admin, 0);
+        Launch.Outcome o = launcher.launch(diamond, _d(registry), address(tl), admin, 0);
         assertEq(uint8(o), uint8(Launch.Outcome.AlreadyLive));
         assertTrue(AdminFacet(diamond).paused(), "the incident pause stands");
     }
@@ -842,10 +872,10 @@ contract LaunchTest is Test {
     function test_Testnet_AdminWillNotLiftAPauseAfterLaunch() public {
         vm.chainId(84532);
         _configure();
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
         vm.prank(admin);
         AdminFacet(diamond).pause();
-        Launch.Outcome o = launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        Launch.Outcome o = launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
         assertEq(uint8(o), uint8(Launch.Outcome.AlreadyLive));
         assertTrue(AdminFacet(diamond).paused());
         (address by,) = launcher.firstUnpause(diamond);
@@ -860,7 +890,7 @@ contract LaunchTest is Test {
         _configure();
         vm.prank(admin);
         AdminFacet(diamond).pause();
-        Launch.Outcome o = launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        Launch.Outcome o = launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
         assertEq(uint8(o), uint8(Launch.Outcome.Unpaused));
         assertFalse(AdminFacet(diamond).paused());
     }
@@ -871,7 +901,7 @@ contract LaunchTest is Test {
         vm.chainId(8453);
         _configure();
         Launch.Decision memory d =
-            launcher.decide(diamond, _registryWithLane(), address(new LaunchMockTimelock()), admin, true);
+            launcher.decide(diamond, _d(_registryWithLane()), address(new LaunchMockTimelock()), admin, true);
         assertEq(uint8(d.path), uint8(Launch.Path.Refuse));
         assertEq(d.reason, "Launch: the Timelock does not hold UNPAUSER_ROLE - run the handover and its gate first");
     }
@@ -884,7 +914,7 @@ contract LaunchTest is Test {
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
     }
 
     /// @dev The Diamond's own oracle reads a carried-over round as stale, so
@@ -894,11 +924,11 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCarriedRoundFeed()));
-        OracleAdminFacet(diamond).setWethContract(WETH);
+        OracleAdminFacet(diamond).setWethContract(weth);
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
-        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
     }
 
     // ─── Round 5/6 (Codex #2686): the launch is the Diamond's own record ──
@@ -918,9 +948,9 @@ contract LaunchTest is Test {
         (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
         _execute(tl, registry, epoch);
         _inflateEpoch(_guardian(tl), 300);
-        Launch.Decision memory d = launcher.decide(diamond, registry, address(tl), admin, false);
+        Launch.Decision memory d = launcher.decide(diamond, _d(registry), address(tl), admin, false);
         assertEq(uint8(d.path), uint8(Launch.Path.Launched));
-        Launch.Outcome o = launcher.launch(diamond, registry, address(tl), admin, 0);
+        Launch.Outcome o = launcher.launch(diamond, _d(registry), address(tl), admin, 0);
         assertEq(uint8(o), uint8(Launch.Outcome.AlreadyLive));
         assertTrue(AdminFacet(diamond).paused(), "the incident pause stands");
     }
@@ -934,7 +964,7 @@ contract LaunchTest is Test {
         VaipakamTimelock tl = _realTimelock();
         _handOverUnpause(address(tl));
         _inflateEpoch(_guardian(tl), 300);
-        Launch.Outcome o = launcher.launch(diamond, registry, address(tl), admin, 0);
+        Launch.Outcome o = launcher.launch(diamond, _d(registry), address(tl), admin, 0);
         assertEq(uint8(o), uint8(Launch.Outcome.TimelockProposalPrinted));
         assertTrue(AdminFacet(diamond).paused());
     }
@@ -955,7 +985,7 @@ contract LaunchTest is Test {
         tl.executeBatch(targets, new uint256[](1), payloads, bytes32(0), bytes32("plain"));
         vm.prank(_guardian(tl));
         AdminFacet(diamond).pause();
-        Launch.Decision memory d = launcher.decide(diamond, registry, address(tl), admin, false);
+        Launch.Decision memory d = launcher.decide(diamond, _d(registry), address(tl), admin, false);
         assertEq(uint8(d.path), uint8(Launch.Path.Launched));
         (address by,) = launcher.firstUnpause(diamond);
         assertEq(by, address(tl));
@@ -975,12 +1005,12 @@ contract LaunchTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 LaunchGate.LaunchNotReady.selector,
-                "CCIP lanes wired and rate-limited",
+                "CCIP lanes are exactly the declared set, rate-limited",
                 "NOT MET",
                 "a lane's OUTBOUND rate limit is disabled or outside the governor's bounds: run the ccip-wire phase's rate limits"
             )
         );
-        LaunchGate(LaunchGateDeployment.predicted()).assertReady(diamond, registry, admin);
+        LaunchGate(LaunchGateDeployment.predicted()).assertReady(diamond, _d(registry), admin);
     }
 
     /// @dev Enabled but with a capacity past the governor's ceiling: as good
@@ -993,12 +1023,12 @@ contract LaunchTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 LaunchGate.LaunchNotReady.selector,
-                "CCIP lanes wired and rate-limited",
+                "CCIP lanes are exactly the declared set, rate-limited",
                 "NOT MET",
                 "a lane's INBOUND rate limit is disabled or outside the governor's bounds: run the ccip-wire phase's rate limits"
             )
         );
-        LaunchGate(LaunchGateDeployment.predicted()).assertReady(diamond, registry, admin);
+        LaunchGate(LaunchGateDeployment.predicted()).assertReady(diamond, _d(registry), admin);
     }
 
     /// @dev A limiter disabled during the delay: the launch reverts on
@@ -1007,17 +1037,206 @@ contract LaunchTest is Test {
         (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
         _pool(registry).setLimit(1, true, false, 0, 0);
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launcher.launchBatch(diamond, registry, admin, epoch);
+            launcher.launchBatch(diamond, _d(registry), admin, epoch);
         bytes32 salt = launcher.launchSalt(diamond);
         vm.expectRevert(
             abi.encodeWithSelector(
                 LaunchGate.LaunchNotReady.selector,
-                "CCIP lanes wired and rate-limited",
+                "CCIP lanes are exactly the declared set, rate-limited",
                 "NOT MET",
                 "a lane's INBOUND rate limit is disabled or outside the governor's bounds: run the ccip-wire phase's rate limits"
             )
         );
         tl.executeBatch(targets, values, payloads, bytes32(0), salt);
         assertTrue(AdminFacet(diamond).paused());
+    }
+
+    // ─── Round 7 (Codex #2686): checked against what the launch declares ──
+
+    function _gate() internal view returns (LaunchGate) {
+        return LaunchGate(LaunchGateDeployment.predicted());
+    }
+
+    function _lanes(uint64 a, uint64 b) internal pure returns (uint64[] memory l) {
+        l = new uint64[](b == 0 ? 1 : 2);
+        l[0] = a;
+        if (b != 0) l[1] = b;
+    }
+
+    /// @dev A destination of the declared topology was never wired: the
+    ///      pool's one in-bounds lane does not make the launch ready.
+    function test_Gate_RefusesAMissingDeclaredLane() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        LibLaunchReadiness.Declared memory d = _d(_registryWithLane());
+        d.lanes = _lanes(1, 2);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchGate.LaunchNotReady.selector,
+                "CCIP lanes are exactly the declared set, rate-limited",
+                "NOT MET",
+                "declared lane 2 is not on the registry's VPFI pool: run the ccip-wire phase for every chain in CCIP_LANE_CHAIN_IDS"
+            )
+        );
+        _gate().assertReady(diamond, d, admin);
+    }
+
+    /// @dev A lane nobody declared is an unreviewed route: refused too.
+    function test_Gate_RefusesAnUndeclaredLane() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        LibLaunchReadiness.Declared memory d = _d(registry);
+        _pool(registry).setLanes(_lanes(1, 2));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchGate.LaunchNotReady.selector,
+                "CCIP lanes are exactly the declared set, rate-limited",
+                "NOT MET",
+                "the registry's VPFI pool carries lane 2, which is not declared: an undeclared lane is an unreviewed route"
+            )
+        );
+        _gate().assertReady(diamond, d, admin);
+    }
+
+    /// @dev Duplicates in the declaration do not stand in for a missing lane.
+    function test_Gate_DuplicateDeclaredLanesDoNotHideAMissingOne() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        _pool(registry).setLanes(_lanes(1, 2));
+        LibLaunchReadiness.Declared memory d = _d(registry);
+        d.lanes = _lanes(1, 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchGate.LaunchNotReady.selector,
+                "CCIP lanes are exactly the declared set, rate-limited",
+                "NOT MET",
+                "the registry's VPFI pool carries lane 2, which is not declared: an undeclared lane is an unreviewed route"
+            )
+        );
+        _gate().assertReady(diamond, d, admin);
+    }
+
+    /// @dev The registry routes VPFI through a pool other than the declared
+    ///      one (the pool the handover gate checked): refused.
+    function test_Gate_RefusesARegistryPoolOtherThanTheDeclaredOne() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        LibLaunchReadiness.Declared memory d = _d(_registryWithLane());
+        d.vpfiPool = address(0xA11CE);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchGate.LaunchNotReady.selector,
+                "VPFI routes through the declared pool",
+                "NOT MET",
+                "the TokenAdminRegistry routes the Diamond's VPFI token through a pool other than the declared one (the pool the handover gate checked)"
+            )
+        );
+        _gate().assertReady(diamond, d, admin);
+    }
+
+    /// @dev The oracle prices whatever is stored as WETH, so a price alone
+    ///      proves nothing: a WETH other than the declared one is refused.
+    function test_Gate_RefusesAWethOtherThanTheDeclaredOne() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        LibLaunchReadiness.Declared memory d = _d(_registryWithLane());
+        d.weth = address(new LaunchWethStub());
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchGate.LaunchNotReady.selector,
+                "WETH is the declared token and priced",
+                "NOT MET",
+                "the configured WETH is not the declared one"
+            )
+        );
+        _gate().assertReady(diamond, d, admin);
+    }
+
+    /// @dev An EOA stored as WETH still "prices" through the ETH feed; it is
+    ///      refused as no 18-decimal token.
+    function test_Testnet_RefusesAnEoaWeth() public {
+        vm.chainId(84532);
+        _configure();
+        vm.prank(admin);
+        OracleAdminFacet(diamond).setWethContract(address(0xE7E7));
+        LibLaunchReadiness.Declared memory d = _d(address(0));
+        d.weth = address(0xE7E7);
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, d, address(0), admin, ADMIN_KEY);
+    }
+
+    /// @dev WETH re-pointed during the delay: the batch pins the reviewed
+    ///      one, so the execution reverts and the Diamond stays paused.
+    function test_Production_WethChangedDuringDelayRevertsTheLaunch() public {
+        (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
+        address other = address(new LaunchWethStub());
+        vm.prank(OwnershipFacet(diamond).owner());
+        OracleAdminFacet(diamond).setWethContract(other);
+        (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
+            launcher.launchBatch(diamond, _d(registry), admin, epoch);
+        bytes32 salt = launcher.launchSalt(diamond);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchGate.LaunchNotReady.selector,
+                "WETH is the declared token and priced",
+                "NOT MET",
+                "the configured WETH is not the declared one"
+            )
+        );
+        tl.executeBatch(targets, values, payloads, bytes32(0), salt);
+        assertTrue(AdminFacet(diamond).paused());
+    }
+
+    /// @dev `--skip-vpfi`: no VPFI token and none declared. Both CCIP checks
+    ///      are met as not applicable, so the testnet launches.
+    function test_Testnet_NoVpfiDeploymentLaunches() public {
+        vm.chainId(84532);
+        vm.startPrank(admin);
+        ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
+        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
+        AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
+        OracleAdminFacet(diamond).setWethContract(weth);
+        vm.stopPrank();
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertTrue(LibLaunchReadiness.allMet(c), "every check met, the CCIP two as not applicable");
+        assertEq(
+            c[5].detail,
+            "not applicable: the Diamond records no VPFI token and the launch declares no VPFI pool or lane, so this deployment carries no cross-chain VPFI"
+        );
+        Launch.Outcome o = launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
+        assertEq(uint8(o), uint8(Launch.Outcome.Unpaused));
+    }
+
+    /// @dev A Diamond with a VPFI token but no lane set declared: the lane
+    ///      check cannot say whether every destination is wired. A testnet
+    ///      reports it and launches; a production chain refuses.
+    function test_UndeclaredLanes_NotCheckedOnTestnet_RefusedOnProduction() public {
+        _configure();
+        LibLaunchReadiness.Declared memory d = _d(_registryWithLane());
+        d.lanes = new uint64[](0);
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, d);
+        assertFalse(c[5].checkable);
+        assertEq(c[5].detail, "no lane set declared (CCIP_LANE_CHAIN_IDS), so whether every destination is wired is unknown");
+
+        vm.chainId(8453);
+        address timelock = address(new LaunchMockTimelock());
+        _handOverUnpause(timelock);
+        vm.expectRevert(
+            bytes(
+                "Launch: a production Diamond is unpaused only when every readiness check is met (NOT MET and NOT CHECKED both refuse)"
+            )
+        );
+        launcher.launch(diamond, d, timelock, admin, 0);
+    }
+
+    function test_Testnet_UndeclaredLanesStillLaunch() public {
+        vm.chainId(84532);
+        _configure();
+        LibLaunchReadiness.Declared memory d = _d(_registryWithLane());
+        d.lanes = new uint64[](0);
+        Launch.Outcome o = launcher.launch(diamond, d, address(0), admin, ADMIN_KEY);
+        assertEq(uint8(o), uint8(Launch.Outcome.Unpaused));
     }
 }

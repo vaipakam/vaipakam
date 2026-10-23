@@ -7,10 +7,11 @@ chain could be live with every wallet reading as unsanctioned and no way to
 liquidate. The deploy now leaves the Diamond paused on every chain, and the
 first unpause belongs to a new launch step.
 
-The launch step reads five requirements off the live chain and prints each
+The launch step reads six requirements off the live chain and prints each
 as met, not met, or not checked: a treasury is set, a sanctions oracle
-contract is set, the ETH/numeraire price feed is set, at least one enabled
-swap adapter exists, and the VPFI cross-chain pool has at least one lane. A
+contract is set, the declared WETH is configured and priced, at least one
+enabled swap adapter exists, VPFI is routed through the declared
+cross-chain pool, and that pool carries exactly the declared lanes. A
 requirement the chain cannot answer is never read as met. On a production
 chain every requirement must be met and the governance handover must be
 complete, and the step broadcasts nothing: it prints the Timelock proposal
@@ -73,6 +74,25 @@ second launch. On a production chain the record must name the Timelock, so
 a Diamond first unpaused by anyone else is refused and named. A testnet
 Diamond paused again before it ever went live no longer needs the operator
 to confirm it never launched: the record says so.
+
+The launch checks the chain against what the launch DECLARES, not against
+itself. The lane list is the same per-chain list the cross-chain wiring
+phase uses, and the pool must carry exactly those lanes: a missing lane
+would leave a destination unreachable, and an extra one is a route nobody
+reviewed. The pool Chainlink's registry routes VPFI through must be the pool
+the deploy recorded, the one the handover check proved is owned by the
+Timelock; the handover check itself now also fails when the registry routes
+VPFI through any other pool, or when that pool's rate limits can be set by
+anyone but the bounded rate governor. The configured WETH must be a token
+contract with 18 decimals, because the price oracle prices whatever address
+is stored as WETH from the ETH feed. Nothing on-chain records which token is
+a chain's bridged WETH, so the Timelock proposal prints the WETH (with the
+registry, pool and lanes) for the governance Safe to check against the
+chain's official bridge registry, and the on-chain re-check refuses any
+other value than the one signed. A deployment built without the VPFI token
+that declares no pool or lane reports both cross-chain requirements as met
+because they do not apply, and says so, so a testnet deployed that way can
+still launch.
 
 The cross-chain readiness check now reads every lane of the VPFI pool, not
 just whether one exists. Each lane's inbound and outbound rate limits must

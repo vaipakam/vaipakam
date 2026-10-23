@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibAccessControl} from "../libraries/LibAccessControl.sol";
 import {VpfiPoolRateBounds} from "../crosschain/VpfiPoolRateBounds.sol";
+import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
 /// @dev The Diamond reads the launch requirements need. Declared here rather
 ///      than imported from the facets so the readiness rule depends on the
@@ -44,13 +45,20 @@ interface ILaunchReadableDiamond {
  *      registered for, because the Diamond's own reads fail OPEN on a wrong
  *      contract (a failing `isSanctioned` reads as "not sanctioned").
  *
+ *      Nor is a configuration accepted on the strength of reading back
+ *      itself. Which WETH, which VPFI pool and which CCIP lanes the chain
+ *      should carry are DECLARED ({Declared}) and the chain is compared with
+ *      them; the Timelock proposal carries the declaration in its calldata,
+ *      so what the Governance Safe reviews is what the gate enforces.
+ *
  *      A check is one of three things, and none is ever read as another:
  *        - met;
  *        - NOT met — the chain was read and the requirement is missing;
  *        - not checkable — the chain could not answer (no CCIP registry
- *          given, a read that reverted or returned a malformed answer). Never read
- *          as met: the gate and a production launch refuse it, a testnet
- *          launch reports it.
+ *          given, a read that reverted or returned a malformed answer), or
+ *          nothing was declared to compare it against. Never read as met:
+ *          the gate and a production launch refuse it, a testnet launch
+ *          reports it.
  */
 library LibLaunchReadiness {
     /// @dev Gas each interface probe of a third-party contract may spend (an
@@ -75,19 +83,51 @@ library LibLaunchReadiness {
         string detail;
     }
 
+    /// @notice What the chain is checked AGAINST: the expectations the
+    ///         launch declares, which the Timelock proposal carries in its
+    ///         calldata for the Governance Safe to review (Codex #2686 r7).
+    /// @dev A requirement read back from the configuration it is meant to
+    ///      validate proves nothing: any lane set, any pool and any WETH
+    ///      pass a check that only asks the chain about itself. So the
+    ///      identity and completeness questions are answered against these
+    ///      declared values, and only the on-chain shape (a bounded limiter,
+    ///      an 18-decimal token, a price) is read from the chain alone.
+    struct Declared {
+        /// @dev The chain's CCIP `TokenAdminRegistry`; zero leaves the VPFI
+        ///      pool unknown, so both CCIP checks are NOT CHECKED.
+        address tokenAdminRegistry;
+        /// @dev The VPFI pool the deployment artifact records
+        ///      (`vpfiTokenPool`): the pool whose Timelock ownership and
+        ///      rate-governor wiring the handover gate proved. Zero declares
+        ///      no cross-chain VPFI.
+        address vpfiPool;
+        /// @dev The CCIP chain selector of every lane the pool must carry,
+        ///      exactly (`CCIP_LANE_CHAIN_IDS`, the list the ccip-wire phase
+        ///      wires). Empty declares none.
+        uint64[] lanes;
+        /// @dev The WETH the proposal names for review. No on-chain record
+        ///      says which token is the chain's bridged WETH9 (the
+        ///      `setWethContract` policy names the bridge registry as the
+        ///      source), so its identity is the reviewers' to establish; the
+        ///      check refuses any other configured WETH.
+        address weth;
+    }
+
     /// @notice Reads every launch requirement off the live chain.
     /// @param diamond The Diamond to read.
-    /// @param tokenAdminRegistry The chain's CCIP `TokenAdminRegistry`, or
-    ///        zero when none is known (the lane check is then not checkable).
-    ///        The VPFI pool is read FROM it, for the token the Diamond itself
-    ///        records, so no pool address is ever taken on trust.
-    function check(address diamond, address tokenAdminRegistry) internal view returns (Check[] memory checks) {
-        checks = new Check[](5);
+    /// @param declared What the chain must match (see {Declared}). The VPFI
+    ///        pool is read FROM the registry, for the token the Diamond
+    ///        itself records, and then compared with the declared one, so
+    ///        no pool address is ever taken on trust.
+    function check(address diamond, Declared memory declared) internal view returns (Check[] memory checks) {
+        VpfiRoute memory route = _vpfiRoute(diamond, declared.tokenAdminRegistry);
+        checks = new Check[](6);
         checks[0] = _treasury(diamond);
         checks[1] = _sanctions(diamond);
-        checks[2] = _priceFeed(diamond);
+        checks[2] = _priceFeed(diamond, declared.weth);
         checks[3] = _swapRoute(diamond);
-        checks[4] = _ccipLanes(diamond, tokenAdminRegistry);
+        checks[4] = _vpfiPool(route, declared);
+        checks[5] = _ccipLanes(route, declared);
     }
 
     /// @notice Whether every check was answered and met.
@@ -172,8 +212,15 @@ library LibLaunchReadiness {
     ///      the Pyth cross-check) that would drift from them. A price that is
     ///      missing, stale or distrusted at the moment of the read is NOT
     ///      MET: the Diamond could not price anything ETH-anchored then.
-    function _priceFeed(address diamond) private view returns (Check memory c) {
-        c.label = "price oracle wired";
+    ///
+    ///      That price alone says nothing about WHICH token is configured:
+    ///      the oracle prices whatever address is stored as WETH from the
+    ///      ETH feed without touching it (Codex #2686 r7). So the configured
+    ///      WETH must first be the declared one, and a contract answering
+    ///      `decimals()` with 18, which an EOA or an unrelated contract
+    ///      stored by mistake does not.
+    function _priceFeed(address diamond, address declaredWeth) private view returns (Check memory c) {
+        c.label = "WETH is the declared token and priced";
         address weth;
         try ILaunchReadableDiamond(diamond).getWethContract() returns (address w) {
             weth = w;
@@ -186,20 +233,34 @@ library LibLaunchReadiness {
             c.detail = "no WETH configured (setWethContract): run the configure phase";
             return c;
         }
+        if (declaredWeth == address(0)) {
+            c.detail = "no WETH declared to compare the configured one against";
+            return c;
+        }
+        c.checkable = true;
+        if (weth != declaredWeth) {
+            c.detail = "the configured WETH is not the declared one";
+            return c;
+        }
+        if (!_answersEighteenDecimals(weth)) {
+            c.detail = "the configured WETH is not a contract answering decimals() with 18";
+            return c;
+        }
         (bool ok, bytes memory ret) = diamond.staticcall(abi.encodeWithSignature("getAssetPriceStatus(address)", weth));
         if (!ok || ret.length != 96) {
+            c.checkable = false;
             c.detail = "getAssetPriceStatus(weth) unreadable";
             return c;
         }
         uint256 status = abi.decode(ret, (uint256));
         if (status > 2) {
+            c.checkable = false;
             c.detail = "getAssetPriceStatus(weth) returned an unknown status";
             return c;
         }
-        c.checkable = true;
         c.met = status == 0;
         c.detail = status == 0
-            ? "the Diamond's oracle prices WETH from the ETH reference feed"
+            ? "the declared WETH is configured, and the Diamond's oracle prices it from the ETH reference feed"
             : status == 1
                 ? "the Diamond's oracle has no usable WETH price now (ETH feed unset, stale or not positive, or the sequencer down): run the configure phase, or wait for a fresh round"
                 : "the Diamond's oracle distrusts the WETH price (the secondary oracles or the Pyth cross-check disagree)";
@@ -234,77 +295,170 @@ library LibLaunchReadiness {
         }
     }
 
-    /// @dev The VPFI pool CCIP actually routes through needs at least one
-    ///      lane, and EVERY lane must carry the rate limits the mainnet gate
-    ///      requires: inbound and outbound enabled, with capacity and refill
-    ///      rate inside the `VpfiPoolRateGovernor` bounds. A lane whose
-    ///      limiter is disabled moves tokens with no cap at all (CCIP skips
-    ///      a disabled bucket), which is the state a wiring run leaves when
-    ///      the lane landed and its limits did not (Codex #2686 r6). The
-    ///      pool is the one the `TokenAdminRegistry` maps the Diamond's own
-    ///      VPFI token to: a stale or look-alike pool address from an
-    ///      artifact can never stand in for it.
-    function _ccipLanes(address diamond, address registry) private view returns (Check memory c) {
-        c.label = "CCIP lanes wired and rate-limited";
-        if (registry == address(0)) {
-            c.detail = "no CCIP TokenAdminRegistry given (CCIP_TOKEN_ADMIN_REGISTRY), so the VPFI pool is unknown";
-            return c;
-        }
+    /// @dev The Diamond's VPFI token and the pool the CCIP registry routes it
+    ///      through, read once for both CCIP checks.
+    struct VpfiRoute {
+        /// @dev The token and (when there is one) the pool were read.
+        bool readable;
         address token;
+        address pool;
+        string detail;
+    }
+
+    function _vpfiRoute(address diamond, address registry) private view returns (VpfiRoute memory r) {
         try ILaunchReadableDiamond(diamond).getVPFIToken() returns (address t) {
-            token = t;
+            r.token = t;
         } catch {
-            c.detail = "getVPFIToken() unreadable";
-            return c;
+            r.detail = "getVPFIToken() unreadable";
+            return r;
         }
-        if (token == address(0)) {
-            c.checkable = true;
-            c.detail = "the Diamond records no VPFI token: run the configure phase";
-            return c;
+        if (r.token == address(0)) {
+            r.readable = true;
+            return r;
         }
-        (bool ok, bytes memory ret) = registry.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("getPool(address)", token));
+        if (registry == address(0)) {
+            r.detail = "no CCIP TokenAdminRegistry given (CCIP_TOKEN_ADMIN_REGISTRY), so the VPFI pool is unknown";
+            return r;
+        }
+        (bool ok, bytes memory ret) =
+            registry.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("getPool(address)", r.token));
         if (!ok || ret.length != 32 || uint256(bytes32(ret)) >> 160 != 0) {
-            c.detail = "getPool(vpfiToken) unreadable on the TokenAdminRegistry";
+            r.detail = "getPool(vpfiToken) unreadable on the TokenAdminRegistry";
+            return r;
+        }
+        r.readable = true;
+        r.pool = address(uint160(uint256(bytes32(ret))));
+    }
+
+    /// @dev A deployment with no VPFI token (`deploy-chain.sh --skip-vpfi`)
+    ///      carries no cross-chain VPFI, and both CCIP checks say so as MET
+    ///      only when the launch declares none either; a declared pool or
+    ///      lane with no token behind it is NOT MET (Codex #2686 r7).
+    function _noVpfi(Check memory c, Declared memory declared) private pure {
+        c.checkable = true;
+        c.met = declared.vpfiPool == address(0) && declared.lanes.length == 0;
+        c.detail = c.met
+            ? "not applicable: the Diamond records no VPFI token and the launch declares no VPFI pool or lane, so this deployment carries no cross-chain VPFI"
+            : "the Diamond records no VPFI token, yet the launch declares a VPFI pool or lane: run the configure phase";
+    }
+
+    /// @dev The registry must route the Diamond's VPFI token through the
+    ///      DECLARED pool: the one the handover gate proved Timelock-owned
+    ///      and wired to the bounded rate governor. A registry pointing at
+    ///      any other pool (a stale artifact, a look-alike) would launch
+    ///      through a pool nobody checked (Codex #2686 r7).
+    function _vpfiPool(VpfiRoute memory route, Declared memory declared) private pure returns (Check memory c) {
+        c.label = "VPFI routes through the declared pool";
+        if (!route.readable) {
+            c.detail = route.detail;
             return c;
         }
-        address pool = address(uint160(uint256(bytes32(ret))));
-        if (pool == address(0)) {
+        if (route.token == address(0)) {
+            _noVpfi(c, declared);
+            return c;
+        }
+        if (route.pool == address(0)) {
             c.checkable = true;
             c.detail = "the TokenAdminRegistry maps no pool to the Diamond's VPFI token: run the ccip-wire phase";
             return c;
         }
-        (ok, ret) = pool.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("getSupportedChains()"));
-        (bool wellFormed, uint256 lanes) = ok ? _dynamicLength(ret, true) : (false, 0);
+        if (declared.vpfiPool == address(0)) {
+            c.detail = "no VPFI pool declared (the artifact records no vpfiTokenPool) to compare the registry's pool against";
+            return c;
+        }
+        c.checkable = true;
+        c.met = route.pool == declared.vpfiPool;
+        c.detail = c.met
+            ? "the TokenAdminRegistry routes the Diamond's VPFI token through the declared pool"
+            : "the TokenAdminRegistry routes the Diamond's VPFI token through a pool other than the declared one (the pool the handover gate checked)";
+    }
+
+    /// @dev The pool CCIP actually routes VPFI through must carry EXACTLY
+    ///      the declared lanes: every declared lane present, so no
+    ///      destination of the topology is left unreachable, and no lane
+    ///      beyond them, since an undeclared lane is an unreviewed route
+    ///      (Codex #2686 r7). And EVERY lane must carry the rate limits the
+    ///      mainnet gate requires: inbound and outbound enabled, with
+    ///      capacity and refill rate inside the `VpfiPoolRateGovernor`
+    ///      bounds. A lane whose limiter is disabled moves tokens with no
+    ///      cap at all (CCIP skips a disabled bucket), which is the state a
+    ///      wiring run leaves when the lane landed and its limits did not
+    ///      (Codex #2686 r6).
+    function _ccipLanes(VpfiRoute memory route, Declared memory declared) private view returns (Check memory c) {
+        c.label = "CCIP lanes are exactly the declared set, rate-limited";
+        if (!route.readable) {
+            c.detail = route.detail;
+            return c;
+        }
+        if (route.token == address(0)) {
+            _noVpfi(c, declared);
+            return c;
+        }
+        if (route.pool == address(0)) {
+            c.checkable = true;
+            c.detail = "the TokenAdminRegistry maps no pool to the Diamond's VPFI token: run the ccip-wire phase";
+            return c;
+        }
+        (bool ok, bytes memory ret) = route.pool.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("getSupportedChains()"));
+        (bool wellFormed, uint256 count) = ok ? _dynamicLength(ret, true) : (false, 0);
         if (!wellFormed) {
             c.detail = "getSupportedChains() unreadable on the registry's VPFI pool";
             return c;
         }
-        if (lanes == 0) {
+        if (count == 0) {
             c.checkable = true;
             c.detail = "the registry's VPFI pool has no lane: run the ccip-wire phase";
             return c;
         }
-        if (lanes > MAX_LANES) {
-            c.detail = "the registry's VPFI pool has more lanes than the check reads";
+        if (count > MAX_LANES || declared.lanes.length > MAX_LANES) {
+            c.detail = "more lanes than the check reads";
+            return c;
+        }
+        if (declared.lanes.length == 0) {
+            c.detail = "no lane set declared (CCIP_LANE_CHAIN_IDS), so whether every destination is wired is unknown";
             return c;
         }
         // Decoded as full words, which cannot revert once the shape above is
         // checked; each word is then range-checked as a chain selector.
         uint256[] memory selectors = abi.decode(ret, (uint256[]));
-        for (uint256 i; i < lanes; ++i) {
-            uint256 word = selectors[i];
-            if (word > type(uint64).max) {
+        for (uint256 i; i < count; ++i) {
+            if (selectors[i] > type(uint64).max) {
                 c.detail = "getSupportedChains() returned a value that is no chain selector";
                 return c;
             }
+        }
+        c.checkable = true;
+        // Both containments, so the sets are equal whatever duplicates the
+        // declared list carries.
+        for (uint256 i; i < declared.lanes.length; ++i) {
+            if (!_contains(selectors, count, declared.lanes[i])) {
+                c.detail = string.concat(
+                    "declared lane ",
+                    Strings.toString(declared.lanes[i]),
+                    " is not on the registry's VPFI pool: run the ccip-wire phase for every chain in CCIP_LANE_CHAIN_IDS"
+                );
+                return c;
+            }
+        }
+        for (uint256 i; i < count; ++i) {
+            if (!_declares(declared.lanes, uint64(selectors[i]))) {
+                c.detail = string.concat(
+                    "the registry's VPFI pool carries lane ",
+                    Strings.toString(selectors[i]),
+                    ", which is not declared: an undeclared lane is an unreviewed route"
+                );
+                return c;
+            }
+        }
+        for (uint256 i; i < count; ++i) {
             for (uint256 dir; dir < 2; ++dir) {
-                (bool readable, bool bounded) = _laneLimited(pool, uint64(word), dir == 0);
+                (bool readable, bool bounded) = _laneLimited(route.pool, uint64(selectors[i]), dir == 0);
                 if (!readable) {
+                    c.checkable = false;
                     c.detail = "a lane's rate-limiter state is unreadable on the registry's VPFI pool";
                     return c;
                 }
                 if (!bounded) {
-                    c.checkable = true;
                     c.detail = dir == 0
                         ? "a lane's INBOUND rate limit is disabled or outside the governor's bounds: run the ccip-wire phase's rate limits"
                         : "a lane's OUTBOUND rate limit is disabled or outside the governor's bounds: run the ccip-wire phase's rate limits";
@@ -312,9 +466,26 @@ library LibLaunchReadiness {
                 }
             }
         }
-        c.checkable = true;
         c.met = true;
-        c.detail = "every lane of the registry's VPFI pool is rate-limited both ways within the governor's bounds";
+        c.detail = string.concat(
+            "the registry's VPFI pool carries exactly the ",
+            Strings.toString(count),
+            " declared lane(s), each rate-limited both ways within the governor's bounds"
+        );
+    }
+
+    function _contains(uint256[] memory words, uint256 count, uint64 value) private pure returns (bool) {
+        for (uint256 i; i < count; ++i) {
+            if (words[i] == value) return true;
+        }
+        return false;
+    }
+
+    function _declares(uint64[] memory lanes, uint64 value) private pure returns (bool) {
+        for (uint256 i; i < lanes.length; ++i) {
+            if (lanes[i] == value) return true;
+        }
+        return false;
     }
 
     /// @dev Reads one lane's current token bucket (`TokenBucket`: tokens,
@@ -362,6 +533,14 @@ library LibLaunchReadiness {
             oracle.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("isSanctioned(address)", subject));
         if (!ok || ret.length != 32) return false;
         return abi.decode(ret, (uint256)) <= 1;
+    }
+
+    /// @dev Whether `token` is a contract answering `decimals()` with exactly
+    ///      one ABI word holding 18, as every chain's bridged WETH9 does.
+    function _answersEighteenDecimals(address token) private view returns (bool) {
+        if (token.code.length == 0) return false;
+        (bool ok, bytes memory ret) = token.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("decimals()"));
+        return ok && ret.length == 32 && abi.decode(ret, (uint256)) == 18;
     }
 
     /// @dev Reads the length of a single ABI-encoded dynamic return value

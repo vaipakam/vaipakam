@@ -81,6 +81,11 @@ contract HandoverGate is Script {
         address[] botHolders;
         HandoverPlan.Target[] targets;
         address vpfiToken;
+        /// @dev The artifact's VPFI pool and its rate governor: the pool
+        ///      whose ownership `_checkTargets` proves, and the governor it
+        ///      must be bound to.
+        address vpfiPool;
+        address rateGovernor;
         address cctRegistry;
         /// @dev `Deployments.requiresProductionGovernance()` for the chain.
         bool production;
@@ -319,12 +324,60 @@ contract HandoverGate is Script {
             _fail("VPFI CCT administrator unreadable on CCIP_TOKEN_ADMIN_REGISTRY");
             return;
         }
-        (address administrator, address pendingAdministrator,) = abi.decode(ret, (address, address, address));
+        (address administrator, address pendingAdministrator, address tokenPool) =
+            abi.decode(ret, (address, address, address));
         if (administrator != inp.timelock) {
             _fail(string.concat("VPFI CCT administrator is ", vm.toString(administrator), ", not the Timelock"));
         }
         if (pendingAdministrator != address(0)) {
             _fail(string.concat("VPFI CCT administrator transfer to ", vm.toString(pendingAdministrator), " is still pending"));
+        }
+        _checkRoutedPool(inp, tokenPool);
+    }
+
+    /// @dev The ownership checks above cover the ARTIFACT's pool; CCIP routes
+    ///      through the REGISTRY's (Codex #2686 r7). The two must be the same
+    ///      pool, or a stale artifact proves an unused pool Timelock-owned
+    ///      while VPFI moves through one nobody checked. That pool's rate
+    ///      limits must also be settable only through the bounded
+    ///      `VpfiPoolRateGovernor` the artifact records (itself
+    ///      Timelock-owned, above): a different rate-limit admin could
+    ///      disable every lane's limit outside the governor's bounds.
+    function _checkRoutedPool(Inputs memory inp, address tokenPool) internal {
+        if (inp.vpfiPool == address(0)) {
+            _notCheckable("VPFI pool binding NOT CHECKED: addresses.json records no vpfiTokenPool");
+            return;
+        }
+        if (tokenPool != inp.vpfiPool) {
+            _fail(
+                string.concat(
+                    "the CCIP registry routes VPFI through ",
+                    vm.toString(tokenPool),
+                    ", not the artifact's vpfiTokenPool ",
+                    vm.toString(inp.vpfiPool)
+                )
+            );
+            return;
+        }
+        if (inp.rateGovernor == address(0)) {
+            _notCheckable("VPFI pool rate-limit admin NOT CHECKED: addresses.json records no vpfiPoolRateGovernor");
+            return;
+        }
+        (bool ok, bytes memory ret) = tokenPool.staticcall(abi.encodeWithSignature("getRateLimitAdmin()"));
+        if (!ok || ret.length < 32) {
+            _fail("VPFI pool getRateLimitAdmin() unreadable");
+            return;
+        }
+        address rateAdmin = abi.decode(ret, (address));
+        if (rateAdmin != inp.rateGovernor) {
+            _fail(
+                string.concat(
+                    "VPFI pool rate-limit admin is ",
+                    vm.toString(rateAdmin),
+                    ", not the artifact's VpfiPoolRateGovernor ",
+                    vm.toString(inp.rateGovernor)
+                )
+            );
         }
     }
 
@@ -547,6 +600,8 @@ contract HandoverGate is Script {
         }
         inp.targets = HandoverPlan.read(json);
         inp.vpfiToken = HandoverPlan.vpfiToken(json);
+        inp.vpfiPool = HandoverPlan.readOptional(json, "vpfiTokenPool");
+        inp.rateGovernor = HandoverPlan.readOptional(json, "vpfiPoolRateGovernor");
         inp.cctRegistry = vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0));
         inp.production = Deployments.requiresProductionGovernance();
     }

@@ -1708,8 +1708,11 @@ phase_handover_gate() {
 # state. The batch is LaunchGate.assertReady (every check, and the admin
 # key holding no role) then unpauseIfPauseEpoch(epoch), so the checks are
 # read again on-chain when it executes and an incident pause recorded
-# during the delay makes it revert. The lane check reads the VPFI pool from
-# CCIP_TOKEN_ADMIN_REGISTRY. The phase is recorded only when
+# during the delay makes it revert. The CCIP checks read the VPFI pool from
+# CCIP_TOKEN_ADMIN_REGISTRY and require it to be the artifact's
+# vpfiTokenPool, carrying exactly the CCIP_LANE_CHAIN_IDS lanes (resolved
+# per chain, as ccip-wire does); the proposal prints those declared values
+# and the WETH for the Safe to review. The phase is recorded only when
 # Launch.requireLaunched() finds the Timelock reporting that operation
 # done; any other unpause makes Launch.s.sol refuse.
 phase_launch() {
@@ -1727,6 +1730,10 @@ EOF
   echo "═══════════════════════════════════════════════════════════════"
   echo "deploy-mainnet.sh — launch  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
+
+  # The launch declares the lane set the VPFI pool must carry EXACTLY
+  # (Codex #2686 r7): the same per-chain list the ccip-wire phase wired.
+  resolve_ccip_lane_chain_ids "$CCIP_SLUG" || exit 1
 
   CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --rpc-url "$RPC"
 
@@ -2211,6 +2218,8 @@ phase_verify() {
   else
     echo "  ✓ paused, as it must be until --phase launch"
   fi
+  # The lane set the launch declares, resolved as --phase launch does.
+  resolve_ccip_lane_chain_ids "$CCIP_SLUG" || exit 1
   # The same readiness list --phase launch enforces, reported here so a
   # green verify never implies a launch would pass. A NOT MET line (the
   # sanctions oracle above all, #946) is printed, not hidden; the launch

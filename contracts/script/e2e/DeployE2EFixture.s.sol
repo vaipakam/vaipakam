@@ -96,9 +96,10 @@ contract DeployE2EFixture is DeployDiamond, DeployTestnetMocks {
         // The deploy leaves the Diamond paused (#945); the fixture goes live
         // through the same launch step every chain uses. On 31337 it reports
         // the readiness checks the mocks do not meet, then the admin unpauses.
-        new Launch().launch(
+        Launch launcher = new Launch();
+        launcher.launch(
             diamond,
-            vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0)),
+            launcher.declaredFromEnv(diamond),
             Deployments.readTimelockOptional(),
             vm.addr(adminKey),
             adminKey

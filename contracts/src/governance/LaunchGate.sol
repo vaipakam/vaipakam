@@ -17,7 +17,10 @@ import {LibLaunchReadiness} from "./LibLaunchReadiness.sol";
  *      would still execute. So the launch operation `Launch.s.sol` prints is
  *      a BATCH of two calls, in this order:
  *
- *        1. `LaunchGate.assertReady(diamond, tokenAdminRegistry, deployKey)`;
+ *        1. `LaunchGate.assertReady(diamond, declared, deployKey)`, where
+ *           `declared` ({LibLaunchReadiness.Declared}) is the CCIP registry
+ *           and the WETH, VPFI pool and lane set the chain must match — in
+ *           the calldata, so the Safe reviews exactly what is enforced;
  *        2. `diamond.unpauseIfPauseEpoch(epoch)`, with the pause epoch read
  *           when the proposal was printed, so an incident pause recorded in
  *           the meantime makes the batch revert instead of being cleared by
@@ -50,12 +53,12 @@ contract LaunchGate {
     error NoDeployKey();
 
     /// @notice Every launch requirement and what the chain says about it now.
-    function checks(address diamond, address tokenAdminRegistry)
+    function checks(address diamond, LibLaunchReadiness.Declared calldata declared)
         external
         view
         returns (LibLaunchReadiness.Check[] memory)
     {
-        return LibLaunchReadiness.check(diamond, tokenAdminRegistry);
+        return LibLaunchReadiness.check(diamond, declared);
     }
 
     /// @notice Reverts {LaunchNotReady} with the first requirement that is
@@ -63,9 +66,12 @@ contract LaunchGate {
     ///         `deployKey`, or {DeployKeyHoldsRole} while `deployKey` holds
     ///         any Diamond role (`LibAccessControl.knownRoles()`); returns
     ///         otherwise.
-    function assertReady(address diamond, address tokenAdminRegistry, address deployKey) external view {
+    function assertReady(address diamond, LibLaunchReadiness.Declared calldata declared, address deployKey)
+        external
+        view
+    {
         if (deployKey == address(0)) revert NoDeployKey();
-        LibLaunchReadiness.Check[] memory c = LibLaunchReadiness.check(diamond, tokenAdminRegistry);
+        LibLaunchReadiness.Check[] memory c = LibLaunchReadiness.check(diamond, declared);
         for (uint256 i; i < c.length; ++i) {
             if (!c[i].checkable || !c[i].met) {
                 revert LaunchNotReady(c[i].label, LibLaunchReadiness.verdict(c[i]), c[i].detail);

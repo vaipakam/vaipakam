@@ -582,19 +582,31 @@ even for the gap between the deploy and the handover.
 1. Finish the deploy phases, then `handover` and `handover-gate`. The
    `contracts` phase has already deployed the LaunchGate, a stateless
    contract at a deterministic address that the launch operation calls.
-2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the five launch
-   requirements off the chain (treasury, a sanctions oracle that answers
-   `isSanctioned`, the Diamond's own oracle pricing WETH from the ETH
-   reference feed right now, an enabled swap adapter that answers `adapterName()`,
-   a CCIP lane on the VPFI pool, with every lane's inbound and outbound
-   rate limits enabled and inside the `VpfiPoolRateGovernor` bounds) and
-   refuses unless every one is met, the
+2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the six launch
+   requirements off the chain and refuses unless every one is met, the
    Timelock holds `UNPAUSER_ROLE`, and the admin key holds no Diamond role
-   at all. It broadcasts nothing. The VPFI pool is not taken from the
-   deploy artifact: the step reads it from the chain's CCIP
-   `TokenAdminRegistry` (`CCIP_TOKEN_ADMIN_REGISTRY`) for the VPFI token
-   the Diamond records, so the lane check is about the pool CCIP actually
-   routes through.
+   at all. It broadcasts nothing. The requirements:
+   - a treasury;
+   - a sanctions oracle that answers `isSanctioned`;
+   - the declared WETH, an 18-decimal token contract, which the Diamond's
+     own oracle prices from the ETH reference feed right now;
+   - an enabled swap adapter that answers `adapterName()`;
+   - VPFI routed through the declared pool: the chain's CCIP
+     `TokenAdminRegistry` (`CCIP_TOKEN_ADMIN_REGISTRY`) must map the VPFI
+     token the Diamond records to the artifact's `vpfiTokenPool`, the pool
+     the handover gate proved Timelock-owned and bound to the rate
+     governor;
+   - exactly the declared CCIP lanes on that pool (`CCIP_LANE_CHAIN_IDS`,
+     resolved per chain as the ccip-wire phase does): none missing and
+     none extra, each with inbound and outbound rate limits enabled and
+     inside the `VpfiPoolRateGovernor` bounds.
+
+   The launch checks the chain against these DECLARED values rather than
+   against itself: a check that only read the configuration back would
+   pass a lane set missing a destination, a stale pool, or any address
+   stored as WETH. A deployment with no VPFI token and no declared pool or
+   lane (`--skip-vpfi`, testnets) has both CCIP checks met as not
+   applicable, and the step says so.
 
    **Not among the checks: per-asset risk parameters.** No deploy phase sets
    them and there is no declared asset list for a check to read, so a
@@ -604,16 +616,22 @@ even for the gap between the deploy and the handover.
    governance sets them through Timelock proposals (`updateRiskParams`
    works while the Diamond is paused) before scheduling the launch.
 3. It prints the Timelock `scheduleBatch(...)` call. The batch has two
-   calls: `LaunchGate.assertReady(diamond, tokenAdminRegistry, adminKey)`,
-   then `diamond.unpauseIfPauseEpoch(epoch)`. The governance Safe proposes
-   it. Before signing, check that the gate address printed is the one the
-   launch phase reports, that the registry is the chain's CCIP
-   `TokenAdminRegistry`, and that the admin key is the deploy-time admin
-   address. The salt is fixed per chain and Diamond, so a re-run finds the
+   calls: `LaunchGate.assertReady(diamond, declared, adminKey)`, then
+   `diamond.unpauseIfPauseEpoch(epoch)`. The governance Safe proposes it.
+   `declared` carries the registry, the VPFI pool, the lane selectors and
+   the WETH, and the step prints each one. Before signing, check that the
+   gate address printed is the one the launch phase reports, that the
+   registry is the chain's CCIP `TokenAdminRegistry`, that the lanes are
+   the full production topology for this chain, that the WETH is the
+   chain's bridged WETH9 according to its official bridge registry (never
+   the wrapped native token; nothing on-chain records which token that
+   is, so this review is where it is established), and that the admin key
+   is the deploy-time admin address. The gate refuses any value other than
+   the ones signed. The salt is fixed per chain and Diamond, so a re-run finds the
    same operation and prints its state (not scheduled, pending, ready,
    done).
 4. After the delay, anyone sends the printed `executeBatch(...)` call. The
-   gate reads all five requirements again inside that transaction, and
+   gate reads all six requirements again inside that transaction, and
    checks that the admin key still holds no Diamond role. If a requirement
    stopped holding during the delay (an adapter was removed, the oracle was
    cleared), the execution reverts with `LaunchNotReady(label, state,
