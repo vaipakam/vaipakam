@@ -1,7 +1,8 @@
 {
-  "_readme": "Binds storage-layout.json beside it to the chain it describes (#2092). Written with the record; an in-place change is refused unless the Diamond, the fingerprint of every code location the record governs (facets, vault and adapter templates, every UUPS proxy the chain reaches) and the record hash still match. The parts beside codeFingerprint are there to say which code moved. Do not edit by hand.",
+  "_readme": "Binds storage-layout.json beside it to the chain it describes (#2092). Written with the record; an in-place change is refused unless the Diamond, the fingerprint of every code location the record governs (facets, vault and adapter templates, every UUPS proxy the chain reaches, and the runtime code at each) and the record hash still match. The parts beside codeFingerprint are there to say which code moved. Do not edit by hand.",
   "adapterTemplate": "0x0000000000000000000000000000000000000000",
-  "codeFingerprint": "0x05224020c2378a3ce1cfe26f0f871472959eedc39d520187309469c8cde0af32",
+  "codeFingerprint": "0x101b881f2a41db212f327a617d92fa87dd9eb106da7ff3346ee26978d8f0db40",
+  "codeHashes": "0xfbe91456ef371cde0673a9041037516ab42e8ce60b8e65bdec3a7c8a383ea3c3",
   "diamond": "0x2535baC87F3df287268fC697F2f31cf418365303",
   "facetsFingerprint": "0xd950b4be7681c31767baa572bdc36775e32b6bbebeffcb604716ca11b29b2065",
   "implementations": [
