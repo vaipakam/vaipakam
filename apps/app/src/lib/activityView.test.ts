@@ -10,6 +10,7 @@ import {
   humanizeKind,
   labelForKind,
   ACTIVITY_LABELS,
+  STATUS_EDGE_LABELS,
 } from './activityView';
 import { copySource } from '../content/copy';
 import type { IndexedActivityEvent } from '../data/indexer';
@@ -90,6 +91,16 @@ describe('activity feed labels are translatable (extraction guard)', () => {
     }
   });
 
+  it('every status-edge label has a matching catalog label, and no stale one', () => {
+    const catalog = copySource.activity.statusEdgeLabels;
+    for (const [status, meta] of Object.entries(STATUS_EDGE_LABELS)) {
+      expect(catalog[status], `missing status-edge catalog label for ${status}`).toBe(meta.label);
+    }
+    for (const status of Object.keys(catalog)) {
+      expect(STATUS_EDGE_LABELS[status], `stale status-edge catalog label for ${status}`).toBeDefined();
+    }
+  });
+
   it('the catalog adds no stale label for a kind the module dropped', () => {
     for (const kind of Object.keys(copySource.activity.labels)) {
       expect(ACTIVITY_LABELS[kind], `stale catalog label for ${kind}`).toBeDefined();
@@ -145,8 +156,11 @@ describe('coalesceByTx', () => {
     'LiquidationFallback',
     'LiquidationFallbackSplit',
   ];
+  // The status edge carries its destination, as the indexer stores it.
+  const argsOf = (kind: string) =>
+    kind === 'LoanStatusChanged' ? { from: 0, to: 4 } : {};
   const rowOf = (kinds: string[]) =>
-    coalesceByTx(kinds.map((kind, logIndex) => ev({ kind, logIndex, loanId: 9 })));
+    coalesceByTx(kinds.map((kind, logIndex) => ev({ kind, logIndex, loanId: 9, args: argsOf(kind) })));
 
   it('names a failed-sale HF liquidation by its outcome, not its steps', () => {
     // RiskFacet.triggerLiquidation returns straight after the fallback entry:
@@ -170,6 +184,41 @@ describe('coalesceByTx', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].label).toBe('Settlement pending after a failed sale');
     expect(rows[0].hiddenCount).toBe(FALLBACK_ENTRY.length);
+  });
+
+  // #2702 r2 — a status edge into an end state is named by its destination
+  // when nothing else in the transaction names the outcome.
+  const edge = (to: number | string, logIndex = 0) =>
+    ev({ kind: 'LoanStatusChanged', logIndex, loanId: 5, args: { from: 0, to } });
+
+  it('names the last rental deduction by the repayment it completes', () => {
+    const rows = coalesceByTx([edge(1, 0), ev({ kind: 'AutoDailyDeducted', logIndex: 1, loanId: 5 })]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('Loan repaid');
+    expect(rows[0].labelSource).toEqual({ catalog: 'statusEdgeLabels', key: 'Repaid' });
+    expect(rows[0].category).toBe('loan-repay');
+  });
+
+  it('reads the destination whether the indexer stored a number or a numeric string', () => {
+    expect(coalesceByTx([edge('2')])[0].label).toBe('Loan defaulted');
+    expect(coalesceByTx([edge(5)])[0].label).toBe('Loan closed by internal matching');
+  });
+
+  it('leaves the row to an event that names the outcome itself', () => {
+    const repay = coalesceByTx([edge(1, 0), ev({ kind: 'LoanRepaid', logIndex: 1, loanId: 5 })]);
+    expect(repay[0].label).toBe('Loan repaid');
+    expect(repay[0].labelSource).toEqual({ catalog: 'labels', key: 'LoanRepaid' });
+    const claim = coalesceByTx([
+      ev({ kind: 'BorrowerFundsClaimed', logIndex: 0, loanId: 5 }),
+      ev({ kind: 'LoanStatusChanged', logIndex: 1, loanId: 5, args: { from: 1, to: 3 } }),
+    ]);
+    expect(claim[0].label).toBe('Collateral claimed');
+  });
+
+  it('keeps the generic name for an edge back to Active, or an unreadable one', () => {
+    expect(coalesceByTx([edge(0)])[0].label).toBe('Loan status updated');
+    expect(coalesceByTx([edge('x')])[0].label).toBe('Loan status updated');
+    expect(coalesceByTx([edge(99)])[0].labelSource).toEqual({ catalog: 'labels', key: 'LoanStatusChanged' });
   });
 
   it('collapses one transaction to its highest-priority event', () => {

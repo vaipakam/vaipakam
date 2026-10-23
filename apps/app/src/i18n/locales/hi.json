@@ -2337,6 +2337,13 @@
       "repairTitle": "ऋण #{{loanId}} समाप्त हो चुका है",
       "repairBody": "चेन की जाँच में यह ऋण ब्लॉक {{block}} तक {{status}} पाया गया। यह कब और कैसे समाप्त हुआ, यह दर्ज नहीं हुआ, इसलिए दिखाने के लिए कोई लेनदेन नहीं है।",
       "repairCheckedAgo": "{{ago}} जाँचा गया",
+      "statusEdgeLabels": {
+        "Repaid": "Loan repay हुआ",
+        "Defaulted": "Loan default हुआ",
+        "Settled": "Loan settle हुआ",
+        "FallbackPending": "विफल बिक्री के बाद निपटान लंबित",
+        "InternalMatched": "आंतरिक मिलान से ऋण बंद"
+      },
       "repairStatus": {
         "repaid": "चुकाया गया",
         "defaulted": "डिफ़ॉल्ट",
@@ -2411,7 +2418,7 @@
         "AutoDailyDeducted": "दैनिक किराया शुल्क चुकाया गया",
         "AutoExtendBorrowerCapsChanged": "स्वचालित विस्तार सीमाएँ अपडेट की गईं",
         "AutoExtendLenderCapsChanged": "स्वचालित विस्तार सीमाएँ अपडेट की गईं",
-        "AutoListOptOutCleared": "छूट अवधि में स्वचालित लिस्टिंग फिर से चालू",
+        "AutoListOptOutCleared": "छूट अवधि में स्वचालित लिस्टिंग चालू",
         "AutoRefinanceCapsChanged": "स्वचालित पुनर्वित्त सीमाएँ अपडेट की गईं",
         "BackstopFilled": "बैकस्टॉप द्वारा वित्तपोषित",
         "BackstopLoanClaimed": "बैकस्टॉप वसूली का दावा किया गया",

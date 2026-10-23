@@ -2337,6 +2337,13 @@
       "repairTitle": "대출 #{{loanId}}이(가) 종료되었습니다",
       "repairBody": "체인을 확인한 결과 이 대출은 블록 {{block}}까지 {{status}} 상태였습니다. 언제, 어떻게 종료되었는지는 기록되지 않아 표시할 거래가 없습니다.",
       "repairCheckedAgo": "{{ago}} 확인",
+      "statusEdgeLabels": {
+        "Repaid": "loan repaid",
+        "Defaulted": "loan defaulted",
+        "Settled": "loan settled",
+        "FallbackPending": "매각 실패 후 정산 대기 중",
+        "InternalMatched": "내부 매칭으로 대출 종료됨"
+      },
       "repairStatus": {
         "repaid": "상환됨",
         "defaulted": "채무 불이행",
@@ -2411,7 +2418,7 @@
         "AutoDailyDeducted": "일일 대여료 지불됨",
         "AutoExtendBorrowerCapsChanged": "자동 연장 한도 업데이트됨",
         "AutoExtendLenderCapsChanged": "자동 연장 한도 업데이트됨",
-        "AutoListOptOutCleared": "유예 기간 자동 등록 다시 켜짐",
+        "AutoListOptOutCleared": "유예 기간 자동 등록 켜짐",
         "AutoRefinanceCapsChanged": "자동 재융자 한도 업데이트됨",
         "BackstopFilled": "백스톱이 자금 제공",
         "BackstopLoanClaimed": "백스톱 회수금 청구됨",

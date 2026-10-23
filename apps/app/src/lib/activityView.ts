@@ -18,6 +18,7 @@
  */
 import type { IndexedActivityEvent } from '../data/indexer';
 import { formatTokenAmount, shortAddress } from './format';
+import { LoanStatus } from './types';
 
 export type ActivityCategory =
   | 'offer'
@@ -159,7 +160,9 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   AutoDailyDeducted: { label: 'Daily rental fee paid', category: 'loan-repay', priority: 50 },
   AutoExtendBorrowerCapsChanged: { label: 'Automatic extension limits updated', category: 'loan-modify', priority: 40 },
   AutoExtendLenderCapsChanged: { label: 'Automatic extension limits updated', category: 'loan-modify', priority: 40 },
-  AutoListOptOutCleared: { label: 'Automatic grace-period listing turned back on', category: 'loan-modify', priority: 40 },
+  // Emitted even when the opt-out was already clear (a documented no-op
+  // confirmation), so the label states the resulting setting, not a change.
+  AutoListOptOutCleared: { label: 'Automatic grace-period listing on', category: 'loan-modify', priority: 40 },
   AutoRefinanceCapsChanged: { label: 'Automatic refinance limits updated', category: 'loan-modify', priority: 40 },
   BackstopFilled: { label: 'Funded by the backstop', category: 'loan-open', priority: 60 },
   BackstopLoanClaimed: { label: 'Backstop recovery claimed', category: 'loan-close', priority: 80 },
@@ -237,6 +240,55 @@ export function labelForKind(kind: string): string {
   return ACTIVITY_LABELS[kind]?.label ?? humanizeKind(kind);
 }
 
+/**
+ * #2658 (#2702 r2) — a status edge INTO an end state is itself the loan's
+ * lifecycle outcome. `LoanStatusChanged` is generic as a kind ("Loan status
+ * updated"), but its `to` says what happened, and some transactions carry no
+ * other event that does: the last daily rental deduction moves the loan to
+ * Repaid and emits only the deduction beside the edge. So the edge is named by
+ * its destination, at a priority above the routine steps that can cause it
+ * (a deduction, an interest settlement, a retry) and below every event that
+ * names an outcome itself (a repayment, a default, a claim, a failed sale),
+ * which keep their rows. An edge back to Active (a cure) has its own event
+ * and keeps the generic name. Keyed by the LibVaipakam.LoanStatus member name.
+ */
+export const STATUS_EDGE_LABELS: Record<string, ActivityLabel> = {
+  Repaid: { label: 'Loan repaid', category: 'loan-repay', priority: 72 },
+  Defaulted: { label: 'Loan defaulted', category: 'loan-default', priority: 72 },
+  Settled: { label: 'Loan settled', category: 'loan-close', priority: 72 },
+  FallbackPending: { label: 'Settlement pending after a failed sale', category: 'loan-default', priority: 72 },
+  InternalMatched: { label: 'Loan closed by internal matching', category: 'loan-close', priority: 72 },
+};
+
+/** Where a row's display label is translated: the per-kind catalog, or the
+ *  per-destination catalog for a status edge into an end state. */
+export interface LabelSource {
+  catalog: 'labels' | 'statusEdgeLabels';
+  key: string;
+}
+
+/** The end state a `LoanStatusChanged` moved the loan into, by member name,
+ *  when it is one {@link STATUS_EDGE_LABELS} names; otherwise null. */
+function statusEdgeOf(ev: IndexedActivityEvent): string | null {
+  if (ev.kind !== 'LoanStatusChanged') return null;
+  const raw = (ev.args as Record<string, unknown> | null | undefined)?.to;
+  const code = typeof raw === 'number' ? raw : typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : NaN;
+  const name = Object.keys(LoanStatus).find((k) => LoanStatus[k as keyof typeof LoanStatus] === code);
+  return name !== undefined && Object.hasOwn(STATUS_EDGE_LABELS, name) ? name : null;
+}
+
+/** The label entry and catalog key one event is named by. */
+function labelOf(ev: IndexedActivityEvent): { meta: ActivityLabel | undefined; source: LabelSource } {
+  const edge = statusEdgeOf(ev);
+  if (edge !== null) {
+    return { meta: STATUS_EDGE_LABELS[edge], source: { catalog: 'statusEdgeLabels', key: edge } };
+  }
+  return {
+    meta: Object.hasOwn(ACTIVITY_LABELS, ev.kind) ? ACTIVITY_LABELS[ev.kind] : undefined,
+    source: { catalog: 'labels', key: ev.kind },
+  };
+}
+
 /** One coalesced feed row — a single transaction's representative
  *  event plus how many sub-events it stood in for. */
 export interface ActivityRowView {
@@ -244,6 +296,8 @@ export interface ActivityRowView {
   key: string;
   event: IndexedActivityEvent;
   label: string;
+  /** Where {@link label}'s translation lives. */
+  labelSource: LabelSource;
   category: ActivityCategory;
   /** Extra events in the same transaction that this row subsumes. */
   hiddenCount: number;
@@ -255,8 +309,8 @@ export interface ActivityRowView {
 
 const DEFAULT_PRIORITY = 20;
 
-function priorityOf(kind: string): number {
-  return ACTIVITY_LABELS[kind]?.priority ?? DEFAULT_PRIORITY;
+function priorityOf(ev: IndexedActivityEvent): number {
+  return labelOf(ev).meta?.priority ?? DEFAULT_PRIORITY;
 }
 
 /**
@@ -282,15 +336,17 @@ export function coalesceByTx(events: IndexedActivityEvent[]): ActivityRowView[] 
     let rep = bucket[0];
     for (const ev of bucket) {
       const better =
-        priorityOf(ev.kind) > priorityOf(rep.kind) ||
-        (priorityOf(ev.kind) === priorityOf(rep.kind) && ev.logIndex < rep.logIndex);
+        priorityOf(ev) > priorityOf(rep) ||
+        (priorityOf(ev) === priorityOf(rep) && ev.logIndex < rep.logIndex);
       if (better) rep = ev;
     }
+    const { meta, source } = labelOf(rep);
     rows.push({
       key: `${rep.txHash || rep.blockNumber}-${rep.logIndex}`,
       event: rep,
-      label: labelForKind(rep.kind),
-      category: ACTIVITY_LABELS[rep.kind]?.category ?? 'other',
+      label: meta?.label ?? humanizeKind(rep.kind),
+      labelSource: source,
+      category: meta?.category ?? 'other',
       hiddenCount: bucket.length - 1,
       related: bucket.filter(
         (ev) =>

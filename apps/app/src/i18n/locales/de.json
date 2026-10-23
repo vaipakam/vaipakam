@@ -2337,6 +2337,13 @@
       "repairTitle": "Kredit #{{loanId}} ist beendet",
       "repairBody": "Eine Prüfung der Chain ergab, dass dieser Kredit spätestens bei Block {{block}} {{status}} war. Wann und wie er endete, wurde nicht erfasst, daher gibt es keine Transaktion anzuzeigen.",
       "repairCheckedAgo": "geprüft {{ago}}",
+      "statusEdgeLabels": {
+        "Repaid": "Kredit zurückgezahlt",
+        "Defaulted": "Kredit ausgefallen",
+        "Settled": "Kredit abgerechnet",
+        "FallbackPending": "Abwicklung nach fehlgeschlagenem Verkauf ausstehend",
+        "InternalMatched": "Kredit durch internes Matching geschlossen"
+      },
       "repairStatus": {
         "repaid": "zurückgezahlt",
         "defaulted": "ausgefallen",
@@ -2411,7 +2418,7 @@
         "AutoDailyDeducted": "Tägliche Mietgebühr bezahlt",
         "AutoExtendBorrowerCapsChanged": "Grenzen für automatische Verlängerung aktualisiert",
         "AutoExtendLenderCapsChanged": "Grenzen für automatische Verlängerung aktualisiert",
-        "AutoListOptOutCleared": "Automatisches Listing in der Nachfrist wieder aktiviert",
+        "AutoListOptOutCleared": "Automatisches Listing in der Nachfrist aktiv",
         "AutoRefinanceCapsChanged": "Grenzen für automatische Refinanzierung aktualisiert",
         "BackstopFilled": "Vom Backstop finanziert",
         "BackstopLoanClaimed": "Backstop-Rückfluss beansprucht",

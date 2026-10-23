@@ -2337,6 +2337,13 @@
       "repairTitle": "ローン #{{loanId}} は終了しています",
       "repairBody": "チェーンを確認したところ、このローンはブロック {{block}} までに{{status}}でした。いつ・どのように終了したかは記録されていないため、表示できるトランザクションはありません。",
       "repairCheckedAgo": "{{ago}}に確認",
+      "statusEdgeLabels": {
+        "Repaid": "ローン返済済み",
+        "Defaulted": "ローンがデフォルト",
+        "Settled": "ローン決済済み",
+        "FallbackPending": "売却失敗後の決済待ち",
+        "InternalMatched": "内部マッチングでローンが終了"
+      },
       "repairStatus": {
         "repaid": "返済済み",
         "defaulted": "デフォルト",
@@ -2411,7 +2418,7 @@
         "AutoDailyDeducted": "日次レンタル料を支払い",
         "AutoExtendBorrowerCapsChanged": "自動延長の上限を更新",
         "AutoExtendLenderCapsChanged": "自動延長の上限を更新",
-        "AutoListOptOutCleared": "猶予期間中の自動出品を再び有効化",
+        "AutoListOptOutCleared": "猶予期間中の自動出品：有効",
         "AutoRefinanceCapsChanged": "自動借り換えの上限を更新",
         "BackstopFilled": "バックストップが資金を提供",
         "BackstopLoanClaimed": "バックストップの回収分を請求",

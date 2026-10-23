@@ -2337,6 +2337,13 @@
       "repairTitle": "Le prêt n°{{loanId}} est terminé",
       "repairBody": "Une vérification de la chaîne a constaté que ce prêt était {{status}} au plus tard au bloc {{block}}. Ni le moment ni la manière dont il s’est terminé n’ont été enregistrés, il n’y a donc aucune transaction à afficher.",
       "repairCheckedAgo": "vérifié {{ago}}",
+      "statusEdgeLabels": {
+        "Repaid": "Prêt remboursé",
+        "Defaulted": "Prêt en défaut",
+        "Settled": "Prêt réglé",
+        "FallbackPending": "Règlement en attente après une vente échouée",
+        "InternalMatched": "Prêt clôturé par appariement interne"
+      },
       "repairStatus": {
         "repaid": "remboursé",
         "defaulted": "en défaut",
@@ -2411,7 +2418,7 @@
         "AutoDailyDeducted": "Frais de location quotidiens payés",
         "AutoExtendBorrowerCapsChanged": "Limites de prolongation automatique mises à jour",
         "AutoExtendLenderCapsChanged": "Limites de prolongation automatique mises à jour",
-        "AutoListOptOutCleared": "Mise en vente automatique en période de grâce réactivée",
+        "AutoListOptOutCleared": "Mise en vente automatique en période de grâce activée",
         "AutoRefinanceCapsChanged": "Limites de refinancement automatique mises à jour",
         "BackstopFilled": "Financé par le filet de sécurité",
         "BackstopLoanClaimed": "Récupération du filet de sécurité réclamée",

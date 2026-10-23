@@ -2337,6 +2337,13 @@
       "repairTitle": "انتهى القرض #{{loanId}}",
       "repairBody": "وجد فحصٌ للسلسلة أن هذا القرض {{status}} بحلول الكتلة {{block}}. لم يُسجَّل متى ولا كيف انتهى، لذلك لا توجد معاملة لعرضها.",
       "repairCheckedAgo": "تم الفحص {{ago}}",
+      "statusEdgeLabels": {
+        "Repaid": "تم سداد loan",
+        "Defaulted": "loan تعثر",
+        "Settled": "تمت تسوية loan",
+        "FallbackPending": "التسوية معلّقة بعد بيع فاشل",
+        "InternalMatched": "أُغلق القرض بالمطابقة الداخلية"
+      },
       "repairStatus": {
         "repaid": "مُسدَّد",
         "defaulted": "متعثّر",
@@ -2411,7 +2418,7 @@
         "AutoDailyDeducted": "تم دفع رسوم الإيجار اليومية",
         "AutoExtendBorrowerCapsChanged": "تم تحديث حدود التمديد التلقائي",
         "AutoExtendLenderCapsChanged": "تم تحديث حدود التمديد التلقائي",
-        "AutoListOptOutCleared": "أُعيد تشغيل الإدراج التلقائي في فترة السماح",
+        "AutoListOptOutCleared": "الإدراج التلقائي في فترة السماح مُفعّل",
         "AutoRefinanceCapsChanged": "تم تحديث حدود إعادة التمويل التلقائية",
         "BackstopFilled": "مُموَّل من صندوق الدعم",
         "BackstopLoanClaimed": "تمت المطالبة باسترداد صندوق الدعم",

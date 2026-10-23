@@ -2337,6 +2337,13 @@
       "repairTitle": "贷款 #{{loanId}} 已结束",
       "repairBody": "对链上的检查发现，该贷款在区块 {{block}} 之前已{{status}}。结束的时间和方式没有记录，因此没有可显示的交易。",
       "repairCheckedAgo": "{{ago}}检查",
+      "statusEdgeLabels": {
+        "Repaid": "贷款已偿还",
+        "Defaulted": "贷款已违约",
+        "Settled": "贷款已结算",
+        "FallbackPending": "出售失败后待结算",
+        "InternalMatched": "贷款已通过内部撮合关闭"
+      },
       "repairStatus": {
         "repaid": "还清",
         "defaulted": "违约",
@@ -2411,7 +2418,7 @@
         "AutoDailyDeducted": "已支付每日租金",
         "AutoExtendBorrowerCapsChanged": "自动延期限制已更新",
         "AutoExtendLenderCapsChanged": "自动延期限制已更新",
-        "AutoListOptOutCleared": "宽限期自动挂单已重新开启",
+        "AutoListOptOutCleared": "宽限期自动挂单：开启",
         "AutoRefinanceCapsChanged": "自动再融资限制已更新",
         "BackstopFilled": "由兜底资金提供",
         "BackstopLoanClaimed": "兜底回收款已领取",

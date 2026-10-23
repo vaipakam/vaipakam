@@ -2445,6 +2445,13 @@
       "repairTitle": "Loan #{{loanId}} has ended",
       "repairBody": "A check of the chain found this loan {{status}} by block {{block}}. When and how it ended was not recorded, so there is no transaction to show.",
       "repairCheckedAgo": "checked {{ago}}",
+      "statusEdgeLabels": {
+        "Repaid": "Loan repaid",
+        "Defaulted": "Loan defaulted",
+        "Settled": "Loan settled",
+        "FallbackPending": "Settlement pending after a failed sale",
+        "InternalMatched": "Loan closed by internal matching"
+      },
       "repairStatus": {
         "repaid": "repaid",
         "defaulted": "defaulted",
@@ -2519,7 +2526,7 @@
         "AutoDailyDeducted": "Daily rental fee paid",
         "AutoExtendBorrowerCapsChanged": "Automatic extension limits updated",
         "AutoExtendLenderCapsChanged": "Automatic extension limits updated",
-        "AutoListOptOutCleared": "Automatic grace-period listing turned back on",
+        "AutoListOptOutCleared": "Automatic grace-period listing on",
         "AutoRefinanceCapsChanged": "Automatic refinance limits updated",
         "BackstopFilled": "Funded by the backstop",
         "BackstopLoanClaimed": "Backstop recovery claimed",

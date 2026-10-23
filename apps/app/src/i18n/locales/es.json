@@ -2337,6 +2337,13 @@
       "repairTitle": "El préstamo #{{loanId}} ha terminado",
       "repairBody": "Una comprobación de la cadena encontró que este préstamo estaba {{status}} a más tardar en el bloque {{block}}. No se registró cuándo ni cómo terminó, así que no hay ninguna transacción que mostrar.",
       "repairCheckedAgo": "comprobado {{ago}}",
+      "statusEdgeLabels": {
+        "Repaid": "Préstamo reembolsado",
+        "Defaulted": "Préstamo en default",
+        "Settled": "Préstamo saldado",
+        "FallbackPending": "Liquidación pendiente tras una venta fallida",
+        "InternalMatched": "Préstamo cerrado por emparejamiento interno"
+      },
       "repairStatus": {
         "repaid": "reembolsado",
         "defaulted": "en impago",
@@ -2411,7 +2418,7 @@
         "AutoDailyDeducted": "Tarifa diaria de alquiler pagada",
         "AutoExtendBorrowerCapsChanged": "Límites de extensión automática actualizados",
         "AutoExtendLenderCapsChanged": "Límites de extensión automática actualizados",
-        "AutoListOptOutCleared": "Listado automático en periodo de gracia reactivado",
+        "AutoListOptOutCleared": "Listado automático en periodo de gracia activado",
         "AutoRefinanceCapsChanged": "Límites de refinanciación automática actualizados",
         "BackstopFilled": "Financiado por el respaldo",
         "BackstopLoanClaimed": "Recuperación del respaldo reclamada",

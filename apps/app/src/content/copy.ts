@@ -5321,6 +5321,15 @@ const copySource = {
     ),
     // The chain time of the block the check read, not of the ending.
     repairCheckedAgo: tmpl(`checked {{ago}}`, ['ago']),
+    // #2658 (#2702 r2) — a status edge into an end state, named by its
+    // destination (lib/activityView STATUS_EDGE_LABELS; parity-tested).
+    statusEdgeLabels: {
+      Repaid: 'Loan repaid',
+      Defaulted: 'Loan defaulted',
+      Settled: 'Loan settled',
+      FallbackPending: 'Settlement pending after a failed sale',
+      InternalMatched: 'Loan closed by internal matching',
+    } as Record<string, string>,
     repairStatus: {
       repaid: 'repaid',
       defaulted: 'defaulted',
@@ -5407,7 +5416,7 @@ const copySource = {
       AutoDailyDeducted: 'Daily rental fee paid',
       AutoExtendBorrowerCapsChanged: 'Automatic extension limits updated',
       AutoExtendLenderCapsChanged: 'Automatic extension limits updated',
-      AutoListOptOutCleared: 'Automatic grace-period listing turned back on',
+      AutoListOptOutCleared: 'Automatic grace-period listing on',
       AutoRefinanceCapsChanged: 'Automatic refinance limits updated',
       BackstopFilled: 'Funded by the backstop',
       BackstopLoanClaimed: 'Backstop recovery claimed',

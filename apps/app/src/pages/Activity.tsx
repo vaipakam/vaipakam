@@ -80,11 +80,12 @@ function RowValueText({ value }: { value: RowValue }) {
  *  action, a single substance sub-line (loan/offer id · who acted · when
  *  · how many sub-events it stood in for), and an explorer link. */
 function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string }) {
-  const { event, label, hiddenCount } = row;
-  // Prefer the translated catalog label for a known event kind; fall
-  // back to the pure module's humanized label for a kind the app
-  // doesn't map yet (English — unavoidable for an unknown event).
-  const displayLabel = catalogText(copy.activity.labels, event.kind) ?? label;
+  const { event, label, labelSource, hiddenCount } = row;
+  // Prefer the translated catalog label (per kind, or per destination for a
+  // status edge into an end state); fall back to the pure module's label for
+  // a kind the app doesn't map yet (English — unavoidable for an unknown
+  // event).
+  const displayLabel = catalogText(copy.activity[labelSource.catalog], labelSource.key) ?? label;
   const value = useMemo(() => rowValue(row), [row]);
   const hasValue = value.legs.length > 0 || value.unstated;
   const context = [
