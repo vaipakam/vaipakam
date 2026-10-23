@@ -1176,13 +1176,19 @@ for (const roleKey of wanted) {
       // the route's own "Loading…" placeholder and reported it as the page.
       // The shared readiness rule waits for the route to render first; a
       // route that never does is UNVERIFIED (not observed), never a FAIL.
+      //
+      // Not-ready is decided LAST, after the two observations below that do
+      // not depend on the route having rendered (#2709 r1): a URL that
+      // already moved elsewhere proves the route did not render, and a
+      // modal open over a stuck route is still a modal.
       const surface = await awaitSurface(page);
-      if (!surface.ready) throw new NotObserved(notReadyReason(surface));
       // Per-scenario settle: a surface whose state arrives from an async
       // chain/config read needs longer than one that renders from props.
       // A scenario may replace it with a bounded poll (see R1).
-      if (s.settle) await s.settle(page);
-      else await page.waitForTimeout(s.settleMs ?? 1800);
+      if (surface.ready) {
+        if (s.settle) await s.settle(page);
+        else await page.waitForTimeout(s.settleMs ?? 1800);
+      }
       // SAMPLED PER SCENARIO, because a modal does not survive to the
       // end of the role (review round 16 P2). Every scenario navigates
       // with `page.goto`, a full document navigation that tears down any
@@ -1201,6 +1207,7 @@ for (const roleKey of wanted) {
       if (wantPath && landed !== null && landed !== wantPath) {
         throw new Error(`redirected to ${landed} after mount — ${s.route} never rendered`);
       }
+      if (!surface.ready) throw new NotObserved(notReadyReason(surface));
       // The URL can be right and the surface still absent: see
       // `gateMasked`. Neither pass nor fail — the journey did not run.
       if (posture.preAuthorized && (await gateMasked(page))) {

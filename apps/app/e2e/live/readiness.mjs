@@ -13,16 +13,28 @@
  * This module is the one rule for that question, so a drive asks it rather
  * than guessing with a sleep:
  *
- *   - `unmounted` — the app shell's `#main-content` landmark is not in the
- *     document yet, so nothing routed has rendered.
- *   - `empty`     — the landmark exists and holds no text.
- *   - `loading`   — every piece of text in the landmark belongs to a loading
+ * What is measured is the ROUTED REGION — the element the app shell marks
+ * `data-route-outlet` (`AppShell.tsx`) — not the whole `#main-content`
+ * landmark. The landmark also holds the shell's own banners (the network
+ * banner, and the sanctions banner for a connected wallet), and their text
+ * is not the route's: counted, it made a route still showing its loading
+ * placeholder read as rendered (#2709 r1).
+ *
+ *   - `unmounted` — the shell's `#main-content` landmark is not in the
+ *     document yet.
+ *   - `no-outlet` — the shell rendered but carries no routed-region marker:
+ *     a build from before the marker. Nothing here can say what the route
+ *     rendered, so it is never treated as ready; the reason says to review a
+ *     current build.
+ *   - `empty`     — the region exists and holds no text.
+ *   - `loading`   — every piece of text in the region belongs to a loading
  *     placeholder: an `.empty-state` carrying the spinner. That is the
- *     route-level Suspense fallback (`AppShell.tsx`) and any page whose whole
- *     content is still its own loading state.
+ *     route-level Suspense fallback and any page whose whole content is
+ *     still its own loading state.
  *   - `rendered`  — anything else: the route has put real content up.
- *   - `unreadable` — the snapshot itself could not be taken (the document was
- *     replaced mid-read, the page closed). Not ready, and the error is kept.
+ *   - `unreadable` — the snapshot could not be taken, or did not come back
+ *     before the deadline (a wedged renderer), or the page closed. Not
+ *     ready, and the cause is kept.
  *
  * WHAT `rendered` DOES NOT CLAIM. A rendered route can still have a card
  * further down waiting on a chain read; that is the scenario's own business
@@ -59,61 +71,95 @@ export const ROUTE_READY_TIMEOUT_MS = 60_000;
 
 const POLL_MS = 250;
 
+/** The least time one snapshot is given, however little of the readiness
+ *  deadline is left, so a final (or single, `timeoutMs: 0`) read can still
+ *  come back. A wedged renderer is therefore abandoned at most this long
+ *  after the deadline. */
+const SNAPSHOT_FLOOR_MS = 5_000;
+
 /**
  * Classify one snapshot of the routed landmark.
  *
  * @param {null | { error: string }
  *   | { hasMain: false }
- *   | { hasMain: true, textLength: number, placeholderCount: number, otherTextLength: number }} snap
- * @returns {'unreadable' | 'unmounted' | 'empty' | 'loading' | 'rendered'}
+ *   | { hasMain: true, hasOutlet: false }
+ *   | { hasMain: true, hasOutlet: true, textLength: number, placeholderCount: number, otherTextLength: number }} snap
+ * @returns {'unreadable' | 'unmounted' | 'no-outlet' | 'empty' | 'loading' | 'rendered'}
  */
 export function surfaceStateOf(snap) {
   if (!snap || typeof snap !== 'object' || 'error' in snap) return 'unreadable';
   if (!snap.hasMain) return 'unmounted';
+  if (!snap.hasOutlet) return 'no-outlet';
   if (!(snap.textLength > 0)) return 'empty';
   if (snap.placeholderCount > 0 && !(snap.otherTextLength > 0)) return 'loading';
   return 'rendered';
 }
 
 /**
- * Take one snapshot of `#main-content` in a single evaluation, so the counts
- * all describe the same instant.
+ * Take one snapshot of the routed region in a single evaluation, so the
+ * counts all describe the same instant.
+ *
+ * BOUNDED BY `timeoutMs` (#2709 r1). `page.evaluate` has no deadline of its
+ * own, so a renderer whose main thread is wedged would never answer, and the
+ * batch runner — which has no outer timeout — would hang on it. The race
+ * ends the wait; the evaluation itself is abandoned.
  *
  * The catch here is deliberately total, and it is safe for a reason worth
  * stating (#2135's question: can it tell the endpoint from this drive being
  * wrong?). Whatever fails, the result is `unreadable`, which is NOT READY —
  * the direction that reports "not observed", never one that lets a judgement
- * through. The error text is carried, so a defect in this snapshot shows up
- * in the report as an unreadable surface with its cause, not as silence.
+ * through. The cause is carried, so a defect in this snapshot shows up in the
+ * report as an unreadable surface with its cause, not as silence.
  */
-export async function readSurface(page) {
+export async function readSurface(page, { timeoutMs = ROUTE_READY_TIMEOUT_MS } = {}) {
+  let timer;
+  const expired = new Promise((resolve) => {
+    timer = setTimeout(
+      () => resolve({ error: `the page did not answer a snapshot within ${Math.round(timeoutMs / 1000)}s` }),
+      timeoutMs,
+    );
+  });
   try {
-    return await page.evaluate(() => {
-      const main = document.querySelector('#main-content');
-      if (!main) return { hasMain: false };
-      const text = (main.innerText || '').trim();
-      const placeholders = [...main.querySelectorAll('.empty-state')].filter(
-        (el) => el.querySelector('.spin') !== null,
-      );
-      let rest = text;
-      for (const p of placeholders) {
-        const own = (p.innerText || '').trim();
-        if (own) rest = rest.replace(own, '');
-      }
-      return {
-        hasMain: true,
-        textLength: text.length,
-        placeholderCount: placeholders.length,
-        otherTextLength: rest.trim().length,
-      };
-    });
+    return await Promise.race([snapshot(page), expired]);
   } catch (err) {
     return { error: String(err?.message ?? err).split('\n')[0].slice(0, 160) };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
+function snapshot(page) {
+  return page.evaluate(() => {
+    const main = document.querySelector('#main-content');
+    if (!main) return { hasMain: false };
+    const region = main.querySelector('[data-route-outlet]');
+    if (!region) return { hasMain: true, hasOutlet: false };
+    const text = (region.innerText || '').trim();
+    const placeholders = [...region.querySelectorAll('.empty-state')].filter(
+      (el) => el.querySelector('.spin') !== null,
+    );
+    let rest = text;
+    for (const p of placeholders) {
+      const own = (p.innerText || '').trim();
+      if (own) rest = rest.replace(own, '');
+    }
+    return {
+      hasMain: true,
+      hasOutlet: true,
+      textLength: text.length,
+      placeholderCount: placeholders.length,
+      otherTextLength: rest.trim().length,
+    };
+  });
+}
+
+/** A delay that does not depend on the page: a page that closes mid-wait
+ *  must end the wait as unreadable, not reject it (#2709 r1). */
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
- * Poll until the routed surface has rendered, or the deadline passes.
+ * Poll until the routed surface has rendered, or the deadline passes. Never
+ * rejects: every way of not seeing the surface is a not-ready result.
  *
  * @param {import('playwright').Page} page
  * @param {{ timeoutMs?: number, pollMs?: number }} [opts]
@@ -122,14 +168,17 @@ export async function readSurface(page) {
 export async function awaitSurface(page, { timeoutMs = ROUTE_READY_TIMEOUT_MS, pollMs = POLL_MS } = {}) {
   const started = Date.now();
   for (;;) {
-    const snap = await readSurface(page);
+    const remaining = Math.max(timeoutMs - (Date.now() - started), SNAPSHOT_FLOOR_MS);
+    const snap = await readSurface(page, { timeoutMs: remaining });
     const state = surfaceStateOf(snap);
     const waitedMs = Date.now() - started;
     if (state === 'rendered') return { ready: true, state, waitedMs };
-    if (waitedMs >= timeoutMs) {
-      return { ready: false, state, waitedMs, ...(snap && 'error' in snap ? { error: snap.error } : {}) };
+    const closed = typeof page.isClosed === 'function' && page.isClosed();
+    if (waitedMs >= timeoutMs || closed) {
+      const error = closed ? 'the page closed' : snap && 'error' in snap ? snap.error : undefined;
+      return { ready: false, state: closed ? 'unreadable' : state, waitedMs, ...(error ? { error } : {}) };
     }
-    await page.waitForTimeout(pollMs);
+    await sleep(pollMs);
   }
 }
 
@@ -138,6 +187,7 @@ export function notReadyReason(result) {
   const secs = Math.round(result.waitedMs / 1000);
   const what = {
     unmounted: 'the app shell had not mounted',
+    'no-outlet': 'the build carries no routed-region marker (`data-route-outlet`), so what the route rendered cannot be told from the shell around it — review a current build',
     empty: 'the routed content was still empty',
     loading: 'the route was still showing only its loading placeholder',
     unreadable: `the page could not be read (${result.error ?? 'no detail'})`,
