@@ -34,6 +34,7 @@ import {
   readRepairObservations,
   type RepairObservation,
 } from '../lib/repairObservation';
+import { catalogText } from '../lib/catalogText';
 import { useTokenMeta } from '../contracts/erc20';
 import { signalAware } from '../chain/railHealth';
 
@@ -83,7 +84,7 @@ function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string
   // Prefer the translated catalog label for a known event kind; fall
   // back to the pure module's humanized label for a kind the app
   // doesn't map yet (English — unavoidable for an unknown event).
-  const displayLabel = copy.activity.labels[event.kind] ?? label;
+  const displayLabel = catalogText(copy.activity.labels, event.kind) ?? label;
   const value = useMemo(() => rowValue(row), [row]);
   const hasValue = value.legs.length > 0 || value.unstated;
   const context = [
@@ -149,7 +150,8 @@ function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string
  *  the checked block's, not the ending's. */
 function RepairObservationRow({ observation }: { observation: RepairObservation }) {
   const status =
-    copy.activity.repairStatus[observation.observedStatus] ?? copy.activity.repairStatusOther;
+    catalogText(copy.activity.repairStatus, observation.observedStatus) ??
+    copy.activity.repairStatusOther;
   return (
     <div className="item-row activity-row" data-testid="activity-repair-observation">
       <Link to={`/positions/${observation.loanId}`} className="activity-row-link">
