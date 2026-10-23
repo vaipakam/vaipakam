@@ -82,14 +82,36 @@ describe('host deploy kit paths', () => {
     // Ephemeral: no cache survives a build, so no build can plant tooling.
     expect(update).not.toContain('CacheDirectory');
     expect(update).toContain('-p PrivateTmp=yes');
-    // The build sees only the variables update.sh names.
-    expect(update).toMatch(/-p Nice=10 \\\n  \/usr\/bin\/env -i \\$/m);
+    // The build sees only the variables update.sh names, and runs at idle
+    // priority so the keeper always comes first (#2651).
+    expect(update).toMatch(/-p Nice=19 -p CPUWeight=1 -p IOWeight=1 -p IOSchedulingClass=idle \\\n  \/usr\/bin\/env -i \\$/m);
     // One fixed name, so two builds cannot run at once.
     expect(update).toMatch(/--unit=vaipakam-keeper-build \\$/m);
     expect(update).toContain('-p ProtectSystem=strict');
     expect(update).toContain('release="$ROOT/releases/$target"');
     expect(update).toContain('systemctl try-restart --no-block vaipakam-keeper.service');
     expect(read('vaipakam-keeper-update.service')).toContain('ExecStart=/opt/vaipakam-keeper/update.sh');
+  });
+
+  it('runs the updater behind the keeper, and builds only a commit whose build source changed (#2651)', () => {
+    const unit = read('vaipakam-keeper-update.service');
+    for (const line of ['Nice=19', 'CPUWeight=1', 'IOWeight=1', 'IOSchedulingClass=idle']) {
+      expect(unit).toMatch(new RegExp(`^${line}$`, 'm'));
+    }
+    const update = read('update.sh');
+    expect(update).toContain('place "$dir/build-source.sh" "$ROOT/build-source.sh" 755');
+    expect(update).toContain('"$ROOT/build-source.sh" digest "$REPO" "$running"');
+    expect(update).toContain('"$ROOT/build-source.sh" digest "$REPO" "$target"');
+    expect(update).toContain('if [ -n "$running_digest" ] && [ "$running_digest" = "$target_digest" ]; then');
+    // The build is given the same export the digest compares, from the
+    // target's own kit; only a commit with no build-paths gets the whole tree.
+    expect(update).toContain('bash "$kit_dir/build-source.sh" export "$REPO" "$target" "$tmp/src.tar"');
+    expect(update).toMatch(/if \[ "\$source_status" -eq 3 \]; then\n  git -C "\$REPO" archive --format=tar -o "\$tmp\/src.tar" "\$target"\n/);
+    // The comparison runs after the fetch and before any build.
+    const digest = update.indexOf('build-source.sh" digest');
+    expect(digest).toBeGreaterThan(update.indexOf('git -C "$REPO" fetch'));
+    expect(digest).toBeLessThan(update.indexOf('systemd-run'));
+    expect(update.indexOf('build-source.sh" export')).toBeLessThan(update.indexOf('systemd-run'));
   });
 
   it('keeps what the keeper runs root-owned, and never starts the keeper from the install', () => {

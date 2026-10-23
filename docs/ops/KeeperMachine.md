@@ -22,11 +22,14 @@ before it does anything. Read §2 before starting anything.
 A merge to `main` is the deploy. Each run of `update.sh` does the following:
 
 1. It fetches `main` into root's own checkout.
-2. If `current` is already that commit's release, it stops there.
-3. Otherwise it exports exactly that commit and builds it in a sandbox, as a
-   fresh dynamic user that systemd deletes afterwards, with that commit's own
-   `build.sh`. The build runs the new bundle with `--check`, to prove it
-   loads.
+2. If `current` is already that commit's release, it stops there. It also
+   stops if a build of that commit would be given exactly the source the
+   running release was built from (see "Which commits are built" below), and
+   logs once that it is staying on the running release.
+3. Otherwise it exports exactly that commit's build source and builds it in
+   a sandbox, as a fresh dynamic user that systemd deletes afterwards, with
+   that commit's own `build.sh`. The build runs the new bundle with
+   `--check`, to prove it loads.
 4. It installs that same commit's systemd units and `update.sh`, each only if
    it changed. So the keeper never runs under the units of another commit: a
    change that needs a new setting in its unit arrives with the code that
@@ -36,6 +39,39 @@ A merge to `main` is the deploy. Each run of `update.sh` does the following:
    unit changed (a merge that did not touch the keeper).
 
 Any failure leaves the running keeper untouched, and the next run retries.
+
+**Which commits are built (#2651).** This machine is small (about 1 GB of
+memory), and a build is the heaviest thing it does. Before #2651 it built
+every merge to `main`, about 32 a day. While one ran, the keeper's tick
+started several seconds late and the late remittance check often missed its
+read deadline: 37% of ticks during a build, against 0.2% outside one. Two
+rules now keep builds out of the keeper's way:
+
+- **Only a commit that gives the build different source is built.** A
+  build is given only the paths listed in
+  `apps/keeper/host/deploy/build-paths`:
+  - the root manifests and the lockfile;
+  - the keeper;
+  - the workspace packages its install reaches;
+  - the indexer modules it imports.
+  
+  `build-source.sh` exports those paths with `git archive` for the build,
+  and the same script takes a digest of that export: every path, mode and
+  byte, after git's own conversions. The updater compares the running
+  release's digest with the branch tip's. If they are equal, a build would be
+  given the same files and would make the same bundle, so the machine stays
+  on the release it has. Nothing is predicted: what is compared is what the
+  build reads. A path the build needs but the list leaves out makes the build
+  fail; it can never pass on stale input, and a test checks the list against
+  the bundle's real inputs. A commit from before `build-paths` gets the whole
+  tree and is always built, as before.
+
+  As a result, the release the keeper reports can be older than the tip of
+  `main`. That is expected: it is the newest commit whose build source
+  differs.
+- **A build never competes with the keeper.** The updater and its build run
+  at the lowest CPU and disk priority (`Nice=19`, `CPUWeight=1`,
+  `IOWeight=1`, `IOSchedulingClass=idle`), so the keeper's ticks come first.
 
 The units and the release are bound by one file, `kit-commit`, naming the
 commit whose units are installed and loaded. A deploy removes it before it
@@ -82,6 +118,8 @@ Files on the machine, all root's:
 | `/etc/vaipakam/keeper.env` | settings and secrets, `0600`. Never overwritten by the kit |
 | `/opt/vaipakam-keeper/current` | the running release (a symlink into `releases/<commit>`) |
 | `/opt/vaipakam-keeper/releases/` | the last five deployed builds, for rollback |
+| `/opt/vaipakam-keeper/build-source.sh` | the running kit's export and digest of a commit's build source, which decides whether a newer commit is built |
+| `/opt/vaipakam-keeper/checked` | the last running/newer commit pair found to give the build the same source, so it is not compared or logged again |
 | `/opt/vaipakam-keeper/deploy-branch` | the branch followed (default `main`) |
 | `/opt/vaipakam-keeper/repo` | the checkout the code comes from |
 
@@ -352,7 +390,9 @@ empty.
   keeper refuses to start, §1), and run `sudo systemctl restart
   vaipakam-keeper`. **To return to the deploy branch**, resume deploys: the
   next run sees that `current` is not the branch tip's release and deploys
-  it. The branch is the one in `/opt/vaipakam-keeper/deploy-branch` (`main`
+  it. The one exception is a branch tip whose build source is identical to
+  the rolled-back release's. That tip's bundle is the same one, so the
+  keeper stays on it. The branch is the one in `/opt/vaipakam-keeper/deploy-branch` (`main`
   unless `KEEPER_DEPLOY_BRANCH` set another at install); check it, and to
   follow `main` again re-run the install script with
   `KEEPER_DEPLOY_BRANCH=main`.

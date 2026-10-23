@@ -6,9 +6,14 @@
 #
 #   1. fetches the deploy branch into root's own checkout, so no other
 #      account can redirect where the code comes from;
-#   2. stops if `current` is already that commit's release;
-#   3. exports exactly that commit with `git archive` and builds it with
-#      that commit's own build.sh in a throwaway sandbox: a fresh dynamic
+#   2. stops if `current` is already that commit's release, or if the
+#      source a build of that commit would be given is byte-identical to the
+#      running release's (build-source.sh digest, #2651): it would build the
+#      same bundle;
+#   3. exports exactly that commit's build source (the paths its
+#      build-paths lists) with `git archive` and builds it with
+#      that commit's own build.sh, at idle CPU and IO priority so the keeper
+#      always comes first, in a throwaway sandbox: a fresh dynamic
 #      user that cannot read
 #      the env file or write the releases, keeps nothing once it ends (so no
 #      build can leave tooling behind for the next), and runs the new bundle
@@ -115,6 +120,13 @@ install_kit() {
   # recorded as installed only after this.
   systemctl daemon-reload
   place "$dir/update.sh" "$ROOT/update.sh" 755 || true
+  # The digest the next run compares before it builds. A kit from before it
+  # existed takes the copy away, so that run builds, as it always did.
+  if [ -f "$dir/build-source.sh" ]; then
+    place "$dir/build-source.sh" "$ROOT/build-source.sh" 755 || true
+  else
+    rm -f "$ROOT/build-source.sh"
+  fi
 }
 # Record that <commit>'s kit is installed and loaded.
 record_kit() {
@@ -178,15 +190,51 @@ if [ "$(readlink -f "$ROOT/current" 2>/dev/null || true)" = "$release" ]; then
   exit 0
 fi
 
+# A commit whose build source is byte-identical to the running release's
+# would build that release's bundle again. Most merges to the branch are such
+# a commit, and a build is the heaviest thing this machine does (#2651), so
+# it is skipped. `checked` remembers the last pair found identical, so a
+# branch that moves only elsewhere is compared, and logged, once per commit
+# rather than every run. A digest that cannot be taken (a commit from before
+# build-paths, say) means a build.
+if [ -n "$running" ] && [ -x "$ROOT/build-source.sh" ]; then
+  pair="$running $target"
+  if [ "$(cat "$ROOT/checked" 2>/dev/null || true)" = "$pair" ]; then
+    exit 0
+  fi
+  running_digest="$("$ROOT/build-source.sh" digest "$REPO" "$running" "$WORK/digest-running" 2>/dev/null || true)"
+  target_digest="$("$ROOT/build-source.sh" digest "$REPO" "$target" "$WORK/digest-target" 2>/dev/null || true)"
+  if [ -n "$running_digest" ] && [ "$running_digest" = "$target_digest" ]; then
+    log "$target gives the build the same source as $running; staying on $running"
+    echo "$pair" > "$ROOT/checked.new"
+    mv -Tf "$ROOT/checked.new" "$ROOT/checked"
+    exit 0
+  fi
+fi
+
 log "building $BRANCH at $target"
 tmp="$WORK/build"
 mkdir -m 700 "$tmp"
-git -C "$REPO" archive --format=tar -o "$tmp/src.tar" "$target"
-chmod 644 "$tmp/src.tar"
 # This commit's own kit: its build.sh builds it, and its units and updater go
 # in with it below. Checked before the build, so a commit whose updater does
 # not parse costs no build and changes nothing.
 kit_dir="$(extract_kit "$target")"
+# The build is given only the paths this commit's build-paths lists, the same
+# export the digest above compares (#2651). A commit from before build-paths
+# gets the whole tree, as before; a build-paths that cannot be read fails the
+# deploy rather than falling back.
+source_status=3
+if [ -f "$kit_dir/build-source.sh" ]; then
+  source_status=0
+  bash "$kit_dir/build-source.sh" export "$REPO" "$target" "$tmp/src.tar" || source_status=$?
+fi
+if [ "$source_status" -eq 3 ]; then
+  git -C "$REPO" archive --format=tar -o "$tmp/src.tar" "$target"
+elif [ "$source_status" -ne 0 ]; then
+  echo "[keeper-update] could not export $target's build source" >&2
+  exit 1
+fi
+chmod 644 "$tmp/src.tar"
 build_script="$kit_dir/build.sh"
 # The one directory the sandbox may write. `$tmp` itself stays 0700, so no
 # other account on the machine can reach it; the sandbox sees only the
@@ -209,7 +257,7 @@ systemd-run --quiet --wait --pipe --collect \
   -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes \
   -p NoNewPrivileges=yes -p ProtectKernelTunables=yes -p ProtectKernelModules=yes \
   -p ProtectControlGroups=yes -p RestrictNamespaces=yes -p LockPersonality=yes \
-  -p Nice=10 \
+  -p Nice=19 -p CPUWeight=1 -p IOWeight=1 -p IOSchedulingClass=idle \
   /usr/bin/env -i \
   HOME=/tmp/home \
   COREPACK_HOME=/tmp/corepack \

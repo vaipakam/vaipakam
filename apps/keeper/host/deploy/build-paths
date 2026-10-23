@@ -1,0 +1,21 @@
+# Everything a keeper build is given (#2651): update.sh exports exactly these
+# paths of the commit it deploys, and nothing else, to the build sandbox. So
+# two commits whose export of these paths is byte-identical build the same
+# bundle, and the updater builds a commit only when its export differs from
+# the running release's (build-source.sh). A path the build needs and this
+# list leaves out makes the build fail, never pass on stale input.
+#
+# The root manifests decide what pnpm installs, and with which pnpm.
+package.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+# The keeper and the workspace packages it depends on, devDependencies
+# included (`pnpm install --filter '@vaipakam/keeper...'` installs them all).
+apps/keeper
+packages/anvil-harness
+packages/contracts
+packages/lib
+packages/push
+# Indexer modules the keeper bundles by relative import
+# (scripts/lib/keeper-databases.mjs reads the private-database list there).
+apps/indexer/scripts/lib
