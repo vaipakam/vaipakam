@@ -186,11 +186,15 @@ async function markStaleBelow(
     clearGrace?: boolean;
   },
 ): Promise<void> {
+  // Codex #2683 r7 — also record the block of the scan that saw the event
+  // (the highest, if marked more than once), so a reader can require a
+  // replacement read to reach it.
   await env.DB.prepare(
-    `UPDATE protocol_config SET updated_at = 0${
-      opts?.clearGrace ? ', grace_buckets_json = NULL' : ''
-    }
-     WHERE chain_id = ? AND source_block < ?`,
+    `UPDATE protocol_config SET updated_at = 0,
+       stale_at_block = MAX(COALESCE(stale_at_block, 0), ?2)${
+         opts?.clearGrace ? ', grace_buckets_json = NULL' : ''
+       }
+     WHERE chain_id = ?1 AND source_block < ?2`,
   )
     .bind(chainId, Number(belowBlock))
     .run();
@@ -502,7 +506,13 @@ export async function maybeRefreshProtocolConfig(opts: {
          grace_buckets_json = CASE WHEN ?7 = 1 THEN NULL
            ELSE COALESCE(excluded.grace_buckets_json, protocol_config.grace_buckets_json) END,
          source_block = excluded.source_block,
-         updated_at = excluded.updated_at
+         -- Codex #2683 r7 — a refresh read below the block of a governance
+         -- event the row was marked stale for does not include that event:
+         -- the row stays stale. One that reaches it clears the mark.
+         updated_at = CASE WHEN protocol_config.stale_at_block > excluded.source_block
+           THEN 0 ELSE excluded.updated_at END,
+         stale_at_block = CASE WHEN protocol_config.stale_at_block > excluded.source_block
+           THEN protocol_config.stale_at_block ELSE NULL END
        WHERE excluded.source_block >= protocol_config.source_block`,
     )
       .bind(
@@ -570,6 +580,7 @@ export async function handleConfigSnapshot(
       bundle_names_json?: string | null;
       master_flags_names_json?: string | null;
       knob_values_json?: string | null;
+      stale_at_block?: number | null;
     };
     // The route must tolerate the previous schema while a migration has not
     // reached the database yet: each step drops the columns the newest
@@ -581,7 +592,8 @@ export async function handleConfigSnapshot(
       () =>
         env.DB.prepare(
           `SELECT bundle_json, master_flags_json, source_block, updated_at,
-                  bundle_names_json, master_flags_names_json, knob_values_json
+                  bundle_names_json, master_flags_names_json, knob_values_json,
+                  stale_at_block
            FROM protocol_config WHERE chain_id = ?`,
         )
           .bind(chainId)
@@ -652,6 +664,11 @@ export async function handleConfigSnapshot(
       // signal has to be explicit rather than inferred from a magic
       // timestamp (Codex #1821 r1 P2).
       ...(row.updated_at === 0 ? { stale: true } : {}),
+      // Codex #2683 r7 — and the block a replacement read must reach to
+      // include the event it is stale for, when that is recorded.
+      ...(row.updated_at === 0 && typeof row.stale_at_block === 'number'
+        ? { staleAtBlock: row.stale_at_block }
+        : {}),
     });
   } catch (err) {
     // eslint-disable-next-line no-console

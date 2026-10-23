@@ -163,6 +163,34 @@ export type ConsoleReading =
     }
   | ({ source: 'chain'; why: SnapshotGap; readAtSec: number } & ChainConsoleRead);
 
+/** The lowest block a chain read must come from to be fresher than the
+ *  snapshot it would replace, or `null` when there is no snapshot block to
+ *  compare against. One rule for every case (Codex #2683 r4, r5, r7):
+ *
+ *  - A current or merely old snapshot: the snapshot's own block. A lagging
+ *    RPC answering from an earlier block knows less than the snapshot.
+ *  - A known-stale snapshot whose staling event the indexer recorded: that
+ *    event's block. A read from before it cannot have seen the change that
+ *    made the snapshot stale, however far past the snapshot it is.
+ *  - A known-stale snapshot without that record (marked before the indexer
+ *    kept it): one block past the snapshot, the least the change can be.
+ *
+ *  A read below the floor counts as a failed chain read, so the snapshot
+ *  stays and is shown as not current. */
+export function chainReadFloor(
+  snap: ProtocolKnobSnapshot | null,
+  gap: SnapshotGap | null,
+): bigint | null {
+  const snapBlock = snap?.sourceBlock;
+  if (snapBlock === undefined || !Number.isSafeInteger(snapBlock)) return null;
+  if (gap !== 'known-stale') return BigInt(snapBlock);
+  const staleAt = snap?.staleAtBlock;
+  if (staleAt !== undefined && Number.isSafeInteger(staleAt) && staleAt > snapBlock) {
+    return BigInt(staleAt);
+  }
+  return BigInt(snapBlock) + 1n;
+}
+
 /**
  * Snapshot first while it can stand in for the chain; the chain otherwise.
  * A snapshot that is not current is shown only when the chain read fails,
@@ -178,17 +206,9 @@ export async function loadProtocolConsole(opts: {
   if (snap !== null && gap === null) return { source: 'snapshot', snap };
   try {
     const live = await opts.readChain();
-    // Codex #2683 r4 — a lagging RPC can answer from a block older than
-    // the snapshot it was meant to replace. That is not a fresher reading,
-    // so it counts as a failed chain read and the newer snapshot stays,
-    // marked as not current.
-    // A known-stale snapshot was followed by a governance event after its
-    // block, so a read AT that block is no newer either (Codex #2683 r5).
-    const snapBlock = snap?.sourceBlock;
-    if (snapBlock !== undefined && Number.isSafeInteger(snapBlock)) {
-      const floor = BigInt(snapBlock);
-      const behind = gap === 'known-stale' ? live.blockNumber <= floor : live.blockNumber < floor;
-      if (behind) throw new Error('chain read is not newer than the snapshot');
+    const floor = chainReadFloor(snap, gap);
+    if (floor !== null && live.blockNumber < floor) {
+      throw new Error('chain read is older than what the snapshot already knows');
     }
     return { source: 'chain', why: gap ?? 'missing', readAtSec: opts.nowSec(), ...live };
   } catch (err) {

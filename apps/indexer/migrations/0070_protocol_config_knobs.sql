@@ -19,3 +19,12 @@
 -- serves no extra settings until the next capture writes them. Not
 -- backfilled: the values must come from the block the row was read at.
 ALTER TABLE protocol_config ADD COLUMN knob_values_json TEXT;
+
+-- Codex #2683 r7 — when a scan sees a governance event the stored row
+-- predates, the row is marked stale (`updated_at = 0`). This records the
+-- block of that scan, so a reader knows how far a replacement read must
+-- reach to include the event: a direct chain read from an earlier block
+-- carries the same obsolete values. NULL when the row is not known to be
+-- stale, or was marked before this column existed. Additive: the deployed
+-- code neither reads nor writes it.
+ALTER TABLE protocol_config ADD COLUMN stale_at_block INTEGER;

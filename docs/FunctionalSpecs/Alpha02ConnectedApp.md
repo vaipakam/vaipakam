@@ -179,7 +179,10 @@ including people who never will.
   too. A direct read that answers from a block older than the snapshot's
   own block counts as failed: it is not a fresher reading. When the
   snapshot is already known to be behind a governance change, the direct
-  read must come from a later block than the snapshot's.
+  read must come from a block that includes that change: the block at
+  which the indexer saw it, when the indexer recorded one, and otherwise
+  at least a later block than the snapshot's. Until a reading reaches
+  that block, the indexer keeps its own snapshot marked as behind too.
 - The indexer refreshes its snapshot after any change to the Diamond's
   code, not only after a setting changes, since an upgrade can change what
   a setting's read returns. The console then says the contracts could not be read and that the

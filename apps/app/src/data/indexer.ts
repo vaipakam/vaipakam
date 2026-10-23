@@ -1040,6 +1040,12 @@ export interface ProtocolKnobSnapshot {
    *  event a catch-up scan already saw. Distinct from an unknown age —
    *  it is a positive statement that the values are out of date. */
   stale?: boolean;
+  /** #2071 (Codex #2683 r7) — on a stale snapshot, the block of the
+   *  governance event that staled it, when the indexer recorded one. A
+   *  read of the chain from an earlier block cannot have seen that change,
+   *  so it is no fresher than the snapshot. `undefined` when the row was
+   *  marked stale before the indexer recorded the boundary. */
+  staleAtBlock?: number;
 }
 
 export async function fetchProtocolKnobs(
@@ -1053,6 +1059,7 @@ export async function fetchProtocolKnobs(
     sourceBlock?: number;
     updatedAt?: number;
     stale?: boolean;
+    staleAtBlock?: unknown;
   }>(`/config/${chainId}`);
   if (!res || res.available !== true) return null;
   return {
@@ -1077,5 +1084,12 @@ export async function fetchProtocolKnobs(
     // page showing its undated copy, which says the values may be
     // current; they are known not to be.
     stale: res.stale === true,
+    staleAtBlock:
+      res.stale === true &&
+      typeof res.staleAtBlock === 'number' &&
+      Number.isSafeInteger(res.staleAtBlock) &&
+      res.staleAtBlock >= 0
+        ? res.staleAtBlock
+        : undefined,
   };
 }

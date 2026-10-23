@@ -185,6 +185,79 @@ describe('configSnapshot', () => {
     expect(h.row()?.ua).toBe(0); // …but the old row no longer looks fresh
   });
 
+  it('records the staling block and keeps the row stale until a refresh reaches it (Codex #2683 r7)', async () => {
+    const h = refreshHarness();
+    h.db
+      .prepare(
+        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
+         VALUES (84532, '[]', '[]', 50, ?)`,
+      )
+      .run(Math.floor(Date.now() / 1000));
+    const staleAt = () =>
+      (h.db.prepare(`SELECT stale_at_block AS s FROM protocol_config WHERE chain_id = 84532`).get() as {
+        s: number | null;
+      }).s;
+    // A catch-up scan to block 100 saw a governance event.
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: ['FeesConfigSet'],
+      blockNumber: 100n,
+      headBlock: 1_000n,
+    });
+    expect(h.row()?.ua).toBe(0);
+    expect(staleAt()).toBe(100);
+    // A second, lower catch-up mark never lowers the recorded boundary.
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: ['FeesConfigSet'],
+      blockNumber: 80n,
+      headBlock: 1_000n,
+    });
+    expect(staleAt()).toBe(100);
+    // The route serves the boundary with the stale flag.
+    const served = (await (
+      await handleConfigSnapshot(84532, { DB: h.env.DB, RPC_BASE_SEPOLIA: SERVED_RPC } as unknown as Env)
+    ).json()) as { stale?: boolean; staleAtBlock?: number };
+    expect(served).toMatchObject({ stale: true, staleAtBlock: 100 });
+    // A refresh read from below the boundary stores its values but cannot
+    // include the event: the row stays stale.
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: [],
+      blockNumber: 90n,
+      headBlock: 90n,
+    });
+    expect(h.row()).toMatchObject({ sb: 90, ua: 0 });
+    expect(staleAt()).toBe(100);
+    // One that reaches it clears the mark.
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: [],
+      blockNumber: 100n,
+      headBlock: 100n,
+    });
+    expect(h.row()?.sb).toBe(100);
+    expect(h.row()?.ua).toBeGreaterThan(0);
+    expect(staleAt()).toBeNull();
+    const cleared = (await (
+      await handleConfigSnapshot(84532, { DB: h.env.DB, RPC_BASE_SEPOLIA: SERVED_RPC } as unknown as Env)
+    ).json()) as Record<string, unknown>;
+    expect(cleared).not.toHaveProperty('stale');
+    expect(cleared).not.toHaveProperty('staleAtBlock');
+  });
+
   it('lets a late older scan neither overwrite nor stale-mark a newer row', async () => {
     // Codex #1231 r2: the cursor advance is monotonic for overlapping
     // scans; the snapshot writes follow the same discipline.

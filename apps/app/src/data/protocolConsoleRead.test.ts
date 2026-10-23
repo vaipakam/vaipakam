@@ -8,6 +8,7 @@ import { PROTOCOL_KNOB_GETTERS, abiOutputNames } from '@vaipakam/lib/protocolKno
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   CONSOLE_SNAPSHOT_MAX_AGE_SEC,
+  chainReadFloor,
   loadProtocolConsole,
   readProtocolConsoleLive,
   snapshotGap,
@@ -172,6 +173,37 @@ describe('loadProtocolConsole', () => {
       nowSec: () => NOW,
     });
     expect(past).toMatchObject({ source: 'chain', why: 'known-stale' });
+  });
+
+  it('needs a read at or past the event that staled the snapshot (Codex #2683 r7)', async () => {
+    // Snapshot at 100, staled by an event at 150: a read from 123 is past
+    // the snapshot but cannot have seen the change, so the snapshot stays.
+    const before = await loadProtocolConsole({
+      fetchSnapshot: async () => snapshot({ stale: true, sourceBlock: 100, staleAtBlock: 150 }),
+      readChain: async () => CHAIN, // block 123
+      nowSec: () => NOW,
+    });
+    expect(before).toMatchObject({ source: 'snapshot', chainReadFailed: 'known-stale' });
+    const atEvent = await loadProtocolConsole({
+      fetchSnapshot: async () => snapshot({ stale: true, sourceBlock: 100, staleAtBlock: 123 }),
+      readChain: async () => CHAIN,
+      nowSec: () => NOW,
+    });
+    expect(atEvent).toMatchObject({ source: 'chain', why: 'known-stale' });
+  });
+
+  it('chainReadFloor states one floor per case', () => {
+    expect(chainReadFloor(null, 'missing')).toBeNull();
+    expect(chainReadFloor(snapshot({ sourceBlock: undefined }), 'undated')).toBeNull();
+    expect(chainReadFloor(snapshot({ sourceBlock: 100 }), 'old')).toBe(100n);
+    expect(chainReadFloor(snapshot({ stale: true, sourceBlock: 100 }), 'known-stale')).toBe(101n);
+    expect(
+      chainReadFloor(snapshot({ stale: true, sourceBlock: 100, staleAtBlock: 150 }), 'known-stale'),
+    ).toBe(150n);
+    // An inconsistent boundary (not past the snapshot) never lowers the floor.
+    expect(
+      chainReadFloor(snapshot({ stale: true, sourceBlock: 100, staleAtBlock: 90 }), 'known-stale'),
+    ).toBe(101n);
   });
 
   it('throws when there is neither a snapshot nor a chain read', async () => {
