@@ -1104,7 +1104,6 @@
 {"type":"event","name":"DailyAssetPriceCaptured","inputs":[{"name":"asset","type":"address","indexed":true,"internalType":"address"},{"name":"dayIndex","type":"uint256","indexed":true,"internalType":"uint256"},{"name":"price","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"feedDecimals","type":"uint8","indexed":false,"internalType":"uint8"}],"anonymous":false},
 {"type":"event","name":"TierLtvCacheRefreshRejected","inputs":[{"name":"tier","type":"uint8","indexed":true,"internalType":"uint8"},{"name":"candidateLtvBps","type":"uint16","indexed":false,"internalType":"uint16"},{"name":"reason","type":"string","indexed":false,"internalType":"string"}],"anonymous":false},
 {"type":"event","name":"TierLtvCacheUpdated","inputs":[{"name":"tier","type":"uint8","indexed":true,"internalType":"uint8"},{"name":"newLtvBps","type":"uint16","indexed":false,"internalType":"uint16"},{"name":"oldLtvBps","type":"uint16","indexed":false,"internalType":"uint16"},{"name":"assetsContributing","type":"uint8","indexed":false,"internalType":"uint8"}],"anonymous":false},
-{"type":"error","name":"DecimalScaleUnsupported","inputs":[{"name":"gap","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"FeeTooHigh","inputs":[]},
 {"type":"error","name":"InsufficientLiquidity","inputs":[]},
 {"type":"error","name":"InvalidReserves","inputs":[]},

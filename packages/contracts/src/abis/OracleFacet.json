@@ -1503,17 +1503,6 @@
   },
   {
     "type": "error",
-    "name": "DecimalScaleUnsupported",
-    "inputs": [
-      {
-        "name": "gap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "DeliveredFreshBoundExceeded",
     "inputs": [
       {
@@ -2416,6 +2405,17 @@
   },
   {
     "type": "error",
+    "name": "NumeraireScaleUnsupported",
+    "inputs": [
+      {
+        "name": "decimalsSum",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NumeraireSwapDisabled",
     "inputs": []
   },
@@ -2726,6 +2726,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PriceZero",
+    "inputs": []
   },
   {
     "type": "error",
