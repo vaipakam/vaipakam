@@ -78,7 +78,7 @@ pnpm --filter @vaipakam/agent exec tsc -p . --noEmit
 Worker `wrangler.jsonc:vars`:
 
 - `FRONTEND_ORIGIN`, `TG_BOT_USERNAME`, `DIAG_*` knobs.
-- `PUSH_CHANNEL_ADDRESS` (optional, #1456) — the Push channel the signer posts for. Unset, the channel is the signer's own address; set, `PUSH_CHANNEL_PK` signs as that channel's delegate. `GET /push/status` reports the channel the rail will use, and the app's subscribe link reads it from there.
+- `PUSH_CHANNEL_ADDRESS` (optional, #1456) — the Push channel the signer posts for. Unset, the channel is the signer's own address; set, `PUSH_CHANNEL_PK` signs as that channel's delegate. `GET /push/status` reports the channel the rail will use, and the app's subscribe link reads it from there. Since #2667 it also covers the keeper's rail, as the keeper last published it to the shared `push_rail_status` row: `scope: 'service'` while that row is under 15 minutes old (both rails must be able to send, on the same channel), `scope: 'agent'` otherwise.
 
 Worker secrets (via `wrangler secret put`):
 

@@ -13,6 +13,7 @@
 
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { chunkD1InList, maxD1InListWidth } from '@vaipakam/lib/d1Binds';
+import type { PublishedRailRow } from '@vaipakam/push';
 import type { KeeperD1 } from './env';
 import { assertGuardedWriteLanded, epochWriteGuard } from './epochFence';
 
@@ -334,6 +335,29 @@ export async function linkTelegram(
 export async function sweepExpiredLinks(db: D1Database): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   await db.prepare(`DELETE FROM telegram_links WHERE expires_at < ?`).bind(now).run();
+}
+
+// ─── #2667 — this keeper's Push rail readiness, for the agent to read ──
+
+/**
+ * Publish what this keeper's Push rail can do, so the agent's
+ * `GET /push/status` can answer for both senders. One row, `sender =
+ * 'keeper'`, replaced each time; the encoding is the shared rail's
+ * (`publishedRailRow`), so the agent reads back exactly what was written.
+ * Shared database, unfenced: the row describes this Worker's configuration,
+ * carries no chain_id, and no Diamond change resets it.
+ */
+export async function publishPushRailStatus(db: D1Database, row: PublishedRailRow): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO push_rail_status (sender, usable, reason, channel, observed_at)
+       VALUES ('keeper', ?1, ?2, ?3, ?4)
+       ON CONFLICT(sender) DO UPDATE SET
+         usable = excluded.usable, reason = excluded.reason,
+         channel = excluded.channel, observed_at = excluded.observed_at`,
+    )
+    .bind(row.usable, row.reason, row.channel, row.observed_at)
+    .run();
 }
 
 // ─── Depth-tiered LTV — liquidity-confidence relay state ──────────────
