@@ -18,11 +18,13 @@
 // budget charges each run of windows as the fewest SCANS that produce it
 // and holds the windows to the app's own rules separately — see
 // `catchUpTally.mjs` (#2097). The figure is the page's own traffic, never
-// a lag read at another moment. A write the read-only session had to
-// abort is a FAIL; a run the wire cannot attribute is UNRESOLVED.
-import { SITE, blocked, launch, visit } from './driver.mjs';
+// a lag read at another moment. Calls are observed over HTTP and
+// WebSocket alike. A write the read-only session had to abort, or one sent
+// on a socket, is a FAIL; a run the wire cannot attribute is UNRESOLVED.
+import { READ_METHODS, SITE, blocked, launch, visit } from './driver.mjs';
+import { attachLedger } from './pageSanctionsReads.mjs';
 import { splitBlocked } from './readOnlyFindings.mjs';
-import { CHUNK_BLOCKS, MAX_CHUNKS_PER_SCAN, tallyCalls } from './catchUpTally.mjs';
+import { CHUNK_BLOCKS, MAX_CHUNKS_PER_SCAN, createCallLedger, tallyCalls } from './catchUpTally.mjs';
 
 const BUDGET_TOTAL = 12; // all JSON-RPC calls in the 60s window
 const BUDGET_BLOCKNUMBER = 5;
@@ -34,110 +36,20 @@ const check = (name, ok, detail = '') => {
   if (!ok) fails++;
 };
 
-// Every JSON-RPC call recorded in the window, in the order the requests
-// started — the tally groups catch-up chunks by that order.
-const calls = [];
+// Every JSON-RPC call the page sends in the window, over HTTP AND WebSocket,
+// in the order the requests started (the tally groups catch-up windows by
+// that order), each with the outcome the wire showed for it. One shared
+// observer (`attachLedger`) feeds it, so an RPC transport on a socket is
+// audited like an HTTP one, and a write sent on a socket — the one door the
+// read-only route guard does not cover — is reported (#2710 r4).
+//
+// Attributed by when the REQUEST started, not when its answer arrived
+// (Codex #1621 r9): an 8s warm-up request can land after recording starts,
+// and a request made near the end can land after it stops.
 let recording = false;
-// Successful JSON-RPC responses the PAGE actually received, counted from
-// its own traffic (Codex #1621 r7).
-//
-// My first attempt at this probed `clientsFor(84532)` — the DRIVER's
-// endpoint. The served SPA picks its RPC at build time
-// (VITE_BASE_SEPOLIA_RPC_URL), so a preview built against a dead custom
-// endpoint passed that probe on the driver's healthy default while every
-// page request was still aborted. The check has to observe the endpoint
-// the page uses, and the only reliable way to know which that is, is to
-// watch what the page does.
-//
-// This is also the FLOOR both budgets lack. They are ceilings: with the
-// chain unreachable the tally is 0, comfortably "within budget", and the
-// error shell clears the weak body-length check — exit 0, batch prints
-// PASS, nothing audited.
-let rpcOk = 0;
-// Attributed by when the REQUEST started, not when its response arrived
-// (Codex #1621 r9), matching how the budgets above count. Keyed on the
-// request object because the two clocks genuinely disagree: an 8s
-// warm-up request can land after `recording` flips on — satisfying the
-// floor while every request made INSIDE the window failed — and a
-// request made near the end can land after it flips off, producing a
-// false BLOCKED. Same request-owns-its-outcome discipline live-ux-sweep
-// uses for its per-route network attribution.
-const recordedRequests = new WeakSet();
-// Recorded requests still awaiting a `response` event. A request started
-// near the end of the window may not have emitted one when the window
-// closes, so snapshotting `bodyReads` right then omits it — and if that
-// late response is the window's only success, the floor reads zero and
-// the audit falsely BLOCKS (Codex #1621 r10).
-const awaitingResponse = new Set();
-const bodyReads = [];
-// The calls each recorded request carried, so its observed OUTCOME can be
-// written onto them. The tally discounts a repeated catch-up window as a
-// retry only when the earlier attempt was observed to fail (#2710 r1), so
-// the outcome comes from the wire, never from a range coincidence.
-const callsOf = new WeakMap();
-const markAll = (req, outcome) => {
-  for (const c of callsOf.get(req) ?? []) c.outcome = outcome;
-};
-page.on('response', (res) => {
-  const req = res.request();
-  if (!recordedRequests.has(req)) return;
-  awaitingResponse.delete(req);
-  if (res.status() !== 200) {
-    markAll(req, 'failed');
-    return;
-  }
-  // Playwright fires `response` on HEADERS and does not await handlers,
-  // so the body read is still in flight; collect the promises and settle
-  // them before the floor is judged, or a slow body reads as "no
-  // successful RPC".
-  bodyReads.push(
-    res
-      .text()
-      .then((text) => {
-        const parsed = JSON.parse(text);
-        const sent = callsOf.get(req) ?? [];
-        for (const r of Array.isArray(parsed) ? parsed : [parsed]) {
-          // A JSON-RPC envelope carrying a result, not an error object.
-          const ok = Boolean(r && r.jsonrpc && r.error === undefined && r.result !== undefined);
-          if (ok) rpcOk++;
-          // The call this envelope answers: by id, or the only one sent.
-          const call = sent.length === 1 ? sent[0] : sent.find((c) => c.id !== undefined && c.id === r?.id);
-          if (call && r?.jsonrpc) call.outcome = ok ? 'ok' : 'failed';
-        }
-      })
-      .catch(() => {
-        /* not a JSON-RPC response body, or the body never arrived */
-      }),
-  );
-});
-// A failed request never emits `response`, so it would otherwise sit in
-// `awaitingResponse` for the whole grace period. Registered up front with
-// the other handlers — registering it after the wait loop, as I first
-// wrote it, meant it could not drain anything during that loop.
-page.on('requestfailed', (req) => {
-  awaitingResponse.delete(req);
-  markAll(req, 'failed');
-});
-page.on('request', (req) => {
-  if (!recording) return;
-  const body = req.postData();
-  if (!body) return;
-  recordedRequests.add(req);
-  awaitingResponse.add(req);
-  try {
-    const parsed = JSON.parse(body);
-    const sent = [];
-    for (const call of Array.isArray(parsed) ? parsed : [parsed]) {
-      if (!call?.method) continue;
-      const recorded = { method: call.method, params: call.params, id: call.id };
-      calls.push(recorded);
-      sent.push(recorded);
-    }
-    callsOf.set(req, sent);
-  } catch {
-    /* not JSON-RPC */
-  }
-});
+const ledger = createCallLedger(() => recording);
+const { wsViolations } = attachLedger(page, ledger, READ_METHODS);
+const { calls } = ledger;
 
 await visit(page, '/offers');
 await page.waitForTimeout(8_000); // initial hydration outside the window
@@ -146,19 +58,22 @@ console.log('recording 60s of steady-state traffic…');
 await page.waitForTimeout(60_000);
 recording = false;
 
-// Let requests still in flight emit their response, THEN settle the body
-// reads. Bounded, because a request that never answers must not hang the
-// drive — and a request still unanswered after the grace period did not
-// contribute a success anyway (Codex #1621 r10).
+// Let calls still in flight be answered. Bounded, because a request that
+// never answers must not hang the drive — and one still unanswered after the
+// grace period delivered nothing to the page: it failed (Codex #1621 r10).
 const settleBy = Date.now() + 15_000;
-while (awaitingResponse.size > 0 && Date.now() < settleBy) {
+while (calls.some((c) => c.outcome === undefined) && Date.now() < settleBy) {
   await page.waitForTimeout(500);
 }
-await Promise.allSettled(bodyReads);
-// A request still unanswered after the grace period delivered nothing: it
-// failed, as far as the page was concerned.
-for (const req of awaitingResponse) markAll(req, 'failed');
+for (const c of calls) c.outcome ??= 'failed';
 
+// Successful JSON-RPC answers the PAGE actually received, from its own
+// traffic (Codex #1621 r7). Probing the DRIVER's endpoint instead passed on
+// a preview built against a dead custom endpoint: the served SPA picks its
+// RPC at build time. This is also the FLOOR both budgets lack — they are
+// ceilings, and with the chain unreachable the tally is 0, comfortably
+// "within budget".
+const rpcOk = calls.filter((c) => c.outcome === 'ok').length;
 const tally = tallyCalls(calls);
 const { counts, total, budgeted, catchUp } = tally;
 console.log('tally:', JSON.stringify(counts), `| successful rpc responses: ${rpcOk}`);
@@ -223,7 +138,7 @@ if (catchUp.longRuns.length > 0) {
 // found a defect, whatever else held (#2710 r2). Read after the teardown,
 // so an attempt made while the context closes still counts.
 await done();
-const { violations } = splitBlocked(blockedRequests ?? [], [SITE]);
+const violations = [...splitBlocked(blockedRequests ?? [], [SITE]).violations, ...wsViolations];
 check(
   'the page attempted no write in a read-only session',
   violations.length === 0,

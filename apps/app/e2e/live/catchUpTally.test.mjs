@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { offerTerminalTopics } from '../../src/data/bookCatchUp.ts';
-import { CHUNK_BLOCKS, MAX_CHUNKS_PER_SCAN, catchUpRange, tallyCalls, terminalTopics } from './catchUpTally.mjs';
+import { CHUNK_BLOCKS, MAX_CHUNKS_PER_SCAN, catchUpRange, createCallLedger, tallyCalls, terminalTopics } from './catchUpTally.mjs';
 
 const hex = (n) => `0x${BigInt(n).toString(16)}`;
-const chunk = (from, to, topics = offerTerminalTopics()) => ({
+const chunk = (from, to, topics = offerTerminalTopics(), outcome = 'ok') => ({
   method: 'eth_getLogs',
   params: [{ address: '0xd1a0', fromBlock: hex(from), toBlock: hex(to), topics: [topics] }],
+  outcome,
 });
 const head = { method: 'eth_blockNumber', params: [] };
 
@@ -83,23 +84,40 @@ describe('tallyCalls (#2097)', () => {
     // The head and cursor have not moved, so each refetch asks for the
     // identical window — the over-frequent polling the audit exists to catch.
     const calls = [];
-    for (let i = 0; i < 8; i++) calls.push(head, { ...chunk(500, 619), outcome: 'ok' });
+    for (let i = 0; i < 8; i++) calls.push(head, chunk(500, 619));
     const t = tallyCalls(calls);
     expect(t.catchUp.retries).toBe(0);
     expect(t.catchUp.runs).toHaveLength(8);
     expect(t.budgeted).toBe(16);
   });
 
-  it('never reads an unknown outcome as a failure', () => {
+  it('reads a call with no observed result as a failed attempt (#2710 r4)', () => {
     const c = chunk(500, 619);
-    const t = tallyCalls([c, c]);
-    expect(t.catchUp.retries).toBe(0);
+    const t = tallyCalls([{ ...c, outcome: undefined }, c]);
+    expect(t.catchUp.retries).toBe(1);
+    expect(t.catchUp.runs).toHaveLength(1);
+  });
+
+  it('does not continue a run past a window that failed (#2710 r4)', () => {
+    // The app stops a scan at a failed window, so a request starting one
+    // block after it is a new scan, even when it is contiguous.
+    const w = Number(CHUNK_BLOCKS);
+    const t = tallyCalls([{ ...chunk(1, w), outcome: 'failed' }, head, chunk(w + 1, 2 * w), chunk(2 * w + 1, 2 * w + 40)]);
     expect(t.catchUp.runs).toHaveLength(2);
+    expect(t.budgeted).toBe(3);
+  });
+
+  it('continues a run once a retried window succeeds', () => {
+    const w = Number(CHUNK_BLOCKS);
+    const t = tallyCalls([{ ...chunk(1, w), outcome: 'failed' }, chunk(1, w), chunk(w + 1, w + 40)]);
+    expect(t.catchUp.retries).toBe(1);
+    expect(t.catchUp.runs).toHaveLength(1);
+    expect(t.catchUp.runs[0].chunks).toBe(2);
   });
 
   it('keeps two scans issued at once over the identical range apart', () => {
     const [a1, a2] = scan(100, 2_000);
-    const t = tallyCalls([{ ...a1, outcome: 'ok' }, { ...a1, outcome: 'ok' }, a2, a2]);
+    const t = tallyCalls([a1, a1, a2, a2]);
     expect(t.catchUp.runs).toHaveLength(2);
     expect(t.catchUp.runs.every((x) => x.chunks === 2)).toBe(true);
   });
@@ -124,5 +142,45 @@ describe('tallyCalls (#2097)', () => {
     const t = tallyCalls(scan(1, 50 * Number(CHUNK_BLOCKS)));
     expect(t.catchUp.scansCharged).toBe(3);
     expect(t.catchUp.longRuns).toHaveLength(1);
+  });
+});
+
+describe('createCallLedger (#2710 r4)', () => {
+  const body = (calls) => JSON.stringify(calls);
+  it('records only while recording, and settles each call by its own id', () => {
+    let on = false;
+    const l = createCallLedger(() => on);
+    expect(l.onRequest(body({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber' }))).toBeNull();
+    on = true;
+    const pending = l.onRequest(body([
+      { jsonrpc: '2.0', id: 1, method: 'eth_blockNumber' },
+      { jsonrpc: '2.0', id: 2, method: 'eth_getLogs', params: [] },
+      { jsonrpc: '2.0', id: 3, method: 'eth_call', params: [] },
+    ]));
+    l.onResponse(pending, body([
+      { jsonrpc: '2.0', id: 2, error: { code: -32000, message: 'range' } },
+      { jsonrpc: '2.0', id: 1, result: '0x10' },
+    ]));
+    expect(l.calls.map((c) => [c.method, c.outcome])).toEqual([
+      ['eth_blockNumber', 'ok'],
+      ['eth_getLogs', 'failed'],
+      ['eth_call', 'failed'],
+    ]);
+  });
+
+  it('reads a malformed body or no response as a failure, as the transport does', () => {
+    const l = createCallLedger();
+    const a = l.onRequest(body({ jsonrpc: '2.0', id: 7, method: 'eth_getLogs' }));
+    l.onResponse(a, '<html>502 Bad Gateway</html>');
+    const b = l.onRequest(body({ jsonrpc: '2.0', id: 8, method: 'eth_getLogs' }));
+    l.onResponse(b, null);
+    expect(l.calls.map((c) => c.outcome)).toEqual(['failed', 'failed']);
+  });
+
+  it('ignores a body that is not JSON-RPC', () => {
+    const l = createCallLedger();
+    expect(l.onRequest('not json')).toBeNull();
+    expect(l.onRequest(body({ event: 'pageview' }))).toBeNull();
+    expect(l.calls).toEqual([]);
   });
 });

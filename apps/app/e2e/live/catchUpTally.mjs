@@ -27,15 +27,20 @@
  *     continuation is matched to exactly one open run. Only a full-width
  *     chunk can be continued, because the app cuts a window short only at
  *     a scan's end.
- *   - A RETRY is established from the WIRE, never from a range alone: a
- *     chunk is a retry only when it repeats the range of a run's latest
- *     attempt AND that attempt was OBSERVED TO FAIL (a non-200 response, a
- *     failed request, a JSON-RPC error, or no answer at all). Each call's
- *     `outcome` is recorded by the drive. A repeat of a range that
- *     succeeded starts a new run, so a page re-scanning an unchanged range
- *     over and over — the polling regression this audit exists for —
- *     counts every scan (#2710 r1). An unknown outcome (a body that could
- *     not be read) is never read as a failure.
+ *   - Each call's OUTCOME comes from the wire (`createCallLedger`, fed by
+ *     the shared HTTP + WebSocket observer `attachLedger`): `ok` only when
+ *     the page received a JSON-RPC result for it. Anything else — a non-200
+ *     response, a failed request, a body that is not JSON-RPC, an error
+ *     envelope, a socket that closed first, or no answer at all — is
+ *     `failed`, which is how the page's own transport treats it (#2710 r4).
+ *   - A RETRY repeats the range of a run's latest attempt AFTER that attempt
+ *     failed; it belongs to that run and does not advance it. A repeat of a
+ *     range that succeeded starts a new run, so a page re-scanning an
+ *     unchanged range over and over — the polling regression this audit
+ *     exists for — counts every scan (#2710 r1).
+ *   - Only a window that SUCCEEDED can be continued: the app stops a scan
+ *     at a window that fails (`chunkedGetLogs` returns), so a later request
+ *     starting one block after a failed window is a new scan (#2710 r4).
  *   - ADJACENT SCANS, stated, because block numbers cannot separate them
  *     (#1672 records why): a later scan that starts exactly one block after
  *     an earlier scan's last full-width chunk reads as its continuation.
@@ -116,7 +121,7 @@ export function catchUpRange(call) {
  * @param {Array<{ method?: string, params?: unknown, outcome?: 'ok' | 'failed' }>} calls
  *   every JSON-RPC call the page made in the window, in the order the
  *   requests started, each with the outcome the drive observed for it
- *   (absent when unknown).
+ *   (`createCallLedger`). Anything but `ok` is a failed attempt.
  */
 export function tallyCalls(calls) {
   const counts = {};
@@ -126,6 +131,12 @@ export function tallyCalls(calls) {
   let chunks = 0;
   let retries = 0;
   const oversized = [];
+  const continuable = (run, r) => {
+    if (r.to - r.from + 1n !== CHUNK_BLOCKS) return;
+    const next = String(r.to + 1n);
+    if (!open.has(next)) open.set(next, []);
+    open.get(next).push(run);
+  };
   for (const call of calls) {
     if (!call?.method) continue;
     counts[call.method] = (counts[call.method] ?? 0) + 1;
@@ -133,7 +144,7 @@ export function tallyCalls(calls) {
     if (!r) continue;
     chunks += 1;
     if (r.to - r.from + 1n > CHUNK_BLOCKS) oversized.push(`${r.from}–${r.to}`);
-    const failed = call.outcome === 'failed';
+    const failed = call.outcome !== 'ok';
     // A RETRY repeats the range of a run's latest attempt, and that attempt
     // was observed to fail (the transport retries a failed request with the
     // same body). It belongs to that run and does not advance it. A repeat
@@ -142,6 +153,7 @@ export function tallyCalls(calls) {
     if (retried) {
       retries += 1;
       retried.lastFailed = failed;
+      if (!failed) continuable(retried, r);
       continue;
     }
     const key = String(r.from);
@@ -158,15 +170,12 @@ export function tallyCalls(calls) {
     run.lastFrom = r.from;
     run.to = r.to;
     run.lastFailed = failed;
-    // Only a FULL-WIDTH chunk can be followed by another of the same scan:
-    // the app's loop cuts a window short only at the scan's end
-    // (`chunkedGetLogs`). So a short chunk closes its run, and a later scan
-    // that happens to start one block after it starts a run of its own.
-    if (r.to - r.from + 1n === CHUNK_BLOCKS) {
-      const next = String(r.to + 1n);
-      if (!open.has(next)) open.set(next, []);
-      open.get(next).push(run);
-    }
+    // Only a FULL-WIDTH window that SUCCEEDED can be followed by another of
+    // the same scan: the app's loop cuts a window short only at the scan's
+    // end, and stops at a window that fails (`chunkedGetLogs`). So a short or
+    // failed window closes its run, and a later scan that happens to start
+    // one block after it starts a run of its own.
+    if (!failed) continuable(run, r);
   }
   const total = Object.values(counts).reduce((a, n) => a + n, 0);
   // The fewest scans a correct page could have issued to produce each run.
@@ -189,6 +198,56 @@ export function tallyCalls(calls) {
       longRuns: runs
         .filter((run) => run.chunks > MAX_CHUNKS_PER_SCAN)
         .map((run) => `${run.from}–${run.to} (${run.chunks} windows)`),
+    },
+  };
+}
+
+/**
+ * A ledger of every JSON-RPC call the page sends, in the shape the shared
+ * observer `attachLedger` (`pageSanctionsReads.mjs`) feeds over HTTP AND
+ * WebSocket, so a deployment whose RPC rides a socket is audited too
+ * (#2710 r4). Calls are recorded only while `isRecording()` holds; each
+ * gets its `outcome` when its answer (or the lack of one) is known.
+ */
+export function createCallLedger(isRecording = () => true) {
+  const calls = [];
+  const asList = (v) => (Array.isArray(v) ? v : [v]);
+  return {
+    calls,
+    onRequest(bodyText) {
+      if (!isRecording()) return null;
+      let sent;
+      try {
+        sent = asList(JSON.parse(bodyText ?? 'null'));
+      } catch {
+        return null;
+      }
+      const pending = new Map();
+      for (const c of sent) {
+        if (!c || typeof c.method !== 'string') continue;
+        const call = { method: c.method, params: c.params, outcome: undefined };
+        calls.push(call);
+        if (!pending.has(c.id)) pending.set(c.id, []);
+        pending.get(c.id).push(call);
+      }
+      return pending.size > 0 ? pending : null;
+    },
+    /** `bodyText` null = no usable response: every pending call failed. */
+    onResponse(pending, bodyText) {
+      let answers = [];
+      if (bodyText != null) {
+        try {
+          answers = asList(JSON.parse(bodyText));
+        } catch {
+          answers = [];
+        }
+      }
+      const byId = new Map(answers.filter((a) => a && typeof a === 'object' && 'id' in a).map((a) => [a.id, a]));
+      for (const [id, list] of pending) {
+        const a = byId.get(id);
+        const ok = Boolean(a && a.error === undefined && a.result !== undefined);
+        for (const call of list) call.outcome = ok ? 'ok' : 'failed';
+      }
     },
   };
 }
