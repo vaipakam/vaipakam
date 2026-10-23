@@ -1,4 +1,4 @@
-## Thread — The NFT verifier gives visitors something a copy cannot fake (PR #<n>)
+## Thread — The NFT verifier gives visitors something a copy cannot fake (PR #2698)
 
 Position NFTs carry real claim rights, so a buyer might check one on the NFT verifier before paying for it. A copied verifier could show any verdict it liked. It could also add a "connect your wallet to confirm" step that drains the visitor's wallet. Nothing stops a web page from being copied, so the real verifier now tells visitors what they can check for themselves, without trusting whichever page they are on.
 
