@@ -8,7 +8,7 @@
 #   workspaces             (required, ~2-3 min) ┬─ cheap fail-fast
 #   analyze-jstypescript   (informational, ~2 min) ┘  gates
 #     ↓
-#   contracts-fast (required, ~50 min cold) ← runs FOUNDRY_PROFILE=cifast:
+#   contracts-fast (required, ~65 min cold) ← runs FOUNDRY_PROFILE=cifast:
 #       ↓                                     src + script + test/deploy/**
 #       │                                     + test/scenarios/** + setup +
 #       │                                     mocks. Compile-only sample of
@@ -56,7 +56,7 @@
 #                     — forge build under FOUNDRY_PROFILE=cifast + deploy-
 #                     sanity suite (`test/deploy/*`) + positive-flow
 #                     scenarios + ABI-in-sync check + shell-script lint.
-#                     ~50 min cold, solc peak under 10 GB (#2712). Catches deploy-
+#                     ~65 min cold, solc peak under 10 GB (#2712). Catches deploy-
 #                     blocker regression classes (#66 size, #71 selector
 #                     coverage, #72 ownership, #75 ABI, #69 facet-count)
 #                     plus the positive-flow happy paths.
@@ -457,7 +457,7 @@ jobs:
   #
   #   detect-changes
   #     ↓
-  #   contracts-fast (FOUNDRY_PROFILE=cifast, ~50 min cold, solc peak
+  #   contracts-fast (FOUNDRY_PROFILE=cifast, ~65 min cold, solc peak
   #                    under 10 GB, required gate; #2712)
   #     ↓ (cache saved at job end → slither restores; the needs: edge
   #     ↓  to build-docs is ordering-only)
@@ -553,13 +553,18 @@ jobs:
     #
     # #2712 split step 2 into chunks of 16 suites (predeploy-check.sh, the
     # helper it shares with run-regression.sh). Measured cold with two
-    # chunks (run 40012166743): solc peaked at 9.0 GB and 9.7 GB, and step 2
-    # took 28m50s instead of 21m47s, because each chunk re-pays some of the
-    # shared script compile. So the job is about 50 min cold, still well
-    # inside this timeout, and about 6 GB of memory is back. The heaviest
-    # single deploy test peaks at 5.5 GB on its own, so chunking cannot go
-    # much lower than this; a smaller chunk mostly costs time.
-    timeout-minutes: 75
+    # chunks: solc peaked at 9.0 GB and 9.7 GB (run 40012166743), so about
+    # 5 GB of memory is back. The cost is time. Each chunk re-pays the
+    # codegen of the deploy scripts its tests instantiate (`new
+    # DeployDiamond()` embeds every facet's creation code), so step 2 took
+    # 28m50s on that run and 37m33s on #2717's own cold run (run
+    # 40019586985), against 21m47s as one invocation. That #2717 run took
+    # 63.5 min for the whole job (step 1 alone 16.5 min), so the timeout is
+    # 90, not 75: the same steps varied by 16-30% between those runs, and a
+    # timed-out job is a lost run. The heaviest single deploy test peaks at
+    # 5.5 GB on its own, so smaller chunks would mostly cost more time.
+    # #2718 tracks cutting the repeated codegen itself.
+    timeout-minutes: 90
     # #290 — every forge invocation in this job runs under the
     # narrow-scope `cifast` profile defined in `contracts/foundry.toml`.
     # It cut peak RSS from ~17.7 GB to ~3.2 GB when it was written. Growth

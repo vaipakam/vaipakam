@@ -1658,12 +1658,15 @@ Three profiles live in `contracts/foundry.toml`:
   `forge doc --build` under `quick` instead — #1493).
   Skips the 94 non-positive top-level test files + invariants + fork
   tests — those run locally at end-of-step under the default profile.
-  **Measured cold on CI (2026-10-23): about 50 min for the
+  **Measured cold on CI (2026-10-23): about 63 min for the
   contracts-fast job, with solc peaking under 10 GB of the runner's
   16 GB.** The peak comes in the deploy-sanity compile, which
   `predeploy-check.sh` runs in chunks of 16 suites (#2712). Run as one
   `forge test` it peaked at 14.7 GB (15.8 GB for the whole runner,
-  #2603), which left no headroom; chunking costs about 7 minutes. The
+  #2603), which left no headroom. Chunking costs time, because each chunk
+  re-pays the codegen of the deploy scripts its tests instantiate: step 2
+  went from 22 to 29–38 minutes, and the job's timeout is 90 (#2718 tracks
+  the repeated codegen). The
   old "~5 min, ~3.2 GB" figure is history. That compile also depends on the CI Foundry
   pin. From v1.8.4, `forge test` stops reusing the `forge build --skip
   test` artifacts and recompiles 469 files, and the runner dies. So
