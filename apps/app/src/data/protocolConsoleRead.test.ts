@@ -46,6 +46,16 @@ const CHAIN: ChainConsoleRead = {
   blockNumber: 123n,
 };
 
+describe('rendered values', () => {
+  it('are each backed by a bundle output or a setting the reader asks for', () => {
+    // Otherwise no snapshot could ever be complete, and the page would read
+    // the chain on every visit while calling the snapshot incomplete.
+    const bundle = new Set(abiOutputNames(DIAMOND_ABI_VIEM, 'getProtocolConfigBundle') ?? []);
+    const knobs = new Set<string>(PROTOCOL_KNOB_GETTERS.map((k) => k.key));
+    expect([...RENDERED_KEYS].filter((k) => !bundle.has(k) && !knobs.has(k))).toEqual([]);
+  });
+});
+
 describe('snapshotGap', () => {
   it('accepts a dated, labelled, complete snapshot inside the refresh window', () => {
     expect(snapshotGap(snapshot(), NOW)).toBeNull();
