@@ -46,7 +46,7 @@ import {
   RewardAggregatorFacetABI,
   InteractionRewardsLensFacetABI,
 } from '@vaipakam/contracts/abis';
-import type { ChainConfig, Env } from './env';
+import type { ChainConfig, Env, PlainVarKey } from './env';
 import type { PassTick } from './passSchedule';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
@@ -95,8 +95,8 @@ type RewardEntryView = {
   perDayNumeraire18: bigint;
 };
 
-function readNumber(env: Env, key: string, fallback: number): number {
-  const raw = (env as unknown as Record<string, string | undefined>)[key];
+function readNumber(env: Env, key: PlainVarKey, fallback: number): number {
+  const raw = env[key];
   if (!raw) return fallback;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;

@@ -280,36 +280,35 @@ fire:
 
 - The on-chain kill-switch `discountPathEnabled` is `true`
   (precondition #2).
-- The keeper's `DISCOUNT_PATH_ENABLED_<chainId>` setting is
-  literally the string `"true"`.
+- The keeper's `DISCOUNT_PATH_CHAIN_IDS` setting names the chain:
+  a comma list of decimal chain ids, such as `8453`.
 
 The second is the bot's belt-and-suspenders: even if governance
 flipped the on-chain flag prematurely, the bot still won't try
 the discount path until you tell it to.
 
-> **⚠ Known gap (#2633): the keeper does not read this setting
-> today, so do not set it yet.** The pass looks the flag up on the
-> keeper's resolved settings, and `resolveEnv` in
-> `apps/keeper/src/env.ts` copies a fixed list of names into those
-> settings. `DISCOUNT_PATH_ENABLED_<chainId>` is not on that list, so
-> the lookup finds nothing on either host and the flash-loan branch
-> stays off whatever the env file says. That is the safe direction.
->
-> **Leave the line out of the env file until the #2633 fix is
-> deployed on the machine.** A line set now would do nothing today and
-> then switch the branch on by itself at the first restart after the
-> fix lands. The machine deploys `main` and restarts the keeper on its
-> own, so that could happen with nobody watching the §6 checks. Once
-> the fix is deployed, set the line as below and do §6 straight away.
-> Until then, do not read the absence of `submitted-flashloan` lines
-> in §6 as an unprofitable market.
+> **⚠ Before arming: the path's debt and gas figures are
+> placeholders (#2697).** The keeper sizes the loan's debt from its
+> collateral amount and the gas headroom as a fixed `1e18` units of
+> the principal token. The liquidator reverts any run that does not
+> cover its own flash-loan fee, so funds are safe, but trades will be
+> misjudged and reverted runs cost gas. Arm the path only once #2697
+> is fixed.
 
-Once #2633's fix is on the machine, set it in
-`/etc/vaipakam/keeper.env` as the line
-`DISCOUNT_PATH_ENABLED_8453=true` and apply it by
-[`KeeperMachine.md`](KeeperMachine.md) §6, "Apply an env-file
-change" (`sudo systemctl try-restart vaipakam-keeper`, then a tick
-that began after the restart). Then do §6 below at once.
+The setting replaced a per-chain `DISCOUNT_PATH_ENABLED_<chainId>`
+flag that the keeper never read (#2633). A leftover line of that
+name does nothing; remove it.
+
+Set it in `/etc/vaipakam/keeper.env` as the line
+`DISCOUNT_PATH_CHAIN_IDS=8453` (add other chains comma-separated) and
+apply it by [`KeeperMachine.md`](KeeperMachine.md) §6, "Apply an
+env-file change" (`sudo systemctl try-restart vaipakam-keeper`, then a
+tick that began after the restart). Then do §6 below at once.
+
+A value that cannot be read (an entry that is not a chain id, or a
+chain named twice) arms no chain. Each skipped loan logs
+`flash-loan-skip not-armed:` with the reason, without echoing the
+value.
 
 **Why a separate keeper-side flag rather than reading the
 on-chain flag every tick**: cost. An on-chain read every tick ×
@@ -419,8 +418,9 @@ You flipped the keeper-side flag (Step 5) before governance
 flipped the on-chain flag (precondition #2). The keeper happily
 submits txs that the diamond rejects.
 
-Snap it off on the machine: remove the `DISCOUNT_PATH_ENABLED_8453`
-line from `/etc/vaipakam/keeper.env` (or leave it empty) and run
+Snap it off on the machine: remove `8453` from the
+`DISCOUNT_PATH_CHAIN_IDS` line in `/etc/vaipakam/keeper.env` (or
+leave the line empty) and run
 `sudo systemctl try-restart vaipakam-keeper`. The restart waits for the
 tick in flight, so it takes as long as that tick does, not a fixed
 30 seconds.
@@ -458,16 +458,15 @@ at the top of this runbook.
 
 Probably the `liquidator` slot in `flashLoanProviders.ts`
 wasn't populated (Step 4 skipped), or the machine has not deployed
-the commit that populated it, or the keeper-side flag is not reaching
-the pass (see the known gap in Step 5, which on its own produces
-exactly this symptom). Verify on the machine:
+the commit that populated it, or the chain is not armed. The keeper
+logs `flash-loan-skip not-armed:` with the reason for each loan it
+skips on that account. Verify on the machine:
 
 ```bash
-# Confirm the flag is set to exactly `true` (prints set / not-set only).
-# The keeper arms only on the string `true`: `1`, `True` or a trailing
-# space leave the path off. Write it unquoted, as this check expects.
-sudo grep -qx 'DISCOUNT_PATH_ENABLED_8453=true' /etc/vaipakam/keeper.env \
-  && echo set || echo not-set
+# Confirm the setting names chain 8453 (prints armed / not-armed only).
+sudo grep -qE '^DISCOUNT_PATH_CHAIN_IDS=(.*,)? *8453 *(,.*)?$' /etc/vaipakam/keeper.env \
+  && echo armed || echo not-armed
+journalctl -u vaipakam-keeper --since -10min | grep -m3 'flash-loan-skip not-armed'
 
 # Confirm the running release carries the address. Search for the
 # deployed FlashLoanLiquidator address itself, case-insensitively; a
@@ -498,15 +497,13 @@ To disable the flash-loan branch on a chain INSTANTLY, in
 order of preference (least to most disruptive):
 
 1. **Remove the keeper-side env flag** — a local edit on the
-   machine, no deploy, no governance: delete the
-   `DISCOUNT_PATH_ENABLED_8453` line from `/etc/vaipakam/keeper.env`
-   (or leave it empty), then `sudo systemctl try-restart vaipakam-keeper`.
+   machine, no deploy, no governance: remove the chain from the
+   `DISCOUNT_PATH_CHAIN_IDS` line in `/etc/vaipakam/keeper.env` (or
+   leave the line empty), then `sudo systemctl try-restart vaipakam-keeper`.
    From the first tick after the restart the discount branch skips,
    and legacy partial/split/atomic still runs while the keeper is
    armed. The restart waits for the tick in flight
-   ([`KeeperMachine.md`](KeeperMachine.md) §6). Until the Step 5 known
-   gap is fixed, this changes nothing, because the keeper never reads
-   the flag: the branch is already off.
+   ([`KeeperMachine.md`](KeeperMachine.md) §6).
 
 2. **Delete the `liquidator` line in `flashLoanProviders.ts`**
    and merge — slower (needs a merge to `main`, then the machine's

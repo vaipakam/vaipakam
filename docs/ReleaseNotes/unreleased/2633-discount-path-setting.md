@@ -1,0 +1,9 @@
+## Keeper — the flash-loan discount path is armed by one setting the keeper actually reads (#2633)
+
+The keeper's discounted liquidation path was meant to be switched on per chain by a line such as `DISCOUNT_PATH_ENABLED_84532=true` in the keeper's environment. The keeper never saw that line. Its settings are passed to every pass through one resolver, which carries only the settings it names, and the per-chain switch was looked up by a name built at run time that the resolver did not carry. So the path stayed off on every chain whatever the operator set, and nothing said so. Two reward passes read their tuning knobs the same untyped way; those knobs happened to be carried, so they worked, but by luck rather than by construction.
+
+The switch is now one named setting, `DISCOUNT_PATH_CHAIN_IDS`, a comma-separated list of the chain ids to arm. It ships empty, so nothing changes on any chain. When the keeper considers the path for a loan and the chain is not armed, it now logs why: the setting is unset, it does not name that chain, or it could not be read (a malformed entry is described by its position and never echoed). Every setting the keeper reads is now looked up by its declared name, and a test checks that every declared setting reaches the passes, so a setting can no longer be dropped silently. The old per-chain gas-headroom override, which was never carried either, is gone; the headroom is a fixed figure until it is sized properly.
+
+The path still does nothing anywhere today: it also needs a deployed FlashLoanLiquidator, and no chain has one. Its debt and gas sizing are placeholders, recorded in #2697, and arming it must wait for that. The rollout runbook and the incident runbook now describe the real setting and say that the old line does nothing.
+
+Closes #2633. Follow-up: #2697.

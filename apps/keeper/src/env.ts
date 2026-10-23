@@ -205,6 +205,11 @@ interface BaseEnv {
    *  back to the full path. Set to 10_000 to disable the partial
    *  path. Tighten (e.g. 9700) for a more conservative regime. */
   PARTIAL_LIQ_MIN_HF_BPS?: string;
+
+  /** #2633 — the chains the flash-loan discount path is armed on: a comma
+   *  list of decimal chain ids (`discountPath.ts`). Unset arms none. Like the
+   *  other arming flags it is `secret_text` on a Worker. */
+  DISCOUNT_PATH_CHAIN_IDS?: string;
 }
 
 /**
@@ -328,7 +333,14 @@ export const PLAIN_VAR_KEYS = [
   'LIQ_TIER3_MIN_VOL_USD',
   'SPLIT_MIN_IMPROVEMENT_BPS',
   'PARTIAL_LIQ_MIN_HF_BPS',
+  'DISCOUNT_PATH_CHAIN_IDS',
 ] as const satisfies readonly (keyof BaseEnv)[];
+
+/** One plain-string knob's name. A reader that takes one of these, rather
+ *  than any string, cannot be handed a name `resolveEnv` does not carry: such
+ *  a lookup reads undefined forever, which is how #2633's lever came to do
+ *  nothing. */
+export type PlainVarKey = (typeof PLAIN_VAR_KEYS)[number];
 
 type PlainVarKeysComplete =
   Exclude<keyof BaseEnv, (typeof PLAIN_VAR_KEYS)[number]> extends never ? true : false;
@@ -467,6 +479,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     FRONTEND_ORIGIN: raw.FRONTEND_ORIGIN,
     PUSH_CHANNEL_ADDRESS: raw.PUSH_CHANNEL_ADDRESS,
     KEEPER_ENABLED: raw.KEEPER_ENABLED,
+    KEEPER_RUNNER_ID: raw.KEEPER_RUNNER_ID,
     REWARD_REMIT_ENABLED: raw.REWARD_REMIT_ENABLED,
     REWARD_REMIT_LOOKBACK_DAYS: raw.REWARD_REMIT_LOOKBACK_DAYS,
     REWARD_REMIT_LANE_CAP: raw.REWARD_REMIT_LANE_CAP,
@@ -488,6 +501,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     LIQ_TIER3_MIN_VOL_USD: raw.LIQ_TIER3_MIN_VOL_USD,
     SPLIT_MIN_IMPROVEMENT_BPS: raw.SPLIT_MIN_IMPROVEMENT_BPS,
     PARTIAL_LIQ_MIN_HF_BPS: raw.PARTIAL_LIQ_MIN_HF_BPS,
+    DISCOUNT_PATH_CHAIN_IDS: raw.DISCOUNT_PATH_CHAIN_IDS,
     // Resolved secrets.
     RPC_BASE: base,
     RPC_ETH: eth,
