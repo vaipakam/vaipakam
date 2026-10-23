@@ -476,14 +476,11 @@ running.
 > branches, and a successful Tier 1 edit must not be read as preserving
 > automated liquidation.
 >
-> **Tier 1 also changes nothing today, for a reason in the code.** The
-> keeper does not carry `DISCOUNT_PATH_ENABLED_<chainId>` from its settings
-> into the pass (`resolveEnv` in `apps/keeper/src/env.ts` copies a fixed list
-> of names, and this is not one; tracked in #2633), so the flash-loan branch
-> is already off on every chain whatever the env file says. See the known gap in
-> [`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md) Step 5.
-> Doing Tier 1 is harmless and leaves the posture correct for when that is
-> fixed, but it is not the *response*.
+> **Tier 1 changes nothing on a chain with no FlashLoanLiquidator
+> deployed**, which today is every chain: the flash-loan branch needs one
+> before it runs at all, whatever `DISCOUNT_PATH_CHAIN_IDS` says. Doing Tier 1
+> is harmless and leaves the posture correct, but on such a chain it is not
+> the *response*.
 >
 > **The immediate on-chain stop for external callers post-handover is the §3
 > GLOBAL protocol pause — not `pauseAsset`**; see the correction after Tier 3.
@@ -548,11 +545,11 @@ Three escalation tiers, least to most disruptive:
 
 **Tier 1 — keeper-side snap-off (local edit, our bot only)**
 
-Remove the per-chain flag from the keeper's env file on the machine
-and restart it:
+Remove the chain from the keeper's `DISCOUNT_PATH_CHAIN_IDS` setting on
+the machine and restart it:
 
 ```bash
-sudo -e /etc/vaipakam/keeper.env   # delete DISCOUNT_PATH_ENABLED_<chainId>, or leave it empty
+sudo -e /etc/vaipakam/keeper.env   # remove <chainId> from DISCOUNT_PATH_CHAIN_IDS, or leave it empty
 sudo systemctl try-restart vaipakam-keeper
 ```
 
@@ -560,8 +557,8 @@ The restart waits for the tick in flight, then the flash-loan
 branch skips from the first tick after it → legacy
 partial/split/atomic still runs while the keeper is armed. Affects
 ONLY our bot; external liquidators are unaffected (use Tier 3 for
-that). See the box above: until the code carries the flag through,
-this changes nothing.
+that). On a chain with no FlashLoanLiquidator deployed the branch was
+not running anyway; see the box above.
 
 **Tier 2 — pull our receiver from the per-chain config**
 
@@ -602,8 +599,8 @@ can always be closed out (see the `assetPaused` note in
 discounted path fully callable by external liquidators.
 
 So post-handover the immediate levers are **Tier 1** (our bot
-only — and see the box above, which makes it a no-op until the
-keeper reads the flag) and the **§3 global protocol pause**
+only — and a no-op on a chain with no FlashLoanLiquidator
+deployed, per the box above) and the **§3 global protocol pause**
 (everyone). If the
 defect is in the diamond's discount-path code and external
 callers must be stopped now, the global pause is the only

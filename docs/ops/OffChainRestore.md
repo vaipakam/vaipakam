@@ -559,6 +559,15 @@ then deploy.
       four above, those have safe defaults, so an omission degrades tuning
       rather than turning a duty off.
 
+      `DISCOUNT_PATH_CHAIN_IDS` is a plain var, not a secret, so it can be
+      read back, but it ARMS something and belongs in the record by value:
+      the chains on which the flash-loan discount branch of the liquidator
+      runs (#2633). Unset, that branch skips on every chain and the partial
+      / split / atomic branches still run. It is a chain list, not `true`,
+      ships empty, and does anything only on a chain that also has a
+      FlashLoanLiquidator (none today; sizing #2697). It is cleared with the
+      flags in §7a step 3B and re-armed only by the owner's decision.
+
       **Do NOT set them here.** They arm signing against a database §§4–6
       have not restored: a matcher or liquidator pass reading half-imported
       state would submit real transactions from a real key. Re-arming is
@@ -1836,7 +1845,8 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `KEEPER_ENABLED=false` and every per-pass flag (`REWARD_REMIT_ENABLED`,
    `REWARD_COMMIT_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED`,
    `GRACE_DEFAULT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`,
-   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`) empty — by editing the
+   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
+   `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 

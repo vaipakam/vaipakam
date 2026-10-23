@@ -25,6 +25,7 @@
  * the one that is running.
  */
 
+import { discountPathPosture } from '../src/discountPath';
 import { buildHostEnv } from './hostEnv';
 import { createHostLeaseRenewal, createHostTick } from './hostTick';
 import { createTickRunner, minuteFloor, msUntilNextMinute } from './scheduler';
@@ -35,8 +36,11 @@ function log(line: string): void {
 }
 
 function main(): void {
-  const { missingD1, refusedD1 } = buildHostEnv(process.env);
+  const { env, missingD1, refusedD1 } = buildHostEnv(process.env);
   if (refusedD1 !== null) log(`[keeper-host] ${refusedD1}; every tick will decline`);
+  // #2633 — the discount path's arming, stated once from the parser the
+  // passes use, so it is readable without waiting for a loan to reach it.
+  log(`[keeper-host] discount path: ${discountPathPosture(env.DISCOUNT_PATH_CHAIN_IDS)}`);
   if (process.argv.includes('--check')) {
     log(
       `[keeper-host] check: build loads; database ${missingD1.length > 0 ? `not configured (${missingD1.join(', ')} unset)` : 'configured'}`,
