@@ -177,6 +177,17 @@ describe('createCallLedger (#2710 r4)', () => {
     expect(l.calls.map((c) => c.outcome)).toEqual(['failed', 'failed']);
   });
 
+  it('counts chain calls only, not another JSON-RPC protocol (#2710 r5)', () => {
+    const l = createCallLedger();
+    const p = l.onRequest(body([
+      { jsonrpc: '2.0', id: 1, method: 'irn_subscribe', params: {} },
+      { jsonrpc: '2.0', id: 2, method: 'eth_chainId' },
+    ]));
+    l.onResponse(p, body([{ jsonrpc: '2.0', id: 1, result: 'sub' }, { jsonrpc: '2.0', id: 2, result: '0x1' }]));
+    expect(l.calls.map((c) => [c.method, c.outcome])).toEqual([['eth_chainId', 'ok']]);
+    expect(l.onRequest(body({ jsonrpc: '2.0', id: 3, method: 'irn_publish' }))).toBeNull();
+  });
+
   it('ignores a body that is not JSON-RPC', () => {
     const l = createCallLedger();
     expect(l.onRequest('not json')).toBeNull();

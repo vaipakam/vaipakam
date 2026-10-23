@@ -206,11 +206,19 @@ export function tallyCalls(calls) {
  * A ledger of every JSON-RPC call the page sends, in the shape the shared
  * observer `attachLedger` (`pageSanctionsReads.mjs`) feeds over HTTP AND
  * WebSocket, so a deployment whose RPC rides a socket is audited too
- * (#2710 r4). Calls are recorded only while `isRecording()` holds; each
- * gets its `outcome` when its answer (or the lack of one) is known.
+ * (#2710 r4). Only chain calls are recorded, and only while
+ * `isRecording()` holds; each gets its `outcome` when its answer (or the
+ * lack of one) is known.
  */
 export function createCallLedger(isRecording = () => true) {
   const calls = [];
+  // The budget is about CHAIN RPC, so the ledger records the Ethereum
+  // JSON-RPC namespaces and nothing else. Another JSON-RPC protocol on the
+  // same observer — WalletConnect's `irn_*` relay is the one this app
+  // carries — is not chain traffic and is not counted (#2710 r5). Write
+  // detection does not depend on this: `attachLedger` judges every socket
+  // frame against the read list itself.
+  const isChainCall = (method) => /^(eth|net|web3)_/.test(method);
   const asList = (v) => (Array.isArray(v) ? v : [v]);
   return {
     calls,
@@ -224,7 +232,7 @@ export function createCallLedger(isRecording = () => true) {
       }
       const pending = new Map();
       for (const c of sent) {
-        if (!c || typeof c.method !== 'string') continue;
+        if (!c || typeof c.method !== 'string' || !isChainCall(c.method)) continue;
         const call = { method: c.method, params: c.params, outcome: undefined };
         calls.push(call);
         if (!pending.has(c.id)) pending.set(c.id, []);
