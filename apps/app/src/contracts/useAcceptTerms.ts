@@ -36,6 +36,7 @@ import {
   signedOfferCeiling,
 } from '../lib/signedOffer';
 import { isAssetIlliquidLive, isMissingSelectorError } from './preflights';
+import { linkedOfferKind } from './linkedOfferKind';
 
 const ACCEPT_DEADLINE_SECONDS = 30 * 60; // 30 minutes, matching the Permit2 window.
 
@@ -345,36 +346,35 @@ export function useAcceptTermsSigning() {
       // collateral reduction between review and accept aborts, while a
       // harmless top-up still passes). Building these from the offer
       // would OfferTermsMismatch the moment the loan moved (e.g. a
-      // partial repay after listing). A sale link is discriminated
-      // from a preclose-offset link by the creator: sale vehicles are
-      // created by the loan's LENDER, offsets by its borrower — offset
-      // offers keep the plain offer-field binding (the contract's
-      // else-branch).
+      // partial repay after listing). Which vehicle a linked offer is
+      // comes from its own offer type (`linkedOfferKind`), the same
+      // split the contract's two links make — never from comparing the
+      // creator with the loan's parties, which one wallet holding both
+      // sides would misread (Codex #2675 r1). Offset offers keep the
+      // plain offer-field binding (the contract's else-branch).
       let saleLoan: {
         principal: bigint;
         durationDays: bigint;
         collateralAmount: bigint;
       } | null = null;
-      if (linkedLoanId !== 0n) {
+      if (linkedLoanId !== 0n && linkedOfferKind(o.offerType as number) === 'sale') {
         const loan = (await publicClient.readContract({
           address: diamondAddr,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'getLoanDetails',
           args: [linkedLoanId],
         })) as Record<string, unknown>;
-        if ((loan.lender as string).toLowerCase() === creator) {
-          // The completion requires the loan Active — a settled/defaulted
-          // loan's listing can never complete, so fail before any
-          // signature like the other doomed-accept guards.
-          if (Number(loan.status) !== 0) {
-            throw new Error(copy.match.offerGone);
-          }
-          saleLoan = {
-            principal: loan.principal as bigint,
-            durationDays: loan.durationDays as bigint,
-            collateralAmount: loan.collateralAmount as bigint,
-          };
+        // The completion requires the loan Active — a settled/defaulted
+        // loan's listing can never complete, so fail before any
+        // signature like the other doomed-accept guards.
+        if (Number(loan.status) !== 0) {
+          throw new Error(copy.match.offerGone);
         }
+        saleLoan = {
+          principal: loan.principal as bigint,
+          durationDays: loan.durationDays as bigint,
+          collateralAmount: loan.collateralAmount as bigint,
+        };
       }
 
       // #730 — stamp the live risk-terms HASH (fail-closed helper below,

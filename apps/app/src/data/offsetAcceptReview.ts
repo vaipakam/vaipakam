@@ -45,6 +45,12 @@ export type OffsetReview =
    *  linked offer whose creator is not the earlier loan's borrower). The
    *  accept stays blocked. */
   | { kind: "other" }
+  /** The earlier loan has already ended (repaid, defaulted, settled). The
+   *  completion refuses any acceptance whose linked loan is not active, so
+   *  this is decided by the loan's status alone: nothing else about the
+   *  offer is read, and its borrower NFT may already be burned by a claim
+   *  (Codex #2675 r1). */
+  | { kind: "loan-ended"; loanId: string; live: LoanLive }
   | {
       kind: "offset";
       /** The earlier loan the acceptance closes. */
@@ -77,8 +83,8 @@ export type OffsetReviewBlock =
 export function offsetReviewBlock(
   review: OffsetReview,
 ): OffsetReviewBlock | null {
+  if (review.kind === "loan-ended") return "loan-not-active";
   if (review.kind !== "offset") return "not-offset";
-  if (review.live.status !== LOAN_STATUS_ACTIVE) return "loan-not-active";
   if (!review.termFits) return "term-passed";
   if (review.swapOrder === "live") return "swap-order";
   if (review.swapOrder === "unknown") return "swap-order-unknown";
@@ -92,6 +98,8 @@ export function offsetReviewFingerprint(
   review: OffsetReview | undefined,
 ): string {
   if (review === undefined) return "?";
+  if (review.kind === "loan-ended")
+    return ["ended", review.loanId, review.live.status].join(":");
   if (review.kind !== "offset") return "other";
   return [
     review.loanId,
@@ -121,6 +129,13 @@ export async function readOffsetReviewLive(
     }>,
     readLoanLive(client, diamondAddress, BigInt(loanId)),
   ]);
+  // An ended loan settles the verdict before anything else is read: the
+  // completion refuses it whatever the offer's shape, and once the borrower
+  // has claimed, the borrower NFT the shape check reads no longer exists, so
+  // reading on would turn a known answer into a failed read.
+  if (live.status !== LOAN_STATUS_ACTIVE) {
+    return { kind: "loan-ended", loanId, live };
+  }
   // The offset path creates the offer AS the earlier loan's borrower-NFT
   // holder, and that NFT is locked until the offset completes or is
   // cancelled, so the two must agree. Anything else is not a shape this

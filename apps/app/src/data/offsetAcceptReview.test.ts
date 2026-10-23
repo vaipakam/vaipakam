@@ -70,7 +70,7 @@ const noCommit = () =>
 interface Setup {
   loan?: Record<string, unknown>;
   offer?: Record<string, unknown>;
-  holder?: `0x${string}`;
+  holder?: `0x${string}` | "burned";
   allowance?: bigint;
   balance?: bigint;
   intent?: "none" | "live" | "fail";
@@ -100,6 +100,8 @@ function client(setup: Setup, asked: string[] = []): PublicClient {
         case "sellerForfeitureWindow":
           return [START, 0n];
         case "ownerOf":
+          asked.push("ownerOf");
+          if (setup.holder === "burned") throw new Error("ERC721NonexistentToken");
           return setup.holder ?? POSTER;
         case "allowance":
           asked.push(`allowance:${String(args?.[0])}`);
@@ -128,7 +130,11 @@ describe("readOffsetReviewLive", () => {
     expect(r.kind).toBe("offset");
     expect(offsetReviewBlock(r)).toBeNull();
     // The close-out pulls from the POSTER, so that is whose funding is read.
-    expect(asked).toEqual([`allowance:${POSTER}`, `balanceOf:${POSTER}`]);
+    expect(asked).toEqual([
+      "ownerOf",
+      `allowance:${POSTER}`,
+      `balanceOf:${POSTER}`,
+    ]);
   });
 
   it("is not an offset when the offer is not a lender offer", async () => {
@@ -144,6 +150,17 @@ describe("readOffsetReviewLive", () => {
   it("blocks when the earlier loan is no longer active", async () => {
     const r = await read({ loan: { status: 1 } });
     expect(offsetReviewBlock(r)).toBe("loan-not-active");
+  });
+
+  it("decides an ended loan from its status alone, even once the borrower NFT is burned", async () => {
+    // Codex #2675 r1 — a borrower who claimed before cancelling the offset
+    // has burned the NFT the shape check reads; the known answer must not
+    // turn into a failed read.
+    const asked: string[] = [];
+    const r = await read({ loan: { status: 1 }, holder: "burned" }, asked);
+    expect(r.kind).toBe("loan-ended");
+    expect(offsetReviewBlock(r)).toBe("loan-not-active");
+    expect(asked).toEqual([]);
   });
 
   it("measures the term from the loan snapshot’s own block time", async () => {

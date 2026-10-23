@@ -75,6 +75,7 @@ import {
   saleBuyerRemainingInterest,
   type LoanLive,
 } from '../contracts/loanLive';
+import { linkedOfferKind } from '../contracts/linkedOfferKind';
 import { saleSettlementNow } from '../data/loanSalePending';
 import {
   offsetReviewBlock,
@@ -329,6 +330,15 @@ export function OfferFlow({ side }: { side: Side }) {
   const recheckCeiling = useAcceptorCeilingRecheck();
   const fees = useProtocolFees();
   const queryClient = useQueryClient();
+  // Codex #2675 r1 — the submit-time recheck of a live review (refinance,
+  // sale, offset) IS a refetch of that review's own query. A fresh answer
+  // replaces the cached one, so the review re-renders it and the consent
+  // fingerprint voids an earlier tick; a failed read puts the review into
+  // its unread state (check-failed banner, retry, not signable) instead of
+  // leaving the earlier clear answer on screen after the app has just
+  // failed to substantiate it.
+  const recheckReview = <T,>(queryKey: readonly unknown[], read: () => Promise<T>) =>
+    queryClient.fetchQuery({ queryKey, queryFn: read, staleTime: 0 });
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [step, setStep] = useState<FlowStep>('details');
@@ -527,13 +537,16 @@ export function OfferFlow({ side }: { side: Side }) {
   const linkedLoanKnown = mode !== 'accept' || linkedLoan.data !== undefined;
   const acceptIsLinked =
     mode === 'accept' && linkedLoan.data !== undefined && linkedLoan.data !== '0';
-  // Which kind of link, from the offer's own side of the book (#2523). A
-  // sale vehicle is a BORROWER-type offer (the taker buys the lender side);
-  // an offset vehicle is a LENDER-type offer (the taker borrows, and the
-  // same transaction closes the poster's earlier loan). Each review then
+  // Which kind of link, from the offer's own side of the book (#2523) — the
+  // one rule the terms signer reads too (`linkedOfferKind`). A sale vehicle
+  // is a BORROWER-type offer (the taker buys the lender side); an offset
+  // vehicle is a LENDER-type offer (the taker borrows, and the same
+  // transaction closes the poster's earlier loan). Each review then
   // confirms its own shape from the chain and blocks anything else.
-  const acceptIsLoanSale = acceptIsLinked && selected?.offerType === 1;
-  const acceptIsOffset = acceptIsLinked && selected?.offerType === 0;
+  const linkedKind =
+    acceptIsLinked && selected ? linkedOfferKind(selected.offerType) : null;
+  const acceptIsLoanSale = linkedKind === 'sale';
+  const acceptIsOffset = linkedKind === 'offset';
 
   // #2421 — a borrow request tagged with a running loan is a REFINANCE:
   // the accept also pays off and closes that loan, and its collateral is
@@ -586,22 +599,23 @@ export function OfferFlow({ side }: { side: Side }) {
   // #986 P3 — the honest buy-a-running-loan review. A sale-vehicle
   // offer's stored fields misdescribe the deal (zero collateral, a
   // term that already partly elapsed), so the review reads the LINKED
-  // LOAN live and describes the position actually being bought. A
-  // sale link is discriminated from a preclose-offset link by the
-  // creator (sale vehicles are created by the loan's lender); offsets
-  // and unknown shapes keep the #951 block. Also checks that the
+  // LOAN live and describes the position actually being bought. It
+  // runs only for a sale link (`linkedOfferKind`) and confirms the
+  // listing's shape (created by the loan's lender); anything else keeps
+  // the #951 block. Also checks that the
   // seller's settlement fits inside the buyer's payment: the completion
   // deducts it from that payment (net settlement, #1659) and refuses the
   // whole acceptance when it is larger — a doomed buy must be blocked
   // here with a plain reason instead.
+  const saleReviewKey = [
+    'offerSaleReview',
+    readChain.chainId,
+    selected?.offerId,
+    linkedLoan.data,
+    address?.toLowerCase(),
+  ];
   const saleReview = useQuery({
-    queryKey: [
-      'offerSaleReview',
-      readChain.chainId,
-      selected?.offerId,
-      linkedLoan.data,
-      address?.toLowerCase(),
-    ],
+    queryKey: saleReviewKey,
     enabled:
       acceptIsLoanSale && Boolean(readClient) && Boolean(selected),
     staleTime: 30_000,
@@ -615,7 +629,10 @@ export function OfferFlow({ side }: { side: Side }) {
         address,
       ),
   });
-  const saleData = saleReview.data;
+  // A failed refresh keeps the previous answer in `data`; it no longer
+  // describes the chain, so it counts as unread (the same rule as the offset
+  // and refinance reviews — Codex #2675 r1).
+  const saleData = saleReview.isError ? undefined : saleReview.data;
   const saleLoanLive: LoanLive | null =
     saleData?.kind === 'sale' ? saleData.live : null;
   // The sale review is signable only when every gate is POSITIVELY
@@ -654,13 +671,14 @@ export function OfferFlow({ side }: { side: Side }) {
   // adds is that the same transaction closes the poster's earlier loan, and
   // every condition that close-out needs, read live. Signable only when all
   // of them are positively clear (`offsetReviewBlock`).
+  const offsetReviewKey = [
+    'offerOffsetReview',
+    readChain.chainId,
+    selected?.offerId,
+    linkedLoan.data,
+  ];
   const offsetReview = useQuery({
-    queryKey: [
-      'offerOffsetReview',
-      readChain.chainId,
-      selected?.offerId,
-      linkedLoan.data,
-    ],
+    queryKey: offsetReviewKey,
     enabled: acceptIsOffset && Boolean(readClient) && Boolean(selected),
     staleTime: 30_000,
     refetchInterval: idleAware(60_000),
@@ -1946,13 +1964,14 @@ export function OfferFlow({ side }: { side: Side }) {
     // refuse to sign against a review that no longer matches, putting the
     // fresh answer in place so the review shows why.
     if (refinanceRead) {
-      const liveRefinance = await readRefinanceRequestLive(
-        publicClient,
-        walletChain.diamondAddress,
-        BigInt(selected.offerId),
+      const liveRefinance = await recheckReview(refinanceKey, () =>
+        readRefinanceRequestLive(
+          publicClient,
+          walletChain.diamondAddress,
+          BigInt(selected.offerId),
+        ),
       );
       if (!sameRefinanceReview(refinanceRead, liveRefinance)) {
-        queryClient.setQueryData(refinanceKey, liveRefinance);
         throw new Error(
           liveRefinance.kind === 'gone' ? copy.match.offerGone : copy.match.termsChanged,
         );
@@ -1985,12 +2004,14 @@ export function OfferFlow({ side }: { side: Side }) {
         // larger than the buyer's payment. Re-run the same reader fresh so
         // a doomed buy fails here, before any signature or buyer approval
         // can mine.
-        const fresh = await readSaleReviewLive(
-          publicClient,
-          walletChain.diamondAddress,
-          selected,
-          linkedLoan.data!,
-          address,
+        const fresh = await recheckReview(saleReviewKey, () =>
+          readSaleReviewLive(
+            publicClient,
+            walletChain.diamondAddress,
+            selected,
+            linkedLoan.data!,
+            address,
+          ),
         );
         if (fresh.kind !== 'sale' || fresh.live.status !== 0) {
           throw new Error(copy.match.saleLoanNotActive);
@@ -2014,23 +2035,19 @@ export function OfferFlow({ side }: { side: Side }) {
         if (!offsetReviewReady || offsetData === undefined) {
           throw new Error(copy.match.termsChanged);
         }
-        const fresh = await readOffsetReviewLive(
-          publicClient,
-          walletChain.diamondAddress,
-          selected.offerId,
-          linkedLoan.data!,
+        const fresh = await recheckReview(offsetReviewKey, () =>
+          readOffsetReviewLive(
+            publicClient,
+            walletChain.diamondAddress,
+            selected.offerId,
+            linkedLoan.data!,
+          ),
         );
         const block = offsetReviewBlock(fresh);
         if (
           block !== null ||
           offsetReviewFingerprint(fresh) !== offsetReviewFingerprint(offsetData)
         ) {
-          // Push the fresh answer so the review re-renders it and the
-          // assertion epoch voids the stale consent.
-          queryClient.setQueryData(
-            ['offerOffsetReview', readChain.chainId, selected.offerId, linkedLoan.data],
-            fresh,
-          );
           throw new Error(
             block !== null ? offsetBlockMessage(block, linkedLoan.data!) : copy.match.termsChanged,
           );
@@ -3214,8 +3231,9 @@ export function OfferFlow({ side }: { side: Side }) {
 // ONE definition for everything the buy-a-running-loan review depends
 // on — the review query AND the submit-time recheck call this, so the
 // blocked-state reasons and the pre-signature guard can never drift.
-// Reads the linked loan live, discriminates sale-vs-offset by creator
-// (sale vehicles are created by the loan's lender), and checks the
+// Reads the linked loan live, confirms the sale shape (the listing is
+// created by the loan's lender; which vehicle it is was already decided by
+// `linkedOfferKind`), and checks the
 // seller's settlement against the buyer's payment: the completion in the
 // buyer's transaction deducts it from that payment (net settlement, #1659)
 // and refuses with `RateShortfallTooHigh` — surfaced as an opaque

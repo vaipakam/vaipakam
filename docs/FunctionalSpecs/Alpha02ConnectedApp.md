@@ -4247,7 +4247,14 @@ Its intended behaviour, as the test oracle for this surface:
   are told the same thing. Each failed condition is named in plain
   words, an unanswered check blocks and offers a retry, and submission
   re-reads every condition and aborts before any signature or approval
-  if one has failed or changed since the review. A linked offer whose
+  if one has failed or changed since the review. Which vehicle a
+  linked offer is follows the side of the book it sits on (a position
+  sale is a borrowing offer, an offset a lending offer), never who
+  created it, because one wallet may hold both sides of a loan. For
+  every acceptance review that is re-read at submission (refinance,
+  position sale, offset), a re-read or background refresh that fails
+  leaves the review unknown, with its retry and nothing signable,
+  never showing the earlier clear answer. A linked offer whose
   kind cannot be positively identified remains not acceptable: the
   review flags the link, names the loan, and blocks signing entirely.
   Signing always waits until the link and kind checks
