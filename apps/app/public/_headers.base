@@ -89,9 +89,11 @@
 # <meta name="robots"> only exists after hydration). Deliberately NOT
 # robots.txt-Disallowed: a Disallow blocks crawling but not reference-
 # only indexing of the URL — noindex requires the fetch to be seen.
-# Every rule has a `/*` sibling: the router also renders trailing-
-# slash and deeper variants, and _headers matching is exact
-# (Codex #1309 r7). Keep in sync with SeoMeta.tsx + generate-seo.mjs.
+# Every rule has a `/*` sibling: the router also renders deeper
+# variants, and _headers matching is exact (Codex #1309 r7). (The
+# trailing-slash form never reaches these rules now: `_redirects`
+# answers it with a 301 to the slashless URL, #2079.) Keep in sync with
+# SeoMeta.tsx + generate-seo.mjs.
 
 /positions
   X-Robots-Tag: noindex
@@ -217,14 +219,14 @@
 # do. Deleting five more rules would not fix it either, for the same
 # reason.
 #
-# The actual fix is a REDIRECT, not a header — strip the trailing slash
-# at the edge so only one form is ever served. That is a global routing
-# change to the deployed Worker (a `_redirects` rule, or
-# `html_handling: drop-trailing-slash`, which issues a 307 rather than
-# the 301 canonicalization wants), and it cannot be verified before it
-# ships. It is tracked as its own change rather than folded in here.
-# Until then the consolidation signal is the canonical `SeoMeta` emits,
-# which points at the slashless URL and is what a crawler follows.
+# FIXED BY A REDIRECT, NOT A HEADER (#2079). `public/_redirects` answers
+# every single-segment trailing-slash form with a 301 to the slashless
+# URL, and redirects run before headers, so `/vpfi/` is never served as
+# a page any more and the noindex these rules attach to it has nothing
+# left to contradict. The rules here are unchanged: they still cover the
+# deeper soft-404 paths they were written for. The measurements and the
+# reason `html_handling: drop-trailing-slash` would not have worked are
+# recorded in that file.
 
 # SPA aliases (App.tsx Navigate routes). The redirect only happens
 # after JS runs, so a non-executing crawler fetching an alias gets
