@@ -2940,6 +2940,13 @@ is the borrower's own money.
   Publishing a nested public page would break that, so it is a decision
   to be taken knowingly and with the exclusion rule revisited alongside
   it — not a change that should be able to pass unremarked.
+- **Each indexable page has exactly one address.** Its form with a
+  trailing slash is not a second page: a request for it is sent,
+  permanently, to the address without the slash, keeping any query
+  string, before anything is served. So the response and the page can
+  never disagree about whether that address belongs in an index, and a
+  crawler never meets a copy of a listed page that its response headers
+  withhold.
 
 ## Privacy and Legal Posture
 
