@@ -37,11 +37,14 @@
  * wallet, and a reload-prone wallet reloads the tab as it closes. Run side
  * by side, the follow-up could reach that reload while the run was still
  * clearing — before it had kept a report — which is the interrupted,
- * unreported erasure the ordering exists to prevent. So both live here: a
- * broadcast that arrives while this tab's own run is going is left to that
- * run, which does everything the follow-up would, and a run requested while
- * a follow-up is still closing the wallet waits for it before touching
- * anything.
+ * unreported erasure the ordering exists to prevent. So both live here, as
+ * one queue: a broadcast that arrives while this tab's own run is going is
+ * carried out AFTER that run, and a run requested while a follow-up is still
+ * closing the wallet waits for it before touching anything. A broadcast is
+ * never dropped (Codex #2670 r5): the run's plan was fixed at its own request
+ * and its sweep may already have passed, so a wallet connected or data
+ * written since is the later request's to remove — against the connections
+ * this tab held when THAT request arrived.
  *
  * ONE RELOAD BARRIER, WHOEVER ASKED (Codex #2670 r3–r4). The teardown
  * resolving is not the moment a reload stops being possible, for the reason
@@ -154,12 +157,27 @@ export interface ErasureDeps<C> {
   readonly resetPreferences: () => void;
 }
 
+/** This tab's own run while it is going, settled either way — what a
+ *  follow-up heard meanwhile waits for. */
+let currentRun: Promise<void> | undefined;
+
 /**
  * Run the erasure, unless one is already running in this tab — the busy
  * guard lives here, not in the page, so a remount cannot drop it.
  */
-export async function runErasure<C>(deps: ErasureDeps<C>): Promise<void> {
-  if (state.phase === 'running') return;
+export function runErasure<C>(deps: ErasureDeps<C>): Promise<void> {
+  if (state.phase === 'running') return Promise.resolve();
+  const run = performErasure(deps);
+  const settled: Promise<void> = run
+    .catch(() => {})
+    .finally(() => {
+      if (currentRun === settled) currentRun = undefined;
+    });
+  currentRun = settled;
+  return run;
+}
+
+async function performErasure<C>(deps: ErasureDeps<C>): Promise<void> {
   setState({ phase: 'running' });
 
   // The mark every late cleanup compares against, taken at the request so
@@ -283,28 +301,36 @@ let peerFollowUp: Promise<void> | undefined;
  * connections — and nothing shared, which the originating tab has cleared
  * and is the only party to report on.
  *
- * Under the same lock as `runErasure` (see the header): while this tab's own
- * run is going it does nothing, because that run covers all of it.
+ * In the same queue as `runErasure` (see the header): heard while this tab's
+ * own run is going, it is carried out once that run has finished.
  */
 export function followPeerErasure<C>(deps: PeerErasureDeps<C>): void {
-  if (state.phase === 'running') return;
-  erasePerTabData();
-  deps.followPreferences();
-  deps.followLanguage();
-  // ...and tell this tab's mounted readers to re-read, exactly as the
-  // erasing tab does for its own.
-  bumpEraseEpoch();
-  // This tab's own connections, LAST: a reload-prone one reloads this tab
-  // (#2035), which is harmless once everything above has run. PLANNED NOW,
-  // so the connections it closes are the ones this tab held when the request
-  // arrived (Codex #2670 r4) — only the closing waits its turn behind an
-  // earlier follow-up, and a wallet connected in that wait is left alone.
-  // Best effort and unacknowledged: there is nobody to report to, which is
-  // why the originating page says other tabs were ASKED.
+  // This tab's own connections are PLANNED NOW, so the ones it closes are
+  // those this tab held when the request arrived (Codex #2670 r4) — only the
+  // work waits its turn, and a wallet connected in that wait is left alone.
   const plan = planWalletTeardown(deps.wallet);
-  const next = (peerFollowUp ?? Promise.resolve()).then(() =>
-    closeConnections(plan),
-  );
+  const followUp = () => {
+    erasePerTabData();
+    deps.followPreferences();
+    deps.followLanguage();
+    // ...and tell this tab's mounted readers to re-read, exactly as the
+    // erasing tab does for its own.
+    bumpEraseEpoch();
+  };
+  // Behind this tab's own run, when one is going: its sweep and counts are
+  // under way, and a per-tab sweep run beside them would make its report
+  // understate what it removed — the same race #2037 took out of the
+  // shared stores.
+  const run = currentRun;
+  if (!run) followUp();
+  // The connections LAST: a reload-prone one reloads this tab (#2035), which
+  // is harmless once everything above has run. Best effort and
+  // unacknowledged: there is nobody to report to, which is why the
+  // originating page says other tabs were ASKED.
+  const next = Promise.all([run, peerFollowUp]).then(() => {
+    if (run) followUp();
+    return closeConnections(plan);
+  });
   peerFollowUp = next;
   void next.finally(() => {
     if (peerFollowUp === next) peerFollowUp = undefined;
@@ -523,6 +549,7 @@ export function parseKeptReport(raw: string, now: number = Date.now()): ErasureR
 export function resetErasureRunForTests(): void {
   dropKeptReport();
   peerFollowUp = undefined;
+  currentRun = undefined;
   reloadQuiet = Promise.resolve();
   state = IDLE;
   listeners.clear();

@@ -3032,8 +3032,10 @@ is the borrower's own money.
   the same time.** Both close this tab's wallet, and a wallet that reloads
   the page as it closes would cut the tab's own erasure off mid-clear,
   before it had kept a report. A request from another tab that arrives while
-  this tab's own erasure is running is left to that erasure, which does
-  everything the follow-up would. An erasure requested while a follow-up is
+  this tab's own erasure is running is carried out after it — never dropped,
+  since a wallet connected or data written after this tab's own request is
+  the later request's to remove, against what this tab held when that
+  request arrived. An erasure requested while a follow-up is
   still closing the wallet waits for it before doing anything, so a reload
   in that time interrupts nothing and the page simply offers the erasure
   again. **A reload the tab may still owe blocks the next erasure, whoever

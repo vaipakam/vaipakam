@@ -398,8 +398,8 @@ describe('a report kept across a wallet-forced reload (#2035)', () => {
   });
 });
 
-describe("one lock for this tab's run and its follow-up of another tab (Codex #2670 r2 P1)", () => {
-  it("leaves a broadcast heard during this tab's own run to that run", async () => {
+describe("one queue for this tab's run and its follow-ups of other tabs (Codex #2670 r2, r5)", () => {
+  it("carries out a broadcast heard during this tab's own run after it, never beside it (Codex #2670 r5)", async () => {
     let release: () => void = () => {};
     const own = connectedPort(
       'metaMask',
@@ -432,6 +432,11 @@ describe("one lock for this tab's run and its follow-up of another tab (Codex #2
     release();
     await running;
     expect(getErasureRun().phase).toBe('done');
+    // Not dropped: carried out once the run is done, against what this tab
+    // held when the request arrived.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(followed).toBe(2);
+    expect(peerWallet.closed).toEqual(['coinbaseWalletSDK']);
   });
 
   it("waits for a follow-up until its reload can no longer come, before starting (Codex #2670 r3)", async () => {
