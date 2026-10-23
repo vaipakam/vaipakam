@@ -117,6 +117,13 @@ library LibLaunchReadiness {
         ///      source), so its identity is the reviewers' to establish; the
         ///      check refuses any other configured WETH.
         address weth;
+        /// @dev The Diamond's VPFI is a burn/mint MIRROR (every chain but the
+        ///      canonical one). A mirror token carries its own mint and burn
+        ///      authority (`tokenPool()`), separate from the registry's
+        ///      route, so the check also requires that slot to name the
+        ///      routed pool and the token to be governed by the Diamond's
+        ///      owner (Codex #2686 r12).
+        bool mirrorToken;
     }
 
     /// @notice One declared CCIP lane: the remote chain and the peer the
@@ -135,18 +142,17 @@ library LibLaunchReadiness {
         address remoteToken;
     }
 
-    /// @notice The Diamond's facet table as the launch binds it: the hash of
-    ///         its loupe's `facets()` answer, every facet with its selectors
-    ///         in the loupe's order. Any `diamondCut` changes it, so a launch
-    ///         decided against one table cannot execute against another
-    ///         (Codex #2686 r11). `readable` is false when the loupe does not
-    ///         answer.
-    /// @dev Not gas-bounded like the third-party probes: the loupe is the
-    ///      Diamond's own facet, and the whole table has to be read.
-    function facetTable(address diamond) internal view returns (bool readable, bytes32 table) {
-        (bool ok, bytes memory ret) = diamond.staticcall(abi.encodeWithSignature("facets()"));
-        if (!ok || ret.length == 0) return (false, bytes32(0));
-        return (true, keccak256(ret));
+    /// @notice How many calls `timelock` has executed
+    ///         (`VaipakamTimelock.executedCalls`), as the launch binds it: a
+    ///         launch proposed at one count executes only while no other
+    ///         Timelock call has completed (Codex #2686 r12). `readable` is
+    ///         false when the account does not answer with one word that
+    ///         fits a uint64.
+    function timelockCalls(address timelock) internal view returns (bool readable, uint64 calls) {
+        (bool ok, bytes memory ret) =
+            timelock.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("executedCalls()"));
+        if (!ok || ret.length != 32 || uint256(bytes32(ret)) > type(uint64).max) return (false, 0);
+        return (true, uint64(uint256(bytes32(ret))));
     }
 
     /// @notice Reads every launch requirement off the live chain.
@@ -455,6 +461,21 @@ library LibLaunchReadiness {
             c.detail = "an authority of the VPFI route (registry administrator, pool owner or rate admin, governor owner or pool) is unreadable";
             return c;
         }
+        address mintAuthority;
+        address tokenOwner;
+        address tokenPending;
+        if (declared.mirrorToken) {
+            bool mintRead;
+            bool tokenOwnerRead;
+            bool tokenPendingRead;
+            (mintRead, mintAuthority) = _readAddress(route.token, abi.encodeWithSignature("tokenPool()"));
+            (tokenOwnerRead, tokenOwner) = _readAddress(route.token, abi.encodeWithSignature("owner()"));
+            (tokenPendingRead, tokenPending) = _readAddress(route.token, abi.encodeWithSignature("pendingOwner()"));
+            if (!mintRead || !tokenOwnerRead || !tokenPendingRead) {
+                c.detail = "the mirror VPFI token's mint authority (tokenPool) or its owner is unreadable";
+                return c;
+            }
+        }
         c.checkable = true;
         if (address(uint160(administrator)) != governance || pendingAdministrator != 0) {
             c.detail = "the registry's VPFI administrator is not the Diamond's owner, or a transfer of it is pending";
@@ -464,9 +485,15 @@ library LibLaunchReadiness {
             c.detail = "the VPFI pool's rate-limit admin is not the declared rate governor, so its limits could be changed outside the governor's bounds";
         } else if (govOwner != governance || govPending != address(0) || govPool != route.pool) {
             c.detail = "the rate governor is not owned by the Diamond's owner, has an ownership transfer pending, or administers another pool";
+        } else if (declared.mirrorToken && mintAuthority != route.pool) {
+            c.detail = "the mirror VPFI token's mint and burn authority (tokenPool) is not the routed pool: the route cannot deliver, and whoever it names can mint";
+        } else if (declared.mirrorToken && (tokenOwner != governance || tokenPending != address(0))) {
+            c.detail = "the mirror VPFI token is not owned by the Diamond's owner, or a transfer of it is pending, so its mint authority could be re-pointed";
         } else {
             c.met = true;
-            c.detail = "the TokenAdminRegistry routes VPFI through the declared pool, and the registry administrator, the pool owner and the rate governor's owner are all the Diamond's owner (a CCIP pool's pending owner is private and not read here)";
+            c.detail = declared.mirrorToken
+                ? "the TokenAdminRegistry routes VPFI through the declared pool, the mirror token's mint authority is that pool, and the registry administrator, the pool owner, the rate governor's owner and the token's owner are all the Diamond's owner (a CCIP pool's pending owner is private: the handover gate reads it from events, and the launch refuses any Timelock call after its proposal)"
+                : "the TokenAdminRegistry routes VPFI through the declared pool, and the registry administrator, the pool owner and the rate governor's owner are all the Diamond's owner (a CCIP pool's pending owner is private: the handover gate reads it from events, and the launch refuses any Timelock call after its proposal)";
         }
     }
 

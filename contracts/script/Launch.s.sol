@@ -462,13 +462,14 @@ contract Launch is Script {
                 "Launch: no role epoch from the handover gate (HANDOVER_ROLE_EPOCH) - run the handover-gate phase first; the deploy wrapper passes the epoch it proved";
             return d;
         }
-        (bool tableRead, bytes32 table) = LibLaunchReadiness.facetTable(diamond);
-        if (!tableRead) {
-            d.reason = "Launch: the Diamond's loupe does not answer facets() - the launch cannot bind the code it was decided against";
+        (bool callsRead, uint64 calls) = LibLaunchReadiness.timelockCalls(timelock);
+        if (!callsRead) {
+            d.reason =
+                "Launch: the Timelock does not count its executed calls (executedCalls) - it predates the launch binding; deploy a current VaipakamTimelock";
             return d;
         }
         d.handover =
-            ILaunchGate.Handover({deployKey: admin, owner: timelock, roleEpoch: liveRoles, facetTable: table});
+            ILaunchGate.Handover({deployKey: admin, owner: timelock, roleEpoch: liveRoles, timelockCalls: calls});
         d.roleEpochProven = proven;
         if (!LaunchGateDeployment.isDeployed()) {
             d.reason =
@@ -621,6 +622,7 @@ contract Launch is Script {
         try ILaunchReadableDiamond(diamond).getWethContract() returns (address w) {
             d.weth = w;
         } catch {}
+        d.mirrorToken = !Deployments.isCanonicalVpfiChainId(block.chainid);
     }
 
     /// @dev How a launch record names its gate: nothing for a plain unpause,
@@ -704,6 +706,11 @@ contract Launch is Script {
             console.log("          remote pool, the only one accepted (that chain's vpfiTokenPool):", declared.lanes[i].remotePool);
             console.log("          remote token (that chain's vpfiToken or vpfiMirror):", declared.lanes[i].remoteToken);
         }
+        console.log(
+            declared.mirrorToken
+                ? "      VPFI kind: mirror - its tokenPool (mint authority) must be the routed pool"
+                : "      VPFI kind: canonical (lock/release)"
+        );
         console.log("      WETH:", declared.weth);
         console.log("        verify it against the chain's official bridge registry: the bridged WETH9,");
         console.log("        never the wrapped native token (OracleAdminFacet.setWethContract policy)");
@@ -721,9 +728,9 @@ contract Launch is Script {
                 ? "        revoke or renounce before execution makes the launch revert"
                 : "        a launch on production refuses without that proof"
         );
-        console.log("      facet table (hash of the loupe's facets(), read when this proposal was printed):");
-        console.logBytes32(d.handover.facetTable);
-        console.log("        any diamondCut before execution makes the launch revert; propose again then");
+        console.log("      Timelock calls executed so far:", uint256(d.handover.timelockCalls));
+        console.log("        the launch must be the Timelock's next call: if any other queued operation");
+        console.log("        executes first, the launch reverts - run those first, then propose again");
         console.log("  1. The Governance Safe calls the Timelock with:");
         console.log("     to:  ", timelock);
         console.logBytes(

@@ -23,8 +23,8 @@ import {ILaunchGate} from "../interfaces/ILaunchGate.sol";
  *          and the WETH, VPFI pool, rate governor and lanes (each with its
  *          remote pool and token) the chain must match, and `handover`
  *          ({ILaunchGate.Handover}) is the deploy key, the Diamond owner, the
- *          role epoch the handover gate proved and the facet table the
- *          launch was decided against — all in the calldata, so the Safe
+ *          role epoch the handover gate proved and the Timelock's call count
+ *          when the launch was proposed — all in the calldata, so the Safe
  *          reviews exactly what is enforced;
  *        - the Diamond makes the call itself, refuses one that is not
  *          `assertReady` for itself, unpauses only when it returns and only
@@ -67,14 +67,18 @@ contract LaunchGate is ILaunchGate {
     ///         sets the Safe approved are no longer known to hold.
     error RoleEpochMoved(uint64 expected, uint64 live);
 
-    /// @notice The Diamond's facet table is not the one the launch was
-    ///         decided against (Codex #2686 r11 P1): a `diamondCut` landed
-    ///         during the delay, so every check above read code the decision
-    ///         never saw.
-    error FacetTableMoved(bytes32 expected, bytes32 live);
+    /// @notice The Timelock executed another call after the launch was
+    ///         proposed (Codex #2686 r11, r12): some governance action landed
+    ///         during the delay (a facet cut, a pool ownership transfer, a
+    ///         rate-governor upgrade, a mirror token's pool change, anything
+    ///         the Timelock may do), so the launch would execute against state
+    ///         the decision never saw.
+    error TimelockActedDuringDelay(uint64 expected, uint64 live);
 
-    /// @notice The Diamond's loupe did not answer `facets()`.
-    error FacetTableUnreadable();
+    /// @notice The Diamond's owner does not count its executed calls
+    ///         (`executedCalls()`), so whether governance acted during the
+    ///         delay cannot be known.
+    error TimelockCallsUnreadable(address owner);
 
     /// @notice Every launch requirement and what the chain says about it now.
     function checks(address diamond, LibLaunchReadiness.Declared calldata declared)
@@ -91,8 +95,10 @@ contract LaunchGate is ILaunchGate {
     ///         `handover.owner`, {DeployKeyHoldsRole} while the deploy key
     ///         holds any Diamond role (`LibAccessControl.knownRoles()`), or
     ///         {RoleEpochMoved} unless the Diamond's role epoch is still
-    ///         `handover.roleEpoch`, or {FacetTableMoved} unless its facet
-    ///         table is still `handover.facetTable`; returns otherwise.
+    ///         `handover.roleEpoch`, or {TimelockActedDuringDelay} unless the
+    ///         Timelock has executed no call since the proposal (the launch
+    ///         call itself is still running, so it is not yet counted);
+    ///         returns otherwise.
     /// @dev The role epoch stands for every holder of every Diamond role:
     ///      they are not enumerable on-chain, so the gate cannot re-read
     ///      them, but it can tell that not one has changed since the proof.
@@ -101,13 +107,19 @@ contract LaunchGate is ILaunchGate {
     ///      the delay: `updateDelay` is the Timelock's own call and refuses
     ///      anything below its immutable floor.
     ///
-    ///      Together these bind the launch to every piece of Diamond state
-    ///      governance can change: the configuration (the readiness checks
-    ///      themselves), the owner, the role table (the role epoch), the
-    ///      code (the facet table) and the pause (the epoch `launch` checks).
-    ///      The facet table is checked because every check reads through the
-    ///      Diamond's facets: a facet replaced during the delay could answer
-    ///      a getter from state the protocol's own code never reads.
+    ///      The Timelock's call count is the root of the rest. Everything the
+    ///      launch depends on is governed by the Timelock: the Diamond (its
+    ///      configuration, roles and facets), and, as the readiness checks
+    ///      require, the VPFI pool, its rate governor, the registry's VPFI
+    ///      administration and the mirror token. Not every effect of a
+    ///      governance call is readable on-chain (a CCIP pool's pending
+    ///      owner is private, an upgraded governor keeps its old getters'
+    ///      answers), so instead of re-reading each one the launch requires
+    ///      that the Timelock executed nothing since the proposal. What can
+    ///      change WITHOUT the Timelock is bound separately: the pause
+    ///      (Guardian, watcher) by the epoch `launch` checks, and the role
+    ///      table (a holder renouncing, the emergency revoker) by the role
+    ///      epoch.
     function assertReady(
         address diamond,
         LibLaunchReadiness.Declared calldata declared,
@@ -126,8 +138,8 @@ contract LaunchGate is ILaunchGate {
         if (held) revert DeployKeyHoldsRole(handover.deployKey, role);
         uint64 liveEpoch = ILaunchReadableDiamond(diamond).roleEpoch();
         if (liveEpoch != handover.roleEpoch) revert RoleEpochMoved(handover.roleEpoch, liveEpoch);
-        (bool readable, bytes32 liveTable) = LibLaunchReadiness.facetTable(diamond);
-        if (!readable) revert FacetTableUnreadable();
-        if (liveTable != handover.facetTable) revert FacetTableMoved(handover.facetTable, liveTable);
+        (bool readable, uint64 liveCalls) = LibLaunchReadiness.timelockCalls(liveOwner);
+        if (!readable) revert TimelockCallsUnreadable(liveOwner);
+        if (liveCalls != handover.timelockCalls) revert TimelockActedDuringDelay(handover.timelockCalls, liveCalls);
     }
 }

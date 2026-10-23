@@ -619,7 +619,10 @@ even for the gap between the deploy and the handover.
      messages go: a lane whose remote pool was removed fails every inbound
      transfer, and one pointing at the wrong token sends the wrong asset.
      The peers come from each remote chain's artifact, through the same
-     helper the ccip-wire phase wires them with.
+     helper the ccip-wire phase wires them with. On a mirror chain the VPFI
+     token's own mint and burn authority (`tokenPool()`) must be that same
+     routed pool, and the token must be owned by the Diamond's owner with no
+     transfer pending: whoever that slot names can mint mirror VPFI.
 
    The launch checks the chain against these DECLARED values rather than
    against itself: a check that only read the configuration back would
@@ -641,8 +644,8 @@ even for the gap between the deploy and the handover.
    Safe proposes it. `declared` carries the registry, the VPFI pool, its
    rate governor, each lane with its remote pool and token, and the WETH;
    `handover` carries the admin key, the Diamond owner (the Timelock), the
-   proven role epoch and the facet table (a hash of the Diamond's
-   `facets()` when the proposal was printed).
+   proven role epoch and the number of calls the Timelock had executed
+   when the proposal was printed.
    The step prints each one. Before signing, check that the gate address
    printed is the one the launch phase reports, that the registry is the
    chain's CCIP `TokenAdminRegistry`, that the lanes are the full
@@ -659,7 +662,8 @@ even for the gap between the deploy and the handover.
    Diamond itself calls the gate, which reads all six requirements again
    inside that transaction, then checks that the Diamond's owner is still
    the one signed, that the admin key still holds no Diamond role, that
-   the role epoch has not moved, and that the facet table has not moved. The Diamond unpauses only when the gate
+   the role epoch has not moved, and that the Timelock has executed no other
+   call since the proposal. The Diamond unpauses only when the gate
    returns, and refuses a gate call that is not `assertReady` for itself.
    If a requirement stopped holding during the delay (an adapter was
    removed, the oracle was cleared), the execution reverts with
@@ -668,17 +672,26 @@ even for the gap between the deploy and the handover.
    with `DeployKeyHoldsRole(key, role)`; if any role was granted, revoked
    or renounced (for example an operation queued in the same delay that
    gives an administrator role to a new account), with
-   `RoleEpochMoved(expected, live)`; if a `diamondCut` landed (every check
-   reads through the Diamond's facets, so a replaced getter could answer
-   from state the protocol's own code never reads), with
-   `FacetTableMoved(expected, live)`. Every case leaves the Diamond paused.
+   `RoleEpochMoved(expected, live)`; if the Timelock executed any other call
+   in between, with `TimelockActedDuringDelay(expected, live)`. Every case
+   leaves the Diamond paused.
    Fix a readiness or ownership failure and execute the same operation
    again. A moved role epoch cannot come back: re-run `handover-gate` to
-   prove the new holders, then the launch phase for a fresh proposal. A
-   moved facet table needs a fresh proposal too. Together these bind the
-   launch to every piece of Diamond state governance can change: its
-   configuration (the six checks), its owner, its roles, its code and its
-   pause.
+   prove the new holders, then the launch phase for a fresh proposal.
+   **The launch must be the Timelock's next call.** Everything the launch
+   depends on is governed by the Timelock: the Diamond's configuration,
+   roles and facets, and (the checks require it) the VPFI pool, its rate
+   governor, the registry's VPFI administration and a mirror's token. Not
+   every effect of a governance call can be read back at execution (a CCIP
+   pool's pending owner is private, an upgraded rate governor keeps its old
+   getters' answers), so instead of re-reading each one, the launch refuses
+   if the Timelock completed any other call after the proposal was
+   printed, even a harmless one. Execute every other queued operation
+   first, or cancel it, then print the proposal; if one executes during the
+   delay, re-run the launch phase for a fresh proposal. What changes
+   without the Timelock is bound separately: the pause by the epoch below,
+   and the role table (a holder renouncing, the emergency revoker) by the
+   role epoch.
    The role epoch covers the Diamond's roles. The Timelock's own role set
    is not in it, because no change to that set removes the delay: the
    delay can only be changed by a Timelock operation, and never below its

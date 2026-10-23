@@ -199,6 +199,27 @@ contract LaunchMockTimelock {
     function isOperationDone(bytes32) external pure returns (bool) {
         return false;
     }
+
+    /// @dev A Timelock that has executed nothing (the launch tests drive
+    ///      the Diamond by pranking this address, never through it).
+    function executedCalls() external pure returns (uint64) {
+        return 0;
+    }
+}
+
+/// @dev A burn/mint mirror VPFI stand-in: its mint authority and its
+///      pending owner (the owner follows the Diamond's by default).
+contract LaunchMockMirrorToken is LaunchFollowsOwner {
+    address public tokenPool;
+    address public pendingOwner;
+
+    function setTokenPool(address p) external {
+        tokenPool = p;
+    }
+
+    function setPendingOwner(address p) external {
+        pendingOwner = p;
+    }
 }
 
 /// @dev Has code and implements nothing: registered as a feed, an oracle or
@@ -412,17 +433,17 @@ contract LaunchTest is Test {
         handedTo = timelock;
         provenEpoch = AccessControlFacet(diamond).roleEpoch();
         launcher.setHandoverProof(provenEpoch);
-        (, provenTable) = LibLaunchReadiness.facetTable(diamond);
+        (, handedCalls) = LibLaunchReadiness.timelockCalls(timelock);
     }
 
     /// @dev The last handover's end state, as a launch binds it. Call-free,
     ///      like `_d`.
     address internal handedTo;
     uint64 internal provenEpoch;
-    bytes32 internal provenTable;
+    uint64 internal handedCalls;
 
     function _h() internal view returns (ILaunchGate.Handover memory) {
-        return ILaunchGate.Handover({deployKey: admin, owner: handedTo, roleEpoch: provenEpoch, facetTable: provenTable});
+        return ILaunchGate.Handover({deployKey: admin, owner: handedTo, roleEpoch: provenEpoch, timelockCalls: handedCalls});
     }
 
     // ─── The deploy leaves it paused ─────────────────────────────────
@@ -819,7 +840,7 @@ contract LaunchTest is Test {
         LaunchGate gate = LaunchGate(LaunchGateDeployment.predicted());
         address registry = _registryWithLane();
         vm.expectRevert(LaunchGate.NoDeployKey.selector);
-        gate.assertReady(diamond, _d(registry), ILaunchGate.Handover(address(0), address(0), 0, bytes32(0)));
+        gate.assertReady(diamond, _d(registry), ILaunchGate.Handover(address(0), address(0), 0, 0));
     }
 
     /// @dev A launched production Diamond paused and unpaused again for an
@@ -1703,9 +1724,17 @@ contract LaunchTest is Test {
 
     // ─── Round 11 (Codex #2686): the code and the lanes' peers ──────────
 
-    /// @dev A `diamondCut` lands during the delay (the Timelock owns the
-    ///      Diamond, so another queued operation can make it): every check
-    ///      would read through code the decision never saw, so the launch
+    /// @dev Schedules and executes `payload` on `target` through the real
+    ///      Timelock, after its delay: a governance action like any other.
+    function _governs(VaipakamTimelock tl, address target, bytes memory payload, bytes32 salt) internal {
+        vm.prank(PROPOSER);
+        tl.schedule(target, 0, payload, bytes32(0), salt, 2 days);
+        vm.warp(block.timestamp + 2 days);
+        tl.execute(target, 0, payload, bytes32(0), salt);
+    }
+
+    /// @dev A `diamondCut` the Timelock executes during the delay: the
+    ///      launch would run against code its proposal never saw, so it
     ///      reverts and the Diamond stays paused.
     function test_Production_DiamondCutDuringDelayRevertsTheLaunch() public {
         (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
@@ -1713,29 +1742,137 @@ contract LaunchTest is Test {
         bytes4[] memory sel = new bytes4[](1);
         sel[0] = LaunchExtraFacet.launchTestExtra.selector;
         cut[0] = IDiamondCut.FacetCut(address(new LaunchExtraFacet()), IDiamondCut.FacetCutAction.Add, sel);
-        vm.prank(address(tl));
-        IDiamondCut(diamond).diamondCut(cut, address(0), "");
-        (, bytes32 live) = LibLaunchReadiness.facetTable(diamond);
-        assertTrue(live != provenTable, "a cut moves the facet table");
+        _governs(tl, diamond, abi.encodeCall(IDiamondCut.diamondCut, (cut, address(0), "")), bytes32("cut"));
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
             launcher.launchBatch(diamond, _d(registry), _h(), epoch);
         bytes32 salt = launcher.launchSalt(diamond);
-        vm.expectRevert(abi.encodeWithSelector(LaunchGate.FacetTableMoved.selector, provenTable, live));
+        vm.expectRevert(abi.encodeWithSelector(LaunchGate.TimelockActedDuringDelay.selector, 0, 1));
         tl.executeBatch(targets, values, payloads, bytes32(0), salt);
         assertTrue(AdminFacet(diamond).paused());
     }
 
-    /// @dev The proposal binds the facet table it was decided against.
-    function test_Production_ProposalBindsTheFacetTable() public {
+    /// @dev Even a call that changes nothing the checks read (the Timelock
+    ///      re-setting its own delay) makes the launch revert: the binding is
+    ///      to governance having done NOTHING since the proposal, because
+    ///      not every governance effect can be read back (a CCIP pool's
+    ///      pending owner, an upgraded governor's code).
+    function test_Production_AnyTimelockCallDuringDelayRevertsTheLaunch() public {
+        (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
+        _governs(tl, address(tl), abi.encodeCall(tl.updateDelay, (2 days)), bytes32("delay"));
+        (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
+            launcher.launchBatch(diamond, _d(registry), _h(), epoch);
+        bytes32 salt = launcher.launchSalt(diamond);
+        vm.expectRevert(abi.encodeWithSelector(LaunchGate.TimelockActedDuringDelay.selector, 0, 1));
+        tl.executeBatch(targets, values, payloads, bytes32(0), salt);
+        assertTrue(AdminFacet(diamond).paused());
+    }
+
+    /// @dev A proposal printed after governance has acted binds the count
+    ///      at that moment, so the launch it prints can still execute.
+    function test_Production_ProposalBindsTheTimelockCallCount() public {
         vm.chainId(8453);
         _configure();
-        address timelock = address(new LaunchMockTimelock());
-        _handOverUnpause(timelock);
-        Launch.Decision memory d = launcher.decide(diamond, _d(_registryWithLane()), timelock, admin, false);
+        address registry = _registryWithLane();
+        VaipakamTimelock tl = _realTimelock();
+        _handOverUnpause(address(tl));
+        _governs(tl, address(tl), abi.encodeCall(tl.updateDelay, (2 days)), bytes32("delay"));
+        assertEq(tl.executedCalls(), 1);
+        Launch.Decision memory d = launcher.decide(diamond, _d(registry), address(tl), admin, false);
         assertEq(uint8(d.path), uint8(Launch.Path.TimelockProposal));
-        (bool read, bytes32 table) = LibLaunchReadiness.facetTable(diamond);
-        assertTrue(read);
-        assertEq(d.handover.facetTable, table);
+        assertEq(d.handover.timelockCalls, 1);
+        handedCalls = 1;
+        _schedule(tl, registry, _epoch());
+        vm.warp(block.timestamp + 2 days);
+        _execute(tl, registry, _epoch());
+        assertFalse(AdminFacet(diamond).paused());
+    }
+
+    /// @dev The Timelock counts every call it completes, each call of a
+    ///      batch included, and a running call does not count itself.
+    function test_Timelock_CountsEveryExecutedCall() public {
+        VaipakamTimelock tl = _realTimelock();
+        address[] memory targets = new address[](2);
+        targets[0] = address(tl);
+        targets[1] = address(tl);
+        bytes[] memory payloads = new bytes[](2);
+        payloads[0] = abi.encodeCall(tl.updateDelay, (2 days));
+        payloads[1] = abi.encodeCall(tl.updateDelay, (3 days));
+        vm.prank(PROPOSER);
+        tl.scheduleBatch(targets, new uint256[](2), payloads, bytes32(0), bytes32("two"), 2 days);
+        vm.warp(block.timestamp + 2 days);
+        assertEq(tl.executedCalls(), 0);
+        tl.executeBatch(targets, new uint256[](2), payloads, bytes32(0), bytes32("two"));
+        assertEq(tl.executedCalls(), 2);
+    }
+
+    // ─── Round 12 (Codex #2686): a mirror token's mint authority ───────
+
+    /// @dev Installs a mirror VPFI at the Diamond's VPFI address, minting
+    ///      through `pool`, owned by the Diamond's owner.
+    function _mirror(address pool) internal returns (LaunchMockMirrorToken t) {
+        vm.etch(VPFI, address(new LaunchMockMirrorToken()).code);
+        t = LaunchMockMirrorToken(VPFI);
+        t.follow(diamond);
+        t.setTokenPool(pool);
+    }
+
+    function _dMirror(address registry) internal view returns (LibLaunchReadiness.Declared memory d) {
+        d = _d(registry);
+        d.mirrorToken = true;
+    }
+
+    function _expectPoolRefused(string memory state, string memory detail) internal {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchGate.LaunchNotReady.selector,
+                "VPFI routes through the declared pool, governed by the Diamond's owner",
+                state,
+                detail
+            )
+        );
+    }
+
+    function test_Gate_AcceptsAMirrorMintingThroughTheRoutedPool() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        _mirror(address(_pool(registry)));
+        _gate().assertReady(diamond, _dMirror(registry), _h());
+    }
+
+    /// @dev The mirror's mint authority names another pool: the route
+    ///      cannot deliver, and whoever it names can mint.
+    function test_Gate_RefusesAMirrorMintingThroughAnotherPool() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        _mirror(address(0xBAD));
+        _expectPoolRefused(
+            "NOT MET",
+            "the mirror VPFI token's mint and burn authority (tokenPool) is not the routed pool: the route cannot deliver, and whoever it names can mint"
+        );
+        _gate().assertReady(diamond, _dMirror(registry), _h());
+    }
+
+    function test_Gate_RefusesAMirrorWithAPendingOwner() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        _mirror(address(_pool(registry))).setPendingOwner(address(0xBAD));
+        _expectPoolRefused(
+            "NOT MET",
+            "the mirror VPFI token is not owned by the Diamond's owner, or a transfer of it is pending, so its mint authority could be re-pointed"
+        );
+        _gate().assertReady(diamond, _dMirror(registry), _h());
+    }
+
+    /// @dev A mirror whose authority cannot be read is never taken as met.
+    function test_Gate_AMirrorWithoutAMintAuthorityIsNotChecked() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        _expectPoolRefused("NOT CHECKED", "the mirror VPFI token's mint authority (tokenPool) or its owner is unreadable");
+        _gate().assertReady(diamond, _dMirror(registry), _h());
     }
 
     function _expectLaneRefused(string memory state, string memory detail) internal {

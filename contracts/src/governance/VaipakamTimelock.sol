@@ -106,6 +106,14 @@ contract VaipakamTimelock is TimelockController {
     ///         or cancelled.
     mapping(bytes32 => address) private _cancellerRemovalTarget;
 
+    /// @notice How many calls this timelock has executed, counting each call
+    ///         of a batch, from deployment on. It moves once per completed
+    ///         call and never otherwise, so a reader who recorded it can tell
+    ///         that governance has acted since — in particular the Diamond's
+    ///         launch, which must execute against exactly the state its
+    ///         proposal was decided on (#945, Codex #2686 r12).
+    uint64 private _executedCalls;
+
     /// @dev The caller tried to cancel the operation that removes its own
     ///      CANCELLER_ROLE, without holding PROPOSER_ROLE.
     error CancellerRemovalNotCancellable(bytes32 id);
@@ -232,6 +240,22 @@ contract VaipakamTimelock is TimelockController {
     ) public payable virtual override {
         super.executeBatch(targets, values, payloads, predecessor, salt);
         _removeActive(hashOperationBatch(targets, values, payloads, predecessor, salt));
+    }
+
+    /// @dev Counts the call AFTER it completes, so while a call is running
+    ///      the count still excludes it: a call can read the count and see
+    ///      exactly the calls that ran before it.
+    function _execute(address target, uint256 value, bytes calldata data) internal virtual override {
+        super._execute(target, value, data);
+        unchecked {
+            ++_executedCalls;
+        }
+    }
+
+    /// @notice How many calls this timelock has completed (see
+    ///         {_executedCalls}). While a call runs, the count excludes it.
+    function executedCalls() external view returns (uint64) {
+        return _executedCalls;
     }
 
     /// @dev The account removed when the call is
