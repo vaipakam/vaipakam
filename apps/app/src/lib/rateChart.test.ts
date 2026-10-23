@@ -9,6 +9,7 @@ import {
   SPARSE_FILLS_THRESHOLD,
   WHITESPACE_SLOT_CAP,
   chartEmptyKind,
+  bucketsStateProvenance,
   readUnplacedCount,
   fillPointsFromTape,
   isSparseTape,
@@ -27,6 +28,7 @@ function bucket(partial: Partial<RateCandleBucket> & { t: number }): RateCandleB
     close: 520,
     fills: 1,
     principalTotal: '1000000000000000000',
+    unrecordedPrincipalFills: 0,
     ...partial,
   };
 }
@@ -151,18 +153,34 @@ describe('unplaced loans (#1142 — counted, never placed under a guessed tenor)
     expect(chartEmptyKind('30d', [{}], 3)).toBe('unplaced');
   });
 
-  it('reads the count, and an absent field as none (a Worker that predates it)', () => {
-    expect(readUnplacedCount(4)).toBe(4);
-    expect(readUnplacedCount(0)).toBe(0);
-    expect(readUnplacedCount(undefined)).toBe(0);
+  it('reads the count and whether the server stopped counting', () => {
+    expect(readUnplacedCount({ count: 4, capped: false })).toEqual({ count: 4, capped: false });
+    expect(readUnplacedCount({ count: 0, capped: false })).toEqual({ count: 0, capped: false });
+    expect(readUnplacedCount({ count: 1000, capped: true })).toEqual({ count: 1000, capped: true });
   });
 
-  it('fails closed on a malformed count, so the hook reports the chart unavailable', () => {
+  it('fails closed on an absent or malformed disclosure, so the hook reports the chart unavailable', () => {
+    // Absent is NOT "none": a response that does not say what it left out
+    // cannot be shown as complete.
+    expect(readUnplacedCount(undefined)).toBeNull();
     expect(readUnplacedCount(null)).toBeNull();
-    expect(readUnplacedCount(-1)).toBeNull();
-    expect(readUnplacedCount(1.5)).toBeNull();
-    expect(readUnplacedCount('2')).toBeNull();
+    expect(readUnplacedCount(4)).toBeNull();
+    expect(readUnplacedCount({ count: -1, capped: false })).toBeNull();
+    expect(readUnplacedCount({ count: 1.5, capped: false })).toBeNull();
+    expect(readUnplacedCount({ count: '2', capped: false })).toBeNull();
+    expect(readUnplacedCount({ count: 2 })).toBeNull();
     expect(readUnplacedCount([{ t: 0, fills: 1 }])).toBeNull();
+  });
+
+  it('accepts buckets only when each states its unrecorded amounts', () => {
+    const b = (fills: unknown, u: unknown) => ({ t: 0, fills, unrecordedPrincipalFills: u });
+    expect(bucketsStateProvenance([])).toBe(true);
+    expect(bucketsStateProvenance([b(3, 0), b(2, 2)])).toBe(true);
+    expect(bucketsStateProvenance([b(3, 0), { t: 0, fills: 1 }])).toBe(false);
+    expect(bucketsStateProvenance([b(2, 3)])).toBe(false);
+    expect(bucketsStateProvenance([b(2, -1)])).toBe(false);
+    expect(bucketsStateProvenance([b(2, '0')])).toBe(false);
+    expect(bucketsStateProvenance([null])).toBe(false);
   });
 });
 

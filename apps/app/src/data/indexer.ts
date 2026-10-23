@@ -297,8 +297,9 @@ export interface IndexedLoan {
   /** #1142 — the tenor market this loan is a fill of: its agreed duration
    *  when the indexer has confirmed the agreed terms, `null` when it has not
    *  (the loan is in no market, since any tenor would be a guess). The key
-   *  the candles and the market-scoped tape select on. Absent from older
-   *  workers. */
+   *  the candles and the market-scoped tape select on. Absent on a row that
+   *  did not come from the indexer's loan routes; the desk reads absent as
+   *  "in no market". */
   marketDurationDays?: number | null;
   collateralAmount: string;
   assetType: number;
@@ -418,9 +419,10 @@ export interface RateCandleBucket {
    *  principal is recorded. */
   principalTotal: string;
   /** #1142 — fills whose principal is NOT recorded and so is left out of
-   *  `principalTotal`; above zero the total is a floor. Optional so an
-   *  older Worker parses (absent = 0). */
-  unrecordedPrincipalFills?: number;
+   *  `principalTotal`; above zero the total is a floor. Required: a bucket
+   *  without it cannot say whether its total is complete, so the desk treats
+   *  such a response as unavailable. */
+  unrecordedPrincipalFills: number;
 }
 
 export interface RateCandlesResponse {
@@ -431,9 +433,17 @@ export interface RateCandlesResponse {
    *  ones). Optional so a not-yet-redeployed Worker parses fine. */
   truncated?: boolean;
   /** #1142 — loans on this PAIR in the range (any tenor) that no tenor
-   *  market holds, because their agreed terms are not confirmed. Optional so
-   *  a not-yet-redeployed Worker parses fine (absent = none known). */
-  unplaced?: number;
+   *  market holds, because their agreed terms are not confirmed. Required: a
+   *  response without it cannot say whether the drawn fills are everything,
+   *  so the desk treats it as unavailable. */
+  unplaced: UnplacedCount;
+}
+
+/** #1142 — the candle response's unplaced disclosure. The server stops
+ *  counting at a cap; `capped: true` means MORE than `count` such loans. */
+export interface UnplacedCount {
+  count: number;
+  capped: boolean;
 }
 
 /** Executed-rate candles for one (pair, tenor) market — the Rate Desk

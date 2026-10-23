@@ -4521,7 +4521,12 @@ Its intended behaviour, as the test oracle for this surface:
   that. A loan belongs to a tenor market only once its agreed terms are
   confirmed from its opening record. Until then its tenor is unknown, so
   it is shown under no duration, never under a guessed or current one,
-  and the chart states how many such loans the pair has in the period.
+  and the chart states how many such loans the pair has in the period,
+  counted from the same reading of the data as the chart itself. Past a
+  stated limit the chart says "more than" that many rather than an exact
+  figure. A rate history that does not state these exclusions (how many
+  loans it leaves out, and in each bucket how many amounts are
+  unconfirmed) is shown as unavailable, never as complete.
   Where only the agreed amount cannot be confirmed, the fill appears and
   its amount reads as not recorded. The loan's current terms are never
   shown in place of agreed ones. Positions show under the book with their health

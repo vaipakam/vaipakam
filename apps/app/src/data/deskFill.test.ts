@@ -52,8 +52,8 @@ describe('marketTenorOf (#1142)', () => {
     expect(marketTenorOf(loan({ marketDurationDays: 30 }))).toBe(30);
   });
 
-  it('falls back to the live tenor for an older worker, which scoped on it', () => {
-    expect(marketTenorOf(loan({}))).toBe(60);
+  it('never stands the live tenor in for a missing key: such a row is in no market', () => {
+    expect(marketTenorOf(loan({}))).toBeNull();
   });
 
   it('keeps a loan the indexer placed in no market out of every tenor', () => {

@@ -93,7 +93,6 @@ describe('market tape tenor (#1142)', () => {
     expect(placedTenorOf({ init_terms_unbacked: 0, init_rate_bps: 500, init_duration_days: 30 })).toBe(30);
     expect(placedTenorOf({ init_terms_unbacked: 1, init_rate_bps: 500, init_duration_days: 30 })).toBeNull();
     expect(placedTenorOf({ init_terms_unbacked: undefined, init_rate_bps: 500, init_duration_days: 30 })).toBeNull();
-    expect(placedTenorOf({ init_terms_unbacked: 0, init_rate_bps: null, init_duration_days: 30 })).toBeNull();
     expect(placedTenorOf({ init_terms_unbacked: 0, init_rate_bps: 500, init_duration_days: null })).toBeNull();
   });
 

@@ -1819,7 +1819,8 @@
         "unplacedNote_two": "{{count}} prêts de cette paire sur cette période n’apparaissent sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
         "unplacedNote_few": "{{count}} prêts de cette paire sur cette période n’apparaissent sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
         "unplacedNote_many": "{{count}} prêts de cette paire sur cette période n’apparaissent sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
-        "unplacedNote_other": "{{count}} prêts de cette paire sur cette période n’apparaissent sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture."
+        "unplacedNote_other": "{{count}} prêts de cette paire sur cette période n’apparaissent sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture.",
+        "unplacedNoteCapped": "Plus de {{floor, number}} prêts sur cette paire pendant cette période ne sont affichés sous aucune durée, car leurs conditions convenues ne sont pas confirmées par leur enregistrement d’ouverture."
       },
       "history": {
         "tab": "Historique",

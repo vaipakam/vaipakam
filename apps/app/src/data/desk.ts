@@ -50,6 +50,7 @@ import {
   type IndexedSignedOffer,
   type MarketSummary,
   type RateCandleBucket,
+  type UnplacedCount,
 } from './indexer';
 import {
   signedOrderIsSingleValue,
@@ -57,7 +58,11 @@ import {
 } from '../lib/signedOffer';
 import { readOfferRowsBatchLive } from './chainPositions';
 import { initiatedPrincipal, initiatedTerms } from '../lib/positionAmounts';
-import { readUnplacedCount, type TapeFillLike } from '../lib/rateChart';
+import {
+  bucketsStateProvenance,
+  readUnplacedCount,
+  type TapeFillLike,
+} from '../lib/rateChart';
 import { isMissingSelectorError } from '../contracts/preflights';
 
 const REFRESH_MS = 30_000;
@@ -400,13 +405,14 @@ export function deskFillOf(loan: IndexedLoan): DeskFill {
   };
 }
 
-/** The tenor market a loan is a fill of: the indexer's own key when it
- *  sends one (`null` = in no market, its agreed terms unconfirmed), else
- *  (an older worker, which scoped on it) the live tenor. */
+/** The tenor market a loan is a fill of: the indexer's own key, `null`
+ *  when the loan is in no market (its agreed terms unconfirmed). A row
+ *  without the key is in no market too: the live `durationDays` is not an
+ *  agreed term (`LoanExtended` rewrites it), so it is never a stand-in. */
 export function marketTenorOf(
-  loan: Pick<IndexedLoan, 'marketDurationDays' | 'durationDays'>,
+  loan: Pick<IndexedLoan, 'marketDurationDays'>,
 ): number | null {
-  return loan.marketDurationDays === undefined ? loan.durationDays : loan.marketDurationDays;
+  return typeof loan.marketDurationDays === 'number' ? loan.marketDurationDays : null;
 }
 
 /** Executed fills for the (pair, tenor) market, newest first. */
@@ -511,7 +517,7 @@ export function useDeskCandles(
     queryFn: async (): Promise<{
       buckets: RateCandleBucket[];
       truncated: boolean;
-      unplaced: number;
+      unplaced: UnplacedCount;
     } | null> => {
       if (!indexerConfigured()) return null;
       const res = await fetchRateCandles(
@@ -529,6 +535,10 @@ export function useDeskCandles(
       // treat it as unavailable, never render it.
       if (res.chainId !== readChain.chainId) return null;
       if (!Array.isArray(res.buckets)) return null;
+      // #1142 — a response that does not state what it leaves out (the
+      // unplaced loans, each bucket's unrecorded amounts) is unavailable,
+      // never read as "nothing left out".
+      if (!bucketsStateProvenance(res.buckets)) return null;
       const unplaced = readUnplacedCount(res.unplaced);
       if (unplaced === null) return null;
       return { buckets: res.buckets, truncated: res.truncated === true, unplaced };

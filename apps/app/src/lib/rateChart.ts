@@ -81,14 +81,35 @@ export function newestPrint(
   return { source: 'bucket', rateBps: last.close, at: last.t };
 }
 
-/** #1142 — the candle response's count of loans on the pair that no tenor
- *  market holds (agreed terms unconfirmed). Absent = 0 (a Worker that
- *  predates the field). A present but malformed value returns `null`, which
- *  the hook turns into "unavailable": a chart that silently dropped the
- *  count would present the placed fills as everything that happened. */
-export function readUnplacedCount(raw: unknown): number | null {
-  if (raw === undefined) return 0;
-  return typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 ? raw : null;
+const isCount = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+/** #1142 — the candle response's disclosure of loans on the pair that no
+ *  tenor market holds (agreed terms unconfirmed). Anything but a well-formed
+ *  `{ count, capped }`, ABSENT included, returns `null`, which the hook
+ *  turns into "unavailable": a chart without the disclosure would present
+ *  the placed fills as everything that happened. */
+export function readUnplacedCount(
+  raw: unknown,
+): { count: number; capped: boolean } | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const { count, capped } = raw as { count?: unknown; capped?: unknown };
+  return isCount(count) && typeof capped === 'boolean' ? { count, capped } : null;
+}
+
+/** #1142 — every bucket states how many of its fills have no recorded
+ *  principal (`0 ≤ unrecordedPrincipalFills ≤ fills`). A bucket that does not
+ *  cannot say whether its total is complete or a floor, so the hook treats
+ *  the whole response as unavailable rather than reading the gap as zero. */
+export function bucketsStateProvenance(buckets: readonly unknown[]): boolean {
+  return buckets.every((b) => {
+    if (typeof b !== 'object' || b === null) return false;
+    const { fills, unrecordedPrincipalFills: u } = b as {
+      fills?: unknown;
+      unrecordedPrincipalFills?: unknown;
+    };
+    return isCount(fills) && isCount(u) && u <= fills;
+  });
 }
 
 /**

@@ -14,7 +14,11 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
 import { handleLoansRateCandles } from '../src/loanRoutes';
-import { PLACED_IN_TENOR_SQL } from '../src/marketPlacement';
+import {
+  PLACED_IN_TENOR_SQL,
+  UNPLACED_COUNT_CAP,
+  unplacedOnPairStatement,
+} from '../src/marketPlacement';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -33,13 +37,22 @@ const CAP = 10_000;
 interface CandlesBody {
   chainId: number;
   buckets: Array<{ t: number; open: number; close: number; fills: number }>;
-  unplaced: number;
+  unplaced: { count: number; capped: boolean };
   truncated: boolean;
 }
 
 function makeHarness() {
   const h: SqliteD1 = createSqliteD1(ALL_MIGRATIONS);
-  const env = { DB: h.d1, RPC_BASE_SEPOLIA: 'http://127.0.0.1:9' } as unknown as Env;
+  // Every batch the route sends, so a test can pin that its reads share one.
+  const batches: unknown[][] = [];
+  const db = {
+    prepare: (sql: string) => h.d1.prepare(sql),
+    batch: (stmts: unknown[]) => {
+      batches.push(stmts);
+      return h.d1.batch(stmts as Parameters<typeof h.d1.batch>[0]);
+    },
+  };
+  const env = { DB: db, RPC_BASE_SEPOLIA: 'http://127.0.0.1:9' } as unknown as Env;
   const insert = h.db.prepare(
     `INSERT INTO loans (chain_id, loan_id, offer_id, status, lender, borrower,
        principal, collateral_amount, asset_type, collateral_asset_type,
@@ -69,7 +82,7 @@ function makeHarness() {
     expect(res.status).toBe(200);
     return (await res.json()) as CandlesBody;
   };
-  return { ...h, seed, call };
+  return { ...h, seed, call, batches };
 }
 
 describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
@@ -131,7 +144,7 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
     const body = await h.call();
     expect(body.truncated).toBe(false);
     expect(body.buckets.map((b) => [b.t, b.open, b.close, b.fills])).toEqual([[0, 400, 400, 1]]);
-    expect(body.unplaced).toBe(2);
+    expect(body.unplaced).toEqual({ count: 2, capped: false });
   });
 
   it('files a fill by its agreed tenor, never the live one, and counts an unconfirmed loan whatever tenor it names', async () => {
@@ -147,7 +160,7 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
       .run(DAYS + 30);
     const body = await h.call();
     expect(body.buckets).toEqual([]);
-    expect(body.unplaced).toBe(1);
+    expect(body.unplaced).toEqual({ count: 1, capped: false });
   });
 
   it('range-scans the placed fills through the placement index', () => {
@@ -162,5 +175,42 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
       )
       .all(CHAIN_ID, LEND, COLL, DAYS, 0, 10) as Array<{ detail: string }>;
     expect(plan.map((r) => r.detail).join(' | ')).toContain('idx_loans_placed_tenor_start_at');
+  });
+
+  it('reads the candles and the unplaced count in one batch, so both describe one snapshot', async () => {
+    const h = makeHarness();
+    h.seed(1, 0, 400);
+    h.seed(2, 100, 500, 1);
+    await h.call();
+    expect(h.batches).toHaveLength(1);
+    expect(h.batches[0]).toHaveLength(2);
+  });
+
+  it('stops counting at the cap and says "more than" past it', async () => {
+    const h = makeHarness();
+    h.db.exec('BEGIN');
+    for (let i = 1; i <= UNPLACED_COUNT_CAP; i++) h.seed(i, i, 500, 1);
+    h.db.exec('COMMIT');
+    expect((await h.call()).unplaced).toEqual({ count: UNPLACED_COUNT_CAP, capped: false });
+    h.seed(UNPLACED_COUNT_CAP + 1, 0, 500, 1);
+    expect((await h.call()).unplaced).toEqual({ count: UNPLACED_COUNT_CAP, capped: true });
+  });
+
+  it('range-scans the unplaced count through its own partial index', () => {
+    const h = makeHarness();
+    // The statement's own SQL, captured rather than restated.
+    let sql = '';
+    let binds: unknown[] = [];
+    const recorder = {
+      prepare: (q: string) => {
+        sql = q;
+        return { bind: (...b: unknown[]) => ((binds = b), {}) };
+      },
+    } as unknown as D1Database;
+    unplacedOnPairStatement(recorder, CHAIN_ID, LEND, COLL, 0);
+    const plan = h.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...binds) as Array<{
+      detail: string;
+    }>;
+    expect(plan.map((r) => r.detail).join(' | ')).toContain('idx_loans_unplaced_start_at');
   });
 });

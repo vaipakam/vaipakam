@@ -28,7 +28,12 @@ import {
   foldRateCandles,
   type CandleFillRow,
 } from './rateCandles';
-import { PLACED_IN_TENOR_SQL, countUnplacedOnPair, placedTenorOf } from './marketPlacement';
+import {
+  PLACED_IN_TENOR_SQL,
+  placedTenorOf,
+  readUnplacedCount,
+  unplacedOnPairStatement,
+} from './marketPlacement';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -1446,7 +1451,7 @@ export async function handleLoansTimeseries(
  *
  * → { chainId, buckets: [{ t, open, high, low, close, fills, principalTotal,
  *                           unrecordedPrincipalFills }],
- *     unplaced, truncated }
+ *     unplaced: { count, capped }, truncated }
  *
  * Executed-rate OHLC series for ONE market (ProRateTerminalDesign.md §7). All
  * three market params are REQUIRED — a candle series is per-market by
@@ -1487,6 +1492,8 @@ export async function handleLoansTimeseries(
  * loan on this pair whose terms are not confirmed is in no tenor market: the
  * response counts those in range as `unplaced` (pair-wide, every tenor), and
  * the desk says so, rather than drawing a guess or dropping them silently.
+ * The count is read in the same batch as the candles (one snapshot) and stops
+ * at `UNPLACED_COUNT_CAP`; past it, `capped: true` says "more than".
  * A drawn fill whose PRINCIPAL is not confirmed (`init_principal_unbacked`,
  * 0056) is counted in its bucket's `unrecordedPrincipalFills` and left out of
  * `principalTotal`.
@@ -1579,17 +1586,29 @@ export async function handleLoansRateCandles(
     // D1 read per request. Scan the NEWEST CANDLE_SCAN_CAP fills
     // (DESC + reverse for the fold's ascending order) and say so —
     // a truncated series drops the OLDEST candles, never recent ones.
-    const rows = await env.DB.prepare(
-      `SELECT loan_id, start_at, init_rate_bps,
-              init_principal, init_principal_unbacked
-       FROM loans
-       WHERE ${conds.join(' AND ')}
-       ORDER BY start_at DESC, loan_id DESC
-       LIMIT ?`,
-    )
-      .bind(...binds, CANDLE_SCAN_CAP + 1)
-      .all<CandleFillRow>();
-    const fills = rows.results ?? [];
+    // The candle read and the unplaced count (the loans on this pair in
+    // range that no tenor market holds, marketPlacement.ts) run in ONE
+    // batch, so both describe the same snapshot: a loan whose flag clears
+    // between two separate reads would otherwise be counted by both or by
+    // neither. `range=all` counts from the epoch.
+    const [rows, unplacedRows] = await env.DB.batch([
+      env.DB.prepare(
+        `SELECT loan_id, start_at, init_rate_bps,
+                init_principal, init_principal_unbacked
+         FROM loans
+         WHERE ${conds.join(' AND ')}
+         ORDER BY start_at DESC, loan_id DESC
+         LIMIT ?`,
+      ).bind(...binds, CANDLE_SCAN_CAP + 1),
+      unplacedOnPairStatement(
+        env.DB,
+        chainId,
+        market.lendingAsset,
+        market.collateralAsset,
+        since ?? 0,
+      ),
+    ]);
+    const fills = (rows.results ?? []) as CandleFillRow[];
     const truncated = fills.length > CANDLE_SCAN_CAP;
     const scanned = (truncated ? fills.slice(0, CANDLE_SCAN_CAP) : fills)
       .slice()
@@ -1606,16 +1625,7 @@ export async function handleLoansRateCandles(
     // `truncated` disclosure covers its approximation.
     const buckets =
       truncated && folded.length > 1 ? folded.slice(1) : folded;
-    // Loans on this pair in range that no tenor market holds (agreed terms
-    // unconfirmed), counted so the desk can say so (marketPlacement.ts).
-    // `range=all` counts from the epoch.
-    const unplaced = await countUnplacedOnPair(
-      env.DB,
-      chainId,
-      market.lendingAsset,
-      market.collateralAsset,
-      since ?? 0,
-    );
+    const unplaced = readUnplacedCount(unplacedRows as D1Result<{ n: number }>);
     return jsonResponse({ chainId, buckets, unplaced, truncated }, 200, {
       'Cache-Control': 'public, max-age=60',
     });

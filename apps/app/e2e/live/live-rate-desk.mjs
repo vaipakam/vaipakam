@@ -842,14 +842,23 @@ try {
   // Wire probe — the exact worker route the chart reads, for the
   // driven market with the UI's default view params (1d × 30d): must
   // 200 with a `buckets` array (empty is fine — the driven market
-  // usually has no fills; the count is recorded either way).
+  // usually has no fills; the count is recorded either way) AND the
+  // #1142 disclosures the app requires (the `unplaced` count, each
+  // bucket's `unrecordedPrincipalFills`): without them the desk shows
+  // the chart as unavailable.
   const candlesProbe = await indexerGet(
     `${INDEXER}/loans/rate-candles?chainId=${CHAIN_ID}` +
       `&lendingAsset=${asAddress(WETH, 'bundle weth')}` +
       `&collateralAsset=${asAddress(TLIQ, 'bundle liquidToken')}` +
       `&durationDays=${tenor}&interval=1d&range=30d`,
   );
-  if (candlesProbe.status !== 200 || !Array.isArray(candlesProbe.body?.buckets)) {
+  const unplacedOk =
+    Number.isInteger(candlesProbe.body?.unplaced?.count) &&
+    typeof candlesProbe.body?.unplaced?.capped === 'boolean';
+  const bucketsOk =
+    Array.isArray(candlesProbe.body?.buckets) &&
+    candlesProbe.body.buckets.every((b) => Number.isInteger(b?.unrecordedPrincipalFills));
+  if (candlesProbe.status !== 200 || !bucketsOk || !unplacedOk) {
     throw new Error(
       `/loans/rate-candles wire probe failed — status ${candlesProbe.status}, ` +
         `body ${JSON.stringify(candlesProbe.body)?.slice(0, 300)}`,

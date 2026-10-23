@@ -4322,6 +4322,12 @@ const copySource = {
         ['count'],
         { one: '{{count}} loan on this pair in this period is not shown under any duration, because its agreed terms are not confirmed from its opening record.' },
       ),
+      // The server stops counting at a cap; past it the line says "more
+      // than" rather than presenting the cap as the count.
+      unplacedNoteCapped: tmpl(
+        'More than {{floor, number}} loans on this pair in this period are not shown under any duration, because their agreed terms are not confirmed from their opening record.',
+        ['floor'],
+      ),
       unavailable: 'We couldn’t load the rate history right now.',
       retry: 'Retry',
       quotedMid: 'middle rate',

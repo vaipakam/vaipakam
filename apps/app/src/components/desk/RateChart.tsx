@@ -154,7 +154,7 @@ export default function RateChart({
   // #1142 — loans on this pair in range that no tenor market holds (their
   // agreed terms are unconfirmed). Stated with the chart so the drawn series
   // never reads as everything the pair did.
-  const unplaced = candles.data?.unplaced ?? 0;
+  const unplaced = candles.data?.unplaced ?? null;
   // What the response says about its own scope, shown in EVERY data state:
   // an empty series can be clipped or leave loans out just as a drawn one
   // can (Codex #2689 r3).
@@ -166,9 +166,11 @@ export default function RateChart({
         // complete history.
         <p className="muted desk-chart-sparse-note">{text.truncatedNote}</p>
       ) : null}
-      {unplaced > 0 ? (
+      {unplaced !== null && unplaced.count > 0 ? (
         <p className="muted desk-chart-sparse-note" data-testid="desk-chart-unplaced">
-          {text.unplacedNote(unplaced)}
+          {unplaced.capped
+            ? text.unplacedNoteCapped(unplaced.count)
+            : text.unplacedNote(unplaced.count)}
         </p>
       ) : null}
     </>
@@ -363,7 +365,7 @@ export default function RateChart({
               : `O ${formatBpsAsPercent(b.open)} · H ${formatBpsAsPercent(b.high)} · L ${formatBpsAsPercent(b.low)} · C ${formatBpsAsPercent(b.close)}`,
             fills: b.fills,
             principalTotal: b.principalTotal,
-            unrecordedPrincipalFills: b.unrecordedPrincipalFills ?? 0,
+            unrecordedPrincipalFills: b.unrecordedPrincipalFills,
           }));
     const byTime = new Map(tipRows.map((r) => [r.t, r]));
     const onCrosshair = (param: MouseEventParams) => {
@@ -507,7 +509,7 @@ export default function RateChart({
         <>
           <p className="muted">
             {(() => {
-              const kind = chartEmptyKind(range, tape, unplaced);
+              const kind = chartEmptyKind(range, tape, unplaced?.count ?? 0);
               if (kind === 'unplaced') return text.emptyUnplaced;
               return kind === 'market' ? text.empty : text.emptyRange;
             })()}
