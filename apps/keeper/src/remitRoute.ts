@@ -155,10 +155,12 @@ export function undeliveredAlertKey(
   return `remit-undelivered:${path}:${baseChainId}:${diamond.toLowerCase()}:${reason}:${remitId}`;
 }
 
-/** The pattern matching every undelivered-remittance alert of one path on one
- *  Diamond, whatever the reason. */
-export function undeliveredAlertPattern(path: RemitPath, baseChainId: number, diamond: Address): string {
-  return `remit-undelivered:${path}:${baseChainId}:${diamond.toLowerCase()}:%`;
+/** The key prefix every undelivered-remittance alert of one path on one
+ *  Diamond carries, whatever the reason. A literal prefix, not a `LIKE`
+ *  pattern: with the Diamond in it, it is longer than D1 lets a pattern be
+ *  (#2677). */
+export function undeliveredAlertPrefix(path: RemitPath, baseChainId: number, diamond: Address): string {
+  return `remit-undelivered:${path}:${baseChainId}:${diamond.toLowerCase()}:`;
 }
 
 /** The reason and remitId a key from {@link undeliveredAlertKey} names, or

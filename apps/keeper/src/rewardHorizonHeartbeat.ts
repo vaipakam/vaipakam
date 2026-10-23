@@ -572,7 +572,7 @@ export async function raiseHeartbeatAlerts(env: Env, chainId: number, diamond: s
   const prefix = `horizon-revert:${chainId}:`;
   let open: Set<string>;
   try {
-    open = new Set(await listOpsAlertKeys(env.KEEPER_DB, `horizon-%:${chainId}:%`));
+    open = new Set(await listOpsAlertKeys(env.KEEPER_DB, 'horizon-', chainId));
   } catch (err) {
     console.error(`[keeper] rewardHorizonHeartbeat chain=${chainId}: open alerts unread, alerts left for the next run: ${shortErr(err)}`);
     return;

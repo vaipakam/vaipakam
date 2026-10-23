@@ -33,7 +33,7 @@ import {
   undeliveredAlertFooter,
   undeliveredAlertHeader,
   undeliveredAlertKey,
-  undeliveredAlertPattern,
+  undeliveredAlertPrefix,
   undeliveredReason,
 } from '../src/remitRoute';
 import { lateOutstanding, runRemitAck } from '../src/remitAck';
@@ -336,9 +336,9 @@ function d1(openAlerts: string[] = [], lateOpenIds: number[] = [], failAlertList
         if (q.includes('FROM keeper_work_open')) {
           return lateOpenIds.map((id) => ({ item: String(id), block: 1, payload: JSON.stringify({ remitId: id }) }));
         }
-        if (!q.includes('FROM keeper_ops_alert WHERE alert_key LIKE')) return [];
+        if (!q.includes('FROM keeper_ops_alert WHERE substr(alert_key, 1, length(?1)) = ?1')) return [];
         if (failAlertList) throw new Error('D1 unavailable');
-        const prefix = String(binds[0]).replace(/%$/, '');
+        const prefix = String(binds[0]);
         return openAlerts.filter((k) => k.startsWith(prefix)).map((alert_key) => ({ alert_key }));
       };
       stmt.all = async () => ({ results: rows(), success: true, meta: {} });
@@ -854,11 +854,11 @@ describe('undeliveredReason (#2561)', () => {
 });
 
 describe('undelivered alert keys and text (#2561)', () => {
-  it('round-trips the reason and remitId and matches its own path pattern only', () => {
+  it('round-trips the reason and remitId and matches its own path prefix only', () => {
     const k = key('retired', 'late', 42);
     expect(parseUndeliveredAlertKey(k)).toEqual({ reason: 'retired', remitId: 42 });
-    expect(k.startsWith(undeliveredAlertPattern('late', BASE, BASE_DIAMOND as never).replace(/%$/, ''))).toBe(true);
-    expect(k.startsWith(undeliveredAlertPattern('pending', BASE, BASE_DIAMOND as never).replace(/%$/, ''))).toBe(false);
+    expect(k.startsWith(undeliveredAlertPrefix('late', BASE, BASE_DIAMOND as never))).toBe(true);
+    expect(k.startsWith(undeliveredAlertPrefix('pending', BASE, BASE_DIAMOND as never))).toBe(false);
     expect(parseUndeliveredAlertKey('remit-undelivered:pending:1:0xabc:bogus:1')).toBeUndefined();
     expect(parseUndeliveredAlertKey('remit-undelivered:pending:1:0xabc:retired:x')).toBeUndefined();
   });

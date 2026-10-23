@@ -396,7 +396,7 @@ export async function settleAlerts(env: Env, store: DayStore, f: RunFindings, no
   const chainId = f.chainId;
   let openKeys: string[];
   try {
-    openKeys = await listOpsAlertKeys(env.KEEPER_DB, `dayclose-%:${chainId}:%`);
+    openKeys = await listOpsAlertKeys(env.KEEPER_DB, 'dayclose-', chainId);
   } catch (err) {
     console.error(`[keeper] rewardDayClose chain=${chainId}: open alerts unread, alerts left for the next run: ${shortErr(err)}`);
     return 'all';
@@ -511,7 +511,7 @@ export async function closeWithNotice(env: Env, chainId: number, items: readonly
 export async function retireChainAlerts(env: Env, chainId: number, role: number, deadline: number): Promise<void> {
   let open: string[];
   try {
-    open = (await listOpsAlertKeys(env.KEEPER_DB, `dayclose-%:${chainId}:%`)).filter((k) => parseKey(k, chainId) !== null).sort();
+    open = (await listOpsAlertKeys(env.KEEPER_DB, 'dayclose-', chainId)).filter((k) => parseKey(k, chainId) !== null).sort();
   } catch (err) {
     console.error(`[keeper] rewardDayClose chain=${chainId}: open alerts unread, left for the next run: ${shortErr(err)}`);
     return;
@@ -542,7 +542,7 @@ export async function retireChainAlerts(env: Env, chainId: number, role: number,
 export async function retireUnworkedAlerts(env: Env, served: ReadonlyMap<number, string>, deadline: number): Promise<void> {
   let keys: string[];
   try {
-    keys = await listOpsAlertKeys(env.KEEPER_DB, 'dayclose-%');
+    keys = await listOpsAlertKeys(env.KEEPER_DB, 'dayclose-');
   } catch (err) {
     console.error(`[keeper] rewardDayClose: open alerts unread, unworked alerts left for the next run: ${shortErr(err)}`);
     return;
