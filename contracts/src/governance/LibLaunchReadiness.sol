@@ -9,7 +9,7 @@ import {LibAccessControl} from "../libraries/LibAccessControl.sol";
 interface ILaunchReadableDiamond {
     function getTreasury() external view returns (address);
     function getSanctionsOracle() external view returns (address);
-    function getEthNumeraireFeed() external view returns (address);
+    function getWethContract() external view returns (address);
     function getSwapAdapters() external view returns (address[] memory);
     function isSwapAdapterDisabled(address adapter) external view returns (bool);
     // forge-lint: disable-next-line(mixed-case-function)
@@ -52,8 +52,9 @@ interface ILaunchReadableDiamond {
  *          launch reports it.
  */
 library LibLaunchReadiness {
-    /// @dev Gas each interface probe may spend (an adapter's `adapterName()`,
-    ///      the oracle's `isSanctioned`, the feed's `latestRoundData`). A real
+    /// @dev Gas each interface probe of a third-party contract may spend (an
+    ///      adapter's `adapterName()`, the oracle's `isSanctioned`, the CCIP
+    ///      registry's `getPool` and the pool's lanes). A real
     ///      implementation answers well inside it; the bound keeps one
     ///      misbehaving registration from consuming the whole execution.
     uint256 internal constant PROBE_GAS = 200_000;
@@ -155,27 +156,47 @@ library LibLaunchReadiness {
         }
     }
 
-    /// @dev The ETH/numeraire feed is the anchor every price conversion in
-    ///      the risk engine goes through; `ConfigureOracle` sets it first. It
-    ///      must answer `decimals()` and `latestRoundData()` as a Chainlink
-    ///      aggregator does, with a positive price and a non-zero update
-    ///      time. Freshness is the oracle layer's rule at
-    ///      use time, not a launch requirement.
+    /// @dev The ETH reference feed is the anchor every price conversion in
+    ///      the risk engine goes through: it prices WETH directly, and every
+    ///      asset/ETH fallback multiplies against it. So the requirement is
+    ///      that the Diamond's OWN oracle prices WETH now, read through
+    ///      `getAssetPriceStatus` — the classification every flow reads —
+    ///      rather than a restatement of the oracle's acceptance rules (round
+    ///      shape, timestamps, staleness, the sequencer, the secondary quorum,
+    ///      the Pyth cross-check) that would drift from them. A price that is
+    ///      missing, stale or distrusted at the moment of the read is NOT
+    ///      MET: the Diamond could not price anything ETH-anchored then.
     function _priceFeed(address diamond) private view returns (Check memory c) {
         c.label = "price oracle wired";
-        try ILaunchReadableDiamond(diamond).getEthNumeraireFeed() returns (address f) {
-            c.checkable = true;
-            if (f == address(0) || f.code.length == 0) {
-                c.detail = "getEthNumeraireFeed() is unset or has no code: run the configure phase";
-            } else if (!_answersPositivePrice(f)) {
-                c.detail = "getEthNumeraireFeed() does not answer decimals() and latestRoundData() as an aggregator with a positive price";
-            } else {
-                c.met = true;
-                c.detail = "getEthNumeraireFeed() answers as an aggregator with a positive price";
-            }
+        address weth;
+        try ILaunchReadableDiamond(diamond).getWethContract() returns (address w) {
+            weth = w;
         } catch {
-            c.detail = "getEthNumeraireFeed() unreadable";
+            c.detail = "getWethContract() unreadable";
+            return c;
         }
+        if (weth == address(0)) {
+            c.checkable = true;
+            c.detail = "no WETH configured (setWethContract): run the configure phase";
+            return c;
+        }
+        (bool ok, bytes memory ret) = diamond.staticcall(abi.encodeWithSignature("getAssetPriceStatus(address)", weth));
+        if (!ok || ret.length != 96) {
+            c.detail = "getAssetPriceStatus(weth) unreadable";
+            return c;
+        }
+        uint256 status = abi.decode(ret, (uint256));
+        if (status > 2) {
+            c.detail = "getAssetPriceStatus(weth) returned an unknown status";
+            return c;
+        }
+        c.checkable = true;
+        c.met = status == 0;
+        c.detail = status == 0
+            ? "the Diamond's oracle prices WETH from the ETH reference feed"
+            : status == 1
+                ? "the Diamond's oracle has no usable WETH price now (ETH feed unset, stale or not positive, or the sequencer down): run the configure phase, or wait for a fresh round"
+                : "the Diamond's oracle distrusts the WETH price (the secondary oracles or the Pyth cross-check disagree)";
     }
 
     /// @dev A liquidation with no working swap adapter has nowhere to sell.
@@ -272,22 +293,6 @@ library LibLaunchReadiness {
             oracle.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("isSanctioned(address)", subject));
         if (!ok || ret.length != 32) return false;
         return abi.decode(ret, (uint256)) <= 1;
-    }
-
-    /// @dev Whether `feed` answers the two Chainlink reads the oracle layer
-    ///      makes of it: `decimals()` with one word that fits a `uint8`, and
-    ///      `latestRoundData()` with five words whose round ids fit a
-    ///      `uint80`, a positive answer and a non-zero `updatedAt`. Read as
-    ///      full words so an out-of-range field reads as malformed rather
-    ///      than reverting the read.
-    function _answersPositivePrice(address feed) private view returns (bool) {
-        (bool ok, bytes memory ret) = feed.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("decimals()"));
-        if (!ok || ret.length != 32 || abi.decode(ret, (uint256)) > type(uint8).max) return false;
-        (ok, ret) = feed.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("latestRoundData()"));
-        if (!ok || ret.length != 160) return false;
-        (uint256 roundId, int256 answer,, uint256 updatedAt, uint256 answeredInRound) =
-            abi.decode(ret, (uint256, int256, uint256, uint256, uint256));
-        return roundId <= type(uint80).max && answeredInRound <= type(uint80).max && answer > 0 && updatedAt != 0;
     }
 
     /// @dev Reads the length of a single ABI-encoded dynamic return value

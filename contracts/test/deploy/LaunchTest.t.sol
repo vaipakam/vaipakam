@@ -91,8 +91,23 @@ contract LaunchFeedStub {
         return 8;
     }
 
+    /// @dev Updated "now", so the oracle's staleness rule passes at any
+    ///      warp.
     function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
-        return (1, price, 1, 1, 1);
+        return (1, price, block.timestamp, block.timestamp, 1);
+    }
+}
+
+/// @dev A complete aggregator whose round is not well formed: the answer was
+///      carried from an earlier round (`answeredInRound != roundId`), which
+///      the oracle reads as stale.
+contract LaunchCarriedRoundFeed {
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
+        return (2, 2000e8, block.timestamp, block.timestamp, 1);
     }
 }
 
@@ -147,6 +162,7 @@ contract LaunchTest is Test {
     address internal constant PROPOSER = address(0x5AFE);
     address internal constant TREASURY = address(0xBEEF);
     address internal constant VPFI = address(0xF1F1);
+    address internal constant WETH = address(0xE7E7);
 
     address internal diamond;
     address internal admin;
@@ -173,6 +189,7 @@ contract LaunchTest is Test {
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         VPFITokenFacet(diamond).setVPFIToken(VPFI);
+        OracleAdminFacet(diamond).setWethContract(WETH);
         vm.stopPrank();
     }
 
@@ -361,6 +378,7 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
+        OracleAdminFacet(diamond).setWethContract(WETH);
         AdminFacet(diamond).addSwapAdapter(adapter);
         vm.stopPrank();
     }
@@ -499,6 +517,7 @@ contract LaunchTest is Test {
         address adapter = address(new LaunchAdapterStub());
         AdminFacet(diamond).addSwapAdapter(adapter);
         VPFITokenFacet(diamond).setVPFIToken(VPFI);
+        OracleAdminFacet(diamond).setWethContract(WETH);
         vm.stopPrank();
         address registry = _registryWithLane();
         VaipakamTimelock tl = _realTimelock();
@@ -624,18 +643,14 @@ contract LaunchTest is Test {
 
     function test_Production_CheckLaunchedRefusesBeforeExecution() public {
         (VaipakamTimelock tl, address registry,) = _scheduledLaunch();
-        vm.expectRevert(
-            bytes(
-                "Launch: the Timelock has not executed this checkout's launch operation - the Diamond went live outside the launch step, the launch used a different LaunchGate build, registry or admin address, or it has not launched; investigate before anything records a launch"
-            )
-        );
+        vm.expectRevert(bytes("Launch: the Diamond has not launched"));
         launcher.checkLaunched(diamond, registry, address(tl), admin);
     }
 
     function test_Testnet_CheckLaunchedRefusesAPausedDiamond() public {
         vm.chainId(84532);
         _configure();
-        vm.expectRevert(bytes("Launch: the Diamond is paused - it has not launched"));
+        vm.expectRevert(bytes("Launch: the Diamond has not launched"));
         launcher.checkLaunched(diamond, address(0), address(0), admin);
         launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
         launcher.checkLaunched(diamond, address(0), address(0), admin);
@@ -681,6 +696,7 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchDecimalLessFeed()));
+        OracleAdminFacet(diamond).setWethContract(WETH);
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -692,6 +708,7 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchWideRoundFeed()));
+        OracleAdminFacet(diamond).setWethContract(WETH);
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -721,6 +738,7 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new LaunchCodeStub()));
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
+        OracleAdminFacet(diamond).setWethContract(WETH);
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -732,6 +750,7 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCodeStub()));
+        OracleAdminFacet(diamond).setWethContract(WETH);
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -745,6 +764,99 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
         OracleAdminFacet(diamond).setEthUsdFeed(address(feed));
+        OracleAdminFacet(diamond).setWethContract(WETH);
+        AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
+        vm.stopPrank();
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+    }
+
+    // ─── Round 4 (Codex #2686 r4) ────────────────────────────────────
+
+    function test_DeployLeavesTheBirthEpoch() public view {
+        assertEq(launcher.pauseEpoch(diamond), launcher.BIRTH_EPOCH());
+    }
+
+    /// @dev Launched through the Timelock, then paused for an incident: a
+    ///      re-run reports the launch and proposes NOTHING, so no fresh batch
+    ///      bound to the incident's epoch is ever printed to lift it.
+    function test_Production_RerunDuringAnIncidentProposesNothing() public {
+        (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
+        _execute(tl, registry, epoch);
+        vm.prank(_guardian(tl));
+        AdminFacet(diamond).pause();
+        Launch.Decision memory d = launcher.decide(diamond, registry, address(tl), admin, false);
+        assertEq(uint8(d.path), uint8(Launch.Path.Launched));
+        Launch.Outcome o = launcher.launch(diamond, registry, address(tl), admin, 0);
+        assertEq(uint8(o), uint8(Launch.Outcome.AlreadyLive));
+        assertTrue(AdminFacet(diamond).paused(), "the incident pause stands");
+    }
+
+    /// @dev A testnet Diamond the admin launched and a guardian then paused:
+    ///      nothing on chain records the admin's launch, so the run cannot
+    ///      tell this from a pause before launch and refuses to unpause.
+    function test_Testnet_AdminWillNotLiftAPauseAfterBirth() public {
+        vm.chainId(84532);
+        _configure();
+        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        vm.prank(admin);
+        AdminFacet(diamond).pause();
+        vm.expectRevert(
+            bytes(
+                "Launch: the Diamond has been paused since its birth pause, so it may have launched and be paused for an incident - lifting that is incident response, not a launch. If it never went live, re-run with LAUNCH_ACK_PAUSE_EPOCH set to the epoch printed above"
+            )
+        );
+        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        assertTrue(AdminFacet(diamond).paused());
+    }
+
+    /// @dev Paused again before it ever launched: the operator states it
+    ///      never went live by naming the epoch, and the admin unpauses.
+    function test_Testnet_AckedEpochLetsTheAdminLaunch() public {
+        vm.chainId(84532);
+        _configure();
+        vm.prank(admin);
+        AdminFacet(diamond).pause();
+        uint64 epoch = _epoch();
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("LAUNCH_ACK_PAUSE_EPOCH", vm.toString(uint256(epoch)));
+        Launch.Outcome o = launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("LAUNCH_ACK_PAUSE_EPOCH", "0");
+        assertEq(uint8(o), uint8(Launch.Outcome.Unpaused));
+        assertFalse(AdminFacet(diamond).paused());
+    }
+
+    /// @dev The report is the launch's own decision: before the handover a
+    ///      production deployment is not launchable, whatever the checks say.
+    function test_Decide_ProductionBeforeHandoverIsNotLaunchable() public {
+        vm.chainId(8453);
+        _configure();
+        Launch.Decision memory d =
+            launcher.decide(diamond, _registryWithLane(), address(new LaunchMockTimelock()), admin, true);
+        assertEq(uint8(d.path), uint8(Launch.Path.Refuse));
+        assertEq(d.reason, "Launch: the Timelock does not hold UNPAUSER_ROLE - run the handover and its gate first");
+    }
+
+    function test_Testnet_RefusesWithoutWeth() public {
+        vm.chainId(84532);
+        vm.startPrank(admin);
+        ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
+        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
+        AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
+        vm.stopPrank();
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+    }
+
+    /// @dev The Diamond's own oracle reads a carried-over round as stale, so
+    ///      the launch does too.
+    function test_Testnet_RefusesACarriedRound() public {
+        vm.chainId(84532);
+        vm.startPrank(admin);
+        ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
+        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCarriedRoundFeed()));
+        OracleAdminFacet(diamond).setWethContract(WETH);
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));

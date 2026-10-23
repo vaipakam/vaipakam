@@ -34,8 +34,9 @@ proposal calls; the contracts phase deploys it.
 No requirement is met just because an address has code. The sanctions
 oracle must answer a sanctions lookup (the Diamond treats a failing lookup
 as "not sanctioned", so a wrong contract would screen nobody), the price
-feed must answer as a price aggregator (its decimals and a well-formed
-round with a positive price), and a swap route counts only when the adapter
+requirement asks the platform's own price oracle to price ETH right then,
+under the same rules every other flow uses (so a missing, malformed, stale
+or distrusted price does not count), and a swap route counts only when the adapter
 is enabled and answers as an adapter. The cross-chain lane check reads the
 VPFI pool from Chainlink's token registry for the token the Diamond itself
 records, rather than trusting a pool address from the deploy files. A production launch also
@@ -46,7 +47,14 @@ evidence: on a production chain the Timelock must report the launch
 operation executed, and on a testnet no answered requirement may be unmet.
 Any other unpause makes the launch step refuse instead of recording it,
 and the deploy scripts record the launch from that same evidence rather
-than from whether the Diamond happens to be unpaused. On
+than from whether the Diamond happens to be unpaused. Once a Diamond has
+launched, the launch step never offers to unpause it again: a later pause
+is an incident and is lifted through incident response. On a testnet,
+where the admin launches directly and leaves no such record, the admin
+unpauses only a Diamond that has not been paused since it was created,
+unless the operator explicitly confirms it never went live. The readiness
+report printed by the verify phases now reaches the same verdict the
+launch would, handover included. On
 a testnet no answered requirement may be unmet and the admin unpauses
 directly. A local development chain only warns. The deploy scripts' verify
 phases print the same report, and fail if a Diamond was unpaused outside

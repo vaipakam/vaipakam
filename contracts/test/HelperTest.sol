@@ -3085,7 +3085,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](34);
+        selectors = new bytes4[](35);
         selectors[0] = OracleAdminFacet.setChainlinkRegistry.selector;
         selectors[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
         selectors[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
@@ -3120,6 +3120,7 @@ contract HelperTest {
         selectors[31] = OracleAdminFacet.getPeerProtocolAddresses.selector;
         selectors[32] = OracleAdminFacet.setTierReferenceAssets.selector;
         selectors[33] = OracleAdminFacet.getTierReferenceAssets.selector;
+        selectors[34] = OracleAdminFacet.getWethContract.selector;
         return selectors;
     }
 

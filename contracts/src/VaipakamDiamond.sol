@@ -51,14 +51,12 @@ contract VaipakamDiamond {
         // calls to those selectors clean-revert via {FunctionDoesNotExist},
         // but a future fallback that swallowed revert reasons would
         // turn that into a foot-gun. Defence in depth: protocol stays
-        // frozen until the deploy script's final {AdminFacet.unpause}
-        // call lands after every facet is cut, every Step-5 init has
-        // run, and the post-cut facet-count assertion has passed. The
-        // deploy script holds {PAUSER_ROLE} from
-        // {AccessControlFacet.initializeAccessControl}, so it can flip
-        // the bit back without an extra grant. See deploy-chain.sh
-        // step `[5d]` health check — `paused()` must be `false` at the
-        // end of a healthy deploy.
+        // frozen through the whole deploy. The deploy itself never
+        // unpauses (#945): the first unpause is the launch step
+        // (`Launch.s.sol`), after every launch requirement has been read
+        // off the chain, and on production it is a Timelock operation.
+        // This pause is the Diamond's birth pause epoch (one transition),
+        // which the launch step reads as "never unpaused".
         LibPausable.pause();
     }
 

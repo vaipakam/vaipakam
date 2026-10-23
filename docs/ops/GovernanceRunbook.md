@@ -584,8 +584,8 @@ even for the gap between the deploy and the handover.
    contract at a deterministic address that the launch operation calls.
 2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the five launch
    requirements off the chain (treasury, a sanctions oracle that answers
-   `isSanctioned`, an ETH/numeraire feed that answers `decimals()` and
-   reports a price, an enabled swap adapter that answers `adapterName()`,
+   `isSanctioned`, the Diamond's own oracle pricing WETH from the ETH
+   reference feed right now, an enabled swap adapter that answers `adapterName()`,
    a CCIP lane on the VPFI pool) and refuses unless every one is met, the
    Timelock holds `UNPAUSER_ROLE`, and the admin key holds no Diamond role
    at all. It broadcasts nothing. The VPFI pool is not taken from the
@@ -623,6 +623,11 @@ even for the gap between the deploy and the handover.
    no launch operation is done, something unpaused it outside this step:
    the phase refuses, and that is an incident to investigate, not a
    launch.
+7. The launch step looks for that evidence before anything else, paused or
+   not. Once the launch operation is done, a re-run during a later incident
+   pause reports "launched, and paused since" and prints no proposal: the
+   launch step never offers a second unpause. Lift an incident pause
+   through "Incident response — unpause" below.
 
 The Pauser Safe can cancel the queued launch like any other operation.
 
