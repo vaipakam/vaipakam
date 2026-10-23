@@ -161,6 +161,25 @@ describe('activity feed labels are translatable (extraction guard)', () => {
 });
 
 describe('coalesceByTx', () => {
+  // #2658 — an HF liquidation whose every swap route failed: the row is
+  // named by the outcome, and the steps inside it are counted, not shown.
+  it('names a failed-sale liquidation by its outcome, not its steps', () => {
+    const rows = coalesceByTx(
+      [
+        'HFLiquidationTriggered',
+        'SwapAdapterAttempted',
+        'SwapAllAdaptersFailed',
+        'LiquidationFallback',
+        'FallbackCustodyMoved',
+        'LoanStatusChanged',
+        'LoanFallbackPending',
+      ].map((kind, logIndex) => ev({ kind, logIndex, loanId: 9 })),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('Settlement pending after a failed sale');
+    expect(rows[0].hiddenCount).toBe(6);
+  });
+
   it('collapses one transaction to its highest-priority event', () => {
     // A loan-start tx emits LoanInitiated (90) + LoanInitiatedDetails
     // (10) + Transfer (5): one row, labelled by the real action.
