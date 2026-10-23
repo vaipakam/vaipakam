@@ -754,7 +754,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](49);
+        selectors = new bytes4[](50);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -811,6 +811,7 @@ contract HelperTest {
         selectors[46] = AdminFacet.getRateModelMaxDeviationBps.selector;
         selectors[47] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
         selectors[48] = AdminFacet.unpauseIfPauseEpoch.selector;
+        selectors[49] = AdminFacet.launch.selector;
         return selectors;
     }
 
@@ -1686,7 +1687,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](17);
         selectors[0] = AccessControlFacet.initializeAccessControl.selector;
         selectors[1] = AccessControlFacet.grantRole.selector;
         selectors[2] = AccessControlFacet.revokeRole.selector;
@@ -1703,6 +1704,7 @@ contract HelperTest {
         selectors[13] = AccessControlFacet.transferAdmin.selector;
         selectors[14] = AccessControlFacet.VAULT_ADMIN_ROLE.selector;
         selectors[15] = AccessControlFacet.EMERGENCY_REVOKER_ROLE.selector;
+        selectors[16] = AccessControlFacet.roleEpoch.selector;
         return selectors;
     }
 

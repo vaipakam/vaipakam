@@ -17,6 +17,7 @@ import {HandoverPlan} from "../../script/lib/HandoverPlan.sol";
 import {DeployLaunchGate} from "../../script/DeployLaunchGate.s.sol";
 import {LaunchGateDeployment} from "../../script/lib/LaunchGateDeployment.sol";
 import {LaunchGate} from "../../src/governance/LaunchGate.sol";
+import {ILaunchGate} from "../../src/interfaces/ILaunchGate.sol";
 import {LibLaunchReadiness} from "../../src/governance/LibLaunchReadiness.sol";
 import {VaipakamTimelock} from "../../src/governance/VaipakamTimelock.sol";
 
@@ -266,6 +267,8 @@ contract LaunchTest is Test {
     address internal constant PROPOSER = address(0x5AFE);
     address internal constant TREASURY = address(0xBEEF);
     address internal constant VPFI = address(0xF1F1);
+    /// @dev The Pauser Safe stand-in the handover appoints.
+    address internal constant GUARDIAN = address(0x6A2D);
 
     address internal diamond;
     address internal admin;
@@ -354,6 +357,7 @@ contract LaunchTest is Test {
         for (uint256 i; i < tl.length; ++i) {
             AccessControlFacet(diamond).grantRole(tl[i], timelock);
         }
+        AccessControlFacet(diamond).grantRole(LibAccessControl.PAUSER_ROLE, GUARDIAN);
         OwnershipFacet(diamond).transferOwnership(timelock);
         for (uint256 i = all.length; i > 0; --i) {
             if (AccessControlFacet(diamond).hasRole(all[i - 1], admin)) {
@@ -364,6 +368,19 @@ contract LaunchTest is Test {
         for (uint256 i; i < all.length; ++i) {
             assertFalse(AccessControlFacet(diamond).hasRole(all[i], admin), "admin keeps no role");
         }
+        // What the handover gate would prove here, as the wrapper hands it on.
+        handedTo = timelock;
+        provenEpoch = AccessControlFacet(diamond).roleEpoch();
+        launcher.setHandoverProof(provenEpoch);
+    }
+
+    /// @dev The last handover's end state, as a launch binds it. Call-free,
+    ///      like `_d`.
+    address internal handedTo;
+    uint64 internal provenEpoch;
+
+    function _h() internal view returns (ILaunchGate.Handover memory) {
+        return ILaunchGate.Handover({deployKey: admin, owner: handedTo, roleEpoch: provenEpoch});
     }
 
     // ─── The deploy leaves it paused ─────────────────────────────────
@@ -613,7 +630,7 @@ contract LaunchTest is Test {
 
     function _schedule(VaipakamTimelock tl, address registry, uint64 epoch) internal {
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launcher.launchBatch(diamond, _d(registry), admin, epoch);
+            launcher.launchBatch(diamond, _d(registry), _h(), epoch);
         bytes32 salt = launcher.launchSalt(diamond);
         vm.prank(PROPOSER);
         tl.scheduleBatch(targets, values, payloads, bytes32(0), salt, 2 days);
@@ -621,7 +638,7 @@ contract LaunchTest is Test {
 
     function _execute(VaipakamTimelock tl, address registry, uint64 epoch) internal {
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launcher.launchBatch(diamond, _d(registry), admin, epoch);
+            launcher.launchBatch(diamond, _d(registry), _h(), epoch);
         tl.executeBatch(targets, values, payloads, bytes32(0), launcher.launchSalt(diamond));
     }
 
@@ -672,7 +689,7 @@ contract LaunchTest is Test {
         vm.prank(address(tl));
         AdminFacet(diamond).setSwapAdapterDisabled(adapter, true);
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launcher.launchBatch(diamond, _d(registry), admin, epoch);
+            launcher.launchBatch(diamond, _d(registry), _h(), epoch);
         bytes32 salt = launcher.launchSalt(diamond);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -702,7 +719,7 @@ contract LaunchTest is Test {
         address timelock = address(new LaunchMockTimelock());
         _handOverUnpause(timelock);
         LaunchGate gate = LaunchGate(LaunchGateDeployment.predicted());
-        gate.assertReady(diamond, _d(_registryWithLane()), admin);
+        gate.assertReady(diamond, _d(_registryWithLane()), _h());
         vm.expectRevert(
             abi.encodeWithSelector(
                 LaunchGate.LaunchNotReady.selector,
@@ -711,16 +728,15 @@ contract LaunchTest is Test {
                 "no CCIP TokenAdminRegistry given (CCIP_TOKEN_ADMIN_REGISTRY), so the VPFI pool is unknown"
             )
         );
-        gate.assertReady(diamond, _d(address(0)), admin);
+        gate.assertReady(diamond, _d(address(0)), _h());
     }
 
     // ─── Round 3 (Codex #2686 r3) ────────────────────────────────────
 
     /// @dev A guardian with PAUSER_ROLE, as the handover appoints one.
-    function _guardian(VaipakamTimelock tl) internal returns (address guardian) {
-        guardian = address(0x6A2D);
-        vm.prank(address(tl));
-        AccessControlFacet(diamond).grantRole(LibAccessControl.PAUSER_ROLE, guardian);
+    ///      The handover appoints it, so the launch's role epoch covers it.
+    function _guardian(VaipakamTimelock) internal pure returns (address) {
+        return GUARDIAN;
     }
 
     /// @dev An incident pause recorded during the delay (a guardian pauses
@@ -732,7 +748,7 @@ contract LaunchTest is Test {
         vm.prank(_guardian(tl));
         AdminFacet(diamond).pause();
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launcher.launchBatch(diamond, _d(registry), admin, epoch);
+            launcher.launchBatch(diamond, _d(registry), _h(), epoch);
         bytes32 salt = launcher.launchSalt(diamond);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.PauseEpochMoved.selector, epoch, epoch + 1));
         tl.executeBatch(targets, values, payloads, bytes32(0), salt);
@@ -747,7 +763,7 @@ contract LaunchTest is Test {
         vm.prank(address(tl));
         AccessControlFacet(diamond).grantRole(LibAccessControl.PAUSER_ROLE, admin);
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launcher.launchBatch(diamond, _d(registry), admin, epoch);
+            launcher.launchBatch(diamond, _d(registry), _h(), epoch);
         bytes32 salt = launcher.launchSalt(diamond);
         vm.expectRevert(
             abi.encodeWithSelector(LaunchGate.DeployKeyHoldsRole.selector, admin, LibAccessControl.PAUSER_ROLE)
@@ -761,7 +777,7 @@ contract LaunchTest is Test {
         LaunchGate gate = LaunchGate(LaunchGateDeployment.predicted());
         address registry = _registryWithLane();
         vm.expectRevert(LaunchGate.NoDeployKey.selector);
-        gate.assertReady(diamond, _d(registry), address(0));
+        gate.assertReady(diamond, _d(registry), ILaunchGate.Handover(address(0), address(0), 0));
     }
 
     /// @dev A launched production Diamond paused and unpaused again for an
@@ -777,6 +793,7 @@ contract LaunchTest is Test {
             string.concat(
                 "first unpaused by ",
                 vm.toString(address(tl)),
+                _throughGate(),
                 ", and PAUSED now: lifting that pause is incident response (GovernanceRunbook), not a launch"
             ),
             "an incident-paused Diamond is reported launched, never live"
@@ -785,7 +802,7 @@ contract LaunchTest is Test {
         AdminFacet(diamond).unpause();
         assertEq(
             launcher.checkLaunched(diamond, _d(registry), address(tl), admin),
-            string.concat("first unpaused by ", vm.toString(address(tl)), ", and unpaused now")
+            string.concat("first unpaused by ", vm.toString(address(tl)), _throughGate(), ", and unpaused now")
         );
     }
 
@@ -1045,11 +1062,11 @@ contract LaunchTest is Test {
         assertTrue(AdminFacet(diamond).paused());
     }
 
-    /// @dev Launched by a Timelock operation this checkout did not build (a
-    ///      plain governance unpause, as a later LaunchGate build or registry
-    ///      would also make it): the record still says launched, so a later
-    ///      incident pause is never offered a second launch.
-    function test_Production_LaunchRecordDoesNotDependOnTheBatch() public {
+    /// @dev A Timelock operation that only unpauses (Codex #2686 r9): the
+    ///      Diamond's record names the Timelock but no launch gate, so no
+    ///      readiness check vouched for it. Production refuses to call that a
+    ///      launch, and the wrapper never records one.
+    function test_Production_PlainTimelockUnpauseIsNotALaunch() public {
         (VaipakamTimelock tl, address registry,) = _scheduledLaunch();
         address[] memory targets = new address[](1);
         targets[0] = diamond;
@@ -1059,12 +1076,19 @@ contract LaunchTest is Test {
         tl.scheduleBatch(targets, new uint256[](1), payloads, bytes32(0), bytes32("plain"), 2 days);
         vm.warp(block.timestamp + 2 days);
         tl.executeBatch(targets, new uint256[](1), payloads, bytes32(0), bytes32("plain"));
-        vm.prank(_guardian(tl));
-        AdminFacet(diamond).pause();
-        Launch.Decision memory d = launcher.decide(diamond, _d(registry), address(tl), admin, false);
-        assertEq(uint8(d.path), uint8(Launch.Path.Launched));
         (address by,) = launcher.firstUnpause(diamond);
         assertEq(by, address(tl));
+        assertEq(launcher.firstUnpauseGate(diamond), address(0), "a plain unpause names no gate");
+        string memory refusal = string.concat(
+            "Launch: the Diamond was first unpaused by the Timelock, but not through a launch gate ",
+            "(AdminFacet.launch) - no readiness check vouched for it in that call; investigate before ",
+            "anything records a launch"
+        );
+        Launch.Decision memory d = launcher.decide(diamond, _d(registry), address(tl), admin, false);
+        assertEq(uint8(d.path), uint8(Launch.Path.Refuse));
+        assertEq(d.reason, refusal);
+        vm.expectRevert(bytes(refusal));
+        launcher.checkLaunched(diamond, _d(registry), address(tl), admin);
     }
 
     function _pool(address registry) internal view returns (LaunchMockPool) {
@@ -1086,7 +1110,7 @@ contract LaunchTest is Test {
                 "a lane's OUTBOUND rate limit is disabled or outside the governor's bounds: run the ccip-wire phase's rate limits"
             )
         );
-        LaunchGate(LaunchGateDeployment.predicted()).assertReady(diamond, _d(registry), admin);
+        LaunchGate(LaunchGateDeployment.predicted()).assertReady(diamond, _d(registry), _h());
     }
 
     /// @dev Enabled but with a capacity past the governor's ceiling: as good
@@ -1104,7 +1128,7 @@ contract LaunchTest is Test {
                 "a lane's INBOUND rate limit is disabled or outside the governor's bounds: run the ccip-wire phase's rate limits"
             )
         );
-        LaunchGate(LaunchGateDeployment.predicted()).assertReady(diamond, _d(registry), admin);
+        LaunchGate(LaunchGateDeployment.predicted()).assertReady(diamond, _d(registry), _h());
     }
 
     /// @dev A limiter disabled during the delay: the launch reverts on
@@ -1113,7 +1137,7 @@ contract LaunchTest is Test {
         (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
         _pool(registry).setLimit(1, true, false, 0, 0);
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launcher.launchBatch(diamond, _d(registry), admin, epoch);
+            launcher.launchBatch(diamond, _d(registry), _h(), epoch);
         bytes32 salt = launcher.launchSalt(diamond);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -1131,6 +1155,10 @@ contract LaunchTest is Test {
 
     function _gate() internal view returns (LaunchGate) {
         return LaunchGate(LaunchGateDeployment.predicted());
+    }
+
+    function _throughGate() internal view returns (string memory) {
+        return string.concat(" through launch gate ", vm.toString(LaunchGateDeployment.predicted()), " (this checkout's gate)");
     }
 
     function _lanes(uint64 a, uint64 b) internal pure returns (uint64[] memory l) {
@@ -1154,7 +1182,7 @@ contract LaunchTest is Test {
                 "declared lane 2 is not on the registry's VPFI pool: run the ccip-wire phase for every chain in CCIP_LANE_CHAIN_IDS"
             )
         );
-        _gate().assertReady(diamond, d, admin);
+        _gate().assertReady(diamond, d, _h());
     }
 
     /// @dev A lane nobody declared is an unreviewed route: refused too.
@@ -1172,7 +1200,7 @@ contract LaunchTest is Test {
                 "the registry's VPFI pool carries lane 2, which is not declared: an undeclared lane is an unreviewed route"
             )
         );
-        _gate().assertReady(diamond, d, admin);
+        _gate().assertReady(diamond, d, _h());
     }
 
     /// @dev Duplicates in the declaration do not stand in for a missing lane.
@@ -1191,7 +1219,7 @@ contract LaunchTest is Test {
                 "the registry's VPFI pool carries lane 2, which is not declared: an undeclared lane is an unreviewed route"
             )
         );
-        _gate().assertReady(diamond, d, admin);
+        _gate().assertReady(diamond, d, _h());
     }
 
     /// @dev The registry routes VPFI through a pool other than the declared
@@ -1209,7 +1237,7 @@ contract LaunchTest is Test {
                 "the TokenAdminRegistry routes the Diamond's VPFI token through a pool other than the declared one (the pool the handover gate checked)"
             )
         );
-        _gate().assertReady(diamond, d, admin);
+        _gate().assertReady(diamond, d, _h());
     }
 
     /// @dev The oracle prices whatever is stored as WETH, so a price alone
@@ -1227,7 +1255,7 @@ contract LaunchTest is Test {
                 "the configured WETH is not the declared one"
             )
         );
-        _gate().assertReady(diamond, d, admin);
+        _gate().assertReady(diamond, d, _h());
     }
 
     /// @dev An EOA stored as WETH still "prices" through the ETH feed; it is
@@ -1251,7 +1279,7 @@ contract LaunchTest is Test {
         vm.prank(OwnershipFacet(diamond).owner());
         OracleAdminFacet(diamond).setWethContract(other);
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launcher.launchBatch(diamond, _d(registry), admin, epoch);
+            launcher.launchBatch(diamond, _d(registry), _h(), epoch);
         bytes32 salt = launcher.launchSalt(diamond);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -1336,7 +1364,7 @@ contract LaunchTest is Test {
         (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
         _pool(registry).setRateLimitAdmin(address(0xBAD));
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launcher.launchBatch(diamond, _d(registry), admin, epoch);
+            launcher.launchBatch(diamond, _d(registry), _h(), epoch);
         bytes32 salt = launcher.launchSalt(diamond);
         _expectRouteRefused(
             "the VPFI pool's rate-limit admin is not the declared rate governor, so its limits could be changed outside the governor's bounds"
@@ -1351,7 +1379,7 @@ contract LaunchTest is Test {
         address registry = _registryWithLane();
         _pool(registry).setOwner(address(0xBAD));
         _expectRouteRefused("the VPFI pool's owner is not the Diamond's owner");
-        _gate().assertReady(diamond, _d(registry), admin);
+        _gate().assertReady(diamond, _d(registry), _h());
     }
 
     function test_Gate_RefusesAPendingRegistryAdministratorTransfer() public {
@@ -1360,7 +1388,7 @@ contract LaunchTest is Test {
         address registry = _registryWithLane();
         LaunchMockRegistry(registry).setPendingAdministrator(address(0xBAD));
         _expectRouteRefused("the registry's VPFI administrator is not the Diamond's owner, or a transfer of it is pending");
-        _gate().assertReady(diamond, _d(registry), admin);
+        _gate().assertReady(diamond, _d(registry), _h());
     }
 
     function test_Gate_RefusesAGovernorWithAPendingOwner() public {
@@ -1371,6 +1399,183 @@ contract LaunchTest is Test {
         _expectRouteRefused(
             "the rate governor is not owned by the Diamond's owner, has an ownership transfer pending, or administers another pool"
         );
-        _gate().assertReady(diamond, _d(registry), admin);
+        _gate().assertReady(diamond, _d(registry), _h());
+    }
+
+    // ─── Round 9 (Codex #2686): the gated launch and the role epoch ─────
+
+    /// @dev A role granted to a fresh account during the delay (here by a
+    ///      governance call the Timelock executes): the holders the handover
+    ///      gate proved no longer hold, so the launch reverts.
+    function test_Production_RoleGrantedDuringDelayRevertsTheLaunch() public {
+        (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
+        vm.prank(address(tl));
+        AccessControlFacet(diamond).grantRole(LibAccessControl.ORACLE_ADMIN_ROLE, address(0xE0A));
+        (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
+            launcher.launchBatch(diamond, _d(registry), _h(), epoch);
+        bytes32 salt = launcher.launchSalt(diamond);
+        vm.expectRevert(abi.encodeWithSelector(LaunchGate.RoleEpochMoved.selector, provenEpoch, provenEpoch + 1));
+        tl.executeBatch(targets, values, payloads, bytes32(0), salt);
+        assertTrue(AdminFacet(diamond).paused());
+    }
+
+    /// @dev Executed: the Diamond's record names the gate it went through,
+    ///      and the evidence line says it is this checkout's.
+    function test_Production_LaunchRecordsTheGate() public {
+        (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
+        _execute(tl, registry, epoch);
+        assertEq(launcher.firstUnpauseGate(diamond), LaunchGateDeployment.predicted());
+        assertEq(
+            launcher.checkLaunched(diamond, _d(registry), address(tl), admin),
+            string.concat("first unpaused by ", vm.toString(address(tl)), _throughGate(), ", and unpaused now")
+        );
+    }
+
+    function test_Production_RefusesWithoutAHandoverProof() public {
+        vm.chainId(8453);
+        _configure();
+        address timelock = address(new LaunchMockTimelock());
+        _handOverUnpause(timelock);
+        Launch unproven = new Launch();
+        address registry = _registryWithLane();
+        vm.expectRevert(
+            bytes(
+                "Launch: no role epoch from the handover gate (HANDOVER_ROLE_EPOCH) - run the handover-gate phase first; the deploy wrapper passes the epoch it proved"
+            )
+        );
+        unproven.launch(diamond, _d(registry), timelock, admin, 0);
+    }
+
+    function test_Production_RefusesRolesChangedSinceTheProof() public {
+        vm.chainId(8453);
+        _configure();
+        address timelock = address(new LaunchMockTimelock());
+        _handOverUnpause(timelock);
+        address registry = _registryWithLane();
+        vm.prank(timelock);
+        AccessControlFacet(diamond).grantRole(LibAccessControl.KEEPER_ROLE, address(0xC0FFEE));
+        vm.expectRevert(
+            bytes(
+                string.concat(
+                    "Launch: the Diamond's roles changed after the handover gate proved them (role epoch ",
+                    vm.toString(uint256(provenEpoch)),
+                    " proven, ",
+                    vm.toString(uint256(provenEpoch) + 1),
+                    " now) - re-run the handover-gate phase, then launch"
+                )
+            )
+        );
+        launcher.launch(diamond, _d(registry), timelock, admin, 0);
+    }
+
+    function test_Production_RefusesWhileTheOwnerIsNotTheTimelock() public {
+        vm.chainId(8453);
+        _configure();
+        address timelock = address(new LaunchMockTimelock());
+        _handOverUnpause(timelock);
+        address registry = _registryWithLane();
+        address elsewhere = address(new LaunchMockTimelock());
+        vm.prank(timelock);
+        AccessControlFacet(diamond).grantRole(bytes32(0), elsewhere);
+        vm.prank(timelock);
+        OwnershipFacet(diamond).transferOwnership(elsewhere);
+        vm.expectRevert(bytes("Launch: the Diamond's owner is not the Timelock - the handover is not complete"));
+        launcher.launch(diamond, _d(registry), timelock, admin, 0);
+    }
+
+    /// @dev A testnet rehearsal without the handover gate's output: the
+    ///      proposal binds the live epoch and says it was not proven.
+    function test_Testnet_ProposalWithoutAProofBindsTheLiveEpoch() public {
+        vm.chainId(84532);
+        _configure();
+        address timelock = address(new LaunchMockTimelock());
+        _handOverUnpause(timelock);
+        Launch unproven = new Launch();
+        Launch.Decision memory d = unproven.decide(diamond, _d(_registryWithLane()), timelock, admin, false);
+        assertEq(uint8(d.path), uint8(Launch.Path.TimelockProposal));
+        assertFalse(d.roleEpochProven);
+        assertEq(d.handover.roleEpoch, AccessControlFacet(diamond).roleEpoch());
+        assertEq(d.handover.owner, timelock);
+        assertEq(d.handover.deployKey, admin);
+    }
+
+    function test_Gate_RefusesAMovedOwner() public {
+        _configure();
+        address timelock = address(new LaunchMockTimelock());
+        _handOverUnpause(timelock);
+        address registry = _registryWithLane();
+        ILaunchGate.Handover memory h = _h();
+        h.owner = address(0xBEEF);
+        vm.expectRevert(abi.encodeWithSelector(LaunchGate.OwnerMoved.selector, address(0xBEEF), timelock));
+        _gate().assertReady(diamond, _d(registry), h);
+    }
+
+    /// @dev The Diamond accepts only `assertReady` for itself: a gate call
+    ///      naming another Diamond, or another function, vouches for nothing.
+    function test_DiamondLaunch_RefusesAGateCallNotForItself() public {
+        _configure();
+        address timelock = address(new LaunchMockTimelock());
+        _handOverUnpause(timelock);
+        LibLaunchReadiness.Declared memory d = _d(_registryWithLane());
+        address gate = LaunchGateDeployment.predicted();
+        bytes memory forAnother = abi.encodeCall(ILaunchGate.assertReady, (address(0xD1A), d, _h()));
+        bytes memory notAssert = abi.encodeCall(LaunchGate.checks, (diamond, d));
+        uint64 epoch = _epoch();
+        vm.startPrank(timelock);
+        vm.expectRevert(IVaipakamErrors.LaunchGateCallInvalid.selector);
+        AdminFacet(diamond).launch(epoch, gate, forAnother);
+        vm.expectRevert(IVaipakamErrors.LaunchGateCallInvalid.selector);
+        AdminFacet(diamond).launch(epoch, gate, notAssert);
+        vm.expectRevert(IVaipakamErrors.LaunchGateCallInvalid.selector);
+        AdminFacet(diamond).launch(epoch, gate, hex"1234");
+        vm.stopPrank();
+        assertTrue(AdminFacet(diamond).paused());
+    }
+
+    /// @dev A gate address with no code is refused, not read as "returned".
+    function test_DiamondLaunch_RefusesAGateWithoutCode() public {
+        _configure();
+        address timelock = address(new LaunchMockTimelock());
+        _handOverUnpause(timelock);
+        bytes memory call_ = abi.encodeCall(ILaunchGate.assertReady, (diamond, _d(_registryWithLane()), _h()));
+        uint64 epoch = _epoch();
+        vm.prank(timelock);
+        vm.expectRevert();
+        AdminFacet(diamond).launch(epoch, address(0xC0DE), call_);
+        assertTrue(AdminFacet(diamond).paused());
+    }
+
+    /// @dev A launch is the first unpause only: once live, lifting a pause
+    ///      is incident response and `launch` refuses.
+    function test_DiamondLaunch_RefusesOnceLive() public {
+        (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
+        _execute(tl, registry, epoch);
+        vm.prank(GUARDIAN);
+        AdminFacet(diamond).pause();
+        bytes memory call_ = abi.encodeCall(ILaunchGate.assertReady, (diamond, _d(registry), _h()));
+        uint64 now_ = _epoch();
+        address gate = LaunchGateDeployment.predicted();
+        vm.prank(address(tl));
+        vm.expectRevert(IVaipakamErrors.AlreadyLaunched.selector);
+        AdminFacet(diamond).launch(now_, gate, call_);
+    }
+
+    /// @dev The role epoch counts every change to the role table and
+    ///      nothing else: a grant to a holder already holding it is no change.
+    function test_RoleEpoch_CountsEveryRoleTableChange() public {
+        uint64 e0 = AccessControlFacet(diamond).roleEpoch();
+        address who = address(0xA0A0);
+        vm.startPrank(admin);
+        AccessControlFacet(diamond).grantRole(LibAccessControl.KEEPER_ROLE, who);
+        assertEq(AccessControlFacet(diamond).roleEpoch(), e0 + 1, "grant");
+        AccessControlFacet(diamond).grantRole(LibAccessControl.KEEPER_ROLE, who);
+        assertEq(AccessControlFacet(diamond).roleEpoch(), e0 + 1, "a repeated grant changes nothing");
+        AccessControlFacet(diamond).revokeRole(LibAccessControl.KEEPER_ROLE, who);
+        assertEq(AccessControlFacet(diamond).roleEpoch(), e0 + 2, "revoke");
+        AccessControlFacet(diamond).grantRole(LibAccessControl.KEEPER_ROLE, who);
+        vm.stopPrank();
+        vm.prank(who);
+        AccessControlFacet(diamond).renounceRole(LibAccessControl.KEEPER_ROLE, who);
+        assertEq(AccessControlFacet(diamond).roleEpoch(), e0 + 4, "renounce");
     }
 }

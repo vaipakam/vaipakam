@@ -66,6 +66,15 @@ library LibPausable {
         // the timestamp in bytes 20..27.
         address firstUnpausedBy;
         uint64 firstUnpausedAt;
+        // #945 (Codex #2686 r9 P1) — the launch gate the first unpause went
+        // through, or zero when it went through a plain {unpause}. Written
+        // only by {unpauseThroughGate}, in the same write as the two fields
+        // above, so the record says not only who admitted users but whether
+        // a readiness gate had just vouched for this Diamond in that call:
+        // a bare Timelock unpause leaves `firstUnpausedBy` = the Timelock
+        // and this zero, and the production launch tooling refuses it. Own
+        // slot (slot + 2).
+        address firstUnpausedVia;
     }
 
     /// @custom:event-category informational/admin
@@ -158,6 +167,15 @@ library LibPausable {
         at = uint64(word >> 160);
     }
 
+    /// @dev The raw slot holding {PausableStorage.firstUnpausedVia}: the
+    ///      address in its low 20 bytes.
+    bytes32 internal constant FIRST_UNPAUSE_VIA_SLOT = bytes32(uint256(PAUSABLE_STORAGE_POSITION) + 2);
+
+    /// @dev Whether the Diamond has ever been live (a first unpause is on record).
+    function everUnpaused() internal view returns (bool) {
+        return _storage().firstUnpausedBy != address(0);
+    }
+
     /// @dev The MANUAL pause only — an auto-pause window does not qualify.
     ///      For a ceremony or migration whose safety depends on service NOT
     ///      resuming until someone decides it should (#1566 slice 4 PR A,
@@ -178,6 +196,17 @@ library LibPausable {
     }
 
     function unpause() internal {
+        _unpause(address(0));
+    }
+
+    /// @dev {unpause}, recording `gate` as the launch gate when this is the
+    ///      first unpause. The caller ({AdminFacet.launch}) has just had
+    ///      `gate` vouch for this Diamond.
+    function unpauseThroughGate(address gate) internal {
+        _unpause(gate);
+    }
+
+    function _unpause(address via) private {
         // Clear both manual + auto-pause — admin can short-circuit a
         // false-positive auto-pause without waiting for the window
         // to elapse.
@@ -197,6 +226,7 @@ library LibPausable {
             if (ps.firstUnpausedBy == address(0)) {
                 ps.firstUnpausedBy = msg.sender;
                 ps.firstUnpausedAt = SafeCast.toUint64(block.timestamp);
+                ps.firstUnpausedVia = via;
             }
         }
         emit Unpaused(msg.sender);

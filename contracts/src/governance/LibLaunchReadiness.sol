@@ -18,6 +18,7 @@ interface ILaunchReadableDiamond {
     function getVPFIToken() external view returns (address);
     function hasRole(bytes32 role, address account) external view returns (bool);
     function owner() external view returns (address);
+    function roleEpoch() external view returns (uint64);
 }
 
 /**

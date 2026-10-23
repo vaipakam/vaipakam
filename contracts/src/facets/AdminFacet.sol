@@ -6,6 +6,8 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {ILaunchGate} from "../interfaces/ILaunchGate.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 
 /**
  * @title AdminFacet
@@ -832,6 +834,52 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         uint64 live = LibPausable.pauseTransitions();
         if (live != expectedEpoch) revert IVaipakamErrors.PauseEpochMoved(expectedEpoch, live);
         LibPausable.unpause();
+    }
+
+    /// @notice A Diamond's launch: its first unpause, made only once `gate`
+    ///         has vouched that this Diamond is ready.
+    /// @custom:event-category informational/admin
+    event LaunchedThroughGate(address indexed gate, address indexed by);
+
+    /// @notice The launch: the FIRST unpause of a Diamond born paused, made
+    ///         only after the readiness gate `gate` has returned from
+    ///         `gateCall`, in this same call (#945, Codex #2686 r9 P1).
+    /// @dev UNPAUSER_ROLE (the Timelock, after handover). In order:
+    ///      1. refuses {IVaipakamErrors.AlreadyLaunched} once the Diamond
+    ///         has ever been live;
+    ///      2. refuses {IVaipakamErrors.LaunchGateCallInvalid} unless
+    ///         `gateCall` is `ILaunchGate.assertReady` with THIS Diamond as
+    ///         its first argument — a gate's success vouches only for the
+    ///         Diamond it read;
+    ///      3. makes the call as a static call, and reverts with the gate's
+    ///         own reason when it does (or when `gate` has no code);
+    ///      4. refuses {IVaipakamErrors.PauseEpochMoved} unless the pause
+    ///         epoch is still `expectedEpoch`, as {unpauseIfPauseEpoch} does;
+    ///      5. unpauses, and the first-unpause record names `gate` beside
+    ///         the caller and the time.
+    ///      The Diamond does not decide which gate is the right one: it
+    ///      records the one it was given. The launch tooling compares that
+    ///      record with the gate the proposal named, and a first unpause
+    ///      through {unpause} leaves no gate on record, which production
+    ///      refuses to count as a launch.
+    /// @param expectedEpoch The pause epoch the launch decision read.
+    /// @param gate          The readiness gate to consult.
+    /// @param gateCall      The `ILaunchGate.assertReady` calldata, with the
+    ///                      declared values the Safe reviewed.
+    function launch(uint64 expectedEpoch, address gate, bytes calldata gateCall)
+        external
+        onlyRole(LibAccessControl.UNPAUSER_ROLE)
+    {
+        if (LibPausable.everUnpaused()) revert IVaipakamErrors.AlreadyLaunched();
+        if (
+            gateCall.length < 36 || bytes4(gateCall[:4]) != ILaunchGate.assertReady.selector
+                || abi.decode(gateCall[4:36], (address)) != address(this)
+        ) revert IVaipakamErrors.LaunchGateCallInvalid();
+        Address.functionStaticCall(gate, gateCall);
+        uint64 live = LibPausable.pauseTransitions();
+        if (live != expectedEpoch) revert IVaipakamErrors.PauseEpochMoved(expectedEpoch, live);
+        LibPausable.unpauseThroughGate(gate);
+        emit LaunchedThroughGate(gate, msg.sender);
     }
 
     /// @notice Returns whether the protocol is currently paused.

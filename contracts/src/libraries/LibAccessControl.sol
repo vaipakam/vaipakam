@@ -134,6 +134,17 @@ library LibAccessControl {
     ///      rename, or change types of existing fields on live diamonds.
     struct AccessControlStorage {
         mapping(bytes32 => RoleData) roles;
+        // #945 (Codex #2686 r9 P1) — a strictly monotonic count of role-table
+        // changes: every grant or revoke that changes a holder, every
+        // renounce that does, every role-admin assignment. The ROLE EPOCH a
+        // launch decision is bound to: the handover gate proves the exact
+        // holder of every role from the role events at epoch N, and the
+        // launch the Timelock executes after its delay refuses unless the
+        // epoch is still N, so no grant (or revoke) lands unreviewed between
+        // that proof and users being admitted. The holder sets themselves
+        // are not enumerable on-chain; this count is what makes "unchanged
+        // since the proof" checkable there.
+        uint64 roleTransitions;
     }
 
     // ─── Events ──────────────────────────────────────────────────────────
@@ -181,9 +192,16 @@ library LibAccessControl {
         return _storage().roles[role].adminRole;
     }
 
+    /// @dev The role epoch: the count of role-table changes ({AccessControlStorage}).
+    function roleTransitions() internal view returns (uint64) {
+        return _storage().roleTransitions;
+    }
+
     function grantRole(bytes32 role, address account) internal {
         if (!hasRole(role, account)) {
-            _storage().roles[role].hasRole[account] = true;
+            AccessControlStorage storage acs = _storage();
+            acs.roles[role].hasRole[account] = true;
+            ++acs.roleTransitions;
             emit RoleGranted(role, account, msg.sender);
         }
     }
@@ -191,7 +209,9 @@ library LibAccessControl {
     function revokeRole(bytes32 role, address account) internal {
         _assertNotOwnerRootRemoval(role, account);
         if (hasRole(role, account)) {
-            _storage().roles[role].hasRole[account] = false;
+            AccessControlStorage storage acs = _storage();
+            acs.roles[role].hasRole[account] = false;
+            ++acs.roleTransitions;
             emit RoleRevoked(role, account, msg.sender);
         }
     }
@@ -202,7 +222,9 @@ library LibAccessControl {
         }
         _assertNotOwnerRootRemoval(role, msg.sender);
         if (hasRole(role, msg.sender)) {
-            _storage().roles[role].hasRole[msg.sender] = false;
+            AccessControlStorage storage acs = _storage();
+            acs.roles[role].hasRole[msg.sender] = false;
+            ++acs.roleTransitions;
             emit RoleRevoked(role, msg.sender, msg.sender);
         }
     }
@@ -222,7 +244,9 @@ library LibAccessControl {
 
     function setRoleAdmin(bytes32 role, bytes32 adminRole) internal {
         bytes32 previousAdminRole = getRoleAdmin(role);
-        _storage().roles[role].adminRole = adminRole;
+        AccessControlStorage storage acs = _storage();
+        acs.roles[role].adminRole = adminRole;
+        ++acs.roleTransitions;
         emit RoleAdminChanged(role, previousAdminRole, adminRole);
     }
 

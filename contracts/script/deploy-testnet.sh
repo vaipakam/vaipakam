@@ -1729,12 +1729,24 @@ phase_handover_gate() {
   echo "deploy-testnet.sh — handover-gate  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
 
+  # The gate prints the role epoch at which it proved every role's holders
+  # on a line of its own; the launch binds its Timelock call to it, so a
+  # role that changes hands after this proof makes the launch refuse
+  # (Codex #2686 r9). pipefail makes a failing gate fail this phase.
+  local hg_log="$MARKERS_DIR/handover-gate.log"
   CHAIN_SLUG="$CHAIN_SLUG" forge script script/HandoverGate.s.sol \
-    --rpc-url "$RPC"
+    --rpc-url "$RPC" 2>&1 | tee "$hg_log"
+  local proven_epoch
+  proven_epoch=$(sed -n 's/^ *HANDOVER_ROLE_EPOCH=\([0-9][0-9]*\) *$/\1/p' "$hg_log" | tail -n 1)
+  if [ -z "$proven_epoch" ]; then
+    echo "handover-gate: the gate passed but printed no HANDOVER_ROLE_EPOCH line; refusing to record it." >&2
+    exit 1
+  fi
 
   mark_phase_done "handover-gate"
+  printf '%s\n' "$proven_epoch" > "$MARKERS_DIR/handover-gate.role-epoch"
   echo
-  echo "✓ handover-gate passed: the chain holds the governance topology."
+  echo "✓ handover-gate passed: the chain holds the governance topology (role epoch $proven_epoch)."
 }
 
 # ── Phase: launch ─────────────────────────────────────────────────────
@@ -1743,9 +1755,10 @@ phase_handover_gate() {
 # sanctions oracle, price feed, an enabled swap route, CCIP lanes) and
 # refuses while any is NOT MET. One the chain cannot answer is printed as
 # NOT CHECKED. The admin key then unpauses; after a rehearsal handover the
-# Timelock holds UNPAUSER_ROLE and the phase prints its gated batch instead
-# (LaunchGate.assertReady then unpauseIfPauseEpoch), which needs every
-# check met and the admin key to hold no role. The CCIP checks read the
+# Timelock holds UNPAUSER_ROLE and the phase prints its gated call instead
+# (AdminFacet.launch, which calls LaunchGate.assertReady itself), which
+# needs every check met, the admin key to hold no role and the role epoch
+# the handover gate proved. The CCIP checks read the
 # VPFI pool from CCIP_TOKEN_ADMIN_REGISTRY and compare it with the
 # artifact's vpfiTokenPool, and its lanes with CCIP_LANE_CHAIN_IDS
 # (resolved per chain, as ccip-wire does): exactly that set. An
@@ -1760,6 +1773,15 @@ phase_launch() {
   # The launch declares the lane set the VPFI pool must carry EXACTLY
   # (Codex #2686 r7): the same per-chain list the ccip-wire phase wired.
   resolve_ccip_lane_chain_ids "$CCIP_SLUG" || exit 1
+
+  # After a rehearsal handover the Timelock call is bound to the role epoch
+  # the handover gate proved, when that phase ran here; without it the
+  # proposal binds the live epoch and says so (a production one refuses).
+  local proven_file="$MARKERS_DIR/handover-gate.role-epoch"
+  if [ -s "$proven_file" ]; then
+    export HANDOVER_ROLE_EPOCH
+    HANDOVER_ROLE_EPOCH="$(cat "$proven_file")"
+  fi
 
   CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol \
     --rpc-url "$RPC" --broadcast --slow

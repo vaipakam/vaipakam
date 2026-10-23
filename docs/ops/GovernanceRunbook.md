@@ -582,10 +582,15 @@ even for the gap between the deploy and the handover.
 1. Finish the deploy phases, then `handover` and `handover-gate`. The
    `contracts` phase has already deployed the LaunchGate, a stateless
    contract at a deterministic address that the launch operation calls.
+   `handover-gate` also prints the Diamond's **role epoch**, a count of
+   every change to its role table, at the moment it proved every role's
+   holders; the wrapper records it for the launch phase.
 2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the six launch
    requirements off the chain and refuses unless every one is met, the
-   Timelock holds `UNPAUSER_ROLE`, and the admin key holds no Diamond role
-   at all. It broadcasts nothing. The requirements:
+   Timelock holds `UNPAUSER_ROLE` and owns the Diamond, the admin key holds
+   no Diamond role at all, and the role epoch is still the one
+   `handover-gate` proved (if any role changed hands since, re-run
+   `handover-gate`). It broadcasts nothing. The requirements:
    - a treasury;
    - a sanctions oracle that answers `isSanctioned`;
    - the declared WETH, an 18-decimal token contract, which the Diamond's
@@ -623,30 +628,46 @@ even for the gap between the deploy and the handover.
    prints this as `[NOT A CHECK]`. Until #2696 adds asset onboarding,
    governance sets them through Timelock proposals (`updateRiskParams`
    works while the Diamond is paused) before scheduling the launch.
-3. It prints the Timelock `scheduleBatch(...)` call. The batch has two
-   calls: `LaunchGate.assertReady(diamond, declared, adminKey)`, then
-   `diamond.unpauseIfPauseEpoch(epoch)`. The governance Safe proposes it.
-   `declared` carries the registry, the VPFI pool, the lane selectors and
-   the WETH, and the step prints each one. Before signing, check that the
-   gate address printed is the one the launch phase reports, that the
-   registry is the chain's CCIP `TokenAdminRegistry`, that the lanes are
-   the full production topology for this chain, that the WETH is the
-   chain's bridged WETH9 according to its official bridge registry (never
-   the wrapped native token; nothing on-chain records which token that
-   is, so this review is where it is established), and that the admin key
-   is the deploy-time admin address. The gate refuses any value other than
-   the ones signed. The salt is fixed per chain and Diamond, so a re-run finds the
+3. It prints the Timelock `scheduleBatch(...)` call. The operation is ONE
+   call, `diamond.launch(epoch, gate, gateCall)`, where `gateCall` is
+   `LaunchGate.assertReady(diamond, declared, handover)`. The governance
+   Safe proposes it. `declared` carries the registry, the VPFI pool, its
+   rate governor, the lane selectors and the WETH; `handover` carries the
+   admin key, the Diamond owner (the Timelock) and the proven role epoch.
+   The step prints each one. Before signing, check that the gate address
+   printed is the one the launch phase reports, that the registry is the
+   chain's CCIP `TokenAdminRegistry`, that the lanes are the full
+   production topology for this chain, that the WETH is the chain's
+   bridged WETH9 according to its official bridge registry (never the
+   wrapped native token; nothing on-chain records which token that is, so
+   this review is where it is established), that the admin key is the
+   deploy-time admin address, and that the role epoch is the one
+   `handover-gate` printed. The gate refuses any value other than the ones
+   signed. The salt is fixed per chain and Diamond, so a re-run finds the
    same operation and prints its state (not scheduled, pending, ready,
    done).
 4. After the delay, anyone sends the printed `executeBatch(...)` call. The
-   gate reads all six requirements again inside that transaction, and
-   checks that the admin key still holds no Diamond role. If a requirement
-   stopped holding during the delay (an adapter was removed, the oracle was
-   cleared), the execution reverts with `LaunchNotReady(label, state,
-   detail)`; if the admin key was given a role back, with
-   `DeployKeyHoldsRole(key, role)`. Either way the Diamond stays paused;
-   fix it and execute the same operation again.
-5. The epoch in the second call is the pause library's transition count
+   Diamond itself calls the gate, which reads all six requirements again
+   inside that transaction, then checks that the Diamond's owner is still
+   the one signed, that the admin key still holds no Diamond role, and that
+   the role epoch has not moved. The Diamond unpauses only when the gate
+   returns, and refuses a gate call that is not `assertReady` for itself.
+   If a requirement stopped holding during the delay (an adapter was
+   removed, the oracle was cleared), the execution reverts with
+   `LaunchNotReady(label, state, detail)`; if ownership moved, with
+   `OwnerMoved(expected, live)`; if the admin key was given a role back,
+   with `DeployKeyHoldsRole(key, role)`; if any role was granted, revoked
+   or renounced (for example an operation queued in the same delay that
+   gives an administrator role to a new account), with
+   `RoleEpochMoved(expected, live)`. Every case leaves the Diamond paused.
+   Fix a readiness or ownership failure and execute the same operation
+   again. A moved role epoch cannot come back: re-run `handover-gate` to
+   prove the new holders, then the launch phase for a fresh proposal.
+   The role epoch covers the Diamond's roles. The Timelock's own role set
+   is not in it, because no change to that set removes the delay: the
+   delay can only be changed by a Timelock operation, and never below its
+   floor.
+5. The epoch in the call is the pause library's transition count
    when the proposal was printed. Every pause, auto-pause and unpause moves
    it. If the Guardian pauses or the watcher auto-pauses during the delay,
    the execution reverts with `PauseEpochMoved(expected, live)`, so a launch
@@ -655,9 +676,14 @@ even for the gap between the deploy and the handover.
    launch phase for a fresh proposal at the new epoch.
 6. Re-run the launch phase. It reads the launch from the Diamond itself:
    the pause library records who first lifted the birth pause, and when,
-   once and never again. On production that must be the Timelock; if anyone
-   else first unpaused it, the phase names them and refuses, and that is an
-   incident to investigate, not a launch. The record does not depend on the
+   once and never again, and which launch gate the first unpause went
+   through (none for a plain `unpause`). On production that must be the
+   Timelock, through a launch gate; if anyone else first unpaused it, or the
+   Timelock ran an operation that only unpauses, no readiness check vouched
+   for the Diamond going live, so the phase refuses, and that is an incident
+   to investigate, not a launch. When the recorded gate is not the one this
+   checkout would propose (a later gate build), the phase says so and names
+   the recorded address, where that gate's code is. The record does not depend on the
    checkout running the step (a later LaunchGate build, a different registry
    or admin address) or on how far later pauses moved the pause epoch, so
    neither can make a launched Diamond look unlaunched.

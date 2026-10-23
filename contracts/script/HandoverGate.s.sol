@@ -136,6 +136,24 @@ contract HandoverGate is Script {
         if (failures.length > 0) {
             revert(string.concat("HandoverGate: FAILED with ", vm.toString(failures.length), " finding(s) - see above"));
         }
+        _printProvenRoleEpoch(inp.diamond);
+    }
+
+    /// @dev The Diamond's role epoch in the state this run proved, on a line
+    ///      of its own that the deploy wrappers read (#945, Codex #2686 r9):
+    ///      the launch binds its Timelock call to it, so a role that changes
+    ///      hands after this proof makes the launch revert instead of
+    ///      admitting users under holders nobody checked. It is read in the
+    ///      same state as every holder and role admin this run compared, so
+    ///      any role change after that state moves it, and the launch refuses
+    ///      (it never binds an epoch newer than the state proved).
+    function _printProvenRoleEpoch(address diamond) internal view {
+        try IAccessControlRead(diamond).roleEpoch() returns (uint64 epoch) {
+            console.log("HandoverGate: every role's holders proven at role epoch", uint256(epoch));
+            console.log(string.concat("HANDOVER_ROLE_EPOCH=", vm.toString(uint256(epoch))));
+        } catch {
+            revert("HandoverGate: the Diamond has no roleEpoch() - it predates the launch binding (#945); fresh deploy");
+        }
     }
 
     // ── The check ───────────────────────────────────────────────────────
@@ -780,6 +798,7 @@ contract HandoverGate is Script {
 interface IAccessControlRead {
     function hasRole(bytes32 role, address account) external view returns (bool);
     function getRoleAdmin(bytes32 role) external view returns (bytes32);
+    function roleEpoch() external view returns (uint64);
 }
 
 interface IOwnerRead {

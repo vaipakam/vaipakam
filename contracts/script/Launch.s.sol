@@ -8,7 +8,7 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {LibLaunchReadiness, ILaunchReadableDiamond} from "../src/governance/LibLaunchReadiness.sol";
-import {LaunchGate} from "../src/governance/LaunchGate.sol";
+import {ILaunchGate} from "../src/interfaces/ILaunchGate.sol";
 import {LaunchGateDeployment} from "./lib/LaunchGateDeployment.sol";
 
 /// @dev The role read this script needs of the Diamond.
@@ -52,16 +52,23 @@ interface ILaunchTimelock {
  *          never live under the hot admin key, and its first unpause waits
  *          out the same review window as any other governance action.
  *
- *          The operation is a batch of `LaunchGate.assertReady` then
- *          `unpauseIfPauseEpoch(epoch)`, so every requirement — and the
- *          admin key holding no role — is read AGAIN, on-chain, in the
- *          transaction that unpauses: one that stopped holding during the
- *          delay reverts the execution and the Diamond stays paused. The
- *          epoch is the pause library's transition count when the proposal
- *          was printed, so an incident pause (a Pauser or the watcher's
- *          auto-pause) recorded during the delay also makes the execution
- *          revert: a launch decision taken before an incident never clears
- *          it. That case needs a fresh proposal.
+ *          The operation is ONE call, `AdminFacet.launch(epoch, gate,
+ *          gateCall)`: the Diamond calls `LaunchGate.assertReady` itself and
+ *          unpauses only when it returns, so every requirement is read
+ *          AGAIN, on-chain, in the transaction that unpauses — and so is the
+ *          handover: the admin key holds no role, the owner is still the
+ *          Timelock, and the role epoch is still the one the handover gate
+ *          proved (`HANDOVER_ROLE_EPOCH`), so no role changed hands
+ *          unreviewed. One that stopped holding during the delay reverts the
+ *          execution and the Diamond stays paused. The epoch is the pause
+ *          library's transition count when the proposal was printed, so an
+ *          incident pause (a Pauser or the watcher's auto-pause) recorded
+ *          during the delay also makes the execution revert: a launch
+ *          decision taken before an incident never clears it. That case,
+ *          like a moved role epoch, needs a fresh proposal. The Diamond's
+ *          first-unpause record names the gate it went through, so a
+ *          Timelock operation that only unpauses can never pass for a
+ *          launch (Codex #2686 r9).
  *        - **Known testnet**: no requirement may be NOT MET; one the chain
  *          cannot answer is printed as NOT CHECKED (a rehearsal may lack part
  *          of the stack). The admin key unpauses directly while it holds
@@ -84,8 +91,9 @@ interface ILaunchTimelock {
  *      changed registry or admin address) or on how far later pauses moved
  *      the pause epoch, so neither can make a launched Diamond look
  *      unlaunched. On production the first unpause must have been the
- *      Timelock's; one by anyone else went live outside this step and the
- *      run refuses. An unpaused Diamond with no record predates the record:
+ *      Timelock's, through a launch gate; one by anyone else, or a plain
+ *      Timelock unpause, went live outside this step and the run refuses.
+ *      An unpaused Diamond with no record predates the record:
  *      production refuses it, a testnet counts it as launched only while no
  *      answered requirement is NOT MET, local anvil reports it. The deploy
  *      wrappers record the phase only when `requireLaunched()` passes, never
@@ -109,6 +117,11 @@ interface ILaunchTimelock {
  *            `CCIP_LANE_CHAIN_IDS_<SLUG>` into it). Unset declares no lane:
  *            NOT CHECKED while the Diamond records a VPFI token, met as
  *            not applicable on a deployment with none (`--skip-vpfi`).
+ *        HANDOVER_ROLE_EPOCH — the Diamond's role epoch at which the
+ *            handover gate proved every role's holders; the deploy wrappers
+ *            set it from the handover-gate phase's output. Required for a
+ *            production proposal; a testnet one without it binds the live
+ *            epoch and says so.
  *        ADMIN_PRIVATE_KEY — the admin key; unused (and optional) on
  *            production, where only its address is read to prove it holds
  *            no role. ADMIN_ADDRESS is accepted instead there.
@@ -139,7 +152,18 @@ contract Launch is Script {
         LibLaunchReadiness.Check[] checks;
         /// @dev The pause epoch now; an unpause this run makes is bound to it.
         uint64 epoch;
+        /// @dev On the Timelock path: the governance state the batch binds
+        ///      (the admin key, the Diamond owner, the role epoch), and
+        ///      whether that role epoch is one the handover gate proved.
+        ILaunchGate.Handover handover;
+        bool roleEpochProven;
     }
+
+    /// @dev The role epoch the handover gate proved, when given
+    ///      programmatically ({setHandoverProof}); otherwise read from
+    ///      `HANDOVER_ROLE_EPOCH`.
+    bool private _proofSet;
+    uint64 private _proofEpoch;
 
     function run() external returns (Outcome) {
         uint256 adminKey = vm.envOr("ADMIN_PRIVATE_KEY", uint256(0));
@@ -190,8 +214,19 @@ contract Launch is Script {
         console.log("  paused:", AdminFacet(diamond).paused());
         console.log("  pause epoch:", uint256(d.epoch));
         (address liveBy, uint64 liveAt) = firstUnpause(diamond);
-        if (liveBy == address(0)) console.log("  first unpaused: never");
-        else console.log(string.concat("  first unpaused by ", vm.toString(liveBy), " at ", vm.toString(uint256(liveAt))));
+        if (liveBy == address(0)) {
+            console.log("  first unpaused: never");
+        } else {
+            console.log(
+                string.concat(
+                    "  first unpaused by ",
+                    vm.toString(liveBy),
+                    _gateClause(firstUnpauseGate(diamond)),
+                    " at ",
+                    vm.toString(uint256(liveAt))
+                )
+            );
+        }
         _printChecks(d.checks);
         _printNotChecked();
         console.log("  launch gate:", LaunchGateDeployment.predicted());
@@ -231,7 +266,7 @@ contract Launch is Script {
             return Outcome.AlreadyLive;
         }
         if (d.path == Path.TimelockProposal) {
-            _printTimelockProposal(diamond, declared, timelock, admin, d.epoch);
+            _printTimelockProposal(diamond, declared, timelock, d);
             return Outcome.TimelockProposalPrinted;
         }
         if (local && !LibLaunchReadiness.noneUnmet(d.checks)) {
@@ -252,14 +287,17 @@ contract Launch is Script {
     ///         pause it is under now is an incident: lifting it is incident
     ///         response, never a second launch, so nothing is proposed or
     ///         unpaused. On production the first unpause must have been the
-    ///         Timelock's, or the run refuses.
+    ///         Timelock's, through a launch gate (`AdminFacet.launch`), or
+    ///         the run refuses.
     ///      2. Unpaused with no record (a Diamond older than the record):
     ///         production refuses; a testnet counts it as launched only while
     ///         no answered requirement is NOT MET; local anvil counts it.
     ///      3. Paused with no record — it has never been live: the readiness
     ///         checks decide, then who unpauses. The admin key unpauses
     ///         directly (never on production); otherwise the Timelock
-    ///         proposal is printed.
+    ///         proposal is printed, once the owner is the Timelock and the
+    ///         role epoch is the one the handover gate proved (a testnet
+    ///         without that proof binds the live epoch and says so).
     /// @param adminKeyGiven Whether the run holds the admin's private key.
     function decide(address diamond, LibLaunchReadiness.Declared memory declared, address timelock, address admin, bool adminKeyGiven)
         public
@@ -282,10 +320,20 @@ contract Launch is Script {
                 );
                 return d;
             }
+            address via = firstUnpauseGate(diamond);
+            if (production && via == address(0)) {
+                d.reason = string.concat(
+                    "Launch: the Diamond was first unpaused by the Timelock, but not through a launch gate ",
+                    "(AdminFacet.launch) - no readiness check vouched for it in that call; investigate before ",
+                    "anything records a launch"
+                );
+                return d;
+            }
             d.path = Path.Launched;
             d.reason = string.concat(
                 "first unpaused by ",
                 vm.toString(liveBy),
+                _gateClause(via),
                 paused
                     ? ", and PAUSED now: lifting that pause is incident response (GovernanceRunbook), not a launch"
                     : ", and unpaused now"
@@ -364,6 +412,29 @@ contract Launch is Script {
             d.reason = "Launch: the admin key still holds a Diamond role - the handover is not complete";
             return d;
         }
+        if (ILaunchReadableDiamond(diamond).owner() != timelock) {
+            d.reason = "Launch: the Diamond's owner is not the Timelock - the handover is not complete";
+            return d;
+        }
+        uint64 liveRoles = roleEpoch(diamond);
+        (bool proven, uint64 provenRoles) = _handoverProof();
+        if (proven && provenRoles != liveRoles) {
+            d.reason = string.concat(
+                "Launch: the Diamond's roles changed after the handover gate proved them (role epoch ",
+                vm.toString(uint256(provenRoles)),
+                " proven, ",
+                vm.toString(uint256(liveRoles)),
+                " now) - re-run the handover-gate phase, then launch"
+            );
+            return d;
+        }
+        if (production && !proven) {
+            d.reason =
+                "Launch: no role epoch from the handover gate (HANDOVER_ROLE_EPOCH) - run the handover-gate phase first; the deploy wrapper passes the epoch it proved";
+            return d;
+        }
+        d.handover = ILaunchGate.Handover({deployKey: admin, owner: timelock, roleEpoch: liveRoles});
+        d.roleEpochProven = proven;
         if (!LaunchGateDeployment.isDeployed()) {
             d.reason =
                 "Launch: the LaunchGate is not deployed at its address - run script/DeployLaunchGate.s.sol (the contracts phase does)";
@@ -372,34 +443,37 @@ contract Launch is Script {
         d.path = Path.TimelockProposal;
     }
 
-    /// @notice The Timelock batch that launches `diamond`: the gate re-reads
-    ///         every requirement and that `deployKey` holds no role, then the
-    ///         Diamond is unpaused only if the pause epoch is still `epoch`.
-    ///         Both calls land in one execution or neither does.
-    function launchBatch(address diamond, LibLaunchReadiness.Declared memory declared, address deployKey, uint64 epoch)
-        public
-        pure
-        returns (address[] memory targets, uint256[] memory values, bytes[] memory payloads)
-    {
-        targets = new address[](2);
-        values = new uint256[](2);
-        payloads = new bytes[](2);
-        targets[0] = LaunchGateDeployment.predicted();
-        payloads[0] = abi.encodeCall(LaunchGate.assertReady, (diamond, declared, deployKey));
-        targets[1] = diamond;
-        payloads[1] = abi.encodeCall(AdminFacet.unpauseIfPauseEpoch, (epoch));
+    /// @notice The Timelock batch that launches `diamond`: ONE call,
+    ///         `diamond.launch(epoch, gate, gateCall)`. The Diamond makes the
+    ///         gate's `assertReady(diamond, declared, handover)` call itself
+    ///         and unpauses only when it returns and the pause epoch is still
+    ///         `epoch`, recording the gate as its launch's.
+    function launchBatch(
+        address diamond,
+        LibLaunchReadiness.Declared memory declared,
+        ILaunchGate.Handover memory handover,
+        uint64 epoch
+    ) public pure returns (address[] memory targets, uint256[] memory values, bytes[] memory payloads) {
+        targets = new address[](1);
+        values = new uint256[](1);
+        payloads = new bytes[](1);
+        targets[0] = diamond;
+        payloads[0] = abi.encodeCall(
+            AdminFacet.launch,
+            (epoch, LaunchGateDeployment.predicted(), abi.encodeCall(ILaunchGate.assertReady, (diamond, declared, handover)))
+        );
     }
 
     /// @notice The Timelock's id for this chain's launch operation at `epoch`.
     function launchOperationId(
         address diamond,
         LibLaunchReadiness.Declared memory declared,
-        address deployKey,
+        ILaunchGate.Handover memory handover,
         uint64 epoch,
         address timelock
     ) public view returns (bytes32) {
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launchBatch(diamond, declared, deployKey, epoch);
+            launchBatch(diamond, declared, handover, epoch);
         return ILaunchTimelock(timelock).hashOperationBatch(targets, values, payloads, bytes32(0), launchSalt(diamond));
     }
 
@@ -449,6 +523,34 @@ contract Launch is Script {
         );
     }
 
+    /// @notice Supplies the role epoch the handover gate proved, in place of
+    ///         `HANDOVER_ROLE_EPOCH`, for a caller that runs this contract
+    ///         rather than the script (a test or a fixture).
+    function setHandoverProof(uint64 provenEpoch) external {
+        _proofSet = true;
+        _proofEpoch = provenEpoch;
+    }
+
+    /// @notice The Diamond's role epoch now (`AccessControlFacet.roleEpoch`).
+    function roleEpoch(address diamond) public view returns (uint64) {
+        return ILaunchReadableDiamond(diamond).roleEpoch();
+    }
+
+    /// @notice The launch gate `diamond`'s first unpause went through, or
+    ///         zero when it went through a plain unpause (or has not
+    ///         happened). Read from storage like the record beside it.
+    function firstUnpauseGate(address diamond) public view returns (address) {
+        return address(uint160(uint256(vm.load(diamond, LibPausable.FIRST_UNPAUSE_VIA_SLOT))));
+    }
+
+    /// @dev The role epoch the handover gate proved: {setHandoverProof}, or
+    ///      `HANDOVER_ROLE_EPOCH`, which the deploy wrappers set from the
+    ///      handover-gate phase's own output.
+    function _handoverProof() internal view returns (bool given, uint64 epoch) {
+        if (_proofSet) return (true, _proofEpoch);
+        if (vm.envExists("HANDOVER_ROLE_EPOCH")) return (true, uint64(vm.envUint("HANDOVER_ROLE_EPOCH")));
+    }
+
     /// @notice What this chain's launch declares it must match
     ///         ({LibLaunchReadiness.Declared}), from the sources the deploy
     ///         itself wired from, never read back from the configuration
@@ -478,6 +580,22 @@ contract Launch is Script {
         try ILaunchReadableDiamond(diamond).getWethContract() returns (address w) {
             d.weth = w;
         } catch {}
+    }
+
+    /// @dev How a launch record names its gate: nothing for a plain unpause,
+    ///      and whether a recorded gate is the one this checkout would
+    ///      propose (a later build moves the predicted address; the record
+    ///      still names the gate that vouched, whose code is at it).
+    function _gateClause(address via) internal view returns (string memory) {
+        if (via == address(0)) return "";
+        address predicted = LaunchGateDeployment.predicted();
+        return string.concat(
+            " through launch gate ",
+            vm.toString(via),
+            via == predicted
+                ? " (this checkout's gate)"
+                : string.concat(" (not this checkout's gate ", vm.toString(predicted), "; its code is at the recorded address)")
+        );
     }
 
     /// @dev Whether the run holds the admin's private key: a known
@@ -514,26 +632,27 @@ contract Launch is Script {
         address diamond,
         LibLaunchReadiness.Declared memory declared,
         address timelock,
-        address admin,
-        uint64 epoch
+        Decision memory d
     ) internal view {
         address gate = LaunchGateDeployment.predicted();
         ILaunchTimelock tl = ILaunchTimelock(timelock);
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
-            launchBatch(diamond, declared, admin, epoch);
+            launchBatch(diamond, declared, d.handover, d.epoch);
         bytes32 salt = launchSalt(diamond);
         uint256 delay = tl.getMinDelay();
-        bytes32 id = launchOperationId(diamond, declared, admin, epoch, timelock);
+        bytes32 id = launchOperationId(diamond, declared, d.handover, d.epoch, timelock);
 
         string memory state = tl.isOperationDone(id)
             ? "DONE"
             : tl.isOperationReady(id) ? "READY to execute" : tl.isOperationPending(id) ? "PENDING (delay running)" : "not scheduled";
 
-        console.log("The first unpause is a Timelock batch. Operation state:", state);
-        console.log("  call 1: LaunchGate.assertReady(diamond, declared, adminKey)");
-        console.log("    re-reads every check above, and that the admin key holds no role, when executed");
+        console.log("The first unpause is ONE Timelock call. Operation state:", state);
+        console.log("  diamond.launch(epoch, gate, LaunchGate.assertReady(diamond, declared, handover))");
+        console.log("    the Diamond calls the gate itself, which re-reads every check above when executed,");
+        console.log("    and unpauses only if it returns; its first-unpause record then names this gate");
         console.log("    gate:", gate);
-        console.log("    admin key:", admin);
+        console.log("    epoch:", uint256(d.epoch));
+        console.log("      reverts if a pause or auto-pause is recorded before execution; propose again then");
         console.log("    declared - REVIEW each value before signing; the gate refuses anything else:");
         console.log("      tokenAdminRegistry:", declared.tokenAdminRegistry);
         console.log("      VPFI pool (the artifact's vpfiTokenPool, checked by the handover gate):", declared.vpfiPool);
@@ -545,9 +664,20 @@ contract Launch is Script {
         console.log("      WETH:", declared.weth);
         console.log("        verify it against the chain's official bridge registry: the bridged WETH9,");
         console.log("        never the wrapped native token (OracleAdminFacet.setWethContract policy)");
-        console.log("  call 2: diamond.unpauseIfPauseEpoch(epoch), epoch:", uint256(epoch));
-        console.log("    reverts if a pause or auto-pause is recorded before execution; propose again then");
-        console.log("    the Diamond records this first unpause (who, when); later pauses are incidents");
+        console.log("    handover - the governance state the launch is bound to:");
+        console.log("      admin key, which must hold no role:", d.handover.deployKey);
+        console.log("      Diamond owner:", d.handover.owner);
+        console.log("      role epoch:", uint256(d.handover.roleEpoch));
+        console.log(
+            d.roleEpochProven
+                ? "        the epoch at which the handover gate proved every role's holders; any grant,"
+                : "        NOTE: the live epoch, NOT one the handover gate proved in this run (testnet only);"
+        );
+        console.log(
+            d.roleEpochProven
+                ? "        revoke or renounce before execution makes the launch revert"
+                : "        a launch on production refuses without that proof"
+        );
         console.log("  1. The Governance Safe calls the Timelock with:");
         console.log("     to:  ", timelock);
         console.logBytes(

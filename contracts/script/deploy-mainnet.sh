@@ -1688,12 +1688,24 @@ phase_handover_gate() {
   echo "deploy-mainnet.sh — handover-gate  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
 
+  # The gate prints the role epoch at which it proved every role's holders
+  # on a line of its own; the launch binds its Timelock call to it, so a
+  # role that changes hands after this proof makes the launch refuse
+  # (Codex #2686 r9). pipefail makes a failing gate fail this phase.
+  local hg_log="$MARKERS_DIR/handover-gate.log"
   CHAIN_SLUG="$CHAIN_SLUG" forge script script/HandoverGate.s.sol \
-    --rpc-url "$RPC"
+    --rpc-url "$RPC" 2>&1 | tee "$hg_log"
+  local proven_epoch
+  proven_epoch=$(sed -n 's/^ *HANDOVER_ROLE_EPOCH=\([0-9][0-9]*\) *$/\1/p' "$hg_log" | tail -n 1)
+  if [ -z "$proven_epoch" ]; then
+    echo "handover-gate: the gate passed but printed no HANDOVER_ROLE_EPOCH line; refusing to record it." >&2
+    exit 1
+  fi
 
   mark_phase_done "handover-gate"
+  printf '%s\n' "$proven_epoch" > "$MARKERS_DIR/handover-gate.role-epoch"
   echo
-  echo "✓ handover-gate passed: the chain holds the governance topology."
+  echo "✓ handover-gate passed: the chain holds the governance topology (role epoch $proven_epoch)."
 }
 
 # ── Phase: launch ─────────────────────────────────────────────────────
@@ -1705,16 +1717,19 @@ phase_handover_gate() {
 # hold UNPAUSER_ROLE and the admin key to hold neither it nor the role
 # root, then prints the Timelock `scheduleBatch` call for the Governance
 # Safe, the `executeBatch` call for after the delay, and the operation's
-# state. The batch is LaunchGate.assertReady (every check, and the admin
-# key holding no role) then unpauseIfPauseEpoch(epoch), so the checks are
-# read again on-chain when it executes and an incident pause recorded
-# during the delay makes it revert. The CCIP checks read the VPFI pool from
+# state. The call is AdminFacet.launch(epoch, gate, assertReady(...)): the
+# Diamond calls LaunchGate.assertReady itself and unpauses only when it
+# returns, so the checks are read again on-chain when it executes, an
+# incident pause recorded during the delay makes it revert, and so does a
+# role changing hands after the handover gate proved them (the call carries
+# that phase's role epoch). The CCIP checks read the VPFI pool from
 # CCIP_TOKEN_ADMIN_REGISTRY and require it to be the artifact's
 # vpfiTokenPool, carrying exactly the CCIP_LANE_CHAIN_IDS lanes (resolved
 # per chain, as ccip-wire does); the proposal prints those declared values
 # and the WETH for the Safe to review. The phase is recorded only when
-# Launch.requireLaunched() finds the Timelock reporting that operation
-# done; any other unpause makes Launch.s.sol refuse.
+# Launch.requireLaunched() finds the Diamond's own first-unpause record
+# naming the Timelock and a launch gate; any other unpause makes
+# Launch.s.sol refuse.
 phase_launch() {
   _assert_rpc_chain
   if ! phase_already_done "handover-gate"; then
@@ -1735,11 +1750,22 @@ EOF
   # (Codex #2686 r7): the same per-chain list the ccip-wire phase wired.
   resolve_ccip_lane_chain_ids "$CCIP_SLUG" || exit 1
 
-  CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --rpc-url "$RPC"
+  # The role epoch the handover gate proved: the Timelock call is bound to
+  # it, and Launch.s.sol refuses a production proposal without it, or once
+  # a role has changed hands since (re-run --phase handover-gate then).
+  local proven_file="$MARKERS_DIR/handover-gate.role-epoch"
+  if [ ! -s "$proven_file" ]; then
+    echo "Refusing --phase launch on MAINNET: no role epoch recorded by --phase handover-gate. Re-run it." >&2
+    exit 1
+  fi
 
-  # Recorded only on the Timelock's own evidence (Launch.requireLaunched:
-  # this checkout's launch operation DONE), never from the pause bit — an
-  # unpause by anyone else must not be written down as the launch.
+  CHAIN_SLUG="$CHAIN_SLUG" HANDOVER_ROLE_EPOCH="$(cat "$proven_file")" \
+    forge script script/Launch.s.sol --rpc-url "$RPC"
+
+  # Recorded only on the Diamond's own evidence (Launch.requireLaunched:
+  # its first unpause was the Timelock's, through a launch gate), never from
+  # the pause bit — an unpause by anyone else, or a plain Timelock unpause,
+  # must not be written down as the launch.
   # The message is the decision's own `launched:` line, which says whether
   # the Diamond is paused NOW: a launch followed by an incident pause is
   # recorded as launched, and must not be reported as live.

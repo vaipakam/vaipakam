@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {LibLaunchReadiness} from "./LibLaunchReadiness.sol";
+import {LibLaunchReadiness, ILaunchReadableDiamond} from "./LibLaunchReadiness.sol";
+import {ILaunchGate} from "../interfaces/ILaunchGate.sol";
 
 /**
  * @title LaunchGate
@@ -15,22 +16,25 @@ import {LibLaunchReadiness} from "./LibLaunchReadiness.sol";
  *      last swap adapter, clears the sanctions oracle, or grants the deploy
  *      key a role back — and an operation whose only call is an unpause
  *      would still execute. So the launch operation `Launch.s.sol` prints is
- *      a BATCH of two calls, in this order:
+ *      ONE call, `diamond.launch(epoch, gate, gateCall)` (AdminFacet), where
+ *      `gateCall` is `assertReady(diamond, declared, handover)` on this gate:
  *
- *        1. `LaunchGate.assertReady(diamond, declared, deployKey)`, where
- *           `declared` ({LibLaunchReadiness.Declared}) is the CCIP registry
- *           and the WETH, VPFI pool and lane set the chain must match — in
- *           the calldata, so the Safe reviews exactly what is enforced;
- *        2. `diamond.unpauseIfPauseEpoch(epoch)`, with the pause epoch read
- *           when the proposal was printed, so an incident pause recorded in
- *           the meantime makes the batch revert instead of being cleared by
- *           a launch decision taken before it.
+ *        - `declared` ({LibLaunchReadiness.Declared}) is the CCIP registry
+ *          and the WETH, VPFI pool, rate governor and lane set the chain
+ *          must match, and `handover` ({ILaunchGate.Handover}) is the deploy
+ *          key, the Diamond owner and the role epoch the handover gate
+ *          proved — all in the calldata, so the Safe reviews exactly what is
+ *          enforced;
+ *        - the Diamond makes the call itself, refuses one that is not
+ *          `assertReady` for itself, unpauses only when it returns and only
+ *          while the pause epoch is still `epoch`, and records this gate as
+ *          the one its launch went through. A Timelock operation that only
+ *          unpauses leaves no gate on that record, so it can never be taken
+ *          for a launch (Codex #2686 r9 P1).
  *
- *      The Timelock executes a batch atomically: when either call reverts,
- *      the whole execution reverts and the Diamond stays paused. A
- *      readiness or handover failure leaves the operation executable once
- *      the precondition holds again; a moved pause epoch needs a fresh
- *      proposal, by design.
+ *      A readiness or handover failure leaves the operation executable once
+ *      the precondition holds again; a moved pause epoch or role epoch needs
+ *      a fresh proposal, by design.
  *
  *      The gate is stateless, ownerless and constructor-free, and it is
  *      deployed at a deterministic CREATE2 address (`DeployLaunchGate.s.sol`),
@@ -40,7 +44,7 @@ import {LibLaunchReadiness} from "./LibLaunchReadiness.sol";
  *      accepts only "every requirement met": a requirement the chain cannot
  *      answer refuses here exactly as it does for a production launch.
  */
-contract LaunchGate {
+contract LaunchGate is ILaunchGate {
     /// @notice A launch requirement does not hold. `state` is the printed
     ///         verdict ("NOT MET" or "NOT CHECKED").
     error LaunchNotReady(string label, string state, string detail);
@@ -52,6 +56,16 @@ contract LaunchGate {
     /// @notice No deploy key was named, so the handover cannot be checked.
     error NoDeployKey();
 
+    /// @notice The Diamond's owner is not the one the launch decision
+    ///         reviewed: ownership moved during the delay.
+    error OwnerMoved(address expected, address live);
+
+    /// @notice The Diamond's role table changed after the handover gate
+    ///         proved it (Codex #2686 r9 P1): some role was granted, revoked,
+    ///         renounced or re-administered during the delay, so the holder
+    ///         sets the Safe approved are no longer known to hold.
+    error RoleEpochMoved(uint64 expected, uint64 live);
+
     /// @notice Every launch requirement and what the chain says about it now.
     function checks(address diamond, LibLaunchReadiness.Declared calldata declared)
         external
@@ -62,22 +76,36 @@ contract LaunchGate {
     }
 
     /// @notice Reverts {LaunchNotReady} with the first requirement that is
-    ///         not both answered and met, {NoDeployKey} for a zero
-    ///         `deployKey`, or {DeployKeyHoldsRole} while `deployKey` holds
-    ///         any Diamond role (`LibAccessControl.knownRoles()`); returns
-    ///         otherwise.
-    function assertReady(address diamond, LibLaunchReadiness.Declared calldata declared, address deployKey)
-        external
-        view
-    {
-        if (deployKey == address(0)) revert NoDeployKey();
+    ///         not both answered and met, {NoDeployKey} for a zero deploy
+    ///         key, {OwnerMoved} unless the Diamond's owner is still
+    ///         `handover.owner`, {DeployKeyHoldsRole} while the deploy key
+    ///         holds any Diamond role (`LibAccessControl.knownRoles()`), or
+    ///         {RoleEpochMoved} unless the Diamond's role epoch is still
+    ///         `handover.roleEpoch`; returns otherwise.
+    /// @dev The role epoch stands for every holder of every Diamond role:
+    ///      they are not enumerable on-chain, so the gate cannot re-read
+    ///      them, but it can tell that not one has changed since the proof.
+    ///      What the epoch does not cover, the Timelock's own role set, can
+    ///      change only through the Timelock, and no change to it removes
+    ///      the delay: `updateDelay` is the Timelock's own call and refuses
+    ///      anything below its immutable floor.
+    function assertReady(
+        address diamond,
+        LibLaunchReadiness.Declared calldata declared,
+        Handover calldata handover
+    ) external view {
+        if (handover.deployKey == address(0)) revert NoDeployKey();
         LibLaunchReadiness.Check[] memory c = LibLaunchReadiness.check(diamond, declared);
         for (uint256 i; i < c.length; ++i) {
             if (!c[i].checkable || !c[i].met) {
                 revert LaunchNotReady(c[i].label, LibLaunchReadiness.verdict(c[i]), c[i].detail);
             }
         }
-        (bool held, bytes32 role) = LibLaunchReadiness.firstRoleHeld(diamond, deployKey);
-        if (held) revert DeployKeyHoldsRole(deployKey, role);
+        address liveOwner = ILaunchReadableDiamond(diamond).owner();
+        if (liveOwner != handover.owner) revert OwnerMoved(handover.owner, liveOwner);
+        (bool held, bytes32 role) = LibLaunchReadiness.firstRoleHeld(diamond, handover.deployKey);
+        if (held) revert DeployKeyHoldsRole(handover.deployKey, role);
+        uint64 liveEpoch = ILaunchReadableDiamond(diamond).roleEpoch();
+        if (liveEpoch != handover.roleEpoch) revert RoleEpochMoved(handover.roleEpoch, liveEpoch);
     }
 }

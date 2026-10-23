@@ -18,19 +18,29 @@ complete, and the step broadcasts nothing: it prints the Timelock proposal
 for the governance Safe, so the first unpause waits out the same 48-hour
 window as any governance action (owner decision 2026-10-23).
 
-The proposal is not a bare unpause. It is a batch of two calls: a new
-stateless launch-gate contract reads every requirement again, and checks
-that the deploy key still holds no role, then the Diamond is unpaused. The
-Timelock runs both in one transaction, so if a requirement stopped holding
-during the 48-hour wait (a swap route was removed, the sanctions oracle was
-cleared, the deploy key was given a role back), the execution fails and the
-Diamond stays paused until it is fixed. The unpause is also tied to the
-pause count at the time of the proposal: if the Guardian pauses or the
-watcher auto-pauses during the wait, the launch can no longer execute, so a
-launch decided before an incident never lifts the incident's pause. A fresh
-proposal is needed once the incident is closed. The gate has no owner and sits at
-an address fixed by its own code, so reviewers can check exactly what the
-proposal calls; the contracts phase deploys it.
+The proposal is not a bare unpause. It is one call to a new launch
+function on the Diamond, which first asks a new stateless launch-gate
+contract to read every requirement again, and unpauses only if the gate
+agrees, in the same transaction. The gate also checks that the deploy key
+still holds no role, that the Diamond is still owned by the Timelock the
+Safe reviewed, and that no role has changed hands since the handover check
+proved who holds each one. The Diamond's role holders cannot be listed
+on-chain, so the Diamond now keeps a count of every change to its role
+table; the handover check prints that count when it passes, the proposal
+carries it, and the launch refuses if the count has moved. So if a
+requirement stopped holding during the 48-hour wait (a swap route was
+removed, the sanctions oracle was cleared, the deploy key was given a role
+back, or another queued operation gave an administrator role to someone
+new), the execution fails and the Diamond stays paused. A moved role count
+needs the handover check run again and a fresh proposal. The unpause is
+also tied to the pause count at the time of the proposal: if the Guardian
+pauses or the watcher auto-pauses during the wait, the launch can no longer
+execute, so a launch decided before an incident never lifts the incident's
+pause. A fresh proposal is needed once the incident is closed. The gate has
+no owner and sits at an address fixed by its own code, so reviewers can
+check exactly what the proposal calls; the contracts phase deploys it. The
+Diamond accepts only a gate call about itself, so a gate's answer about a
+different Diamond cannot launch it.
 
 No requirement is met just because an address has code. The sanctions
 oracle must answer a sanctions lookup (the Diamond treats a failing lookup
@@ -45,7 +55,10 @@ refuses while the deploy key still holds any Diamond role, not only the
 unpause role.
 A Diamond is recorded as launched only on evidence, the Diamond's own
 record of its first unpause (described below), and on a production chain
-that record must name the Timelock. Any other unpause makes the launch step
+that record must name the Timelock and the launch gate the unpause went
+through. A Timelock operation that only unpauses leaves no gate on the
+record, so it is refused rather than counted as a launch that no readiness
+check vouched for. Any other unpause makes the launch step
 refuse instead of recording it, and the deploy scripts record the launch
 from that same evidence rather than from whether the Diamond happens to be
 unpaused. Once a Diamond has launched, the launch step never offers to

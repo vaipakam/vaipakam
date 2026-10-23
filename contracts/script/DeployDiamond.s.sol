@@ -1301,7 +1301,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getAccessControlSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](16);
+        s = new bytes4[](17);
         s[0] = AccessControlFacet.initializeAccessControl.selector;
         s[1] = AccessControlFacet.grantRole.selector;
         s[2] = AccessControlFacet.revokeRole.selector;
@@ -1327,10 +1327,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // Gated by `onlyRole(DEFAULT_ADMIN_ROLE)`.
         s[14] = AccessControlFacet.transferAdmin.selector;
         s[15] = AccessControlFacet.EMERGENCY_REVOKER_ROLE.selector;
+        // #945 — the role epoch a Timelock launch is bound to.
+        s[16] = AccessControlFacet.roleEpoch.selector;
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](49);
+        s = new bytes4[](50);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -1392,6 +1394,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[46] = AdminFacet.getRateModelMaxDeviationBps.selector;
         s[47] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
         s[48] = AdminFacet.unpauseIfPauseEpoch.selector;
+        // #945 — the gated first unpause (the launch).
+        s[49] = AdminFacet.launch.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
