@@ -9,7 +9,11 @@ curated refreshes, the oracle and risk-terms upgrades, and the vault
 implementation upgrade) first checks the new code against the chain's record,
 refuses before sending anything if a recorded fact would be lost, and rewrites
 the record once its change is in. A chain with no record is refused, because
-the layout it runs is unknown. Declared renames count; acknowledged breaks
+the layout it runs is unknown. Each record is also bound to the live
+deployment it describes, so an upgrade is refused when the chain's code has
+changed since its record was written, for example by an upgrade from another
+checkout whose record was never committed. Two upgrades of one chain still must
+not run at the same time. Declared renames count; acknowledged breaks
 never do, since an acknowledged break means that chain needs a fresh deploy.
 
 The check runs inside each script rather than in a wrapper (owner decision

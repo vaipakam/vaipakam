@@ -252,7 +252,27 @@ it after its change. A dry run writes no record, like it writes no artifact.
 The guard writes the file (`storage-layout-guard.mjs record --to <file>`), and
 that mode refuses a stale golden file, so a record always describes the code
 being deployed. A fresh deploy wrapper (`deploy-testnet.sh`,
-`deploy-mainnet.sh`) archives the old record with the old `addresses.json`.
+`deploy-mainnet.sh`, and `deploy-chain.sh --fresh`) moves the old record and
+anchor aside with the old `addresses.json`.
+
+**The record is bound to the live chain.** A record is a file in one
+checkout, and a chain can be changed from another: a refresh whose new record
+was never committed, or two branches that each start from the same record and
+add different fields at the same free slot. Checked only against its own
+checkout's file, the second of those refreshes would pass and reinterpret the
+first one's storage. So beside the record sits its anchor,
+`storage-layout.anchor.json`, written with it: the Diamond, a fingerprint of the
+code it runs (the loupe's facet address list and the vault template) and the
+record's own hash. A change is refused unless the live Diamond still matches
+the anchor and the record is the one the anchor names, so a chain changed from
+elsewhere fails here instead of being checked against a record that no longer
+describes it. Two runs racing from different checkouts can both pass before
+either broadcasts, and nothing off-chain can close that, so these scripts are
+run one at a time per chain. `AnchorStorageLayoutRecord.s.sol` writes an anchor
+on its own, for a chain's one-time seed and for recovery after a change reached
+a chain without recording; it refuses unless the operator sets
+`ANCHOR_RECORD_DESCRIBES_CHAIN=true`, because writing one asserts that the
+record describes what the chain runs.
 
 **Who checks it.** Every script that changes deployed code in place runs
 `storage-layout-guard.mjs check --base <record>` before its first transaction
@@ -273,9 +293,12 @@ around it. Each script calls the guard through `vm.tryFfi`, so these scripts
 are run with `--ffi`, and a run without it is refused before its first
 transaction. `foundry.toml` enables neither ffi nor a read of
 `storage-layout/`: it is part of CI's forge cache key (#2603), and the flag
-belongs on these invocations only. The checks sit in each script's
-environment entry point, not in its `runWith`, so the in-process tests that
-drive `runWith` need no ffi. The wrappers that run these scripts pass `--ffi`.
+belongs on these invocations only. The checks sit in each script's one
+body (its `runWith` where it has one), so selecting a function with `--sig`
+cannot skip them. They skip themselves under `forge test`, which has no ffi
+and no chain, and for a run whose artifact root is redirected to a scratch
+directory, which is allowed only on Anvil or under test and so holds no live
+chain's record. The wrappers that run these scripts pass `--ffi`.
 
 **Why over-recording is safe.** Every comparison is set inclusion (record ⊆
 new layout). A record claiming more than a chain runs can only refuse more. So
@@ -289,7 +312,8 @@ testnet were deployed on 2026-10-17 and 2026-10-18 and refreshed on
 2026-10-19. Main at each of those points is included in #2600's golden ledger
 (measured, #2092 comment of 2026-10-20), #2600's ledger is included in today's
 (checked with `check --base` when the records were written), and no break has
-been acknowledged since. Their records are therefore today's ledger. Ethereum
+been acknowledged since. Their records are therefore today's ledger, anchored to each Diamond as it
+ran when the records were written. Ethereum
 Sepolia and OP Sepolia are retired and carry no record, so a refresh of either
 is refused.
 

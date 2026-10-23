@@ -404,7 +404,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // #2092 item 1 — the code this run cuts must keep every storage-layout
         // fact recorded for this chain. Before the first transaction, so a
         // refused run sends nothing; needs `--ffi`.
-        StorageLayoutRecord.requireAppendOnly("RefreshAllFacetsInPlace");
+        StorageLayoutRecord.requireAppendOnly("RefreshAllFacetsInPlace", diamond);
 
         console.log("=== Full-facet in-place refresh ===");
         console.log("Chain id:", cid);
@@ -1385,7 +1385,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // construction-time `diamondCutFacet` and any non-routed map entry).
         Deployments.writeUint(".facetCount", loupe.facetAddresses().length);
         // #2092 item 1 — the chain now runs this checkout's layout.
-        StorageLayoutRecord.record();
+        StorageLayoutRecord.record(diamond);
         console.log("");
         console.log("addresses.json and storage-layout.json updated. Next:");
         console.log("  bash script/exportFrontendDeployments.sh");

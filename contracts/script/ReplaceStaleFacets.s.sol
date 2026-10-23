@@ -73,13 +73,7 @@ contract ReplaceStaleFacets is DeployDiamond {
         // Same env-var-prefix normalisation as RedeployFacets — read
         // from deployments/<chain>/addresses.json with chain-prefixed
         // env fallback rather than the bare DIAMOND_ADDRESS.
-        // #2092 item 1 — refuse code that drops a storage-layout fact this
-        // chain records, before anything is broadcast (needs `--ffi`), and
-        // record the layout once the cut is in. Here rather than in {runWith},
-        // so the in-process test entry needs no ffi.
-        StorageLayoutRecord.requireAppendOnly("ReplaceStaleFacets");
         runWith(Deployments.readDiamond(), deployerKey);
-        StorageLayoutRecord.record();
     }
 
     /**
@@ -93,6 +87,12 @@ contract ReplaceStaleFacets is DeployDiamond {
      */
     function runWith(address diamond, uint256 deployerKey) public {
         console.log("Diamond:", diamond);
+        // #2092 item 1 — refuse code that drops a storage-layout fact this
+        // chain records, before anything is broadcast (needs `--ffi`); the
+        // record is rewritten once the cut is in. In this body rather than in
+        // {run}, so `--sig runWith(...)` cannot skip it; the in-process tests
+        // skip it by the library's own rule ({StorageLayoutRecord.active}).
+        StorageLayoutRecord.requireAppendOnly("ReplaceStaleFacets", diamond);
         // #2407 — see RefinanceRecordRollout.
         RefinanceRecordRollout.assertInstalled(diamond);
         // #902 - refuse a Diamond from before the per-rental renter rows; see
@@ -312,6 +312,7 @@ contract ReplaceStaleFacets is DeployDiamond {
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
         vm.stopBroadcast();
+        StorageLayoutRecord.record(diamond);
 
         console.log("DiamondCut applied; cuts:", n);
     }

@@ -61,7 +61,7 @@ contract MigrateRiskTermsCommitReveal is Script {
         console.log("Diamond:", diamond);
         // #2092 item 1 — refuse code that drops a storage-layout fact this
         // chain records, before anything is broadcast (needs `--ffi`).
-        StorageLayoutRecord.requireAppendOnly("MigrateRiskTermsCommitReveal");
+        StorageLayoutRecord.requireAppendOnly("MigrateRiskTermsCommitReveal", diamond);
 
         IDiamondLoupe loupe = IDiamondLoupe(diamond);
 
@@ -123,7 +123,7 @@ contract MigrateRiskTermsCommitReveal is Script {
         console.log("Legacy bump selectors removed:", nRemove);
         console.log("Commit/reveal selectors replaced:", nReplace);
         console.log("Commit/reveal selectors added:   ", nAdd);
-        StorageLayoutRecord.record();
+        StorageLayoutRecord.record(diamond);
     }
 
     /// @dev Count selectors in `sels` whose routed-state matches `wantRouted`.

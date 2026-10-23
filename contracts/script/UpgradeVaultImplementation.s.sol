@@ -117,7 +117,7 @@ contract UpgradeVaultImplementation is Script {
         // before anything is broadcast (needs `--ffi`). This replaces the
         // operator-only precondition the STORAGE SAFETY note above used to
         // leave to judgement.
-        StorageLayoutRecord.requireAppendOnly("UpgradeVaultImplementation");
+        StorageLayoutRecord.requireAppendOnly("UpgradeVaultImplementation", diamond);
 
         // OPTIONAL eager per-user upgrade list. Default = none (lazy upgrade).
         address[] memory users = vm.envOr("VAULT_UPGRADE_USERS", ",", new address[](0));
@@ -166,7 +166,7 @@ contract UpgradeVaultImplementation is Script {
         // addresses.json stale vs the live diamond. The eager loop is a
         // best-effort convenience, not part of recording the template bump.
         Deployments.writeVaultImpl(newImpl);
-        StorageLayoutRecord.record();
+        StorageLayoutRecord.record(diamond);
 
         // ── Optional: eagerly upgrade the known dev-wallet vaults ──
         // `upgradeUserVault` is permissionless; the deployer signs. Each call

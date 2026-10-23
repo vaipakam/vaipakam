@@ -683,7 +683,7 @@ archive_chain_state() {
     || { echo "ERROR: could not record the deployment being archived in archive-manifest.json; refusing to archive" >&2; exit 1; }
 
   mkdir -p "$archive"
-  for entry in addresses.json deployment_source.json storage-layout.json .markers .history; do
+  for entry in addresses.json deployment_source.json storage-layout.json storage-layout.anchor.json .markers .history; do
     if [ -e "$deploy_dir/$entry" ]; then
       mv "$deploy_dir/$entry" "$archive/" 2>/dev/null || true
     fi

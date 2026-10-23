@@ -634,6 +634,15 @@ if [ "$FRESH" = "1" ]; then
       || { echo "ERROR: could not record the prior deployment in archive-manifest.json; refusing --fresh (nothing moved)" >&2; exit 1; }
     mv "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" "$BACKUP"
     echo "  ✓ backed up prior addresses.json → $(basename "$BACKUP") — recorded in archive-manifest.json; COMMIT IT"
+    # #2092 — the retired Diamond's storage-layout record and its anchor go
+    # with its addresses (Codex #2684 r1 P2), so the new deploy writes a fresh
+    # pair instead of overwriting the only copy of the old one.
+    for rec in storage-layout storage-layout.anchor; do
+      if [ -f "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/$rec.json" ]; then
+        mv "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/$rec.json" \
+          "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/$rec.prior-rehearsal.$TS.json"
+      fi
+    done
     if [ -n "$PRIOR_DIAMOND" ] && [ "$PRIOR_DIAMOND" != "null" ]; then
       echo "  retired Diamond $PRIOR_DIAMOND (deploy block ${PRIOR_DEPLOY_BLOCK:-0}) is in archive-manifest.json for the indexer"
       seed_retired_deployments_now "$REPO_ROOT"

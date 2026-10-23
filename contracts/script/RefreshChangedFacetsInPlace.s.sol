@@ -100,18 +100,10 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
     /// @notice The changed set the last run found, as printed.
     string public lastChangedKeys;
 
-    /// @dev #2092 item 1 — the storage-layout refusal and the record write sit
-    ///      in this env entry rather than in {_refreshChanged}, so
-    ///      {refreshChangedWith} (the test entry) needs no ffi. The refusal runs
-    ///      before the first transaction; the run needs `--ffi`. A run that
-    ///      finds nothing changed still records: the chain then provably runs
-    ///      this checkout's code, so the record only grows.
     function refreshChanged() external {
-        StorageLayoutRecord.requireAppendOnly("RefreshChangedFacetsInPlace");
         _refreshChanged(
             Deployments.readDiamond(), vm.envUint("ADMIN_PRIVATE_KEY"), vm.envOr("EXPECT_CHANGED", string(""))
         );
-        StorageLayoutRecord.record();
     }
 
     /// @notice Parameterised entry — same body as {refreshChanged}, with the
@@ -134,6 +126,11 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
         );
         _requireSlice3Diamond(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
+        // #2092 item 1 — refuse code that drops a storage-layout fact this
+        // chain records, before anything is broadcast (needs `--ffi`). Here in
+        // the shared body, so neither entry skips it; `forge test` skips it by
+        // the library's own rule ({StorageLayoutRecord.active}).
+        StorageLayoutRecord.requireAppendOnly("RefreshChangedFacetsInPlace", diamond);
         IDiamondLoupe loupe = IDiamondLoupe(diamond);
         bool writesArtifact = Deployments.artifactWritesEnabled();
 
@@ -254,7 +251,9 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
             if (changed[i]) Deployments.writeFacet(target[i].key, target[i].impl);
         }
         Deployments.writeUint(".facetCount", loupe.facetAddresses().length);
-        console.log("addresses.json updated for the changed facets. Next:");
+        // #2092 item 1 — the chain now runs this checkout's layout and code.
+        StorageLayoutRecord.record(diamond);
+        console.log("addresses.json and the storage-layout record updated for the changed facets. Next:");
         console.log("  bash script/exportFrontendDeployments.sh");
     }
 

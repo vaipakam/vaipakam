@@ -52,7 +52,7 @@ contract UpgradeOracleFacet is Script {
 
         // #2092 item 1 — refuse code that drops a storage-layout fact this
         // chain records, before anything is broadcast (needs `--ffi`).
-        StorageLayoutRecord.requireAppendOnly("UpgradeOracleFacet");
+        StorageLayoutRecord.requireAppendOnly("UpgradeOracleFacet", diamond);
 
         // ── Deployer: fund admin gas (if low) + deploy new facet ────────
         vm.startBroadcast(deployerKey);
@@ -92,7 +92,7 @@ contract UpgradeOracleFacet is Script {
         console.log("OracleFacet cut complete.");
         console.log("  selectors added:   ", toAdd.length);
         console.log("  selectors replaced:", toReplace.length);
-        StorageLayoutRecord.record();
+        StorageLayoutRecord.record(diamond);
     }
 
     /// @dev Split `selectors` into those NOT yet routed on `diamond` (need Add,

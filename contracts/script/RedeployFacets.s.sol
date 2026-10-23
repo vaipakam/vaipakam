@@ -87,13 +87,7 @@ contract RedeployFacets is Script {
         // env fallback. Replaces the previous unprefixed `DIAMOND_ADDRESS`
         // env which was inconsistent with sibling scripts and risked
         // broadcasting against the wrong Diamond if env state was stale.
-        // #2092 item 1 — refuse code that drops a storage-layout fact this
-        // chain records, before anything is broadcast (needs `--ffi`), and
-        // record the layout once the cut is in. Here rather than in {runWith},
-        // so the in-process test entry needs no ffi.
-        StorageLayoutRecord.requireAppendOnly("RedeployFacets");
         runWith(Deployments.readDiamond(), deployerKey);
-        StorageLayoutRecord.record();
     }
 
     /**
@@ -112,6 +106,12 @@ contract RedeployFacets is Script {
      */
     function runWith(address diamond, uint256 deployerKey) public {
         console.log("Diamond:", diamond);
+        // #2092 item 1 — refuse code that drops a storage-layout fact this
+        // chain records, before anything is broadcast (needs `--ffi`); the
+        // record is rewritten once the cut is in. In this body rather than in
+        // {run}, so `--sig runWith(...)` cannot skip it; the in-process tests
+        // skip it by the library's own rule ({StorageLayoutRecord.active}).
+        StorageLayoutRecord.requireAppendOnly("RedeployFacets", diamond);
         // #2407 — the refinance-request record spans facets this curated set
         // does not carry; refuse a Diamond that has not had it rolled out.
         RefinanceRecordRollout.assertInstalled(diamond);
@@ -589,6 +589,7 @@ contract RedeployFacets is Script {
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
         vm.stopBroadcast();
+        StorageLayoutRecord.record(diamond);
 
         console.log("DiamondCut applied: 9 facets replaced + partitioned Claim/HF/Cons.");
         console.log("  HF selectors added:   ", hfToAdd.length);

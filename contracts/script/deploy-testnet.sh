@@ -716,7 +716,7 @@ archive_chain_state() {
   # Move every chain-state file/dir we know about. The `2>/dev/null`
   # tolerates missing entries (e.g. .history/ may not exist on a
   # half-failed deploy).
-  for entry in addresses.json deployment_source.json storage-layout.json .markers .history; do
+  for entry in addresses.json deployment_source.json storage-layout.json storage-layout.anchor.json .markers .history; do
     if [ -e "$deploy_dir/$entry" ]; then
       mv "$deploy_dir/$entry" "$archive/" 2>/dev/null || true
     fi

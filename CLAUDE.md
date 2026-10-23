@@ -642,15 +642,20 @@ node contracts/script/storage-layout-guard.mjs write   # builds src/, then write
 
 **Each chain carries its own record** (#2092 item 1):
 `contracts/deployments/<slug>/storage-layout.json`, the golden ledger as it
-stood when code last reached that chain. `DeployDiamond.run()` writes it, and
+stood when code last reached that chain, plus `storage-layout.anchor.json`,
+which binds it to the live Diamond's facet list and vault template. Commit the
+two together; a refresh from a checkout whose pair is out of date is refused.
+`DeployDiamond` writes them, and
 every in-place script (`RefreshAllFacetsInPlace`, `RefreshChangedFacetsInPlace`,
 `RedeployFacets`, `ReplaceStaleFacets`, `UpgradeOracleFacet`,
 `MigrateRiskTermsCommitReveal`, `UpgradeVaultImplementation`) runs
-`check --base <record>` before its first transaction, refuses on failure or on
-a missing record, and rewrites the record afterwards. They call the guard
+`check --base <record>` before its first transaction, refuses on failure, on a
+missing record or on an anchor the live chain no longer matches, and rewrites
+the pair afterwards. They call the guard
 through `vm.tryFfi`, so **run them with `--ffi`** (the wrappers do); a run
-without it is refused before anything is sent. Do not move the check into
-`runWith` (the in-process tests have no ffi) and do not enable ffi or a
+without it is refused before anything is sent. The calls sit in each script's
+`runWith` body so `--sig` cannot skip them; the library skips itself under
+`forge test` and for a redirected artifact root. Do not enable ffi or a
 `storage-layout/` read in `foundry.toml` (#2603). A new script that changes
 deployed code in place calls `StorageLayoutRecord.requireAppendOnly` and
 `record` the same way.

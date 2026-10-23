@@ -1,0 +1,6 @@
+{
+  "_readme": "Binds storage-layout.json beside it to the chain it describes (#2092). Written with the record; an in-place change is refused unless the Diamond, its code fingerprint and the record hash still match. Do not edit by hand.",
+  "codeFingerprint": "0x779a28fd71b4473b79ae113e99c0016fe79b31b9bb8ca883c0fd22632decae30",
+  "diamond": "0x50199e30838f368fa18ba87764F9F078c5d5c209",
+  "recordHash": "0x2c9a4817cb36a8afc6fc94ff2c4052e2298571b67b813b217e7e821ad046faaf"
+}
