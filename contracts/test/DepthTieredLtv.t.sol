@@ -45,7 +45,10 @@ contract DepthTieredLtv is Test {
 
     ERC20Mock assetTok; // 18-dec ERC-20 used as the classified collateral
     address mockAsset;
-    address mockWeth = makeAddr("weth");
+    // #2419 — a real token, not a bare address: the classifier and the route
+    // search read each asset's (and each quote's) `decimals()`, and a
+    // codeless WETH reads as unreadable, so as Illiquid.
+    address mockWeth = address(new ERC20Mock("Wrapped Ether", "WETH", 18));
     address mockRegistry = makeAddr("registry");
     address mockDenom = makeAddr("denom");
     address mockEthUsdFeed = makeAddr("ethNumeraireFeed");

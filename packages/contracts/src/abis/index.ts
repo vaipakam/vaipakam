@@ -55,6 +55,8 @@ import FallbackCustodyFacetABI from './FallbackCustodyFacet.json';
 import SwapAttemptFacetABI from './SwapAttemptFacet.json';
 // #2440 — the treasury fee host (every fee drawn from a wallet or a vault).
 import TreasuryFeeFacetABI from './TreasuryFeeFacet.json';
+// #2419 — the valuation host (the one 1e18 numeraire-value rule).
+import NumeraireValueFacetABI from './NumeraireValueFacet.json';
 import RiskSplitLiquidationFacetABI from './RiskSplitLiquidationFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
@@ -207,6 +209,7 @@ export {
   FallbackCustodyFacetABI,
   SwapAttemptFacetABI,
   TreasuryFeeFacetABI,
+  NumeraireValueFacetABI,
   RiskSplitLiquidationFacetABI,
   ClaimFacetABI,
   OracleFacetABI,

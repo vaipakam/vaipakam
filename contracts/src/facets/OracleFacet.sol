@@ -18,7 +18,8 @@ import {IApi3ServerV1} from "../interfaces/IApi3ServerV1.sol";
 import {IDIAOracleV2} from "../interfaces/IDIAOracleV2.sol";
 import {IPyth} from "../interfaces/IPyth.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {LibNumeraireValue} from "../libraries/LibNumeraireValue.sol";
+import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
@@ -99,18 +100,14 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///         leg values to zero — the same refusal, by the same name, as
     ///         the loan-level `RiskFacet.calculateLTV(loanId)`.
     error ZeroCollateral();
-    /// @notice Reverted by the pair-level {calculateLTV} when the two legs'
-    ///         decimal scales (feed decimals + token decimals) differ by more
-    ///         than it can represent exactly — 73 when the collateral's scale
-    ///         is the larger (`LTV_SCALE · 10**gap` must fit in 256 bits), 77
-    ///         when the borrowed one is (`10**gap` must). Far beyond any real
-    ///         token pair, and refused by name rather than by an overflow.
-    error DecimalScaleUnsupported(uint256 gap);
-    /// @notice Reverted by the pair-level {calculateLTV} when an asset's
-    ///         price resolves to zero — a composed price can floor to zero
-    ///         even when every component feed is positive. A zero price says
-    ///         nothing about value, so it is refused rather than read as a
-    ///         loan-to-value of 0 ("no risk") or as zero collateral.
+    /// @notice Reverted by {getAssetPrice} — and so by every valuation and
+    ///         loan-to-value read built on it — when an asset's price
+    ///         resolves to zero (#2418 r4 for the pair preview, #2419 for
+    ///         every reader). A composed price can floor to zero even when
+    ///         every component feed is positive. A zero price says nothing
+    ///         about value, so it is refused rather than read as a value of
+    ///         0 ("no debt", "no risk") or as zero collateral. The try and
+    ///         status readers report it as Unavailable.
     error ZeroPrice(address asset);
 
     // 0.3% v3-style AMM fee tier — the standard ERC20/WETH venue. Resolved
@@ -245,6 +242,14 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             );
         }
 
+        // #2419 — an asset whose `decimals()` cannot be read is Illiquid:
+        // no amount of it can be valued, so no risk math may run on it.
+        // Read on the common path, before the WETH branch, so a configured
+        // WETH whose decimals are unreadable is not reported Liquid while
+        // every valuation of it refuses.
+        (bool okDec, uint8 tokenDec) = LibNumeraireValue.tryTokenDecimals(asset);
+        if (!okDec) return (LibVaipakam.LiquidityStatus.Illiquid, address(0));
+
         // WETH itself: no asset/WETH pool (circular); Liquid iff ETH/USD
         // is fresh (2h, no peg branch — ETH is volatile).
         if (asset == weth) {
@@ -292,7 +297,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         (bool ethOk, , ) = _readFreshUsdFeed(ethFeed, false);
         if (!ethOk) return (LibVaipakam.LiquidityStatus.Illiquid, address(0));
 
-        (bool passes, address distrustedQuote) = _passesFloorSlippage(asset, s);
+        (bool passes, address distrustedQuote) = _passesFloorSlippage(asset, tokenDec, s);
         return passes
             ? (LibVaipakam.LiquidityStatus.Liquid, address(0))
             : (LibVaipakam.LiquidityStatus.Illiquid, distrustedQuote);
@@ -315,16 +320,21 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///      have cleared on everything checkable without that price
     ///      ({_distrustedQuoteThatClears}). The failed search is then not
     ///      evidence the asset is illiquid. Zero when there is none.
-    function _passesFloorSlippage(address asset, LibVaipakam.Storage storage s)
+    function _passesFloorSlippage(
+        address asset,
+        uint8 tdA,
+        LibVaipakam.Storage storage s
+    )
         private
         view
         returns (bool passes, address distrustedQuote)
     {
         (bool okA, uint256 pA, uint8 dA) = tryGetAssetPrice(asset);
         if (!okA || pA == 0) return (false, address(0));
+        // `tdA` is the decimals {_classifyLiquidity} already read (#2419).
         _TierCtx memory ctx = _TierCtx({
             pA: pA,
-            scaleA: 10 ** (uint256(dA) + uint256(_tryTokenDecimals(asset))),
+            scaleA: 10 ** (uint256(dA) + uint256(tdA)),
             band: LibVaipakam.cfgTwapConsistencyBps(),
             twapWindow: uint32(LibVaipakam.cfgTwapWindowSec()),
             quoteUnvalued: false
@@ -451,43 +461,28 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      *         of `borrowedAsset` against `collateralAmount` of
      *         `collateralAsset` — a pair-level PREVIEW of the figure loan
      *         initiation checks.
-     * @dev    Values each leg in numeraire terms as the loan-level path does
-     *         (`RiskFacet._computeNumeraireValues`, which initiation,
-     *         liquidation, add-collateral and refinance use) — price over the
-     *         feed's decimals AND over the token's own decimals. Dividing by
-     *         the feed's decimals alone (#2403) left each leg in raw token
-     *         units, so a pair whose tokens have different decimals — a
-     *         6-decimal stablecoin against an 18-decimal asset — came out off
-     *         by `10**(decimal difference)`.
+     * @dev    #2419 — the SAME figure the loan-level path computes
+     *         (`RiskFacet.calculateLTV(loanId)`, which initiation,
+     *         liquidation, add-collateral and refinance read): each leg is
+     *         valued by the one shared rule ({LibNumeraireValue.toValue}, 1e18
+     *         numeraire, price over the feed's decimals AND the token's own
+     *         decimals, #2403), the borrowed leg rounded UP and the collateral
+     *         leg DOWN, and the ratio is {LibRiskMath.ltvBps} over the two
+     *         values. So the preview is the binding figure, not an
+     *         approximation of it: a nonzero borrow never reads as 0 (its
+     *         value rounds up), and no intermediate product can overflow
+     *         while both values fit in 256 bits — 2^256 / 1e18 numeraire units
+     *         a leg, far above any real amount.
      *
-     *         The ratio is computed in ONE step, never from two separately
-     *         rounded leg values (#2418 r2 — root fix after r1 found a
-     *         sub-unit leg truncating to 0, and r2 the same at the next
-     *         scale down):
-     *
-     *           ltv = ⌊ bAmt·bPrice·LTV_SCALE · 10**(cFeedDec + cTokenDec)
-     *                   ÷ (cAmt·cPrice · 10**(bFeedDec + bTokenDec)) ⌋
-     *
-     *         Only the common power of ten is cancelled, and the single floor
-     *         is the final one, so the result is the exact loan-to-value
-     *         rounded down to whole basis points for ANY sizes — a nonzero
-     *         borrow is never reported as 0 because a leg rounded away.
-     *         This is the economic ratio. The loan-level path values each
-     *         leg separately and truncates both to whole units, so the two
-     *         agree except where a leg sits within one unit of that
-     *         truncation — tracked as #2419.
-     *
-     *         Reverts {ZeroCollateral} on a zero collateral amount, as the
-     *         loan-level path does; returning 0 read as "no risk". Reverts
-     *         {ZeroPrice} when either asset's price resolves to zero (#2418
-     *         r4): a composed price can floor to zero from positive feeds,
-     *         and a zero borrowed price would otherwise return a confident
-     *         0 for a nonzero debt. Reverts on a missing or stale
-     *         feed via {getAssetPrice}. Two stated limits, both far outside
-     *         any real asset: {DecimalScaleUnsupported} when the legs'
-     *         decimal scales differ by more than 73 / 77 (#2418 r3 — see the
-     *         error), and an overflow revert when an amount × price product
-     *         exceeds 256 bits. Meaningful only for liquid (priced) assets.
+     *         Reverts {ZeroCollateral} on a zero collateral amount, or a
+     *         collateral leg that values to zero, as the loan-level path
+     *         does; returning 0 read as "no risk". Reverts {ZeroPrice} when
+     *         either asset's price resolves to zero (a composed price can
+     *         floor to zero from positive feeds; {getAssetPrice} refuses it
+     *         too), on a missing or stale feed via {getAssetPrice}, and
+     *         {LibNumeraireValue.TokenDecimalsUnreadable} when a token's
+     *         `decimals()` cannot be read or exceeds 36. Meaningful only for
+     *         liquid (priced) assets.
      */
     // forge-lint: disable-next-line(mixed-case-function)
     function calculateLTV(
@@ -497,48 +492,24 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         uint256 collateralAmount
     ) external view returns (uint256 ltv) {
         if (collateralAmount == 0) revert ZeroCollateral();
+        uint256 debtValue = _numeraireValue(borrowedAsset, borrowedAmount, true);
+        uint256 collateralValue = _numeraireValue(collateralAsset, collateralAmount, false);
+        if (collateralValue == 0) revert ZeroCollateral();
+        ltv = LibRiskMath.ltvBps(debtValue, collateralValue);
+    }
 
-        (uint256 borrowedPrice, uint8 borrowedFeedDec) = this.getAssetPrice(borrowedAsset);
-        (uint256 collateralPrice, uint8 collateralFeedDec) = this.getAssetPrice(collateralAsset);
-
-        // The two legs' decimal scales, as powers of ten.
-        uint256 borrowedScale = uint256(borrowedFeedDec) + IERC20Metadata(borrowedAsset).decimals();
-        uint256 collateralScale = uint256(collateralFeedDec) + IERC20Metadata(collateralAsset).decimals();
-        if (borrowedPrice == 0) revert ZeroPrice(borrowedAsset);
-        if (collateralPrice == 0) revert ZeroPrice(collateralAsset);
-        uint256 borrowedRaw = borrowedAmount * borrowedPrice;
-        uint256 collateralRaw = collateralAmount * collateralPrice;
-
-        // Cancel only the common power of ten, then floor once.
-        uint256 gap = collateralScale >= borrowedScale
-            ? collateralScale - borrowedScale
-            : borrowedScale - collateralScale;
-        if (collateralScale >= borrowedScale) {
-            if (gap > 73) revert DecimalScaleUnsupported(gap); // LTV_SCALE·10**gap < 2**256
-            ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE * (10 ** gap), collateralRaw);
-        } else {
-            if (gap > 77) revert DecimalScaleUnsupported(gap); // 10**gap < 2**256
-            // ltv = floor(borrowedRaw · LTV_SCALE / (k · collateralRaw)),
-            // k = 10**gap, with no intermediate allowed to overflow when the
-            // result fits (#2418 r3/r4):
-            //  - k · collateralRaw fits → ONE full-precision division by it;
-            //    mulDiv then reverts only if the true result does not fit.
-            //  - it does not fit → the result is below LTV_SCALE, and the
-            //    LARGER of the two divisors goes inside mulDiv. Since
-            //    k · collateralRaw > 2**256, that divisor exceeds 2**128, so
-            //    the intermediate is below 2**256 · LTV_SCALE / 2**128 and
-            //    fits; the smaller is divided out after.
-            // Every order is exact: floor(floor(N / a) / b) == floor(N / (a · b)).
-            uint256 k = 10 ** gap;
-            (bool fits, uint256 denominator) = Math.tryMul(k, collateralRaw);
-            if (fits) {
-                ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE, denominator);
-            } else if (collateralRaw >= k) {
-                ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE, collateralRaw) / k;
-            } else {
-                ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE, k) / collateralRaw;
-            }
-        }
+    /// @dev One leg of {calculateLTV}: `amount` of `asset` in 1e18 numeraire
+    ///      by the shared rule. A zero price is refused by name, by asset.
+    function _numeraireValue(address asset, uint256 amount, bool roundUp)
+        private
+        view
+        returns (uint256)
+    {
+        (uint256 price, uint8 feedDecimals) = this.getAssetPrice(asset);
+        if (price == 0) revert ZeroPrice(asset);
+        return LibNumeraireValue.toValue(
+            amount, price, feedDecimals, LibNumeraireValue.tokenDecimals(asset), roundUp
+        );
     }
 
     /**
@@ -632,6 +603,12 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         address asset
     ) external view returns (uint256 price, uint8 decimals) {
         (price, decimals) = _primaryPrice(asset);
+        // #2419 — a composed price (asset/ETH × ETH/numeraire, or an FX
+        // leg) can floor to zero from positive feeds. Every consumer
+        // multiplies by it, so a zero would value a nonzero amount at
+        // nothing (a debt as no debt). Refuse it here, once, so the
+        // try/status readers see it as Unavailable.
+        if (price == 0) revert ZeroPrice(asset);
         // Phase 7b.2 — Soft 2-of-N cross-validation across Tellor +
         // API3 + DIA. The aggregator probes each source, classifies
         // its result as Unavailable / Agree / Disagree, and:
@@ -1673,25 +1650,6 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         return [V3_TIER_LOW, V3_TIER_LOW_MID, V3_TIER_PANCAKE, V3_TIER_STANDARD];
     }
 
-    /// @dev Best-effort `decimals()` — low-level `staticcall` so a
-    ///      non-contract / non-conforming address (e.g. a fat-fingered
-    ///      PAA entry) can't revert the never-reverting classification
-    ///      view; falls back to `18` on call failure / short return /
-    ///      an implausible (> 36) value. A wrong fallback is
-    ///      self-correcting: the value-balance guard in
-    ///      {_accumulatePoolImpacts} skips a pool whose legs don't
-    ///      balance, which is exactly what a decimals mismatch produces.
-    ///      (`try/catch IERC20Metadata(addr).decimals()` is *not* enough:
-    ///      a call to a code-less address succeeds with empty returndata
-    ///      and the compiler's "call to non-contract" guard then reverts
-    ///      *outside* the catch.)
-    function _tryTokenDecimals(address token) private view returns (uint8) {
-        if (token.code.length == 0) return 18;
-        (bool ok, bytes memory data) = token.staticcall(abi.encodeWithSignature("decimals()"));
-        if (!ok || data.length < 32) return 18;
-        uint256 d = abi.decode(data, (uint256));
-        return d > 36 ? 18 : SafeCast.toUint8(d);
-    }
 
     /// @dev Read a Uni-V3-clone pool's state for the depth-tier route
     ///      search. `ok == false` on any malformed/failed read or a
@@ -1873,7 +1831,11 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ) private view {
         (PriceStatus stQ, uint256 pQ, uint8 dQ) = getAssetPriceStatus(q);
         if (stQ != PriceStatus.Priced || pQ == 0) return;
-        uint256 scaleQ = 10 ** (uint256(dQ) + uint256(_tryTokenDecimals(q)));
+        // A quote whose `decimals()` cannot be read cannot value its leg
+        // either (#2419): skip it like an unpriced one.
+        (bool okDecQ, uint8 tdQ) = LibNumeraireValue.tryTokenDecimals(q);
+        if (!okDecQ) return;
+        uint256 scaleQ = 10 ** (uint256(dQ) + uint256(tdQ));
         _foldRoutes(asset, q, s, ctx, pQ, scaleQ, sizes, best);
     }
 
@@ -2000,9 +1962,11 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         if (_checkLiquidity(asset) != LibVaipakam.LiquidityStatus.Liquid) return 0;
         (bool okA, uint256 pA, uint8 dA) = tryGetAssetPrice(asset);
         if (!okA || pA == 0) return 0;
+        (bool okDec, uint8 tdA) = LibNumeraireValue.tryTokenDecimals(asset);
+        if (!okDec) return 0; // the Liquid check refuses it, except for the configured WETH
         _TierCtx memory ctx = _TierCtx({
             pA: pA,
-            scaleA: 10 ** (uint256(dA) + uint256(_tryTokenDecimals(asset))),
+            scaleA: 10 ** (uint256(dA) + uint256(tdA)),
             band: LibVaipakam.cfgTwapConsistencyBps(),
             twapWindow: uint32(LibVaipakam.cfgTwapWindowSec()),
             quoteUnvalued: false

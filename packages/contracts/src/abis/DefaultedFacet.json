@@ -2319,6 +2319,11 @@
   },
   {
     "type": "error",
+    "name": "OraclePriceDivergence",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PadNumeraireRateFeedStale",
     "inputs": []
   },
@@ -4801,6 +4806,17 @@
     "type": "error",
     "name": "SwapAttemptHostMissing",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TokenDecimalsUnreadable",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

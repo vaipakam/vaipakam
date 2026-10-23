@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
+import {NumeraireValueFacet} from "../facets/NumeraireValueFacet.sol";
 
 /**
  * @title LibRiskMath
@@ -11,34 +12,87 @@ import {OracleFacet} from "../facets/OracleFacet.sol";
  *         lending ceiling validated at `OfferFacet.createOffer` time
  *         under Range Orders Phase 1 (docs/RangeOffersDesign.md §3).
  *
- *         Both helpers solve `HF = (collateralUsd × liqThresholdBps /
- *         BASIS_POINTS) / debtUSD` for the unknown side at
- *         `HF == MIN_HEALTH_FACTOR` (1.5e18). The concrete USD values
- *         use the same Chainlink-feed conversion as
- *         `RiskFacet._computeUsdValues` (asset_amount × price /
- *         10**feedDec / 10**tokenDec) so the create-time bound matches
- *         the runtime HF gate semantics 1:1.
+ *         The HF helpers solve `HF = (collateralValue × liqThresholdBps /
+ *         BASIS_POINTS) × HF_SCALE / debtValue` for the unknown side at
+ *         the create-time admission floor; the LTV-cap helpers solve
+ *         `LTV = debtValue × BASIS_POINTS / collateralValue` at the cap.
+ *         Every value is a 1e18-scaled numeraire figure from
+ *         `NumeraireValueFacet` — the rule `RiskFacet._computeNumeraireValues`
+ *         applies at runtime (#2419) — and every bound is rounded so that
+ *         the runtime gate, with ITS rounding (debt up, collateral down, each
+ *         ratio's divisions down), accepts the bound itself. The HF bounds
+ *         are exact: a floor is the smallest collateral the gate admits, a
+ *         ceiling the largest debt. The LTV-cap bounds hold the unrounded
+ *         ratio to the cap (`debtValue × BASIS_POINTS ≤ capBps ×
+ *         collateralValue`), so they can be stricter than the gate's floored
+ *         LTV read by under one basis point, never looser: the lender keeps
+ *         that margin.
  *
- *         No storage. Reads from `OracleFacet.getAssetPrice` (oracle
- *         layer) and `s.assetRiskParams[collateralAsset].liqThresholdBps`
- *         (storage). Each call is two oracle reads + two `decimals()`
- *         reads + one storage read.
+ *         No storage beyond the tier / cap knobs. Each call is two
+ *         valuation reads through the Diamond (each a price read and a
+ *         `decimals()` read). A missing, stale, distrusted or zero price
+ *         reverts, as it does in `OracleFacet.getAssetPrice`; it is never
+ *         read as "no bound".
  *
- *         Returns 0 (skip-the-bound) when the collateral asset has no
- *         registered risk params (`liqThresholdBps == 0`) — treats
- *         missing-params as "illiquid, no HF gate at create-time, fall
- *         through to whatever the runtime HF gate decides at match."
- *         Same shape as `RiskFacet.calculateHealthFactor` which doesn't
- *         enforce HF on illiquid pairs.
+ *         Returns the no-bound sentinel (0 for a floor, `type(uint256).max`
+ *         for a ceiling) for a genuinely ILLIQUID collateral (tier 0 that
+ *         does not classify Liquid) — "no HF gate at create-time, fall
+ *         through to whatever the runtime gate decides at match." Same
+ *         shape as `RiskFacet.calculateHealthFactor`, which doesn't enforce
+ *         HF on illiquid pairs.
  */
 library LibRiskMath {
+    /// @notice The runtime health-factor rule, from a loan's two 1e18
+    ///         numeraire leg values: `⌊⌊C·liq/BPS⌋·HF_SCALE / D⌋`, both
+    ///         divisions rounded down (lender first). The single home of the
+    ///         formula `RiskFacet` and `PartialWithdrawalFacet` gate on, and
+    ///         the one the bound helpers below invert (#2419).
+    /// @dev    Each step is a full-precision `mulDiv`, so an intermediate
+    ///         product never overflows where the result fits. No debt reads as
+    ///         an infinite HF; an HF of about 1.15e59 or more, whose scaled
+    ///         figure would not fit in `uint256`, saturates to
+    ///         `type(uint256).max`, which every gate reads the same way:
+    ///         healthy.
+    /// @param collateralValue Collateral value, rounded down (1e18 numeraire).
+    /// @param liqThresholdBps The loan's liquidation threshold, in BPS.
+    /// @param debtValue       Debt value, rounded up (1e18 numeraire).
+    /// @return hf             Health factor, scaled to `HF_SCALE`.
+    function healthFactor(
+        uint256 collateralValue,
+        uint256 liqThresholdBps,
+        uint256 debtValue
+    ) internal pure returns (uint256 hf) {
+        if (debtValue == 0) return type(uint256).max;
+        uint256 riskAdjusted =
+            Math.mulDiv(collateralValue, liqThresholdBps, LibVaipakam.BASIS_POINTS);
+        // ⌊R/D⌋ below ⌊max/HF_SCALE⌋ means (⌊R/D⌋ + 1)·HF_SCALE still fits,
+        // so the mulDiv result does; otherwise saturate.
+        if (riskAdjusted / debtValue >= type(uint256).max / LibVaipakam.HF_SCALE) {
+            return type(uint256).max;
+        }
+        hf = Math.mulDiv(riskAdjusted, LibVaipakam.HF_SCALE, debtValue);
+    }
+
+    /// @notice The runtime loan-to-value rule, in BPS, from a loan's two 1e18
+    ///         numeraire leg values: `⌊D·BPS / C⌋`, at full precision (#2419).
+    ///         The single home of the ratio `RiskFacet` and
+    ///         `PartialWithdrawalFacet` gate on. `collateralValue` must be
+    ///         nonzero; each caller handles a zero collateral first (the
+    ///         risk reads refuse it by name, the withdrawal simulation reads
+    ///         it as an unbounded LTV).
+    /// @param debtValue       Debt value, rounded up (1e18 numeraire).
+    /// @param collateralValue Collateral value, rounded down (1e18 numeraire).
+    function ltvBps(uint256 debtValue, uint256 collateralValue) internal pure returns (uint256) {
+        return Math.mulDiv(debtValue, LibVaipakam.BASIS_POINTS, collateralValue);
+    }
+
     /// @notice Smallest collateral amount (in collateral-asset native
     ///         units, NOT USD) that satisfies HF >= 1.5 against the
     ///         given lending amount. Lender-side gate at offer create.
-    /// @dev    Returns 0 when oracle price is missing on either leg or
-    ///         when the collateral asset has no registered risk params
-    ///         — caller treats 0 as "no bound enforced" (fall through to
-    ///         the runtime gate at match time).
+    /// @dev    Returns 0 when the collateral is genuinely illiquid —
+    ///         caller treats 0 as "no bound enforced" (fall through to the
+    ///         runtime gate at match time). Reverts when either leg has no
+    ///         usable price (#2419).
     /// @param amountMax        The lender's `amountMax` (worst-case
     ///                         lending size used for the bound).
     /// @param principalAsset   ERC-20 the lender is offering.
@@ -88,11 +142,11 @@ library LibRiskMath {
         }
         uint256 liqThresholdBps = LibVaipakam.cfgTierLiquidationLtvBps(tier);
 
-        (uint256 principalUsd, uint256 priceCollateral, uint256 collateralScale) =
-            _gatherUsd(amountMax, principalAsset, collateralAsset);
-        if (principalUsd == 0 || priceCollateral == 0) return 0;
+        // Debt leg rounded UP, as the runtime gate values it (#2419).
+        uint256 principalValue = _value(principalAsset, amountMax, true);
 
-        // Solve for collateralUsd where HF == the create-time admission floor.
+        // Solve for the collateral value where HF == the create-time
+        // admission floor.
         // BRANCH-AWARE (#394 Lever A, Codex #647 P2): in the depth-tiered
         // regime the admission floor is the fixed `HF_LIQUIDATION_THRESHOLD`
         // (1e18) — the LTV tier cap is the binding constraint there — so the
@@ -100,33 +154,27 @@ library LibRiskMath {
         // (raising it to 1.8 would wrongly tighten tiered range offers the
         // tiered admission path would accept). Only the non-tiered floor is
         // the tunable knob.
-        //   collateralUsd × liqThresholdBps / BASIS_POINTS
-        //     == principalUsd × hfFloor / HF_SCALE
-        //   collateralUsd
-        //     == (principalUsd × hfFloor × BASIS_POINTS)
-        //        / (HF_SCALE × liqThresholdBps)
-        // BPS multiplications fit comfortably under uint256 since
-        // principalUsd here is the (price-scaled but token-unscaled) raw
-        // numerator of the USD figure RiskFacet uses; see _gatherUsd
-        // below — it intentionally returns the un-divided-by-1e18 form
-        // so the rest of the math stays in integers.
+        //
+        // The runtime gate computes HF = ⌊⌊C·liq/BPS⌋·HF_SCALE / D⌋, so
+        // HF ≥ hfFloor ⟺ ⌊C·liq/BPS⌋ ≥ R with R = ⌈D·hfFloor / HF_SCALE⌉
+        // ⟸ C ≥ ⌈R·BPS / liq⌉. Both ceilings are exact: the smallest C the
+        // gate admits.
         uint256 hfFloor = LibVaipakam.cfgDepthTieredLtvEnabled()
             ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
             : LibVaipakam.minHealthFactor();
-        uint256 collateralUsd =
-            (principalUsd * hfFloor * LibVaipakam.BASIS_POINTS)
-            / (LibVaipakam.HF_SCALE * liqThresholdBps);
+        uint256 riskAdjustedNeeded =
+            Math.mulDiv(principalValue, hfFloor, LibVaipakam.HF_SCALE, Math.Rounding.Ceil);
+        uint256 collateralValue = Math.mulDiv(
+            riskAdjustedNeeded,
+            LibVaipakam.BASIS_POINTS,
+            liqThresholdBps,
+            Math.Rounding.Ceil
+        );
 
-        // Convert collateralUsd back to collateral-asset native units.
-        // `collateralScale` already encodes the (10^feedDec × 10^tokenDec)
-        // factor, so `collateral_native = collateralUsd × collateralScale
-        // / collateralPrice` recovers the right number.
-        floor = (collateralUsd * collateralScale) / priceCollateral;
-        // Round up by 1 wei when there's any remainder so the caller
-        // satisfies the >= relation strictly under integer truncation.
-        if ((collateralUsd * collateralScale) % priceCollateral != 0) {
-            floor += 1;
-        }
+        // Back to collateral-asset native units, rounded UP: the smallest
+        // amount whose value (rounded down, as the gate values collateral)
+        // reaches `collateralValue`.
+        floor = _amount(collateralAsset, collateralValue, true);
 
         // #394 Lever A (Codex #647 round-3 P2) — the HF-derived floor can fall
         // BELOW the per-asset init-LTV cap once the (non-tiered) admission floor
@@ -154,12 +202,11 @@ library LibRiskMath {
             if (tierCap < capBps) capBps = tierCap;
         }
         if (capBps != 0) {
-            uint256 ltvNum = principalUsd * LibVaipakam.BASIS_POINTS;
-            uint256 ltvCollateralUsd = ltvNum / capBps;
-            if (ltvNum % capBps != 0) ltvCollateralUsd += 1;
-            uint256 ltvNum2 = ltvCollateralUsd * collateralScale;
-            uint256 ltvFloor = ltvNum2 / priceCollateral;
-            if (ltvNum2 % priceCollateral != 0) ltvFloor += 1;
+            uint256 ltvFloor = _amount(
+                collateralAsset,
+                _collateralValueForLtvCap(principalValue, capBps),
+                true
+            );
             if (ltvFloor > floor) floor = ltvFloor;
         }
     }
@@ -172,25 +219,26 @@ library LibRiskMath {
     ///         binding `LoanFacet._checkInitialLtvAndHf` gate. `capBps` is
     ///         the effective cap = `min(assetRiskParams.loanInitMaxLtvBps,
     ///         cfgTierMaxInitLtvBps(effectiveTier(collateral)))`.
-    /// @dev    `LTV = debtUSD × BASIS_POINTS / collateralUsd` (the loan-level
+    /// @dev    `LTV = ⌊debtValue × BASIS_POINTS / collateralValue⌋` (the loan-level
     ///         `RiskFacet.calculateLTV(loanId)` formula, which values each
-    ///         leg via `RiskFacet._computeNumeraireValues`, flooring each leg
-    ///         to whole numeraire units), so `LTV ≤ capBps` ⟺
-    ///         `collateralUsd ≥ debtUSD × BASIS_POINTS / capBps`. Doesn't
+    ///         leg via `RiskFacet._computeNumeraireValues` at 1e18
+    ///         precision, debt up and collateral down), so `LTV ≤ capBps`
+    ///         ⟸ `collateralValue ≥ ⌈debtValue × BASIS_POINTS / capBps⌉` (a
+    ///         sufficient condition, up to one basis point stricter than
+    ///         the gate, see the library header). Doesn't
     ///         involve `liqThresholdBps` (the LTV cap is on the *borrow*
     ///         ratio, not the liquidation trigger; and since the invariant
     ///         `capBps ≤ loanInitMaxLtvBps ≤ liqThresholdBps` holds, this floor
     ///         dominates the `HF ≥ 1e18` floor `_checkInitialLtvAndHf`
     ///         also keeps). The pair-level `OracleFacet.calculateLTV`
     ///         preview prices in the same units but floors only the final
-    ///         ratio, so it is NOT a substitute for this binding rounding:
-    ///         for a leg near one numeraire unit the two can differ (#2419).
+    ///         ratio, so it is NOT a substitute for this binding rounding;
+    ///         the two differ by at most one 1e-18 unit per leg (#2419).
     ///         Returns `type(uint256).max` when `capBps == 0`
     ///         (a Tier-0 / no-borrow collateral — no positive amount
-    ///         satisfies it, caller must reject); returns `0` when oracle
-    ///         price is missing on either leg (no create-time bound, fall
-    ///         through to the runtime gate). Same un-divided-by-1e18 USD
-    ///         convention + round-up-on-remainder as {minCollateralForLending}.
+    ///         satisfies it, caller must reject). Reverts when either leg
+    ///         has no usable price. Same 1e18 values + round-up-to-satisfy
+    ///         convention as {minCollateralForLending}.
     /// @param amountMax        The lender's `amountMax` (worst-case lending size).
     /// @param principalAsset   ERC-20 the lender is offering.
     /// @param collateralAsset  ERC-20 the borrower will post.
@@ -205,27 +253,22 @@ library LibRiskMath {
         if (amountMax == 0) return 0;
         if (capBps == 0) return type(uint256).max; // no-borrow collateral
 
-        (uint256 principalUsd, uint256 priceCollateral, uint256 collateralScale) =
-            _gatherUsd(amountMax, principalAsset, collateralAsset);
-        if (principalUsd == 0 || priceCollateral == 0) return 0;
-
-        uint256 num = principalUsd * LibVaipakam.BASIS_POINTS;
-        uint256 collateralUsd = num / capBps;
-        if (num % capBps != 0) collateralUsd += 1; // round up
-
-        uint256 collNum = collateralUsd * collateralScale;
-        floor = collNum / priceCollateral;
-        if (collNum % priceCollateral != 0) floor += 1; // round up — satisfy `>=` strictly
+        uint256 principalValue = _value(principalAsset, amountMax, true);
+        floor = _amount(
+            collateralAsset,
+            _collateralValueForLtvCap(principalValue, capBps),
+            true // round up — satisfy `>=` strictly
+        );
     }
 
     /// @notice Largest lending amount (principal-asset wei) the borrower
     ///         can accept on the offer such that HF >= 1.5 with the
     ///         already-posted collateral. Borrower-side gate at offer
     ///         create.
-    /// @dev    Returns `type(uint256).max` (no ceiling) when oracle
-    ///         price is missing on either leg or when the collateral
-    ///         asset has no registered risk params — fall through to the
-    ///         runtime gate.
+    /// @dev    Returns `type(uint256).max` (no ceiling) when the
+    ///         collateral is genuinely illiquid — fall through to the
+    ///         runtime gate. Reverts when either leg has no usable price
+    ///         (#2419).
     /// @param collateralAmount The borrower's posted collateral, native units.
     /// @param principalAsset   ERC-20 the borrower wants to receive.
     /// @param collateralAsset  ERC-20 the borrower is posting.
@@ -256,39 +299,43 @@ library LibRiskMath {
         }
         uint256 liqThresholdBps = LibVaipakam.cfgTierLiquidationLtvBps(tier);
 
-        (uint256 collateralUsd, uint256 pricePrincipal, uint256 principalScale) =
-            _gatherUsd(collateralAmount, collateralAsset, principalAsset);
-        if (collateralUsd == 0 || pricePrincipal == 0) {
-            return type(uint256).max;
-        }
+        // Collateral leg rounded DOWN, as the runtime gate values it. A
+        // collateral worth nothing at 1e18 precision supports no debt.
+        uint256 collateralValue = _value(collateralAsset, collateralAmount, false);
 
-        // Solve for principalUsd where HF == the create-time admission floor.
+        // Solve for the debt value where HF == the create-time admission
+        // floor.
         // BRANCH-AWARE (#394 Lever A, Codex #647 P2): tiered regime uses the
         // fixed `HF_LIQUIDATION_THRESHOLD` (1e18); only the non-tiered floor is
         // the tunable `minHealthFactor()` knob — so the knob never leaks into
         // tiered offer-creation bounds.
-        //   principalUsd
-        //     == (collateralUsd × liqThresholdBps × HF_SCALE)
-        //        / (BASIS_POINTS × hfFloor)
+        //
+        // The runtime gate computes HF = ⌊A·HF_SCALE / D⌋ with
+        // A = ⌊C·liq/BPS⌋, so HF ≥ hfFloor ⟸ D ≤ ⌊A·HF_SCALE / hfFloor⌋:
+        // the largest debt value the gate admits, computed in the gate's
+        // own two steps.
         uint256 hfFloor = LibVaipakam.cfgDepthTieredLtvEnabled()
             ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
             : LibVaipakam.minHealthFactor();
-        uint256 principalUsd =
-            (collateralUsd * liqThresholdBps * LibVaipakam.HF_SCALE)
-            / (LibVaipakam.BASIS_POINTS * hfFloor);
+        uint256 riskAdjusted =
+            Math.mulDiv(collateralValue, liqThresholdBps, LibVaipakam.BASIS_POINTS);
+        uint256 principalValue =
+            Math.mulDiv(riskAdjusted, LibVaipakam.HF_SCALE, hfFloor);
 
-        // Truncating division here is borrower-friendly: the returned
-        // ceiling is the largest amount that can definitely satisfy
-        // HF >= 1.5 — any larger amount might fail the runtime gate.
-        ceiling = (principalUsd * principalScale) / pricePrincipal;
+        // Back to principal-asset native units, rounded DOWN: the largest
+        // amount whose value (rounded up, as the gate values debt) stays
+        // within `principalValue` — any larger amount might fail the
+        // runtime gate. Borrower-friendly in the safe sense.
+        ceiling = _amount(principalAsset, principalValue, false);
 
         // #394 Lever A (Codex #647 round-3 P2) — symmetric to the
         // `minCollateralForLending` clamp: a lowered (non-tiered) admission
         // floor raises this HF-derived ceiling above what the per-asset
         // init-LTV cap permits, so the borrower could accept a lending amount
         // the admission gate then rejects with `LTVExceeded`. Clamp the ceiling
-        // DOWN to the init-LTV-cap ceiling (`LTV = debt/coll ≤ cap ⟺
-        // debtUSD ≤ collateralUsd × cap / BASIS_POINTS`).
+        // DOWN to the init-LTV-cap ceiling (`LTV = debt/coll ≤ cap ⟸
+        // debtValue ≤ ⌊collateralValue × cap / BASIS_POINTS⌋`, at most one
+        // basis point stricter than the gate, see the library header).
         // #394 Lever A (Codex #647 round-3 + round-4) — `min(per-asset cap,
         // tier cap)` in the depth-tiered regime (mirrors `_checkInitialLtvAndHf`).
         // #1007 — for a tier-0 (thin-but-liquid) asset in the depth-tiered
@@ -305,9 +352,11 @@ library LibRiskMath {
             if (tierCap < capBps) capBps = tierCap;
         }
         if (capBps != 0) {
-            uint256 ltvPrincipalUsd =
-                (collateralUsd * capBps) / LibVaipakam.BASIS_POINTS;
-            uint256 ltvCeiling = (ltvPrincipalUsd * principalScale) / pricePrincipal;
+            uint256 ltvCeiling = _amount(
+                principalAsset,
+                Math.mulDiv(collateralValue, capBps, LibVaipakam.BASIS_POINTS),
+                false
+            );
             if (ltvCeiling < ceiling) ceiling = ltvCeiling;
         }
     }
@@ -337,17 +386,13 @@ library LibRiskMath {
     ///         - `0` if `capBps == 0` — collateral is tagged no-borrow
     ///           (the dual of `minCollateralForLtvCap` returning
     ///           `type(uint256).max` for the same condition)
-    ///         - `0` if oracle price is missing on either leg — fall
-    ///           through to the runtime gate. Borrower-friendly: an
-    ///           offer derived with `amountMax = 0` because of a missing
-    ///           feed simply won't match until the feed comes back,
-    ///           rather than advertising a stale ceiling.
-    ///         - otherwise: `floor((collateralUsd × capBps × principalScale)
-    ///                            / (BASIS_POINTS × pricePrincipal))`.
-    ///           Truncating is borrower-friendly: the returned ceiling
-    ///           is the largest amount that can definitely satisfy
+    ///         - otherwise: the largest principal amount whose value
+    ///           (rounded up) is at most `⌊collateralValue × capBps /
+    ///           BASIS_POINTS⌋`, with the collateral valued rounded down —
+    ///           the largest amount that can definitely satisfy
     ///           `LTV ≤ capBps`; any larger amount might fail the
     ///           runtime gate.
+    ///         Reverts when either leg has no usable price (#2419).
     /// @param collateralAmount The borrower's posted collateral, native units.
     /// @param principalAsset   ERC-20 the borrower wants to receive.
     /// @param collateralAsset  ERC-20 the borrower is posting.
@@ -375,56 +420,50 @@ library LibRiskMath {
         // derivation path.
         if (capBps == 0) return 0;
 
-        (uint256 collateralUsd, uint256 pricePrincipal, uint256 principalScale) =
-            _gatherUsd(collateralAmount, collateralAsset, principalAsset);
-        if (collateralUsd == 0 || pricePrincipal == 0) return 0;
+        uint256 collateralValue = _value(collateralAsset, collateralAmount, false);
 
-        // Solve for principalUsd at LTV == capBps:
-        //   principalUsd == collateralUsd × capBps / BASIS_POINTS
-        uint256 principalUsd =
-            (collateralUsd * capBps) / LibVaipakam.BASIS_POINTS;
+        // Solve for the debt value at LTV == capBps:
+        //   debtValue ≤ ⌊collateralValue × capBps / BASIS_POINTS⌋
+        //   ⟹ ⌊debtValue × BASIS_POINTS / collateralValue⌋ ≤ capBps.
+        uint256 principalValue =
+            Math.mulDiv(collateralValue, capBps, LibVaipakam.BASIS_POINTS);
 
-        // Convert back to principal-asset wei. Truncating division is
-        // borrower-friendly per the docstring.
-        ceiling = (principalUsd * principalScale) / pricePrincipal;
+        // Back to principal-asset wei, rounded down per the docstring.
+        ceiling = _amount(principalAsset, principalValue, false);
     }
 
-    /// @dev Internal: returns (subjectUSD_raw, priceOther, scaleOther)
-    ///      for the math above. `subjectUSD_raw` is `subjectAmount ×
-    ///      subjectPrice / subjectScale`, where `subjectScale =
-    ///      10**subjectFeedDecimals × 10**subjectTokenDecimals`. The
-    ///      "raw" suffix is a reminder that this isn't a 1e18-scaled USD
-    ///      figure — it shares the scaling convention of
-    ///      `RiskFacet._computeUsdValues`.
-    function _gatherUsd(
-        uint256 subjectAmount,
-        address subjectAsset,
-        address otherAsset
-    ) private view returns (
-        uint256 subjectUsd,
-        uint256 priceOther,
-        uint256 scaleOther
-    ) {
-        OracleFacet oracle = OracleFacet(address(this));
+    /// @dev The smallest collateral value at which the UNROUNDED LTV,
+    ///      debtValue × BASIS_POINTS / collateralValue, is at most `capBps`:
+    ///      ⌈debtValue × BASIS_POINTS / capBps⌉. The runtime gate floors that
+    ///      ratio, so it also admits this value, and can admit a slightly
+    ///      smaller one (under one basis point of LTV); the bound keeps that
+    ///      margin for the lender. `capBps` nonzero.
+    function _collateralValueForLtvCap(uint256 debtValue, uint256 capBps)
+        private
+        pure
+        returns (uint256)
+    {
+        return Math.mulDiv(debtValue, LibVaipakam.BASIS_POINTS, capBps, Math.Rounding.Ceil);
+    }
 
-        (uint256 priceSubject, uint8 feedDecSubject) =
-            oracle.getAssetPrice(subjectAsset);
-        if (priceSubject == 0) {
-            return (0, 0, 0);
-        }
-        uint8 tokenDecSubject = IERC20Metadata(subjectAsset).decimals();
-        subjectUsd = (subjectAmount * priceSubject)
-            / (10 ** feedDecSubject)
-            / (10 ** tokenDecSubject);
+    /// @dev 1e18-scaled numeraire value of `amount` of `asset`, through the
+    ///      shared rule (`NumeraireValueFacet`, #2419).
+    function _value(address asset, uint256 amount, bool roundUp)
+        private
+        view
+        returns (uint256)
+    {
+        return NumeraireValueFacet(address(this)).getNumeraireValue(asset, amount, roundUp);
+    }
 
-        (uint256 priceO, uint8 feedDecOther) = oracle.getAssetPrice(otherAsset);
-        if (priceO == 0) {
-            return (subjectUsd, 0, 0);
-        }
-        uint8 tokenDecOther = IERC20Metadata(otherAsset).decimals();
-        priceOther = priceO;
-        // scaleOther packs the inverse-conversion factor for the caller:
-        // `otherAsset_native = otherUSD × scaleOther / priceOther`.
-        scaleOther = (10 ** feedDecOther) * (10 ** tokenDecOther);
+    /// @dev Amount of `asset` worth `value` (1e18 numeraire) — the inverse
+    ///      of {_value}; see `NumeraireValueFacet.getAmountForNumeraireValue`
+    ///      for what each rounding guarantees.
+    function _amount(address asset, uint256 value, bool roundUp)
+        private
+        view
+        returns (uint256)
+    {
+        return NumeraireValueFacet(address(this)).getAmountForNumeraireValue(asset, value, roundUp);
     }
 }

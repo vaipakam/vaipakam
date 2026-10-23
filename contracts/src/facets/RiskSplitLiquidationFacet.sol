@@ -16,11 +16,11 @@ import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
+import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
@@ -252,12 +252,10 @@ contract RiskSplitLiquidationFacet is
             / LibVaipakam.BASIS_POINTS;
         if (bonus > proceeds) bonus = proceeds;
 
-        // Tiered-KYC check for the liquidator — identical to {RiskFacet.triggerLiquidation}.
-        (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
-            .getAssetPrice(loan.principalAsset);
-        uint8 tokenDecimals = IERC20Metadata(loan.principalAsset).decimals();
-        uint256 bonusNumeraire =
-            (bonus * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
+        // Tiered-KYC check for the liquidator — identical to {RiskFacet.triggerLiquidation}:
+        // the bonus valued through the one shared rule, rounded down (#2419).
+        uint256 bonusNumeraire = NumeraireValueFacet(address(this))
+            .getNumeraireValue(loan.principalAsset, bonus, false);
         if (!ProfileFacet(address(this)).meetsKYCRequirement(msg.sender, bonusNumeraire))
             revert KYCRequired();
 

@@ -16,7 +16,6 @@ import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -28,6 +27,7 @@ import {RiskFacet} from "./RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
+import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 
@@ -225,9 +225,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         LibPrepayCleanup.clearActiveListing(loan, loanId);
 
         // Tiered KYC check on loan value for the lender. Both branches
-        // (ERC20 loan / NFT rental) price the same way — we only differ in
-        // which asset + amount to value. Collapsed to one getAssetPrice +
-        // decimals() fetch instead of two duplicated bodies.
+        // (ERC20 loan / NFT rental) value the same way — we only differ in
+        // which asset + amount to value. #2419 — through the one shared rule
+        // ({NumeraireValueFacet.getLiquidNumeraireValue}, rounded down).
         // Illiquid assets have no oracle feed, so valued at 0 per README — KYC always passes.
         {
             address valueAsset;
@@ -241,17 +241,13 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 valueAmount = loan.prepayAmount;
             }
 
-            LibVaipakam.LiquidityStatus liq = OracleFacet(address(this))
-                .checkLiquidity(valueAsset);
-            if (liq == LibVaipakam.LiquidityStatus.Liquid) {
-                (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
-                    .getAssetPrice(valueAsset);
-                uint8 tokenDecimals = IERC20Metadata(valueAsset).decimals();
-                uint256 valueNumeraire = (valueAmount * price * 1e18)
-                    / (10 ** feedDecimals) / (10 ** tokenDecimals);
-                if (!ProfileFacet(address(this)).meetsKYCRequirement(loan.lender, valueNumeraire)) {
-                    revert KYCRequired();
-                }
+            uint256 valueNumeraire = NumeraireValueFacet(address(this))
+                .getLiquidNumeraireValue(valueAsset, valueAmount);
+            if (
+                valueNumeraire != 0 &&
+                !ProfileFacet(address(this)).meetsKYCRequirement(loan.lender, valueNumeraire)
+            ) {
+                revert KYCRequired();
             }
             // Illiquid asset: valued at 0, KYC always passes.
         }
@@ -318,8 +314,34 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // live network exposes a swap path for the collateral. When the
         // active-network check returns Illiquid we drop into the full-
         // collateral-transfer branch below instead of attempting a swap.
-        LibVaipakam.LiquidityStatus liquidity = OracleFacet(address(this))
-            .checkLiquidityOnActiveNetwork(loan.collateralAsset);
+        //
+        // #2419 — for a loan liquid on both legs at origination the PAIR is
+        // probed first (`tryOracleRate`), BEFORE the live classifier: when a
+        // leg has no usable price the route is already the unpriced fallback
+        // (see the route note below), whatever the other leg says — the
+        // missing-price rule wins over a distrusted other leg (owner
+        // decision 2026-10-22, #666) — so the classifier, which refuses a
+        // distrusted collateral price, is not consulted. A priced pair with a
+        // distrusted leg reverts inside the probe (#666).
+        bool liquidLoan =
+            loan.assetType == LibVaipakam.AssetType.ERC20 &&
+            loan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
+            loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid;
+        bool unpricedPair;
+        if (liquidLoan) {
+            (bool pairPriced, ) = LibFallback.tryOracleRate(
+                address(this), loan.collateralAsset, loan.principalAsset
+            );
+            unpricedPair = !pairPriced;
+        }
+        // The live market check is read only where it can change the route:
+        // a loan liquid at origination whose pair is priced. An unpriced pair
+        // needs no market check, and a loan that began illiquid on either leg
+        // defaults in kind whatever the check would say, so neither consults
+        // the classifier (which refuses a distrusted collateral price, #666).
+        LibVaipakam.LiquidityStatus liquidity = (liquidLoan && !unpricedPair)
+            ? OracleFacet(address(this)).checkLiquidityOnActiveNetwork(loan.collateralAsset)
+            : LibVaipakam.LiquidityStatus.Illiquid;
 
         // Terminal NFT status for this default — README §7: "Loan Defaulted" or
         // "Loan Liquidated". Each branch below sets the appropriate label.
@@ -344,6 +366,37 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // (oracle-dead) or the collateral is insufficient. Only query for
             // liquid collateral — illiquid loans have no oracle and
             // `calculateLTV` reverts IlliquidLoanNoRiskMath.
+            //
+            // #2419 — which route a default takes is decided first by what
+            // the loan WAS at origination (`loan.collateralLiquidity` /
+            // `loan.principalLiquidity`), then by what can be done now:
+            //  - A loan liquid on both legs at origination is the only kind
+            //    risk math and a sale apply to (`calculateLTV` refuses any
+            //    other with IlliquidLoanNoRiskMath). Its PAIR must be priced:
+            //    the LTV read and the sale floor value both legs, and the
+            //    shared valuation rule refuses a missing or zero price. When
+            //    the pair cannot be priced (`tryOracleRate`: a missing or zero
+            //    price, or unreadable decimals, on either leg) the default skips the LTV read and the
+            //    swap and enters the fallback directly, exactly as a failed
+            //    swap would — a sale with no oracle floor is not attempted,
+            //    the default still completes (lender first), and the
+            //    fallback's unpriced split gives the lender the collateral
+            //    while the loan stays curable. This holds whatever the live
+            //    probe says: a missing collateral price makes it report the
+            //    collateral Illiquid, which alone would send a loan never
+            //    consented as illiquid to `LiquidationFailed`. A priced pair
+            //    on liquid collateral takes the swap route, or the in-kind
+            //    route on a genuine value collapse.
+            //  - A loan that began illiquid on either leg was consented as
+            //    illiquid and defaults in kind (the branch below), whatever
+            //    the live probe says now; it never reaches risk math.
+            // A DISTRUSTED price reverts the whole default instead (#666:
+            // refuse and retry once the feeds agree), except where the other
+            // leg has no usable price at all, where the unpriced route wins.
+            // `liquidLoan` / `unpricedPair` were settled above, and with them
+            // `liquidity`: Liquid only for a priced loan liquid at origination
+            // whose collateral the live check still finds liquid, Illiquid for
+            // every other loan.
             bool isLtvCollapsed;
             if (liquidity == LibVaipakam.LiquidityStatus.Liquid) {
                 isLtvCollapsed = RiskFacet(address(this)).calculateLTV(loanId)
@@ -351,8 +404,8 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             }
 
             if (
-                liquidity == LibVaipakam.LiquidityStatus.Liquid &&
-                !isLtvCollapsed
+                unpricedPair ||
+                (liquidity == LibVaipakam.LiquidityStatus.Liquid && !isLtvCollapsed)
             ) {
                 // #1005 (S9) — a liquid time-based default must attempt at least
                 // one enabled swap route: `LibSwap.swapWithFailover` (below)
@@ -362,7 +415,8 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // eligible loan into the full-collateral fallback with zero DEX
                 // attempts. (Illiquid / genuinely LTV-collapsed defaults
                 // legitimately need no swap list and fall through to the in-kind
-                // branch below.)
+                // branch below. An unpriced pair needs none either: it enters
+                // the fallback without a swap, #2419, see the route note above.)
 
                 // Time-based default with liquid collateral: swap directly without HF check.
                 // RiskFacet.triggerLiquidation requires HF < 1 (for HF-based liquidation),
@@ -383,6 +437,18 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     loan.collateralAsset,
                     loan.collateralAmount
                 );
+
+                if (unpricedPair) {
+                    // #2419 — see the route note above: no price, no sale.
+                    _enterFallback(loanId);
+                    emit LoanFallbackPending(
+                        loanId,
+                        loan.lender,
+                        loan.riskAndTermsConsentFromBoth,
+                        loan.status
+                    );
+                    return;
+                }
 
                 // README §3 lines 140–141 + §7 line 263: compute the oracle-
                 // derived expected output and the 6% slippage floor. Adapters

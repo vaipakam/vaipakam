@@ -128,6 +128,10 @@ export interface DeploymentFacets {
    *  a user's vault into the treasury is moved, measured and accrued there.
    *  Optional: a chain deployed before it has no such key. */
   treasuryFeeFacet?: HexAddress;
+  /** #2419 - the valuation host: every amount valued in the numeraire (LTV,
+   *  health factor, offer bounds) goes through its one 1e18 rule. Optional:
+   *  a chain deployed before it has no such key. */
+  numeraireValueFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

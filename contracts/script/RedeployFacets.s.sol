@@ -26,6 +26,7 @@ import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
@@ -80,6 +81,9 @@ contract RedeployFacets is Script {
     /// @notice #902 - the target Diamond predates the per-rental renter rows;
     ///         see {_requirePerRentalRenterRows}.
     error PredatesPerRentalRenterRows(address diamond);
+    /// @notice #2419 - the target Diamond predates the 1e18 numeraire value
+    ///         rule; see {_requireNumeraireValueRule}.
+    error PredatesNumeraireValueRule(address diamond);
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -127,6 +131,9 @@ contract RedeployFacets is Script {
         // #902 - and one from before the per-rental renter rows; see
         // {_requirePerRentalRenterRows}.
         _requirePerRentalRenterRows(diamond);
+        // #2419 - and one from before the 1e18 numeraire value rule; see
+        // {_requireNumeraireValueRule}.
+        _requireNumeraireValueRule(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -239,6 +246,14 @@ contract RedeployFacets is Script {
         // pre-#2440 Diamond its two selectors are unrouted and partition to an
         // Add below.
         TreasuryFeeFacet treasuryFeeFacet = new TreasuryFeeFacet();
+        // #2419 - the valuation host. RiskFacet (every LTV / HF read),
+        // RiskPreviewFacet (LibRiskMath) and every KYC comparison (Defaulted,
+        // RiskSplitLiquidation, and Loan, Preclose and EarlyWithdrawalDirect
+        // through LibCompliance) value through it by self-call, so it rides
+        // the same cut. The target already routes it
+        // ({_requireNumeraireValueRule}); a selector added to the host later
+        // partitions to an Add below.
+        NumeraireValueFacet numeraireValueFacet = new NumeraireValueFacet();
 
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("RiskSplitLiquidation: ", address(riskSplitLiquidationFacet));
@@ -259,6 +274,7 @@ contract RedeployFacets is Script {
         console.log("FallbackCustodyFacet: ", address(fallbackCustodyFacet));
         console.log("SwapAttemptFacet:     ", address(swapAttemptFacet));
         console.log("TreasuryFeeFacet:     ", address(treasuryFeeFacet));
+        console.log("NumeraireValueFacet:  ", address(numeraireValueFacet));
 
         // #394 (Codex #647 rounds 5+7) — the runtime HF-floor knob selectors
         // need an Add on a PRE-#394 diamond (not yet routed → Replace reverts on
@@ -393,6 +409,9 @@ contract RedeployFacets is Script {
         // #2440 - the treasury fee host, from the one list the deploy cuts.
         (bytes4[] memory tfToAdd, bytes4[] memory tfToReplace) =
             _partitionByRouting(diamond, FacetSelectors.treasuryFee());
+        // #2419 - the valuation host, from the one list the deploy cuts.
+        (bytes4[] memory nvToAdd, bytes4[] memory nvToReplace) =
+            _partitionByRouting(diamond, FacetSelectors.numeraireValue());
 
         uint256 nExtra =
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
@@ -413,7 +432,8 @@ contract RedeployFacets is Script {
             (rpToRemove.length > 0 ? 1 : 0) +
             (fcToAdd.length > 0 ? 1 : 0) + (fcToReplace.length > 0 ? 1 : 0) +
             (saToAdd.length > 0 ? 1 : 0) + (saToReplace.length > 0 ? 1 : 0) +
-            (tfToAdd.length > 0 ? 1 : 0) + (tfToReplace.length > 0 ? 1 : 0);
+            (tfToAdd.length > 0 ? 1 : 0) + (tfToReplace.length > 0 ? 1 : 0) +
+            (nvToAdd.length > 0 ? 1 : 0) + (nvToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](9 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
@@ -585,6 +605,13 @@ contract RedeployFacets is Script {
         if (tfToAdd.length > 0) {
             cuts[idx++] = _add(address(treasuryFeeFacet), tfToAdd);
         }
+        // #2419 - and the valuation host, in the same cut for the same reason.
+        if (nvToReplace.length > 0) {
+            cuts[idx++] = _replace(address(numeraireValueFacet), nvToReplace);
+        }
+        if (nvToAdd.length > 0) {
+            cuts[idx++] = _add(address(numeraireValueFacet), nvToAdd);
+        }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
@@ -616,6 +643,8 @@ contract RedeployFacets is Script {
         console.log("  SwapAttempt selectors repl.:     ", saToReplace.length);
         console.log("  TreasuryFee selectors added:     ", tfToAdd.length);
         console.log("  TreasuryFee selectors repl.:     ", tfToReplace.length);
+        console.log("  NumeraireValue selectors added:  ", nvToAdd.length);
+        console.log("  NumeraireValue selectors repl.:  ", nvToReplace.length);
     }
 
     /// @dev #1566 S2b - the fallback-custody boundary. From S2b the fallback
@@ -705,6 +734,28 @@ contract RedeployFacets is Script {
             IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.vaultSetRentalUser.selector)
                 == address(0)
         ) revert PredatesPerRentalRenterRows(diamond);
+    }
+
+    /// @dev #2419 - refuse a Diamond from before the 1e18 numeraire value
+    ///      rule. The rule is one behaviour spread over facets this curated
+    ///      set does not carry: OracleFacet (the liquidity probe that
+    ///      classifies a token with unreadable decimals Illiquid, which the
+    ///      strict KYC valuation relies on, and the pair loan-to-value
+    ///      preview), AdminFacet (the dust-floor setter and getter, now on the
+    ///      1e18 scale) and the offer facets (the create-time bounds). Run
+    ///      across the boundary it would leave the new valuation beside an old
+    ///      classifier and an old dust-floor setter, so the sizing getter and
+    ///      the risk code would disagree and a default could revert on a token
+    ///      the old probe still calls liquid. Crossing the boundary is a fresh
+    ///      deploy or `RefreshAllFacetsInPlace`, which carries every facet,
+    ///      never this refresh. The marker is the routing of
+    ///      `getLiquidNumeraireValue`, which #2419 introduced. Called before
+    ///      the broadcast starts, so a refused run sends nothing.
+    function _requireNumeraireValueRule(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(NumeraireValueFacet.getLiquidNumeraireValue.selector)
+                == address(0)
+        ) revert PredatesNumeraireValueRule(diamond);
     }
 
     function _replace(address facet, bytes4[] memory selectors)
