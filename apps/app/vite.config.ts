@@ -5,6 +5,10 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  applyScriptHashes,
+  scriptHashSources,
+} from './scripts/cspScriptHashes.mjs';
 
 // Stamp the commit + build time into the bundle (shown on the Help page)
 // so a tester can always tell which build they're looking at.
@@ -110,12 +114,42 @@ function e2eDeploymentsBundle(): Plugin {
   };
 }
 
+// #43 (ET-017) — the Content-Security-Policy allows inline scripts only by
+// hash. This writes the hashes of the BUILT page's inline scripts into the
+// built `_headers`, replacing the placeholder `_headers.base` carries in
+// `script-src`. Runs after Vite writes the client output (the public
+// directory, and so `_headers`, is in place by then), and throws rather
+// than ship a policy it could not complete. See scripts/cspScriptHashes.mjs.
+function cspScriptHashes(): Plugin {
+  return {
+    name: 'vaipakam-csp-script-hashes',
+    apply: 'build',
+    writeBundle(options) {
+      const outDir = options.dir;
+      if (!outDir) return;
+      const page = path.join(outDir, 'index.html');
+      // The worker environment of the Cloudflare plugin writes no page.
+      if (!fs.existsSync(page)) return;
+      const headersFile = path.join(outDir, '_headers');
+      if (!fs.existsSync(headersFile)) {
+        this.error(`[csp] ${headersFile} is missing; run the prebuild (scripts/generate-seo.mjs) first.`);
+      }
+      const sources = scriptHashSources(fs.readFileSync(page, 'utf8'));
+      fs.writeFileSync(
+        headersFile,
+        applyScriptHashes(fs.readFileSync(headersFile, 'utf8'), sources),
+      );
+      console.log(`[csp] script-src allows ${sources.length} inline script hash(es)`);
+    },
+  };
+}
+
 export default defineConfig(({ mode, command }) => {
   checkIndexerOrigin(mode, command);
   return {
   plugins: process.env.APP_E2E
-    ? [e2eDeploymentsBundle(), react()]
-    : [react(), cloudflare()],
+    ? [e2eDeploymentsBundle(), react(), cspScriptHashes()]
+    : [react(), cloudflare(), cspScriptHashes()],
   build: {
     rollupOptions: {
       output: {

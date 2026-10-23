@@ -14,9 +14,30 @@
 # are separate origins, and WalletConnect relays are third-party. Pin
 # narrower only if the RPC set is ever frozen.
 #
-# `unsafe-inline`/`unsafe-eval` in script-src mirror defi (wallet SDK
-# constraints); tightening to nonces is a follow-up hardening pass —
-# do not loosen further without review.
+# script-src is `'self'` plus the hashes of the inline boot scripts in
+# index.html, and NOTHING else (#43 / ET-017). The upper-case token in
+# script-src below is a placeholder: the build replaces it with the
+# SHA-256 of each inline script in the page it actually wrote
+# (scripts/cspScriptHashes.mjs, wired as a Vite plugin), and fails if it
+# cannot. Editing a boot script therefore needs nothing here. (The token
+# is not spelled out in this comment because the build requires it to
+# occur exactly once in the file.)
+#
+# `'unsafe-inline'` and `'unsafe-eval'` were removed, not narrowed. They had
+# been copied from the retired apps/defi on an unverified "wallet SDK
+# constraints" note. Measured on 2026-10-23: no built chunk calls `eval` or
+# constructs a `Function` from a string (one module only REFERENCES `eval`
+# in a table of intrinsics, which a policy allows), and a local build served
+# by `wrangler dev` under this policy loaded 17 routes and the wallet modal,
+# including WalletConnect and the Coinbase popup, with zero violations. A
+# calibration run with one hash removed reported that script refused, so the
+# check can see a violation when there is one. Do not add either keyword
+# back to make a dependency work; find out what it evaluates first.
+#
+# `style-src` keeps `'unsafe-inline'`: React writes `style` attributes,
+# which a hash cannot allow without `'unsafe-hashes'` for every value.
+# Inline STYLE cannot run code, so this is a much smaller allowance than
+# the script one.
 #
 # Safe-App embed support: `frame-ancestors` allows Safe's dapp-browser
 # origins (this app registers the Safe connector). `X-Frame-Options` is
@@ -64,7 +85,7 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
   Cross-Origin-Opener-Policy: same-origin-allow-popups
   Cross-Origin-Resource-Policy: cross-origin
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' https: wss:; frame-src 'self' https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://app.safe.global https://*.safe.global; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' __INLINE_SCRIPT_HASHES__; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' https: wss:; frame-src 'self' https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://app.safe.global https://*.safe.global; upgrade-insecure-requests
 
 # SPA entry point — served for every non-asset path via wrangler.jsonc
 # `not_found_handling: single-page-application`. Force revalidation on
