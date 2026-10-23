@@ -306,15 +306,25 @@ env-file change" (`sudo systemctl try-restart vaipakam-keeper`, then a
 tick that began after the restart). Then do §6 below at once.
 
 A value that cannot be read (an entry that is not a chain id, or a
-chain named twice) arms no chain. Confirm what the keeper read from
-the line it logs at every start. For each armed chain it also says
-whether the running build can run the branch there: `via aave-v3` or
-`via balancer-v2`, or what is missing (no FlashLoanLiquidator, or no
-flash-loan provider in `flashLoanProviders.ts`):
+chain named twice) arms no chain. Confirm it from two lines, because
+they answer different questions:
+
+- the `discount path:` line, logged once at every start: how the keeper
+  read the setting, and for each armed chain the running build's route
+  (`routes it via aave-v3` / `via balancer-v2`) or what is missing (no
+  FlashLoanLiquidator, or no flash-loan provider in
+  `flashLoanProviders.ts`);
+- the `chains resolved:` line, logged every tick: whether the keeper
+  serves that chain at all. A chain whose RPC or deployment is missing
+  is not on it, and the branch never runs there.
 
 ```bash
 journalctl -u vaipakam-keeper --grep 'discount path:' -n 1 --no-pager
+journalctl -u vaipakam-keeper --grep 'chains resolved:' -n 1 --no-pager
 ```
+
+Neither line reads the Diamond's own discount-path switch (Step 3);
+that is read per loan.
 
 Each skipped loan also logs `flash-loan-skip not-armed:` with the
 reason. Neither line echoes the value.
@@ -474,13 +484,13 @@ logs `flash-loan-skip not-armed:` with the reason for each loan it
 skips on that account. Verify on the machine:
 
 ```bash
-# The keeper states how it read the setting once at every start, from the
-# same parser the passes use: which chains are armed, and for each one the
-# route the running build resolves (`via aave-v3` / `via balancer-v2`) or
-# what is missing (liquidator or provider). A value it cannot
-# read (a malformed entry, a chain named twice) arms no chain and says so
-# here, so this line, not a read of the env file, is the answer.
+# How the keeper read the setting, from the parser the passes use, and
+# each armed chain's route in the running build (or what is missing). A
+# value it cannot read arms no chain and says so here, so this line, not a
+# read of the env file, is the answer. Then whether it serves the chain
+# at all (RPC and deployment present), from the latest tick. See Step 5.
 journalctl -u vaipakam-keeper --grep 'discount path:' -n 1 --no-pager
+journalctl -u vaipakam-keeper --grep 'chains resolved:' -n 1 --no-pager
 # Per-loan skips, once a distressed loan has reached the branch:
 journalctl -u vaipakam-keeper --since -10min | grep -m3 'flash-loan-skip not-armed'
 

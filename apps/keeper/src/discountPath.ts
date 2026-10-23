@@ -71,10 +71,13 @@ export function discountPathBlocker(raw: string | undefined, chainId: number): s
 }
 
 /**
- * The whole posture, for the start-up line: which chains are armed, and for
- * each one whether this build can run the branch there at all — the same
- * `flashLoanRoute` the branch resolves (a liquidator and a provider), since
- * without one the branch stays off on that chain whatever the setting says.
+ * The start-up line: how the setting was read and, for each armed chain,
+ * the build's static route (`flashLoanRoute`, the same reading the branch
+ * makes). It states only those two facts, and says so. Whether the keeper
+ * serves a chain at all (its RPC and deployment) is the tick's `chains
+ * resolved` line, which is read per tick, and the Diamond's own switch is
+ * read per loan; neither is known at start-up, so the line does not claim
+ * them (#2633 r3).
  */
 export function discountPathPosture(raw: string | undefined): string {
   const read = discountPathChains(raw);
@@ -86,7 +89,10 @@ export function discountPathPosture(raw: string | undefined): string {
       const resolved = flashLoanRoute(id);
       return 'missing' in resolved
         ? `${id} (${resolved.missing}, so the path stays off there)`
-        : `${id} (via ${resolved.route.via})`;
+        : `${id} (this build routes it via ${resolved.route.via})`;
     });
-  return `${DISCOUNT_PATH_VAR} arms chain${chains.length === 1 ? '' : 's'} ${chains.join(', ')}`;
+  return (
+    `${DISCOUNT_PATH_VAR} arms chain${chains.length === 1 ? '' : 's'} ${chains.join(', ')}; ` +
+    "whether the keeper serves a chain is the tick's `chains resolved` line"
+  );
 }

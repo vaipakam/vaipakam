@@ -44,7 +44,8 @@ describe('DISCOUNT_PATH_CHAIN_IDS', () => {
     expect(discountPathPosture('42161,8453,999')).toBe(
       'DISCOUNT_PATH_CHAIN_IDS arms chains 999 (this build has no flash-loan entry for the chain, so the path stays off there), ' +
         '8453 (no FlashLoanLiquidator configured, so the path stays off there), ' +
-        '42161 (no FlashLoanLiquidator configured, so the path stays off there)',
+        '42161 (no FlashLoanLiquidator configured, so the path stays off there); ' +
+        "whether the keeper serves a chain is the tick's `chains resolved` line",
     );
   });
 });
