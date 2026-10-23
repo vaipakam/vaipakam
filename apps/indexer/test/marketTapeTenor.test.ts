@@ -11,7 +11,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
 import { handleLoansRecent } from '../src/loanRoutes';
-import { PLACED_IN_TENOR_SQL, placedTenorOf } from '../src/marketPlacement';
+import { PLACED_IN_TENOR_SQL, PLACEMENT_RULE, placedTenorOf } from '../src/marketPlacement';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
 const DIR = new URL('../migrations/', import.meta.url);
@@ -48,7 +48,16 @@ function harness() {
     );
     return ((await res.json()) as { loans: Array<Record<string, unknown>> }).loans;
   };
-  return { ...h, env, loan, tape };
+  const page = async (days: number) =>
+    (await (
+      await handleLoansRecent(
+        new Request(
+          `https://idx/loans/recent?chainId=84532&lendingAsset=${LEND}&collateralAsset=${COLL}&durationDays=${days}&excludeSaleVehicles=1`,
+        ),
+        env,
+      )
+    ).json()) as { loans: unknown[]; scope: Record<string, unknown> };
+  return { ...h, env, loan, tape, page };
 }
 
 describe('market tape tenor (#1142)', () => {
@@ -80,6 +89,29 @@ describe('market tape tenor (#1142)', () => {
       marketDurationDays: null,
       initDurationDays: null,
       initRateBps: null,
+    });
+  });
+
+  it('echoes the scope it applied, the placement rule included, even on an empty page (Codex #2689 r5)', async () => {
+    const h = harness();
+    const body = await h.page(30);
+    expect(body.loans).toEqual([]);
+    expect(body.scope).toEqual({
+      lendingAsset: LEND,
+      collateralAsset: COLL,
+      durationDays: 30,
+      placement: PLACEMENT_RULE,
+      excludeSaleVehicles: true,
+    });
+    const global = (await (
+      await handleLoansRecent(new Request('https://idx/loans/recent?chainId=84532'), h.env)
+    ).json()) as { scope: Record<string, unknown> };
+    expect(global.scope).toEqual({
+      lendingAsset: null,
+      collateralAsset: null,
+      durationDays: null,
+      placement: null,
+      excludeSaleVehicles: false,
     });
   });
 

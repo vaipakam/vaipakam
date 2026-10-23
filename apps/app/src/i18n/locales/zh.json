@@ -1820,7 +1820,8 @@
         "unplacedNote_few": "此期间该交易对有 {{count}} 笔贷款的约定条款未能由其开立记录确认，因此未在任何期限下显示。",
         "unplacedNote_many": "此期间该交易对有 {{count}} 笔贷款的约定条款未能由其开立记录确认，因此未在任何期限下显示。",
         "unplacedNote_other": "此期间该交易对有 {{count}} 笔贷款的约定条款未能由其开立记录确认，因此未在任何期限下显示。",
-        "unplacedNoteCapped": "此期间该交易对中超过 {{floor, number}} 笔贷款未显示在任何期限下，因为其约定条款未经开立记录确认。"
+        "unplacedNoteCapped": "此期间该交易对中超过 {{floor, number}} 笔贷款未显示在任何期限下，因为其约定条款未经开立记录确认。",
+        "emptyCatchingUp": "图表尚未包含最新的贷款。它每分钟刷新一次。"
       },
       "history": {
         "tab": "历史",

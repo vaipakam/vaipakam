@@ -30,6 +30,7 @@ import {
 } from './rateCandles';
 import {
   PLACED_IN_TENOR_SQL,
+  PLACEMENT_RULE,
   placedTenorOf,
   readUnplacedCount,
   unplacedOnPairStatement,
@@ -1295,7 +1296,18 @@ export async function handleLoansRecent(req: Request, env: Env): Promise<Respons
       loans.length === limit && loans.length > 0
         ? (loans[loans.length - 1] as { loanId: number }).loanId
         : null;
-    return jsonResponse({ chainId, loans, nextBefore: next });
+    // The scope this page was actually read under, so a reader can verify
+    // the filters were applied — an empty page included, which has no row
+    // to check (#1142, Codex #2689 r5). `placement` names the rule that
+    // chose the tenor; null when no tenor was asked for.
+    const scope = {
+      lendingAsset: market.lendingAsset,
+      collateralAsset: market.collateralAsset,
+      durationDays: market.durationDays,
+      placement: market.durationDays !== null ? PLACEMENT_RULE : null,
+      excludeSaleVehicles,
+    };
+    return jsonResponse({ chainId, loans, nextBefore: next, scope });
   } catch (err) {
     console.error('[loanRoutes] recent failed', err);
     return jsonResponse({ error: 'recent-failed' }, 500);

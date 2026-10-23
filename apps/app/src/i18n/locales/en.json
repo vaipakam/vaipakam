@@ -1898,6 +1898,7 @@
         "empty": "No loans agreed yet for this pair — the chart only shows rates people actually agreed.",
         "emptyRange": "No loans agreed in this period — try a longer one.",
         "emptyUnplaced": "No loans with confirmed terms at this duration in this period.",
+        "emptyCatchingUp": "The chart has not caught up with the newest loans yet. It refreshes every minute.",
         "unplacedNote_zero": "{{count}} loans on this pair in this period are not shown under any duration, because their agreed terms are not confirmed from their opening record.",
         "unplacedNote_one": "{{count}} loan on this pair in this period is not shown under any duration, because its agreed terms are not confirmed from its opening record.",
         "unplacedNote_two": "{{count}} loans on this pair in this period are not shown under any duration, because their agreed terms are not confirmed from their opening record.",

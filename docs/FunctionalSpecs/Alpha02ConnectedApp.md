@@ -4526,9 +4526,14 @@ Its intended behaviour, as the test oracle for this surface:
   stated limit the chart says "more than" that many rather than an exact
   figure. A rate history that does not state these exclusions (how many
   loans it leaves out, and in each bucket how many amounts are
-  unconfirmed) is shown as unavailable, never as complete.
-  Where only the agreed amount cannot be confirmed, the fill appears and
-  its amount reads as not recorded. The loan's current terms are never
+  unconfirmed) is shown as unavailable, never as complete, and so is a
+  tape that does not state it was read under this rule for this market:
+  an empty tape counts as "no loans yet" only when the indexer says so.
+  When the tape already shows a loan in the chosen period that the
+  chart's last refresh did not include, the chart says it is catching up
+  rather than claiming the period is empty.
+  Where only the agreed amount cannot be confirmed, the fill appears, with
+  its own marker on a sparse chart, and its amount reads as not recorded. The loan's current terms are never
   shown in place of agreed ones. Positions show under the book with their health
   status and lead to the existing manage flows. A rate-history chart
   shows the market's **executed** rates over a chosen interval and

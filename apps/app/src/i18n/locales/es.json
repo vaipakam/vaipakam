@@ -1820,7 +1820,8 @@
         "unplacedNote_few": "{{count}} préstamos de este par en este periodo no aparecen en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
         "unplacedNote_many": "{{count}} préstamos de este par en este periodo no aparecen en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
         "unplacedNote_other": "{{count}} préstamos de este par en este periodo no aparecen en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
-        "unplacedNoteCapped": "Más de {{floor, number}} préstamos de este par en este período no se muestran en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura."
+        "unplacedNoteCapped": "Más de {{floor, number}} préstamos de este par en este período no se muestran en ningún plazo, porque sus condiciones acordadas no están confirmadas por su registro de apertura.",
+        "emptyCatchingUp": "El gráfico aún no incluye los préstamos más recientes. Se actualiza cada minuto."
       },
       "history": {
         "tab": "Historial",

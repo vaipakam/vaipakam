@@ -1820,7 +1820,8 @@
         "unplacedNote_few": "{{count}} Kredite für dieses Paar in diesem Zeitraum werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
         "unplacedNote_many": "{{count}} Kredite für dieses Paar in diesem Zeitraum werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
         "unplacedNote_other": "{{count}} Kredite für dieses Paar in diesem Zeitraum werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
-        "unplacedNoteCapped": "Mehr als {{floor, number}} Kredite für dieses Paar in diesem Zeitraum werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind."
+        "unplacedNoteCapped": "Mehr als {{floor, number}} Kredite für dieses Paar in diesem Zeitraum werden unter keiner Laufzeit angezeigt, weil ihre vereinbarten Konditionen nicht aus ihrem Eröffnungsdatensatz bestätigt sind.",
+        "emptyCatchingUp": "Das Diagramm ist noch nicht auf dem Stand der neuesten Kredite. Es wird jede Minute aktualisiert."
       },
       "history": {
         "tab": "Verlauf",

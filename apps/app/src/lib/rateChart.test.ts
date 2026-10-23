@@ -120,37 +120,49 @@ describe('newestPrint', () => {
 });
 
 describe('chartEmptyKind (#1139 — never-filled vs empty-in-range copy)', () => {
+  const NOW = 100 * 86_400;
+  const at = (daysAgo: number) => ({ startAt: NOW - daysAgo * 86_400 });
+
   it('range=all earns the market copy when the tape cannot disprove it', () => {
-    expect(chartEmptyKind('all', undefined, 0)).toBe('market');
-    expect(chartEmptyKind('all', null, 0)).toBe('market');
-    expect(chartEmptyKind('all', [], 0)).toBe('market');
+    expect(chartEmptyKind('all', undefined, 0, NOW)).toBe('market');
+    expect(chartEmptyKind('all', null, 0, NOW)).toBe('market');
+    expect(chartEmptyKind('all', [], 0, NOW)).toBe('market');
   });
 
-  it('a tape-proven fill NEVER earns the market copy — even at range=all (round-4: 60 s candle-cache skew after a first fill)', () => {
-    // The candle response is still empty (60 s cache) but the tape —
-    // and hence the last-fill header — already shows the fill; the
-    // body must not claim "no fills yet" against its own header.
-    expect(chartEmptyKind('all', [{}], 0)).toBe('range');
-    expect(chartEmptyKind('7d', [{}], 0)).toBe('range');
-    expect(chartEmptyKind('30d', [{}, {}], 0)).toBe('range');
+  it('a tape fill inside the range means the empty series is stale: catching up, never a claim about the period', () => {
+    // Candle-cache skew: the tape (and the last-fill header) already shows
+    // the fill; the body must not claim "none" against its own header.
+    expect(chartEmptyKind('all', [at(200)], 0, NOW)).toBe('catchingUp');
+    expect(chartEmptyKind('7d', [at(1)], 0, NOW)).toBe('catchingUp');
+    expect(chartEmptyKind('30d', [at(40), at(2)], 0, NOW)).toBe('catchingUp');
+  });
+
+  it('a tape fill older than the range proves the market filled, so only the period copy fits', () => {
+    expect(chartEmptyKind('7d', [at(8)], 0, NOW)).toBe('range');
+    expect(chartEmptyKind('30d', [at(31), at(45)], 0, NOW)).toBe('range');
   });
 
   it('a narrower range with a confirmed-empty tape is a never-filled market', () => {
-    expect(chartEmptyKind('7d', [], 0)).toBe('market');
-    expect(chartEmptyKind('30d', [], 0)).toBe('market');
+    expect(chartEmptyKind('7d', [], 0, NOW)).toBe('market');
+    expect(chartEmptyKind('30d', [], 0, NOW)).toBe('market');
   });
 
   it('a narrower range is range-scoped when the tape is unknown', () => {
-    expect(chartEmptyKind('7d', null, 0)).toBe('range'); // tape unavailable
-    expect(chartEmptyKind('30d', undefined, 0)).toBe('range'); // tape loading
+    expect(chartEmptyKind('7d', null, 0, NOW)).toBe('range'); // tape unavailable
+    expect(chartEmptyKind('30d', undefined, 0, NOW)).toBe('range'); // tape loading
   });
 });
 
 describe('unplaced loans (#1142 — counted, never placed under a guessed tenor)', () => {
+  const NOW = 100 * 86_400;
   it('an empty series on a pair with unplaced loans claims neither "never filled" nor "none in this period"', () => {
-    expect(chartEmptyKind('all', [], 2)).toBe('unplaced');
-    expect(chartEmptyKind('7d', null, 1)).toBe('unplaced');
-    expect(chartEmptyKind('30d', [{}], 3)).toBe('unplaced');
+    expect(chartEmptyKind('all', [], 2, NOW)).toBe('unplaced');
+    expect(chartEmptyKind('7d', null, 1, NOW)).toBe('unplaced');
+    expect(chartEmptyKind('30d', [{ startAt: NOW - 40 * 86_400 }], 3, NOW)).toBe('unplaced');
+  });
+
+  it('a tape-proven fill in the range outranks the unplaced copy (Codex #2689 r5)', () => {
+    expect(chartEmptyKind('30d', [{ startAt: NOW - 86_400 }], 3, NOW)).toBe('catchingUp');
   });
 
   it('reads the count and whether the server stopped counting', () => {
@@ -237,9 +249,9 @@ describe('sparse-mode per-fill markers from the tape (#1139)', () => {
         tapeFill(1, 100, 500, '10'),
       ];
       expect(fillPointsFromTape(buckets, tape, H)).toEqual([
-        { t: 100, rateBps: 500, fills: 1, principalTotal: '10' },
-        { t: 200, rateBps: 600, fills: 1, principalTotal: '20' },
-        { t: H + 5, rateBps: 700, fills: 1, principalTotal: '30' },
+        { t: 100, rateBps: 500, fills: 1, principalTotal: '10', unrecordedPrincipalFills: 0 },
+        { t: 200, rateBps: 600, fills: 1, principalTotal: '20', unrecordedPrincipalFills: 0 },
+        { t: H + 5, rateBps: 700, fills: 1, principalTotal: '30', unrecordedPrincipalFills: 0 },
       ]);
     });
 
@@ -248,7 +260,7 @@ describe('sparse-mode per-fill markers from the tape (#1139)', () => {
       const tape = [tapeFill(9, 100, 700, '5'), tapeFill(7, 100, 400, '3')];
       expect(fillPointsFromTape(buckets, tape, H)).toEqual([
         // Loan 7 executed first → loan 9's rate is the last print.
-        { t: 100, rateBps: 700, fills: 2, principalTotal: '8' },
+        { t: 100, rateBps: 700, fills: 2, principalTotal: '8', unrecordedPrincipalFills: 0 },
       ]);
     });
 
@@ -256,7 +268,7 @@ describe('sparse-mode per-fill markers from the tape (#1139)', () => {
       const buckets = [bucket({ t: 0, fills: 1 })];
       const tape = [tapeFill(1, 100, 500, '10'), tapeFill(2, 5 * H, 900, '99')];
       expect(fillPointsFromTape(buckets, tape, H)).toEqual([
-        { t: 100, rateBps: 500, fills: 1, principalTotal: '10' },
+        { t: 100, rateBps: 500, fills: 1, principalTotal: '10', unrecordedPrincipalFills: 0 },
       ]);
     });
 
@@ -268,10 +280,22 @@ describe('sparse-mode per-fill markers from the tape (#1139)', () => {
       expect(fillPointsFromTape(buckets, bad, H)).toBeNull();
     });
 
-    it('returns null (bucket fallback) when a covered fill has no recorded terms (#1142)', () => {
+    it('returns null (bucket fallback) when a covered fill has no confirmed rate (#1142)', () => {
       const buckets = [bucket({ t: 0, fills: 2 })];
       expect(fillPointsFromTape(buckets, [tapeFill(1, 100), tapeFill(2, 200, null)], H)).toBeNull();
-      expect(fillPointsFromTape(buckets, [tapeFill(1, 100), tapeFill(2, 200, 500, null)], H)).toBeNull();
+    });
+
+    it('keeps a fill whose amount alone is unrecorded as its own marker, counting the amount (Codex #2689 r5)', () => {
+      const buckets = [bucket({ t: 0, fills: 3 })];
+      const tape = [
+        tapeFill(3, 200, 650, null),
+        tapeFill(2, 100, 600, null),
+        tapeFill(1, 100, 500, '10'),
+      ];
+      expect(fillPointsFromTape(buckets, tape, H)).toEqual([
+        { t: 100, rateBps: 600, fills: 2, principalTotal: '10', unrecordedPrincipalFills: 1 },
+        { t: 200, rateBps: 650, fills: 1, principalTotal: '0', unrecordedPrincipalFills: 1 },
+      ]);
     });
 
     it('folds principals as BigInt past 2^53', () => {

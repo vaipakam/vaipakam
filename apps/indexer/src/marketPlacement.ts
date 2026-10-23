@@ -48,6 +48,14 @@ export interface PlacementRow {
  */
 
 /**
+ * The name of this rule as a response states it. A market-scoped response
+ * echoes it (with the scope it applied) so a reader can tell a response
+ * scoped by this rule from one that is not: an empty page carries no row on
+ * which a missing per-row key could show (Codex #2689 r5).
+ */
+export const PLACEMENT_RULE = 'confirmed-agreed-terms';
+
+/**
  * The WHERE fragment for "placed in the tenor market `?`" (one bind: the
  * duration in days). Spelled exactly as the placed partial indexes'
  * condition (0071), so the planner can use them.

@@ -371,6 +371,20 @@ export interface RecentLoansPage {
   chainId: number;
   loans: IndexedLoan[];
   nextBefore: number | null;
+  /** The scope the page was read under, as the worker applied it.
+   *  `placement` names the rule that chose the tenor (#1142); null when
+   *  no tenor was asked for. A market-scoped reader requires it: an empty
+   *  page has no row from which to tell a scoped answer from an unscoped
+   *  one. */
+  scope?: RecentLoansScope | null;
+}
+
+export interface RecentLoansScope {
+  lendingAsset: string | null;
+  collateralAsset: string | null;
+  durationDays: number | null;
+  placement: string | null;
+  excludeSaleVehicles: boolean;
 }
 
 /** Cross-status recent loans, optionally market-scoped server-side —

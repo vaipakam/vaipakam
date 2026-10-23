@@ -355,8 +355,7 @@ export default function RateChart({
             rateLine: formatBpsAsPercent(p.rateBps),
             fills: p.fills,
             principalTotal: p.principalTotal,
-            // A tape point is drawn only when its principal is recorded.
-            unrecordedPrincipalFills: 0,
+            unrecordedPrincipalFills: p.unrecordedPrincipalFills,
           }))
         : buckets.map((b) => ({
             t: b.t,
@@ -509,7 +508,15 @@ export default function RateChart({
         <>
           <p className="muted">
             {(() => {
-              const kind = chartEmptyKind(range, tape, unplaced?.count ?? 0);
+              const kind = chartEmptyKind(
+                range,
+                tape,
+                unplaced?.count ?? 0,
+                // The range is judged at the time the candle response was
+                // fetched, the moment its own range was cut.
+                Math.floor(candles.dataUpdatedAt / 1000),
+              );
+              if (kind === 'catchingUp') return text.emptyCatchingUp;
               if (kind === 'unplaced') return text.emptyUnplaced;
               return kind === 'market' ? text.empty : text.emptyRange;
             })()}

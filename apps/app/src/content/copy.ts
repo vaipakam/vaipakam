@@ -4317,6 +4317,11 @@ const copySource = {
       // confirmed, so no duration holds them and one may belong here. The
       // empty line claims only what is known; `unplacedNote` gives the count.
       emptyUnplaced: 'No loans with confirmed terms at this duration in this period.',
+      // The tape already shows a loan in this period that the chart's last
+      // refresh did not include; no claim about the period holds until the
+      // chart catches up (Codex #2689 r5).
+      emptyCatchingUp:
+        'The chart has not caught up with the newest loans yet. It refreshes every minute.',
       unplacedNote: tmpl(
         '{{count}} loans on this pair in this period are not shown under any duration, because their agreed terms are not confirmed from their opening record.',
         ['count'],

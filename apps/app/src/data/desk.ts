@@ -50,6 +50,7 @@ import {
   type IndexedSignedOffer,
   type MarketSummary,
   type RateCandleBucket,
+  type RecentLoansPage,
   type UnplacedCount,
 } from './indexer';
 import {
@@ -70,10 +71,6 @@ const REFRESH_MS = 30_000;
  *  cap: hitting it with a cursor still open returns null (truncated
  *  ≠ complete), never a confident half-book. */
 const BOOK_FALLBACK_PAGES = 5;
-/** Tape page-walk bound — only ever consumed against an OLDER worker
- *  that ignored the market params and served the global feed (a
- *  market-scoping worker answers the tape in its first page). */
-const TAPE_FALLBACK_PAGES = 5;
 
 export interface DeskPair {
   lendingAsset: string;
@@ -415,18 +412,53 @@ export function marketTenorOf(
   return typeof loan.marketDurationDays === 'number' ? loan.marketDurationDays : null;
 }
 
-/** #1142 — whether every row of a tape page says which market it is a
- *  fill of (`marketDurationDays` present, a number or `null`). A page with a
- *  keyless row cannot be scoped, so the tape treats it as unavailable. */
-export function pageCarriesPlacement(
-  loans: readonly Pick<IndexedLoan, 'marketDurationDays'>[],
-): boolean {
-  return loans.every(
-    (l) => l.marketDurationDays === null || typeof l.marketDurationDays === 'number',
-  );
+/** #1142 — the placement rule a market-scoped tape page must state it was
+ *  read under (the indexer's `PLACEMENT_RULE`). */
+export const TAPE_PLACEMENT_RULE = 'confirmed-agreed-terms';
+
+/**
+ * The (pair, tenor) market's fills from one `/loans/recent` page, or `null`
+ * (unavailable) when the page cannot prove it is that market's tape.
+ *
+ * The page must echo the scope it was read under — this pair, this tenor
+ * under the confirmed-agreed-terms placement rule, sale vehicles excluded —
+ * and every row must agree with it. A worker that ignored the filters, or
+ * scoped on the live tenor (which an extension rewrites), states no such
+ * scope; that includes an EMPTY page, which has no row to check, so the echo
+ * rather than the rows is what proves an empty tape (Codex #2689 r5). A row
+ * that disagrees with the echoed scope breaks the route's contract, so the
+ * page is unavailable rather than filtered.
+ */
+export function tapeFromPage(
+  page: RecentLoansPage,
+  pair: DeskPair,
+  durationDays: number,
+): DeskFill[] | null {
+  const wantLending = pair.lendingAsset.toLowerCase();
+  const wantCollateral = pair.collateralAsset.toLowerCase();
+  const scope = page.scope;
+  if (
+    scope === undefined ||
+    scope === null ||
+    scope.placement !== TAPE_PLACEMENT_RULE ||
+    scope.durationDays !== durationDays ||
+    scope.lendingAsset?.toLowerCase() !== wantLending ||
+    scope.collateralAsset?.toLowerCase() !== wantCollateral ||
+    scope.excludeSaleVehicles !== true ||
+    !Array.isArray(page.loans)
+  ) {
+    return null;
+  }
+  const inMarket = (l: IndexedLoan): boolean =>
+    l.isSaleVehicle !== true &&
+    l.lendingAsset.toLowerCase() === wantLending &&
+    l.collateralAsset.toLowerCase() === wantCollateral &&
+    marketTenorOf(l) === durationDays;
+  return page.loans.every(inMarket) ? page.loans.map(deskFillOf) : null;
 }
 
-/** Executed fills for the (pair, tenor) market, newest first. */
+/** Executed fills for the (pair, tenor) market, newest first: the newest
+ *  page of the market-scoped tape, verified by `tapeFromPage`. */
 export function useDeskTape(pair: DeskPair | null, durationDays: number) {
   const { readChain } = useActiveChain();
   return useQuery({
@@ -440,64 +472,17 @@ export function useDeskTape(pair: DeskPair | null, durationDays: number) {
     refetchInterval: signalAware(REFRESH_MS),
     queryFn: async (): Promise<DeskFill[] | null> => {
       if (!indexerConfigured()) return null;
-      // Belt-and-suspenders client-side verification, mirroring the
-      // book fallback (Codex #1134 round-5 P2): an older worker
-      // ignores the market params AND excludeSaleVehicles=1, so the
-      // response may be the GLOBAL cross-status feed — other pairs'
-      // fills would print on this market's tape. Keep only rows
-      // matching the requested pair (case-insensitive — indexer rows
-      // are lowercase, but don't depend on it) + tenor, and drop sale
-      // vehicles by the row flag (rows from workers too old to carry
-      // `isSaleVehicle` keep their rows — same behaviour as before).
-      const wantLending = pair!.lendingAsset.toLowerCase();
-      const wantCollateral = pair!.collateralAsset.toLowerCase();
-      const matchesMarket = (l: IndexedLoan): boolean =>
-        l.isSaleVehicle !== true &&
-        l.lendingAsset.toLowerCase() === wantLending &&
-        l.collateralAsset.toLowerCase() === wantCollateral &&
-        // #1142 — the key the server scoped on, so an extended loan the
-        // worker rightly kept in its executed tenor is not read as a sign
-        // that the worker ignored the filter.
-        marketTenorOf(l) === durationDays;
-      // Bounded `nextBefore` walk, same shape as the book fallback
-      // (Codex #1134 round-6 P2): against an older worker the first
-      // page is the newest 50 GLOBAL loans, so a market whose fills
-      // are older than that page would render a false "No fills yet"
-      // — a truncated scan presented as a complete empty tape. A row
-      // failing the market filter is the tell that the worker ignored
-      // the params (a market-scoping worker can only return matching
-      // rows); only then does the walk continue, and hitting the page
-      // cap with a cursor still open returns null (tri-state
-      // "unavailable"), never a possibly-false empty [].
-      const fills: IndexedLoan[] = [];
-      let before: number | undefined;
-      let untrusted = false;
-      for (let i = 0; i < TAPE_FALLBACK_PAGES; i++) {
-        const page = await fetchRecentLoans(readChain.chainId, {
-          limit: 50,
-          before,
-          lendingAsset: pair!.lendingAsset,
-          collateralAsset: pair!.collateralAsset,
-          durationDays,
-          excludeSaleVehicles: true,
-        });
-        if (page === null) return null;
-        // #1142 — a row without the placement key comes from a worker that
-        // cannot say which market the loan is a fill of (it scoped on the
-        // live tenor, which an extension rewrites). Its tape is unavailable,
-        // not a list to filter.
-        if (!pageCarriesPlacement(page.loans)) return null;
-        const matched = page.loans.filter(matchesMarket);
-        if (matched.length !== page.loans.length) untrusted = true;
-        fills.push(...matched);
-        // Feed exhausted — the scan is complete either way. A clean
-        // first page keeps the pre-walk semantics: whether the worker
-        // filtered or the global page happened to be all-this-market,
-        // those ARE the newest fills of this market.
-        if (page.nextBefore === null || !untrusted) return fills.map(deskFillOf);
-        before = page.nextBefore;
-      }
-      return null; // cap hit on an untrusted feed — truncated ≠ complete
+      const page = await fetchRecentLoans(readChain.chainId, {
+        limit: 50,
+        lendingAsset: pair!.lendingAsset,
+        collateralAsset: pair!.collateralAsset,
+        durationDays,
+        excludeSaleVehicles: true,
+      });
+      if (page === null) return null;
+      // A response for another chain is not this market's tape.
+      if (page.chainId !== readChain.chainId) return null;
+      return tapeFromPage(page, pair!, durationDays);
     },
   });
 }
