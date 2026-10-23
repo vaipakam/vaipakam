@@ -37,6 +37,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
+import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
 
 /**
  * @title  RewardSanctionsForfeitTest (and its siblings in this file)
@@ -2534,25 +2535,14 @@ abstract contract RewardSanctionsMirrorBase is RewardSanctionsTestBase {
     ///      receipt per call: the ingress refuses a repeated receipt id.
     function _liveFresh(uint256 amount) internal {
         ++liveNonce;
-        _ingress().onRewardBudgetReceived(
-            address(vpfi),
-            amount,
-            _one(1),
-            CHAIN_BASE,
-            5000 + liveNonce,
-            REMITTER,
-            0,
-            amount,
-            keccak256(abi.encode("sanc-live", liveNonce)),
-            true
-        );
+        LibD6Delivery.liveFresh(address(diamond), address(vpfi), amount, _one(1), CHAIN_BASE, 5000 + liveNonce, REMITTER, keccak256(abi.encode("sanc-live", liveNonce)));
         _mut().setArmedFreshLedgerRaw(amount, 0);
     }
 
     function _epochOf(uint256 amount, uint256 remitId, bytes32 bid) internal returns (bytes32 h) {
-        _ingress().onRewardBudgetReceived(address(vpfi), amount, _one(1), CHAIN_BASE, remitId, REMITTER, 0, 0, bid, false);
+        LibD6Delivery.deliverUnattested(address(diamond), address(vpfi), amount, _one(1), CHAIN_BASE, remitId, REMITTER, bid);
         h = keccak256(abi.encode(uint256(CHAIN_BASE), bid));
-        _epoch().materializeTransportBatchPage(h, _one(1));
+        LibD6Delivery.indexAllDays(address(diamond), h, _one(1));
     }
 
     /// @dev 65 attested fresh epochs listing day 1, ten seconds apart.
@@ -2561,15 +2551,15 @@ abstract contract RewardSanctionsMirrorBase is RewardSanctionsTestBase {
         for (uint256 i; i < WIDE; ++i) {
             vm.warp(t0 + 10 * (i + 1));
             _epochOf(TINY, 100 + i, keccak256(abi.encode("sanc-tiny", i)));
-            _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 100 + i, TINY, 0);
+            LibD6Delivery.attest(address(diamond), REMITTER, 100 + i, TINY, 0);
         }
     }
 
     function _epochOnDay(uint256 amount, uint256 d, uint256 remitId, bytes32 bid) internal {
-        _ingress().onRewardBudgetReceived(address(vpfi), amount, _one(d), CHAIN_BASE, remitId, REMITTER, 0, 0, bid, false);
+        LibD6Delivery.deliverUnattested(address(diamond), address(vpfi), amount, _one(d), CHAIN_BASE, remitId, REMITTER, bid);
         bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), bid));
-        _epoch().materializeTransportBatchPage(h, _one(d));
-        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, remitId, amount, 0);
+        LibD6Delivery.indexAllDays(address(diamond), h, _one(d));
+        LibD6Delivery.attest(address(diamond), REMITTER, remitId, amount, 0);
     }
 
     function _wideDayOn(uint256 d, uint256 salt) internal {

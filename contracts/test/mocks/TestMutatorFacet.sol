@@ -2493,20 +2493,6 @@ contract TestMutatorFacet {
         LibVpfiRecycle.restoreReleasedRemit(recycledFull, recycledSent, remitId);
     }
 
-    /// @notice #1566 transport epochs PR 3a test-only — a reservation as an
-    ///         OLDER WIRE dispatched it: one whose payload carried no
-    ///         fresh/recycled split. Production sets `splitOnWire` on every
-    ///         reservation it creates (every payload it builds is d5), so the
-    ///         attestable set is exactly the rows that predate that field —
-    ///         and a test needs a way to stand in one of them.
-    /// @notice #1566 transport epochs 3b-i test-only (#2258) — the RELEASE
-    ///         lifecycle the production facet refuses until 3b-ii. The library
-    ///         functions are the 3b-ii implementation and stay tested through
-    ///         these; nothing in production can reach them.
-    /// @notice 3b-ii-A test-only (Codex #2276 r9 P1) — classify a packet the
-    ///         way a classification ran BEFORE the batch gate existed: the
-    ///         same take, no gate. Stands a packet in the state an in-place
-    ///         refresh can find it in: classified value recorded, no epoch yet.
     /// @notice 3b-ii-A test-only (Codex #2276) — SET a packet's two classified
     ///         figures, standing in for the correction path moving attribution
     ///         between components. The real path needs a reconciliation-log
@@ -2554,6 +2540,32 @@ contract TestMutatorFacet {
         p.attested = true;
     }
 
+    /// @notice Test-only — a FRESH inflow into the live ledger: relocated
+    ///         (measured) from the Diamond into the holder and credited under
+    ///         the deficit split, by the same library write a live-era
+    ///         compensation lands through. On an activated custody every budget
+    ///         delivery opens a transport epoch, so a cell that needs live
+    ///         funding beside its epochs stands it in here.
+    function relocateFreshIngressRaw(uint256 amount) external {
+        LibRewardCustody.relocateFreshIngress(LibVaipakam.storageSlot(), amount);
+    }
+
+    /// @notice Test-only — take a packet's attestation away, standing in an
+    ///         epoch whose split was never attested. The d6 ingress attests
+    ///         every epoch from its own wire at landing, so no production path
+    ///         reaches this state; the draw planner still withholds such an
+    ///         epoch (fail-closed), and this keeps that rule covered.
+    function clearPacketAttestedRaw(bytes32 packetHash) external {
+        LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
+        p.freshAttested = 0;
+        p.recycledAttested = 0;
+        p.attested = false;
+    }
+
+    /// @notice 3b-ii-A test-only (Codex #2276 r9 P1) — classify a packet the
+    ///         way a classification ran BEFORE the batch gate existed: the
+    ///         same take, no gate. Stands a packet in the state an in-place
+    ///         refresh can find it in: classified value recorded, no epoch yet.
     function classifyPacketPreGateRaw(bytes32 packetHash, uint256 freshShare, uint256 recycledShare) external {
         LibRewardCustody.takeFromUnclassified(LibVaipakam.storageSlot(), packetHash, freshShare, recycledShare);
     }
@@ -2570,6 +2582,10 @@ contract TestMutatorFacet {
         }
     }
 
+    /// @notice #1566 transport epochs 3b-i test-only (#2258) — the RELEASE
+    ///         lifecycle the production facet refuses until 3b-ii. The library
+    ///         functions are the 3b-ii implementation and stay tested through
+    ///         these; nothing in production can reach them.
     function parkTransportBatchRaw(bytes32 batchId) external returns (uint256) {
         return LibRewardCustody.parkTransportRemainder(LibVaipakam.storageSlot(), batchId);
     }
@@ -2580,10 +2596,6 @@ contract TestMutatorFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         parked = LibRewardCustody.parkTransportRemainder(s, batchId);
         LibRewardCustody.acknowledgeTransportRemainder(s, batchId);
-    }
-
-    function setRemitSplitOnWireRaw(uint256 remitId, bool onWire) external {
-        LibVaipakam.storageSlot().remitReservations[remitId].splitOnWire = onWire;
     }
 
     /// @notice #1566 transport epochs PR 3a test-only — a reservation's
@@ -2657,22 +2669,6 @@ contract TestMutatorFacet {
         if (s.remitReservationNonce < remitId) s.remitReservationNonce = remitId;
     }
 
-    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) test-only —
-    ///         put a delivered packet back into the PRE-3b shape: its 3a
-    ///         day-list commitment and its protected `unclassified` balance
-    ///         intact, its transport epoch gone.
-    /// @dev    This is the ROLLOUT POPULATION, and it cannot be produced by
-    ///         driving the current ingress, which always admits. It is the
-    ///         state of every old-wire packet that landed on an activated
-    ///         mirror while 3a was deployed and 3b was not — the exact
-    ///         population design §5c records a commitment for, and the one
-    ///         `admitLegacyTransportBatch` exists to bring in.
-    function unadmitTransportBatchRaw(bytes32 packetHash) external {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.ingressPackets[packetHash].batchId = bytes32(0);
-        delete s.transportBatches[packetHash];
-    }
-
     /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) test-only — set a
     ///         packet's recorded ARRIVAL, which is the ordering key a day's
     ///         batch index is read by. Two deliveries in one test share a
@@ -2681,17 +2677,6 @@ contract TestMutatorFacet {
     ///         happened to materialize in.
     function setPacketArrivedAtRaw(bytes32 packetHash, uint64 arrivedAt) external {
         LibVaipakam.storageSlot().ingressPackets[packetHash].arrivedAt = arrivedAt;
-    }
-
-    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) test-only — set a
-    ///         packet's 3a DAY-LIST COMMITMENT, so the shapes that carry none
-    ///         can be driven: a pre-3a arrival (no fingerprint at all) and a
-    ///         record whose count is zero. Both are refused by the rollout
-    ///         admission, and neither is reachable through the current ingress.
-    function setPacketDayListRaw(bytes32 packetHash, bytes32 dayListHash, uint256 dayCount) external {
-        LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
-        p.dayListHash = dayListHash;
-        p.dayCount = dayCount;
     }
 
     // ───────── 3b-ii-A2 (#2305) — raw reads for the staging cells ─────────

@@ -27,6 +27,7 @@ import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
 import {LibRewardRemitDispatch} from "../src/libraries/LibRewardRemitDispatch.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
 
 /**
  * @title RewardRemitLedgerTest — #1222 M3 B2-d2 delivered-backing ledger.
@@ -148,134 +149,6 @@ contract RewardRemitLedgerTest is SetupTest {
     function _remitDay1ToArb() internal returns (uint256 total) {
         (total, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
         remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), 69_000_000 ether);
-    }
-
-    // ─── #1566 transport epochs PR 3a — the split attestation (send) ────────
-
-    /// The attestation carries exactly the reservation's recorded split toward
-    /// the chain it was sent to, under this deployment's own identity as the
-    /// remit wire carries it; the lens quotes it through the messenger; it is
-    /// re-sendable; an unknown reservation refuses on both entries.
-    ///
-    /// The fixture stands the reservation in for one an OLDER WIRE dispatched
-    /// (Codex #2224 r1): every payload this deployment builds carries the
-    /// split, so every reservation it creates is refused — the attestable set
-    /// is exactly the rows that predate that wire, which is what this entry
-    /// exists for.
-    function test_AttestRemitSplit_CarriesTheReservationsRecordedSplit() public {
-        _finalizeDay(1);
-        _remitDay1ToArb();
-        mutator.setRemitSplitOnWireRaw(1, false);
-        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
-        assertGt(r.total, 0, "fixture: a reservation exists");
-        rewardMessenger.setQuoteNative(0.003 ether);
-        assertEq(rlens.quoteSplitAttestationFee(1), 0.003 ether, "quoted through the messenger");
-        bytes32 id = remit.attestRemitSplit{value: 0.003 ether}(1, payable(address(this)));
-        assertEq(id, rewardMessenger.attestMessageId());
-        assertEq(rewardMessenger.attestSendCount(), 1);
-        assertEq(uint256(rewardMessenger.lastAttestDst()), uint256(CHAIN_ARB), "toward the mirror it went to");
-        assertEq(rewardMessenger.lastAttestRemitter(), address(diamond), "this deployment's own identity");
-        assertEq(rewardMessenger.lastAttestRemitId(), 1);
-        assertEq(rewardMessenger.lastAttestFresh(), r.fresh, "the recorded fresh figure");
-        assertEq(rewardMessenger.lastAttestRecycled(), r.recycled, "the recorded recycled figure");
-        assertEq(rewardMessenger.lastAttestValue(), 0.003 ether);
-        remit.attestRemitSplit(1, payable(address(this))); // re-sendable: the mirror accepts one
-        assertEq(rewardMessenger.attestSendCount(), 2);
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitReservationUnknown.selector, 77));
-        remit.attestRemitSplit(77, payable(address(this)));
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitReservationUnknown.selector, 77));
-        rlens.quoteSplitAttestationFee(77);
-    }
-
-    /// Codex #2224 r6 — the fee quote refuses exactly what the send refuses,
-    /// because both read ONE rule. A demoted deployment keeps its historical
-    /// reservations, so without the shared role gate the quote would price an
-    /// operation the send already knows it cannot perform.
-    function test_AttestRemitSplit_QuoteRefusesWhateverTheSendRefuses() public {
-        _finalizeDay(1);
-        _remitDay1ToArb();
-        mutator.setRemitSplitOnWireRaw(1, false);
-        rewardMessenger.setQuoteNative(0.003 ether);
-        assertGt(rlens.quoteSplitAttestationFee(1), 0, "priced while canonical");
-
-        // Demote. The production setter is frozen until the era carry-forward
-        // exists, so the raw role writer stands in for the state a demotion
-        // reaches — which is precisely the state this gate is about: the
-        // historical reservations stay in storage after the role leaves.
-        mutator.setRewardRoleRaw(CHAIN_BASE, false, true);
-        vm.expectRevert(IVaipakamErrors.NotCanonicalRewardChain.selector);
-        rlens.quoteSplitAttestationFee(1);
-        vm.expectRevert(IVaipakamErrors.NotCanonicalRewardChain.selector);
-        remit.attestRemitSplit{value: 0.003 ether}(1, payable(address(this)));
-    }
-
-    /// Codex #2224 r2 — EVERY path that creates a reservation marks it as
-    /// dispatched on a wire that carries its split, because every payload
-    /// this deployment builds does. The budget remittance marked its rows
-    /// from round 1; the two manual-compensation dispatches did not, and the
-    /// eligibility rule then admitted an attestation the mirror had to reject
-    /// after the caller had paid for it. This drives all three paths, so a
-    /// fourth block that forgets the marker fails here rather than in
-    /// production. Three blocks cover four public entries: both
-    /// from-recovery entries route through the block their sibling uses.
-    function test_EveryDispatchPathMarksTheReservationsWire() public {
-        _finalizeDay(1);
-        _remitDay1ToArb();
-        assertTrue(rlens.getRemitReservation(1).splitOnWire, "the budget remittance");
-
-        _finalizeDay(2);
-        mutator.setChainDayRemitIneligibleRaw(2, CHAIN_ARB, true);
-        rewardMessenger.deliverCompQuote(CHAIN_ARB, 2, 3e18, 2e18);
-        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 2, 2e18, 2e18);
-        assertTrue(rlens.getRemitReservation(2).splitOnWire, "the manual compensation dispatch");
-
-        // The third block: the supplemental dispatch, which writes its own
-        // reservation rather than sharing the manual one's. (The two
-        // from-recovery entries route through the blocks their siblings use,
-        // so three blocks cover all four public entries.)
-        rewardMessenger.deliverRemitAck(CHAIN_ARB, 2, 4e18);
-        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 2, 1e18, 0);
-        assertTrue(rlens.getRemitReservation(3).splitOnWire, "the supplemental dispatch");
-
-        uint256 created = rlens.getRemitReservationNonce();
-        assertEq(created, 3, "fixture: every creating block drove once");
-        for (uint256 id = 1; id <= created; ++id) {
-            assertTrue(
-                rlens.getRemitReservation(id).splitOnWire,
-                "no reservation this deployment creates is attestable"
-            );
-        }
-    }
-
-    /// Codex #2224 r1 — the send refuses, BEFORE any fee is paid, every
-    /// reservation whose attestation could only revert at the destination:
-    /// one whose own wire carried the split (the mirror typed its packet at
-    /// ingress) and one that moved no value (it dispatched no packet and
-    /// wrote no receipt). The fee quote refuses exactly the same set, because
-    /// both read one rule — a caller can never be quoted for a message the
-    /// send would refuse, or vice versa.
-    function test_AttestRemitSplit_RefusesWhatTheMirrorCouldOnlyReject() public {
-        _finalizeDay(1);
-        _remitDay1ToArb();
-        rewardMessenger.setQuoteNative(0.003 ether);
-        uint256 sendsBefore = rewardMessenger.attestSendCount();
-
-        // As dispatched: the d5 wire carried the split.
-        assertTrue(rlens.getRemitReservation(1).splitOnWire, "every payload this deployment builds is d5");
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitSplitAlreadyOnWire.selector, 1));
-        remit.attestRemitSplit{value: 0.003 ether}(1, payable(address(this)));
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitSplitAlreadyOnWire.selector, 1));
-        rlens.quoteSplitAttestationFee(1);
-
-        // A row that moved no value: no packet, no receipt to name.
-        mutator.setRemitSplitOnWireRaw(1, false);
-        mutator.setRemitReservationSplitRaw(1, 0, 0);
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitReservationCarriesNoSplit.selector, 1));
-        remit.attestRemitSplit{value: 0.003 ether}(1, payable(address(this)));
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RemitReservationCarriesNoSplit.selector, 1));
-        rlens.quoteSplitAttestationFee(1);
-
-        assertEq(rewardMessenger.attestSendCount(), sendsBefore, "no message left, so no fee was spent");
     }
 
     function _outstanding()
@@ -1724,6 +1597,37 @@ contract RewardRemitLedgerTest is SetupTest {
         TestMutatorFacet(address(diamond)).setRewardRoleChangesFrozenRaw(false);
     }
 
+    /// @dev A budget delivery on the rooted (d6) wire, the only budget shape
+    ///      the remittance receiver accepts, filed in the live era. Returns
+    ///      the packet stamp.
+    function _d6(
+        address token,
+        uint256 amount,
+        uint256[] memory dayIds,
+        uint256 sourceChainId,
+        uint256 remitId,
+        address remitter,
+        uint256 recycled,
+        uint256 fresh,
+        bytes32 messageId
+    ) internal returns (bytes32 h) {
+        (h, ) = LibD6Delivery.deliver(
+            address(diamond),
+            LibD6Delivery.Delivery({
+                token: token,
+                amount: amount,
+                dayIds: dayIds,
+                sourceChainId: sourceChainId,
+                remitId: remitId,
+                remitter: remitter,
+                recycled: recycled,
+                fresh: fresh,
+                messageId: messageId,
+                era: 0
+            })
+        );
+    }
+
     function _configureMirror() internal {
         vm.chainId(CHAIN_ARB);
         RewardReporterFacet rep = RewardReporterFacet(address(diamond));
@@ -1740,9 +1644,7 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_MirrorIngress_RecordsReceipt_and_AckIsResendable() public {
         _configureMirror();
 
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0
-        , 0, bytes32(0), false);
+        _d6(address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0, 7e18, bytes32(0));
         LibVaipakam.ReceivedRemit memory rec =
             rlens.getReceivedRemit(address(0xBA5E), 42);
         assertEq(rec.srcChainId, CHAIN_BASE, "src");
@@ -1766,9 +1668,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
     function test_MirrorIngress_LegacyDeliveryHasNoReceipt() public {
         _configureMirror();
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0
-        , 0, bytes32(0), false);
+        _d6(address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0, 7e18, bytes32(0));
         assertEq(
             rlens.getReceivedRemit(address(0xBA5E), 0).receivedAt,
             0,
@@ -1791,9 +1691,7 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      and could finalize an unrelated same-numbered reservation).
     function test_SendRemitAck_RejectsStaleReceiptAfterBaseRotation() public {
         _configureMirror();
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0
-        , 0, bytes32(0), false);
+        _d6(address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0, 7e18, bytes32(0));
         // Owner rotates the canonical deployment — through Detached, as
         // #1566 slice 4 PR B requires of a mirror's source; the freeze is
         // lifted raw (the stale-receipt rule is what this test pins).
@@ -1846,12 +1744,8 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      with its own recorded remitter.
     function test_MirrorIngress_DeploymentReceiptsCoexist() public {
         _configureMirror();
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0x01D), 0
-        , 0, bytes32(0), false);
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 9e18, _days(4), CHAIN_BASE, 42, address(0x2EF), 0
-        , 0, bytes32(0), false);
+        _d6(address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0x01D), 0, 7e18, keccak256("receipt-old-era"));
+        _d6(address(vpfiTok), 9e18, _days(4), CHAIN_BASE, 42, address(0x2EF), 0, 9e18, keccak256("receipt-new-era"));
         assertEq(
             rlens.getReceivedRemit(address(0x01D), 42).amount,
             7e18,
@@ -1872,9 +1766,7 @@ contract RewardRemitLedgerTest is SetupTest {
                 keccak256(abi.encode(address(0x2EF), uint256(42)))
             )
         );
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 1e18, _days(5), CHAIN_BASE, 42, address(0x2EF), 0
-        , 0, bytes32(0), false);
+        _d6(address(vpfiTok), 1e18, _days(5), CHAIN_BASE, 42, address(0x2EF), 0, 1e18, keccak256("receipt-duplicate"));
         assertEq(
             rlens.getReceivedRemit(address(0x2EF), 42).amount,
             9e18,
@@ -1938,130 +1830,6 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.sendRemitAck{value: 0.001 ether}(
             1, address(0xBA5E), payable(address(this))
         );
-    }
-
-    // ─── B2-d5: relocated-custody credit at remit arrival ─────────────────
-
-    /// @dev The core d5 shape: an arriving remit's RECYCLED share credits the
-    ///      mirror's bucket (so the claim path's `consume(paidRecycled)` has
-    ///      real backing) while staying OUT of both Ā-feeding figures — the
-    ///      day-bucket AND the cumulative this chain reports to Base.
-    function test_D5_CustodyCredit_BacksBucket_ButFeedsNeitherAFigure() public {
-        _configureMirror();
-        ConfigFacet cfg = ConfigFacet(address(diamond));
-
-        // Give the mirror some GENUINE local absorption first, so the test
-        // distinguishes "excluded" from "trivially zero".
-        mutator.setRecycleBucketRaw(40e18);
-        mutator.setRecycleCreditedCumulativeRaw(40e18);
-        (uint256 dayNow, ) = InteractionRewardsLensFacet(address(diamond))
-            .getInteractionCurrentDay();
-        uint256 dayBucketBefore = cfg.getRecycledCreditedByDay(dayNow);
-        uint256 reportedBefore = cfg.getRecycleCreditedCumulative();
-        assertEq(reportedBefore, 40e18, "precondition: genuine absorption");
-
-        // Base tops up 23 recycled inside a 30-token delivery.
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
-            23e18
-        , 0, bytes32(0), true);
-
-        // Bucket grew by exactly the recycled share — the claim path is backed.
-        assertEq(cfg.getRecycleBucket(), 63e18, "bucket takes the top-up");
-        // ...but neither Ā-feeding figure moved.
-        assertEq(
-            cfg.getRecycledCreditedByDay(dayNow),
-            dayBucketBefore,
-            "day-bucket (A-bar's per-day feed) untouched"
-        );
-        assertEq(
-            cfg.getRecycleCreditedCumulative(),
-            reportedBefore,
-            "reported cumulative untouched despite the bucket growing"
-        );
-
-        (uint256 relocated, uint256 bucket, uint256 reported) =
-            RewardAggregatorFacet(address(diamond))
-                .getRecycleCustodyPosition();
-        assertEq(relocated, 23e18, "custody counter records the relocation");
-        assertEq(bucket, 63e18, "position reports the live bucket");
-        assertEq(reported, 40e18, "position reports the netted cumulative");
-    }
-
-    /// @dev THE load-bearing invariant (design record §2f.2). Base derives a
-    ///      mirror's committable local funding from `reported`, net of the
-    ///      claim and repatriation draws ({LibVpfiRecycle.mirrorAvailRecycled}
-    ///      owns the operand order). If
-    ///      relocated custody reached `reported`, Base would re-offer its own
-    ///      already-spent top-up as that mirror's OWN funding and commit it
-    ///      twice. The exclusion must survive the tokens being CONSUMED,
-    ///      because `creditedCumulative` derives a floor from
-    ///      `recycleBucket + paidOutRecycled` — consuming moves the custody
-    ///      value from one term of that sum into the other.
-    function test_D5_ReportedCumulativeSurvivesConsume_NoPhantomAvailability()
-        public
-    {
-        _configureMirror();
-        ConfigFacet cfg = ConfigFacet(address(diamond));
-
-        mutator.setRecycleBucketRaw(40e18);
-        mutator.setRecycleCreditedCumulativeRaw(40e18);
-
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 23e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
-            23e18
-        , 0, bytes32(0), true);
-        assertEq(cfg.getRecycleBucket(), 63e18, "backed");
-
-        // The mirror's claims now consume the WHOLE recycled payout — the
-        // 40 it absorbed itself plus the 23 Base delivered.
-        mutator.consumeRecycleRaw(63e18);
-        assertEq(cfg.getRecycleBucket(), 0, "bucket drained by claims");
-
-        // The reported cumulative must still be 40: this chain absorbed 40,
-        // full stop. Without the custody subtraction the derived floor
-        // (`0 + 63`) would report 63 and hand Base 23 of phantom
-        // availability on the very next day.
-        assertEq(
-            cfg.getRecycleCreditedCumulative(),
-            40e18,
-            "reports only GENUINE absorption after the custody tokens are consumed"
-        );
-    }
-
-    /// @dev A payload cannot claim more recycled backing than it delivered —
-    ///      the Diamond's own bound, independent of the receiver's scaling.
-    function test_D5_Ingress_RejectsRecycledShareAboveDelivery() public {
-        _configureMirror();
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.RecycledShareExceedsDelivery.selector,
-                8e18,
-                7e18
-            )
-        );
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
-            8e18
-        , 0, bytes32(0), true);
-    }
-
-    /// @dev Backward-decodability: a delayed pre-d5 delivery arrives with a
-    ///      zero share and must relocate NO custody — degrading to the old
-    ///      behaviour rather than mis-crediting.
-    function test_D5_LegacyShapedDelivery_RelocatesNoCustody() public {
-        _configureMirror();
-        ConfigFacet cfg = ConfigFacet(address(diamond));
-        mutator.setRecycleBucketRaw(40e18);
-
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0
-        , 0, bytes32(0), false);
-
-        assertEq(cfg.getRecycleBucket(), 40e18, "bucket unchanged");
-        (uint256 relocated, , ) = RewardAggregatorFacet(address(diamond))
-            .getRecycleCustodyPosition();
-        assertEq(relocated, 0, "no custody relocated");
     }
 
     // ─── #1444 / #1446: externally verifiable bucket accounting ───────────
@@ -2268,49 +2036,6 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.releaseRemitReservation(1);
         _assertComposition("after released-remit restore");
         _assertDerivation("after released-remit restore");
-    }
-
-    /// @dev #1446 — the mirror half, and the case the check exists for.
-    ///      Relocated custody raises the bucket without advancing the
-    ///      reported cumulative; if `creditCustodyRelocated` ever ALSO
-    ///      advanced `recycleCreditedCumulative`, the left side of the
-    ///      composition bound would jump by twice the credit against a right
-    ///      side that moved once. Comparing the reported figure against
-    ///      Base's copy cannot see that — both derive from the same helper.
-    function test_Composition_HoldsAcrossRelocatedCustodyAndConsume() public {
-        _configureMirror();
-        mutator.setRecycleBucketRaw(40e18);
-        mutator.setRecycleCreditedCumulativeRaw(40e18);
-        _assertComposition("mirror genesis");
-        _assertDerivation("mirror genesis");
-
-        // Base tops up 23 recycled inside a 30-token delivery.
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
-            23e18
-        , 0, bytes32(0), true);
-        (uint256 raw, , , uint256 relocated, uint256 bucket, , , ) =
-            _composition();
-        assertEq(relocated, 23e18, "fixture: custody relocated");
-        assertEq(bucket, 63e18, "fixture: bucket took the top-up");
-        // ORDER IS DELIBERATE: the composition bound is asserted BEFORE the
-        // precise `raw` fixture check, because the bound is what
-        // `ops/mesh-watcher` actually evaluates — it has no fixture knowledge
-        // of what `raw` "should" be. Asserting the fixture first would let a
-        // mutation be caught by an oracle the watcher does not have, and this
-        // test would then overstate what is externally detectable.
-        _assertComposition("after relocation");
-        _assertDerivation("after relocation");
-        assertEq(raw, 40e18, "the RAW counter must not move on relocation");
-
-        // Consuming moves the custody value from one term of the derived
-        // floor into the other — the exclusion has to survive that.
-        mutator.consumeRecycleRaw(63e18);
-        assertEq(
-            ConfigFacet(address(diamond)).getRecycleBucket(), 0, "drained"
-        );
-        _assertComposition("after consuming the relocated tokens");
-        _assertDerivation("after consuming the relocated tokens");
     }
 
     // ─── #1448 r3: the pre-upgrade seed ceremony ──────────────────────────
@@ -2980,268 +2705,6 @@ contract RewardRemitLedgerTest is SetupTest {
             )
         );
         comp.seedReleasedRemitStranded(seedTo);
-    }
-
-    /// @dev Current interaction-schedule day (arming must be strictly future).
-    function _today() internal view returns (uint256 d) {
-        (d, ) = InteractionRewardsLensFacet(address(diamond))
-            .getInteractionCurrentDay();
-    }
-
-    /// @dev Two-day batch, for the cutover-straddling case.
-    function _days2(uint256 a, uint256 b)
-        internal
-        pure
-        returns (uint256[] memory out)
-    {
-        out = new uint256[](2);
-        out[0] = a;
-        out[1] = b;
-    }
-
-    /// @dev Install `D*` through the CANONICAL setter (which is Base-only),
-    ///      then return to the mirror chain id the ingress tests run under.
-    ///      Deliberately not the raw mutator: the point of these tests is the
-    ///      attribution rule reading real arming state.
-    function _armFrom(uint256 dayId) internal {
-        vm.chainId(CHAIN_BASE);
-        _unfreezeRole();
-        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(true);
-        RewardAggregatorFacet(address(diamond))
-            .setGovernorCommitArmedFromDay(dayId);
-        vm.chainId(CHAIN_ARB);
-        _unfreezeRole();
-        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
-    }
-
-    // ─── #1434 P1-a — delivered-fresh accounting ──────────────────────────
-    //
-    // The counter exists because `poolRemaining()` is not a delivered-funding
-    // bound on a mirror (it is the GLOBAL 69M cap less LOCAL payouts, so every
-    // mirror believes it owns the whole pool).
-    //
-    // #1566 closure 2 — it counts the authenticated FRESH component of every
-    // COMPOSITION-KNOWN delivery, whatever days it funds (vintage-blind), and
-    // records the rest as `uncounted` rather than dropping it. The
-    // armed-attributable test that used to gate counting is retired: the paid
-    // side now charges legacy and armed outflows alike at the chokepoints, so
-    // a receipt for a pre-`D*` day is matched by the spend it funds on the
-    // SAME ledger — the double-count finding (b) guarded against cannot arise. There is
-    // no subtraction here and no baseline: the first shape of this slice
-    // netted a lifetime receipt cumulative against a payout snapshot taken at
-    // arming, and baselining one side of a subtraction is what made it
-    // unsound (Codex #1556 r1 P1 ×2). What these assert is the attribution
-    // rule; the bound that will consume it lands with P1-b, which needs the
-    // armed fresh PAID figure the splits do not report today.
-
-    /// @dev The counted case, and the non-vacuity anchor for every negative
-    ///      test below: an armed-day delivery whose composition arrived on
-    ///      the wire is counted in full.
-    function test_DeliveredFresh_CountsArmedAttributableDelivery() public {
-        _configureMirror();
-        uint256 dStar = _today() + 5;
-        _armFrom(dStar);
-
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42,
-            address(0xBA5E), 0, 7e18
-        , bytes32(0), true);
-
-        (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 7e18, "armed-day delivery counts in full");
-        assertEq(uncounted, 0, "nothing was refused");
-    }
-
-    /// @dev **Finding (c).** A wire generation that never carried the split
-    ///      arrives with `freshShare == 0`, and the Diamond must NOT infer
-    ///      `amount - recycledShare`. The old code did, booking a delivery of
-    ///      unknown composition as entirely fresh — over-stating precisely
-    ///      where least is known.
-    ///
-    ///      Non-vacuous by construction: the same fixture, same chain, same
-    ///      armed day and same amount is counted in full by the test above.
-    ///      The ONLY difference is the declared fresh share.
-    function test_DeliveredFresh_UnknownCompositionCountsNothing() public {
-        _configureMirror();
-        uint256 dStar = _today() + 5;
-        _armFrom(dStar);
-
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42,
-            address(0xBA5E), 0, 0
-        , bytes32(0), false);
-
-        (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 0, "unknown composition contributes no fresh");
-        assertEq(uncounted, 7e18, "and is recorded, not discarded");
-    }
-
-    /// @dev **Finding (b), inverted by #1566 closure 2.** Funding delivered
-    ///      for PRE-`D*` days now ENTERS the ledger. The withdrawn design's
-    ///      defect was counting the receipt while erasing the spend (a payout
-    ///      snapshot taken at arming); the vintage rule that replaced it
-    ///      refused the receipt instead, which left the pre-arming SPEND
-    ///      unbounded — the closure-2 defect. With both sides vintage-blind,
-    ///      100 VPFI delivered and spent before arming is 100 received and
-    ///      100 paid: zero reusable headroom, and every legacy claim bounded.
-    ///
-    ///      Both legs run in ONE test so the change cannot pass vacuously:
-    ///      the armed-day delivery is counted exactly as before.
-    function test_DeliveredFresh_PreArmingDeliveryIsCounted_VintageBlind() public {
-        _configureMirror();
-        uint256 dStar = _today() + 5;
-        _armFrom(dStar);
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 3e18, _days(dStar), CHAIN_BASE, 42,
-            address(0xBA5E), 0, 3e18
-        , bytes32(0), true);
-        (uint256 counted, ) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 3e18, "armed-day delivery counts as before");
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 100e18, _days(dStar - 1), CHAIN_BASE, 43,
-            address(0xBA5E), 0, 100e18
-        , bytes32(0), true);
-        uint256 uncounted;
-        (counted, uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 103e18, "pre-arming funding enters the same ledger");
-        assertEq(uncounted, 0, "nothing is parked when the composition is stated");
-    }
-
-    /// @dev A batch straddling the cutover no longer needs apportioning:
-    ///      under the vintage-blind rule (#1566 closure 2) the summed fresh
-    ///      share counts whichever side of `D*` each day sits on, so there is
-    ///      nothing to guess and nothing to refuse whole. The all-armed pair
-    ///      runs beside it so the straddle is shown to be treated identically.
-    function test_DeliveredFresh_BatchStraddlingCutoverIsCounted() public {
-        _configureMirror();
-        uint256 dStar = _today() + 5;
-        _armFrom(dStar);
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 8e18, _days2(dStar - 1, dStar), CHAIN_BASE, 42,
-            address(0xBA5E), 0, 8e18
-        , bytes32(0), true);
-        (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 8e18, "a straddling batch counts its fresh share");
-        assertEq(uncounted, 0, "nothing refused");
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 8e18, _days2(dStar, dStar + 1), CHAIN_BASE, 43,
-            address(0xBA5E), 0, 8e18
-        , bytes32(0), true);
-        (counted, ) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 16e18, "an all-armed batch counts the same way");
-    }
-
-    /// @dev An UNARMED mirror counts too (#1566 closure 2): the ledger is live
-    ///      on any mirror because its paid side charges legacy outflows, so a
-    ///      delivery landing before `D*` is installed — or one naming no days
-    ///      at all — is counted by its authenticated fresh share. Under the
-    ///      retired rule both were refused; refusing them left the legacy
-    ///      claims they fund with a delivered bound of zero AND a paid side
-    ///      that never charged, the inconsistency this closure removes.
-    function test_DeliveredFresh_UnarmedChainAndEmptyDaySetCount() public {
-        _configureMirror();
-        // The setUp funded the canonical pool before this fixture switched
-        // the role raw, so the counted figure starts at that baseline.
-        (uint256 baseline, ) = rlens.getDeliveredFreshPosition();
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 5e18, _days(9), CHAIN_BASE, 42,
-            address(0xBA5E), 0, 5e18
-        , bytes32(0), true);
-        (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted - baseline, 5e18, "an unarmed chain counts its fresh share");
-        assertEq(uncounted, 0, "nothing refused");
-        uint256 dStar = _today() + 5;
-        _armFrom(dStar);
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 6e18, new uint256[](0), CHAIN_BASE, 43,
-            address(0xBA5E), 0, 6e18
-        , bytes32(0), true);
-        (counted, uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted - baseline, 11e18, "an empty day set changes nothing about counting");
-        assertEq(uncounted, 0, "still nothing refused");
-    }
-
-    /// @dev Only the FRESH component accrues. The recycled component is
-    ///      bounded separately — it credits the bucket as relocated custody
-    ///      (B2-d5) — so counting it here would double-count backing. The
-    ///      two counters still account for the whole non-recycled remainder.
-    function test_DeliveredFresh_ExcludesRecycledComponent() public {
-        _configureMirror();
-        uint256 dStar = _today() + 5;
-        _armFrom(dStar);
-        // Back the relocated-custody credit: {creditCustodyRelocated} asserts
-        // `balance >= bucket + share`, so the tokens must really be here.
-        vpfiTok.transfer(address(diamond), 10e18);
-
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 10e18, _days(dStar), CHAIN_BASE, 43,
-            address(0xBA5E), 4e18, 6e18
-        , bytes32(0), true);
-
-        (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 6e18, "10 delivered, 4 recycled -> 6 fresh");
-        assertEq(uncounted, 0, "the remainder was fully attributed");
-    }
-
-    /// @dev The accounting identity the pair exists to support: across an
-    ///      armed-day delivery, a pre-arming one and one carrying recycled
-    ///      backing, `counted + uncounted` equals the summed NON-RECYCLED
-    ///      delivery. Nothing is invented and nothing is lost — which is what
-    ///      makes `uncounted` usable for reconciliation rather than a hint.
-    ///      #1566 closure 2 — the pre-arming delivery is COUNTED now, so the
-    ///      identity holds with `uncounted` at zero; an unstated composition
-    ///      is the only thing that lands there (see the finding-(c) test).
-    function test_DeliveredFresh_CountedPlusUncountedIsExhaustive() public {
-        _configureMirror();
-        uint256 dStar = _today() + 5;
-        _armFrom(dStar);
-        vpfiTok.transfer(address(diamond), 4e18);
-
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42,
-            address(0xBA5E), 0, 7e18
-        , bytes32(0), true);
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 5e18, _days(dStar - 2), CHAIN_BASE, 43,
-            address(0xBA5E), 0, 5e18
-        , bytes32(0), true);
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 9e18, _days(dStar), CHAIN_BASE, 44,
-            address(0xBA5E), 4e18, 5e18
-        , bytes32(0), true);
-
-        (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
-        // 7 + 5 + 5 = 17 counted, 0 uncounted (vintage-blind); the 4e18
-        // recycled leg belongs to the bucket, not to either counter.
-        assertEq(counted, 17e18, "all three fresh shares counted, any vintage");
-        assertEq(uncounted, 0, "nothing refused when every composition is stated");
-        assertEq(
-            counted + uncounted,
-            (7e18) + (5e18) + (9e18 - 4e18),
-            "exhaustive over the non-recycled delivery"
-        );
-    }
-
-    /// @dev The two shares are bounded JOINTLY. Each is individually no
-    ///      larger than the delivery here, and they still sum past it — the
-    ///      case a per-share bound would wave through, letting one delivery
-    ///      be booked as both relocated recycled custody and armed fresh.
-    function test_DeliveredFresh_RevertsWhenSharesJointlyExceedDelivery()
-        public
-    {
-        _configureMirror();
-        uint256 dStar = _today() + 5;
-        _armFrom(dStar);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.FreshShareExceedsDelivery.selector, 7e18, 6e18
-            )
-        );
-        ingress.onRewardBudgetReceived(
-            address(vpfiTok), 10e18, _days(dStar), CHAIN_BASE, 45,
-            address(0xBA5E), 4e18, 7e18
-        , bytes32(0), true);
     }
 
     /// @dev Accept ETH refunds from the remit fee path.

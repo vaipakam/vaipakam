@@ -21,6 +21,7 @@ import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
 import {RemitWire} from "../src/crosschain/RemitWire.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
 
 /**
  * @title RewardRemittanceFacetTest — #776 PR1 (Base sender) unit coverage.
@@ -690,12 +691,43 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertEq(rlens.getRemitReservation(remitId).dayIds.length, n, "and the closed days are recorded as before");
     }
 
-    // ─── mirror-side ingress: onRewardBudgetReceived (#776 PR2) ────────────
+    // ─── mirror-side ingress: the rooted budget ingress (#776 PR2) ─────────
 
     // A code-bearing stand-in for the registered receiver — `setRewardRemittance
     // Receiver` rejects EOAs, so the gate test needs a contract address.
     function _rcv() internal view returns (address) {
         return address(ccip);
+    }
+
+    /// @dev A budget delivery on the rooted (d6) wire, the only budget shape
+    ///      the remittance receiver accepts, filed in the live era. Returns
+    ///      the packet stamp.
+    function _d6(
+        address token,
+        uint256 amount,
+        uint256[] memory dayIds,
+        uint256 sourceChainId,
+        uint256 remitId,
+        address remitter,
+        uint256 recycled,
+        uint256 fresh,
+        bytes32 messageId
+    ) internal returns (bytes32 h) {
+        (h, ) = LibD6Delivery.deliver(
+            address(diamond),
+            LibD6Delivery.Delivery({
+                token: token,
+                amount: amount,
+                dayIds: dayIds,
+                sourceChainId: sourceChainId,
+                remitId: remitId,
+                remitter: remitter,
+                recycled: recycled,
+                fresh: fresh,
+                messageId: messageId,
+                era: 0
+            })
+        );
     }
 
     function test_SetReceiver_RequiresAdmin() public {
@@ -719,7 +751,7 @@ contract RewardRemittanceFacetTest is SetupTest {
         remit.setRewardRemittanceReceiver(rcv);
         assertEq(rlens.getRewardRemittanceReceiver(), rcv, "receiver set");
         vm.prank(rcv);
-        ingress.onRewardBudgetReceived(address(vpfiTok), 123e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0), false);
+        _d6(address(vpfiTok), 123e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 123e18, bytes32(0));
         assertEq(rlens.getRewardBudgetReceivedTotal(), 123e18, "recorded total");
     }
 
@@ -732,7 +764,7 @@ contract RewardRemittanceFacetTest is SetupTest {
                 stranger
             )
         );
-        ingress.onRewardBudgetReceived(address(vpfiTok), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0), false);
+        _d6(address(vpfiTok), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 1e18, bytes32(0));
     }
 
     function test_Ingress_RevertsOnTokenMismatch() public {
@@ -746,7 +778,7 @@ contract RewardRemittanceFacetTest is SetupTest {
                 address(0xDEAD)
             )
         );
-        ingress.onRewardBudgetReceived(address(0xDEAD), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0, bytes32(0), false);
+        _d6(address(0xDEAD), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 1e18, bytes32(0));
     }
 
     receive() external payable {}

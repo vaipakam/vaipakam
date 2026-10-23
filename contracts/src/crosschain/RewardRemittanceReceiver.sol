@@ -18,59 +18,26 @@ import {
     ICrossChainMessageRecipient
 } from "./ICrossChainMessenger.sol";
 
-/// @dev Mirror-side Diamond ingress for the reward-budget remittance flow.
-///      #1222 M3 B2-d2 widens the ingress with the echoed `remitId` (0 for a
-///      legacy pre-d2 delivery — the Diamond records no receipt and no ack
-///      ever flows; Base holds no reservation for those). B2-d5 adds
-///      `recycledShare`: the RECYCLED component of `amount`, already scaled to
-///      what physically landed. Zero for legacy/d2 layouts, which is the
-///      pre-d5 behaviour.
+/// @dev The receiver's CURRENT wire generation (#1434 P2-w2), at file level so
+///      the refresh script imports the same value the deployed probe
+///      ({RewardRemittanceReceiver.WIRE_GENERATION}) returns — one definition,
+///      no literal to drift. What it governs is the refresh's UPGRADE
+///      DECISION: a deployed proxy reporting less than this figure is
+///      upgraded, so any change to the receiver's behaviour advances it,
+///      whichever side of the contract the change is on.
 ///
-///      #1434 P1-a adds `freshShare`, the other component — and it is passed
-///      rather than left for the Diamond to infer as `amount − recycledShare`
-///      precisely BECAUSE of the legacy/d2 zero above. On those wires a zero
-///      recycled share does not mean "none was recycled", it means "the split
-///      was never sent", and the difference is invisible from inside the
-///      Diamond. Deriving there recorded the whole of such a delivery as
-///      fresh (Codex #1556 r1 P1). This contract is the only party that knows
-///      which generation it decoded, so it is the only one that can answer,
-///      and for the two old generations the honest answer is ZERO.
-/// @dev #1566 transport epochs PR 3b (Codex #2232 r1) — advanced 4 → 5 for the
-///      `splitTyped` argument. The change is NOT to the payloads this contract
-///      decodes; it is to what the contract TELLS the Diamond, which is the
-///      distinction worth stating because it is the reason this bump is easy to
-///      miss. What the constant governs is the refresh's UPGRADE DECISION: a
-///      deployed proxy reporting less than this figure is upgraded. Any change
-///      to the receiver's own behaviour has to advance it, whichever side of
-///      the contract the change is on, or the refresh reads a current-looking
-///      proxy and leaves it running the old implementation.
+///      6 — #1566 transport epochs 3d-1: the receiver decodes the d6 (rooted)
+///      wire and forwards it through its own Diamond ingress.
 ///
-/// @dev #1434 P2-w2 — the receiver's CURRENT wire generation, at file
-///      level so the refresh script can import the same value the
-///      deployed probe ({RewardRemittanceReceiver.WIRE_GENERATION})
-///      returns — one definition, no literal to drift.
-///
-/// @dev 6 — #1566 transport epochs 3d-1: the receiver decodes the d6 (rooted)
-///      wire and forwards it through a NEW Diamond ingress; a mirror still on
-///      generation 5 would revert every d6 delivery (the tag is out of bounds
-///      as an offset), which is the fail-closed rollout posture the tag exists
-///      for — and the reason the refresh must not read it as current.
-uint256 constant REMIT_RECEIVER_WIRE_GENERATION = 6;
+///      7 — the receiver accepts the d6 budget wire and the P2 compensation
+///      wire ONLY, and refuses every older budget shape by name
+///      ({RewardRemittanceReceiver.UnknownRemitWireShape}). The untagged
+///      legacy and d2 payloads and the tagged d5 payload carried a flat day
+///      list, and the untagged two carried no split; the Diamond ingress that
+///      took them is gone.
+uint256 constant REMIT_RECEIVER_WIRE_GENERATION = 7;
 
 interface IRewardBudgetIngress {
-    function onRewardBudgetReceived(
-        address token,
-        uint256 amount,
-        uint256[] calldata dayIds,
-        uint256 sourceChainId,
-        uint256 remitId,
-        address remitter,
-        uint256 recycledShare,
-        uint256 freshShare,
-        bytes32 transportMessageId,
-        bool splitTyped
-    ) external;
-
     /// @notice #1566 transport epochs 3d-1 — a d6 (rooted) delivery: the day
     ///         list arrives as an authenticated commitment plus its extent, the
     ///         split is typed on the wire, and the era the packet was
@@ -93,7 +60,7 @@ interface IRewardBudgetIngress {
 
 /// @notice #1434 P2-w2 — the mirror Diamond's COMPENSATION ingress
 ///         (`RewardRemittanceFacet.onCompensationBudgetReceived`): the
-///         classifying counterpart of the ordinary budget ingress for the
+///         classifying counterpart of the d6 budget ingress for the
 ///         P2 manual-compensation wire (one zeroed day, per-side amounts,
 ///         the day's frozen expiry inputs riding along — §1.3/§2.2).
 interface ICompensationBudgetIngress {
@@ -121,7 +88,7 @@ interface ICompensationBudgetIngress {
  * {RewardRemittanceFacet.remitRewardBudget} sends from Base, forwards the
  * delivered VPFI into the local Vaipakam Diamond (which is what
  * `claimInteractionRewards` pays from), and calls the Diamond's
- * `onRewardBudgetReceived` ingress to record the funded total for monitoring.
+ * `onRewardBudgetReceivedD6` ingress to record the delivery.
  *
  * The mirror image of {BuybackRemittanceReceiver} (mirror→Base): same trust +
  * fee-on-transfer handling, differing only in direction and the payload shape.
@@ -171,16 +138,6 @@ contract RewardRemittanceReceiver is
     event DiamondSet(address indexed previousDiamond, address indexed newDiamond);
     /// @custom:event-category informational/config
     event VpfiTokenSet(address indexed previousToken, address indexed newToken);
-    /// @custom:event-category informational/reward-transport
-    /// @dev #1222 M3 B2-d2 — `remitId` is the Base-side delivered-backing
-    ///      reservation this delivery fulfils (0 = legacy pre-d2 message).
-    event RewardBudgetForwarded(
-        uint256 indexed sourceChainId,
-        address indexed token,
-        uint256 amount,
-        uint256[] dayIds,
-        uint256 remitId
-    );
 
     // ─── Errors ───────────────────────────────────────────────────────
 
@@ -193,6 +150,13 @@ contract RewardRemittanceReceiver is
     /// @notice Delivered amount disagrees with the payload's declared total.
     error AmountMismatch(uint256 declared, uint256 delivered);
     error ZeroAmount();
+    /// @notice The payload leads with a word that names no shape this
+    ///         receiver accepts: only the d6 budget wire
+    ///         ({RemitWire.REMIT_WIRE_TAG_D6}) and the P2 compensation wire
+    ///         ({RemitWire.REMIT_WIRE_TAG_P2}) are. CCIP records the delivery
+    ///         as a failed, re-executable message, so the tokens stay with
+    ///         the transport rather than landing uncredited.
+    error UnknownRemitWireShape(uint256 head);
 
     // ─── Construction ─────────────────────────────────────────────────
 
@@ -256,182 +220,22 @@ contract RewardRemittanceReceiver is
         if (msg.sender != messenger) revert NotMessenger(msg.sender);
         if (tokens.length != 1) revert WrongTokenCount(tokens.length);
 
-        // Payload shapes (#1222 M3 B2-d2 dual-decode — delayed pre-d2 CCIP
-        // deliveries and governance replays MUST keep decoding, per the plan
-        // §M3 backward-decodability rule):
-        //   legacy: `abi.encode(uint256[] dayIds, uint256 total)`
-        //   d2 r4:  `abi.encode(uint256[] dayIds, uint256 total,
-        //            uint256 remitId, address remitter)`
-        //   d5:     `abi.encode(REMIT_WIRE_TAG_D5, uint256[] dayIds,
-        //            uint256 total, uint256 remitId, address remitter,
-        //            uint256 recycledShare)`
-        //
-        // The two OLD shapes are discriminated by the leading ABI head word —
-        // the `dayIds` array offset, exactly `32 × head-slots`: 0x40 (two) for
-        // legacy, 0x80 (four) for d2's. A legacy delivery carries no
-        // `remitId`/`remitter` — the Diamond records no receipt and no ack
-        // flows (Base holds no reservation for pre-d2 sends). `remitter` is
-        // the sending deployment's own address, embedded at send — immutable
-        // message data, so unlike the adapter's config-derived sourceSender
-        // it identifies the DEPLOYMENT even for a delayed pre-rotation packet
-        // (#1426 r4).
-        //
-        // B2-d5 (Codex #1432 r2) — the new shape leads with an explicit
-        // TAG instead of extending the offset ladder to 0xA0, and that choice
-        // is load-bearing for the cross-chain ROLLOUT, not cosmetic.
-        //
-        // With an offset ladder, a not-yet-upgraded receiver reads 0xA0,
-        // fails its `== 0x80` test, falls into the legacy branch — and the
-        // 0xA0 offset is still IN BOUNDS, so the decode SUCCEEDS. It silently
-        // drops `remitId`/`remitter`/`recycledShare`, forwards through the
-        // retired ingress, strands Base's reservation Pending and applies no
-        // custody credit. Since Base is refreshed before the mirrors, that
-        // window is real on every rollout.
-        //
-        // The tag is a keccak-derived sentinel, so it is astronomically
-        // larger than any payload length. An old receiver reads it as the
-        // array offset, the decoder's bounds check fails, and the delivery
-        // REVERTS — deterministically, not probabilistically. CCIP records a
-        // failed message, re-executable once that mirror is upgraded, so
-        // nothing is lost. The wire is therefore version-gated BY
-        // CONSTRUCTION: no operator flag to set, no refresh-order rule to
-        // remember, and no way for a partial rollout to under-credit
-        // silently. Fail-closed is the same posture the pause lever relies on.
-        uint256[] memory dayIds;
-        uint256 declaredTotal;
-        uint256 remitId;
-        address remitter;
-        uint256 recycledShare;
-        uint256 head = abi.decode(payload[:32], (uint256));
-        // #1434 P2-w2 — the manual-compensation shape has its own tag, its
-        // own decode and its own Diamond ingress (the classifying one);
-        // handled in a separate frame and RETURNED from. Both shapes share
-        // ONE token-delivery implementation ({_deliverTokens}) so the
+        // The payload's LEADING WORD names its shape ({RemitWire}): the d6
+        // budget wire or the P2 compensation wire, each with its own decode
+        // and its own Diamond ingress, handled in a separate frame. Both share
+        // ONE token-delivery implementation ({_deliverTokens}), so the
         // delivered-vs-declared and fee-on-transfer rules can never diverge
-        // between wire generations.
-        if (head == RemitWire.REMIT_WIRE_TAG_P2) {
-            _handleCompensation(sourceChainId, payload, tokens, transportMessageId);
-            return;
-        }
-        // #1566 transport epochs 3d-1 — the ROOTED shape: its own decode, its
-        // own Diamond ingress, the same token-delivery implementation.
+        // between them. Any other word is refused by name: the older budget
+        // shapes carried a flat day list (and the untagged two no split), and
+        // nothing on this mirror can account for one any more.
+        uint256 head = abi.decode(payload[:32], (uint256));
         if (head == RemitWire.REMIT_WIRE_TAG_D6) {
             _handleRooted(sourceChainId, payload, tokens, transportMessageId);
-            return;
-        }
-        if (head == RemitWire.REMIT_WIRE_TAG_D5) {
-            (, dayIds, declaredTotal, remitId, remitter, recycledShare) =
-                abi.decode(
-                    payload,
-                    (uint256, uint256[], uint256, uint256, address, uint256)
-                );
-        } else if (head == 0x80) {
-            (dayIds, declaredTotal, remitId, remitter) = abi.decode(
-                payload,
-                (uint256[], uint256, uint256, address)
-            );
+        } else if (head == RemitWire.REMIT_WIRE_TAG_P2) {
+            _handleCompensation(sourceChainId, payload, tokens, transportMessageId);
         } else {
-            (dayIds, declaredTotal) = abi.decode(payload, (uint256[], uint256));
+            revert UnknownRemitWireShape(head);
         }
-
-        (address deliveredToken, uint256 actualReceived) =
-            _deliverTokens(tokens, declaredTotal);
-
-        // #1434 P1-a — the FRESH component, decided HERE because this is the
-        // only place the wire generation is known. d5 carries the split, so
-        // fresh is the declared remainder; the two older layouts carry no
-        // split at all, and for them the answer is ZERO rather than "all of
-        // it". Their `recycledShare` is zero because nothing was transmitted,
-        // not because nothing was recycled, and treating that as a fully
-        // fresh delivery over-states delivered fresh precisely where the
-        // composition is unknown (Codex #1556 r1 P1). Unknown composition is
-        // therefore read as fully recycled for FRESH-counting purposes —
-        // while still crediting zero relocated custody, since neither figure
-        // is actually known. The delivery itself is unaffected: the tokens
-        // land, `rewardBudgetReceivedTotal` records them, and the Diamond
-        // books the whole amount as uncounted so the shortfall is visible.
-        //
-        // The `>` rather than a bare subtraction is deliberate: a malformed
-        // d5 payload declaring more recycled than it sends must fail on the
-        // Diamond's {RecycledShareExceedsDelivery} bound, which names the
-        // problem, not on an arithmetic panic here that names nothing.
-        uint256 freshShare =
-            head == RemitWire.REMIT_WIRE_TAG_D5 &&
-                declaredTotal > recycledShare
-                ? declaredTotal - recycledShare
-                : 0;
-
-        // B2-d5 — scale the declared shares to what ACTUALLY landed.
-        // `recycledShare` is a component of `declaredTotal`, but the
-        // fee-on-transfer path above can credit less than that, and crediting
-        // the face value would relocate custody the Diamond never received —
-        // {LibVpfiRecycle.creditCustodyRelocated} asserts physical backing and
-        // would revert the whole arrival. `declaredTotal` is non-zero here
-        // (it equals the non-zero `deliveredAmount`).
-        //
-        // BOTH shares floor. Pre-P1-a only the recycled share was scaled and
-        // fresh was whatever remained, so the rounding dust rode along with
-        // fresh; now that fresh is an explicit figure the Diamond bounds
-        // (`freshShare + recycledShare <= amount`), letting it absorb the dust
-        // would make it the one term that rounds UP. Flooring both instead
-        // leaves at most a wei or two attributed to neither, which the
-        // Diamond records as uncounted — the direction that defers.
-        if (actualReceived != declaredTotal) {
-            if (recycledShare != 0) {
-                recycledShare =
-                    Math.mulDiv(recycledShare, actualReceived, declaredTotal);
-            }
-            if (freshShare != 0) {
-                freshShare =
-                    Math.mulDiv(freshShare, actualReceived, declaredTotal);
-            }
-        }
-
-        IRewardBudgetIngress(diamond).onRewardBudgetReceived(
-            deliveredToken,
-            actualReceived,
-            dayIds,
-            sourceChainId,
-            remitId,
-            remitter,
-            recycledShare,
-            freshShare,
-            transportMessageId,
-            // #1566 transport epochs PR 3b — WHETHER THE WIRE CARRIED THE
-            // SPLIT, which is a different question from whether the split it
-            // carried was non-zero. This frame is the only place either can be
-            // answered: by the time the Diamond sees the call, a d5 remittance
-            // whose components BOTH FLOORED TO ZERO and a legacy one that
-            // transmitted nothing arrive as the same two zeros.
-            //
-            // Note which d5 delivery that is, because the obvious guess is
-            // wrong (Codex #2232 r12). A WHOLLY RECYCLED one is not ambiguous:
-            // `recycledShare == declaredTotal`, and the scaling just above
-            // carries that through exactly, so the Diamond sees
-            // `(freshShare = 0, recycledShare = actualReceived)` — one zero,
-            // not two. The ambiguous case is a MIXED delivery short enough
-            // that both `mulDiv` results floor away, which
-            // {LibRewardCustody.admitLegacyTransportBatch} states precisely
-            // where it explains why the recorded-packet entry must read the
-            // shape instead of being told the wire.
-            //
-            // The Diamond needs the distinction because the two take different
-            // ACCOUNTING PATHS. A d5 delivery's components are typed and
-            // credited to the shared live/bucket ledgers here and now; an
-            // untyped one's value is in no shared ledger and needs a transport
-            // epoch to be spendable at all. Opening an epoch for a d5 delivery
-            // would make it spendable twice, and opening none for an untyped
-            // one would strand it.
-            head == RemitWire.REMIT_WIRE_TAG_D5
-        );
-
-        emit RewardBudgetForwarded(
-            sourceChainId,
-            deliveredToken,
-            actualReceived,
-            dayIds,
-            remitId
-        );
     }
 
     /// @notice #1566 transport epochs 3d-1 — a d6 (rooted) delivery was
@@ -506,10 +310,10 @@ contract RewardRemittanceReceiver is
 
     /// @dev #1434 P2-w2 — decode + forward the P2 compensation shape (own
     ///      frame for stack headroom). Same delivered-vs-declared and
-    ///      fee-on-transfer rules as the ordinary path ({_deliverTokens} is
+    ///      fee-on-transfer rules as the d6 path ({_deliverTokens} is
     ///      shared), with BOTH per-side shares scaled to what actually
     ///      landed, each flooring — the dust stays unattributed, the
-    ///      direction that defers (the d5 precedent). The expiry inputs
+    ///      direction that defers. The expiry inputs
     ///      pass through verbatim: they are Base's frozen words, not this
     ///      contract's to interpret.
     function _handleCompensation(
@@ -622,8 +426,8 @@ contract RewardRemittanceReceiver is
     ///         had already closed the day. The script now probes THIS
     ///         constant instead: a missing selector (pre-P2 impl) or a
     ///         lower value means the proxy needs the upgrade. Bump it with
-    ///         every wire generation the receiver learns to decode
-    ///         (1 = legacy/d2 · 2 = d5 + P1-a · 3 = P2 compensation).
+    ///         every change to what the receiver decodes or forwards; the history
+    ///         is at {REMIT_RECEIVER_WIRE_GENERATION}.
     uint256 public constant WIRE_GENERATION =
         REMIT_RECEIVER_WIRE_GENERATION;
 

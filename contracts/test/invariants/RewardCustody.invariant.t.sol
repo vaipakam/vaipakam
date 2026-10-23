@@ -15,7 +15,6 @@ import {RewardCustodyFacet} from "../../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../../src/facets/RewardReconciliationFacet.sol";
 import {RewardRemittanceLensFacet} from "../../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardRemittanceFacet} from "../../src/facets/RewardRemittanceFacet.sol";
-import {RewardIngressFacet} from "../../src/facets/RewardIngressFacet.sol";
 import {RewardEpochFacet} from "../../src/facets/RewardEpochFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
@@ -24,6 +23,9 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
 import {LibVpfiRecycle} from "../../src/libraries/LibVpfiRecycle.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
+import {MerkleFixture} from "../mocks/MerkleFixture.sol";
+import {LibD6Delivery} from "../helpers/LibD6Delivery.sol";
+import {RemitWire} from "../../src/crosschain/RemitWire.sol";
 
 /**
  * @title  RewardCustodyInvariant
@@ -88,25 +90,21 @@ contract RewardCustodyInvariant is SetupTest {
 
         targetContract(address(handler));
         RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(handler));
-        bytes4[] memory sel = new bytes4[](10);
+        bytes4[] memory sel = new bytes4[](9);
         sel[0] = RewardCustodyHandler.fund.selector;
         sel[1] = RewardCustodyHandler.claim.selector;
         sel[2] = RewardCustodyHandler.absorb.selector;
         sel[3] = RewardCustodyHandler.feeInflow.selector;
         sel[4] = RewardCustodyHandler.surplus.selector;
-        sel[5] = RewardCustodyHandler.untypedIngress.selector;
+        sel[5] = RewardCustodyHandler.budgetIngress.selector;
         sel[6] = RewardCustodyHandler.classify.selector;
         sel[7] = RewardCustodyHandler.reclassify.selector;
-        // #1566 transport epochs PR 3b (Codex #2232 r3) — the ROLLOUT
-        // admission is a SECOND way an epoch comes into existence, so the
-        // conservation invariant above must see epochs opened that way too.
-        sel[8] = RewardCustodyHandler.rolloutAdmit.selector;
-        // #1566 transport epochs PR 3b (Codex #2232 r3) — and the RELEASE, or
+        // #1566 transport epochs PR 3b (Codex #2232 r3) — the RELEASE, or
         // the campaign cannot reach the debit seam at all: classification
         // against an epoch-backed packet is gated on it, so without this
         // action every such call reverts at the gate and the conservation
         // invariant passes over a transition it never performs.
-        sel[9] = RewardCustodyHandler.releaseEpoch.selector;
+        sel[8] = RewardCustodyHandler.releaseEpoch.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: sel}));
     }
 
@@ -115,9 +113,9 @@ contract RewardCustodyInvariant is SetupTest {
     }
 
     /// #1566 closure 2 cutover PR 1 — the `Unclassified` row is auditable
-    /// like every other: it equals its two figures (untyped remainders and
+    /// like every other: it equals its two figures (protected deliveries and
     /// quarantines held, pre-attribution returns held), under every
-    /// interleaving of untyped deliveries with the other flows.
+    /// interleaving of budget deliveries with the other flows.
     function invariant_UnclassifiedRowEqualsItsFigures() public view {
         (uint256 uncountedHeld, uint256 returnedHeld, ) =
             RewardRemittanceLensFacet(address(diamond)).getUnclassifiedPosition();
@@ -173,55 +171,31 @@ contract RewardCustodyInvariant is SetupTest {
     }
 
     /// #1566 transport epochs PR 3b — the LIVENESS check behind the
-    /// conservation invariant below: an even seed must actually produce a
-    /// transport epoch.
+    /// conservation invariant below: the handler's deliveries must actually
+    /// produce transport epochs.
     ///
     /// Deterministic and not an invariant, on purpose. The property it
     /// establishes is "the handler has subjects", and an invariant asserting
-    /// that would be flaky — a run whose draws happened to be all odd would
-    /// fail on nothing being wrong. Driving one known-even seed by hand proves
-    /// it once, for good.
+    /// that would be flaky. Driving two known seeds by hand proves it once.
     ///
-    /// This exists because the first version of the handler derived the wire
-    /// from `fresh != 0`, where `fresh` is bounded over `[0, amount]` and is
-    /// therefore zero about one time in 10^19. The conservation invariant
-    /// passed over an empty set.
-    function test_Handler_UntypedDrawAdmitsAnEpoch() public {
-        handler.untypedIngress(2); // even: the untyped wire
-        assertEq(handler.untypedAdmitted(), 1, "the untyped path was taken");
+    /// Since the pre-d6 retirement every budget delivery lands on the rooted
+    /// wire and, on this activated custody, opens an epoch whatever split it
+    /// states. The first version of the handler drew the wire from
+    /// `fresh != 0`, which made the epoch path all but unreachable while the
+    /// conservation invariant passed over an empty set; this pin is what keeps
+    /// that from coming back in another form.
+    function test_Handler_EveryDeliveryAdmitsAnEpoch() public {
+        handler.budgetIngress(2);
+        handler.budgetIngress(3);
+        assertEq(handler.epochsAdmitted(), 2, "both deliveries landed");
         RewardEpochFacet ep = RewardEpochFacet(address(diamond));
         uint256 n = handler.packets();
-        assertGt(n, 0, "the delivery landed");
-        uint256 withEpoch;
+        assertEq(n, 2, "two packets recorded");
         for (uint256 i; i < n; ++i) {
-            (bytes32 packetHash, , , , , ) = ep.getTransportBatch(handler.packetAt(i));
-            if (packetHash != bytes32(0)) ++withEpoch;
+            (bytes32 packetHash, , uint256 admitted, , , ) = ep.getTransportBatch(handler.packetAt(i));
+            assertEq(packetHash, handler.packetAt(i), "each delivery opened its epoch");
+            assertGt(admitted, 0, "over the amount that landed");
         }
-        assertGt(withEpoch, 0, "an untyped delivery opens an epoch for the invariant to check");
-
-        // And the odd draw takes the other path, so the parity means what the
-        // handler says it means.
-        handler.untypedIngress(3); // odd: a stated composition
-        assertEq(handler.untypedAdmitted(), 1, "the typed path added no untyped delivery");
-    }
-
-    /// #1566 transport epochs PR 3b (Codex #2232 r3) — the same coverage pin
-    /// for the SECOND way an epoch comes into existence. The rollout action is
-    /// guarded (a typed delivery has no epoch to redo, a parked one is skipped),
-    /// so without this the guards could silently swallow every draw and the
-    /// conservation invariant would again pass over a path it never reached.
-    function test_Handler_RolloutAdmitOpensAnEpoch() public {
-        handler.untypedIngress(2); // even: the untyped wire, so an epoch exists
-        assertEq(handler.rolloutAdmitted(), 0, "nothing has gone through the rollout yet");
-        handler.rolloutAdmit(0);
-        assertEq(handler.rolloutAdmitted(), 1, "the rollout admission opened one");
-
-        RewardEpochFacet ep = RewardEpochFacet(address(diamond));
-        (bytes32 packetHash, uint256 balance, uint256 admitted, , , ) =
-            ep.getTransportBatch(handler.packetAt(0));
-        assertEq(packetHash, handler.packetAt(0), "and the epoch is back");
-        assertEq(balance, admitted, "conserving, with nothing parked");
-        assertGt(admitted, 0, "over a real balance read from the packet");
     }
 
     /// #1566 transport epochs PR 3b — every TRANSPORT EPOCH conserves under
@@ -243,18 +217,18 @@ contract RewardCustodyInvariant is SetupTest {
     /// what hid the falsity — which is why `test_Handler_ReleaseAndClassify
     /// ReachesTheDebit` below pins the liveness rather than trusting it.
     ///
-    /// It also pins the rule the ingress relies on: a batch is admitted with
-    /// the UNTYPED REMAINDER, so a delivery that stated a component can never
-    /// have that component in an epoch as well as in the shared ledger it was
-    /// credited to.
+    /// It also pins the rule the ingress relies on: on an activated custody a
+    /// budget delivery credits no shared ledger, and its whole amount is what
+    /// the batch is admitted with, so no component can sit in an epoch as
+    /// well as in a ledger it was credited to.
     function invariant_TransportEpochsConserve() public view {
         RewardEpochFacet ep = RewardEpochFacet(address(diamond));
         uint256 n = handler.packets();
         for (uint256 i = 0; i < n; ++i) {
             bytes32 h = handler.packetAt(i);
             (bytes32 packetHash, uint256 balance, uint256 admitted, , , ) = ep.getTransportBatch(h);
-            if (packetHash == bytes32(0)) continue; // a typed delivery holds no epoch
-            (uint256 parked, , , , uint256 debited) = ep.getTransportRemainder(h);
+            if (packetHash == bytes32(0)) continue; // defensive: every handler delivery opens one
+            (uint256 parked, , , uint256 debited) = ep.getTransportRemainder(h);
             (uint256 legFresh, uint256 legRecycled) = ep.getTransportBatchLegs(h);
             // 3b-ii-A2 (#2305) — the identity gains the staged terms.
             (uint256 stagedFresh, uint256 stagedRecycled, ) = ep.getTransportBatchStaged(h);
@@ -272,8 +246,8 @@ contract RewardCustodyInvariant is SetupTest {
     /// pages walk exactly as many as the day has ever listed, each ordered
     /// after the last — except that the order may restart right after the
     /// cursor, where a late epoch older than the passed prefix takes the first
-    /// place of the window (Codex #2276 r11). The handler's untyped deliveries
-    /// all list day 1.
+    /// place of the window (Codex #2276 r11). The handler's deliveries all
+    /// list day 1.
     ///
     /// There is no longer a "how much is linked" figure to compare (Codex
     /// #2296 items 2 and 4): every member is linked as it is pushed, so the
@@ -445,13 +419,13 @@ contract RewardCustodyInvariant is SetupTest {
     /// classification, `balance + parked` is SHORT of `admitted` by exactly
     /// what left, and it is `debited` that closes it.
     function test_Handler_ReleaseAndClassifyReachesTheDebit() public {
-        handler.untypedIngress(2); // even: the untyped wire, so an epoch exists
+        handler.budgetIngress(2);
         bytes32 h = handler.packetAt(0);
         RewardEpochFacet ep = RewardEpochFacet(address(diamond));
 
         handler.releaseEpoch(0);
         assertGt(handler.released(), 0, "the handler released an epoch");
-        (, , , bool acknowledged, ) = ep.getTransportRemainder(h);
+        (, , bool acknowledged, ) = ep.getTransportRemainder(h);
         assertTrue(acknowledged, "and the acknowledgment is recorded");
 
         for (uint256 seed = 1; seed <= 32 && handler.classified() == 0; ++seed) {
@@ -460,7 +434,7 @@ contract RewardCustodyInvariant is SetupTest {
         assertGt(handler.classified(), 0, "a classification was applied against the released epoch");
 
         (, uint256 balance, uint256 admitted, , , ) = ep.getTransportBatch(h);
-        (uint256 parked, , , , uint256 debited) = ep.getTransportRemainder(h);
+        (uint256 parked, , , uint256 debited) = ep.getTransportRemainder(h);
         assertGt(debited, 0, "and it DEBITED the remainder - the seam is reached");
         assertLt(balance + parked, admitted, "which the old two-term identity would have called a loss");
         assertEq(balance + parked + debited, admitted, "the epoch conserves with the exit named");
@@ -472,12 +446,15 @@ contract RewardCustodyInvariant is SetupTest {
     /// rather than on rolled-back calls.
     function test_HandlerClassificationActionsPersist() public {
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
-        handler.untypedIngress(7);
+        handler.budgetIngress(7);
         bytes32 h = handler.packetAt(0);
+        // Classification of an epoch-backed packet is gated on its release.
+        handler.releaseEpoch(0);
         (, , uint256 remainder, , , , , ) = recon.getPacketReconciliation(h);
-        // The whole remainder evidenced, so whichever way the handler splits
-        // its entry, one direction of a later correction is always open.
-        TestMutatorFacet(address(diamond)).setPacketFreshAuthenticatedRaw(h, remainder);
+        // The whole remainder evidenced on both sides, so whichever way the
+        // handler splits its entry, one direction of a later correction is
+        // always open.
+        TestMutatorFacet(address(diamond)).setPacketAttestedCapsRaw(h, remainder, remainder);
         for (uint256 seed = 1; seed <= 16 && handler.classified() == 0; ++seed) {
             handler.classify(seed);
         }
@@ -520,7 +497,7 @@ contract RewardCustodyHandler is Test {
     uint256 public payouts;
     uint256 public surplusReleased;
     uint64 internal nextLoan = 1;
-    /// @dev #1566 closure 2 cutover PR 2 — the untyped packets this handler
+    /// @dev #1566 closure 2 cutover PR 2 — the packets this handler
     ///      landed (zero transport id → the per-source sequence stamps them,
     ///      and this handler is the only source-8453 ingress), the recorded
     ///      spent/released figures at the start of the current action and
@@ -528,19 +505,14 @@ contract RewardCustodyHandler is Test {
     ///      correction invariant's baseline), and how many classification
     ///      actions were APPLIED (Codex #2206 r3: the liveness the campaign
     ///      is checked against).
-    /// @dev #1566 transport epochs PR 3b — how many UNTYPED deliveries this
-    ///      handler has attempted. Read by the liveness test below: an
-    ///      invariant over transport epochs proves nothing if the handler never
-    ///      produces one.
-    uint256 public untypedAdmitted;
-    /// @dev #1566 transport epochs PR 3b (Codex #2232 r3) — how many epochs
-    ///      were opened through the ROLLOUT admission rather than at ingress.
-    ///      Same reason as the counter above: an invariant over epochs opened
-    ///      a second way proves nothing if the handler never opens one.
-    uint256 public rolloutAdmitted;
+    /// @dev #1566 transport epochs PR 3b — how many deliveries this handler
+    ///      landed, each of which opens a transport epoch. Read by the liveness
+    ///      test: an invariant over transport epochs proves nothing if the
+    ///      handler never produces one.
+    uint256 public epochsAdmitted;
     /// @dev #1566 transport epochs PR 3b (Codex #2232 r3) — how many epochs
     ///      this handler has RELEASED (parked and acknowledged). Same reason as
-    ///      the two counters above, and the sharpest of the three: the release
+    ///      the counter above, and the sharpest of the three: the release
     ///      is what a classification against an epoch-backed packet is gated
     ///      on, so with this at zero the whole debit seam is unreachable and
     ///      every invariant over it passes vacuously.
@@ -600,7 +572,7 @@ contract RewardCustodyHandler is Test {
         TestMutatorFacet mut = TestMutatorFacet(diamond);
         uint256 id = mut.pushRewardEntry(user, nextLoan++, LibVaipakam.RewardSide.Lender, 100e18, 1);
         mut.closeRewardEntryRaw(id, 3);
-        // An entry listed by an admitted (untyped) batch defers its first claim
+        // An entry listed by an admitted batch defers its first claim
         // while its legacy-slice domain is driven (A2-ii (c)); drive it home with
         // the facet's permissionless step, then claim again, as a keeper would.
         bool paidOut;
@@ -647,46 +619,56 @@ contract RewardCustodyHandler is Test {
         TestMutatorFacet(diamond).creditInflowRawWithBefore(LibVpfiRecycle.RecycleSource.NotificationFee, 1, amount, before);
     }
 
-    /// A delivery whose remainder is UNTYPED, as the receiver presents it
+    /// A budget delivery on the rooted (d6) wire, as the receiver presents it
     /// (the handler is the registered receiver): the tokens are forwarded to
-    /// the Diamond first, the fresh share is credited live, the remainder is
-    /// protected into the `Unclassified` row — nothing of it stays in the
-    /// Diamond.
-    ///
-    /// #1566 transport epochs PR 3b — the draw decides the WIRE too, not only
-    /// the composition: a zero fresh share is what an untyped wire delivers,
-    /// and such a delivery opens a transport epoch whose conservation the
-    /// invariants below then cover.
-    function untypedIngress(uint256 seed) external {
+    /// the Diamond first, then the ingress protects the WHOLE amount into the
+    /// `Unclassified` row and opens a transport epoch over it. On an activated
+    /// custody a budget delivery credits no live row; the split the wire
+    /// states (drawn here, and whole, as the ingress requires) is recorded as
+    /// the packet's attestation. So every delivery is a subject of the
+    /// conservation invariant.
+    function budgetIngress(uint256 seed) external {
         _start();
         uint256 amount = bound(seed, 2, 10_000e18);
-        // #1566 transport epochs PR 3b — the WIRE is its own draw, on the raw
-        // seed's parity, so both accounting paths are reached about half the
-        // time each.
-        //
-        // Deriving it from the fresh component instead (`fresh != 0`) looked
-        // equivalent and was not: `fresh` is bounded over `[0, amount]`, so it
-        // is zero with probability about 1/amount — effectively never. The
-        // untyped path, and with it every transport epoch the conservation
-        // invariant checks, would have had no subjects at all while the
-        // invariant passed. `test_Handler_UntypedDrawAdmitsAnEpoch` pins the
-        // parity so this cannot quietly regress to a path nothing exercises.
-        bool splitTyped = seed % 2 == 1;
-        uint256 fresh = splitTyped
-            ? bound(uint256(keccak256(abi.encode(seed, "fresh"))), 0, amount)
-            : 0;
-        if (!splitTyped) ++untypedAdmitted;
+        uint256 fresh = bound(uint256(keccak256(abi.encode(seed, "fresh"))), 0, amount);
         _mint(diamond, amount);
-        uint256[] memory days_ = new uint256[](1);
-        days_[0] = 1;
-        try RewardIngressFacet(diamond).onRewardBudgetReceived(
-            address(vpfi), amount, days_, 8453, ++nextRemit, address(0xBA5E), 0, fresh, bytes32(0),
-            splitTyped
-        ) {
+        // Through an external self-call, so a refusal is counted rather than
+        // reverting the handler: the ingress call itself is built by the
+        // shared test-side delivery library.
+        try this.deliverD6(amount, fresh, ++nextRemit) {
+            ++epochsAdmitted;
             packetHashes.push(keccak256(abi.encode(uint256(8453), ++seqStamped, "seq")));
         } catch {
             refusals++;
         }
+    }
+
+    /// A whole-split d6 delivery of `amount` over the handler's one day, from
+    /// Base, with no transport id (the per-source sequence stamps it), in the
+    /// live era. Self-call only: {budgetIngress} wraps it in a `try`.
+    function deliverD6(uint256 amount, uint256 fresh, uint256 remitId) external {
+        require(msg.sender == address(this), "self only");
+        LibD6Delivery.deliver(
+            diamond,
+            LibD6Delivery.Delivery({
+                token: address(vpfi),
+                amount: amount,
+                dayIds: _dayOne(),
+                sourceChainId: 8453,
+                remitId: remitId,
+                remitter: address(0xBA5E),
+                recycled: amount - fresh,
+                fresh: fresh,
+                messageId: bytes32(0),
+                era: 0
+            })
+        );
+    }
+
+    /// The one day every handler delivery lists.
+    function _dayOne() internal pure returns (uint256[] memory days_) {
+        days_ = new uint256[](1);
+        days_[0] = 1;
     }
 
     /// #1566 closure 2 cutover PR 2 — classify a random share of a random
@@ -720,45 +702,6 @@ contract RewardCustodyHandler is Test {
         AdminFacet(diamond).unpause();
     }
 
-    /// #1566 transport epochs PR 3b (Codex #2232 r3) — put a random landed
-    /// packet back into its PRE-3b shape and bring it in through the ROLLOUT
-    /// admission, so an epoch opened that way is a subject of the conservation
-    /// invariant under every interleaving and not only in its own unit suite.
-    ///
-    /// Skipped where a remainder ROW EXISTS. The fixture clears the batch row,
-    /// and a remainder entry outliving it is an artifact of the mutator rather
-    /// than a state the chain can reach: a rollout packet by definition never
-    /// had a batch to park.
-    ///
-    /// The probe is the row's `dayCount`, not its `amount` (Codex #2232 r3).
-    /// An earlier revision tested `parked != 0` and reasoned that this also
-    /// excluded every classified packet, since classification is gated behind
-    /// the release — true only while a classification could not empty the
-    /// remainder. It can: park 10, classify 10, and `amount` is back to zero
-    /// with the row very much alive. `dayCount` is copied from the batch at
-    /// parking and never falls, so it answers "is there a row" rather than
-    /// "does the row still hold anything", which is the question being asked.
-    function rolloutAdmit(uint256 seed) external {
-        _start();
-        if (packetHashes.length == 0) return;
-        bytes32 h = packetHashes[seed % packetHashes.length];
-        RewardEpochFacet ep = RewardEpochFacet(diamond);
-        (bytes32 packetHash, , , , , ) = ep.getTransportBatch(h);
-        if (packetHash == bytes32(0)) return; // a typed delivery has no epoch to redo
-        (, , uint32 remDayCount, , ) = ep.getTransportRemainder(h);
-        if (remDayCount != 0) return;
-        TestMutatorFacet(diamond).unadmitTransportBatchRaw(h);
-        // The handler's untyped deliveries all list exactly this one day, so the
-        // whole list re-supplied here is the list the commitment covers.
-        uint256[] memory days_ = new uint256[](1);
-        days_[0] = 1;
-        try ep.admitLegacyTransportBatch(h, days_) {
-            rolloutAdmitted++;
-        } catch {
-            refusals++;
-        }
-    }
-
     /// #1566 transport epochs PR 3b (Codex #2232 r3) — RELEASE a random
     /// landed packet's epoch: materialize its membership, park what its
     /// obligations left, and record the acknowledgment.
@@ -770,7 +713,7 @@ contract RewardCustodyHandler is Test {
     /// 50,000 calls while the conservation invariant reported success over it.
     /// That is the failure mode an invariant campaign is least able to
     /// announce, so `released` is counted and asserted on, the way
-    /// `untypedAdmitted` and `rolloutAdmitted` already are.
+    /// `epochsAdmitted` already is.
     ///
     /// Each step is attempted independently rather than guarded up front: the
     /// three are reachable in different states (a batch may already be
@@ -783,12 +726,19 @@ contract RewardCustodyHandler is Test {
         bytes32 h = packetHashes[seed % packetHashes.length];
         RewardEpochFacet ep = RewardEpochFacet(diamond);
         (bytes32 packetHash, , , , , ) = ep.getTransportBatch(h);
-        if (packetHash == bytes32(0)) return; // a typed delivery has no epoch to release
-        // The handler's untyped deliveries all list exactly this one day, so
-        // the whole list re-supplied here is the list the commitment covers.
-        uint256[] memory days_ = new uint256[](1);
-        days_[0] = 1;
-        try ep.materializeTransportBatchPage(h, days_) {} catch {}
+        if (packetHash == bytes32(0)) return; // defensive: every handler delivery opens one
+        // The handler's deliveries all list exactly this one day, so its one
+        // chunk, proved against the root the wire carried, is the membership.
+        uint256[] memory days_ = _dayOne();
+        bytes32[] memory leaves = RemitWire.d6Chunks(days_);
+        try ep.materializeTransportBatchChunk(
+            h,
+            0,
+            MerkleFixture.chunk(days_, 0, RemitWire.D6_CHUNK_DAYS),
+            MerkleFixture.proof(leaves, 0),
+            new bytes32[](0),
+            new bytes32[](0)
+        ) {} catch {}
         // #2258 — the production release refuses everyone in 3b-i, so the
         // handler reaches the release (and the debit seam the conservation
         // invariant exists for) through the test-only raw entry.

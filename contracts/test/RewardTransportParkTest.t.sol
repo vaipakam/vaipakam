@@ -15,6 +15,7 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
 
 /// @title RewardTransportParkTest
 /// @notice 3b-ii-B — the PARK is the release gate: a batch's remainder parks only
@@ -71,13 +72,8 @@ contract RewardTransportParkTest is SetupTest, IVaipakamErrors {
     function _epochOn(uint256 n, uint256 remitId) internal returns (bytes32 h, uint256[] memory list) {
         list = _days(n);
         bytes32 id = keccak256(abi.encode("park-epoch", n, remitId));
-        _ingress().onRewardBudgetReceived(address(vpfi), EPOCH, list, CHAIN_BASE, remitId, REMITTER, 0, 0, id, false);
-        h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
-        while (true) {
-            (, , , uint32 dayCount, uint32 indexedDays, ) = _epoch().getTransportBatch(h);
-            if (indexedDays >= dayCount) break;
-            _epoch().materializeTransportBatchPage(h, list);
-        }
+        (h, ) = LibD6Delivery.deliverFresh(address(diamond), address(vpfi), EPOCH, list, CHAIN_BASE, remitId, REMITTER, id);
+        LibD6Delivery.indexAllDays(address(diamond), h, list);
     }
 
     /// @dev Days 1..n elapse, the chain closes each, and each is proven closed —
@@ -94,52 +90,41 @@ contract RewardTransportParkTest is SetupTest, IVaipakamErrors {
     /// @dev The gate: an open listed day refuses the park by name; once every listed
     ///      day is proven closed the remainder parks, whole.
     function test_ThePark_RequiresEveryListedDayProvenClosed() public {
-        (bytes32 h, uint256[] memory list) = _epochOn(2, 7);
+        (bytes32 h, ) = _epochOn(2, 7);
         vm.expectRevert(abi.encodeWithSelector(TransportDayNotClosed.selector, h, 1));
-        _epoch().parkTransportBatchRemainder(h, list);
+        _epoch().parkTransportBatchRemainder(h);
         vm.warp(launch + 3 days + 1);
         _rep().closeDay(1);
         _clo().startDayClosure(1);
         vm.expectRevert(abi.encodeWithSelector(TransportDayNotClosed.selector, h, 2));
-        _epoch().parkTransportBatchRemainder(h, list);
+        _epoch().parkTransportBatchRemainder(h);
         _rep().closeDay(2);
         _clo().startDayClosure(2);
         address anyone = makeAddr("anyone");
         vm.prank(anyone);
-        (uint32 checked, bool parked, uint256 amount) = _epoch().parkTransportBatchRemainder(h, list);
+        (uint32 checked, bool parked, uint256 amount) = _epoch().parkTransportBatchRemainder(h);
         assertEq(checked, 2); assertTrue(parked); assertEq(amount, EPOCH, "the whole remainder");
-        (uint256 remAmount, , uint32 remDays, bool acked, ) = _epoch().getTransportRemainder(h);
+        (uint256 remAmount, uint32 remDays, bool acked, ) = _epoch().getTransportRemainder(h);
         assertEq(remAmount, EPOCH); assertEq(remDays, 2); assertFalse(acked);
         (, uint256 balance, , , , bool released) = _epoch().getTransportBatch(h);
         assertEq(balance, 0, "moved out of the batch"); assertFalse(released, "parked is not released");
     }
 
-    /// @dev The day list is checked against the batch's own commitment.
-    function test_ThePark_RefusesAForeignDayList() public {
-        (bytes32 h, ) = _epochOn(2, 8);
-        _closeDays(2);
-        uint256[] memory wrong = _days(3);
-        vm.expectRevert(
-            abi.encodeWithSelector(TransportDayListMismatch.selector, h, keccak256(abi.encode(_days(2))), keccak256(abi.encode(wrong)))
-        );
-        _epoch().parkTransportBatchRemainder(h, wrong);
-    }
-
-    /// @dev A list longer than one page is checked across calls with a cursor.
+    /// @dev A day list longer than one page is checked across calls with a cursor.
     function test_ThePark_IsPaged() public {
-        (bytes32 h, uint256[] memory list) = _epochOn(PAGE + 8, 9);
+        (bytes32 h, ) = _epochOn(PAGE + 8, 9);
         _closeDays(PAGE + 8);
-        (uint32 checked, bool parked, ) = _epoch().parkTransportBatchRemainder(h, list);
+        (uint32 checked, bool parked, ) = _epoch().parkTransportBatchRemainder(h);
         assertEq(checked, PAGE); assertFalse(parked, "one page per call");
-        (checked, parked, ) = _epoch().parkTransportBatchRemainder(h, list);
+        (checked, parked, ) = _epoch().parkTransportBatchRemainder(h);
         assertEq(checked, PAGE + 8); assertTrue(parked);
     }
 
     /// @dev The acknowledgment is the administrator's disposition; it releases the batch.
     function test_TheAcknowledgment_IsTheAdministrators_AndReleases() public {
-        (bytes32 h, uint256[] memory list) = _epochOn(1, 10);
+        (bytes32 h, ) = _epochOn(1, 10);
         _closeDays(1);
-        _epoch().parkTransportBatchRemainder(h, list);
+        _epoch().parkTransportBatchRemainder(h);
         address stranger = makeAddr("stranger");
         vm.expectRevert(
             abi.encodeWithSelector(LibAccessControl.AccessControlUnauthorizedAccount.selector, stranger, LibAccessControl.ADMIN_ROLE)
@@ -147,7 +132,7 @@ contract RewardTransportParkTest is SetupTest, IVaipakamErrors {
         vm.prank(stranger);
         _epoch().acknowledgeTransportBatchRemainder(h);
         _epoch().acknowledgeTransportBatchRemainder(h);
-        (, , , bool acked, ) = _epoch().getTransportRemainder(h);
+        (, , bool acked, ) = _epoch().getTransportRemainder(h);
         assertTrue(acked);
         (, , , , , bool released) = _epoch().getTransportBatch(h);
         assertTrue(released);

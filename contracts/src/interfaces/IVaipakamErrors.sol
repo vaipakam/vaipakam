@@ -568,93 +568,22 @@ interface IVaipakamErrors {
     /// @notice The packet's day-list commitment is already written — it is
     ///         recorded once, with the record, by the ingress itself.
     error IngressPacketDayListStamped(bytes32 packetHash);
-    /// @notice The receipt predates packet stamping, so there is no packet to
-    ///         attest a split for.
-    error IngressReceiptHasNoPacket(uint256 remitId);
-    /// @notice The packet's own wire carried its split; an attestation has
-    ///         nothing to add and is refused rather than silently ignored.
-    error IngressPacketAlreadyTyped(bytes32 packetHash);
     /// @notice The packet's split is already attested. The first attestation
     ///         is the source's record; a differing second one is a faulty
     ///         source, not a correction.
     error IngressPacketAlreadyAttested(bytes32 packetHash);
-    /// @notice A split attestation carrying neither a fresh nor a recycled
-    ///         figure — nothing to scale, and nothing it could authenticate.
-    error SplitAttestationEmpty(uint256 remitId);
     /// @notice No reservation was ever issued under this id.
     error RemitReservationUnknown(uint256 remitId);
-    /// @notice This reservation's own wire carried its split, so the mirror
-    ///         typed its packet at ingress and an attestation has nothing to
-    ///         add. Refused on the canonical side rather than after the
-    ///         caller has paid a transport fee for a message the destination
-    ///         must reject.
-    error RemitSplitAlreadyOnWire(uint256 remitId);
-    /// @notice #1566 transport epochs PR 3b — the day list re-supplied to a
-    ///         materialization call is not the one this delivery committed to
-    ///         at ingress. Membership is never taken from an event or from a
-    ///         caller's word: the packet's 3a commitment is the authority, and
-    ///         a page that cannot prove itself against it writes nothing.
+    /// @notice #1566 transport epochs — a chunk materialization's optional
+    ///         `hints` / `lateHints` are not aligned with the chunk's day list
+    ///         (each must be empty or exactly as long). Nothing is written.
     error TransportDayListMismatch(bytes32 batchId, bytes32 committed, bytes32 supplied);
-    /// @notice #1566 transport epochs PR 3b — this batch's per-day index is
-    ///         already whole, so there is no page left to materialize.
-    error TransportBatchFullyIndexed(bytes32 batchId);
     /// @notice #1566 transport epochs PR 3b — no batch was admitted under this
-    ///         id. A d5 delivery has no batch by design (its components are
-    ///         typed on the wire and credited to the shared ledgers at
-    ///         ingress), and neither has a packet that arrived before 3a began
-    ///         recording the day-list commitment an epoch is bound to.
-    ///
-    ///         NOT "a packet that landed before this ledger existed" (Codex
-    ///         #2232 r15). An arrival between 3a and 3b carries that
-    ///         commitment and is OWED an epoch: it draws this error only until
-    ///         someone calls the permissionless rollout admission, and the
-    ///         remedy is to call it rather than to conclude the packet is
-    ///         outside the ledger. `LibRewardCustody.rolloutAdmissionStatus`
-    ///         is what tells the two apart, and is the only place that list
-    ///         lives.
+    ///         id. Only a rooted (d6) budget delivery landing on a deployment
+    ///         whose reward custody is activated opens one, at its own
+    ///         landing; a compensation, and a budget delivery that landed
+    ///         before activation, never hold one.
     error TransportBatchUnknown(bytes32 batchId);
-    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — this packet
-    ///         already holds a transport epoch, so the ROLLOUT admission has
-    ///         nothing to open. The retrospective entry exists only for
-    ///         packets that landed before this ledger did; re-running it on an
-    ///         admitted packet would restate an anchor the conservation rule
-    ///         treats as immutable.
-    error TransportBatchAlreadyAdmitted(bytes32 packetHash);
-    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — this packet
-    ///         carries no 3a day-list commitment, so there is no membership to
-    ///         bind an epoch to. A d6+ arrival is typed on the wire and has no
-    ///         day list to name; a pre-3a one recorded none. Neither can be
-    ///         admitted retrospectively, because membership is never taken
-    ///         from a caller's word.
-    error TransportPacketHasNoDayList(bytes32 packetHash);
-    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — this packet's
-    ///         record STATES a component, so its wire typed it and the value
-    ///         was credited to a shared ledger at ingress. Opening an epoch
-    ///         over it would make the same value drawable twice — once through
-    ///         the ledger that holds it, once through the epoch — which is the
-    ///         error design §5c's one-accounting-path rule exists to prevent.
-    error TransportPacketWireTyped(bytes32 packetHash);
-    /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — this packet
-    ///         holds nothing protected-and-unclassified, so a retrospective
-    ///         epoch would have a balance of zero: a membership that can
-    ///         reserve nothing, behind a gate that would hold the packet shut
-    ///         until an operator released a batch releasing nothing. Refused
-    ///         for the same reason the ingress opens no epoch for an empty
-    ///         remainder.
-    error TransportPacketNothingUntyped(bytes32 packetHash);
-    /// @notice #1566 transport epochs PR 3b (Codex #2232 r4) — this packet
-    ///         holds no transport epoch YET, and it is one the rollout
-    ///         admission can still open one over: it landed with a 3a day-list
-    ///         commitment, its wire typed nothing, and its remainder is still
-    ///         unclassified. Classifying it now would spend, with no release
-    ///         and no debit, value its own listed days are entitled to reach
-    ///         — the bypass the epoch gate exists to close, on precisely the
-    ///         population the retrospective admission exists to rescue.
-    ///         Admit it (`admitLegacyTransportBatch`, permissionless, with the
-    ///         committed day list), index it, park it, acknowledge it, then
-    ///         classify. A packet the rollout refuses can never hold an epoch
-    ///         and is classifiable as before.
-    error TransportBatchNotAdmitted(bytes32 packetHash);
     /// @notice #1566 transport epochs PR 3b — the batch's remainder is already
     ///         parked. Parking is once and for all: the remainder it names is
     ///         what the batch's obligations left, and a second park would
@@ -704,17 +633,6 @@ interface IVaipakamErrors {
     /// @dev The named predecessor is not in the day's list, or the batch does
     ///      not belong between it and its successor by (arrival, batch id).
     error TransportIndexHintInvalid(bytes32 batchId, uint256 dayId, bytes32 hint);
-    /// @notice A split attestation arrived from a chain that is not this
-    ///         deployment's canonical (Base) chain. Messenger authentication
-    ///         proves a message came from a configured peer, never that the
-    ///         peer is the right one for this kind: an extra or stale peer
-    ///         would otherwise be able to decide a packet's fresh/recycled
-    ///         split once the attested caps become usable.
-    error SplitAttestationNotFromBase(uint32 sourceChainId, uint32 baseChainId);
-    /// @notice This reservation moved no value, so it dispatched no packet and
-    ///         wrote no receipt on the destination — there is nothing for an
-    ///         attestation to name.
-    error RemitReservationCarriesNoSplit(uint256 remitId);
     /// @notice #1566 closure 2 cutover PR 2 (Codex #2206 r6) — the unspent
     ///         fresh credit a correction may move with its tokens is bounded
     ///         by the live row net of the outstanding fresh commitments, the
@@ -881,8 +799,8 @@ interface IVaipakamErrors {
     ///         priced, on this gate-armed mirror, to owe FRESH value that
     ///         Base has not yet been proven to have delivered here. The claim
     ///         DEFERS, moving no value: it pays once a budget packet proven
-    ///         to list the day has landed (`proveDeliveryDayList` /
-    ///         `proveDeliveryDayChunk`, or an indexed transport epoch).
+    ///         to list the day has landed (`proveDeliveryDayChunk`, or an
+    ///         indexed transport epoch).
     /// @param dayId The first day the walk parked on for want of delivery.
     error InteractionDayAwaitingDelivery(uint256 dayId);
     /// @notice User attempted to withdraw more VPFI than their vault
@@ -1834,9 +1752,8 @@ interface IVaipakamErrors {
     /// @notice The d6 wire's extent is not one the chain can index: no days, a chunk count that is not the
     ///         fixed-size chunking of the element count, or more chunks than the index marks (3d-1).
     error TransportRootExtentInvalid(bytes32 packetHash, uint256 elementCount, uint256 chunkCount);
-    /// @notice The batch's membership is committed by a root: it is indexed by proven chunks, not by the flat-hash page (3d-1).
-    error TransportBatchRooted(bytes32 batchId);
-    /// @notice The batch's membership is committed by a flat hash, not a root: it is not chunk-indexed (3d-1).
+    /// @notice The packet carries no day-list root — a compensation (whose flat stamp is provenance
+    ///         only), or a stamp no budget delivery recorded — so it has no chunk to index or prove (3d-1).
     error TransportBatchNotRooted(bytes32 batchId);
     /// @notice `chunkIndex` is at or past the committed chunk count (3d-1).
     error TransportChunkOutOfExtent(bytes32 batchId, uint256 chunkIndex, uint256 chunkCount);
@@ -1847,7 +1764,7 @@ interface IVaipakamErrors {
     /// @notice The chunk's leaf does not verify against the packet's day-list root under the supplied proof (3d-1).
     error TransportChunkProofInvalid(bytes32 batchId, uint256 chunkIndex, bytes32 leaf);
     /// @notice #1944 c1 — the packet holds a transport batch: its days land through the batch's own index
-    ///         (`materializeTransportBatchPage` / `Chunk`), which is the one fact the delivery gate reads for it.
+    ///         (`materializeTransportBatchChunk`), which is the one fact the delivery gate reads for it.
     error DeliveryProofRouteIsBatch(bytes32 packetHash);
     /// @notice #1944 c1 — only a BUDGET packet funds days; any other kind proves no delivery.
     error DeliveryProofNotBudget(bytes32 packetHash, uint8 kind);

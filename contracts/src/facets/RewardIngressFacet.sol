@@ -18,9 +18,9 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *         authenticated the packet.
  * @dev    #1566 transport epochs PR 3a — split out of {RewardRemittanceFacet}
  *         verbatim. That facet had 285 bytes of EIP-170 headroom left, and
- *         the ingress is exactly where the transport epochs grow: 3a's
- *         day-list commitment on every pre-d6 arrival, 3b's batch admission,
- *         PR C's intended-era validation. Same storage, same Diamond, same
+ *         the ingress is exactly where the transport epochs grow: the
+ *         day-list commitment, the batch admission, PR C's intended-era
+ *         validation. Same storage, same Diamond, same
  *         selectors for every caller (the receiver contracts and the reporter
  *         facet reach these through the Diamond's fallback by selector); only
  *         the runtime bytecode is separate. The two facets must be refreshed
@@ -31,335 +31,11 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *         send stay on {RewardRemittanceFacet}.
  */
 contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
-    /// @notice Emitted (mirror side) when a reward budget is received + credited.
-    /// @param sourceChainId Base chain id the budget came from.
-    /// @param token         Local VPFI token credited.
-    /// @param amount        VPFI credited to this Diamond.
-    /// @param dayIds        The exact day ids the batch funded — the mirror
-    ///                      keeps only `rewardBudgetReceivedTotal`, so this is
-    ///                      the sole per-day reconciliation record (the design
-    ///                      dropped a per-day map in favour of this event).
-    /// @param remitId       B2-d2 delivered-backing reservation id this
-    ///                      delivery fulfils (0 = legacy pre-d2 message — no
-    ///                      receipt record, no ack).
-    /// @param recycledShare #1434 P1-a — the delivery's declared RECYCLED
-    ///                      component, post-scaling.
-    /// @param freshShare    #1434 P1-a — its declared FRESH component,
-    ///                      post-scaling. Zero on a wire generation that
-    ///                      carried no split, which is NOT the same as
-    ///                      "nothing was fresh".
-    /// @dev    The two shares are the RAW INPUTS to the delivered-fresh
-    ///         attribution, deliberately not its outcome. Whether a delivery
-    ///         was counted is a function of these plus `dayIds` and the
-    ///         chain's `D*`, all of which a reader already has — so emitting
-    ///         the verdict as well would be a second source of the same
-    ///         truth, free to drift from the counters. What a reader could
-    ///         NOT previously reconstruct is `freshShare`: it depends on the
-    ///         wire generation, and the generation itself still never reaches
-    ///         this Diamond. Without it, a refused delivery is
-    ///         indistinguishable from a delivery that genuinely carried no
-    ///         fresh funding.
-    ///
-    ///         #1566 transport epochs PR 3b — ONE fact about the generation
-    ///         now travels, `splitTyped`, and it is not emitted here: whether
-    ///         the delivery opened a transport epoch is exactly that fact, and
-    ///         {LibRewardCustody.TransportBatchAdmitted} already says so for
-    ///         every delivery that did. Emitting it twice would be a second
-    ///         source of one truth, free to drift — the same reason the
-    ///         counted/uncounted verdict is absent above.
-    /// @custom:event-category informational/reward-transport
-    event RewardBudgetReceived(
-        uint256 indexed sourceChainId,
-        address indexed token,
-        uint256 amount,
-        uint256[] dayIds,
-        uint256 remitId,
-        uint256 recycledShare,
-        uint256 freshShare
-    );
-
-    /// @notice `onRewardBudgetReceived` called by an address other than the
-    ///         configured mirror-side receiver.
+    /// @notice A budget or compensation ingress called by an address other
+    ///         than the configured mirror-side receiver.
     error NotRewardRemittanceReceiver(address caller);
     /// @notice The credited token is not this Diamond's VPFI token.
     error RewardBudgetTokenMismatch(address expected, address delivered);
-
-    /**
-     * @notice Record a reward budget the {RewardRemittanceReceiver} has already
-     *         forwarded (as VPFI) into this mirror Diamond.
-     * @dev    Monitoring-only: the VPFI is already in the Diamond's balance
-     *         (the receiver transferred it before this call), and
-     *         `claimInteractionRewards` pays from that balance. This just
-     *         records the funded total + emits an event for reconciliation.
-     *         Trust chain: gated to the registered receiver, whose own
-     *         `onCrossChainMessage` is gated to the CCIP messenger.
-     * @param token         Token credited — must be this Diamond's VPFI.
-     * @param amount        VPFI amount credited.
-     * @param dayIds        Days the batch covered (for the event log).
-     * @param sourceChainId Base chain id the budget came from.
-     * @param remitId       #1222 M3 B2-d2 — the Base-side delivered-backing
-     *                      reservation id this delivery fulfils (0 for a
-     *                      legacy pre-d2 message: no receipt record is
-     *                      written and no ack ever flows — Base holds no
-     *                      reservation for those). First delivery wins the
-     *                      receipt slot; the ack content is later computed
-     *                      from this record, never caller-supplied.
-     * @param recycledShare RECYCLED component of `amount`, already scaled to
-     *                      what physically landed. Zero on a legacy/d2
-     *                      payload, whose wire never carried the split.
-     * @param freshShare    #1434 P1-a — FRESH component of `amount`, likewise
-     *                      pre-scaled. The receiver derives it from the WIRE
-     *                      GENERATION it decoded and passes ZERO whenever the
-     *                      composition was not transmitted, so this ingress
-     *                      never has to infer a split from a payload that
-     *                      does not carry one. `freshShare + recycledShare`
-     *                      may be LESS than `amount` (both are floored) and
-     *                      may never exceed it.
-     * @param splitTyped    #1566 transport epochs PR 3b — whether the WIRE
-     *                      carried the fresh/recycled split, which is not the
-     *                      same as whether the split it carried was non-zero:
-     *                      a d5 remittance whose components BOTH FLOORED TO
-     *                      ZERO and a legacy one that transmitted nothing
-     *                      arrive here as the same two zeros. (Not a wholly
-     *                      recycled d5 delivery, which is unambiguous — it
-     *                      arrives as `recycledShare == amount` with only
-     *                      `freshShare` zero; Codex #2232 r12.) Supplied by the
-     *                      receiver rather than inferred here because the
-     *                      receiver is the only party that saw the wire
-     *                      generation. It decides the delivery's ACCOUNTING
-     *                      PATH: a typed delivery's components are credited to
-     *                      the shared ledgers below and it takes no transport
-     *                      epoch, while an untyped delivery's value is in no
-     *                      shared ledger and its epoch is what makes it
-     *                      spendable by the obligations it names.
-     * @param transportMessageId The transport's message id, as the adapter
-     *                      delivered it (#1566 closure 2 cutover PR 1): the
-     *                      Diamond records the packet under
-     *                      `keccak256(sourceChainId, transportMessageId)`,
-     *                      the ingress stamp the cutover's reconciliation
-     *                      entries verify against. Zero for a transport
-     *                      without one — the ingress then allocates a
-     *                      per-source sequence itself.
-     *
-     *         MIGRATION MODE (design §5c, "the freeze blocks consumers
-     *         WITHOUT blocking the packets being drained"): this receive
-     *         ingress is deliberately NOT `whenNotPaused`. Under the
-     *         manual pause every reward CONSUMER — claim, expiry and
-     *         forfeit sweeps, transports — is refused, while a packet in
-     *         flight still lands and is protected at ingress; the pause
-     *         boundary the expiry predicates already stamp keeps the
-     *         frozen interval uncredited. The receiver's own guardian
-     *         pause remains the lever to stop inbound packets at the edge.
-     */
-    function onRewardBudgetReceived(
-        address token,
-        uint256 amount,
-        uint256[] calldata dayIds,
-        uint256 sourceChainId,
-        uint256 remitId,
-        address remitter,
-        uint256 recycledShare,
-        uint256 freshShare,
-        bytes32 transportMessageId,
-        bool splitTyped
-    ) external nonReentrant {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (msg.sender != s.rewardRemittanceReceiver) {
-            revert NotRewardRemittanceReceiver(msg.sender);
-        }
-        if (token != s.vpfiToken) {
-            revert RewardBudgetTokenMismatch(s.vpfiToken, token);
-        }
-        // Both component bounds are enforced BEFORE either is used. The
-        // recycled bound was always here (it gates the custody credit
-        // below); the fresh bound is its twin, and checking it against the
-        // recycled REMAINDER rather than against `amount` is what makes the
-        // pair jointly sound — two individually-valid shares can still sum
-        // past the delivery.
-        if (recycledShare > amount) {
-            revert RecycledShareExceedsDelivery(recycledShare, amount);
-        }
-        uint256 freshLooking = amount - recycledShare;
-        if (freshShare > freshLooking) {
-            revert FreshShareExceedsDelivery(freshShare, freshLooking);
-        }
-        s.rewardBudgetReceivedTotal += amount;
-        // #1434 P1-a — record the ARMED-ATTRIBUTABLE fresh component.
-        //
-        // Two independent tests, and a delivery must pass BOTH:
-        //
-        //   1. COMPOSITION KNOWN — decided by the receiver, which is the only
-        //      party that saw the wire generation. A legacy/d2 payload never
-        //      carried the fresh/recycled split, so the receiver sends
-        //      `freshShare = 0` and the delivery contributes nothing. The
-        //      earlier shape of this code inferred `amount - recycledShare`
-        //      here, which recorded such a delivery as ENTIRELY fresh even
-        //      where the original remit was partly recycled — over-stating
-        //      exactly on the deliveries whose composition is unknown
-        //      (Codex #1556 r1 P1).
-        //   2. ARMED-ATTRIBUTABLE — every day this delivery covers is at or
-        //      after this chain's `D*`. A pre-arming delivery funds legacy
-        //      schedule days, which the delivered-fresh bound does not
-        //      govern; counting it would hand the chain headroom for payouts
-        //      that bound never owed.
-        //
-        // Whatever is not counted is recorded, not discarded — see
-        // `rewardBudgetFreshUncounted`. The two always sum to `freshLooking`,
-        // so an operator can reconcile a chain's counted funding against what
-        // Base actually sent without re-deriving anything.
-        // #1566 closure 2 — the received side is VINTAGE-BLIND and
-        // FRESH-ONLY: the authenticated fresh component of a delivery is
-        // credited whatever days it funds, because the paid side now charges
-        // legacy and armed outflows alike at the chokepoints, and a ledger
-        // whose two sides count different nouns is the defect closure 2
-        // exists to remove. Test 2 (armed-attributable days) is retired; test
-        // 1 (composition known) is unchanged — an old-wire packet still
-        // arrives with `freshShare = 0` and lands whole in `uncounted`, which
-        // the cutover epoch (closure 2, second PR) reconciles.
-        // #1566 closure 2 cutover PR 1 — the packet under its ingress stamp,
-        // recorded BEFORE any share moves so the record describes the
-        // whole landing (a replayed stamp, or a second packet for a receipt
-        // already delivered, refuses whole).
-        // PR C-3 — an era-less wire landing after this chain's role changed is
-        // placed by the days it lists, since the era of a day is defined
-        // (custodyEraOfDay): every day at or after the live era's boundary is
-        // the live era's, taken as before; a list naming any earlier day belongs
-        // to a retired era — the era of its EARLIEST listed day — and reaches no
-        // live ledger (#1566 PR C revision): the WHOLE delivery opens its epoch,
-        // the consumable home its listed days draw from, typed from the wire's
-        // own split when it carries one, else awaiting the canonical chain's
-        // split attestation like any untyped delivery. A list of no days names
-        // no retired obligation and funds the live era.
-        bool retiredDays = LibRewardCustody.active(s) && s.custodyEraCurrent != 0
-            && !LibRewardCustody.listedDaysAreLive(s, dayIds);
-        bytes32 h = LibRewardCustody.callRecordIngressPacket(
-            sourceChainId,
-            transportMessageId,
-            LibRewardCustody.PACKET_KIND_BUDGET,
-            amount,
-            retiredDays ? 0 : freshShare,
-            retiredDays ? 0 : recycledShare,
-            remitter,
-            remitId
-        );
-        // #1566 transport epochs PR 3a — the day-list commitment, in the same
-        // transaction as the record: the transport epochs' compact admission
-        // materializes this batch's membership against it, never against an
-        // event, so a packet landing before that ledger exists is still
-        // admissible on the strength of the chain's own record.
-        LibRewardCustody.stampPacketDayList(s, h, dayIds);
-        if (retiredDays) {
-            LibRewardCustody.stampPacketEra(
-                s, h, LibRewardCustody.custodyEraOfDay(s, LibRewardCustody.earliestListedDay(dayIds))
-            );
-            // Attested WHOLE, the rooted wire's rule: recycled as delivered,
-            // fresh the rest of what landed. The receiver floors BOTH shares of
-            // a short d5 delivery, and the whole delivery becomes one epoch typed
-            // by these two caps — a wei under no cap is value no day could draw.
-            if (splitTyped) LibRewardCustody.attestPacketFromWire(s, h, freshLooking, recycledShare);
-            s.rewardBudgetFreshUncounted += amount;
-            LibRewardCustody.callUnclassifiedIngress(h, amount);
-            LibRewardCustody.admitTransportBatch(s, h, dayIds, amount);
-            emit RewardBudgetReceived(sourceChainId, token, amount, dayIds, remitId, recycledShare, freshShare);
-            return;
-        }
-        // #1566 transport epochs PR 3b — the UNTYPED delivery opens its
-        // transport epoch here, in the same transaction as the record and the
-        // commitment, so the obligations it names can reach it and nothing
-        // else can. A typed delivery opens none: its components are credited
-        // to the shared ledgers immediately below, and a batch as well would
-        // make one delivery spendable twice (§5c's one-accounting-path rule).
-        //
-        // Deliberately BEFORE the credits rather than after: the admission is
-        // the only step that can refuse for a reason the credits would not
-        // (an unknown packet), and a refusal must leave no half-credited
-        // delivery behind.
-        uint256 counted = freshShare;
-        // #1566 slice 4 PR B — on an activated deployment the counted fresh
-        // share is RELOCATED from this balance into the holder and credited
-        // under the §5c deficit split (live-fresh, or restitution for the
-        // part that only closes a deficit). The uncounted remainder is
-        // recorded as before and, since closure 2's cutover PR 1, protected
-        // into the holder's `Unclassified` row below.
-        if (counted != 0) {
-            if (LibRewardCustody.active(s)) LibRewardCustody.callRelocateFreshIngress(counted);
-            else s.rewardBudgetArmedFreshReceived += counted;
-        }
-        if (freshLooking > counted) {
-            uint256 remainder = freshLooking - counted;
-            s.rewardBudgetFreshUncounted += remainder;
-            // #1566 closure 2 cutover PR 1 — PROTECTED AT INGRESS on an
-            // activated deployment: the untyped remainder is relocated
-            // (measured) into the holder's `Unclassified` row the moment it
-            // lands, instead of resting in the shared balance where a later
-            // relocation could move another owner's tokens (design §5c).
-            if (LibRewardCustody.active(s)) {
-                LibRewardCustody.callUnclassifiedIngress(h, remainder);
-                // #1566 transport epochs PR 3b — the TRANSPORT EPOCH is opened
-                // HERE, under the same condition and from the same amount as
-                // the protection above, and only for an untyped wire (Codex
-                // #2232 r1).
-                //
-                // One condition, because the epoch and the protection are two
-                // views of ONE value: what the delivery's own days may draw,
-                // and what a reconciliation may later classify. An earlier
-                // revision admitted the epoch unconditionally, so a delivery
-                // landing on a configured-but-not-yet-ACTIVATED mirror got an
-                // epoch reporting the full balance while the packet's
-                // `unclassified` figure stayed zero — its tokens are
-                // Diamond-side until activation, and the activation envelope
-                // can move them into shared recycled backing. That is two
-                // claims on one amount, and no arithmetic downstream could
-                // have reconciled them.
-                //
-                // A pre-activation delivery therefore keeps `batchId == 0` and
-                // behaves exactly as every pre-3b arrival does: its value is
-                // Diamond-side, the epoch gate does not concern it, and the
-                // activation envelope is what attributes it. `freshShare` is
-                // bounded by `freshLooking` above, so the subtraction cannot
-                // underflow, and this branch is only reached when the
-                // remainder is non-zero.
-                if (!splitTyped) {
-                    LibRewardCustody.admitTransportBatch(s, h, dayIds, remainder);
-                }
-            }
-        }
-        // #1222 M3 B2-d5 — the RECYCLED component of this delivery is
-        // RELOCATED CUSTODY: the tokens are physically here and the claim
-        // path will debit the bucket for the WHOLE recycled payout
-        // (`RewardClaimFacet` → `consume(paidRecycled)`, no funding-source
-        // split), so without this credit a Base-funded top-up would be
-        // consumed against a bucket that never held it — flooring the ledger
-        // at zero and over-counting `paidOutRecycled`, which inflates the
-        // DERIVED `creditedCumulative` and reports Base's own tokens back as
-        // this chain's absorption (Codex #1430 r3 F2).
-        //
-        // It is NOT absorption: {creditCustodyRelocated} keeps it out of the
-        // Ā day-bucket AND out of the cumulative this chain reports to Base.
-        // The guard against a malformed/hostile payload claiming more
-        // recycled backing than actually arrived now runs at the TOP of this
-        // function, alongside its fresh-share twin.
-        LibVpfiRecycle.creditCustodyRelocated(
-            remitId,
-            recycledShare,
-            LibVpfiRecycle.RecycleSource.RemittedCustodyRelocation
-        );
-        // r4 — receipts key by (remitter, remitId): `remitter` comes from
-        // the remit PAYLOAD (immutable, messenger-authenticated message
-        // data — never delivery-time channel config), so different
-        // canonical deployments' same-numbered receipts CO-EXIST under
-        // distinct keys — no collision, no supersession ordering. The
-        // receipt itself is written by the packet record above
-        // (`LibRewardCustody.recordIngressPacket`), ONCE per key: a second
-        // packet for a delivered receipt refuses whole there (Codex #2198
-        // r1 — the ingress used to keep the first receipt silently, on the
-        // reasoning that CCIP executes a message once; the stamp guard
-        // covers that case, the receipt guard covers a faulty remitter).
-        emit RewardBudgetReceived(
-            sourceChainId, token, amount, dayIds, remitId, recycledShare,
-            freshShare
-        );
-    }
 
     /// @notice 3d-1 — a d6 (rooted) reward budget landed: what arrived, the
     ///         commitment and extent it arrived under, the split the wire typed
@@ -399,24 +75,40 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
      *         custody row under the packet, and the days the root commits to
      *         draw it first — under the draw, staging and gate rules every
      *         other epoch obeys — with only the residual reaching the shared
-     *         sources. The uncounted figures grow by the whole amount for the
-     *         same reason they do for an untyped delivery: this value is in no
-     *         shared ledger, and the draws step them down as they type it. A
+     *         sources. The uncounted figures grow by the whole amount: this
+     *         value is in no shared ledger, and the draws step them down as
+     *         they type it. A
      *         wire whose split does not account for the whole delivery is
      *         refused by name: a wei under no cap would be value no day could
      *         draw and no classification could reach.
      *
      *         Before custody activation the delivery's tokens rest with the
      *         Diamond and the activation is what assigns them, so a rooted
-     *         delivery then takes the TYPED-LEDGER path exactly as a d5 one
-     *         does — the fresh component counted, the recycled one credited to
-     *         the bucket — and opens no epoch (giving it one would leave two
-     *         records claiming the same money, the rule the untyped path
-     *         states). Its commitment is still stamped: a packet's record says
+     *         delivery then takes the TYPED-LEDGER path — the fresh component
+     *         counted, the recycled one credited to the bucket — and opens no
+     *         epoch (giving it one would leave two records claiming the same
+     *         money, §5c's one-accounting-path rule). Its commitment is still
+     *         stamped, so its days land through
+     *         {RewardEpochFacet.proveDeliveryDayChunk}: a packet's record says
      *         what it claimed whichever path its value took.
      *
      *         `intendedEra` is STORED, not validated — PR C's receive rules
-     *         read it; no wire before d6 carried one.
+     *         read it.
+     *
+     *         `transportMessageId` is the transport's message id, as the
+     *         adapter delivered it (#1566 closure 2 cutover PR 1): the Diamond
+     *         records the packet under `keccak256(sourceChainId,
+     *         transportMessageId)`, the ingress stamp the cutover's
+     *         reconciliation entries verify against. Zero for a transport
+     *         without one — the ingress then allocates a per-source sequence.
+     *
+     *         MIGRATION MODE (design §5c, "the freeze blocks consumers
+     *         WITHOUT blocking the packets being drained"): this ingress is
+     *         deliberately NOT `whenNotPaused`. Under the manual pause every
+     *         reward CONSUMER — claim, expiry and forfeit sweeps, transports —
+     *         is refused, while a packet in flight still lands and is
+     *         protected at ingress. The receiver's own guardian pause remains
+     *         the lever to stop inbound packets at the edge.
      */
     function onRewardBudgetReceivedD6(
         address token,
@@ -604,10 +296,11 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
      *         counted + uncounted always reconciles against what Base
      *         sent.
      * @param transportMessageId The transport's message id (#1566 closure 2
-     *         cutover PR 1) — see {onRewardBudgetReceived}; the packet is
+     *         cutover PR 1) — see {onRewardBudgetReceivedD6}; the packet is
      *         recorded under its ingress stamp, and a quarantine lands in
      *         the holder's `Unclassified` row on an activated deployment.
-     *         Not `whenNotPaused`, for the same migration-mode reason.
+     *         Not `whenNotPaused`, for the migration-mode reason
+     *         {onRewardBudgetReceivedD6} gives.
      */
     function onCompensationBudgetReceived(
         address token,
@@ -652,9 +345,8 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // #1566 PR C revision — a compensation belongs to the era of its day.
         LibRewardCustody.stampPacketEra(s, h, LibRewardCustody.custodyEraOfDay(s, dayId));
         {
-            // #1566 transport epochs PR 3a — a compensation names ONE day; its
-            // commitment is recorded exactly as a budget delivery's list is,
-            // so no pre-d6 arrival is left without one.
+            // #1566 transport epochs PR 3a — a compensation names ONE day, and
+            // its packet records that day's flat commitment as provenance.
             uint256[] memory one = new uint256[](1);
             one[0] = dayId;
             LibRewardCustody.stampPacketDayList(s, h, one);
@@ -1091,36 +783,4 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     // delivery covers is at or after `D*`. Its conservative gap (a delivery
     // overtaking the arming broadcast counted as zero) no longer exists,
     // because vintage no longer decides what is counted.
-
-    // ─── #1566 transport epochs PR 3a — the split attestation ingress ───────
-
-    /**
-     * @notice The SPLIT ATTESTATION ingress (called by the reward messenger
-     *         after peer authentication): the canonical chain's recorded split
-     *         of a d2 remittance this mirror received untyped, persisted once
-     *         as the packet's two attested caps, each scaled to what landed.
-     * @dev    Mirror-only, and gated on the messenger exactly as the ack
-     *         ingress is. It lifts no classification bound by itself — the
-     *         bound is derived from the caps at use time and the gate that
-     *         admits them is the transport epochs' batch lifecycle (3b), so
-     *         until that lands an attested packet classifies exactly as it did
-     *         before. Every refusal is re-executable (the transport keeps the
-     *         message failed) and the mirror accepts exactly one attestation
-     *         per packet, so a repeat send is a retry lever, not a grief.
-     */
-    function onRemitSplitAttested(
-        uint32 sourceChainId,
-        address remitter,
-        uint256 remitId,
-        uint256 fresh,
-        uint256 recycled
-    ) external nonReentrant {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0)) {
-            revert NotAuthorizedRewardMessenger();
-        }
-        if (!LibVaipakam.isMirrorRewardChain(s)) revert OnlyMirrorRewardChain();
-        LibRewardCustody.attestPacketSplit(s, sourceChainId, remitter, remitId, fresh, recycled);
-    }
-
 }

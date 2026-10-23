@@ -3171,7 +3171,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](12);
+        s = new bytes4[](11);
         s[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         s[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         s[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -3181,11 +3181,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[6] = RewardRemittanceFacet.onRemitAckReceived.selector;
         s[7] = RewardRemittanceFacet.finalizeRemitReservation.selector;
         s[8] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
-        // #1566 transport epochs PR 3a — the canonical split attestation send.
-        s[9] = RewardRemittanceFacet.attestRemitSplit.selector;
         // #1944 consequence 1 — the mirror's one-shot day-delivery gate.
         s[10] = RewardRemittanceFacet.setDayDeliveryGateFromDay.selector;
-        s[11] = RewardRemittanceFacet.backfillRemitHistory.selector; // #2489 r7: the history walk
+        s[9] = RewardRemittanceFacet.backfillRemitHistory.selector; // #2489 r7: the history walk
     }
 
     /// #1566 transport epochs PR 3a — the mirror-side ingress half of the
@@ -3195,14 +3193,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](5);
+        s = new bytes4[](3);
         s[0] = RewardIngressFacet.onCompensationBudgetReceived.selector;
         s[1] = RewardIngressFacet.onCompensationDayBroadcastArrived.selector;
-        s[2] = RewardIngressFacet.onRewardBudgetReceived.selector;
-        // #1566 transport epochs PR 3a — the split attestation ingress.
-        s[3] = RewardIngressFacet.onRemitSplitAttested.selector;
         // 3d-1 — the rooted (d6) ingress.
-        s[4] = RewardIngressFacet.onRewardBudgetReceivedD6.selector;
+        s[2] = RewardIngressFacet.onRewardBudgetReceivedD6.selector;
     }
 
     /// #1566 transport epochs PR 3b — the transport epochs' post-ingress
@@ -3215,21 +3210,18 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](25);
-        s[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
+        s = new bytes4[](21);
         s[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         s[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
         s[3] = RewardEpochFacet.getTransportBatch.selector;
         s[4] = RewardEpochFacet.getTransportBatchLegs.selector;
         s[5] = RewardEpochFacet.getTransportRemainder.selector;
         s[6] = RewardEpochFacet.getTransportDayBatches.selector;
-        s[7] = RewardEpochFacet.admitLegacyTransportBatch.selector;
         s[8] = RewardEpochFacet.getTransportCoverageForDay.selector;
         s[9] = RewardEpochFacet.epochDrawForDay.selector;
         s[10] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
         s[11] = RewardEpochFacet.getTransportAllocationForDay.selector;
         s[12] = RewardEpochFacet.epochSettleLegs.selector; // A2-ii: one leg settle, by source (was epochSettleClaimLegs)
-        s[13] = RewardEpochFacet.materializeTransportBatchPageHinted.selector;
         s[14] = RewardEpochFacet.getTransportDayBatchesFrom.selector;
         s[15] = RewardEpochFacet.getTransportDayIndex.selector;
         s[16] = RewardEpochFacet.getTransportDayScanIds.selector;
@@ -3240,11 +3232,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[19] = RewardEpochFacet.getTransportBatchGates.selector;
         s[20] = RewardEpochFacet.getTransportBatchDays.selector;
         // 3d-1 — the rooted (d6) chunk index.
-        s[21] = RewardEpochFacet.materializeTransportBatchChunk.selector;
+        s[0] = RewardEpochFacet.materializeTransportBatchChunk.selector;
         // #1944 consequence 1 — the delivery proofs for packets holding no batch.
-        s[22] = RewardEpochFacet.proveDeliveryDayList.selector;
-        s[23] = RewardEpochFacet.proveDeliveryDayChunk.selector;
-        s[24] = RewardEpochFacet.getTransportDayLateFrom.selector; // #2489 (Codex r2): the late chain, for verified late hints
+        s[7] = RewardEpochFacet.proveDeliveryDayChunk.selector;
+        s[13] = RewardEpochFacet.getTransportDayLateFrom.selector; // #2489 (Codex r2): the late chain, for verified late hints
     }
 
     /// @dev 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads:
@@ -3499,7 +3490,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](43);
+        s = new bytes4[](42);
         s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         s[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -3528,7 +3519,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1566 slice 4 PR B — the Diamond-internal custody entry points.
         s[24] = RewardCustodyFacet.custodyRelocateToRow.selector;
         s[25] = RewardCustodyFacet.custodyMove.selector;
-        s[26] = RewardCustodyFacet.custodyRelocateFreshIngress.selector;
         s[27] = RewardCustodyFacet.custodyUnclassifiedQuarantine.selector;
         s[28] = RewardCustodyFacet.custodyReleaseFromRow.selector;
         s[29] = RewardCustodyFacet.custodyPayoutToWallet.selector;
@@ -3550,7 +3540,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
         // #1566 sanctions rule (owner 2026-10-14) — reward set apart / released.
         s[41] = RewardCustodyFacet.custodySetApartReward.selector;
-        s[42] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;
+        s[26] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch.
@@ -3588,7 +3578,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](47);
+        s = new bytes4[](46);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3643,8 +3633,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
             RewardRemittanceLensFacet.recoveryAttributionArmed.selector;
         s[33] =
             RewardRemittanceLensFacet.recoveryAttributionArmedAt.selector;
-        // #1566 transport epochs PR 3a — the split attestation fee quote.
-        s[37] = RewardRemittanceLensFacet.quoteSplitAttestationFee.selector;
         // #2459 r5 — the provisional compensation value held apart.
         s[38] = RewardRemittanceLensFacet.getProvisionalFreshHeld.selector;
         // #1944 consequence 1 — the delivery gate's rule (the self-staticcall
@@ -3657,7 +3645,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[43] = RewardRemittanceLensFacet.getRemitHistoryPending.selector; // #2489 r7
         s[44] = RewardRemittanceLensFacet.getChainRemittedRecycledHistory.selector; // #2489 r9
         s[45] = RewardRemittanceLensFacet.getRemitHistoryBooked.selector; // #2489 r10
-        s[46] = RewardRemittanceLensFacet.getRemitRoute.selector; // #2561
+        s[37] = RewardRemittanceLensFacet.getRemitRoute.selector; // #2561
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

@@ -19,6 +19,7 @@ import {
     RewardRemittanceReceiver
 } from "../src/crosschain/RewardRemittanceReceiver.sol";
 import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
+import {RemitWire} from "../src/crosschain/RemitWire.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /// @dev Stand-in for the mirror's CCIP adapter — the receiver only checks
@@ -158,7 +159,9 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
 
     /// @dev Deliver `amount` VPFI as a reward-budget remittance through the real
     ///      receiver: the CCIP adapter transfers the tokens to the receiver
-    ///      first, then invokes the callback — so pre-fund the receiver.
+    ///      first, then invokes the callback — so pre-fund the receiver. The
+    ///      payload is the rooted (d6) wire, the only budget shape the receiver
+    ///      accepts, carrying day 1 as a whole-fresh delivery.
     function _fundViaReceiver(uint256 amount) internal {
         vpfi.mint(address(receiver), amount);
         ICrossChainMessenger.TokenAmount[] memory tokens =
@@ -168,7 +171,9 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            abi.encode(_days1(), amount),
+            RemitWire.encodeD6(
+                RemitWire.d6Root(RemitWire.d6Chunks(_days1())), 1, 1, amount, 1, address(0xBA5E), 0, 0
+            ),
             tokens
         );
     }

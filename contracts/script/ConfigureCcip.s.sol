@@ -680,7 +680,7 @@ contract ConfigureCcip is Script {
     }
 
     /// @dev #776 — mirror only: authorize the local RewardRemittanceReceiver
-    ///      as the caller of the Diamond's `onRewardBudgetReceived` ingress.
+    ///      as the caller of the Diamond's `onRewardBudgetReceivedD6` ingress.
     ///      Without this, the receiver forwards the VPFI but the ingress call
     ///      reverts `NotRewardRemittanceReceiver`, so CCIP parks the message as
     ///      re-executable (no funds lost) until it is wired. Base sends and so

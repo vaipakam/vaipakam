@@ -169,7 +169,7 @@ recoverable back-pressure — not a fund-loss event.
    whole call reverts `NothingToRemit` if none are left) — retry is always safe.
 3. CCIP delivers the VPFI to the mirror's `RewardRemittanceReceiver`, which
    forwards it into the mirror Diamond; claims then succeed from balance. Watch
-   the mirror's `RewardBudgetReceived(dayIds…)` event for confirmation.
+   the mirror's `RewardBudgetRootReceived` event for confirmation.
 
 ### Guard rails / recovery
 - **Ordering:** remit a day **before** its broadcast opens the claim gate on the

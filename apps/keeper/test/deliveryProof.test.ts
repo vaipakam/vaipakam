@@ -1,31 +1,29 @@
 /**
- * #1944 / transport epochs — the delivery-proof pass. The planner decides, per
- * delivery, which permissionless call it still needs: INDEX an epoch's days
- * (flat page / rooted chunk) or PROVE a no-epoch delivery's days (flat list /
- * rooted chunk). Pinned on every route, including the two that must do
- * NOTHING (a whole index, an already-landed list) and the refusals (a rebuilt
- * list whose chunk count disagrees with the packet's, a disposed packet). Every
- * rooted proof the planner emits is checked to VERIFY against the root, so a
- * builder slip fails here, not as gas. The discovery read runs on the real
- * migration DDL.
+ * #1944 / transport epochs — the delivery-proof pass. Every budget delivery is
+ * rooted (d6), so the planner decides, per delivery, which permissionless call
+ * each chunk not yet landed still needs: INDEX it into the delivery's epoch, or
+ * PROVE it for a delivery that holds no epoch. Pinned on both routes, including
+ * the cases that must do NOTHING (every chunk landed, a disposed packet, a
+ * packet with no rooted list) and the refusal (a rebuilt list whose chunk count
+ * disagrees with the packet's). Every proof the planner emits is checked to
+ * VERIFY against the root, so a builder slip fails here, not as gas. The
+ * discovery read runs on the real migration DDL.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Hex } from 'viem';
 import {
   actionsFor,
-  rolloutAdmissible,
   canonicalChainOf,
-  deliveryComplete,
   fundedDaysFromBits,
   isWalkExceeded,
   packetMayNeedWork,
   planDelivery,
   type PacketState,
 } from '../src/deliveryProof';
-import { BaseError, encodeAbiParameters, keccak256 } from 'viem';
+import { BaseError } from 'viem';
 import { d6Leaf, d6Leaves, d6Root, d6VerifyProof } from '../src/d6Wire';
-import { flatDayListHash, listBudgetDeliveries } from '../src/db';
+import { listBudgetDeliveries } from '../src/db';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../../indexer/migrations/', import.meta.url);
@@ -46,16 +44,11 @@ function packet(over: Partial<PacketState> = {}): PacketState {
     remitId: 1n,
     kind: 1,
     batchId: Z,
-    dayListHash: Z,
     dayListRoot: Z,
     chunkCount: 0,
     chunksIndexed: 0n,
     disposed: 0n,
     arrivedAt: 0,
-    dayCount: 0,
-    freshShare: 0n,
-    recycledShare: 0n,
-    unclassified: 0n,
     ...over,
   };
 }
@@ -68,10 +61,7 @@ describe('planDelivery — rooted (d6)', () => {
     const acts = planDelivery({
       packetHash: H,
       packet: packet({ dayListRoot: root, chunkCount: 3, chunksIndexed: 0b010n }),
-      batch: null,
-      flatDays: null,
       rootedDays: list,
-      flatAllLanded: false,
     });
     expect(acts.map((a) => (a.kind === 'proveChunk' ? a.chunkIndex : -1))).toEqual([0, 2]);
     for (const a of acts) {
@@ -84,10 +74,7 @@ describe('planDelivery — rooted (d6)', () => {
     const acts = planDelivery({
       packetHash: H,
       packet: packet({ dayListRoot: root, chunkCount: 3, batchId: BATCH }),
-      batch: { dayCount: 40, indexedDays: 0 },
-      flatDays: null,
       rootedDays: list,
-      flatAllLanded: false,
     });
     expect(acts).toHaveLength(3);
     expect(acts.every((a) => a.kind === 'indexChunk' && a.batchId === BATCH)).toBe(true);
@@ -98,10 +85,7 @@ describe('planDelivery — rooted (d6)', () => {
       planDelivery({
         packetHash: H,
         packet: packet({ dayListRoot: root, chunkCount: 2 }),
-        batch: null,
-        flatDays: null,
         rootedDays: list,
-        flatAllLanded: false,
       }),
     ).toEqual([]);
   });
@@ -111,36 +95,24 @@ describe('planDelivery — rooted (d6)', () => {
       planDelivery({
         packetHash: H,
         packet: packet({ dayListRoot: root, chunkCount: 3, chunksIndexed: 0b111n }),
-        batch: null,
-        flatDays: null,
         rootedDays: list,
-        flatAllLanded: false,
       }),
     ).toEqual([]);
   });
 });
 
-describe('planDelivery — flat', () => {
+describe('planDelivery — nothing to do', () => {
   const list = days(3);
-  it('indexes one page while the epoch index is short of whole, then stops (straddle)', () => {
-    const base = { packetHash: H, packet: packet({ dayListHash: H, batchId: BATCH }), flatDays: list, rootedDays: null, flatAllLanded: false };
-    expect(planDelivery({ ...base, batch: { dayCount: 3, indexedDays: 2 } })).toEqual([
-      { kind: 'indexPage', batchId: BATCH, dayIds: list, indexedFrom: 2 },
-    ]);
-    expect(planDelivery({ ...base, batch: { dayCount: 3, indexedDays: 3 } }), 'whole: the writer would refuse').toEqual([]);
+  const root = d6Root(d6Leaves(list));
+  it('does nothing for a disposed packet, a non-budget packet, or a packet with no rooted list', () => {
+    const base = { packetHash: H, rootedDays: list };
+    expect(planDelivery({ ...base, packet: packet({ dayListRoot: root, chunkCount: 1, disposed: 1n }) })).toEqual([]);
+    expect(planDelivery({ ...base, packet: packet({ dayListRoot: root, chunkCount: 1, kind: 2 }) })).toEqual([]);
+    expect(planDelivery({ ...base, packet: packet({ chunkCount: 1 }) }), 'no root: nothing to prove against').toEqual([]);
   });
 
-  it('proves a no-epoch list once, and not again once every day landed', () => {
-    const base = { packetHash: H, packet: packet({ dayListHash: H }), batch: null, flatDays: list, rootedDays: null };
-    expect(planDelivery({ ...base, flatAllLanded: false })).toEqual([{ kind: 'proveList', packetHash: H, dayIds: list }]);
-    expect(planDelivery({ ...base, flatAllLanded: true })).toEqual([]);
-  });
-
-  it('does nothing for a disposed packet, a non-budget packet, or a packet with no list', () => {
-    const base = { packetHash: H, batch: null, flatDays: list, rootedDays: null, flatAllLanded: false };
-    expect(planDelivery({ ...base, packet: packet({ dayListHash: H, disposed: 1n }) })).toEqual([]);
-    expect(planDelivery({ ...base, packet: packet({ dayListHash: H, kind: 2 }) })).toEqual([]);
-    expect(planDelivery({ ...base, packet: packet() })).toEqual([]);
+  it('does nothing when the list could not be rebuilt', () => {
+    expect(planDelivery({ packetHash: H, packet: packet({ dayListRoot: root, chunkCount: 1 }), rootedDays: null })).toEqual([]);
   });
 });
 
@@ -169,59 +141,74 @@ describe('listBudgetDeliveries (real schema)', () => {
       `INSERT INTO activity_events (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at) VALUES (421614, ?, ?, ?, ?, ?, 5000)`,
     );
     for (const [tx, p, blk, days] of [['0xb1', P1, 100, ['4']], ['0xb2', P2, 101, ['5']]] as const) {
+      const root = d6Root(d6Leaves(days.map(BigInt)));
       ev.run(blk, 0, tx, 'IngressPacketRecorded', JSON.stringify({ packetHash: p, kind: 1, remitId: '7', sourceChainId: S }));
-      ev.run(blk, 1, tx, 'IngressPacketDayListRecorded', JSON.stringify({ packetHash: p, dayListHash: flatDayListHash([...days]), dayCount: '1' }));
-      ev.run(blk, 2, tx, 'RewardBudgetReceived', JSON.stringify({ dayIds: [...days], remitId: '7', sourceChainId: S }));
+      ev.run(blk, 1, tx, 'IngressPacketDayListRooted', JSON.stringify({ packetHash: p, dayListRoot: root }));
+      ev.run(blk, 2, tx, 'RewardBudgetRootReceived', JSON.stringify({ dayListRoot: root, remitId: '7', sourceChainId: S }));
     }
     void seed;
     // limit 4: the 5th row is block 101, so the page ends before it.
     const first = await discoverBudgetDeliveries(h.d1 as D1Database, 421614, 0, 1_000, 4);
     expect(first.rows.map((r) => r.packetHash.toLowerCase())).toEqual([P1]);
-    expect(first.rows[0].flatDayIds, 'paired inside its own page').toEqual(['4']);
+    expect(first.rows[0].remitId, 'paired inside its own page').toBe('7');
     expect(first.next).toBe(101);
     const second = await discoverBudgetDeliveries(h.d1 as D1Database, 421614, first.next, 1_000, 4);
     expect(second.rows.map((r) => r.packetHash.toLowerCase())).toEqual([P2]);
     expect(second.next, 'past the watermark it was given').toBe(1_001);
   });
 
-  it('lists every budget packet with a VERIFIED day list, oldest first — no age window (Codex #2489 r1)', async () => {
+  const R1 = `0x${'e1'.repeat(32)}`;
+  const R2 = `0x${'e2'.repeat(32)}`;
+
+  it('lists every budget packet with a VERIFIED rooted list, oldest first — no age window (Codex #2489 r1)', async () => {
     const { h, seed } = ledger();
     const P1 = `0x${'1'.repeat(64)}`;
     const P2 = `0x${'2'.repeat(64)}`;
     const P3 = `0x${'3'.repeat(64)}`;
     const P4 = `0x${'4'.repeat(64)}`;
     seed('0xt1', 'IngressPacketRecorded', { packetHash: P1, kind: 1, remitId: '7', sourceChainId: S });
-    seed('0xt1', 'IngressPacketDayListRecorded', { packetHash: P1, dayListHash: flatDayListHash(['4', '5']), dayCount: '2' });
-    seed('0xt1', 'RewardBudgetReceived', { dayIds: ['4', '5'], remitId: '7', sourceChainId: S });
+    seed('0xt1', 'IngressPacketDayListRooted', { packetHash: P1, dayListRoot: R1 });
+    seed('0xt1', 'RewardBudgetRootReceived', { dayListRoot: R1, remitId: '7', sourceChainId: S });
     seed('0xt2', 'IngressPacketRecorded', { packetHash: P2, kind: 1, remitId: '8', sourceChainId: S });
     seed('0xt2', 'IngressPacketDayListRooted', { packetHash: P2, dayListRoot: H });
     seed('0xt2', 'RewardBudgetRootReceived', { dayListRoot: H, remitId: '8', sourceChainId: S });
     seed('0xt3', 'IngressPacketRecorded', { packetHash: P3, kind: 2, remitId: '9', sourceChainId: S }); // not a budget
     seed('0xt5', 'IngressPacketRecorded', { packetHash: P4, kind: 1, remitId: '6', sourceChainId: S }); // no stamp: not provable
-    seed('0xt5', 'RewardBudgetReceived', { dayIds: ['1'], remitId: '6', sourceChainId: S });
+    seed('0xt5', 'RewardBudgetRootReceived', { dayListRoot: R2, remitId: '6', sourceChainId: S });
     const rows = await listBudgetDeliveries(h.d1 as D1Database, 421614, 0);
-    expect(rows.map((r) => [r.packetHash, r.remitId, r.rooted, r.flatDayIds])).toEqual([
-      [P1, '7', false, ['4', '5']],
-      [P2, '8', true, null],
+    expect(rows.map((r) => [r.packetHash, r.remitId])).toEqual([
+      [P1, '7'],
+      [P2, '8'],
     ]);
   });
 
-  it('pairs two ZERO-id deliveries in one transaction by their stamped commitment, never by source and remit id (#2497 r3)', async () => {
+  it('pairs two ZERO-id deliveries in one transaction by their stamped root, never by source and remit id (#2497 r3)', async () => {
     const { h, seed } = ledger();
     const A = `0x${'a'.repeat(64)}`;
     const B = `0x${'c'.repeat(64)}`;
-    // Both legacy/manual: remitId 0 and the same source — the old join paired each packet with BOTH.
+    const C = `0x${'d'.repeat(64)}`;
+    // remitId 0 and the same source for all three — a join on source and remit
+    // id would pair each packet with every delivery. C's stamped root matches
+    // no delivery in the transaction, so it is left out.
     seed('0xtx', 'IngressPacketRecorded', { packetHash: A, kind: 1, remitId: '0', sourceChainId: S });
-    seed('0xtx', 'IngressPacketDayListRecorded', { packetHash: A, dayListHash: flatDayListHash(['1', '2']), dayCount: '2' });
-    seed('0xtx', 'RewardBudgetReceived', { dayIds: ['1', '2'], remitId: '0', sourceChainId: S });
+    seed('0xtx', 'IngressPacketDayListRooted', { packetHash: A, dayListRoot: R1 });
+    seed('0xtx', 'RewardBudgetRootReceived', { dayListRoot: R1, remitId: '0', sourceChainId: S });
     seed('0xtx', 'IngressPacketRecorded', { packetHash: B, kind: 1, remitId: '0', sourceChainId: S });
-    seed('0xtx', 'IngressPacketDayListRecorded', { packetHash: B, dayListHash: flatDayListHash(['3']), dayCount: '1' });
-    seed('0xtx', 'RewardBudgetReceived', { dayIds: ['3'], remitId: '0', sourceChainId: S });
+    seed('0xtx', 'IngressPacketDayListRooted', { packetHash: B, dayListRoot: R2 });
+    seed('0xtx', 'RewardBudgetRootReceived', { dayListRoot: R2, remitId: '0', sourceChainId: S });
+    seed('0xtx', 'IngressPacketRecorded', { packetHash: C, kind: 1, remitId: '0', sourceChainId: S });
+    seed('0xtx', 'IngressPacketDayListRooted', { packetHash: C, dayListRoot: H });
     const rows = await listBudgetDeliveries(h.d1 as D1Database, 421614, 0);
-    expect(rows.map((r) => [r.packetHash, r.flatDayIds])).toEqual([
-      [A, ['1', '2']],
-      [B, ['3']],
-    ]);
+    expect(rows.map((r) => r.packetHash)).toEqual([A, B]);
+  });
+
+  it('never lists a pre-d6 flat-list delivery: the receiver refuses that wire, so no such packet is work', async () => {
+    const { h, seed } = ledger();
+    const P = `0x${'7'.repeat(64)}`;
+    seed('0xf1', 'IngressPacketRecorded', { packetHash: P, kind: 1, remitId: '5', sourceChainId: S });
+    seed('0xf1', 'IngressPacketDayListRecorded', { packetHash: P, dayListHash: H, dayCount: '2' });
+    seed('0xf1', 'RewardBudgetReceived', { dayIds: ['4', '5'], remitId: '5', sourceChainId: S });
+    expect(await listBudgetDeliveries(h.d1 as D1Database, 421614, 0)).toEqual([]);
   });
 
   it("reads nothing from before the active Diamond's first block (#2497 r3)", async () => {
@@ -229,18 +216,13 @@ describe('listBudgetDeliveries (real schema)', () => {
     const OLD = `0x${'5'.repeat(64)}`;
     const NEW = `0x${'6'.repeat(64)}`;
     seed('0xold', 'IngressPacketRecorded', { packetHash: OLD, kind: 1, remitId: '1', sourceChainId: S }, 100, 50);
-    seed('0xold', 'IngressPacketDayListRecorded', { packetHash: OLD, dayListHash: flatDayListHash(['1']), dayCount: '1' }, 100, 51);
-    seed('0xold', 'RewardBudgetReceived', { dayIds: ['1'], remitId: '1', sourceChainId: S }, 100, 52);
+    seed('0xold', 'IngressPacketDayListRooted', { packetHash: OLD, dayListRoot: R1 }, 100, 51);
+    seed('0xold', 'RewardBudgetRootReceived', { dayListRoot: R1, remitId: '1', sourceChainId: S }, 100, 52);
     seed('0xnew', 'IngressPacketRecorded', { packetHash: NEW, kind: 1, remitId: '2', sourceChainId: S }, 200, 500);
-    seed('0xnew', 'IngressPacketDayListRecorded', { packetHash: NEW, dayListHash: flatDayListHash(['2']), dayCount: '1' }, 200, 501);
-    seed('0xnew', 'RewardBudgetReceived', { dayIds: ['2'], remitId: '2', sourceChainId: S }, 200, 502);
+    seed('0xnew', 'IngressPacketDayListRooted', { packetHash: NEW, dayListRoot: R2 }, 200, 501);
+    seed('0xnew', 'RewardBudgetRootReceived', { dayListRoot: R2, remitId: '2', sourceChainId: S }, 200, 502);
     const rows = await listBudgetDeliveries(h.d1 as D1Database, 421614, 400);
     expect(rows.map((r) => r.packetHash)).toEqual([NEW]);
-  });
-
-  it('computes the flat commitment exactly as the contract does: keccak256(abi.encode(uint256[]))', () => {
-    const want = keccak256(encodeAbiParameters([{ type: 'uint256[]' }], [[4n, 5n]])).toLowerCase();
-    expect(flatDayListHash(['4', '5'])).toBe(want);
   });
 });
 
@@ -253,48 +235,18 @@ describe('the pass wiring', () => {
   });
 
   it('skips, before any read, a packet with nothing left to write', () => {
-    const base: PacketState = {
-      kind: 1, batchId: Z, dayListHash: Z, dayListRoot: H, chunkCount: 3, chunksIndexed: 0n, disposed: 0n,
-    };
+    const base = packet({ dayListRoot: H, chunkCount: 3 });
     expect(packetMayNeedWork(base)).toBe(true);
     expect(packetMayNeedWork({ ...base, chunksIndexed: 0b011n })).toBe(true); // straddle: one chunk left
     expect(packetMayNeedWork({ ...base, chunksIndexed: 0b111n })).toBe(false); // every chunk landed
     expect(packetMayNeedWork({ ...base, disposed: 1n })).toBe(false);
     expect(packetMayNeedWork({ ...base, kind: 2 })).toBe(false);
-    expect(packetMayNeedWork({ ...base, dayListRoot: Z, dayListHash: H })).toBe(true); // a flat list: the planner decides
-    expect(packetMayNeedWork({ ...base, dayListRoot: Z })).toBe(false); // a pre-3a packet: no provable list
+    expect(packetMayNeedWork({ ...base, dayListRoot: Z })).toBe(false); // no rooted list: nothing to prove, so finished
     // The protocol's maximum, 256 chunks: the uint256 bitmap with every bit set
     // is finished, and one bit short is not (#2497 r1 — the mask was -1n).
     const full256 = (1n << 256n) - 1n;
     expect(packetMayNeedWork({ ...base, chunkCount: 256, chunksIndexed: full256 }), 'all 256 landed').toBe(false);
     expect(packetMayNeedWork({ ...base, chunkCount: 256, chunksIndexed: full256 >> 1n }), 'chunk 255 missing').toBe(true);
-  });
-});
-
-describe('deliveryComplete — the done set takes only what the chain shows finished', () => {
-  const root = d6Root(d6Leaves(days(40)));
-  it('rooted: done only when every chunk has landed (straddle on the last bit)', () => {
-    expect(deliveryComplete({ packet: packet({ dayListRoot: root, chunkCount: 3, chunksIndexed: 0b011n }), batch: null, flatAllLanded: false })).toBe(false);
-    expect(deliveryComplete({ packet: packet({ dayListRoot: root, chunkCount: 3, chunksIndexed: 0b111n }), batch: null, flatAllLanded: false })).toBe(true);
-  });
-
-  it("an epoch's flat list: done only when the batch index is whole; an unread batch is not done", () => {
-    const p = packet({ dayListHash: H, batchId: BATCH });
-    expect(deliveryComplete({ packet: p, batch: { dayCount: 3, indexedDays: 2 }, flatAllLanded: false })).toBe(false);
-    expect(deliveryComplete({ packet: p, batch: { dayCount: 3, indexedDays: 3 }, flatAllLanded: false })).toBe(true);
-    expect(deliveryComplete({ packet: p, batch: null, flatAllLanded: true }), 'batch unread').toBe(false);
-  });
-
-  it('a no-epoch flat list: done only when every day reads as landed', () => {
-    const p = packet({ dayListHash: H });
-    expect(deliveryComplete({ packet: p, batch: null, flatAllLanded: false })).toBe(false);
-    expect(deliveryComplete({ packet: p, batch: null, flatAllLanded: true })).toBe(true);
-  });
-
-  it('nothing provable left is done: disposed, not a budget, no list', () => {
-    expect(deliveryComplete({ packet: packet({ dayListHash: H, disposed: 1n }), batch: null, flatAllLanded: false })).toBe(true);
-    expect(deliveryComplete({ packet: packet({ dayListHash: H, kind: 2 }), batch: null, flatAllLanded: false })).toBe(true);
-    expect(deliveryComplete({ packet: packet(), batch: null, flatAllLanded: false })).toBe(true);
   });
 });
 
@@ -329,7 +281,7 @@ describe("a rooted packet's list is rebuilt from the packet's OWN remitter (#249
   const root = d6Root(d6Leaves(list));
   const OLD = `0x${'2'.repeat(40)}` as const; // a retired canonical Diamond
   const MIRROR = 97;
-  const row = { packetHash: H, remitId: 99, block: 1, flatDayIds: null } as never; // the ledger's id is NOT used
+  const row = { packetHash: H, remitId: '99', block_at: 0, block: 1 }; // the ledger's id is NOT used
 
   function sourceClient() {
     const reads: { address: string; args: readonly unknown[] }[] = [];
@@ -346,8 +298,6 @@ describe("a rooted packet's list is rebuilt from the packet's OWN remitter (#249
     const { reads, client } = sourceClient();
     const asked: number[] = [];
     const plan = await actionsFor(
-      {} as never,
-      `0x${'3'.repeat(40)}`,
       MIRROR,
       row,
       packet({ sourceChainId: 421614, remitter: OLD, remitId: 3n, dayListRoot: root, chunkCount: 1 }),
@@ -365,35 +315,10 @@ describe("a rooted packet's list is rebuilt from the packet's OWN remitter (#249
   it('declines, reading nothing, when the source chain has no RPC here', async () => {
     const warn = (await import('vitest')).vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      const plan = await actionsFor({} as never, `0x${'3'.repeat(40)}`, MIRROR, row, packet({ sourceChainId: 1, remitter: OLD, remitId: 3n, dayListRoot: root, chunkCount: 1 }), () => null);
+      const plan = await actionsFor(MIRROR, row, packet({ sourceChainId: 1, remitter: OLD, remitId: 3n, dayListRoot: root, chunkCount: 1 }), () => null);
       expect(plan).toEqual({ actions: [], complete: false });
     } finally {
       warn.mockRestore();
     }
   });
 });
-
-describe('a flat packet the rollout can still admit takes the admission, never the batchless proof (#2571 r1)', () => {
-  const days = [4n, 5n];
-  const flat = (over: Partial<PacketState> = {}) =>
-    packet({ dayListHash: H, dayCount: 2, unclassified: 10n, ...over });
-  it('admits first, and is never finished while admissible', () => {
-    expect(rolloutAdmissible(flat())).toBe(true);
-    expect(planDelivery({ packetHash: H, packet: flat(), batch: null, flatDays: days, rootedDays: null, flatAllLanded: true })).toEqual([
-      { kind: 'admitBatch', packetHash: H, dayIds: days },
-    ]);
-    expect(deliveryComplete({ packet: flat(), batch: null, flatAllLanded: true }), 'not retired on landed days').toBe(false);
-  });
-  it('follows the contract clause for clause: typed wire, nothing untyped, or a batch already — not admissible', () => {
-    expect(rolloutAdmissible(flat({ freshShare: 1n }))).toBe(false);
-    expect(rolloutAdmissible(flat({ recycledShare: 1n }))).toBe(false);
-    expect(rolloutAdmissible(flat({ unclassified: 0n }))).toBe(false);
-    expect(rolloutAdmissible(flat({ dayCount: 0 }))).toBe(false);
-    expect(rolloutAdmissible(flat({ batchId: BATCH }))).toBe(false);
-    // Not admissible: the batchless proof route, as before.
-    expect(planDelivery({ packetHash: H, packet: flat({ unclassified: 0n }), batch: null, flatDays: days, rootedDays: null, flatAllLanded: false })).toEqual([
-      { kind: 'proveList', packetHash: H, dayIds: days },
-    ]);
-  });
-});
-

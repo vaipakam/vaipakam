@@ -8,20 +8,18 @@
 // commitment the delivery's own ingress stamped (the destination's gas budget
 // is spent by the ingress itself, so no per-day write rides the delivery).
 // Every route is permissionless and moves no value; nothing calls them by
-// itself, so this pass does, on every mirror:
+// itself, so this pass does, on every mirror. Every budget delivery is ROOTED
+// (d6) — the mirror receiver refuses any older wire shape — and its list is
+// worked chunk by chunk, each chunk with its Merkle proof:
 //
-//   - a delivery holding a transport EPOCH (a batch) is INDEXED: a flat list
-//     page by page (`materializeTransportBatchPage`, the whole list each call,
-//     one page written), a rooted (d6) list chunk by chunk
-//     (`materializeTransportBatchChunk`, each chunk with its Merkle proof).
-//     Until its days are indexed an epoch funds nothing a claim can find;
-//   - a delivery holding NO epoch (a pre-activation rooted delivery, a typed
-//     or legacy flat one) is PROVEN: `proveDeliveryDayChunk` per chunk, or
-//     `proveDeliveryDayList` once for a flat list — the step the #1944
-//     delivery gate waits on before a mirror day may be priced.
+//   - a delivery holding a transport EPOCH (a batch) is INDEXED
+//     (`materializeTransportBatchChunk`). Until its days are indexed an epoch
+//     funds nothing a claim can find;
+//   - a delivery holding NO epoch (one that landed before custody activation)
+//     is PROVEN (`proveDeliveryDayChunk`) — the step the #1944 delivery gate
+//     waits on before a mirror day may be priced.
 //
-// The flat list comes from the delivery's own `RewardBudgetReceived` event.
-// A rooted list is REBUILT from Base, per the runbook's reconstruction rule:
+// The list is REBUILT from Base, per the runbook's reconstruction rule:
 // the reservation's day list (every day the remit closed, a superset) filtered
 // to the days actually funded for this chain, chunked and rooted with the
 // wire's own rules (`d6Wire.ts`) and checked against BOTH the reservation's and
@@ -73,14 +71,12 @@ const ABI = [
   ...(RewardReporterFacetABI as Abi),
 ] as Abi;
 
-/** Transactions per chain per tick (each indexes one page or one chunk). */
+/** Transactions per chain per tick (each indexes or proves one chunk). */
 const MAX_WRITES_PER_TICK = 20;
 /** How long one send may take to be mined before this tick's sends stop. */
 const RECEIPT_TIMEOUT_MS = 30_000;
 /** Reads per `aggregate3` (#1946). */
 const READ_CHUNK = 100;
-/** Days one flat page links (`LibRewardCustody.TRANSPORT_INDEX_PAGE`). */
-const TRANSPORT_INDEX_PAGE = 32;
 /** This pass's open-work kind (`keeper_work_open.kind`). */
 const WORK_KIND = 'delivery_proof' as const;
 /** Open deliveries one tick works on (the rest wait their turn in rotation). */
@@ -97,7 +93,7 @@ export const PASS_ALERT_WINDOW_MS = 15_000;
 const ALERT_REPEAT_SEC = 6 * 3600;
 /** Reverts that mean the work is ALREADY DONE (another caller, or this pass
  *  last run, got there first). Never a failure. */
-export const ALREADY_DONE = new Set(['TransportChunkAlreadyIndexed', 'TransportBatchFullyIndexed', 'TransportBatchAlreadyAdmitted']);
+export const ALREADY_DONE = new Set(['TransportChunkAlreadyIndexed']);
 
 /** What a packet's ingress recorded, as the pass reads it. */
 export interface PacketState {
@@ -107,7 +103,6 @@ export interface PacketState {
   remitId: bigint;
   kind: number;
   batchId: Hex;
-  dayListHash: Hex;
   dayListRoot: Hex;
   chunkCount: number;
   /** Bit `i` set = chunk `i` landed (indexed or proven). */
@@ -115,107 +110,40 @@ export interface PacketState {
   disposed: bigint;
   /** When the packet's ingress landed (unix seconds). */
   arrivedAt: number;
-  /** What `LibRewardCustody.rolloutAdmissionStatus` reads besides the above
-   *  (#2571 r1): the day-list length and the typed and untyped value. */
-  dayCount: number;
-  freshShare: bigint;
-  recycledShare: bigint;
-  unclassified: bigint;
-}
-
-/**
- * Whether the ROLLOUT admission can still open an epoch over a flat packet
- * that has none (#2571 r1) — a packet that landed while custody was not yet
- * active, or between the 3a commitment and the 3b ledger. The contract's own
- * rule, clause for clause (`LibRewardCustody.rolloutAdmissionStatus`, the ONE
- * definition its admission and its classification gate both use): a known
- * packet, no batch yet, a day list, nothing typed on the wire, and untyped
- * value left. Such a packet's value is unavailable to claims until its epoch
- * is admitted and indexed, so it must never take the batchless proof route
- * and be retired. The admission call itself is simulated before it is sent,
- * so the contract stays the arbiter. Pure; pinned by the tests.
- */
-export function rolloutAdmissible(p: PacketState): boolean {
-  return (
-    p.batchId === ZERO32 &&
-    p.dayListHash !== ZERO32 &&
-    p.dayCount > 0 &&
-    p.freshShare === 0n &&
-    p.recycledShare === 0n &&
-    p.unclassified > 0n
-  );
-}
-
-/** A batch's index progress. */
-export interface BatchProgress {
-  dayCount: number;
-  indexedDays: number;
 }
 
 export type ProofAction =
-  /** `indexedFrom`: how many of the list's days the epoch had already indexed
-   *  when planned — the page writer starts there (Codex #2599 r5). */
-  | { kind: 'indexPage'; batchId: Hex; dayIds: bigint[]; indexedFrom: number }
   | { kind: 'indexChunk'; batchId: Hex; chunkIndex: number; dayIds: bigint[]; proof: Hex[] }
-  | { kind: 'proveChunk'; packetHash: Hex; chunkIndex: number; dayIds: bigint[]; proof: Hex[] }
-  | { kind: 'proveList'; packetHash: Hex; dayIds: bigint[] }
-  | { kind: 'admitBatch'; packetHash: Hex; dayIds: bigint[] };
+  | { kind: 'proveChunk'; packetHash: Hex; chunkIndex: number; dayIds: bigint[]; proof: Hex[] };
 
 const ZERO32 = `0x${'0'.repeat(64)}` as Hex;
 
 /**
- * The actions a delivery still needs. Pure: the packet's recorded state, its
- * batch's progress, and its day list in; the calls out — nothing for a
- * disposed packet, a non-budget packet, or one whose list cannot be had.
- * `rootedDays` is the REBUILT rooted list (already checked against the root by
- * the caller); `flatDays` the event's list; `landed` says which flat days the
- * chain already counts as landed, so a whole flat list already proven is not
- * re-proven.
+ * The actions a delivery still needs. Pure: the packet's recorded state and
+ * its REBUILT day list (already checked against the root by the caller) in;
+ * one call per chunk not yet landed out — nothing for a disposed packet, a
+ * non-budget packet, or one whose list cannot be had.
  */
-export function planDelivery(args: {
-  packetHash: Hex;
-  packet: PacketState;
-  batch: BatchProgress | null;
-  flatDays: bigint[] | null;
-  rootedDays: bigint[] | null;
-  flatAllLanded: boolean;
-}): ProofAction[] {
-  const { packetHash, packet, batch } = args;
-  if (packet.kind !== 1 || packet.disposed !== 0n) return [];
+export function planDelivery(args: { packetHash: Hex; packet: PacketState; rootedDays: bigint[] | null }): ProofAction[] {
+  const { packetHash, packet } = args;
+  if (!packetMayNeedWork(packet)) return [];
+  const days = args.rootedDays;
+  if (!days || days.length === 0) return [];
+  const leaves = d6Leaves(days);
+  if (leaves.length !== packet.chunkCount) return [];
   const batched = packet.batchId !== ZERO32;
-  if (packet.dayListRoot !== ZERO32) {
-    const days = args.rootedDays;
-    if (!days || days.length === 0) return [];
-    const leaves = d6Leaves(days);
-    if (leaves.length !== packet.chunkCount) return [];
-    const out: ProofAction[] = [];
-    for (let c = 0; c < packet.chunkCount; c++) {
-      if ((packet.chunksIndexed >> BigInt(c)) & 1n) continue;
-      const chunk = d6Chunk(days, c);
-      const proof = d6Proof(leaves, c);
-      out.push(
-        batched
-          ? { kind: 'indexChunk', batchId: packet.batchId, chunkIndex: c, dayIds: chunk, proof }
-          : { kind: 'proveChunk', packetHash, chunkIndex: c, dayIds: chunk, proof },
-      );
-    }
-    return out;
+  const out: ProofAction[] = [];
+  for (let c = 0; c < packet.chunkCount; c++) {
+    if ((packet.chunksIndexed >> BigInt(c)) & 1n) continue;
+    const chunk = d6Chunk(days, c);
+    const proof = d6Proof(leaves, c);
+    out.push(
+      batched
+        ? { kind: 'indexChunk', batchId: packet.batchId, chunkIndex: c, dayIds: chunk, proof }
+        : { kind: 'proveChunk', packetHash, chunkIndex: c, dayIds: chunk, proof },
+    );
   }
-  if (packet.dayListHash !== ZERO32) {
-    const days = args.flatDays;
-    if (!days || days.length === 0) return [];
-    if (batched) {
-      // One page per call; the page writer refuses once the index is whole.
-      return batch && batch.indexedDays < batch.dayCount
-        ? [{ kind: 'indexPage', batchId: packet.batchId, dayIds: days, indexedFrom: batch.indexedDays }]
-        : [];
-    }
-    // An epoch the rollout can still open comes first (#2571 r1): the next
-    // run then finds the batch and indexes it page by page.
-    if (rolloutAdmissible(packet)) return [{ kind: 'admitBatch', packetHash, dayIds: days }];
-    return args.flatAllLanded ? [] : [{ kind: 'proveList', packetHash, dayIds: days }];
-  }
-  return []; // a pre-3a packet carries no provable list
+  return out;
 }
 
 /**
@@ -233,46 +161,18 @@ export function canonicalChainOf(cfg: readonly [Address, number, number, boolean
 }
 
 /** Whether a packet can still need a write — checked BEFORE any read of its
- *  batch or its rooted list, so a finished one costs nothing. A flat list's
- *  answer needs those reads, so a flat packet always "may" — see
- *  {@link deliveryComplete} for the verdict once they are made. */
+ *  rooted list, so a finished one costs nothing. A delivery is FINISHED on
+ *  chain (and leaves the pass's queue for good, Codex #2489 r1) exactly when
+ *  this is false: disposed, not a budget packet, no rooted list (nothing to
+ *  prove), or every chunk landed. */
 export function packetMayNeedWork(packet: PacketState): boolean {
-  if (packet.kind !== 1 || packet.disposed !== 0n) return false;
-  if (packet.dayListRoot !== ZERO32) {
-    // The chunk bitmap is a uint256, so "every chunk" is 2^n − 1 for n ≤ 256 —
-    // never -1n, which no non-negative bitmap can equal: a full 256-chunk
-    // packet would never be seen finished and would be rebuilt every tick
-    // (#2497 r1).
-    const all = (1n << BigInt(Math.min(packet.chunkCount, 256))) - 1n;
-    return packet.chunkCount > 0 && (packet.chunksIndexed & all) !== all;
-  }
-  return packet.dayListHash !== ZERO32;
-}
-
-/**
- * Whether a delivery is FINISHED on chain, so the pass may record it in its
- * done set and never read it again (Codex #2489 r1). Pure; true only on
- * evidence the chain itself gives:
- *   - nothing provable is left: disposed, not a budget packet, no list, or a
- *     rooted list whose every chunk has landed;
- *   - an EPOCH's flat list: the batch's index is whole;
- *   - a no-epoch flat list: every listed day reads as landed.
- * Anything unread (a batch read that failed, a list that could not be had) is
- * NOT finished — it is read again next tick.
- */
-export function deliveryComplete(args: {
-  packet: PacketState;
-  batch: BatchProgress | null;
-  flatAllLanded: boolean;
-}): boolean {
-  const { packet, batch } = args;
-  if (!packetMayNeedWork(packet)) return true;
-  if (packet.dayListRoot !== ZERO32) return false; // a rooted chunk is still out
-  if (packet.batchId !== ZERO32) return batch !== null && batch.dayCount > 0 && batch.indexedDays >= batch.dayCount;
-  // Never finished while its epoch can still be admitted (#2571 r1): its value
-  // reaches claims only through that epoch.
-  if (rolloutAdmissible(packet)) return false;
-  return args.flatAllLanded;
+  if (packet.kind !== 1 || packet.disposed !== 0n || packet.dayListRoot === ZERO32) return false;
+  // The chunk bitmap is a uint256, so "every chunk" is 2^n − 1 for n ≤ 256 —
+  // never -1n, which no non-negative bitmap can equal: a full 256-chunk
+  // packet would never be seen finished and would be rebuilt every tick
+  // (#2497 r1).
+  const all = (1n << BigInt(Math.min(packet.chunkCount, 256))) - 1n;
+  return packet.chunkCount > 0 && (packet.chunksIndexed & all) !== all;
 }
 
 export async function runDeliveryProof(env: Env, tick: PassTick): Promise<void> {
@@ -372,8 +272,7 @@ async function proveOnMirror(
   const failures = new Map<string, string>();
   /** Packets this run worked with every call going through: their revert
    *  alert, if any, is disproved. Says nothing about whether the delivery is
-   *  now whole — an admission, say, only opens the epoch its days are then
-   *  indexed into. */
+   *  now whole — the run's budget may have stopped before its last chunk. */
   const clean = new Set<string>();
   /** Packets whose delivery this run read as NOT whole (a plan was built). */
   const notWhole = new Set<string>();
@@ -401,7 +300,7 @@ async function proveOnMirror(
       let plan: DeliveryPlan;
       try {
         // eslint-disable-next-line no-await-in-loop
-        plan = await actionsFor(client, diamond, chain.id, row, packet, sources, deadline);
+        plan = await actionsFor(chain.id, row, packet, sources);
       } catch (err) {
         console.error(`[keeper] deliveryProof packet=${row.packetHash} read failed: ${shortErr(err)}`);
         continue;
@@ -499,26 +398,11 @@ export function dayRuns(ids: readonly bigint[]): string {
 }
 
 /** Which days a call covers, for an alert that names a refusal (Codex #2599
- *  r4): a delivery proven in chunks is held back only by the chunk refused —
- *  its other chunks prove on their own — while a flat list indexes page by
- *  page, so a refused page holds every later one too. Pure. */
+ *  r4): a delivery is held back only by the chunk refused — its other chunks
+ *  land on their own. Pure. */
 export function actionScope(a: ProofAction): string {
-  const span = (ids: readonly bigint[]): string => {
-    const n = ids.length;
-    return `${n} day${n === 1 ? '' : 's'}${n === 0 ? '' : ` (days ${dayRuns(ids)})`}`;
-  };
-  switch (a.kind) {
-    case 'indexChunk':
-    case 'proveChunk':
-      return `chunk ${a.chunkIndex}, ${span(a.dayIds)}`;
-    case 'indexPage':
-      // Only the days the epoch has not indexed yet: the writer starts at its
-      // own progress, and the days before it are landed.
-      return `the days its epoch has not indexed yet, ${span(a.dayIds.slice(a.indexedFrom))}, from the next page on`;
-    case 'proveList':
-    case 'admitBatch':
-      return `its whole day list, ${span(a.dayIds)}`;
-  }
+  const n = a.dayIds.length;
+  return `chunk ${a.chunkIndex}, ${n} day${n === 1 ? '' : 's'}${n === 0 ? '' : ` (days ${dayRuns(a.dayIds)})`}`;
 }
 
 /**
@@ -652,10 +536,9 @@ export async function raiseDeliveryAlerts(env: Env, chainId: number, m: Delivery
 /**
  * Whether each of `rows`' deliveries is whole NOW, by a fresh read bounded by
  * `deadline` (Codex #2599 r1). Read only for the deliveries a run's sends may
- * have moved; the verdict is {@link deliveryComplete}'s on that read, so a
- * rooted list with a chunk still out, or a rollout packet whose epoch was only
- * admitted, reads not whole. A delivery whose read did not land is absent from
- * the result: undetermined, not whole and not "not whole".
+ * have moved; the verdict is {@link packetMayNeedWork}'s on that read, so a
+ * list with a chunk still out reads not whole. A delivery whose read did not
+ * land is absent from the result: undetermined, not whole and not "not whole".
  */
 async function measureWhole(
   env: Env,
@@ -672,31 +555,7 @@ async function measureWhole(
     for (const row of rows) {
       const key = row.packetHash.toLowerCase();
       const packet = packets.get(key);
-      if (!packet) continue;
-      try {
-        let batch: BatchProgress | null = null;
-        if (packetMayNeedWork(packet) && packet.dayListRoot === ZERO32 && packet.batchId !== ZERO32) {
-          // eslint-disable-next-line no-await-in-loop
-          const b = (await client.readContract({ address: diamond, abi: ABI, functionName: 'getTransportBatch', args: [packet.batchId] })) as readonly [
-            Hex,
-            bigint,
-            bigint,
-            number,
-            number,
-            boolean,
-          ];
-          batch = { dayCount: Number(b[3]), indexedDays: Number(b[4]) };
-        }
-        const flatDays = row.flatDayIds ? row.flatDayIds.map((d) => BigInt(d)) : null;
-        const flatAllLanded =
-          packetMayNeedWork(packet) && packet.batchId === ZERO32 && packet.dayListRoot === ZERO32 && !rolloutAdmissible(packet) && flatDays
-            ? // eslint-disable-next-line no-await-in-loop
-              await allLanded(client, diamond, flatDays, deadline)
-            : false;
-        out.set(key, deliveryComplete({ packet, batch, flatAllLanded }));
-      } catch (err) {
-        console.warn(`[keeper] deliveryProof packet=${row.packetHash} re-read failed, left undetermined: ${shortErr(err)}`);
-      }
+      if (packet) out.set(key, !packetMayNeedWork(packet));
     }
   } catch (err) {
     console.warn(`[keeper] deliveryProof chain=${chain.id}: re-read after sends failed, left undetermined: ${shortErr(err)}`);
@@ -727,48 +586,27 @@ interface DeliveryPlan {
 
 /** Exported for the tests. */
 export async function actionsFor(
-  client: PublicClient,
-  diamond: Address,
   chainId: number,
   row: BudgetDeliveryRow,
   packet: PacketState,
   sources: (chainId: number) => PublicClient | null,
-  deadline: number = Number.POSITIVE_INFINITY,
 ): Promise<DeliveryPlan> {
   const packetHash = row.packetHash as Hex;
-  let batch: BatchProgress | null = null;
-  if (packet.batchId !== ZERO32) {
-    const b = (await client.readContract({
-      address: diamond,
-      abi: ABI,
-      functionName: 'getTransportBatch',
-      args: [packet.batchId],
-    })) as readonly [Hex, bigint, bigint, number, number, boolean];
-    batch = { dayCount: Number(b[3]), indexedDays: Number(b[4]) };
+  if (!packetMayNeedWork(packet)) return { actions: [], complete: true };
+  // The reservation lives where the packet says it was remitted from — its
+  // authenticated `remitter` on its `sourceChainId`, under its `remitId`
+  // (#2497 r6). The canonical Diamond configured TODAY may be a fresh deploy
+  // whose remit ids restarted, and reading there would match nothing (or the
+  // wrong reservation) and leave the packet gated forever. A wrong source
+  // cannot pass anyway: the rebuilt root must equal the packet's.
+  const sourceClient = sources(packet.sourceChainId);
+  if (!sourceClient) {
+    console.warn(`[keeper] deliveryProof packet=${packetHash}: no RPC for its source chain ${packet.sourceChainId} — cannot rebuild its list`);
+    return { actions: [], complete: false };
   }
-  let rootedDays: bigint[] | null = null;
-  if (packet.dayListRoot !== ZERO32) {
-    // The reservation lives where the packet says it was remitted from — its
-    // authenticated `remitter` on its `sourceChainId`, under its `remitId`
-    // (#2497 r6). The canonical Diamond configured TODAY may be a fresh deploy
-    // whose remit ids restarted, and reading there would match nothing (or the
-    // wrong reservation) and leave the packet gated forever. A wrong source
-    // cannot pass anyway: the rebuilt root must equal the packet's.
-    const sourceClient = sources(packet.sourceChainId);
-    if (!sourceClient) {
-      console.warn(`[keeper] deliveryProof packet=${packetHash}: no RPC for its source chain ${packet.sourceChainId} — cannot rebuild its list`);
-      return { actions: [], complete: false };
-    }
-    rootedDays = await rebuildRootedList(sourceClient, packet.remitter, chainId, packet.remitId, packet.dayListRoot);
-    if (!rootedDays) return { actions: [], complete: false };
-  }
-  const flatDays = row.flatDayIds ? row.flatDayIds.map((d) => BigInt(d)) : null;
-  let flatAllLanded = false;
-  if (flatDays && packet.batchId === ZERO32 && packet.dayListRoot === ZERO32) {
-    flatAllLanded = await allLanded(client, diamond, flatDays, deadline);
-  }
-  if (deliveryComplete({ packet, batch, flatAllLanded })) return { actions: [], complete: true };
-  return { actions: planDelivery({ packetHash, packet, batch, flatDays, rootedDays, flatAllLanded }), complete: false };
+  const rootedDays = await rebuildRootedList(sourceClient, packet.remitter, chainId, packet.remitId, packet.dayListRoot);
+  if (!rootedDays) return { actions: [], complete: false };
+  return { actions: planDelivery({ packetHash, packet, rootedDays }), complete: false };
 }
 
 /**
@@ -845,27 +683,6 @@ function checkedRoot(funded: bigint[], reservationRoot: Hex, packetRoot: Hex, re
   return funded;
 }
 
-async function allLanded(client: PublicClient, diamond: Address, days: bigint[], deadline: number): Promise<boolean> {
-  for (let i = 0; i < days.length; i += READ_CHUNK) {
-    const chunk = days.slice(i, i + READ_CHUNK);
-    // eslint-disable-next-line no-await-in-loop
-    const res = await boundedRead(
-      client as never,
-      chunk.map((d) => ({ address: diamond, abi: ABI, functionName: 'getDayDeliveryState' as const, args: [d] as const })),
-      'deliveryProof landed',
-      deadline,
-    );
-    for (const r of res) {
-      // An UNREAD state is not "not landed" (#2497 re-cut review): proving on
-      // it would pay for a no-op. It stops this row for the run instead.
-      if (!r || r.status !== 'success') throw new Error('day delivery state unread — retried next run');
-      const t = r.result as readonly unknown[];
-      if (t[3] !== true) return false; // `landed`
-    }
-  }
-  return true;
-}
-
 /** The ingress packets of `hashes` that have ARRIVED, and the ones whose read
  *  failed (`unread`). A hash in neither has not arrived yet. */
 async function readPackets(
@@ -898,16 +715,11 @@ async function readPackets(
         remitId: bigint;
         kind: number;
         batchId: Hex;
-        dayListHash: Hex;
         dayListRoot: Hex;
         chunkCount: number;
         chunksIndexed: bigint;
         disposed: bigint;
         arrivedAt: bigint;
-        dayCount: bigint;
-        freshShare: bigint;
-        recycledShare: bigint;
-        unclassified: bigint;
       };
       if (!p.arrivedAt) return;
       out.set(chunk[j].toLowerCase(), {
@@ -916,16 +728,11 @@ async function readPackets(
         remitId: BigInt(p.remitId),
         kind: Number(p.kind),
         batchId: p.batchId,
-        dayListHash: p.dayListHash,
         dayListRoot: p.dayListRoot,
         chunkCount: Number(p.chunkCount),
         chunksIndexed: BigInt(p.chunksIndexed),
         disposed: BigInt(p.disposed),
         arrivedAt: Number(p.arrivedAt),
-        dayCount: Number(p.dayCount),
-        freshShare: BigInt(p.freshShare),
-        recycledShare: BigInt(p.recycledShare),
-        unclassified: BigInt(p.unclassified),
       });
     });
   }
@@ -940,15 +747,9 @@ interface Call {
 
 /** The UNHINTED call for an action — the cheap common case. */
 function callFor(a: ProofAction): Call {
-  return a.kind === 'indexPage'
-    ? { functionName: 'materializeTransportBatchPage', args: [a.batchId, a.dayIds] }
-    : a.kind === 'indexChunk'
-      ? { functionName: 'materializeTransportBatchChunk', args: [a.batchId, BigInt(a.chunkIndex), a.dayIds, a.proof, [], []] }
-      : a.kind === 'proveChunk'
-        ? { functionName: 'proveDeliveryDayChunk', args: [a.packetHash, BigInt(a.chunkIndex), a.dayIds, a.proof] }
-        : a.kind === 'admitBatch'
-          ? { functionName: 'admitLegacyTransportBatch', args: [a.packetHash, a.dayIds] }
-          : { functionName: 'proveDeliveryDayList', args: [a.packetHash, a.dayIds] };
+  return a.kind === 'indexChunk'
+    ? { functionName: 'materializeTransportBatchChunk', args: [a.batchId, BigInt(a.chunkIndex), a.dayIds, a.proof, [], []] }
+    : { functionName: 'proveDeliveryDayChunk', args: [a.packetHash, BigInt(a.chunkIndex), a.dayIds, a.proof] };
 }
 
 /** Whether `err` is the contract refusing an unhinted link past its bounded
@@ -980,11 +781,10 @@ function dayOrderReader(client: PublicClient, diamond: Address): DayOrderReader 
 }
 
 /** The HINTED call for an index action, its hints derived from the chain's
- *  own views and verified by the contract (`transportHints.ts`). A flat page
- *  links days `[indexedDays, indexedDays + 32)` of the whole list, so only
- *  those carry a hint; a rooted chunk links every day it carries. */
+ *  own views and verified by the contract (`transportHints.ts`): a chunk links
+ *  every day it carries. */
 async function hintedCallFor(ctx: KeeperContext, a: ProofAction): Promise<Call | null> {
-  if (a.kind !== 'indexPage' && a.kind !== 'indexChunk') return null;
+  if (a.kind !== 'indexChunk') return null;
   const client = ctx.client as unknown as PublicClient;
   const packet = (await client.readContract({
     address: ctx.diamond,
@@ -993,23 +793,11 @@ async function hintedCallFor(ctx: KeeperContext, a: ProofAction): Promise<Call |
     args: [a.batchId],
   } as never)) as { arrivedAt: bigint | number };
   const arrived = BigInt(packet.arrivedAt);
-  const reader = dayOrderReader(client, ctx.diamond);
-  if (a.kind === 'indexChunk') {
-    const h = await hintsForDays(reader, a.dayIds, 0, a.dayIds.length, a.batchId, arrived);
-    return {
-      functionName: 'materializeTransportBatchChunk',
-      args: [a.batchId, BigInt(a.chunkIndex), a.dayIds, a.proof, h.hints, h.lateHints],
-    };
-  }
-  const b = (await client.readContract({
-    address: ctx.diamond,
-    abi: ABI,
-    functionName: 'getTransportBatch',
-    args: [a.batchId],
-  } as never)) as readonly [Hex, bigint, bigint, number, number, boolean];
-  const done = Number(b[4]);
-  const h = await hintsForDays(reader, a.dayIds, done, done + TRANSPORT_INDEX_PAGE, a.batchId, arrived);
-  return { functionName: 'materializeTransportBatchPageHinted', args: [a.batchId, a.dayIds, h.hints, h.lateHints] };
+  const h = await hintsForDays(dayOrderReader(client, ctx.diamond), a.dayIds, 0, a.dayIds.length, a.batchId, arrived);
+  return {
+    functionName: 'materializeTransportBatchChunk',
+    args: [a.batchId, BigInt(a.chunkIndex), a.dayIds, a.proof, h.hints, h.lateHints],
+  };
 }
 
 /** What a send did: `ok` (landed, or the work was already done), `failed`

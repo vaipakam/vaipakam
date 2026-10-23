@@ -403,7 +403,8 @@ contract RewardRemittanceLensFacet {
         return LibVaipakam.storageSlot().rewardRemittanceKeeper;
     }
 
-    /// @notice The mirror-side receiver authorized for {onRewardBudgetReceived}.
+    /// @notice The mirror-side receiver authorized for the budget and
+    ///         compensation ingresses.
     function getRewardRemittanceReceiver() external view returns (address) {
         return LibVaipakam.storageSlot().rewardRemittanceReceiver;
     }
@@ -559,15 +560,13 @@ contract RewardRemittanceLensFacet {
      * @notice #1944 consequence 1 — which proof route a landed packet takes,
      *         and whether it is refused: `batched` → the batch materializers;
      *         else `dayListRoot != 0` → {RewardEpochFacet.proveDeliveryDayChunk};
-     *         else `dayListHash != 0` → {RewardEpochFacet.proveDeliveryDayList};
-     *         neither → a pre-3a packet with no provable list. `disposed != 0`
-     *         is refused. (No packet is quarantined since the custody-era
+     *         else nothing to prove (a compensation, which funds no listed
+     *         day). `disposed != 0` is refused. (No packet is quarantined since the custody-era
      *         revision, so the flag that read it is gone.)
      * @dev    A narrow read of existing packet fields rather than the whole
      *         {getIngressPacket} record: the keeper's proof step needs only
      *         these, and a fixed tuple keeps its decode stable when the
      *         append-only packet struct's tail widens. Nothing new is stored.
-     * @return dayListHash         The flat day-list commitment (0 = none).
      * @return dayListRoot         The rooted (d6) commitment (0 = none).
      * @return chunkCount          The rooted list's chunk count.
      * @return chunksIndexed       Bit `i` set = chunk `i` proven.
@@ -579,7 +578,6 @@ contract RewardRemittanceLensFacet {
         external
         view
         returns (
-            bytes32 dayListHash,
             bytes32 dayListRoot,
             uint32 chunkCount,
             uint256 chunksIndexed,
@@ -590,7 +588,6 @@ contract RewardRemittanceLensFacet {
     {
         LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
         return (
-            p.dayListHash,
             p.dayListRoot,
             p.chunkCount,
             p.chunksIndexed,
@@ -634,9 +631,9 @@ contract RewardRemittanceLensFacet {
      *                   (#1566 closure 2 retired the armed-attributable
      *                   test; the paid side is vintage-blind, so the
      *                   received side is too).
-     * @return uncounted Σ fresh-looking value this chain did not count: an
-     *                   old-wire packet whose composition was NOT stated
-     *                   lands here whole, and a composition-KNOWN delivery
+     * @return uncounted Σ fresh-looking value this chain did not count: a
+     *                   delivery held as a transport epoch lands here whole
+     *                   until its draws type it, and a typed delivery
      *                   contributes its scaling residue — the receiver
      *                   scales the fresh and recycled shares to what actually
      *                   arrived with flooring, so on a fee-on-transfer or
@@ -645,8 +642,7 @@ contract RewardRemittanceLensFacet {
      *                   as fresh (Codex #2151 r1 P2). Non-zero means this
      *                   chain's counted funding UNDERSTATES what Base sent —
      *                   the safe direction, but one an operator must read
-     *                   with both sources in mind; the cutover epoch of the
-     *                   second closure-2 PR reconciles the old-wire part.
+     *                   with both sources in mind.
      */
     function getDeliveredFreshPosition()
         external
@@ -839,23 +835,6 @@ contract RewardRemittanceLensFacet {
         }
         fee = IRewardMessenger(messenger).quoteSendRemitAck(
             remitId, rec.amount, rec.remitter
-        );
-    }
-
-    /// @notice #1566 transport epochs PR 3a — quote the native transport fee
-    ///         for {RewardRemittanceFacet.attestRemitSplit} on `remitId`: this
-    ///         reservation's recorded split, toward the mirror it was sent to.
-    /// @dev    Refuses exactly what the send refuses, by calling the same
-    ///         rule rather than restating it (Codex #2224 r6) — including the
-    ///         canonical-role gate, which matters because a demoted
-    ///         deployment KEEPS its historical reservations and would
-    ///         otherwise price an operation it can no longer perform.
-    function quoteSplitAttestationFee(uint256 remitId) external view returns (uint256 fee) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        (address messenger, LibVaipakam.RemitReservation storage r) =
-            LibRewardCustody.requireAttestable(s, remitId);
-        fee = IRewardMessenger(messenger).quoteSendSplitAttestation(
-            r.dstChainId, address(this), remitId, r.fresh, r.recycled
         );
     }
 

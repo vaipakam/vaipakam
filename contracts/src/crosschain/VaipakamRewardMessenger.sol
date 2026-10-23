@@ -19,7 +19,6 @@ import {
     IRewardReporterIngressV3,
     IRewardCommitmentIngress,
     IRewardRemitAckIngress,
-    IRewardSplitAttestationIngress,
     ICompQuoteIngress,
     RewardBroadcastV2,
     RewardBroadcastV3
@@ -193,7 +192,13 @@ interface IRepatriationInstructionIngress {
 ///      would bounce as an unknown kind (Codex #2224 r1).
 ///      Generation 6 (#1566 PR C revision) = generation 5 plus the B4 day
 ///      REPORT, mirror → Base, carrying the reporting chain's custody era.
-uint256 constant REWARD_MESSENGER_WIRE_GENERATION = 6;
+///      Generation 7 = generation 6 WITHOUT the kind-12 split attestation.
+///      Every budget remittance now rides the rooted (d6) wire, which carries
+///      its own split, so no mirror packet is ever untyped and no attestation
+///      has anything to type. Kind 12 is RETIRED: an inbound one reverts
+///      `UnknownMessageType`, and the number is never to be reused for a new
+///      kind, so a stale sender's message can never be read as something else.
+uint256 constant REWARD_MESSENGER_WIRE_GENERATION = 7;
 
 contract VaipakamRewardMessenger is
     Initializable,
@@ -264,15 +269,8 @@ contract VaipakamRewardMessenger is
     ///         funding — the manual compensation dispatch is bounded by
     ///         it. Re-sendable idempotently, like day reports.
     uint8 internal constant MSG_TYPE_COMP_QUOTE = 11;
-    /// @notice #1566 transport epochs PR 3a — Base → mirror SPLIT ATTESTATION:
-    ///         the canonical chain's recorded split of a d2 remittance the
-    ///         mirror received untyped, `abi.encode(uint8 kind, address
-    ///         remitter, uint256 remitId, uint256 fresh, uint256 recycled)`.
-    ///         The mirror persists it once as that packet's attested caps. A
-    ///         NEW kind per the B2-d5 rule; re-sendable, and the mirror
-    ///         accepts exactly one.
-    uint8 internal constant MSG_TYPE_SPLIT_ATTESTATION = 12;
-
+    // Kind 12 was the Base → mirror SPLIT ATTESTATION, retired with the
+    // pre-d6 remit wires (generation 7). It is never reused.
     /// @notice LEGACY REPORT payload size — the pre-#1222 mirror→Base
     ///         `abi.encode(uint8, uint256, uint256, uint256)` four-word
     ///         shape. Base keeps ACCEPTING it (recycled fields read as zero,
@@ -382,11 +380,6 @@ contract VaipakamRewardMessenger is
     // #1656 r8 - 5 words: kind, remitId, amountReceived, remitter,
     // consumed (the mirror's consumption attestation the R6 gate keys on).
     uint256 internal constant REMIT_ACK_PAYLOAD_SIZE = 5 * 32;
-    /// @notice #1566 transport epochs PR 3a — split attestation payload: kind,
-    ///         remitter, remitId, fresh, recycled. It shares five words with
-    ///         the ack shape, so the KIND TAG disambiguates, never the length
-    ///         — the standing rule on this wire.
-    uint256 internal constant SPLIT_ATTESTATION_PAYLOAD_SIZE = 5 * 32;
     /// @notice #1568 C2 — repatriation INSTRUCTION payload:
     ///         `abi.encode(uint8, address issuingBase, uint256 authId,
     ///         uint256 amount)`. Same length as the legacy report / remit
@@ -508,16 +501,6 @@ contract VaipakamRewardMessenger is
         uint256 indexed sourceChainId,
         uint256 indexed remitId,
         uint256 amountReceived
-    );
-    /// @notice #1566 transport epochs PR 3a — a split attestation left for a mirror.
-    /// @custom:event-category informational/reward-transport
-    event SplitAttestationSent(
-        bytes32 indexed messageId, uint256 indexed remitId, uint32 dstChainId, uint256 fresh, uint256 recycled
-    );
-    /// @notice #1566 transport epochs PR 3a — a split attestation arrived from Base.
-    /// @custom:event-category informational/reward-transport
-    event SplitAttestationReceived(
-        uint256 indexed sourceChainId, uint256 indexed remitId, uint256 fresh, uint256 recycled
     );
     /// @custom:event-category informational/reward-transport
     /// @notice #1568 C2 — a Base→mirror repatriation instruction left this
@@ -676,9 +659,6 @@ contract VaipakamRewardMessenger is
     /// @notice #1568 C2 — a Base→mirror repatriation kind arrived on the
     ///         canonical chain itself (Base cannot repatriate to itself).
     error RepatriationOnCanonical();
-    /// @notice #1566 transport epochs PR 3a — a split attestation arrived on
-    ///         the canonical chain. They flow Base → mirror only.
-    error AttestationOnCanonical();
     /// @notice Unknown payload msgType.
     error UnknownMessageType(uint8 msgType);
     /// @notice Inbound payload length is not the canonical 4-word shape.
@@ -1087,47 +1067,6 @@ contract VaipakamRewardMessenger is
         );
         nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
             baseChainId, payload, _noTokens(), destGasLimit
-        );
-    }
-
-    // ─── #1566 transport epochs PR 3a — Base → mirror split attestation ─────
-
-    /// @notice Dispatch the canonical chain's recorded split of remittance
-    ///         `remitId` toward the mirror `dstChainId` it was sent to.
-    function sendSplitAttestation(
-        uint32 dstChainId,
-        address remitter,
-        uint256 remitId,
-        uint256 fresh,
-        uint256 recycled,
-        address payable refundAddress
-    )
-        external
-        payable
-        onlyDiamond
-        whenNotPaused
-        nonReentrant
-        returns (bytes32 messageId)
-    {
-        if (messenger == address(0)) revert MessengerNotSet();
-        bytes memory payload =
-            abi.encode(MSG_TYPE_SPLIT_ATTESTATION, remitter, remitId, fresh, recycled);
-        messageId = _dispatch(dstChainId, payload, msg.value, refundAddress);
-        emit SplitAttestationSent(messageId, remitId, dstChainId, fresh, recycled);
-    }
-
-    /// @notice Quote the native CCIP fee for a Base→mirror split attestation.
-    function quoteSendSplitAttestation(
-        uint32 dstChainId,
-        address remitter,
-        uint256 remitId,
-        uint256 fresh,
-        uint256 recycled
-    ) external view returns (uint256 nativeFee) {
-        bytes memory payload =
-            abi.encode(MSG_TYPE_SPLIT_ATTESTATION, remitter, remitId, fresh, recycled);
-        nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
-            dstChainId, payload, _noTokens(), destGasLimit
         );
     }
 
@@ -2161,23 +2100,6 @@ contract VaipakamRewardMessenger is
             emit RepatriationCancelReceived(sourceChainId, authId);
             IRepatriationInstructionIngress(diamond)
                 .onRepatriationCancelInstructionReceived(issuingBase, authId);
-        } else if (msgType == MSG_TYPE_SPLIT_ATTESTATION) {
-            // #1566 transport epochs PR 3a — Base → mirror only. The mirror's
-            // ingress resolves the packet through the receipt (remitter,
-            // remitId) and persists the split once, scaled to what landed.
-            if (len != SPLIT_ATTESTATION_PAYLOAD_SIZE) {
-                revert PayloadSizeMismatch(len, SPLIT_ATTESTATION_PAYLOAD_SIZE);
-            }
-            if (isCanonical) revert AttestationOnCanonical();
-            if (sourceChainId > type(uint32).max) {
-                revert ChainIdTooLarge(sourceChainId);
-            }
-            (, address attestRemitter, uint256 attestRemitId, uint256 attestFresh, uint256 attestRecycled) =
-                abi.decode(payload, (uint8, address, uint256, uint256, uint256));
-            emit SplitAttestationReceived(sourceChainId, attestRemitId, attestFresh, attestRecycled);
-            IRewardSplitAttestationIngress(diamond).onRemitSplitAttested(
-                SafeCast.toUint32(sourceChainId), attestRemitter, attestRemitId, attestFresh, attestRecycled
-            );
         } else {
             revert UnknownMessageType(msgType);
         }

@@ -160,8 +160,8 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         LibVaipakam.IngressPacket storage p = s.ingressPackets[packetHash];
         if (p.arrivedAt == 0) revert ReconciliationPacketUnknown(packetHash);
         if (freshShare + recycledShare == 0) revert InvalidAmount();
-        // #1566 transport epochs PR 3b — an old-wire packet is classifiable
-        // only once its TRANSPORT EPOCH has been released: the batch's
+        // #1566 transport epochs PR 3b — a packet holding a transport epoch is
+        // classifiable only once that epoch has been released: the batch's
         // remainder parked, with its acknowledgment recorded (§5c names that
         // the only route). Classifying earlier would spend value the batch's
         // own listed obligations can still draw.
@@ -171,12 +171,9 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         // remainder's dispositions, so leaving the entry at its parked figure
         // would report value that has already left — and it bounds the take at
         // what the entry still holds, which is a second ceiling beside the
-        // packet's own remainder. A packet that can never hold a batch passes
-        // untouched and is debited nothing — which population that is, is
-        // decided inside by LibRewardCustody.rolloutAdmissionStatus and is
-        // deliberately not restated here (Codex #2232 r15): the list that used
-        // to stand in this comment said "a pre-3b arrival", and an arrival
-        // between 3a and 3b is owed an epoch rather than exempt from one.
+        // packet's own remainder. A packet holding no batch passes untouched
+        // and is debited nothing: only the d6 ingress opens a batch, at the
+        // packet's own landing, so it never acquires one later.
         LibRewardCustody.takeFromReleasedRemainder(s, packetHash, freshShare + recycledShare);
         if (p.kind <= LibRewardCustody.PACKET_KIND_COMPENSATION) {
             LibVaipakam.StrandedRecovery storage sr =
@@ -509,10 +506,9 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         // caps, never read from a figure frozen at attestation (Codex #2276):
         // the correction path moves `classifiedFresh` / `classifiedRecycled`,
         // and a stored copy of the excess kept reporting a corrected packet
-        // as still over its caps. This is the same arithmetic the attestation
-        // uses to decide whether to emit {IngressPacketClassifiedBeyondCaps},
-        // and the live caps that block further classification ({_netCaps}) are
-        // derived the same way, so the view and the gate cannot disagree.
+        // as still over its caps. The live caps that block further
+        // classification ({_netCaps}) are derived the same way, so the view
+        // and the gate cannot disagree.
         uint256 usedF = p.classifiedFresh;
         uint256 usedR = p.classifiedRecycled;
         if (p.batchId != bytes32(0)) {

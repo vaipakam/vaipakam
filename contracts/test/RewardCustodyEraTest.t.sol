@@ -25,6 +25,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {LibD6Delivery} from "./helpers/LibD6Delivery.sol";
 
 /// @title RewardCustodyEraTest — slice 4 PR C-1 (#1566): the custody era
 ///        registry and the carry-forward at a role change.
@@ -366,26 +367,39 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
     // ─── #1566 PR C revision — no manual era step; stamping; the B4 report; era routing ───
     address internal constant REMITTER_BF = address(0xBA5E);
 
-    /// @dev An untyped delivery: its value lands unclassified under its packet.
+    /// @dev A budget delivery sent for era 0: its value lands unclassified
+    ///      under its packet.
     function _untypedDelivery(uint256 amount, uint256 remitId, bytes32 id) internal returns (bytes32 h) {
-        h = _untypedDeliveryOn(amount, remitId, id, 1);
+        h = _deliveryFor(amount, remitId, id, 0);
     }
 
-    /// @dev An untyped delivery listing one day, `day` — which places it: a day
-    ///      before the live era's boundary belongs to a retired era.
-    function _untypedDeliveryOn(uint256 amount, uint256 remitId, bytes32 id, uint256 day)
+    /// @dev A whole-fresh budget delivery on the rooted (d6) wire for day 1,
+    ///      sent for custody era `era` — the wire's word, which files it: in
+    ///      that era while it exists, in the live era when it names one ahead.
+    function _deliveryFor(uint256 amount, uint256 remitId, bytes32 id, uint64 era)
         internal
         returns (bytes32 h)
     {
         uint256[] memory one = new uint256[](1);
-        one[0] = day;
+        one[0] = 1;
         RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(this));
         vpfi.mint(address(this), amount);
         vpfi.transfer(address(diamond), amount);
-        RewardIngressFacet(address(diamond)).onRewardBudgetReceived(
-            address(vpfi), amount, one, CHAIN_BASE, remitId, REMITTER_BF, 0, 0, id, false
+        (h, ) = LibD6Delivery.deliver(
+            address(diamond),
+            LibD6Delivery.Delivery({
+                token: address(vpfi),
+                amount: amount,
+                dayIds: one,
+                sourceChainId: CHAIN_BASE,
+                remitId: remitId,
+                remitter: REMITTER_BF,
+                recycled: 0,
+                fresh: amount,
+                messageId: id,
+                era: era
+            })
         );
-        h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
     }
 
     /// @dev Custody activation freezes nothing: a role change right after it
@@ -397,17 +411,17 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         assertEq(_era().getCustodyEra(0).holderRow, 3e18, "and carried the live row");
     }
 
-    /// @dev Every packet is stamped with the era live at its arrival.
+    /// @dev Every packet is stamped with the era its wire was sent for.
     function test_APacket_IsStampedWithTheLiveEra() public {
         activateRewardCustodyForTest(address(vpfi), 0);
         bytes32 h0 = _untypedDelivery(1e18, 41, keccak256("st-0"));
         assertEq(_rlens().getIngressPacket(h0).custodyEra, 0);
         _detach();
         _reattach();
-        // A day of the live era (its boundary is today): a delivery listing an
-        // earlier day is placed by that day instead (the D6 suite pins that).
-        bytes32 h2 = _untypedDeliveryOn(1e18, 42, keccak256("st-2"), _today());
-        assertEq(_rlens().getIngressPacket(h2).custodyEra, 2, "the live era at its arrival");
+        // A delivery sent for the live era is filed in it; one sent for a
+        // retired era is filed in that era instead (the D6 suite pins that).
+        bytes32 h2 = _deliveryFor(1e18, 42, keccak256("st-2"), 2);
+        assertEq(_rlens().getIngressPacket(h2).custodyEra, 2, "the era it was sent for");
         assertEq(_rlens().getIngressPacket(h0).custodyEra, 0, "an earlier packet keeps its own");
     }
 

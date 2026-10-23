@@ -112,7 +112,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](266); // #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](265); // pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -170,7 +170,6 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.consumeRecycleRawBounded.selector;
         selectors[n++] = TestMutatorFacet.consumeRecycleRawAsRemit.selector;
         selectors[n++] = TestMutatorFacet.setRemitReservationReleasedRaw.selector;
-        selectors[n++] = TestMutatorFacet.setRemitSplitOnWireRaw.selector;
         selectors[n++] = TestMutatorFacet.setRemitReservationSplitRaw.selector;
         // #1566 slice 4 PR B — raw role inputs + the freeze flag.
         selectors[n++] = TestMutatorFacet.setRewardRoleRaw.selector;
@@ -516,18 +515,17 @@ contract HelperTest {
             TestMutatorFacet.getRewardEntryExpiryBegunRaw.selector;
         selectors[n++] =
             TestMutatorFacet.getUserClaimPendingUncappedRaw.selector;
-        // #1566 transport epochs PR 3b (Codex #2232 r3) — the rollout
-        // population's fixture: put a packet back into its pre-3b shape, and
-        // set the arrival that a day's batch index is ordered by.
-        selectors[n++] = TestMutatorFacet.unadmitTransportBatchRaw.selector;
+        // #1566 transport epochs PR 3b (Codex #2232 r3) — the arrival that a
+        // day's batch index is ordered by.
         selectors[n++] = TestMutatorFacet.setPacketArrivedAtRaw.selector;
-        selectors[n++] = TestMutatorFacet.setPacketDayListRaw.selector;
         selectors[n++] = TestMutatorFacet.parkTransportBatchRaw.selector;
         selectors[n++] = TestMutatorFacet.classifyPacketPreGateRaw.selector;
         selectors[n++] = TestMutatorFacet.setPacketClassifiedRaw.selector; // 3b-ii-A: a correction's effect on the classified figures // 3b-ii-A r9: a pre-gate classification
         selectors[n++] = TestMutatorFacet.moveClassificationRaw.selector; // 3b-ii-A: the production move-and-reconcile
         selectors[n++] = TestMutatorFacet.setTransportBatchConsumedRaw.selector; // 3b-ii-A: a batch's drawn legs
         selectors[n++] = TestMutatorFacet.setPacketAttestedCapsRaw.selector; // 3b-ii-A r26: a flexible epoch
+        selectors[n++] = TestMutatorFacet.clearPacketAttestedRaw.selector; // pre-d6 retirement: an unattested epoch
+        selectors[n++] = TestMutatorFacet.relocateFreshIngressRaw.selector; // pre-d6 retirement: live funding
         selectors[n++] = TestMutatorFacet.resetTransportDrawWritesRaw.selector; // 3b-ii-A r14: a new transaction's empty transient count
         // 3b-ii-A2 (#2305) — raw reads for the staging cells.
         selectors[n++] = TestMutatorFacet.poolRemainingRaw.selector;
@@ -2434,7 +2432,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](11);
         selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -2444,11 +2442,9 @@ contract HelperTest {
         selectors[6] = RewardRemittanceFacet.onRemitAckReceived.selector;
         selectors[7] = RewardRemittanceFacet.finalizeRemitReservation.selector;
         selectors[8] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
-        // #1566 transport epochs PR 3a — the canonical split attestation send.
-        selectors[9] = RewardRemittanceFacet.attestRemitSplit.selector;
         // #1944 consequence 1 — the mirror's one-shot day-delivery gate.
         selectors[10] = RewardRemittanceFacet.setDayDeliveryGateFromDay.selector;
-        selectors[11] = RewardRemittanceFacet.backfillRemitHistory.selector; // #2489 r7: the history walk
+        selectors[9] = RewardRemittanceFacet.backfillRemitHistory.selector; // #2489 r7: the history walk
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair (mirrors DeployDiamond).
@@ -2508,7 +2504,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](43);
+        selectors = new bytes4[](42);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -2537,7 +2533,6 @@ contract HelperTest {
         // #1566 slice 4 PR B — the Diamond-internal custody entry points.
         selectors[24] = RewardCustodyFacet.custodyRelocateToRow.selector;
         selectors[25] = RewardCustodyFacet.custodyMove.selector;
-        selectors[26] = RewardCustodyFacet.custodyRelocateFreshIngress.selector;
         selectors[27] = RewardCustodyFacet.custodyUnclassifiedQuarantine.selector;
         selectors[28] = RewardCustodyFacet.custodyReleaseFromRow.selector;
         selectors[29] = RewardCustodyFacet.custodyPayoutToWallet.selector;
@@ -2559,7 +2554,7 @@ contract HelperTest {
         selectors[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
         // #1566 sanctions rule (owner 2026-10-14) — reward set apart / released.
         selectors[41] = RewardCustodyFacet.custodySetApartReward.selector;
-        selectors[42] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;
+        selectors[26] = RewardCustodyFacet.custodyReleaseSanctionsHeld.selector;
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch
@@ -2599,14 +2594,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](3);
         selectors[0] = RewardIngressFacet.onCompensationBudgetReceived.selector;
         selectors[1] = RewardIngressFacet.onCompensationDayBroadcastArrived.selector;
-        selectors[2] = RewardIngressFacet.onRewardBudgetReceived.selector;
-        // #1566 transport epochs PR 3a — the split attestation ingress.
-        selectors[3] = RewardIngressFacet.onRemitSplitAttested.selector;
         // 3d-1 — the rooted (d6) ingress.
-        selectors[4] = RewardIngressFacet.onRewardBudgetReceivedD6.selector;
+        selectors[2] = RewardIngressFacet.onRewardBudgetReceivedD6.selector;
     }
 
     /// #1566 transport epochs PR 3b — the transport epochs' ledger. Mirrors
@@ -2617,22 +2609,19 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](25);
-        selectors[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
+        selectors = new bytes4[](21);
         selectors[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         selectors[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
         selectors[3] = RewardEpochFacet.getTransportBatch.selector;
         selectors[4] = RewardEpochFacet.getTransportBatchLegs.selector;
         selectors[5] = RewardEpochFacet.getTransportRemainder.selector;
         selectors[6] = RewardEpochFacet.getTransportDayBatches.selector;
-        selectors[7] = RewardEpochFacet.admitLegacyTransportBatch.selector;
         // 3b-ii-A — the draws (mirrors `DeployDiamond._getRewardEpochSelectors`).
         selectors[8] = RewardEpochFacet.getTransportCoverageForDay.selector;
         selectors[9] = RewardEpochFacet.epochDrawForDay.selector;
         selectors[10] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
         selectors[11] = RewardEpochFacet.getTransportAllocationForDay.selector;
         selectors[12] = RewardEpochFacet.epochSettleLegs.selector; // A2-ii
-        selectors[13] = RewardEpochFacet.materializeTransportBatchPageHinted.selector;
         selectors[14] = RewardEpochFacet.getTransportDayBatchesFrom.selector;
         selectors[15] = RewardEpochFacet.getTransportDayIndex.selector;
         selectors[16] = RewardEpochFacet.getTransportDayScanIds.selector;
@@ -2642,11 +2631,10 @@ contract HelperTest {
         selectors[19] = RewardEpochFacet.getTransportBatchGates.selector;
         selectors[20] = RewardEpochFacet.getTransportBatchDays.selector;
         // 3d-1 — the rooted (d6) chunk index.
-        selectors[21] = RewardEpochFacet.materializeTransportBatchChunk.selector;
+        selectors[0] = RewardEpochFacet.materializeTransportBatchChunk.selector;
         // #1944 consequence 1 — the delivery proofs for packets holding no batch.
-        selectors[22] = RewardEpochFacet.proveDeliveryDayList.selector;
-        selectors[23] = RewardEpochFacet.proveDeliveryDayChunk.selector;
-        selectors[24] = RewardEpochFacet.getTransportDayLateFrom.selector; // #2489 (Codex r2): the late chain, for verified late hints
+        selectors[7] = RewardEpochFacet.proveDeliveryDayChunk.selector;
+        selectors[13] = RewardEpochFacet.getTransportDayLateFrom.selector; // #2489 (Codex r2): the late chain, for verified late hints
     }
 
     /// 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads. Mirrors
@@ -2848,7 +2836,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](47);
+        selectors = new bytes4[](46);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2903,8 +2891,6 @@ contract HelperTest {
             RewardRemittanceLensFacet.recoveryAttributionArmed.selector;
         selectors[33] =
             RewardRemittanceLensFacet.recoveryAttributionArmedAt.selector;
-        // #1566 transport epochs PR 3a — the split attestation fee quote.
-        selectors[37] = RewardRemittanceLensFacet.quoteSplitAttestationFee.selector;
         // #2459 r5 — the provisional compensation value held apart.
         selectors[38] = RewardRemittanceLensFacet.getProvisionalFreshHeld.selector;
         // #1944 consequence 1 — the delivery gate's rule (the self-staticcall
@@ -2916,7 +2902,7 @@ contract HelperTest {
         selectors[43] = RewardRemittanceLensFacet.getRemitHistoryPending.selector; // #2489 r7
         selectors[44] = RewardRemittanceLensFacet.getChainRemittedRecycledHistory.selector; // #2489 r9
         selectors[45] = RewardRemittanceLensFacet.getRemitHistoryBooked.selector; // #2489 r10
-        selectors[46] = RewardRemittanceLensFacet.getRemitRoute.selector; // #2561
+        selectors[37] = RewardRemittanceLensFacet.getRemitRoute.selector; // #2561
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

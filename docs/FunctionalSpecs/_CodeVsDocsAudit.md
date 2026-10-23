@@ -1142,3 +1142,36 @@ it does not make the ordering safe. **Do not resolve this by rewriting the spec
 to "a detached chain's last report is dropped"** without a recorded owner
 decision: the ratchets are what keep retired commitments from staying
 reserved on Base.
+
+## The pre-d6 budget wires are retired: a spec change made on a recorded owner decision (2026-10-22)
+
+**Spec before** (`TokenomicsTechSpec.md`, transport epochs first and second
+changes): a mirror accepts reward-budget deliveries on wires older than the
+rooted one (d6), keeps a fingerprint of their day list, can be sent the
+source's recorded split afterwards by a split-attestation message, writes their
+membership from a re-supplied flat list, proves a no-epoch delivery's flat
+list, and can bring an older delivery into the epoch ledger retrospectively
+from its recorded fingerprint.
+
+**Spec after:** the rooted wire is the only budget wire. The receiving contract
+refuses every older budget payload by name (`UnknownRemitWireShape`), and the
+attestation message, the flat-list writer, the flat-list proof and the
+retrospective admission are withdrawn. A rooted delivery's split is attested by
+its own wire, and its days land only chunk by chunk against its root. The old
+bullets stay in the spec, marked superseded, because the epoch, draw, staging,
+closure and release rules they carry still apply to every rooted delivery.
+
+**Why this is not the spec bent to the code.** The code did what the old spec
+said; nothing diverged. The intent changed, by an explicit owner decision
+(Raaj, 2026-10-22, on the delivery-proof thread): "remove it, we are still in
+prelive, so lets do things accordingly", followed by the choice to do it end to
+end in one change (receiver refusal, the flat-only contract code, and the
+keeper's flat route). The precondition is owner decision O1 = A: every chain
+that runs these slices is a fresh deploy, so no pre-d6 delivery is in flight to
+any of them and no current sender produces one. On a chain that ever did carry
+pre-d6 deliveries, this change would strand them, and it must not reach one by
+an in-place upgrade.
+
+**Status:** resolved by the spec change and the code change together. Do not
+reintroduce a flat-list route to "restore coverage": there is no population for
+it to cover.
