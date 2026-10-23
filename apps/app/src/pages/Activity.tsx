@@ -21,6 +21,7 @@ import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { formatTimeAgo, shortAddress } from '../lib/format';
 import {
   coalesceByTx,
+  isWalletActivity,
   legText,
   rowValue,
   type ActivityRowView,
@@ -255,11 +256,11 @@ export function Activity() {
     setVisible(PAGE);
   }
 
-  // The worker's actor column is non-exhaustive (a keeper-triggered
+  // The worker's actor column is one wallet per row (a keeper-triggered
   // LoanDefaulted has actor null; OfferAccepted stores only the
-  // acceptor), so fetch broadly and keep an event when the wallet is a
-  // PARTICIPANT: recorded actor, mentioned in the event args, or the
-  // event belongs to one of the wallet's own loans.
+  // acceptor), so fetch broadly and keep an event when the event belongs
+  // to one of the wallet's own loans or the wallet is one of its
+  // PARTICIPANTS by the shared rule (#2703, `isWalletActivity`).
   // The filter needs the wallet's loan-id set INCLUDING the indexer
   // leg: the live chain enumeration only sees currently-held position
   // NFTs, so a chain-only fallback would silently drop actor-null
@@ -358,15 +359,7 @@ export function Activity() {
         const pageObservations = readRepairObservations(page.repairObservations, readChain.chainId);
         if (pageObservations === null) observationsKnown = false;
         else observations.push(...pageObservations.filter((o) => myLoanIds.has(o.loanId)));
-        mine.push(
-          ...page.events.filter((ev) => {
-            if (ev.actor && ev.actor.toLowerCase() === me) return true;
-            if (ev.loanId !== null && myLoanIds.has(ev.loanId)) return true;
-            const argsStr =
-              typeof ev.args === 'string' ? ev.args : JSON.stringify(ev.args ?? {});
-            return argsStr.toLowerCase().includes(me);
-          }),
-        );
+        mine.push(...page.events.filter((ev) => isWalletActivity(ev, me, myLoanIds)));
         if (page.nextBefore === null) {
           truncated = false;
           break;

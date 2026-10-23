@@ -6826,8 +6826,9 @@ export async function recordActivityEvents(
       const id = Number((args as Record<string, unknown>).offerId as bigint);
       const creator = creatorByOfferId.get(id);
       if (creator) {
-        // Add `creator` so the dapp's `indexedToActivityEvent`
-        // address-walk surfaces the borrower in participants.
+        // Add `creator` so the actor rule files the row under the
+        // borrower, who is then its participant on the Activity page
+        // (`@vaipakam/lib/activityParticipants`, #2703).
         args = { ...args, creator };
       }
     }

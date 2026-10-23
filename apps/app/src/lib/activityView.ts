@@ -16,6 +16,7 @@
  * feed's honesty rules — truncation, participant filter — stay in the
  * page).
  */
+import { activityParticipants } from '@vaipakam/lib/activityParticipants';
 import type { IndexedActivityEvent } from '../data/indexer';
 import { formatTokenAmount, shortAddress } from './format';
 import { LoanStatus } from './types';
@@ -212,10 +213,76 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   VPFIDiscountApplied: { label: 'Fee discount applied (paid in VPFI)', category: 'loan-open', priority: 12 },
   VPFIYieldFeeDiscountApplied: { label: 'Yield fee discount applied (paid in VPFI)', category: 'loan-close', priority: 12 },
   VaultRentalUpdated: { label: 'Rental access updated', category: 'loan-modify', priority: 12 },
+  // #2703 — kinds the participants rule (@vaipakam/lib/activityParticipants)
+  // admits to a wallet's page because the wallet is a party: its own
+  // settings, intents, vault, perks and reward entries. Companions and
+  // NFT book-keeping stay low so the action beside them represents the row.
+  // The flagged-wallet rows use the in-app wording only (no list or
+  // provider named), the same as SanctionedProceedsLocked.
+  ApprovalForAll: { label: 'Approval for all position NFTs', category: 'other', priority: 5 },
+  NFTMinted: { label: 'Position NFT minted', category: 'other', priority: 5 },
+  OfferCreatedDetails: { label: 'Offer created', category: 'offer', priority: 10 },
+  OfferCanceledDetails: { label: 'Offer cancelled', category: 'offer', priority: 10 },
+  // Created lazily inside a wallet's first offer, accept or deposit, before
+  // that action's own event: low, so the action represents the row (#2708 r1).
+  UserVaultCreated: { label: 'Vault created', category: 'other', priority: 8 },
+  TermsAccepted: { label: 'Terms of use accepted', category: 'other', priority: 40 },
+  TokenDisowned: { label: 'Unsolicited tokens disowned', category: 'other', priority: 40 },
+  StuckERC20Recovered: { label: 'Stuck tokens recovered', category: 'other', priority: 60 },
+  AutoLendConsentChanged: { label: 'Auto-lend setting updated', category: 'other', priority: 40 },
+  AutoOptInOnNewLoanChanged: { label: 'Automatic refinance setting for new loans updated', category: 'other', priority: 40 },
+  DefaultAutoRefinanceCapsChanged: { label: 'Default automatic refinance limits updated', category: 'other', priority: 40 },
+  KeeperAccessUpdated: { label: 'Keeper access setting updated', category: 'other', priority: 40 },
+  KeeperActionsUpdated: { label: 'Keeper permissions updated', category: 'other', priority: 40 },
+  KeeperRevoked: { label: 'Keeper removed', category: 'other', priority: 40 },
+  VPFIDiscountConsentChanged: { label: 'VPFI fee discount setting updated', category: 'other', priority: 40 },
+  LenderIntentSet: { label: 'Standing lending intent set', category: 'offer', priority: 50 },
+  LenderIntentFunded: { label: 'Standing lending intent funded', category: 'offer', priority: 50 },
+  LenderIntentCapitalWithdrawn: { label: 'Capital withdrawn from a standing lending intent', category: 'offer', priority: 50 },
+  LenderIntentCancelled: { label: 'Standing lending intent cancelled', category: 'offer', priority: 50 },
+  LenderIntentPrioritySet: { label: 'Priority routing setting updated', category: 'offer', priority: 30 },
+  PerkPurchased: { label: 'Perk bought with VPFI', category: 'other', priority: 60 },
+  PerkCreditConsumed: { label: 'Perk credit used', category: 'other', priority: 12 },
+  RewardEntryHorizonStamped: { label: 'Reward claim window started', category: 'other', priority: 30 },
+  RewardEntryExpiryArmed: { label: 'Reward entered its final notice period', category: 'other', priority: 40 },
+  RewardEntryExpiryBegun: { label: 'Unclaimed reward returning to the rewards programme', category: 'other', priority: 44 },
+  RewardEntryExpired: { label: 'Unclaimed reward returned to the rewards programme', category: 'other', priority: 46 },
+  // Also emitted for a share set apart for a flagged wallet (its venue is the
+  // held balance), beside RewardSanctionsHeldApart: below it, so the row says
+  // the reward was set aside, never that it was delivered (#2708 r1).
+  StagingDelivered: { label: 'Rewards settled for a day', category: 'other', priority: 45 },
+  RewardSanctionsHeldApart: { label: 'Rewards set aside while this wallet is flagged', category: 'other', priority: 50 },
+  RewardSanctionsHeldReleased: { label: 'Set-aside rewards ready to claim', category: 'other', priority: 55 },
+  StagingClaimantForfeited: { label: 'Rewards forfeited while this wallet is flagged', category: 'other', priority: 50 },
+  // Emitted inside the transfer or close that caused it: low, so that action
+  // represents the row (#2708 r2).
+  RewardEntryRepointRefused: { label: 'Reward entry kept with its earner after a position transfer', category: 'other', priority: 12 },
+  RewardEntrySplitAtTransfer: { label: 'Reward entry split at a position transfer', category: 'other', priority: 12 },
   // Low-priority book-keeping — never represents a transaction alone.
   Transfer: { label: 'Transfer', category: 'other', priority: 5 },
   Approval: { label: 'Approval', category: 'other', priority: 5 },
 };
+
+/**
+ * #2703 — whether one feed event belongs on a wallet's Activity page: it
+ * concerns one of the wallet's loans, or the wallet is one of its
+ * participants by the shared rule (`@vaipakam/lib/activityParticipants`:
+ * its actor, the one the indexer files the row under, and the further
+ * parties the rule lists). Never because the address appears somewhere in
+ * the args: that admitted role grants, treasury settings and approved
+ * operators, under names nobody had written. `me` is lower-case.
+ */
+export function isWalletActivity(
+  ev: IndexedActivityEvent,
+  me: string,
+  myLoanIds: ReadonlySet<number>,
+): boolean {
+  if (ev.loanId !== null && myLoanIds.has(ev.loanId)) return true;
+  // The indexer sends args it could not parse as the raw string; such a row
+  // names no participant the rule can read.
+  const args = typeof ev.args === 'object' && ev.args !== null ? ev.args : {};
+  return activityParticipants(ev.kind, args).includes(me);
+}
 
 /**
  * Fallback humanizer for a kind absent from ACTIVITY_LABELS — splits

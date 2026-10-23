@@ -1273,6 +1273,23 @@ The app uses chain reads and indexed reads for different jobs.
   than silently narrowing to held positions only; a wallet with more
   participation history than one read returns folds into the page's
   recent-activity-only disclosure.
+- Beyond the wallet's own loans, an event is the wallet's when the wallet is
+  one of its PARTICIPANTS: the wallet that acted in it, or a wallet it names as
+  affected (a counterparty, a buyer, the owner of a setting, intent, vault,
+  perk or reward). It is never the wallet's merely because the wallet's address
+  appears somewhere in the event: an administrative event, a treasury or
+  cross-deployment record, a service operator's own accounting, or an address
+  the event only approves or permits does not put a row on the wallet's page.
+  Which addresses count as participants is one platform rule that the history
+  service and the app share, written down for every event that names an
+  address, so a new kind of event is decided on purpose rather than shown or
+  hidden by accident. Every kind the rule admits has a plain-language name in
+  the reader's language. Sanctions screening records are not feed rows (a
+  flagged wallet is told by the in-app banner); the funds consequences that are
+  the wallet's own (proceeds or rewards held, set aside or forfeited) are rows,
+  in the in-app flagged wording only, with no list or provider named. A setting
+  recorded against the wallet's vault rather than the wallet (the risk-access
+  consents) is not yet shown; that gap is tracked (#2707). (#2703)
 - An Activity row states the asset and amount its transaction moved or offered
   when the activity record carries them as normalized fields — exact, or as a
   range for an offer that commits one. It never reconstructs an amount the

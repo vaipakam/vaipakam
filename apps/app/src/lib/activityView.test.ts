@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { refScopedKinds } from '@vaipakam/lib/activityRefs';
 import { actorAttributedKinds } from '@vaipakam/lib/activityActor';
+import { participantKinds } from '@vaipakam/lib/activityParticipants';
 import {
   coalesceByTx,
   legText,
@@ -8,6 +9,7 @@ import {
   valueLeg,
   type LegLabels,
   humanizeKind,
+  isWalletActivity,
   labelForKind,
   ACTIVITY_LABELS,
   STATUS_EDGE_LABELS,
@@ -107,35 +109,87 @@ describe('activity feed labels are translatable (extraction guard)', () => {
     }
   });
 
-  // #2658 — the label set covers every kind the indexer files where a
-  // wallet's Activity page can receive it: under a loan or an offer (the
-  // page's loan match), or under the wallet as its actor (the actor match).
-  // Both sets are READ from the rule the indexer runs, in the shared library
-  // (`@vaipakam/lib/activityRefs`, `@vaipakam/lib/activityActor`), never
-  // re-derived here. A hand list (Codex #1343 r1's) fell forty-odd kinds
+  // #2658 / #2703 — the label set covers every kind a wallet's Activity page
+  // can receive: one filed under a loan or an offer (the page's loan match),
+  // and one naming the wallet as a participant (the participants rule, whose
+  // actor is the indexer's `actor` column). Every set is READ from the rule
+  // the indexer and the page run, in the shared library
+  // (`@vaipakam/lib/activityRefs`, `activityActor`, `activityParticipants`),
+  // never re-derived here. A hand list (Codex #1343 r1's) fell forty-odd kinds
   // behind #1794's rule, and a test-side copy of that rule ignored the
   // policy's `extraAliases` (#2702 r1); each missed kind would render a
   // generated English name in every locale.
-  it('labels every kind the indexer files under a loan, an offer or a wallet', () => {
+  it('labels every kind the page can receive for a wallet', () => {
     const refScoped = refScopedKinds();
     const attributed = actorAttributedKinds();
+    const parties = participantKinds();
     // Each set must find its long-mapped core, or it is reading nothing.
     expect(refScoped.has('LoanRepaid')).toBe(true);
     expect(refScoped.has('OfferCreated')).toBe(true);
     expect(attributed.has('VPFIDepositedToVault')).toBe(true);
-    const filed = new Set([...refScoped, ...attributed]);
-    const missing = [...filed].filter((k) => !Object.hasOwn(ACTIVITY_LABELS, k)).sort();
-    expect(missing, 'event kinds the indexer files for a wallet with no Activity label').toEqual([]);
+    expect(parties.has('UserVaultCreated')).toBe(true);
+    const received = new Set([...refScoped, ...attributed, ...parties]);
+    const missing = [...received].filter((k) => !Object.hasOwn(ACTIVITY_LABELS, k)).sort();
+    expect(missing, 'event kinds a wallet can receive with no Activity label').toEqual([]);
   });
 
-  // Not filed under a loan (its number is not always a loan), but it names
-  // the recipient, so it reaches that wallet's page through the address
-  // match. Its label follows the sanctions copy rule: the in-app wording
-  // only ("while this wallet is flagged"), no list or provider named.
-  it('labels the flagged-share event with the in-app wording only', () => {
-    const label = ACTIVITY_LABELS.SanctionedProceedsLocked?.label ?? '';
-    expect(label).toContain('while this wallet is flagged');
-    expect(label).not.toMatch(/sanction|OFAC|Chainalysis|RedStone|oracle/i);
+  // Rows shown only to a flagged wallet follow the sanctions copy rule: the
+  // in-app wording only ("while this wallet is flagged"), no list or provider
+  // named. `SanctionedProceedsLocked` is not filed under a loan (its number is
+  // not always a loan); it reaches the recipient as a participant.
+  it('labels the flagged-wallet events with the in-app wording only', () => {
+    for (const kind of [
+      'SanctionedProceedsLocked',
+      'RewardSanctionsHeldApart',
+      'StagingClaimantForfeited',
+    ]) {
+      const label = ACTIVITY_LABELS[kind]?.label ?? '';
+      expect(label, kind).toContain('while this wallet is flagged');
+    }
+    for (const kind of [
+      'SanctionedProceedsLocked',
+      'RewardSanctionsHeldApart',
+      'RewardSanctionsHeldReleased',
+      'StagingClaimantForfeited',
+      'RewardEntryRepointRefused',
+      'RewardEntrySplitAtTransfer',
+    ]) {
+      expect(ACTIVITY_LABELS[kind]?.label, kind).not.toMatch(/sanction|OFAC|Chainalysis|RedStone|oracle/i);
+      expect(copySource.activity.labels[kind], kind).not.toMatch(/sanction|OFAC|Chainalysis|RedStone|oracle/i);
+    }
+  });
+});
+
+describe('#2703 — a wallet’s rows, by loan or by the participants rule', () => {
+  const ME = '0x00000000000000000000000000000000000000aa';
+  const OTHER = '0x00000000000000000000000000000000000000bb';
+  const loans = new Set([7]);
+
+  it('keeps a row on one of the wallet’s loans, whoever it names', () => {
+    expect(isWalletActivity(ev({ kind: 'LoanStatusChanged', loanId: 7, args: {} }), ME, loans)).toBe(true);
+  });
+
+  it('keeps a row naming the wallet as a party', () => {
+    expect(isWalletActivity(ev({ kind: 'UserVaultCreated', args: { user: ME, proxy: OTHER } }), ME, loans)).toBe(true);
+    expect(isWalletActivity(ev({ kind: 'Transfer', args: { from: ME, to: OTHER } }), ME, loans)).toBe(true);
+  });
+
+  it('drops a row that only mentions the wallet', () => {
+    // An admin event naming the wallet, and an address the event only approves.
+    expect(isWalletActivity(ev({ kind: 'RoleGranted', args: { account: ME, sender: OTHER } }), ME, loans)).toBe(false);
+    expect(isWalletActivity(ev({ kind: 'Approval', args: { owner: OTHER, approved: ME } }), ME, loans)).toBe(false);
+    // The address inside an unrelated string, which the old text match kept.
+    expect(isWalletActivity(ev({ kind: 'OfferCreated', args: { creator: OTHER, note: ME } }), ME, loans)).toBe(false);
+  });
+
+  it('skips a malformed field instead of failing the page', () => {
+    // A stored row whose actor field is not a string reads as naming no one.
+    expect(isWalletActivity(ev({ kind: 'UserVaultCreated', args: { user: 1 } }), ME, loans)).toBe(false);
+    expect(isWalletActivity(ev({ kind: 'LoanRepaid', args: { repayer: { x: ME } } }), ME, loans)).toBe(false);
+  });
+
+  it('reads no participant from args the indexer could not parse', () => {
+    expect(isWalletActivity(ev({ kind: 'UserVaultCreated', args: `{"user":"${ME}"` }), ME, loans)).toBe(false);
   });
 });
 
@@ -233,6 +287,29 @@ describe('coalesceByTx', () => {
     expect(rows[0].label).toBe('Loan started');
     expect(rows[0].event.loanId).toBe(7);
     expect(rows[0].hiddenCount).toBe(2);
+  });
+
+  // #2708 r1 — a wallet's first offer creates its vault lazily, before the
+  // offer's own event: the offer represents the row, not the vault.
+  it('names a first offer by the offer, not the vault created inside it', () => {
+    const rows = coalesceByTx([
+      ev({ kind: 'UserVaultCreated', logIndex: 0 }),
+      ev({ kind: 'OfferCreated', logIndex: 1, offerId: 3 }),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('Offer created');
+    expect(rows[0].event.offerId).toBe(3);
+  });
+
+  // #2708 r1 — a share set apart for a flagged wallet also emits the generic
+  // delivery event (venue: the held balance); the row says it was set aside.
+  it('names a set-apart reward share by the set-aside, not the delivery', () => {
+    const rows = coalesceByTx([
+      ev({ kind: 'RewardSanctionsHeldApart', logIndex: 0 }),
+      ev({ kind: 'StagingDelivered', logIndex: 1 }),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('Rewards set aside while this wallet is flagged');
   });
 
   // #2374 / #2426 r4 — the owed-at-default record never represents a

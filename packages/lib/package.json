@@ -112,6 +112,10 @@
     "./activityActor": {
       "types": "./src/activityActor.ts",
       "default": "./src/activityActor.ts"
+    },
+    "./activityParticipants": {
+      "types": "./src/activityParticipants.ts",
+      "default": "./src/activityParticipants.ts"
     }
   },
   "scripts": {

@@ -27,9 +27,16 @@ describe('activityActor', () => {
     expect(activityActor('TierExclusionUpdated', { vaultOwner: A })).toBe(A.toLowerCase());
   });
 
-  it('a sold offer is filed under its creator, falling back to the executor', () => {
+  it('a sold offer is filed under its creator, never under the executor contract', () => {
     expect(activityActor('OfferConsumedBySale', { creator: A, executor: '0x2' })).toBe(A.toLowerCase());
-    expect(activityActor('OfferConsumedBySale', { executor: A })).toBe(A.toLowerCase());
+    expect(activityActor('OfferConsumedBySale', { executor: A })).toBeNull();
+    expect(activityActor('PrepayCollateralSaleSettled', { executor: A })).toBeNull();
+  });
+
+  it('reads a non-string field as no actor, never throws', () => {
+    expect(activityActor('LoanRepaid', { repayer: 1 })).toBeNull();
+    expect(activityActor('TierExclusionUpdated', { vaultOwner: { a: 1 } })).toBeNull();
+    expect(activityActor('OfferConsumedBySale', { creator: 7 })).toBeNull();
   });
 
   it('lists every attributed kind', () => {
