@@ -999,7 +999,10 @@ EOF
   # left as misleading knobs. A transient RPC 5xx on send aborts the phase; the
   # recovery is to re-run it — with `--broadcast --resume` forge replays the
   # saved broadcast and skips already-landed txs, or (on a --fresh testnet run)
-  # simply re-run the phase from a clean state.
+  # simply re-run the phase from a clean state. `--resume` is for DeployDiamond
+  # only: DeployVPFIToken and DeployCrosschain run the storage-layout check
+  # (#2092), and a resume sends their saved plan without running it. Re-run
+  # those instead (on a --fresh testnet run, from a clean state).
   # Arbitrum L2-block override (#853 Codex P2). On Arbitrum `block.number`
   # returns the L1 block; the artifact writer uses `ArbSys(0x64).arbBlockNumber()`
   # for the real L2 block, but forge's SIMULATION doesn't emulate that precompile,

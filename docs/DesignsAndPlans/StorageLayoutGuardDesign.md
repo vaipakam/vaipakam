@@ -283,6 +283,20 @@ a chain without recording; it refuses unless the operator sets
 `ANCHOR_RECORD_DESCRIBES_CHAIN=true`, because writing one asserts that the
 record describes what the chain runs.
 
+**Never `forge script --resume` a guarded script** (Codex #2684 r3). Resume
+sends a saved plan without executing the script, so neither the check nor the
+record runs: a plan saved by a dry run, or one whose chain changed after it was
+simulated, would go out unchecked. No code in the script can refuse it, since
+none of it runs, so a resume counts as a change sent from outside these
+scripts, like a `cast send`. The checked recovery after a guarded run stopped
+part-way is: confirm from the run's broadcast journal and the loupe that the
+chain runs only that run's partial change; re-anchor with
+`AnchorStorageLayoutRecord.s.sol` from the same commit; run the script again
+normally. The in-place scripts work out what is left to change from the chain
+itself, and the re-run checks it before sending. A fresh `DeployDiamond` is not
+an in-place change (a new Diamond has no storage to break), so resuming its
+own interrupted broadcast stays the way to finish that Diamond.
+
 **Who checks it.** Every script that changes deployed code in place runs
 `storage-layout-guard.mjs check --base <record>` before its first transaction
 and refuses on a non-zero exit: `RefreshAllFacetsInPlace`,

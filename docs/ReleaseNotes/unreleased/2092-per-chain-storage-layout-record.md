@@ -17,7 +17,9 @@ code has changed since the record was written, for example by an upgrade from
 another checkout whose record was never committed, or by a refresh that
 stopped part-way after upgrading one proxy. The token and cross-chain deploy
 scripts check the record too and rewrite it with the proxies they add. Two upgrades of one chain still must
-not run at the same time. Declared renames count; acknowledged breaks
+not run at the same time, and an interrupted upgrade is finished by running it
+again, never by replaying its saved transactions, since a replay skips the
+check. Declared renames count; acknowledged breaks
 never do, since an acknowledged break means that chain needs a fresh deploy.
 
 The check runs inside each script rather than in a wrapper (owner decision

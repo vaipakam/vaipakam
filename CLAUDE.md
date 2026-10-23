@@ -658,8 +658,12 @@ the pair afterwards. They call the guard
 through `vm.tryFfi`, so **run them with `--ffi`** (the wrappers do); a run
 without it is refused before anything is sent. The calls sit in each script's
 `runWith` body so `--sig` cannot skip them; the library skips itself under
-`forge test` and for a redirected artifact root. Do not enable ffi or a
-`storage-layout/` read in `foundry.toml` (#2603). A new script that changes
+`forge test` and for a redirected artifact root. **Never `forge script
+--resume` one of these scripts**: resume sends the saved plan without running
+the script, so neither check runs. After one stops part-way, confirm from its
+broadcast journal that the chain runs only that partial change, re-anchor with
+`AnchorStorageLayoutRecord.s.sol` from the same commit, and run it again. Do
+not enable ffi or a `storage-layout/` read in `foundry.toml` (#2603). A new script that changes
 deployed code in place calls `StorageLayoutRecord.requireAppendOnly` and
 `record` the same way.
 

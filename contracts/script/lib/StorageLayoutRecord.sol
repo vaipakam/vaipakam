@@ -35,6 +35,19 @@ import {Deployments} from "./Deployments.sol";
  *         both pass before either broadcasts; nothing off-chain can close
  *         that, so these scripts are run one at a time per chain.
  *
+ *         **Never `forge script --resume` a guarded script** (Codex #2684 r3
+ *         P1). Resume sends a saved plan without executing the script, so it
+ *         runs neither {requireAppendOnly} nor {record}: a plan saved by a dry
+ *         run, or one whose chain was changed since it was simulated, would go
+ *         out unchecked. Nothing in a script can refuse it, because no code of
+ *         the script runs, so it counts as a change sent from outside these
+ *         scripts. The checked recovery after a guarded run stopped part-way:
+ *         confirm from its broadcast journal and the loupe that the chain runs
+ *         only that run's partial change, re-anchor with
+ *         `AnchorStorageLayoutRecord.s.sol` from the same commit, and run the
+ *         script again normally. The in-place scripts work out what is still
+ *         to change from the chain, and the re-run checks it before it sends.
+ *
  *         **The comparison is not re-implemented here.** It runs the one guard
  *         CI runs, `script/storage-layout-guard.mjs check --base <record>`,
  *         through `vm.tryFfi`. That command rebuilds `src/`'s layouts, refuses
@@ -425,7 +438,7 @@ library StorageLayoutRecord {
                     who,
                     ": this chain's code changed since its storage-layout record was written (what moved is logged above, against ",
                     anchor,
-                    "). Another checkout or a run outside these scripts changed it, so this record no longer describes the chain. Pull the record and anchor that change wrote; if none exists, establish what the chain runs and re-anchor with AnchorStorageLayoutRecord.s.sol."
+                    "). Another checkout or a run outside these scripts changed it, so this record no longer describes the chain. Pull the record and anchor that change wrote; if none exists, establish what the chain runs and re-anchor with AnchorStorageLayoutRecord.s.sol. If this commit's own run stopped part-way, confirm from its broadcast journal that the chain runs only that partial change, re-anchor from this commit and run the script again; never use forge script --resume, which sends the saved plan without these checks."
                 )
             );
         }
