@@ -2334,6 +2334,17 @@
       "valueNotRecorded": "未记录金额",
       "heldForLenderNote": "出借人领取时，也会一并支付此前追加资金中为出借人保留的款项——这些款项未包含在所示金额中。",
       "viewTx": "查看交易",
+      "repairTitle": "贷款 #{{loanId}} 已结束",
+      "repairBody": "对链上的检查发现，该贷款在区块 {{block}} 之前已{{status}}。结束的时间和方式没有记录，因此没有可显示的交易。",
+      "repairCheckedAgo": "{{ago}}检查",
+      "repairStatus": {
+        "repaid": "还清",
+        "defaulted": "违约",
+        "settled": "结算",
+        "internal_matched": "通过内部撮合关闭"
+      },
+      "repairStatusOther": "关闭",
+      "repairUnknownNote": "此列表可能缺少某笔贷款的结束记录，该贷款的结束事件从未被记录：这部分历史暂时无法读取。",
       "loadMore": "加载更早活动",
       "loadingMore": "加载中…",
       "labels": {

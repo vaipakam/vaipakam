@@ -2334,6 +2334,17 @@
       "valueNotRecorded": "Betrag nicht erfasst",
       "heldForLenderNote": "Eine Auszahlung an den Kreditgeber umfasst auch alle für ihn aus früheren Aufstockungen gehaltenen Mittel – diese sind im angezeigten Betrag nicht enthalten.",
       "viewTx": "Transaktion anzeigen",
+      "repairTitle": "Kredit #{{loanId}} ist beendet",
+      "repairBody": "Eine Prüfung der Chain ergab, dass dieser Kredit spätestens bei Block {{block}} {{status}} war. Wann und wie er endete, wurde nicht erfasst, daher gibt es keine Transaktion anzuzeigen.",
+      "repairCheckedAgo": "geprüft {{ago}}",
+      "repairStatus": {
+        "repaid": "zurückgezahlt",
+        "defaulted": "ausgefallen",
+        "settled": "abgewickelt",
+        "internal_matched": "durch internes Matching geschlossen"
+      },
+      "repairStatusOther": "geschlossen",
+      "repairUnknownNote": "In dieser Liste fehlt möglicherweise das Ende eines Kredits, dessen Abschlussereignis nie erfasst wurde: Dieser Teil des Verlaufs konnte gerade nicht gelesen werden.",
       "loadMore": "Ältere Aktivität laden",
       "loadingMore": "Wird geladen…",
       "labels": {

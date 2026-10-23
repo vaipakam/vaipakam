@@ -5310,6 +5310,28 @@ const copySource = {
     heldForLenderNote:
       'A lender claim also pays out any funds held for the lender from earlier top-ups — those are not included in the amount shown.',
     viewTx: 'View transaction',
+    // #2643 — a loan whose ending event was never recorded, closed by the
+    // indexer reading its status from the chain. An OBSERVATION, not an
+    // event: it says the loan had ended by a block, never when or how, and
+    // carries no transaction and no actor.
+    repairTitle: tmpl(`Loan #{{loanId}} has ended`, ['loanId']),
+    repairBody: tmpl(
+      `A check of the chain found this loan {{status}} by block {{block}}. When and how it ended was not recorded, so there is no transaction to show.`,
+      ['status', 'block'],
+    ),
+    // The chain time of the block the check read, not of the ending.
+    repairCheckedAgo: tmpl(`checked {{ago}}`, ['ago']),
+    repairStatus: {
+      repaid: 'repaid',
+      defaulted: 'defaulted',
+      settled: 'settled',
+      internal_matched: 'closed by internal matching',
+    } as Record<string, string>,
+    // A status this app has no name for: say it ended, not which way.
+    repairStatusOther: 'closed',
+    // The indexer could not say which loans it closed this way.
+    repairUnknownNote:
+      'This list may be missing the ending of a loan whose closing event was never recorded: that part of the history could not be read just now.',
     loadMore: 'Load older activity',
     loadingMore: 'Loading…',
     // UX-008 — readable, translatable labels for each feed row, keyed by

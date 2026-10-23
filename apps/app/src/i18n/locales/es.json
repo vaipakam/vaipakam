@@ -2334,6 +2334,17 @@
       "valueNotRecorded": "Importe no registrado",
       "heldForLenderNote": "Un cobro del prestamista también paga los fondos retenidos para el prestamista de aportaciones anteriores; no están incluidos en el importe mostrado.",
       "viewTx": "Ver transacción",
+      "repairTitle": "El préstamo #{{loanId}} ha terminado",
+      "repairBody": "Una comprobación de la cadena encontró que este préstamo estaba {{status}} a más tardar en el bloque {{block}}. No se registró cuándo ni cómo terminó, así que no hay ninguna transacción que mostrar.",
+      "repairCheckedAgo": "comprobado {{ago}}",
+      "repairStatus": {
+        "repaid": "reembolsado",
+        "defaulted": "en impago",
+        "settled": "liquidado",
+        "internal_matched": "cerrado por emparejamiento interno"
+      },
+      "repairStatusOther": "cerrado",
+      "repairUnknownNote": "Puede que a esta lista le falte el final de un préstamo cuyo evento de cierre nunca se registró: esa parte del historial no se pudo leer en este momento.",
       "loadMore": "Cargar actividad anterior",
       "loadingMore": "Cargando…",
       "labels": {
