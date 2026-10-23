@@ -1,4 +1,4 @@
-## Thread — Rate Desk fills show the terms they were agreed at (PR #<n>)
+## Thread — Rate Desk fills show the terms they were agreed at (PR #2689)
 
 The Rate Desk's recent-loans tape, its "last agreed rate" header and the chart's per-fill markers read each loan's live terms. A loan's rate and term can be extended, and its outstanding amount falls as it is repaid or matched. So a past fill could appear at a rate it never traded at, with an amount smaller than was lent. An extended 30-day loan also left the 30-day tape and showed up in the 60-day one. The rate-history candles had already been fixed this way. The tape and header had not.
 
