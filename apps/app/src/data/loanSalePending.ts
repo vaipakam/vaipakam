@@ -155,11 +155,40 @@ export interface LoanSalePendingState {
   /** False when the listing's rate couldn't be determined — the
    *  watch must show "can't verify", never a false green. */
   fundingKnown: boolean;
+  /** The standing approval / wallet balance is below `requiredNow`, as
+   *  read — whether or not the sale can still complete. Display goes
+   *  through `saleFundingWatch`. */
   allowanceShort: boolean;
   balanceShort: boolean;
 }
 
 export type SaleListingVerdict = 'yes' | 'no' | 'unknown';
+
+/** What the listing card's funding watch shows (#1848, Codex #2673 r1).
+ *
+ *  The watch only matters while the sale can still complete: a settled
+ *  loan's listing, or one that expired unsold, is cancel-only, so a `'no'`
+ *  completable verdict silences every funding line — the shortfalls AND the
+ *  "can't verify the funding" warning. But only an ANSWERED verdict may do
+ *  that. TanStack keeps the last success through a failed poll, and the
+ *  verdict can move back (a loan in fallback cured back to Active), so when
+ *  `stale` the watch falls back to what it would show without the verdict.
+ *  A stale listing may still SHOW something, never SUPPRESS something —
+ *  the same rule as `listingMayStand`. */
+export function saleFundingWatch(
+  state: LoanSalePendingState,
+  stale: boolean,
+): { unknown: boolean; allowanceShort: boolean; balanceShort: boolean } {
+  const silenced = !stale && state.completable === 'no';
+  if (silenced || !state.listed || !state.isHolder) {
+    return { unknown: false, allowanceShort: false, balanceShort: false };
+  }
+  return {
+    unknown: state.loanActive && !state.fundingKnown,
+    allowanceShort: state.allowanceShort,
+    balanceShort: state.balanceShort,
+  };
+}
 
 /** #1848 — what a listing's own record says about it, from its offer fields
  *  and the chain time. A record that was not read gives `'unknown'` for both,
@@ -414,13 +443,11 @@ export function useLoanSalePending(
         requiredNow,
         requiredBound,
         fundingKnown,
-        // The funding watch only matters while the sale can still
-        // complete — a settled loan's listing, or one that expired unsold
-        // (#1848), is cancel-only.
-        allowanceShort:
-          fundingKnown && completable !== 'no' && allowance < requiredNow,
-        balanceShort:
-          fundingKnown && completable !== 'no' && balance < requiredNow,
+        // Raw shortfalls. Whether they are SHOWN depends on whether the sale
+        // can still complete and on whether this answer is current — see
+        // `saleFundingWatch`, which is the only place that decides it.
+        allowanceShort: fundingKnown && allowance < requiredNow,
+        balanceShort: fundingKnown && balance < requiredNow,
       };
     },
   });

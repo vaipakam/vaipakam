@@ -4062,9 +4062,12 @@ Its intended behaviour, as the test oracle for this surface:
   instantaneous figure; it must never sit above what the listing will
   record. The listing is submitted bound to the figures the seller
   reviewed, so the protocol refuses it — nothing listed — rather than
-  record a lower minimum or a higher set-aside balance; such a refusal
-  closes the review and asks the seller to review again against the
-  current figures. Where the minimum cannot be read, the form says so
+  record a lower minimum or a higher set-aside balance; such a refusal,
+  or a listing transaction that fails after it was sent, closes the
+  review and asks the seller to review again against the current
+  figures, which the form reads afresh before it offers a review again.
+  Every review starts unconsented: consent covers only the figures it
+  was given with. Where the minimum cannot be read, the form says so
   and does not offer the listing, rather than listing without a
   stated guarantee.
   Before confirming, the review must disclose: the
@@ -4127,7 +4130,12 @@ Its intended behaviour, as the test oracle for this surface:
   than implying it checked. Listings made before these figures existed
   recorded none and are not presented as broken. The exit chooser's
   pending-cost disclosure follows the same record: a listing that can
-  no longer complete stops carrying its costs as pending.
+  no longer complete stops carrying its costs as pending, and its
+  funding warnings stop too — but only on a current read: a refresh
+  that fails never silences a warning, since a loan can return to a
+  state where the sale can complete. An accepted listing is described
+  as accepted, not as live; and the surface names the cancel action
+  only where it offers one.
   The borrower's repayment surfaces are NOT held off — full and
   partial repayment stay open throughout (a buyer's acceptance binds
   to the loan's current outstanding amount, so the buyer can never

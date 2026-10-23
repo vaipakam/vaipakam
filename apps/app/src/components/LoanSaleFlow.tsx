@@ -61,6 +61,7 @@ import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
 import { ensureAllowance, revokeAllowance } from '../contracts/erc20';
+import { TxNotSettledError } from '../contracts/ownReceipt';
 import {
   assertAssetNotPausedLive,
   assertPositionNftHeldLive,
@@ -86,10 +87,16 @@ import { SimulationPreview } from './SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
 import type { TokenMeta } from '../contracts/erc20';
 
-/** The reverts that say the figures a seller reviewed no longer hold (#1810):
+/** The failures that say the figures a seller reviewed no longer hold (#1810):
  *  the listing would record a lower minimum, or more already set aside for
- *  the lender, than they agreed to. */
+ *  the lender, than they agreed to — or it mined reverted, so which of its
+ *  checks moved is unknown. */
 function reviewedBoundsMoved(err: unknown): boolean {
+  // A listing that MINED reverted carries no decoded revert data (the write
+  // reports it as `TxNotSettledError`), so its reason cannot be read here.
+  // Whatever it was, the chain moved between the review and the block, so the
+  // reviewed figures are no longer known to hold: treat it the same way.
+  if (err instanceof TxNotSettledError) return err.reason === 'reverted';
   if (!(err instanceof BaseError)) return false;
   const revert = err.walk(
     (e) => e instanceof ContractFunctionRevertedError,
@@ -241,10 +248,24 @@ export function LoanSaleFlow({
   // 60s refetch tick must not keep collapsing an open review the
   // user is reading. Rate edits DO void it (below).
 
+  // ONE way into the review and one way out of a stale one (Codex #2673 r1).
+  // Consent always covers exactly the figures frozen with it, so opening a
+  // review clears it. A stale review also drops the cached quote — the
+  // figures that just failed — so Review stays unavailable until the current
+  // figures have been read, rather than re-offering the same refusal.
+  function openReview(q: SellerBoundsQuote) {
+    setConsent(false);
+    setReviewed(q);
+    onOpenConfirm();
+  }
+
   function closeStaleReview() {
     setConsent(false);
     setReviewed(null);
     onCloseConfirm();
+    void queryClient.resetQueries({
+      queryKey: ['sellerBoundsQuote', walletChain?.chainId, row.loanId],
+    });
   }
 
   async function submit() {
@@ -578,8 +599,7 @@ export function LoanSaleFlow({
           onClick={() => {
             // The review shows, and the listing is bound to, the figures on
             // screen at this moment.
-            setReviewed(liveQuote);
-            onOpenConfirm();
+            if (liveQuote) openReview(liveQuote);
           }}
         >
           {copy.loanSale.action}

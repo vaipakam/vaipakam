@@ -5110,6 +5110,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           loanId={row.loanId}
           lenderTokenId={row.lenderTokenId}
           state={sale.state}
+          stale={sale.isError}
           principalAsset={row.lendingAsset as `0x${string}`}
           principalMeta={principal ?? undefined}
           busy={busy}

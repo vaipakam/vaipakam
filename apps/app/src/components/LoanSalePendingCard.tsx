@@ -19,12 +19,14 @@ import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '.
 import { ensureAllowance, revokeAllowance, type TokenMeta } from '../contracts/erc20';
 import {
   BASIS_POINTS,
+  LOAN_STATUS_ACTIVE,
   SECONDS_PER_YEAR,
   readLoanLive,
   sellerEconomics,
 } from '../contracts/loanLive';
 import {
   LOCK_EARLY_WITHDRAWAL_SALE,
+  saleFundingWatch,
   saleSettlementBound,
   type LoanSalePendingState,
 } from '../data/loanSalePending';
@@ -34,6 +36,7 @@ export function LoanSalePendingCard({
   loanId,
   lenderTokenId,
   state,
+  stale,
   principalAsset,
   principalMeta,
   busy,
@@ -45,6 +48,9 @@ export function LoanSalePendingCard({
   /** For the restore-time lock re-check. */
   lenderTokenId: string;
   state: LoanSalePendingState;
+  /** The latest poll failed, so `state` is the last answer, not a current
+   *  one. A stale answer may still show a warning, never silence one. */
+  stale: boolean;
   principalAsset: `0x${string}`;
   principalMeta: TokenMeta | undefined;
   busy: boolean;
@@ -65,7 +71,11 @@ export function LoanSalePendingCard({
 
   const walletReady =
     onSupportedChain && Boolean(walletClient) && Boolean(publicClient);
-  const underfunded = state.allowanceShort || state.balanceShort;
+  const watch = saleFundingWatch(state, stale);
+  const underfunded = watch.allowanceShort || watch.balanceShort;
+  // The cancel control's own gate, so the copy never names a control that
+  // is not on the card (Codex #2673 r1).
+  const canCancel = Boolean(state.offerId) && state.isHolder;
   // #1848 — the listing's own record says it ran out without a buyer. Only
   // a READ record says so; an unread one leaves the ordinary pending text.
   const expiredUnsold =
@@ -150,6 +160,13 @@ export function LoanSalePendingCard({
         void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
         return;
       }
+      // The watch may offer restore from a stale answer (`saleFundingWatch`);
+      // a settled loan's listing can never complete, so it gets no approval.
+      if (liveLoan.status !== LOAN_STATUS_ACTIVE) {
+        setError(copy.loanSale.loanSettledWhileListed);
+        void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
+        return;
+      }
       // Past the original pad the static bound can sit BELOW what a
       // buyer's accept now pulls — restore must always clear the
       // live requirement plus fresh growth margin, or the red banner
@@ -183,21 +200,24 @@ export function LoanSalePendingCard({
       <h3>{copy.loanSale.title}</h3>
       <div className="banner banner-warn" role="status">
         <span className="banner-body">
+          {/* #1848 — what the listing's own record says, when it was read,
+              REPLACES the pre-acceptance text rather than sitting under it. */}
           {!state.loanActive
             ? copy.loanSale.loanSettledWhileListed
-            : expiredUnsold
-              ? copy.loanSale.expiredUnsold(formatDateTime(Number(state.expiresAt)))
-              : state.offerId
-                ? copy.loanSale.pending(state.offerId)
-                : copy.loanSale.pendingNoId}
+            : state.accepted === true
+              ? copy.loanSale.acceptedCompleting
+              : expiredUnsold
+                ? (canCancel
+                    ? copy.loanSale.expiredUnsold
+                    : copy.loanSale.expiredUnsoldNoCancel)(
+                    formatDateTime(Number(state.expiresAt)),
+                  )
+                : state.offerId
+                  ? copy.loanSale.pending(state.offerId)
+                  : copy.loanSale.pendingNoId}
         </span>
       </div>
-      {/* #1848 — what the listing's own record says, when it was read. */}
-      {state.loanActive && state.accepted === true ? (
-        <p className="field-hint" style={{ marginTop: 8 }}>
-          {copy.loanSale.acceptedCompleting}
-        </p>
-      ) : state.loanActive && state.fillable !== 'no' ? (
+      {state.loanActive && state.accepted !== true && state.fillable !== 'no' ? (
         // Open, or unread (listed from another device): the note applies
         // either way; the end time is stated only when it was read.
         <>
@@ -213,7 +233,7 @@ export function LoanSalePendingCard({
           </p>
         </>
       ) : null}
-      {state.listed && state.loanActive && state.isHolder && !state.fundingKnown ? (
+      {watch.unknown ? (
         <div className="banner banner-warn" role="alert" style={{ marginTop: 12 }}>
           <span className="banner-body">{copy.loanSale.fundingUnknown}</span>
         </div>
@@ -232,7 +252,7 @@ export function LoanSalePendingCard({
         </div>
       ) : null}
       <div className="cluster" style={{ marginTop: 12 }}>
-        {state.offerId && state.isHolder ? (
+        {canCancel ? (
           <button
             type="button"
             className="btn btn-secondary"
@@ -244,7 +264,7 @@ export function LoanSalePendingCard({
             {copy.loanSale.cancel}
           </button>
         ) : null}
-        {state.allowanceShort && state.isHolder ? (
+        {watch.allowanceShort ? (
           <button
             type="button"
             className="btn btn-secondary"
@@ -255,7 +275,7 @@ export function LoanSalePendingCard({
           </button>
         ) : null}
       </div>
-      {state.offerId && state.isHolder && !state.cancelUnlocked ? (
+      {canCancel && !state.cancelUnlocked ? (
         <p className="field-hint" style={{ marginTop: 8 }}>
           {copy.loanSale.cancelSoon}
         </p>

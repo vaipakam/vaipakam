@@ -3,7 +3,11 @@
  * verdicts. An unread record answers neither question.
  */
 import { describe, expect, it } from "vitest";
-import { saleListingVerdicts } from "./loanSalePending";
+import {
+  saleFundingWatch,
+  saleListingVerdicts,
+  type LoanSalePendingState,
+} from "./loanSalePending";
 
 const open = { expiresAt: 2_000n, accepted: false };
 
@@ -64,5 +68,69 @@ describe("saleListingVerdicts", () => {
         chainNow: 10_000n,
       }),
     ).toEqual({ fillable: "yes", completable: "yes" });
+  });
+});
+
+const watched = (over: Partial<LoanSalePendingState>): LoanSalePendingState => ({
+  listed: true,
+  loanActive: true,
+  isHolder: true,
+  offerId: "5",
+  offerIdVerifyFailed: false,
+  saleRateBps: 500n,
+  expiresAt: 2_000n,
+  accepted: false,
+  fillable: "yes",
+  completable: "yes",
+  cancelUnlocked: true,
+  requiredNow: 10n,
+  requiredBound: 20n,
+  fundingKnown: true,
+  allowanceShort: true,
+  balanceShort: true,
+  ...over,
+});
+
+describe("saleFundingWatch", () => {
+  it("shows the shortfalls while the sale can still complete", () => {
+    expect(saleFundingWatch(watched({}), false)).toEqual({
+      unknown: false,
+      allowanceShort: true,
+      balanceShort: true,
+    });
+  });
+
+  it("silences every funding line, the unknown warning included, once an answered verdict says no", () => {
+    expect(
+      saleFundingWatch(
+        watched({ fillable: "no", completable: "no", fundingKnown: false }),
+        false,
+      ),
+    ).toEqual({ unknown: false, allowanceShort: false, balanceShort: false });
+  });
+
+  it("never lets a stale 'no' silence a warning", () => {
+    expect(
+      saleFundingWatch(watched({ fillable: "no", completable: "no" }), true),
+    ).toEqual({ unknown: false, allowanceShort: true, balanceShort: true });
+    expect(
+      saleFundingWatch(
+        watched({
+          completable: "no",
+          fundingKnown: false,
+          allowanceShort: false,
+          balanceShort: false,
+        }),
+        true,
+      ).unknown,
+    ).toBe(true);
+  });
+
+  it("shows nothing to a wallet that does not hold the position", () => {
+    expect(saleFundingWatch(watched({ isHolder: false }), false)).toEqual({
+      unknown: false,
+      allowanceShort: false,
+      balanceShort: false,
+    });
   });
 });

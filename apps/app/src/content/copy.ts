@@ -3272,6 +3272,12 @@ const copySource = {
       'This listing ended on {{date}} without a buyer, so no one can buy it now. Your lender NFT stays locked until the listing is cleared: cancel it here, or anyone can send the cleanup transaction.',
       ['date'],
     ),
+    // When this card has no cancel control (the listing's id or the
+    // holder check could not be confirmed here), the copy names none.
+    expiredUnsoldNoCancel: tmpl(
+      'This listing ended on {{date}} without a buyer, so no one can buy it now. Your lender NFT stays locked until the listing is cleared, which anyone can do by sending the cleanup transaction.',
+      ['date'],
+    ),
     acceptedCompleting:
       'A buyer has taken this listing and the sale hasn’t finished settling yet.',
     // #1810 — why a live listing can stop filling. The app cannot read the
