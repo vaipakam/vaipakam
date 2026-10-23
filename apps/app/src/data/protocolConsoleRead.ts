@@ -24,6 +24,7 @@ import {
   readProtocolKnobGetters,
 } from '@vaipakam/lib/protocolKnobs';
 import { CLOCK_SKEW_ALLOWANCE_SEC, type ProtocolKnobSnapshot, type ProtocolKnobValues } from './indexer';
+import { RENDERED_KEYS } from './protocolConsoleRows';
 
 /**
  * How old a snapshot may be and still stand in for the chain on this page.
@@ -37,6 +38,9 @@ import { CLOCK_SKEW_ALLOWANCE_SEC, type ProtocolKnobSnapshot, type ProtocolKnobV
  */
 export const CONSOLE_SNAPSHOT_MAX_AGE_SEC = 7 * 3600;
 
+/** The settings read beside the bundle; only these can be named unreported. */
+const KNOB_KEYS: ReadonlySet<string> = new Set(PROTOCOL_KNOB_GETTERS.map((k) => k.key));
+
 /** Why the snapshot did not stand in for the chain. */
 export type SnapshotGap =
   /** No snapshot: the indexer has none for this chain or could not be reached. */
@@ -49,8 +53,9 @@ export type SnapshotGap =
   | 'old'
   /** Its values did not arrive with the names this page needs. */
   | 'unlabelled'
-  /** It does not account for every setting this page shows: a setting is
-   *  neither among its values nor named as unreported by the chain. */
+  /** It does not account for every value this page shows: a value is not
+   *  among its values, and is not a setting the chain was asked for and
+   *  named as unreported. */
   | 'incomplete';
 
 /** Whether a snapshot can stand in for the chain right now, and if not, why.
@@ -62,10 +67,18 @@ export function snapshotGap(snap: ProtocolKnobSnapshot | null, nowSec: number): 
   if (typeof at !== 'number' || at <= 0 || nowSec - at < -CLOCK_SKEW_ALLOWANCE_SEC) return 'undated';
   if (nowSec - at >= CONSOLE_SNAPSHOT_MAX_AGE_SEC) return 'old';
   if (snap.labelsUnavailable) return 'unlabelled';
+  // EVERY rendered value, the bundle's included (Codex #2683 r2): a fresh
+  // snapshot captured by a build whose bundle predates a field the page now
+  // shows must not stand in for the chain while that row reads "not
+  // reported". Only a setting the snapshot asked the chain for may be
+  // accounted for by being named unreported; a bundle field has no such
+  // list, so it must be present.
   const reported = new Set(Object.keys(snap.values));
   const unreported = new Set(snap.unreported ?? []);
-  for (const k of PROTOCOL_KNOB_GETTERS) {
-    if (!reported.has(k.key) && !unreported.has(k.key)) return 'incomplete';
+  for (const key of RENDERED_KEYS) {
+    if (reported.has(key)) continue;
+    if (KNOB_KEYS.has(key) && unreported.has(key)) continue;
+    return 'incomplete';
   }
   return null;
 }

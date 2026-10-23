@@ -14,11 +14,19 @@ import {
   type ChainConsoleRead,
 } from './protocolConsoleRead';
 import type { ProtocolKnobSnapshot, ProtocolKnobValues } from './indexer';
+import { RENDERED_KEYS } from './protocolConsoleRows';
 
 const NOW = 1_800_000_000;
 
-function allKnobs(): Record<string, string> {
-  return Object.fromEntries(PROTOCOL_KNOB_GETTERS.map((k) => [k.key, '1']));
+/** Every value the page renders, plus every knob, so a snapshot built from
+ *  it is complete. */
+function allKnobs(): Record<string, unknown> {
+  return {
+    ...Object.fromEntries([...RENDERED_KEYS].map((k) => [k, '1'])),
+    tierThresholds: ['1', '2', '3', '4'],
+    tierDiscountBps: ['10', '20', '30', '40'],
+    ...Object.fromEntries(PROTOCOL_KNOB_GETTERS.map((k) => [k.key, '1'])),
+  };
 }
 
 function snapshot(over: Partial<ProtocolKnobSnapshot> = {}): ProtocolKnobSnapshot {
@@ -54,12 +62,19 @@ describe('snapshotGap', () => {
   });
 
   it('calls a snapshot incomplete when a setting is neither reported nor named unreported', () => {
-    const values = { ...allKnobs() } as Record<string, string>;
+    const values = { ...allKnobs() } as Record<string, unknown>;
     delete values.minHealthFactor;
     // An older indexer: no settings list at all.
     expect(snapshotGap(snapshot({ values: values as ProtocolKnobValues, unreported: undefined }), NOW)).toBe(
       'incomplete',
     );
+    // A bundle field the page renders cannot be excused by `unreported`:
+    // a snapshot from a build whose bundle predates it is incomplete.
+    const noFee = { ...allKnobs() } as Record<string, unknown>;
+    delete noFee.treasuryFeeBps;
+    expect(
+      snapshotGap(snapshot({ values: noFee as ProtocolKnobValues, unreported: ['treasuryFeeBps'] }), NOW),
+    ).toBe('incomplete');
     // Named as unreported by the chain: accounted for, so complete.
     expect(
       snapshotGap(snapshot({ values: values as ProtocolKnobValues, unreported: ['minHealthFactor'] }), NOW),
