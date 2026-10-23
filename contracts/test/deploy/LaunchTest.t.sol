@@ -175,6 +175,12 @@ contract LaunchMockTimelock {
 ///      a swap adapter, it must NOT count.
 contract LaunchCodeStub {}
 
+/// @dev A "gate" that vouches for anything: its fallback answers every call,
+///      `assertReady` included, without reading the Diamond.
+contract LaunchPermissiveGate {
+    fallback() external {}
+}
+
 /// @dev A WETH stand-in: a contract answering `decimals()` with 18, as every
 ///      chain's bridged WETH9 does.
 contract LaunchWethStub {
@@ -1577,5 +1583,77 @@ contract LaunchTest is Test {
         vm.prank(who);
         AccessControlFacet(diamond).renounceRole(LibAccessControl.KEEPER_ROLE, who);
         assertEq(AccessControlFacet(diamond).roleEpoch(), e0 + 4, "renounce");
+    }
+
+    // ─── Round 10 (Codex #2686): only this checkout's gate vouches ───────
+
+    /// @dev The Timelock launches through a contract whose fallback answers
+    ///      `assertReady` without reading anything: the Diamond goes live and
+    ///      records that gate, but production refuses to call it a launch.
+    function test_Production_RefusesALaunchThroughAForeignGate() public {
+        vm.chainId(8453);
+        _configure();
+        address timelock = address(new LaunchMockTimelock());
+        _handOverUnpause(timelock);
+        address registry = _registryWithLane();
+        address foreign = address(new LaunchPermissiveGate());
+        bytes memory call_ = abi.encodeCall(ILaunchGate.assertReady, (diamond, _d(registry), _h()));
+        uint64 epoch = _epoch();
+        vm.prank(timelock);
+        AdminFacet(diamond).launch(epoch, foreign, call_);
+        assertEq(launcher.firstUnpauseGate(diamond), foreign);
+        string memory refusal = string.concat(
+            "Launch: the Diamond was first unpaused through ",
+            vm.toString(foreign),
+            ", which is not this checkout's launch gate (",
+            vm.toString(LaunchGateDeployment.predicted()),
+            ") - what it checked is unknown to this run; verify its code, or re-run from the checkout that built it"
+        );
+        Launch.Decision memory d = launcher.decide(diamond, _d(registry), timelock, admin, false);
+        assertEq(uint8(d.path), uint8(Launch.Path.Refuse));
+        assertEq(d.reason, refusal);
+        vm.expectRevert(bytes(refusal));
+        launcher.checkLaunched(diamond, _d(registry), timelock, admin);
+    }
+
+    /// @dev A testnet admin unpause outside the launch step, then a pause,
+    ///      on an unready Diamond: whether it was ready when it went live is
+    ///      unknown, so it is not recorded as launched while paused either.
+    function test_Testnet_RefusesAnUnreadyDiamondUnpausedOutOfBandThenPaused() public {
+        vm.chainId(84532);
+        vm.startPrank(admin);
+        AdminFacet(diamond).unpause();
+        AdminFacet(diamond).pause();
+        vm.stopPrank();
+        string memory refusal =
+            "Launch: the Diamond was first unpaused outside a launch gate and a readiness check is NOT MET now - whether it was ready when it went live is unknown, so it is not recorded as launched; complete the phase named above, then re-run";
+        Launch.Decision memory d = launcher.decide(diamond, _d(address(0)), address(0), admin, true);
+        assertEq(uint8(d.path), uint8(Launch.Path.Refuse));
+        assertEq(d.reason, refusal);
+        vm.expectRevert(bytes(refusal));
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
+        assertTrue(AdminFacet(diamond).paused(), "a refused record lifts no pause");
+    }
+
+    /// @dev Launched through this checkout's gate, then a requirement stops
+    ///      holding: the launch stays recorded, and the verdict says which
+    ///      check is NOT MET now instead of hiding it.
+    function test_Production_LaunchedDiamondReportsADegradedCheck() public {
+        (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
+        _execute(tl, registry, epoch);
+        _pool(registry).setLimit(1, true, false, 0, 0);
+        Launch.Decision memory d = launcher.decide(diamond, _d(registry), address(tl), admin, false);
+        assertEq(uint8(d.path), uint8(Launch.Path.Launched));
+        assertGt(d.checks.length, 0, "the checks are read after launch");
+        assertFalse(LibLaunchReadiness.noneUnmet(d.checks));
+        assertEq(
+            launcher.checkLaunched(diamond, _d(registry), address(tl), admin),
+            string.concat(
+                "first unpaused by ",
+                vm.toString(address(tl)),
+                _throughGate(),
+                ", and unpaused now; a readiness check is NOT MET now (listed above) - restore it through governance"
+            )
+        );
     }
 }

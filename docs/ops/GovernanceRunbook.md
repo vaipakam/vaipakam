@@ -681,12 +681,18 @@ even for the gap between the deploy and the handover.
    Timelock, through a launch gate; if anyone else first unpaused it, or the
    Timelock ran an operation that only unpauses, no readiness check vouched
    for the Diamond going live, so the phase refuses, and that is an incident
-   to investigate, not a launch. When the recorded gate is not the one this
-   checkout would propose (a later gate build), the phase says so and names
-   the recorded address, where that gate's code is. The record does not depend on the
-   checkout running the step (a later LaunchGate build, a different registry
-   or admin address) or on how far later pauses moved the pause epoch, so
-   neither can make a launched Diamond look unlaunched.
+   to investigate, not a launch. The recorded gate must also be this
+   checkout's LaunchGate (its deterministic address): any contract can answer
+   `assertReady` (a permissive fallback does), so a gate this run did not
+   build vouches for nothing it can verify, and production refuses it, naming
+   the recorded address. Verify that gate's code, or re-run from the checkout
+   that built it. A testnet names a foreign gate instead of refusing. After
+   the launch the phase still reads every readiness check: one that is
+   `NOT MET` now is reported beside the launch record (restore it through
+   governance) rather than hidden, and a testnet Diamond first unpaused
+   outside a launch gate counts as launched only while every answered check
+   is met, paused now or not. Later pauses never move the record, so they
+   cannot make a launched Diamond look unlaunched.
 7. The launch step reads that record before anything else, paused or not.
    Once it exists, a re-run during a later incident pause reports "first
    unpaused by <Timelock>, and PAUSED now" and prints no proposal: the

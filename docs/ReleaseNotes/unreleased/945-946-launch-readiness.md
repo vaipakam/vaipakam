@@ -55,10 +55,11 @@ refuses while the deploy key still holds any Diamond role, not only the
 unpause role.
 A Diamond is recorded as launched only on evidence, the Diamond's own
 record of its first unpause (described below), and on a production chain
-that record must name the Timelock and the launch gate the unpause went
-through. A Timelock operation that only unpauses leaves no gate on the
-record, so it is refused rather than counted as a launch that no readiness
-check vouched for. Any other unpause makes the launch step
+that record must name the Timelock and this checkout's launch gate. A
+Timelock operation that only unpauses leaves no gate on the record, so it is
+refused rather than counted as a launch that no readiness check vouched for,
+and so is an unpause through any other contract that merely answers the
+gate's call, since nothing shows what it checked. Any other unpause makes the launch step
 refuse instead of recording it, and the deploy scripts record the launch
 from that same evidence rather than from whether the Diamond happens to be
 unpaused. Once a Diamond has launched, the launch step never offers to

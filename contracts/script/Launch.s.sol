@@ -208,8 +208,12 @@ contract Launch is Script {
     ///         set: a known address alone cannot unpause.
     function report() external view returns (bool ready) {
         address diamond = Deployments.readDiamond();
+        LibLaunchReadiness.Declared memory declared = declaredFromEnv(diamond);
         Decision memory d =
-            decide(diamond, declaredFromEnv(diamond), Deployments.readTimelockOptional(), _adminFromEnv(), _adminKeyGiven());
+            decide(diamond, declared, Deployments.readTimelockOptional(), _adminFromEnv(), _adminKeyGiven());
+        // A decision that stopped early (a refusal, or local anvil) read no
+        // checks; the report lists them anyway, as the chain answers them now.
+        if (d.checks.length == 0) d.checks = LibLaunchReadiness.check(diamond, declared);
         console.log("Launch readiness (report only)");
         console.log("  paused:", AdminFacet(diamond).paused());
         console.log("  pause epoch:", uint256(d.epoch));
@@ -287,8 +291,11 @@ contract Launch is Script {
     ///         pause it is under now is an incident: lifting it is incident
     ///         response, never a second launch, so nothing is proposed or
     ///         unpaused. On production the first unpause must have been the
-    ///         Timelock's, through a launch gate (`AdminFacet.launch`), or
-    ///         the run refuses.
+    ///         Timelock's, through this checkout's launch gate
+    ///         (`AdminFacet.launch`), or the run refuses. The readiness
+    ///         checks are read after a launch too: one NOT MET now is stated
+    ///         beside the record, and a testnet record with no gate counts
+    ///         only while none is NOT MET, paused now or not.
     ///      2. Unpaused with no record (a Diamond older than the record):
     ///         production refuses; a testnet counts it as launched only while
     ///         no answered requirement is NOT MET; local anvil counts it.
@@ -321,12 +328,26 @@ contract Launch is Script {
                 return d;
             }
             address via = firstUnpauseGate(diamond);
-            if (production && via == address(0)) {
-                d.reason = string.concat(
-                    "Launch: the Diamond was first unpaused by the Timelock, but not through a launch gate ",
-                    "(AdminFacet.launch) - no readiness check vouched for it in that call; investigate before ",
-                    "anything records a launch"
-                );
+            address predictedGate = LaunchGateDeployment.predicted();
+            // Only this checkout's gate is known to have read the
+            // requirements: any other contract answering `assertReady` (a
+            // permissive fallback would) vouches for nothing this run can
+            // verify (Codex #2686 r10).
+            bool gated = via != address(0) && via == predictedGate;
+            if (production && !gated) {
+                d.reason = via == address(0)
+                    ? string.concat(
+                        "Launch: the Diamond was first unpaused by the Timelock, but not through a launch gate ",
+                        "(AdminFacet.launch) - no readiness check vouched for it in that call; investigate before ",
+                        "anything records a launch"
+                    )
+                    : string.concat(
+                        "Launch: the Diamond was first unpaused through ",
+                        vm.toString(via),
+                        ", which is not this checkout's launch gate (",
+                        vm.toString(predictedGate),
+                        ") - what it checked is unknown to this run; verify its code, or re-run from the checkout that built it"
+                    );
                 return d;
             }
             d.path = Path.Launched;
@@ -338,18 +359,26 @@ contract Launch is Script {
                     ? ", and PAUSED now: lifting that pause is incident response (GovernanceRunbook), not a launch"
                     : ", and unpaused now"
             );
-            // A testnet admin unpause outside this step leaves the same record
-            // as one through it, so a live testnet Diamond still has to meet
-            // every answered requirement to count as launched. (On production
-            // the record is the Timelock's, whose gate read them at execution.)
-            if (!paused && !production && !local) {
-                d.checks = LibLaunchReadiness.check(diamond, declared);
-                if (!LibLaunchReadiness.noneUnmet(d.checks)) {
-                    d.path = Path.Refuse;
-                    d.reason =
-                        "Launch: the Diamond is unpaused but a readiness check is NOT MET - it went live before it was ready; complete the phase named above, then re-run";
-                }
+            // The launch record is history; readiness is read now as well, so
+            // the report and the verify verdict never hide a requirement that
+            // stopped holding after the launch (Codex #2686 r10).
+            if (local) return d;
+            d.checks = LibLaunchReadiness.check(diamond, declared);
+            if (LibLaunchReadiness.noneUnmet(d.checks)) return d;
+            if (!production && !gated) {
+                // A testnet first unpause outside a launch gate (the admin's,
+                // in or out of this step) leaves no proof the Diamond was
+                // ready when it went live, paused now or not, so it counts as
+                // launched only while every answered requirement is met.
+                d.path = Path.Refuse;
+                d.reason = paused
+                    ? "Launch: the Diamond was first unpaused outside a launch gate and a readiness check is NOT MET now - whether it was ready when it went live is unknown, so it is not recorded as launched; complete the phase named above, then re-run"
+                    : "Launch: the Diamond is unpaused but a readiness check is NOT MET - it went live before it was ready; complete the phase named above, then re-run";
+                return d;
             }
+            d.reason = string.concat(
+                d.reason, "; a readiness check is NOT MET now (listed above) - restore it through governance"
+            );
             return d;
         }
 
