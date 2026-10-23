@@ -1,4 +1,4 @@
-## Thread — retired "Buy VPFI" shortcut removed (PR #<n>)
+## Thread — retired "Buy VPFI" shortcut removed (PR #2688)
 
 The marketing site still served a web-app manifest left over from the retired app. It offered a "Buy VPFI" launcher shortcut to the in-app purchase route that the #687-A excision removed. No page linked the manifest, so no browser could install it, and every shortcut in it pointed at a path the marketing site does not serve. It has been deleted. Three comments that still pointed readers at the retired route now point at the connected app's VPFI vault page, and say plainly that there is no protocol VPFI purchase surface.
 
