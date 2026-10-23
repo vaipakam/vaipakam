@@ -457,7 +457,7 @@ const PINNED = new Map([
   ["contracts/src/facets/OracleAdminFacet.sol", [1, "RETRACTION — #1726 corrected the natspec that cited the adapter as a safety enforcer", "7c945dfc822b"]],
   ["contracts/src/facets/VPFIDiscountFacet.sol", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "5e55ca2e8246"]],
   ["contracts/src/libraries/LibKeeperReward.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c2eb45565824"]],
-  ["contracts/src/libraries/LibVaipakam.sol", [2, "RETRACTION — replaces the dangling storage-struct header that labelled sequencer slots", "4d11b042c3ba"]],
+  ["contracts/src/libraries/LibVaipakam.sol", [2, "RETRACTION — replaces the dangling storage-struct header that labelled sequencer slots — digest re-pinned #2419: both mentions are unchanged and still retract the removed surface; the context moved because the rounding-policy header and the dust-floor notes in the same file were rewritten for the 1e18 numeraire scale", "c775200e920a"]],
   ["contracts/test/CcipDeploymentRehearsalTest.t.sol", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "8ec41b19f570"]],
   ["contracts/test/mocks/MockCrossChainMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "54536afa88ba"]],
   ["docs/DesignsAndPlans/BorrowerPlatformFeeResearch.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "0b2df05b7d0a"]],
