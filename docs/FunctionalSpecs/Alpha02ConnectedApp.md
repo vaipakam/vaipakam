@@ -4520,8 +4520,11 @@ Its intended behaviour, as the test oracle for this surface:
   a partial repayment or a match changing the loan later moves none of
   that. A loan belongs to a tenor market only once its agreed terms are
   confirmed from its opening record. Until then its tenor is unknown, so
-  it is shown under no duration, never under a guessed or current one,
-  and the chart states how many such loans the pair has in the period,
+  it is shown under no duration, never under a guessed or current one.
+  The recent-loans list states how many such loans the pair has in all,
+  and an empty list then says only that no loan with confirmed terms
+  sits at this duration. The chart states how many the pair has in the
+  period,
   counted from the same reading of the data as the chart itself. Past a
   stated limit the chart says "more than" that many rather than an exact
   figure. A rate history that does not state these exclusions (how many

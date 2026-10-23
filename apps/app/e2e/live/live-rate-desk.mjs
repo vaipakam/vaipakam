@@ -766,13 +766,19 @@ try {
   const chartUnavailable = chartCard.getByText(
     /couldn.t load the rate history right now/i,
   );
-  // `copy.desk.chart.empty` — "No loans agreed yet for this pair — the
+  // `copy.desk.chart.empty` — "No loans agreed yet at this duration — the
   // chart only shows rates people actually agreed." (matched on its distinctive
   // second half so the tape's similar "No loans agreed yet…" copy can't
   // collide even if scoping ever changes).
   const chartEmptyMarket = chartCard.getByText(/chart only shows rates people actually agreed/i);
   // `copy.desk.chart.emptyRange` — "No loans agreed in this period…"
   const chartEmptyRange = chartCard.getByText(/no loans agreed in this period/i);
+  // #1142 — `emptyUnplaced` (the pair has loans no tenor holds) and
+  // `emptyCatchingUp` (the tape shows a newer loan than the chart) are honest
+  // empty states too.
+  const chartEmptyOther = chartCard.getByText(
+    /no loans with confirmed terms at this duration|has not caught up with the newest loans/i,
+  );
   // The wrapper div mounts before lightweight-charts initializes, so a
   // "drawn series" claim must see the library's actual OUTPUT — a
   // <canvas> child — not just the container (Codex #1143 round-1 P2:
@@ -784,6 +790,7 @@ try {
       (await chartUnavailable.isVisible().catch(() => false)) ||
       (await chartEmptyMarket.isVisible().catch(() => false)) ||
       (await chartEmptyRange.isVisible().catch(() => false)) ||
+      (await chartEmptyOther.isVisible().catch(() => false)) ||
       (await chartCanvas.count().catch(() => 0)) > 0,
     { timeoutMs: 45_000, intervalMs: 2_000 },
   );
@@ -801,8 +808,10 @@ try {
             : ''
         }`
       : (await chartEmptyMarket.isVisible().catch(() => false))
-        ? 'honest market-history empty copy ("…chart draws only executed rates.")'
-        : 'honest range-scoped empty copy ("No loans agreed in this period…")';
+        ? 'honest market-history empty copy ("…chart only shows rates people actually agreed.")'
+        : (await chartEmptyOther.isVisible().catch(() => false))
+          ? 'honest unplaced or catching-up empty copy (#1142)'
+          : 'honest range-scoped empty copy ("No loans agreed in this period…")';
   // The interval/range chip groups render in EVERY chart state (they
   // sit outside the tri-state branch). The Apache-2.0 TradingView
   // attribution link, by contrast, shows ONLY when a chart actually
@@ -1111,13 +1120,16 @@ try {
   // ---- step 7: tape panel — indexer-backed, ASSERTED healthy ---------
   // (Codex round-2 P2 #3.) The market-scoped /loans/recent route is
   // production-healthy post-migration, so the tape must resolve to
-  // real fills or the honest empty copy (`copy.desk.tapeEmpty`:
-  // "No loans agreed yet for this pair.") — the unavailable copy
+  // real fills or an honest empty copy (`copy.desk.tapeEmpty`: "No loans
+  // agreed yet at this duration.", or `tapeEmptyUnplaced` when the pair has
+  // loans whose tenor is unknown, #1142) — the unavailable copy
   // (`copy.desk.tapeUnavailable`: "We couldn't load recent loans right
   // now.") is a FAIL.
   const tapeCard = page.locator('.card').filter({ hasText: 'Recent loans' }).first();
   await tapeCard.waitFor({ timeout: 30_000 });
-  const tapeEmpty = tapeCard.getByText('No loans agreed yet for this pair.', { exact: true });
+  const tapeEmpty = tapeCard.getByText(
+    /^No loans (agreed yet|with confirmed terms) at this duration( yet)?\.$/,
+  );
   const tapeUnavailable = tapeCard.getByText(/couldn.t load recent loans right now/i);
   const tapeRows = tapeCard.locator('.desk-tape-row');
   await pollChain(
@@ -1140,7 +1152,7 @@ try {
     'PASS',
     tapeFillCount > 0
       ? `${tapeFillCount} fill row(s) rendered`
-      : 'honest market-scoped empty state ("No loans agreed yet for this pair.")',
+      : 'honest market-scoped empty state',
   );
 
   // ---- step 7b (phase 2, #1130): History tab — ASSERTED healthy ------

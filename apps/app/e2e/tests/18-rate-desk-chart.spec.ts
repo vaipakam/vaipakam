@@ -147,7 +147,7 @@ test('a zero-fill market shows the honest empty chart; seeded fills render spars
     .click();
   await expect(
     chartCard.getByText(
-      /No loans agreed yet for this pair — the chart only shows rates people actually agreed\./,
+      /No loans agreed yet at this duration — the chart only shows rates people actually agreed\./,
     ),
   ).toBeVisible({ timeout: 30_000 });
   await expect(chartCard.locator('.desk-chart-canvas')).toHaveCount(0);

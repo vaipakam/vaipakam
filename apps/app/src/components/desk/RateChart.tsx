@@ -41,7 +41,7 @@ import { LoaderCircle } from 'lucide-react';
 import { copy } from '../../content/copy';
 import { useTheme, type ResolvedTheme } from '../../app/ThemeContext';
 import { UnavailableState } from '../EmptyState';
-import { useDeskCandles, type DeskFill, type DeskPair } from '../../data/desk';
+import { useDeskCandles, type DeskPair, type DeskTape } from '../../data/desk';
 import type { CandleInterval, CandleRange } from '../../data/indexer';
 import {
   INTERVAL_SECONDS,
@@ -137,8 +137,9 @@ export default function RateChart({
    *  passed down, never re-fetched), newest first, tri-state per the
    *  app contract. Feeds three things: the "last fill" freshness
    *  backstop (the candle response is 60 s-cached), sparse mode's
-   *  per-fill markers, and the never-filled vs empty-range copy split. */
-  tape: DeskFill[] | null | undefined;
+   *  per-fill markers, and the never-filled vs empty-range copy split
+   *  (with the pair's all-time unplaced count it carries, #1142). */
+  tape: DeskTape | null | undefined;
 }) {
   const [interval, setInterval] = useState<CandleInterval>(DEFAULT_INTERVAL);
   const [range, setRange] = useState<CandleRange>(DEFAULT_RANGE);
@@ -182,7 +183,8 @@ export default function RateChart({
   // The fill itself, not a projection of it: the header needs its loan
   // id when the rate is not recorded (#1142), and a narrower copy is how
   // that id was lost once.
-  const tapeNewest = Array.isArray(tape) && tape.length > 0 ? tape[0] : null;
+  const tapeFills = tape == null ? null : tape.fills;
+  const tapeNewest = tapeFills !== null && tapeFills.length > 0 ? tapeFills[0] : null;
   const lastPrint = useMemo(
     () => newestPrint(Array.isArray(buckets) ? buckets : [], tapeNewest),
     [buckets, tapeNewest],
@@ -196,10 +198,10 @@ export default function RateChart({
    *  fills → the effect falls back to bucket markers. */
   const fillPoints = useMemo(
     () =>
-      sparse && Array.isArray(buckets) && Array.isArray(tape)
-        ? fillPointsFromTape(buckets, tape, INTERVAL_SECONDS[interval])
+      sparse && Array.isArray(buckets) && tapeFills !== null
+        ? fillPointsFromTape(buckets, tapeFills, INTERVAL_SECONDS[interval])
         : null,
-    [sparse, buckets, tape, interval],
+    [sparse, buckets, tapeFills, interval],
   );
 
   const containerRef = useRef<HTMLDivElement | null>(null);

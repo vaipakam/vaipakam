@@ -412,6 +412,13 @@ export function marketTenorOf(
   return typeof loan.marketDurationDays === 'number' ? loan.marketDurationDays : null;
 }
 
+/** The market's tape: its newest placed fills, and the pair's loans that no
+ *  tenor market holds (all time), which the tape states beside them. */
+export interface DeskTape {
+  fills: DeskFill[];
+  unplaced: UnplacedCount;
+}
+
 /** #1142 — the placement rule a market-scoped tape page must state it was
  *  read under (the indexer's `PLACEMENT_RULE`). */
 export const TAPE_PLACEMENT_RULE = 'confirmed-agreed-terms';
@@ -422,7 +429,8 @@ export const TAPE_PLACEMENT_RULE = 'confirmed-agreed-terms';
  *
  * The page must echo the scope it was read under — this pair, this tenor
  * under the confirmed-agreed-terms placement rule, sale vehicles excluded —
- * and every row must agree with it. A worker that ignored the filters, or
+ * and every row must agree with it. It must also state the pair's loans that
+ * no tenor holds, so an empty tape is never read as "no loans at all". A worker that ignored the filters, or
  * scoped on the live tenor (which an extension rewrites), states no such
  * scope; that includes an EMPTY page, which has no row to check, so the echo
  * rather than the rows is what proves an empty tape (Codex #2689 r5). A row
@@ -433,7 +441,7 @@ export function tapeFromPage(
   page: RecentLoansPage,
   pair: DeskPair,
   durationDays: number,
-): DeskFill[] | null {
+): DeskTape | null {
   const wantLending = pair.lendingAsset.toLowerCase();
   const wantCollateral = pair.collateralAsset.toLowerCase();
   const scope = page.scope;
@@ -449,12 +457,18 @@ export function tapeFromPage(
   ) {
     return null;
   }
+  // The pair's loans no tenor holds: a tape without the disclosure cannot
+  // say whether "no loans" means none at all or none confirmed.
+  const unplaced = readUnplacedCount(page.unplaced);
+  if (unplaced === null) return null;
   const inMarket = (l: IndexedLoan): boolean =>
     l.isSaleVehicle !== true &&
     l.lendingAsset.toLowerCase() === wantLending &&
     l.collateralAsset.toLowerCase() === wantCollateral &&
     marketTenorOf(l) === durationDays;
-  return page.loans.every(inMarket) ? page.loans.map(deskFillOf) : null;
+  return page.loans.every(inMarket)
+    ? { fills: page.loans.map(deskFillOf), unplaced }
+    : null;
 }
 
 /** Executed fills for the (pair, tenor) market, newest first: the newest
@@ -470,7 +484,7 @@ export function useDeskTape(pair: DeskPair | null, durationDays: number) {
     ],
     enabled: pair !== null,
     refetchInterval: signalAware(REFRESH_MS),
-    queryFn: async (): Promise<DeskFill[] | null> => {
+    queryFn: async (): Promise<DeskTape | null> => {
       if (!indexerConfigured()) return null;
       const page = await fetchRecentLoans(readChain.chainId, {
         limit: 50,

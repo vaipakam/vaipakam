@@ -377,6 +377,10 @@ export interface RecentLoansPage {
    *  page has no row from which to tell a scoped answer from an unscoped
    *  one. */
   scope?: RecentLoansScope | null;
+  /** #1142 — on a page scoped to one full (pair, tenor) market: loans on
+   *  the PAIR, all time, that no tenor market holds (agreed terms
+   *  unconfirmed), capped like the candles' count. Null otherwise. */
+  unplaced?: UnplacedCount | null;
 }
 
 export interface RecentLoansScope {

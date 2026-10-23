@@ -56,7 +56,7 @@ function harness() {
         ),
         env,
       )
-    ).json()) as { loans: unknown[]; scope: Record<string, unknown> };
+    ).json()) as { loans: unknown[]; scope: Record<string, unknown>; unplaced: unknown };
   return { ...h, env, loan, tape, page };
 }
 
@@ -81,6 +81,9 @@ describe('market tape tenor (#1142)', () => {
     h.loan(3, [900, 60], [800, 30], false);
     expect(await h.tape(30)).toEqual([]);
     expect(await h.tape(60)).toEqual([]);
+    // Every market-scoped tape on the pair states it, whatever the tenor.
+    expect((await h.page(30)).unplaced).toEqual({ count: 1, capped: false });
+    expect((await h.page(45)).unplaced).toEqual({ count: 1, capped: false });
     const all = await (
       await handleLoansRecent(new Request('https://idx/loans/recent?chainId=84532'), h.env)
     ).json() as { loans: Array<Record<string, unknown>> };
@@ -103,9 +106,10 @@ describe('market tape tenor (#1142)', () => {
       placement: PLACEMENT_RULE,
       excludeSaleVehicles: true,
     });
+    expect(body.unplaced).toEqual({ count: 0, capped: false });
     const global = (await (
       await handleLoansRecent(new Request('https://idx/loans/recent?chainId=84532'), h.env)
-    ).json()) as { scope: Record<string, unknown> };
+    ).json()) as { scope: Record<string, unknown>; unplaced: unknown };
     expect(global.scope).toEqual({
       lendingAsset: null,
       collateralAsset: null,
@@ -113,6 +117,7 @@ describe('market tape tenor (#1142)', () => {
       placement: null,
       excludeSaleVehicles: false,
     });
+    expect(global.unplaced).toBeNull();
   });
 
   it('places a row with no snapshot at all in no market', async () => {

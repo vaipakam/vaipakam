@@ -122,29 +122,33 @@ describe('newestPrint', () => {
 describe('chartEmptyKind (#1139 — never-filled vs empty-in-range copy)', () => {
   const NOW = 100 * 86_400;
   const at = (daysAgo: number) => ({ startAt: NOW - daysAgo * 86_400 });
+  const T = (fills: { startAt: number }[], unplacedEver = 0) => ({
+    fills,
+    unplaced: { count: unplacedEver },
+  });
 
   it('range=all earns the market copy when the tape cannot disprove it', () => {
     expect(chartEmptyKind('all', undefined, 0, NOW)).toBe('market');
     expect(chartEmptyKind('all', null, 0, NOW)).toBe('market');
-    expect(chartEmptyKind('all', [], 0, NOW)).toBe('market');
+    expect(chartEmptyKind('all', T([]), 0, NOW)).toBe('market');
   });
 
   it('a tape fill inside the range means the empty series is stale: catching up, never a claim about the period', () => {
     // Candle-cache skew: the tape (and the last-fill header) already shows
     // the fill; the body must not claim "none" against its own header.
-    expect(chartEmptyKind('all', [at(200)], 0, NOW)).toBe('catchingUp');
-    expect(chartEmptyKind('7d', [at(1)], 0, NOW)).toBe('catchingUp');
-    expect(chartEmptyKind('30d', [at(40), at(2)], 0, NOW)).toBe('catchingUp');
+    expect(chartEmptyKind('all', T([at(200)]), 0, NOW)).toBe('catchingUp');
+    expect(chartEmptyKind('7d', T([at(1)]), 0, NOW)).toBe('catchingUp');
+    expect(chartEmptyKind('30d', T([at(40), at(2)]), 0, NOW)).toBe('catchingUp');
   });
 
   it('a tape fill older than the range proves the market filled, so only the period copy fits', () => {
-    expect(chartEmptyKind('7d', [at(8)], 0, NOW)).toBe('range');
-    expect(chartEmptyKind('30d', [at(31), at(45)], 0, NOW)).toBe('range');
+    expect(chartEmptyKind('7d', T([at(8)]), 0, NOW)).toBe('range');
+    expect(chartEmptyKind('30d', T([at(31), at(45)]), 0, NOW)).toBe('range');
   });
 
   it('a narrower range with a confirmed-empty tape is a never-filled market', () => {
-    expect(chartEmptyKind('7d', [], 0, NOW)).toBe('market');
-    expect(chartEmptyKind('30d', [], 0, NOW)).toBe('market');
+    expect(chartEmptyKind('7d', T([]), 0, NOW)).toBe('market');
+    expect(chartEmptyKind('30d', T([]), 0, NOW)).toBe('market');
   });
 
   it('a narrower range is range-scoped when the tape is unknown', () => {
@@ -155,14 +159,24 @@ describe('chartEmptyKind (#1139 — never-filled vs empty-in-range copy)', () =>
 
 describe('unplaced loans (#1142 — counted, never placed under a guessed tenor)', () => {
   const NOW = 100 * 86_400;
+  const T = (fills: { startAt: number }[], unplacedEver = 0) => ({
+    fills,
+    unplaced: { count: unplacedEver },
+  });
+
   it('an empty series on a pair with unplaced loans claims neither "never filled" nor "none in this period"', () => {
-    expect(chartEmptyKind('all', [], 2, NOW)).toBe('unplaced');
+    expect(chartEmptyKind('all', T([]), 2, NOW)).toBe('unplaced');
     expect(chartEmptyKind('7d', null, 1, NOW)).toBe('unplaced');
-    expect(chartEmptyKind('30d', [{ startAt: NOW - 40 * 86_400 }], 3, NOW)).toBe('unplaced');
+    expect(chartEmptyKind('30d', T([{ startAt: NOW - 40 * 86_400 }]), 3, NOW)).toBe('unplaced');
+  });
+
+  it('a confirmed-empty tape whose pair has unplaced loans OUTSIDE the range is not a never-filled market', () => {
+    // The candle count (in range) is zero; the tape's all-time one is not.
+    expect(chartEmptyKind('7d', T([], 2), 0, NOW)).toBe('unplaced');
   });
 
   it('a tape-proven fill in the range outranks the unplaced copy (Codex #2689 r5)', () => {
-    expect(chartEmptyKind('30d', [{ startAt: NOW - 86_400 }], 3, NOW)).toBe('catchingUp');
+    expect(chartEmptyKind('30d', T([{ startAt: NOW - 86_400 }], 3), 3, NOW)).toBe('catchingUp');
   });
 
   it('reads the count and whether the server stopped counting', () => {

@@ -4209,7 +4209,20 @@ const copySource = {
       'Loan #{{loanId}}: the agreed terms of this loan could not be confirmed from its opening record, so they are not shown.',
       ['loanId'],
     ),
-    tapeEmpty: 'No loans agreed yet for this pair.',
+    // #1142 — the tape is one (pair, tenor) market, so "none" is claimed at
+    // this duration only; with loans on the pair whose tenor is unknown, only
+    // "none confirmed" is.
+    tapeEmpty: 'No loans agreed yet at this duration.',
+    tapeEmptyUnplaced: 'No loans with confirmed terms at this duration yet.',
+    tapeUnplacedNote: tmpl(
+      '{{count}} loans on this pair are not shown under any duration, because their agreed terms are not confirmed from their opening record.',
+      ['count'],
+      { one: '{{count}} loan on this pair is not shown under any duration, because its agreed terms are not confirmed from its opening record.' },
+    ),
+    tapeUnplacedNoteCapped: tmpl(
+      'More than {{floor, number}} loans on this pair are not shown under any duration, because their agreed terms are not confirmed from their opening record.',
+      ['floor'],
+    ),
     tapeUnavailable: 'We couldn’t load recent loans right now.',
     // #1131 slice B — the crossable-band previewMatch strip. Shown ONLY
     // when the contract's own previewMatch says Ok (§5.2 honesty rule:
@@ -4311,7 +4324,7 @@ const copySource = {
       // range-scoped line, even at range = all (the 60 s candle-cache
       // skew window after a first fill). See chartEmptyKind.
       empty:
-        'No loans agreed yet for this pair — the chart only shows rates people actually agreed.',
+        'No loans agreed yet at this duration — the chart only shows rates people actually agreed.',
       emptyRange: 'No loans agreed in this period — try a longer one.',
       // #1142 — the pair has loans in range whose agreed terms are not
       // confirmed, so no duration holds them and one may belong here. The

@@ -1290,7 +1290,32 @@ export async function handleLoansRecent(req: Request, env: Env): Promise<Respons
        WHERE ${conds.join(' AND ')}
        ORDER BY loan_id DESC LIMIT ?`,
     ).bind(...binds, limit);
-    const rows = await stmt.all<LoanRow>();
+    // #1142 — a tape scoped to one (pair, tenor) market also states how many
+    // loans on the pair no tenor holds (all time, capped), read in the same
+    // batch, so an empty tape never reads as "no loans agreed" while the
+    // pair has loans whose tenor is unknown (Codex #2689 r5).
+    const marketScoped =
+      market.lendingAsset !== null &&
+      market.collateralAsset !== null &&
+      market.durationDays !== null;
+    let rows: D1Result<LoanRow>;
+    let unplaced: ReturnType<typeof readUnplacedCount> | null = null;
+    if (marketScoped) {
+      const [tapeRows, unplacedRows] = await env.DB.batch([
+        stmt,
+        unplacedOnPairStatement(
+          env.DB,
+          chainId,
+          market.lendingAsset!,
+          market.collateralAsset!,
+          0,
+        ),
+      ]);
+      rows = tapeRows as D1Result<LoanRow>;
+      unplaced = readUnplacedCount(unplacedRows as D1Result<{ n: number }>);
+    } else {
+      rows = await stmt.all<LoanRow>();
+    }
     const loans = (rows.results ?? []).map(loanToJson);
     const next =
       loans.length === limit && loans.length > 0
@@ -1299,7 +1324,8 @@ export async function handleLoansRecent(req: Request, env: Env): Promise<Respons
     // The scope this page was actually read under, so a reader can verify
     // the filters were applied — an empty page included, which has no row
     // to check (#1142, Codex #2689 r5). `placement` names the rule that
-    // chose the tenor; null when no tenor was asked for.
+    // chose the tenor; null when no tenor was asked for. `unplaced` is null
+    // unless the page is scoped to one full market.
     const scope = {
       lendingAsset: market.lendingAsset,
       collateralAsset: market.collateralAsset,
@@ -1307,7 +1333,7 @@ export async function handleLoansRecent(req: Request, env: Env): Promise<Respons
       placement: market.durationDays !== null ? PLACEMENT_RULE : null,
       excludeSaleVehicles,
     };
-    return jsonResponse({ chainId, loans, nextBefore: next, scope });
+    return jsonResponse({ chainId, loans, nextBefore: next, scope, unplaced });
   } catch (err) {
     console.error('[loanRoutes] recent failed', err);
     return jsonResponse({ error: 'recent-failed' }, 500);

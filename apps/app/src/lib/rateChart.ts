@@ -137,25 +137,30 @@ export const RANGE_DAYS: Readonly<Record<CandleRange, number | null>> = {
  *  - `range`: some fill exists (the tape's, older than the range) or the
  *    tape is unknown on a narrower range — "none in this period" only.
  *  - `market`: the evidence covers the whole history (range = all, or a
- *    confirmed-empty tape) and nothing disproves it — "never filled".
+ *    confirmed-empty tape) and nothing disproves it, unplaced loans on the
+ *    pair included (the tape's all-time count) — "never filled".
  */
 export function chartEmptyKind(
   range: CandleRange,
-  tape: readonly { startAt: number }[] | null | undefined,
+  tape: { fills: readonly { startAt: number }[]; unplaced: { count: number } } | null | undefined,
   unplaced: number,
   nowSec: number,
 ): 'catchingUp' | 'unplaced' | 'market' | 'range' {
-  const tapeHasFill = Array.isArray(tape) && tape.length > 0;
+  const fills = tape == null ? null : tape.fills;
+  const tapeHasFill = fills !== null && fills.length > 0;
   if (tapeHasFill) {
     const days = RANGE_DAYS[range];
     const rangeStart = days === null ? null : nowSec - days * 86_400;
-    const newest = Math.max(...tape.map((f) => f.startAt));
+    const newest = Math.max(...fills.map((f) => f.startAt));
     if (rangeStart === null || newest >= rangeStart) return 'catchingUp';
   }
   if (unplaced > 0) return 'unplaced';
   if (tapeHasFill) return 'range';
+  // range = all: the candle response's count IS all time, and it is zero.
   if (range === 'all') return 'market';
-  if (Array.isArray(tape) && tape.length === 0) return 'market';
+  // A confirmed-empty tape covers the market's whole history; its own
+  // all-time count says whether the pair has loans no tenor holds.
+  if (tape != null) return tape.unplaced.count > 0 ? 'unplaced' : 'market';
   return 'range';
 }
 

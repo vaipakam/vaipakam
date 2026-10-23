@@ -72,23 +72,32 @@ describe('tapeFromPage (#1142)', () => {
   };
   const row = (over: Partial<IndexedLoan>) =>
     loan({ lendingAsset: '0xaa', collateralAsset: '0xbb', marketDurationDays: 30, ...over });
-  const page = (loans: IndexedLoan[], s: unknown = scope) =>
-    ({ chainId: 1, loans, nextBefore: null, scope: s }) as RecentLoansPage;
+  const none = { count: 0, capped: false };
+  const page = (loans: IndexedLoan[], s: unknown = scope, unplaced: unknown = none) =>
+    ({ chainId: 1, loans, nextBefore: null, scope: s, unplaced }) as RecentLoansPage;
 
   it('returns the fills of a page that echoes this market\'s scope', () => {
-    expect(tapeFromPage(page([row({ loanId: 3 })]), pair, 30)).toHaveLength(1);
+    expect(tapeFromPage(page([row({ loanId: 3 })]), pair, 30)?.fills).toHaveLength(1);
   });
 
   it('proves an empty tape only through the echoed scope', () => {
-    expect(tapeFromPage(page([]), pair, 30)).toEqual([]);
+    expect(tapeFromPage(page([]), pair, 30)).toEqual({ fills: [], unplaced: none });
     // An older worker: no echo, so even an empty page is unavailable.
-    const unscoped = { chainId: 1, loans: [], nextBefore: null } as RecentLoansPage;
+    const unscoped = { chainId: 1, loans: [], nextBefore: null, unplaced: none } as RecentLoansPage;
     expect(tapeFromPage(unscoped, pair, 30)).toBeNull();
     expect(tapeFromPage(page([], null), pair, 30)).toBeNull();
     expect(tapeFromPage(page([], { ...scope, placement: null }), pair, 30)).toBeNull();
     expect(tapeFromPage(page([], { ...scope, durationDays: 60 }), pair, 30)).toBeNull();
     expect(tapeFromPage(page([], { ...scope, collateralAsset: '0xcc' }), pair, 30)).toBeNull();
     expect(tapeFromPage(page([], { ...scope, excludeSaleVehicles: false }), pair, 30)).toBeNull();
+  });
+
+  it('carries the pair\'s unplaced loans, and is unavailable without that disclosure', () => {
+    const two = { count: 2, capped: false };
+    expect(tapeFromPage(page([], scope, two), pair, 30)).toEqual({ fills: [], unplaced: two });
+    expect(tapeFromPage(page([], scope, null), pair, 30)).toBeNull();
+    const silent = { chainId: 1, loans: [], nextBefore: null, scope } as RecentLoansPage;
+    expect(tapeFromPage(silent, pair, 30)).toBeNull();
   });
 
   it('is unavailable when a row disagrees with the echoed scope, rather than filtering it', () => {
