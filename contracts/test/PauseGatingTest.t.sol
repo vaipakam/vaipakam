@@ -6,6 +6,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
@@ -190,9 +191,15 @@ contract PauseGatingTest is SetupTest {
         RiskFacet(address(diamond)).triggerLiquidation(0, defaultAdapterCalls());
     }
 
-    function test_pause_updateRiskParams() public {
-        vm.expectRevert(LibPausable.EnforcedPause.selector);
+    /// @dev The two risk setters are governance configuration, NOT
+    ///      pause-gated (#945): a Diamond stays paused until launch, and its
+    ///      risk limits must be set before then. Their role and range checks
+    ///      still apply while paused.
+    function test_paused_riskSettersStillConfigurable() public {
+        vm.expectRevert(IVaipakamErrors.InvalidAsset.selector);
         RiskFacet(address(diamond)).updateRiskParams(address(0), 0, 0, 0);
+        RiskFacet(address(diamond)).setMinHealthFactor(LibVaipakam.MIN_HEALTH_FACTOR);
+        assertTrue(AdminFacet(address(diamond)).paused());
     }
 
     // ── DefaultedFacet ──────────────────────────────────────────────────────

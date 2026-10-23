@@ -60,6 +60,13 @@ directly. A local development chain only warns. The deploy scripts' verify
 phases print the same report, and fail if a Diamond was unpaused outside
 the launch step.
 
+Because the Diamond now stays paused until launch, the two risk settings
+(per-asset risk parameters and the loan-admission health-factor floor) no
+longer refuse while paused (owner decision 2026-10-23). Without that, a chain
+could not set its risk limits before going live. They still need the risk
+admin role, which the Timelock holds after the handover, so every change keeps
+its governance delay.
+
 The testnet configure phase now also sets the admin's test sanctions list as
 the Diamond's oracle (#946), so a testnet launch passes the sanctions check.
 On mainnet the sanctions source is still waiting on the #2443 adder-host

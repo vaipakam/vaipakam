@@ -311,8 +311,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
     /**
      * @notice Updates risk parameters for an asset.
-     * @dev Callable only by Diamond owner (multi-sig/governance).
-     *      Validates params. Emits RiskParamsUpdated.
+     * @dev RISK_ADMIN_ROLE (the Timelock after the handover). Validates
+     *      params. Emits RiskParamsUpdated.
+     *
+     *      NOT pause-gated (#945, owner decision 2026-10-23): a Diamond
+     *      stays paused from its birth until the launch step, so risk limits
+     *      must be settable while paused or a chain would launch with none.
+     *      The pause guards user-facing entry points; this is a governance
+     *      setter whose role check carries the Timelock delay.
      *
      *      PR2 of the internal-match work (2026-05-14) retired the
      *      per-asset `liqThresholdBps`. The liquidation threshold is
@@ -332,7 +338,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 loanInitMaxLtvBps,
         uint256 liqBonusBps,
         uint256 reserveFactorBps
-    ) external whenNotPaused onlyRole(LibAccessControl.RISK_ADMIN_ROLE) {
+    ) external onlyRole(LibAccessControl.RISK_ADMIN_ROLE) {
         if (asset == address(0)) revert InvalidAsset();
         // Setter-range audit (2026-05-02): bounded floors on the
         // numeric tunables. Previously: maxLtv only `> 0` (allowed
@@ -387,7 +393,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      * @dev    Range-bounded to `[MIN_ADMISSION_HEALTH_FACTOR,
      *         MAX_ADMISSION_HEALTH_FACTOR]` (1.2e18 … 2.0e18); the default
      *         (unset) is `MIN_HEALTH_FACTOR` (1.5e18). RISK_ADMIN_ROLE-gated,
-     *         same as {updateRiskParams}. The optimistic delta+cooldown
+     *         same as {updateRiskParams}, and like it NOT pause-gated so
+     *         the floor can be set before launch (#945). The optimistic delta+cooldown
      *         "risk-steward" machinery is intentionally deferred to the
      *         governance card (#404) — this ships the bounded direct setter.
      *
@@ -403,7 +410,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      */
     function setMinHealthFactor(
         uint256 newMinHealthFactor
-    ) external whenNotPaused onlyRole(LibAccessControl.RISK_ADMIN_ROLE) {
+    ) external onlyRole(LibAccessControl.RISK_ADMIN_ROLE) {
         if (
             newMinHealthFactor < LibVaipakam.MIN_ADMISSION_HEALTH_FACTOR ||
             newMinHealthFactor > LibVaipakam.MAX_ADMISSION_HEALTH_FACTOR
