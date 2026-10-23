@@ -168,14 +168,18 @@ and revisited before any mainnet pricing.
 was live there and `test/fork/PriorityRoutingPerkLiveForkTest.t.sol` had passed on a
 fork of each chain's deployed Diamond. That test runs against the live Solver curve, the
 live intent gates and the live oracle, and makes no change on the fork except the arming
-write. **BNB testnet stays unpriced.** Its deployment carries no oracle-priced test
-assets, so no lender intent can be filled there. Precondition 4 therefore cannot hold on
-its live state, and a credit sold there could never be used. Price it only once a
-fillable pair exists and the same fork check passes there.
+write. BNB testnet was meant to stay unpriced: its deployment carried no oracle-priced
+test assets, so no lender intent could be filled there, precondition 4 could not hold on
+its live state, and a credit sold there could never be used.
 
-**Update 2026-10-22.** BNB testnet's mocks are now deployed, so a fillable priced pair
-exists there. BNB is still unpriced: the fork check has no BNB cell yet, and pricing
-waits for that cell to pass and for the owner's OK (#2641).
+**Correction 2026-10-23 (#2641).** BNB testnet was in fact priced at 2 VPFI the same
+day, at 13:29:54 UTC, by an admin write that no record carried and that no fork check
+preceded. Every record since then, this document included, said it was unpriced. It was
+found on-chain on 2026-10-23. No credit was bought there in the meantime, so nobody paid
+for the effect while it could not be delivered. BNB's mocks were deployed on 2026-10-22,
+and on 2026-10-23 the fork check's new BNB cell passed against the live, already-armed
+Diamond, so precondition 4 now holds there after the fact. The arming is recorded in
+BNB's deployment ledger.
 
 Then `setPerkConfig(PERK_PRIORITY_ROUTING, price, 0)` is the LAST step on that
 chain. That write is also the **explicit arming of the effect** (Codex #2563 r5):

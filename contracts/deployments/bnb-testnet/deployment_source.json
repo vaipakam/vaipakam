@@ -122,11 +122,21 @@
         ],
         "serviceCapacityEscrow": "0x7F50ca332b2d0fa571C743663f94C5193342a3b1",
         "armingFeeRate": "2e16 (2%)",
-        "note": "owner-approved 2026-10-19 (rate, enable, and the curves); perk 1 deliberately left UNPRICED: this deployment carries no oracle-priced test assets, so no lender intent can be filled here and the fork check (design precondition 4) cannot pass on its live state. Selling a credit would sell an effect that cannot be delivered. Price it only once a fillable pair exists and the fork check passes"
+        "note": "owner-approved 2026-10-19 (rate, enable, and the curves); perk 1 deliberately left UNPRICED: this deployment carries no oracle-priced test assets, so no lender intent can be filled here and the fork check (design precondition 4) cannot pass on its live state. Selling a credit would sell an effect that cannot be delivered. Price it only once a fillable pair exists and the fork check passes. Superseded the same day: perk 1 was armed at 2026-10-19T13:29:54Z without that check (the perk-arming entry under configChanges, recorded 2026-10-23, #2641)"
       }
     }
   ],
   "configChanges": [
+    {
+      "kind": "perk-arming",
+      "at": "2026-10-19T13:29:54Z",
+      "call": "setPerkConfig(1, 2e18, 0)",
+      "tx": "0x69a6cd75434fd0dfb19b7459add1751b4856ec3ac76f9ffe92920ff891db0fff",
+      "block": 137709227,
+      "operator": "0xf718bae5e0dc36140f16daef73289294c2372030",
+      "meaning": "arms the priority-routing perk (id 1): 2 VPFI per credit, counted; emits PriorityRoutingPerkArmed. Sent about five hours after the adminActivation note above that calls perk 1 unpriced, and recorded here only on 2026-10-23 (#2641), when it was found on-chain: PerkConfigured fired once on this Diamond, and getPerkConfig(1) reads 2e18. Unlike Base and Arbitrum, it was NOT preceded by the fork check, and until the 2026-10-22 testnet mocks no lender intent could be filled here, so a credit sold in that window would have bought an effect that could not be delivered. None was sold: no PerkPurchased event from the deploy block to block 138544008",
+      "verified": "2026-10-23: test/fork/PriorityRoutingPerkLiveForkTest's BNB cell passed on a fork of this Diamond at its live state (already armed, so it bought at the live price): covered fill charged to the solver, exhausted fills refused by name, the credit-backed fill carried on exactly one credit (#2641)"
+    },
     {
       "kind": "testnet-mocks",
       "tool": "contracts/script/deploy-testnet.sh bnb-testnet --phase testnet-mocks (script/DeployTestnetMocks.s.sol)",
@@ -162,7 +172,7 @@
         "0x104dc184e3c99a4d09f4813460fea804db05d74261bcc349a40da6f7d36cb32a addSwapAdapter"
       ],
       "verified": "tLIQ and mUSDC read Liquid via checkLiquidity, priced $2,000 and $1",
-      "supersedes": "the 2026-10-19 adminActivation note's 'no oracle-priced test assets': a fillable priced pair now exists. Perk 1 STAYS UNPRICED here until a BNB fork cell passes (#2641); pricing it is an owner-approved write"
+      "supersedes": "the 2026-10-19 adminActivation note's 'no oracle-priced test assets': a fillable priced pair now exists. This entry originally said perk 1 stayed unpriced here; that was already false when it was written, because perk 1 had been armed on 2026-10-19 (the perk-arming entry above, #2641)"
     }
   ]
 }

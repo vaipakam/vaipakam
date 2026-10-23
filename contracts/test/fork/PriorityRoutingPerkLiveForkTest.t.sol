@@ -43,15 +43,14 @@ import {LoanFacet} from "../../src/facets/LoanFacet.sol";
  *         armed, the arming step is skipped and the live price is the one bought
  *         at, so the cells keep proving the effect on whatever is deployed.
  *
- *         BNB testnet has no cell yet. Until 2026-10-22 its deployment carried
- *         no oracle-priced test assets, so no lender intent could be filled
- *         there — the fill refuses an unresolvable collateral floor before the
- *         perk is reached — and under the design's precondition 4 it was left
- *         unpriced. Its testnet mocks were deployed on 2026-10-22, so a priced
- *         pair now exists; the BNB cell, and pricing the perk there only once
- *         that cell passes, are tracked in #2641. Until then BNB stays unpriced.
+ *         BNB testnet's cell came last (#2641). Until 2026-10-22 its
+ *         deployment carried no oracle-priced test assets, so no lender intent
+ *         could be filled there — the fill refuses an unresolvable collateral
+ *         floor before the perk is reached. Its testnet mocks were deployed on
+ *         2026-10-22, which priced the WETH stand-in and the mock liquid token.
  *
- *         Gated per chain by `FORK_URL_BASE_SEPOLIA` / `FORK_URL_ARB_SEPOLIA`;
+ *         Gated per chain by `FORK_URL_BASE_SEPOLIA` / `FORK_URL_ARB_SEPOLIA` /
+ *         `FORK_URL_BNB_TESTNET`;
  *         each cell skips when its URL is unset, like the other suites here.
  */
 contract PriorityRoutingPerkLiveForkTest is Test {
@@ -87,6 +86,13 @@ contract PriorityRoutingPerkLiveForkTest is Test {
 
     function test_arbSepolia_creditCarriesOnlyTheFillCapacityRefuses() public {
         _runOn("FORK_URL_ARB_SEPOLIA", "arb-sepolia", 421614);
+    }
+
+    /// @dev #2641 — BNB testnet's WETH stand-in and its mock liquid token are
+    ///      both priced by the testnet mocks deployed on 2026-10-22, so the
+    ///      same pair the other cells use is fillable here.
+    function test_bnbTestnet_creditCarriesOnlyTheFillCapacityRefuses() public {
+        _runOn("FORK_URL_BNB_TESTNET", "bnb-testnet", 97);
     }
 
     // ─── the scenario ───────────────────────────────────────────────────────
