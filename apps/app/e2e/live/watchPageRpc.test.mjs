@@ -267,6 +267,37 @@ describe('watchPageRpc', () => {
     expect(rpc.sessionFaults()).toEqual(['eth_call: json-rpc -32602']);
   });
 
+  it('still records a fault whose body was parsing when the window reset (#1633 r3)', async () => {
+    const page = new FakePage();
+    const rpc = watchPageRpc(page);
+    const req = request();
+    page.emit('request', req);
+    let release;
+    const body = new Promise((r) => (release = r));
+    page.emit('response', {
+      request: () => req,
+      status: () => 400,
+      text: () => body,
+    });
+    rpc.reset(); // the response arrived, its body is still in flight
+    setTimeout(() => release(JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'bad' } })), 50);
+    // Awaited by settled() although it belongs to the previous window, so
+    // the fault is on record before a drive decides; it is not an answer.
+    expect(await rpc.settled(600)).toBe(0);
+    expect(rpc.sessionFaults()).toEqual(['eth_call: json-rpc -32602']);
+  });
+
+  it('records a malformed chain envelope the provider refused (#1633 r3)', async () => {
+    const page = new FakePage();
+    const rpc = watchPageRpc(page);
+    rpc.reset();
+    const req = request('POST', { jsonrpc: '1.0', id: 1, method: 'eth_call', params: [] });
+    page.emit('request', req);
+    page.emit('response', response(req, 400, { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'invalid' } }));
+    expect(await rpc.settled()).toBe(1);
+    expect(rpc.sessionFaults()).toEqual(['eth_call: malformed json-rpc envelope']);
+  });
+
   it('reads a socket id reused while outstanding as a client fault, not two answers (#1633 r1)', async () => {
     const page = new FakePage();
     const rpc = watchPageRpc(page);

@@ -1967,3 +1967,48 @@ describe('createSocketCalls (#1633 r1)', () => {
     expect(calls.close()).toEqual([]);
   });
 });
+
+describe('classifyRpcResponse on a malformed chain envelope (#1633 r3)', () => {
+  const answered = JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'invalid request' } });
+  it('is a client fault of the page, named by method, whatever came back', () => {
+    for (const req of [
+      { jsonrpc: '1.0', id: 1, method: 'eth_call', params: [] },
+      { jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: 'oops' },
+      { jsonrpc: '2.0', id: true, method: 'eth_blockNumber' },
+      { jsonrpc: '2.0', id: { n: 1 }, method: 'eth_chainId' },
+    ]) {
+      for (const [status, body] of [[400, answered], [200, answered], [503, 'down']]) {
+        const out = classifyRpcResponse(status, body, JSON.stringify(req));
+        expect(out).toHaveLength(1);
+        expect(out[0]).toMatchObject({
+          id: req.id,
+          method: req.method,
+          verdict: 'client-fault',
+          why: 'malformed json-rpc envelope',
+          recoverable: false,
+        });
+      }
+    }
+  });
+
+  it('judges each chain member of a malformed batch, and only chain members', () => {
+    const out = classifyRpcResponse(
+      200,
+      '[]',
+      JSON.stringify([
+        { jsonrpc: '2.0', id: 1, method: 'eth_call', params: [] },
+        { jsonrpc: '2.0', id: 2, method: 'irn_publish', params: 7 },
+        { jsonrpc: '2.0', id: true, method: 'eth_chainId' },
+      ]),
+    );
+    expect(out.map((o) => [o.method, o.verdict])).toEqual([
+      ['eth_call', 'client-fault'],
+      ['eth_chainId', 'client-fault'],
+    ]);
+  });
+
+  it('leaves a body that names no chain method outside the classifier', () => {
+    expect(classifyRpcResponse(200, '{}', JSON.stringify({ method: 'track', id: {} }))).toEqual([]);
+    expect(classifyRpcResponse(200, '{}', JSON.stringify({ event: 'pageview' }))).toEqual([]);
+  });
+});

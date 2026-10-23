@@ -360,7 +360,12 @@ Which failures are preconditions, driver by driver:
   each one to reading it). The shared BLOCKED exits (`blocked`,
   `blockedSync`) honour the same precedence by themselves: once any
   watcher has recorded such a request they exit FAIL, naming it, so no
-  drive's BLOCKED branch can hide one. The RPC audit's call ledger takes the same
+  drive's BLOCKED branch can hide one; `blocked()` first waits (bounded)
+  for the page's in-flight chain answers, and a body still parsing when a
+  window reset is still awaited, so a fault cannot lose the race to the
+  exit. A request whose JSON-RPC envelope is itself malformed (a wrong
+  `jsonrpc`, scalar `params`, an id that is not a string, number or null)
+  is a client fault too, judged from the request like a reused id. The RPC audit's call ledger takes the same
   verdicts, so a page whose requests a reachable provider refuses as
   malformed FAILS there too. On a WebSocket, calls are matched to answers
   by ONE correlator (`createSocketCalls`) shared by both observers: an id

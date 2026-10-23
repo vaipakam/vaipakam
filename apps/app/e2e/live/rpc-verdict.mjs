@@ -771,6 +771,39 @@ function callKey(call) {
 }
 
 /**
+ * A request body that names a CHAIN method but is not a well-formed
+ * JSON-RPC request — `jsonrpc` other than "2.0", scalar `params`, an id
+ * that is not a string, number or null — is the PAGE's defect (#1633 r3).
+ *
+ * The classifier used to return nothing for it, because the strict reader
+ * refuses it and nothing else looked. So a provider that answered `-32600`
+ * was neither an answer nor a fault: `watchPageRpc` counted zero and the
+ * drive went BLOCKED, and the RPC audit's ledger read a failed attempt.
+ * Judged from the request alone, before the response, exactly as a reused
+ * batch id is: `client-fault`, unrecoverable, one per chain member, named
+ * by the lax reader so the report says what the page was trying to send.
+ *
+ * Chain methods only (`isChainRpcMethod`). A POST that merely carries a
+ * `method` field of some other protocol is not a JSON-RPC chain request at
+ * all, and stays outside the classifier as it always was.
+ */
+function malformedChainEnvelope(requestBody) {
+  const parsed = parseJson(requestBody);
+  if (parsed === undefined || parsed === null) return [];
+  const members = Array.isArray(parsed) ? parsed : [parsed];
+  return members
+    .filter((m) => m && typeof m === 'object' && !Array.isArray(m) && isChainRpcMethod(m.method))
+    .map((m) => ({
+      key: callKey(m),
+      ...('id' in m ? { id: m.id } : {}),
+      method: m.method,
+      verdict: 'client-fault',
+      why: 'malformed json-rpc envelope',
+      recoverable: false,
+    }));
+}
+
+/**
  * Does this error body still count as the provider ANSWERING, even though
  * the HTTP status says otherwise?
  *
@@ -851,7 +884,7 @@ function answersDespiteStatus(parsed) {
  */
 export function classifyRpcResponse(status, body, requestBody) {
   const calls = rpcCallsFromBody(requestBody);
-  if (!calls) return [];
+  if (!calls) return malformedChainEnvelope(requestBody);
 
   const parsed = parseJson(body);
   const statusOk = status >= 200 && status < 300;

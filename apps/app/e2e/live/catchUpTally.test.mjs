@@ -217,6 +217,23 @@ describe('createCallLedger (#2710 r4)', () => {
     expect(l.calls.map((c) => [c.outcome, c.why])).toEqual([['client-fault', 'json-rpc -32602']]);
   });
 
+  it('reads a malformed envelope as a client fault, an object id included (#1633 r3)', () => {
+    const l = createCallLedger();
+    const request = body([
+      { jsonrpc: '2.0', id: { n: 1 }, method: 'eth_getLogs', params: [] },
+      { jsonrpc: '1.0', id: 2, method: 'eth_blockNumber' },
+    ]);
+    const p = l.onRequest(request);
+    l.onResponse(p, body({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'invalid' } }), {
+      status: 400,
+      requestBody: request,
+    });
+    expect(l.calls.map((c) => [c.method, c.outcome])).toEqual([
+      ['eth_getLogs', 'client-fault'],
+      ['eth_blockNumber', 'client-fault'],
+    ]);
+  });
+
   it('reads a result behind a status the page cannot see past as failed', () => {
     const l = createCallLedger();
     const request = body({ jsonrpc: '2.0', id: 5, method: 'eth_blockNumber' });

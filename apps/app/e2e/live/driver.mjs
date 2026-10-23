@@ -87,6 +87,11 @@ export function trackBrowser(browser) {
  * BLOCKED exits below can honour evidence precedence by themselves.
  */
 const OBSERVED_RPC_FAULTS = [];
+/** Each attached watcher's session drain, awaited by `blocked()` before it
+ *  decides (and before the browser closes, which would cut the reads off). */
+const WATCHER_DRAINS = new Set();
+/** How long `blocked()` waits for a watcher's in-flight page RPC. */
+const BLOCKED_DRAIN_MS = 5_000;
 
 /**
  * FAIL outranks BLOCKED, and a malformed request the page already sent is a
@@ -107,6 +112,9 @@ function exitBlockedOrFail(why) {
   process.exit(1);
 }
 
+/** The synchronous BLOCKED exit, for a configuration refused before any
+ *  page exists. It cannot wait for in-flight page RPC; once a page is open,
+ *  exit through `blocked()`, which can. */
 export function blockedSync(why) {
   exitBlockedOrFail(why);
 }
@@ -135,6 +143,10 @@ export function blockedSync(why) {
  */
 export async function blocked(why, err, cleanup) {
   const detail = err ? `\n  ${String(err.message ?? err).split('\n')[0].slice(0, 300)}` : '';
+  // Let in-flight page RPC land first (#1633 r3): a fault still parsing
+  // when the drive gave up outranks this exit, and closing the browser
+  // would cut its body read off. Bounded, so a hung request cannot hold it.
+  await Promise.allSettled([...WATCHER_DRAINS].map((d) => d(BLOCKED_DRAIN_MS)));
   try {
     await LIVE_BROWSER?.close();
   } catch {
@@ -300,7 +312,11 @@ export async function precondition(what, fn) {
 export function watchPageRpc(page) {
   let answered = 0;
   const sessionFaults = [];
-  const bodyReads = [];
+  // Body reads still parsing, for the whole SESSION (#1633 r3). Never
+  // cleared on `reset()`: a read that began before it can still carry a
+  // client fault, and dropping it let a BLOCKED exit run before that fault
+  // was recorded. Only the window's answer COUNT is generation-scoped.
+  const bodyReads = new Set();
   // Membership is decided when the REQUEST starts, not when its response
   // arrives. A slow hydration request issued before `reset()` can land
   // after it, and counting that as an answer makes a total outage DURING
@@ -321,6 +337,17 @@ export function watchPageRpc(page) {
   // `Promise.allSettled([])` returns instantly, and the window reports
   // ZERO answers — a false BLOCKED over whatever the drive was asserting.
   const outstanding = new Set();
+  // The same, for the whole session: what `drain()` waits on before a
+  // BLOCKED exit decides whether a fault outranks it.
+  const sessionOutstanding = new Set();
+  const track = (item) => {
+    outstanding.add(item);
+    sessionOutstanding.add(item);
+  };
+  const untrack = (item) => {
+    outstanding.delete(item);
+    sessionOutstanding.delete(item);
+  };
   // Credits one classified response to the window its request started in.
   // Checked at the moment of crediting, because the body read before it is
   // async: a response that passed the gate in the `response` handler can
@@ -349,14 +376,14 @@ export function watchPageRpc(page) {
   page.on('request', (req) => {
     if (req.method() !== 'POST') return;
     startedIn.set(req, generation);
-    outstanding.add(req);
+    track(req);
   });
   // A request that fails at the transport level never emits `response`, so
   // it would otherwise hold the drain loop open for the whole grace period.
-  page.on('requestfailed', (req) => outstanding.delete(req));
+  page.on('requestfailed', (req) => untrack(req));
   page.on('response', (res) => {
     const req = res.request();
-    outstanding.delete(req);
+    untrack(req);
     const gen = startedIn.get(req);
     // Not a POST the page sent: nothing to classify.
     if (gen === undefined) return;
@@ -366,14 +393,14 @@ export function watchPageRpc(page) {
     const requestBody = req.postData?.() ?? undefined;
     // `response` fires on HEADERS and does not await handlers, so the body
     // is still in flight; collect the promises and settle before judging.
-    bodyReads.push(
-      res
-        .text()
-        .then((text) => credit(gen, classifyRpcResponse(res.status(), text, requestBody)))
-        .catch(() => {
-          /* the body never arrived: no answer */
-        }),
-    );
+    const read = res
+      .text()
+      .then((text) => credit(gen, classifyRpcResponse(res.status(), text, requestBody)))
+      .catch(() => {
+        /* the body never arrived: no answer */
+      })
+      .finally(() => bodyReads.delete(read));
+    bodyReads.add(read);
   });
   page.on('websocket', (ws) => {
     // The calls outstanding on this connection, matched by id; a reused id
@@ -385,27 +412,37 @@ export function watchPageRpc(page) {
       const collisions = calls.send(f.payload, (m) => {
         if (!isChainRpcMethod(m.method)) return null;
         const token = {};
-        outstanding.add(token);
+        track(token);
         return { gen: generation, token };
       });
       for (const { entries, requestBody } of collisions) {
         const outcomes = classifyRpcResponse(200, '[]', requestBody);
         entries.forEach(({ tag }, i) => {
-          outstanding.delete(tag.token);
+          untrack(tag.token);
           credit(tag.gen, outcomes.slice(i, i + 1));
         });
       }
     });
     ws.on('framereceived', (f) => {
       for (const { tag, reply, requestBody } of calls.receive(f.payload)) {
-        outstanding.delete(tag.token);
+        untrack(tag.token);
         credit(tag.gen, classifyRpcResponse(200, reply, requestBody));
       }
     });
     ws.on('close', () => {
-      for (const { tag } of calls.close()) outstanding.delete(tag.token);
+      for (const { tag } of calls.close()) untrack(tag.token);
     });
   });
+  /** Wait, bounded, for everything still in flight this SESSION, so the
+   *  faults it carries are recorded before a verdict is decided. */
+  const drain = async (graceMs) => {
+    const until = Date.now() + graceMs;
+    while (sessionOutstanding.size > 0 && Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    await Promise.allSettled([...bodyReads]);
+  };
+  WATCHER_DRAINS.add(drain);
   return {
     /**
      * Start a fresh window. Call immediately before the critical wait.
@@ -416,7 +453,6 @@ export function watchPageRpc(page) {
     reset() {
       generation++;
       answered = 0;
-      bodyReads.length = 0;
       outstanding.clear();
     },
     /**
@@ -433,7 +469,7 @@ export function watchPageRpc(page) {
       while (outstanding.size > 0 && Date.now() < until) {
         await new Promise((r) => setTimeout(r, 250));
       }
-      await Promise.allSettled(bodyReads);
+      await Promise.allSettled([...bodyReads]);
       return answered;
     },
     /**

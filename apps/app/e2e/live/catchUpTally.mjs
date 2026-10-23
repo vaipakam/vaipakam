@@ -256,8 +256,12 @@ export function createCallLedger(isRecording = () => true) {
       // A socket answer carries no HTTP status; it was delivered.
       const verdicts =
         bodyText == null ? [] : classifyRpcResponse(status ?? 200, bodyText, requestBody);
+      // Ids compared by VALUE: an envelope fault can carry an object or
+      // boolean id the page sent, and two parses of an object never match
+      // by identity (#1633 r3).
+      const sameId = (a, b) => JSON.stringify(a) === JSON.stringify(b);
       for (const [id, list] of pending) {
-        const v = verdicts.find((o) => 'id' in o && o.id === id);
+        const v = verdicts.find((o) => 'id' in o && sameId(o.id, id));
         const outcome = v?.verdict === 'ok' || v?.verdict === 'client-fault' ? v.verdict : 'failed';
         for (const call of list) {
           call.outcome = outcome;
