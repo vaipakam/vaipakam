@@ -37,7 +37,7 @@ import {FacetSelectors} from "./lib/FacetSelectors.sol";
  *   - DIAMOND_ADDRESS    (Diamond to upgrade)
  *
  * Usage:
- *   forge script script/UpgradeOracleFacet.s.sol \
+ *   forge script script/UpgradeOracleFacet.s.sol --ffi \
  *     --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow -vvv
  */
 contract UpgradeOracleFacet is Script {

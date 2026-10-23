@@ -640,6 +640,21 @@ node contracts/script/storage-layout-guard.mjs write   # builds src/, then write
   slot is a parameter, never another pointer in the same file.
 - **Facets declare no state variables.** The guard refuses one that does.
 
+**Each chain carries its own record** (#2092 item 1):
+`contracts/deployments/<slug>/storage-layout.json`, the golden ledger as it
+stood when code last reached that chain. `DeployDiamond.run()` writes it, and
+every in-place script (`RefreshAllFacetsInPlace`, `RefreshChangedFacetsInPlace`,
+`RedeployFacets`, `ReplaceStaleFacets`, `UpgradeOracleFacet`,
+`MigrateRiskTermsCommitReveal`, `UpgradeVaultImplementation`) runs
+`check --base <record>` before its first transaction, refuses on failure or on
+a missing record, and rewrites the record afterwards. They call the guard
+through `vm.tryFfi`, so **run them with `--ffi`** (the wrappers do); a run
+without it is refused before anything is sent. Do not move the check into
+`runWith` (the in-process tests have no ffi) and do not enable ffi or a
+`storage-layout/` read in `foundry.toml` (#2603). A new script that changes
+deployed code in place calls `StorageLayoutRecord.requireAppendOnly` and
+`record` the same way.
+
 ## Conventions
 
 - Interest rates and fees use **basis points** (BPS, 1/10000)

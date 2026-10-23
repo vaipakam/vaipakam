@@ -212,7 +212,7 @@ interface IOwnable {
  *         Usage (from contracts/, on main) — run once per chain. Use `--slow`:
  *         the admin owner is EIP-7702-delegated on at least Base Sepolia, and a
  *         delegated account may have only one in-flight tx (no gapped nonces).
- *           forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" \
+ *           forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" --ffi \
  *             --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
  *           # then the same with $ARB_SEPOLIA_RPC_URL, $BNB_TESTNET_RPC_URL
  */

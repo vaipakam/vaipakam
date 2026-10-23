@@ -92,7 +92,7 @@ import {LibPausable} from "../src/libraries/LibPausable.sol";
  *
  *         Env: ADMIN_PRIVATE_KEY (the Diamond's ERC-173 owner), EXPECT_CHANGED
  *         (required on a live broadcast). Usage, from contracts/ on main:
- *           forge script script/RefreshChangedFacetsInPlace.s.sol --sig "refreshChanged()" \
+ *           forge script script/RefreshChangedFacetsInPlace.s.sol --sig "refreshChanged()" --ffi \
  *             --rpc-url $BASE_SEPOLIA_RPC_URL                      # dry run: prints the set
  *           EXPECT_CHANGED=<the printed list> forge script ... --broadcast --slow
  */

@@ -816,7 +816,7 @@ for slug in $CHAINS; do
   var="$(rpc_var_for "$slug")"
   export_chain_answers "$slug"
   info "[3b] $slug — simulating refresh()"
-  "${NICE[@]}" forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" \
+  "${NICE[@]}" forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" --ffi \
     --rpc-url "${!var}" \
     || fail "$slug: RefreshAllFacetsInPlace would REVERT on this chain (see the trace above) -- nothing has been broadcast on any chain"
 done
@@ -911,13 +911,13 @@ EOF
     echo "  #   (#1566 slice-4, while a seed or rebase is still due: the Diamond must ALREADY be under the MANUAL pause, and the"
     echo "  #    answer's pause epoch must be stated -- prefix with ARMED_FRESH_PAUSE_EPOCH=\$ARMED_FRESH_PAUSE_EPOCH_${pfx}; the"
     echo "  #    refresh refuses the migration unless that is still the live epoch)"
-    echo "  FOUNDRY_PROFILE=default forge script script/RefreshAllFacetsInPlace.s.sol --sig \"refresh()\" --rpc-url \$$var --broadcast --slow"
+    echo "  FOUNDRY_PROFILE=default forge script script/RefreshAllFacetsInPlace.s.sol --sig \"refresh()\" --ffi --rpc-url \$$var --broadcast --slow"
     echo "  #   (#1566 slice-4, only while rewardCustodyHolder() is unbound; after handover: --sig \"stage()\" then --sig \"record()\";"
     echo "  #    in every mode the artifact is reconciled by --sig \"record()\" once the bind has confirmed)"
     echo "  FOUNDRY_PROFILE=default forge script script/DeployRewardCustodyHolder.s.sol --sig \"run()\" --rpc-url \$$var --broadcast --slow"
     echo "  FOUNDRY_PROFILE=default forge script script/DeployRewardCustodyHolder.s.sol --sig \"record()\" --rpc-url \$$var   # after the bind is mined; BEFORE any export"
     [ "$SKIP_VAULT" -eq 0 ] && \
-    echo "  FOUNDRY_PROFILE=default forge script script/UpgradeVaultImplementation.s.sol --sig \"run()\" --rpc-url \$$var --broadcast --slow"
+    echo "  FOUNDRY_PROFILE=default forge script script/UpgradeVaultImplementation.s.sol --sig \"run()\" --ffi --rpc-url \$$var --broadcast --slow"
     echo
   done
   echo
@@ -943,7 +943,7 @@ for slug in $CHAINS; do
   remaining=""; hit=0
   for c in $CHAINS; do [ "$c" = "$slug" ] && hit=1; [ "$hit" -eq 1 ] && remaining="${remaining:+$remaining }$c"; done
   banner "[4] $slug — RefreshAllFacetsInPlace (diamond cuts)"
-  "${NICE[@]}" forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" \
+  "${NICE[@]}" forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" --ffi \
     --rpc-url "$rpc" --broadcast --slow \
     || fail "$slug: RefreshAllFacetsInPlace failed on this chain. EITHER forge's pre-send simulation refused it (the trace above ends before any transaction is sent; state changed since [3b] -- ownership, a role, a holder, a proxy generation) and nothing was sent here, OR the broadcast failed part-way and the transactions already mined are listed in broadcast/RefreshAllFacetsInPlace.s.sol/$(chainid_for "$slug")/run-latest.json -- this chain may then be PARTIALLY refreshed and still PAUSED. Inspect that journal and the live loupe (facetAddresses()) before anything else; resume this chain with 'forge script ... --resume' or a fresh refresh once the cause is fixed. Chains already complete in this run: [${done_chains:-none}]. Rerun for the remaining chains with: --chains \"$remaining\""
 
@@ -1065,7 +1065,7 @@ for slug in $CHAINS; do
 
   if [ "$SKIP_VAULT" -eq 0 ]; then
     banner "[5] $slug — UpgradeVaultImplementation (UUPS template)"
-    "${NICE[@]}" forge script script/UpgradeVaultImplementation.s.sol --sig "run()" \
+    "${NICE[@]}" forge script script/UpgradeVaultImplementation.s.sol --sig "run()" --ffi \
       --rpc-url "$rpc" --broadcast --slow \
       || fail "$slug: UpgradeVaultImplementation broadcast failed"
   else

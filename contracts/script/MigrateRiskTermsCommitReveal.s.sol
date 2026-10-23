@@ -51,7 +51,7 @@ import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
  * Env vars: DEPLOYER_PRIVATE_KEY (+ Deployments-resolved DIAMOND_ADDRESS).
  *
  * Usage:
- *   forge script script/MigrateRiskTermsCommitReveal.s.sol \
+ *   forge script script/MigrateRiskTermsCommitReveal.s.sol --ffi \
  *     --rpc-url $RPC_URL --broadcast -vvv
  */
 contract MigrateRiskTermsCommitReveal is Script {

@@ -60,7 +60,7 @@ import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
  * Env vars: DEPLOYER_PRIVATE_KEY, DIAMOND_ADDRESS
  *
  * Usage:
- *   forge script script/ReplaceStaleFacets.s.sol \
+ *   forge script script/ReplaceStaleFacets.s.sol --ffi \
  *     --rpc-url $SEPOLIA_RPC_URL --broadcast -vvv
  */
 contract ReplaceStaleFacets is DeployDiamond {

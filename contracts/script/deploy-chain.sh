@@ -765,7 +765,7 @@ if step_done "diamond"; then
 else
   echo
   echo "[2] DeployDiamond.s.sol"
-  forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --ffi --broadcast --slow
   snapshot_addresses "post-diamond"
   mark_done "diamond"
 fi
