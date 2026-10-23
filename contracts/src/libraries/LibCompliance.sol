@@ -4,9 +4,8 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {ProfileFacet} from "../facets/ProfileFacet.sol";
-import {OracleFacet} from "../facets/OracleFacet.sol";
+import {NumeraireValueFacet} from "../facets/NumeraireValueFacet.sol";
 
 /// @title LibCompliance
 /// @notice Shared country-sanctions + KYC gating and numeraire-quoted
@@ -14,9 +13,10 @@ import {OracleFacet} from "../facets/OracleFacet.sol";
 ///         mid-life (PrecloseFacet, EarlyWithdrawalFacet).
 /// @dev Calls execute against the diamond via `address diamond`, so cross-facet
 ///      routing goes through the EIP-2535 fallback just like direct facet code.
-///      Prices come from `OracleFacet.getAssetPrice` which returns
-///      numeraire-quoted truth (USD by post-deploy default; whatever
-///      governance has rotated to otherwise) — see Numeraire generalization (b1).
+///      Values come from `NumeraireValueFacet` (#2419), which prices through
+///      `OracleFacet.getAssetPrice`: numeraire-quoted truth (USD by
+///      post-deploy default; whatever governance has rotated to otherwise),
+///      see Numeraire generalization (b1).
 library LibCompliance {
     function enforceCountryAndKyc(
         address diamond,
@@ -53,6 +53,14 @@ library LibCompliance {
         }
     }
 
+    /// @notice Numeraire value, 1e18-scaled, of a principal and a collateral
+    ///         amount, counting liquid legs only — the figure the KYC tiers
+    ///         are compared against.
+    /// @dev    #2419 — each leg goes through the one shared valuation rule
+    ///         ({NumeraireValueFacet.getLiquidNumeraireValue}): an illiquid
+    ///         leg is worth 0 (an asset with no price, a zero price or an
+    ///         unreadable `decimals()` is not classified liquid), and a
+    ///         liquid one is valued at full precision and rounded down.
     function calculateValueNumeraire(
         address diamond,
         address principalAsset,
@@ -60,27 +68,8 @@ library LibCompliance {
         address collateralAsset,
         uint256 collateralAmount
     ) internal view returns (uint256 valueNumeraire) {
-        if (
-            OracleFacet(diamond).checkLiquidity(principalAsset) ==
-            LibVaipakam.LiquidityStatus.Liquid
-        ) {
-            (uint256 price, uint8 feedDecimals) = OracleFacet(diamond).getAssetPrice(principalAsset);
-            uint8 tokenDecimals = IERC20Metadata(principalAsset).decimals();
-            valueNumeraire +=
-                (principalAmount * price * 1e18) /
-                (10 ** feedDecimals) /
-                (10 ** tokenDecimals);
-        }
-        if (
-            OracleFacet(diamond).checkLiquidity(collateralAsset) ==
-            LibVaipakam.LiquidityStatus.Liquid
-        ) {
-            (uint256 price, uint8 feedDecimals) = OracleFacet(diamond).getAssetPrice(collateralAsset);
-            uint8 tokenDecimals = IERC20Metadata(collateralAsset).decimals();
-            valueNumeraire +=
-                (collateralAmount * price * 1e18) /
-                (10 ** feedDecimals) /
-                (10 ** tokenDecimals);
-        }
+        valueNumeraire =
+            NumeraireValueFacet(diamond).getLiquidNumeraireValue(principalAsset, principalAmount) +
+            NumeraireValueFacet(diamond).getLiquidNumeraireValue(collateralAsset, collateralAmount);
     }
 }

@@ -16,7 +16,6 @@ import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -28,6 +27,7 @@ import {RiskFacet} from "./RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
+import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 
@@ -225,9 +225,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         LibPrepayCleanup.clearActiveListing(loan, loanId);
 
         // Tiered KYC check on loan value for the lender. Both branches
-        // (ERC20 loan / NFT rental) price the same way — we only differ in
-        // which asset + amount to value. Collapsed to one getAssetPrice +
-        // decimals() fetch instead of two duplicated bodies.
+        // (ERC20 loan / NFT rental) value the same way — we only differ in
+        // which asset + amount to value. #2419 — through the one shared rule
+        // ({NumeraireValueFacet.getLiquidNumeraireValue}, rounded down).
         // Illiquid assets have no oracle feed, so valued at 0 per README — KYC always passes.
         {
             address valueAsset;
@@ -241,17 +241,13 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 valueAmount = loan.prepayAmount;
             }
 
-            LibVaipakam.LiquidityStatus liq = OracleFacet(address(this))
-                .checkLiquidity(valueAsset);
-            if (liq == LibVaipakam.LiquidityStatus.Liquid) {
-                (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
-                    .getAssetPrice(valueAsset);
-                uint8 tokenDecimals = IERC20Metadata(valueAsset).decimals();
-                uint256 valueNumeraire = (valueAmount * price * 1e18)
-                    / (10 ** feedDecimals) / (10 ** tokenDecimals);
-                if (!ProfileFacet(address(this)).meetsKYCRequirement(loan.lender, valueNumeraire)) {
-                    revert KYCRequired();
-                }
+            uint256 valueNumeraire = NumeraireValueFacet(address(this))
+                .getLiquidNumeraireValue(valueAsset, valueAmount);
+            if (
+                valueNumeraire != 0 &&
+                !ProfileFacet(address(this)).meetsKYCRequirement(loan.lender, valueNumeraire)
+            ) {
+                revert KYCRequired();
             }
             // Illiquid asset: valued at 0, KYC always passes.
         }
@@ -347,30 +343,40 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             //
             // #2419 — the liquid route also needs the PAIR priced: the LTV
             // read and the sale floor value both legs, and the shared
-            // valuation rule refuses a missing or zero price. An unpriced
-            // pair (`tryOracleRate`: a missing or zero price on either leg)
-            // skips the LTV read and the swap and enters the fallback
-            // directly, exactly as a failed swap would — a sale with no
-            // oracle floor is not attempted, the default still completes
-            // (lender first), and the fallback's unpriced split gives the
-            // lender the collateral while the loan stays curable. A
+            // valuation rule refuses a missing or zero price. A loan whose
+            // collateral is liquid now, or WAS liquid when the loan began
+            // (`loan.collateralLiquidity`), and whose pair cannot be priced
+            // (`tryOracleRate`: a missing or zero price on either leg) skips
+            // the LTV read and the swap and enters the fallback directly,
+            // exactly as a failed swap would — a sale with no oracle floor is
+            // not attempted, the default still completes (lender first), and
+            // the fallback's unpriced split gives the lender the collateral
+            // while the loan stays curable. The origination half matters
+            // because a missing collateral price makes the live probe report
+            // the collateral Illiquid, which alone would send a loan that
+            // was never consented as illiquid to `LiquidationFailed`. A loan
+            // that began illiquid keeps the consented in-kind route below. A
             // DISTRUSTED price reverts the whole default instead (#666:
             // refuse and retry once the feeds agree).
             bool isLtvCollapsed;
-            bool pairPriced;
-            if (liquidity == LibVaipakam.LiquidityStatus.Liquid) {
-                (pairPriced, ) = LibFallback.tryOracleRate(
+            bool unpricedPair;
+            if (
+                liquidity == LibVaipakam.LiquidityStatus.Liquid ||
+                loan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid
+            ) {
+                (bool pairPriced, ) = LibFallback.tryOracleRate(
                     address(this), loan.collateralAsset, loan.principalAsset
                 );
-                if (pairPriced) {
+                unpricedPair = !pairPriced;
+                if (pairPriced && liquidity == LibVaipakam.LiquidityStatus.Liquid) {
                     isLtvCollapsed = RiskFacet(address(this)).calculateLTV(loanId)
                         > LibVaipakam.cfgVolatilityLtvThresholdBps();
                 }
             }
 
             if (
-                liquidity == LibVaipakam.LiquidityStatus.Liquid &&
-                !isLtvCollapsed
+                unpricedPair ||
+                (liquidity == LibVaipakam.LiquidityStatus.Liquid && !isLtvCollapsed)
             ) {
                 // #1005 (S9) — a liquid time-based default must attempt at least
                 // one enabled swap route: `LibSwap.swapWithFailover` (below)
@@ -403,7 +409,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     loan.collateralAmount
                 );
 
-                if (!pairPriced) {
+                if (unpricedPair) {
                     // #2419 — see the route note above: no price, no sale.
                     _enterFallback(loanId);
                     emit LoanFallbackPending(

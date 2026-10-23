@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibNumeraireValue} from "../libraries/LibNumeraireValue.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 
 /**
  * @title NumeraireValueFacet
@@ -16,7 +17,8 @@ import {OracleFacet} from "./OracleFacet.sol";
  *         little EIP-170 headroom to host it. Facets near the limit
  *         (`RiskFacet`, the offer facets that inline `LibRiskMath`) reach
  *         the rule through these two views instead of inlining the full-
- *         precision arithmetic. The price is `OracleFacet.getAssetPrice`,
+ *         precision arithmetic, and every KYC comparison values its
+ *         amounts through {getLiquidNumeraireValue}. The price is `OracleFacet.getAssetPrice`,
  *         read through the Diamond, so its staleness, sequencer, secondary-
  *         quorum and zero-price refusals all apply and bubble unchanged (the
  *         rule refuses a zero price itself too, whatever the oracle's
@@ -43,6 +45,35 @@ contract NumeraireValueFacet {
             feedDecimals,
             LibNumeraireValue.tokenDecimals(asset),
             roundUp
+        );
+    }
+
+    /// @notice Value of `amount` base units of `asset`, in 1e18 numeraire,
+    ///         counting only a liquid asset — the figure a KYC threshold is
+    ///         compared against.
+    /// @dev    An asset `OracleFacet.checkLiquidity` does not classify Liquid
+    ///         has no trusted price and is valued at 0 (README: illiquid
+    ///         assets count for nothing in a KYC comparison). A liquid asset
+    ///         is valued by the shared rule, rounded down (a value compared
+    ///         against a threshold).
+    /// @param asset  Token to value.
+    /// @param amount Amount in `asset`'s base units.
+    function getLiquidNumeraireValue(address asset, uint256 amount)
+        external
+        view
+        returns (uint256 value)
+    {
+        if (
+            OracleFacet(address(this)).checkLiquidity(asset)
+                != LibVaipakam.LiquidityStatus.Liquid
+        ) return 0;
+        (uint256 price, uint8 feedDecimals) = OracleFacet(address(this)).getAssetPrice(asset);
+        value = LibNumeraireValue.toValue(
+            amount,
+            price,
+            feedDecimals,
+            LibNumeraireValue.tokenDecimals(asset),
+            false
         );
     }
 

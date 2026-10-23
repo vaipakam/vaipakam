@@ -444,11 +444,14 @@ library FacetSelectors {
         s[2] = TreasuryFeeFacet.collectFeeFromDiamond.selector;
     }
 
-    /// @notice Full external selector surface of {NumeraireValueFacet} (2).
+    /// @notice Full external selector surface of {NumeraireValueFacet} (3).
     ///
     /// @dev    #2419. The one 1e18 valuation rule. `RiskFacet` (every LTV,
-    ///         HF and partial-liquidation read) and the facets that reach
-    ///         `LibRiskMath` value through these selectors by self-call —
+    ///         HF and partial-liquidation read), the facets that reach
+    ///         `LibRiskMath`, and every KYC comparison (`Defaulted`,
+    ///         `OfferAccept`, `RiskSplitLiquidation`, and `Loan`, `Preclose`
+    ///         and `EarlyWithdrawalDirect` through `LibCompliance`) value
+    ///         through these selectors by self-call —
     ///         among the facets the curated scripts refresh, `RiskFacet` and
     ///         `RiskPreviewFacet` in `RedeployFacets`, `OfferCreateFacet` and
     ///         `RiskPreviewFacet` in `ReplaceStaleFacets`. A curated refresh
@@ -461,8 +464,9 @@ library FacetSelectors {
     ///         (`getNumeraireValueFacetSelectors`) return it, and
     ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
     function numeraireValue() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = NumeraireValueFacet.getNumeraireValue.selector;
         s[1] = NumeraireValueFacet.getAmountForNumeraireValue.selector;
+        s[2] = NumeraireValueFacet.getLiquidNumeraireValue.selector;
     }
 }

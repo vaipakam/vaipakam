@@ -266,6 +266,19 @@ contract NumeraireValueRiskTest is SetupTest {
         assertEq(v.getAmountForNumeraireValue(mockCollateralERC20, 3e18, true), 3 ether);
     }
 
+    /// @dev The KYC read: a liquid asset is valued by the rule, rounded down;
+    ///      an asset that is not liquid is worth 0 (README: illiquid assets
+    ///      count for nothing in a KYC comparison).
+    function test_liquidValueForKyc() public {
+        NumeraireValueFacet v = NumeraireValueFacet(address(diamond));
+        mockOraclePrice(mockCollateralERC20, 3, 8); // $0.00000003 per token
+        // 50,000,001 wei x 3 / 1e8 = 1.50000003, floored to 1.
+        assertEq(v.getLiquidNumeraireValue(mockCollateralERC20, 50_000_001), 1, "rounds down");
+        assertEq(v.getLiquidNumeraireValue(mockCollateralERC20, 1 ether), 3e10);
+        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
+        assertEq(v.getLiquidNumeraireValue(mockCollateralERC20, 1 ether), 0, "illiquid is 0");
+    }
+
     /// @dev A token whose `decimals()` cannot be read is refused by name.
     function test_unreadableDecimalsAreRefused() public {
         vm.mockCallRevert(mockCollateralERC20, abi.encodeWithSignature("decimals()"), "");

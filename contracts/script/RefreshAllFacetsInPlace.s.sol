@@ -260,7 +260,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // wallet or a user's vault into the treasury, self-called by the
     // fee-charging facets.
     // 96 -> 97: NumeraireValueFacet (#2419) - the one 1e18 valuation rule,
-    // self-called by RiskFacet and every facet that inlines LibRiskMath.
+    // self-called by RiskFacet, every facet that inlines LibRiskMath and
+    // every KYC comparison.
     uint256 public constant EXPECTED_FACETS = 97;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see

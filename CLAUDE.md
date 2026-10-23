@@ -209,13 +209,18 @@ runs half of it on old code:
   `OfferMatchFacet`, `OfferMatchIntentFacet`, `OfferMutateFacet` and
   `RiskPreviewFacet`) value through a self-call to `getNumeraireValue` /
   `getAmountForNumeraireValue`, the one 1e18 rule in `LibNumeraireValue`.
-  Find the set again from the compiled runtime bytecode (a `PUSH4` of either
-  selector, `c85e9b37` / `563622af`), not from this list or from imports:
+  Every KYC comparison values through it too: `getLiquidNumeraireValue` (an
+  illiquid asset is worth 0) from `DefaultedFacet` and `OfferAcceptFacet`,
+  and from `LoanFacet`, `PrecloseFacet` and `EarlyWithdrawalDirectFacet`
+  through `LibCompliance`; `getNumeraireValue` from
+  `RiskSplitLiquidationFacet`'s liquidator check.
+  Find the set again from the compiled runtime bytecode (a `PUSH4` of any of
+  the three selectors), not from this list or from imports:
   importing a library that reaches the rule does not put it in a facet.
   `PartialWithdrawalFacet` inlines the same library and needs no host. A
   consumer refreshed without the host reverts `FunctionDoesNotExist` on every
-  health-factor read — every liquidation and every borrow (a hard revert,
-  never a misread value). All three refresh scripts carry the host. Values
+  health-factor read or KYC comparison — every liquidation, every borrow and
+  every default (a hard revert, never a misread value). All three refresh scripts carry the host. Values
   were whole numeraire units before #2419, and the partial-liquidation dust
   floor is now 1e18-scaled too: a floor stored on the old scale is below the
   one-unit minimum, so it reads as no floor (dust handling off, and the

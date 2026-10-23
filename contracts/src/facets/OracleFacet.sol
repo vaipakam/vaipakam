@@ -248,6 +248,14 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             );
         }
 
+        // #2419 — an asset whose `decimals()` cannot be read is Illiquid:
+        // no amount of it can be valued, so no risk math may run on it.
+        // Read on the common path, before the WETH branch, so a configured
+        // WETH whose decimals are unreadable is not reported Liquid while
+        // every valuation of it refuses.
+        (bool okDec, uint8 tokenDec) = LibNumeraireValue.tryTokenDecimals(asset);
+        if (!okDec) return (LibVaipakam.LiquidityStatus.Illiquid, address(0));
+
         // WETH itself: no asset/WETH pool (circular); Liquid iff ETH/USD
         // is fresh (2h, no peg branch — ETH is volatile).
         if (asset == weth) {
@@ -295,7 +303,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         (bool ethOk, , ) = _readFreshUsdFeed(ethFeed, false);
         if (!ethOk) return (LibVaipakam.LiquidityStatus.Illiquid, address(0));
 
-        (bool passes, address distrustedQuote) = _passesFloorSlippage(asset, s);
+        (bool passes, address distrustedQuote) = _passesFloorSlippage(asset, tokenDec, s);
         return passes
             ? (LibVaipakam.LiquidityStatus.Liquid, address(0))
             : (LibVaipakam.LiquidityStatus.Illiquid, distrustedQuote);
@@ -318,17 +326,18 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///      have cleared on everything checkable without that price
     ///      ({_distrustedQuoteThatClears}). The failed search is then not
     ///      evidence the asset is illiquid. Zero when there is none.
-    function _passesFloorSlippage(address asset, LibVaipakam.Storage storage s)
+    function _passesFloorSlippage(
+        address asset,
+        uint8 tdA,
+        LibVaipakam.Storage storage s
+    )
         private
         view
         returns (bool passes, address distrustedQuote)
     {
         (bool okA, uint256 pA, uint8 dA) = tryGetAssetPrice(asset);
         if (!okA || pA == 0) return (false, address(0));
-        // #2419 — an asset whose `decimals()` cannot be read is Illiquid:
-        // no amount of it can be valued, so no risk math may run on it.
-        (bool okDec, uint8 tdA) = LibNumeraireValue.tryTokenDecimals(asset);
-        if (!okDec) return (false, address(0));
+        // `tdA` is the decimals {_classifyLiquidity} already read (#2419).
         _TierCtx memory ctx = _TierCtx({
             pA: pA,
             scaleA: 10 ** (uint256(dA) + uint256(tdA)),

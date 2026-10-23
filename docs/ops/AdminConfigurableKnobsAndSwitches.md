@@ -173,9 +173,10 @@ value is range-checked, so the reads are trusted unconditionally.
   `PartialLeavesDust` and the keeper must use full liquidation. **Units:
   a `1e18`-scaled numeraire value** (#2419), the scale
   `RiskFacet._computeNumeraireValues` returns — `$1k == 1_000e18`. It was
-  whole units (`$1k == 1_000`) before #2419; a floor stored on that scale
-  reads as a fraction of a cent (dust handling effectively off) until it is
-  set again. A nonzero floor is bounded to `[1e18, 100_000e18]` (1 to
+  whole units (`$1k == 1_000`) before #2419; a floor stored on that scale is
+  below the minimum below, so it reads as `0`, no floor (dust handling off),
+  in both the sizing reader and `getPartialLiquidationSizing`, until it is
+  set again on the new scale. A nonzero floor is bounded to `[1e18, 100_000e18]` (1 to
   100,000 numeraire units): the cap so a misconfigured floor can't turn every
   routine partial into a full close, the minimum so an old-scale value is
   refused (`InvalidPartialLiqSizing`) instead of silently accepted. A

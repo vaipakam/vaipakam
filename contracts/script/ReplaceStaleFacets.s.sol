@@ -132,10 +132,11 @@ contract ReplaceStaleFacets is DeployDiamond {
         // `FunctionDoesNotExist`. Deployed alongside; partitioned below.
         TreasuryFeeFacet treasuryFeeFacet = new TreasuryFeeFacet();
         // #2419 — the valuation host. The refreshed offer facets and
-        // RiskPreviewFacet value through it by self-call (LibRiskMath); a
-        // Diamond from before #2419 routes neither selector, so refreshing
-        // them without it would revert every bounded offer and preview
-        // `FunctionDoesNotExist`. Deployed alongside; partitioned below.
+        // RiskPreviewFacet value through it by self-call (LibRiskMath), and
+        // OfferAcceptFacet values its KYC comparison through it; a Diamond
+        // that does not route these selectors yet would revert every bounded
+        // offer, preview and accept `FunctionDoesNotExist` if they were
+        // refreshed without it. Deployed alongside; partitioned below.
         NumeraireValueFacet numeraireValueFacet = new NumeraireValueFacet();
 
         console.log("OfferFacet:          ", address(offerCreateFacet));
@@ -234,8 +235,8 @@ contract ReplaceStaleFacets is DeployDiamond {
         n = _appendPartitioned(
             staging, n, diamond, address(treasuryFeeFacet), _getTreasuryFeeSelectors()
         );
-        // #2419 — the valuation host the refreshed offer and preview facets
-        // self-call, in the same cut so no block sees them without it.
+        // #2419 — the valuation host the refreshed offer, accept and preview
+        // facets self-call, in the same cut so no block sees them without it.
         n = _appendPartitioned(
             staging, n, diamond, address(numeraireValueFacet), _getNumeraireValueSelectors()
         );

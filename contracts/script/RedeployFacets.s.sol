@@ -233,10 +233,12 @@ contract RedeployFacets is Script {
         // pre-#2440 Diamond its two selectors are unrouted and partition to an
         // Add below.
         TreasuryFeeFacet treasuryFeeFacet = new TreasuryFeeFacet();
-        // #2419 - the valuation host. RiskFacet (every LTV / HF read) and
-        // RiskPreviewFacet (LibRiskMath) value through it by self-call,
-        // so it rides the same cut. On a pre-#2419 Diamond its two selectors
-        // are unrouted and partition to an Add below.
+        // #2419 - the valuation host. RiskFacet (every LTV / HF read),
+        // RiskPreviewFacet (LibRiskMath) and every KYC comparison (Defaulted,
+        // RiskSplitLiquidation, and Loan, Preclose and EarlyWithdrawalDirect
+        // through LibCompliance) value through it by self-call, so it rides
+        // the same cut. A selector the target Diamond does not route yet
+        // partitions to an Add below.
         NumeraireValueFacet numeraireValueFacet = new NumeraireValueFacet();
 
         console.log("RiskFacet:            ", address(riskFacet));
