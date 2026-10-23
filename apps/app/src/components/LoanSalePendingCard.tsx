@@ -28,7 +28,7 @@ import {
   saleSettlementBound,
   type LoanSalePendingState,
 } from '../data/loanSalePending';
-import { formatTokenAmountExact } from '../lib/format';
+import { formatDateTime, formatTokenAmountExact } from '../lib/format';
 
 export function LoanSalePendingCard({
   loanId,
@@ -66,6 +66,13 @@ export function LoanSalePendingCard({
   const walletReady =
     onSupportedChain && Boolean(walletClient) && Boolean(publicClient);
   const underfunded = state.allowanceShort || state.balanceShort;
+  // #1848 — the listing's own record says it ran out without a buyer. Only
+  // a READ record says so; an unread one leaves the ordinary pending text.
+  const expiredUnsold =
+    state.loanActive &&
+    state.accepted === false &&
+    state.fillable === 'no' &&
+    state.expiresAt !== null;
 
   async function cancelListing() {
     if (!state.offerId || !address || !walletChain || !walletClient || !publicClient) {
@@ -178,11 +185,34 @@ export function LoanSalePendingCard({
         <span className="banner-body">
           {!state.loanActive
             ? copy.loanSale.loanSettledWhileListed
-            : state.offerId
-              ? copy.loanSale.pending(state.offerId)
-              : copy.loanSale.pendingNoId}
+            : expiredUnsold
+              ? copy.loanSale.expiredUnsold(formatDateTime(Number(state.expiresAt)))
+              : state.offerId
+                ? copy.loanSale.pending(state.offerId)
+                : copy.loanSale.pendingNoId}
         </span>
       </div>
+      {/* #1848 — what the listing's own record says, when it was read. */}
+      {state.loanActive && state.accepted === true ? (
+        <p className="field-hint" style={{ marginTop: 8 }}>
+          {copy.loanSale.acceptedCompleting}
+        </p>
+      ) : state.loanActive && state.fillable !== 'no' ? (
+        // Open, or unread (listed from another device): the note applies
+        // either way; the end time is stated only when it was read.
+        <>
+          {state.fillable === 'yes' && state.expiresAt !== null && state.expiresAt !== 0n ? (
+            <p className="field-hint" style={{ marginTop: 8 }}>
+              {copy.loanSale.openUntil(formatDateTime(Number(state.expiresAt)))}
+            </p>
+          ) : null}
+          {/* #1810 — why a live listing can stop filling, and what the app
+              cannot see about it yet. */}
+          <p className="field-hint" style={{ marginTop: 8 }}>
+            {copy.loanSale.boundsNote}
+          </p>
+        </>
+      ) : null}
       {state.listed && state.loanActive && state.isHolder && !state.fundingKnown ? (
         <div className="banner banner-warn" role="alert" style={{ marginTop: 12 }}>
           <span className="banner-body">{copy.loanSale.fundingUnknown}</span>

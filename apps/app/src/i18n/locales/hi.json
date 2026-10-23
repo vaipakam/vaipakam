@@ -1232,7 +1232,12 @@
       "rateLabel": "Buyer की yearly earning rate",
       "windowLabel": "Listing अवधि",
       "windowOption": "{{days}} दिन",
-      "windowNote": "हर listing अपने आप expire होती है: आपकी चुनी अवधि के अंत में, या loan की due date पर, जो पहले आए। एक बार listing बिना बिक्री के ख़त्म हो जाए — आप रद्द करें, या वह expire होकर cleanup हो जाए — तो यह loan एक दिन तक दोबारा list नहीं हो सकता: यह Borrower के लिए राहत की जगह है, जिसके जल्दी बंद करने और Collateral निकालने के options listing चालू रहने तक रोके रहते हैं। (Partial repayments कभी नहीं रोकी जातीं — आपकी listing चालू रहते हुए भी बकाया रकम घट सकती है, ऐसे में इंतज़ार कर रहा ख़रीदार बस छोटी हुई position के लिए दोबारा sign कर देता है।)",
+      "windowNote": "हर listing अपने आप expire होती है: आपकी चुनी अवधि के अंत में, या loan की due date पर, जो पहले आए। एक बार listing बिना बिक्री के ख़त्म हो जाए — आप रद्द करें, या वह expire होकर cleanup हो जाए — तो यह loan एक दिन तक दोबारा list नहीं हो सकता: यह Borrower के लिए राहत की जगह है, जिसके जल्दी बंद करने और Collateral निकालने के options listing चालू रहने तक रोके रहते हैं। (Partial repayments कभी नहीं रोकी जातीं। अगर आपकी listing चालू रहते Borrower loan का कुछ हिस्सा चुका दे, तो बिक्री से आपको नीचे दिए minimum से कम मिलेगा, इसलिए ख़रीदारों की कोशिशें अस्वीकार हो जाती हैं; listing रद्द करें और नई शर्तों पर दोबारा list करें।)",
+      "floorQuote": "अगर कोई ख़रीदार इस listing के ख़त्म होने से पहले किसी भी समय इसे ले, तो आपको कम से कम {{amount}} {{sym}} मिलेगा: ख़रीदार जो आपको देता है, उसमें से आपके wallet से ली गई settlement घटाकर। इसमें आपकी listing के confirm होने का समय शामिल है, इसलिए यह आज के आँकड़े से थोड़ा कम हो सकता है।",
+      "heldQuote": "इस loan पर Lender के लिए पहले से अलग रखे {{amount}} {{sym}} position के साथ ख़रीदार को जाते हैं, आपको नहीं।",
+      "floorLoading": "यह listing आपको कितना minimum guarantee करेगी, पढ़ा जा रहा है…",
+      "floorUnavailable": "यह listing आपको कितना minimum guarantee करेगी, अभी पढ़ा नहीं जा सका, इसलिए जब तक पढ़ा न जाए position list नहीं हो सकती। थोड़ी देर में फिर कोशिश करें।",
+      "receiptFloor": "Settlement कटने के बाद कम से कम {{amount}} {{sym}}, अगर कोई ख़रीदार listing ख़त्म होने से पहले किसी भी समय इसे ले। Listing यह minimum दर्ज करती है, और अगर वह इससे कम दर्ज करती तो बनने के बजाय अस्वीकार हो जाती है।",
       "action": "Listing review करें",
       "confirm": "Confirm — मेरी position list करें",
       "lockWarning": "Listing आपका lender position NFT lock करती है — sale complete या listing cancel होने तक transfer नहीं हो सकता। आपके claim rights unaffected हैं।",
@@ -1241,6 +1246,10 @@
       "done": "Position listed. Buyer accept करेगा तो sale automatically settle होगी — तब तक standing approval (और settlement figure के लिए enough balance) रखें, या नीचे listing cancel करें।",
       "pending": "Sale listing #{{offerId}} live है और आपका lender NFT इसके live रहते lock है। Buyer accept करे तो आपको outstanding amount paid होता है और settlement उसी transaction में pulled होता है।",
       "pendingNoId": "यह position sale के लिए listed है (दूसरे device से listed, इसलिए यहाँ cancel available नहीं — जहाँ listed किया था वहाँ cancel करें)। Listing standing रहने तक आपका lender NFT locked है।",
+      "openUntil": "{{date}} तक ख़रीदारों के लिए खुली।",
+      "expiredUnsold": "यह listing {{date}} को बिना ख़रीदार के ख़त्म हो गई, इसलिए अब कोई इसे नहीं ख़रीद सकता। Listing साफ़ होने तक आपका Lender NFT locked रहता है: इसे यहाँ रद्द करें, या कोई भी cleanup transaction भेज सकता है।",
+      "acceptedCompleting": "एक ख़रीदार ने यह listing ले ली है और बिक्री का settlement अभी पूरा नहीं हुआ है।",
+      "boundsNote": "Listing बनते समय वह दर्ज करती है कि आपको कम से कम कितना मिलेगा, और Lender के लिए पहले से कितना अलग रखा है। अगर ख़रीदार के लेने से पहले loan ऐसे बदल जाए कि बिक्री इनमें से कोई आँकड़ा तोड़ दे — जैसे Borrower loan का कुछ हिस्सा चुका दे — तो ख़रीदारों की कोशिशें अस्वीकार हो जाती हैं, और आप रद्द करके नई शर्तों पर दोबारा list कर सकते हैं। App अभी इस listing के लिए दर्ज आँकड़े नहीं पढ़ सकता, इसलिए वह नहीं बता सकता कि ऐसा हुआ है या नहीं। (इस सुरक्षा से पहले बनी listings ने कोई आँकड़े दर्ज नहीं किए और वे पहले की तरह बिकती हैं।)",
       "allowanceShort": "Standing settlement approval (या wallet balance) अब buyer acceptance में pull होने वाली amount cover नहीं करता — sale अभी fail होगी। नीचे restore करें या listing cancel करें।",
       "restore": "Settlement approval restore करें",
       "restored": "Settlement approval restored — listing फिर complete हो सकती है।",
@@ -3068,6 +3077,10 @@
     "AssetPaused": "यह asset अभी governance द्वारा pause है। दोबारा कोशिश करने से पहले pause हटने की प्रतीक्षा करें।",
     "TradeNotAllowed": "Current compliance configuration इन दो देशों के बीच trade allow नहीं करती।",
     "PositionNFTLocked": "यह position NFT strategic flow (preclose / refinance / loan-sale) के बीच में lock है।",
-    "_gasEstimateUnavailable": "Wallet इस transaction का estimate नहीं कर सका, इसलिए sign करने पर यह बहुत संभव है fail हो। यह असली gas shortage नहीं है — यदि review step ने कोई specific reason flag किया है, वही actual cause है। वरना सामान्य कारण missing token approval (exact amount approve करके retry करें) या stale app build है जिसका call shape deployed contract से match नहीं करता (latest version load करने के लिए hard-reload करें)। यदि जारी रहे, diagnostics export support के साथ साझा करें।"
+    "_gasEstimateUnavailable": "Wallet इस transaction का estimate नहीं कर सका, इसलिए sign करने पर यह बहुत संभव है fail हो। यह असली gas shortage नहीं है — यदि review step ने कोई specific reason flag किया है, वही actual cause है। वरना सामान्य कारण missing token approval (exact amount approve करके retry करें) या stale app build है जिसका call shape deployed contract से match नहीं करता (latest version load करने के लिए hard-reload करें)। यदि जारी रहे, diagnostics export support के साथ साझा करें।",
+    "ListingFloorBelowReviewed": "आपके review करने के बाद से यह listing आपको जो minimum guarantee करती, वह घट गया है (समय बीत गया, या loan बदल गया)। कुछ भी list नहीं हुआ। मौजूदा आँकड़ा देखने के लिए listing फिर से review करें।",
+    "ListingHeldAboveReviewed": "आपके listing review करने के बाद से इस loan पर Lender के लिए और रकम अलग रखी गई है। कुछ भी list नहीं हुआ। मौजूदा आँकड़े देखने के लिए listing फिर से review करें।",
+    "SaleBelowSellerFloor": "यह listing अब ख़रीदी नहीं जा सकती: list होने के बाद loan बदल गया है (जैसे उसका कुछ हिस्सा चुका दिया गया), इसलिए बिक्री से seller को उसकी listing के guaranteed minimum से कम मिलेगा। कुछ भी नहीं लिया गया। Seller इसे रद्द करके दोबारा list कर सकता है।",
+    "SaleAboveHeldCeiling": "यह listing अब ख़रीदी नहीं जा सकती: list होने के बाद इस loan पर Lender के लिए listing की अनुमति से ज़्यादा रकम अलग रखी गई है। कुछ भी नहीं लिया गया। Seller इसे रद्द करके दोबारा list कर सकता है।"
   }
 }

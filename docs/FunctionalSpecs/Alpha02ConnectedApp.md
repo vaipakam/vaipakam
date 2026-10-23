@@ -4045,10 +4045,28 @@ Its intended behaviour, as the test oracle for this surface:
   borrower whose offset close-out (its pinned lender offer cannot
   coexist with the listing) and collateral-withdrawal options are held
   while a listing stands (repayment is never held — full, partial, and
-  the direct early close all stay available, and a pending buyer
-  re-signs for the smaller position after a paydown).
+  the direct early close all stay available; a partial repayment while
+  the listing stands can make it unbuyable, as below, and the seller
+  relists at the new terms).
   Changing the chosen window, like changing the rate, voids any
   acknowledgement already given and closes an open review.
+  The form must also state the seller's guaranteed minimum for the
+  rate and window on it: the least the seller comes out with if a
+  buyer takes the listing at any moment before it ends (what the buyer
+  pays, less the settlement pulled from the seller), read from the
+  protocol's own quote rather than recomputed by the app, and — when
+  there is any — the balance already set aside for the lender that
+  goes to the buyer with the position rather than to the seller. The
+  quoted minimum allows for the time the listing takes to confirm and
+  for the protocol's rounding, so it may sit slightly below the
+  instantaneous figure; it must never sit above what the listing will
+  record. The listing is submitted bound to the figures the seller
+  reviewed, so the protocol refuses it — nothing listed — rather than
+  record a lower minimum or a higher set-aside balance; such a refusal
+  closes the review and asks the seller to review again against the
+  current figures. Where the minimum cannot be read, the form says so
+  and does not offer the listing, rather than listing without a
+  stated guarantee.
   Before confirming, the review must disclose: the
   lender position NFT is locked for transfer until the sale
   completes or the listing ends — and honestly, not loosely: expiry
@@ -4096,11 +4114,26 @@ Its intended behaviour, as the test oracle for this surface:
   buyer accepted, or it was cancelled elsewhere), the page states
   that outcome once instead of letting the card silently vanish.
   While a listing stands, the sell-into-offer exit is not offered.
+  The listing surface must also say, from the listing's own record
+  when it can be read, whether a buyer can still take it: open until
+  its end time; already taken and still settling (which can still
+  complete); or ended without a buyer (no one can buy it, and the
+  lock remains until cancel or cleanup). It must say that a listing
+  records the seller's minimum and the set-aside ceiling, that a loan
+  change breaking either — a partial repayment is enough — makes
+  buyers' attempts fail, and that the remedy is to cancel and relist;
+  while the protocol offers no way to read the recorded figures, the
+  surface states that it cannot tell whether that has happened rather
+  than implying it checked. Listings made before these figures existed
+  recorded none and are not presented as broken. The exit chooser's
+  pending-cost disclosure follows the same record: a listing that can
+  no longer complete stops carrying its costs as pending.
   The borrower's repayment surfaces are NOT held off — full and
   partial repayment stay open throughout (a buyer's acceptance binds
-  to the loan's current outstanding amount, so a partial repayment
-  simply shrinks the claim and a pending buyer re-signs for the
-  smaller position — the buyer can never overpay for a shrunk claim).
+  to the loan's current outstanding amount, so the buyer can never
+  overpay for a shrunk claim; on a listing that recorded the seller's
+  figures, a partial repayment that breaks them makes the listing
+  unbuyable until the seller relists).
   What a listing does hold is the borrower's offset close-out (its
   pinned lender offer cannot coexist with the listing) and
   collateral-withdrawal options, and the borrower-side surface must

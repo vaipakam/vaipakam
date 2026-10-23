@@ -3223,7 +3223,28 @@ const copySource = {
     windowLabel: 'Listing window',
     windowOption: tmpl('{{days}} days', ['days']),
     windowNote:
-      'Every listing expires on its own: at the end of your chosen window, or at the loan’s due date, whichever comes first. Once a listing ends without a sale — you cancel, or it expires and is cleaned up — this loan can’t be listed again for a day: a breathing space for the borrower, whose early-close and collateral-withdrawal options are held while a listing stands. (Partial repayments are never held — the outstanding amount can shrink while your listing is live, in which case a pending buyer simply re-signs for the smaller position.)',
+      'Every listing expires on its own: at the end of your chosen window, or at the loan’s due date, whichever comes first. Once a listing ends without a sale — you cancel, or it expires and is cleaned up — this loan can’t be listed again for a day: a breathing space for the borrower, whose early-close and collateral-withdrawal options are held while a listing stands. (Partial repayments are never held. If the borrower repays part of the loan while your listing is live, a sale would pay you less than the minimum below, so buyers’ attempts are refused; cancel and list again at the new terms.)',
+    // #1810 — the seller's guaranteed minimum, quoted from the chain for the
+    // rate and window on the form. It is the figure the listing records and
+    // is bound to, so the copy states it as a guarantee, names what it is net
+    // of, and says why it can sit a little below today's figure.
+    floorQuote: tmpl(
+      'If a buyer takes this listing at any time before it ends, you come out with at least {{amount}} {{sym}}: what the buyer pays you, less the settlement pulled from your wallet. It allows for the time your listing takes to confirm, so it can sit slightly below today’s figure.',
+      ['amount', 'sym'],
+    ),
+    // #1810 — money already set aside for the lender transfers with the
+    // position. Shown only when there is some.
+    heldQuote: tmpl(
+      '{{amount}} {{sym}} already set aside for the lender on this loan goes to the buyer with the position, not to you.',
+      ['amount', 'sym'],
+    ),
+    floorLoading: 'Reading the minimum this listing would guarantee you…',
+    floorUnavailable:
+      'The minimum this listing would guarantee you couldn’t be read right now, so the position can’t be listed until it can. Try again shortly.',
+    receiptFloor: tmpl(
+      'At least {{amount}} {{sym}} once the settlement is taken, if a buyer takes it at any time before the listing ends. The listing records this minimum, and is refused rather than made if it would record less.',
+      ['amount', 'sym'],
+    ),
     action: 'Review listing',
     confirm: 'Confirm — list my position',
     // Spec rule (WebsiteReadme "borrower preclose flow" analog): the
@@ -3244,6 +3265,20 @@ const copySource = {
     ),
     pendingNoId:
       'This position is listed for sale (listed from another device, so cancelling here isn’t available — cancel where it was listed). Your lender NFT is locked while the listing stands.',
+    // #1848 — what the listing's own record says about whether a buyer can
+    // still take it. Shown only when that record was read.
+    openUntil: tmpl('Open to buyers until {{date}}.', ['date']),
+    expiredUnsold: tmpl(
+      'This listing ended on {{date}} without a buyer, so no one can buy it now. Your lender NFT stays locked until the listing is cleared: cancel it here, or anyone can send the cleanup transaction.',
+      ['date'],
+    ),
+    acceptedCompleting:
+      'A buyer has taken this listing and the sale hasn’t finished settling yet.',
+    // #1810 — why a live listing can stop filling. The app cannot read the
+    // figures a listing recorded yet (no view exposes them), so this says so
+    // rather than implying it checked (the view is #2672).
+    boundsNote:
+      'When a listing is made, it records the least you can come out with and how much is already set aside for the lender. If the loan changes before a buyer takes it so that a sale would break either figure — for example, the borrower repays part of the loan — buyers’ attempts are refused, and you can cancel and list again at the new terms. The app can’t read the figures recorded for this listing yet, so it can’t tell you whether that has happened. (Listings made before this protection existed recorded no figures and sell as before.)',
     allowanceShort:
       'The standing settlement approval (or your wallet balance) no longer covers what a buyer’s acceptance would pull — the sale would fail right now. Restore it below or cancel the listing.',
     restore: 'Restore the settlement approval',

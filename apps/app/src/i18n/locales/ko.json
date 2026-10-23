@@ -1232,7 +1232,12 @@
       "rateLabel": "인수자가 얻는 연 금리",
       "windowLabel": "등록 기간",
       "windowOption": "{{days}}일",
-      "windowNote": "모든 등록은 스스로 만료됩니다: 선택하신 기간의 끝, 또는 대출 만기일 중 먼저 도래하는 시점입니다. 매도되지 않은 채 등록이 끝나면 — 취소하시든, 만료되어 정리되든 — 이 대출은 하루 동안 다시 등록할 수 없습니다. 등록이 유지되는 동안 조기 종료와 담보 인출 옵션이 보류되는 차입자를 위한 숨 돌릴 틈입니다. (부분 상환은 결코 보류되지 않습니다 — 등록이 게시된 중에도 미상환 금액은 줄어들 수 있으며, 그 경우 대기 중인 매수자는 줄어든 포지션에 대해 다시 서명하면 됩니다.)",
+      "windowNote": "모든 등록은 스스로 만료됩니다: 선택하신 기간의 끝, 또는 대출 만기일 중 먼저 도래하는 시점입니다. 매도되지 않은 채 등록이 끝나면 — 취소하시든, 만료되어 정리되든 — 이 대출은 하루 동안 다시 등록할 수 없습니다. 등록이 유지되는 동안 조기 종료와 담보 인출 옵션이 보류되는 차입자를 위한 숨 돌릴 틈입니다. (부분 상환은 결코 보류되지 않습니다. 등록이 게시된 중에 차입자가 대출 일부를 상환하면, 매도 시 받는 금액이 아래 최소 금액보다 적어지므로 매수 시도가 거부됩니다. 취소한 뒤 새 조건으로 다시 등록하세요.)",
+      "floorQuote": "등록이 끝나기 전 언제든 매수자가 이 등록을 받으면, 최소 {{amount}} {{sym}}를 받게 됩니다: 매수자가 지급하는 금액에서 지갑에서 인출되는 정산액을 뺀 금액입니다. 등록이 확정되는 데 걸리는 시간을 감안하므로 오늘의 수치보다 약간 낮을 수 있습니다.",
+      "heldQuote": "이 대출에서 대출자 몫으로 이미 따로 마련된 {{amount}} {{sym}}는 포지션과 함께 매수자에게 가며, 귀하에게 지급되지 않습니다.",
+      "floorLoading": "이 등록이 보장할 최소 금액을 읽는 중…",
+      "floorUnavailable": "이 등록이 보장할 최소 금액을 지금 읽을 수 없어, 읽을 수 있을 때까지 포지션을 등록할 수 없습니다. 잠시 후 다시 시도하세요.",
+      "receiptFloor": "등록이 끝나기 전 언제든 매수자가 받으면, 정산액을 뺀 뒤 최소 {{amount}} {{sym}}. 등록은 이 최소 금액을 기록하며, 이보다 적게 기록하게 되면 생성되지 않고 거부됩니다.",
       "action": "등록 검토",
       "confirm": "확인 — 내 포지션 등록",
       "lockWarning": "등록하면 회원님의 대출자 포지션 NFT가 잠깁니다 — 판매가 완료되거나 등록을 취소할 때까지 전송할 수 없습니다. 회원님의 청구 권리는 영향을 받지 않습니다.",
@@ -1241,6 +1246,10 @@
       "done": "포지션이 등록되었습니다. 인수자가 수락하면 판매가 자동으로 정산됩니다 — 그때까지 상시 승인(및 정산 금액을 감당할 충분한 잔액)을 유지하거나, 아래에서 등록을 취소하세요.",
       "pending": "sale listing #{{offerId}}가 live이고, 유지되는 동안 lender NFT가 locked됩니다. buyer가 accept하면 outstanding amount가 지급되고 settlement가 같은 transaction에서 pull됩니다.",
       "pendingNoId": "이 포지션은 판매 등록되어 있습니다(다른 기기에서 등록되어 여기서는 취소할 수 없습니다 — 등록한 곳에서 취소하세요). 등록이 유지되는 동안 회원님의 대출자 NFT는 잠겨 있습니다.",
+      "openUntil": "{{date}}까지 매수자에게 열려 있습니다.",
+      "expiredUnsold": "이 등록은 {{date}}에 매수자 없이 끝났으므로 이제 누구도 매수할 수 없습니다. 등록이 정리될 때까지 대출자 NFT는 잠긴 상태로 유지됩니다: 여기에서 취소하거나, 누구나 정리 트랜잭션을 보낼 수 있습니다.",
+      "acceptedCompleting": "매수자가 이 등록을 받았으며, 매도 정산이 아직 끝나지 않았습니다.",
+      "boundsNote": "등록은 생성될 때 귀하가 받을 최소 금액과 대출자 몫으로 이미 마련된 금액을 기록합니다. 매수자가 받기 전에 대출이 바뀌어 매도가 둘 중 하나의 수치를 어기게 되면 — 예를 들어 차입자가 대출 일부를 상환하면 — 매수 시도가 거부되며, 취소한 뒤 새 조건으로 다시 등록할 수 있습니다. 앱은 아직 이 등록에 기록된 수치를 읽을 수 없어, 그런 일이 일어났는지 알려 드릴 수 없습니다. (이 보호 장치 이전에 만든 등록은 수치를 기록하지 않았으며 이전과 같이 매도됩니다.)",
       "allowanceShort": "상시 정산 승인(또는 회원님의 지갑 잔액)이 인수자의 수락 시 인출될 금액을 더 이상 감당하지 못합니다 — 지금은 판매가 실패합니다. 아래에서 복원하거나 등록을 취소하세요.",
       "restore": "정산 승인 복원",
       "restored": "정산 승인이 복원되었습니다 — 등록이 다시 완료될 수 있습니다.",
@@ -3068,6 +3077,10 @@
     "AssetPaused": "이 asset은 현재 governance에 의해 paused 상태입니다. pause가 해제된 뒤 다시 시도하세요.",
     "TradeNotAllowed": "현재 compliance configuration은 이 두 국가 간 trade를 허용하지 않습니다.",
     "PositionNFTLocked": "이 position NFT는 strategic flow(preclose / refinance / loan-sale)가 진행 중이라 locked 상태입니다.",
-    "_gasEstimateUnavailable": "wallet이 이 transaction을 estimate할 수 없어, sign하면 실패할 가능성이 큽니다. 이것은 실제 gas shortage가 아닙니다. review step이 특정 reason을 flagged했다면 그것이 실제 원인입니다. 그렇지 않으면 보통 missing token approval(정확한 amount를 approve하고 retry) 또는 deployed contract와 call shape가 맞지 않는 stale app build(최신 버전 로드를 위해 hard-reload)가 원인입니다. 계속되면 diagnostics export를 support에 공유하세요."
+    "_gasEstimateUnavailable": "wallet이 이 transaction을 estimate할 수 없어, sign하면 실패할 가능성이 큽니다. 이것은 실제 gas shortage가 아닙니다. review step이 특정 reason을 flagged했다면 그것이 실제 원인입니다. 그렇지 않으면 보통 missing token approval(정확한 amount를 approve하고 retry) 또는 deployed contract와 call shape가 맞지 않는 stale app build(최신 버전 로드를 위해 hard-reload)가 원인입니다. 계속되면 diagnostics export를 support에 공유하세요.",
+    "ListingFloorBelowReviewed": "검토하신 뒤 이 등록이 보장할 최소 금액이 낮아졌습니다(시간이 지났거나 대출이 바뀌었습니다). 아무것도 등록되지 않았습니다. 현재 수치를 보려면 등록을 다시 검토하세요.",
+    "ListingHeldAboveReviewed": "등록을 검토하신 뒤 이 대출에서 대출자 몫으로 마련된 금액이 늘었습니다. 아무것도 등록되지 않았습니다. 현재 수치를 보려면 등록을 다시 검토하세요.",
+    "SaleBelowSellerFloor": "이 등록은 더 이상 매수할 수 없습니다: 등록 이후 대출이 바뀌어(예: 일부 상환) 매도 시 매도자가 받는 금액이 등록이 보장하는 최소 금액보다 적어집니다. 아무것도 인출되지 않았습니다. 매도자는 취소한 뒤 다시 등록할 수 있습니다.",
+    "SaleAboveHeldCeiling": "이 등록은 더 이상 매수할 수 없습니다: 등록 이후 이 대출에서 대출자 몫으로 마련된 금액이 등록이 허용하는 범위를 넘었습니다. 아무것도 인출되지 않았습니다. 매도자는 취소한 뒤 다시 등록할 수 있습니다."
   }
 }

@@ -4826,7 +4826,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // and the reward entry stay at risk until something proves
           // otherwise. Falls back to false only when we have never
           // seen a listing at all.
-          listingMayStand={sale.state?.listed === true}
+          // ...and not when the listing's own record says no buyer can
+          // complete it any more (#1848): expired unsold, or the loan is no
+          // longer active. Only an ANSWERED read says so — through a failed
+          // poll the cached listing still counts as standing, for the reason
+          // above.
+          listingMayStand={
+            sale.state?.listed === true &&
+            (sale.isError || sale.state.completable !== 'no')
+          }
           saleLock={
             !loan.data?.lenderTokenId ||
             !/^[1-9]\d*$/.test(String(loan.data.lenderTokenId))

@@ -667,6 +667,24 @@ gap, rather than being quietly wrong or being watered down to match what shipped
 
 ## Sale-cost disclosure keys on the lock, where the spec keys on fillability
 
+**Resolved in the #1810 / #1848 app change (2026-10-23), toward the spec.** No
+intent decision was needed: the code moved to meet the spec. The listing hook
+now keeps the listing's expiry and accepted flag, which it already fetched, and
+the chooser's pending-cost disclosure keys on whether the sale can still
+COMPLETE: an accepted listing still can, an expired unaccepted one cannot, and
+an unread record keeps the lock as the safe-direction fallback. The
+**unrecovered-id** case below is unchanged — with no offer id there is no
+record to read, so the card still falls back to the lock and over-warns. The
+entry is kept for that residue and for the reasoning.
+
+A related spec contradiction was settled in the same change, also toward the
+more specific text. `ProjectDetailsREADME.md`'s quiet-period paragraph said a
+paydown simply makes a pending buyer re-sign, while its own seller-bounds
+paragraph says a partial repayment can make a bounded listing unfillable. The
+parenthetical now distinguishes the listings made before the bounds existed
+(re-sign) from those that recorded them (unfillable until relisted), and the
+connected-app spec says the same.
+
 The spec says an exit the lender has already committed to keeps its cost stated,
 because a sale in flight has pending consequences rather than hypothetical
 prices — and that the test is whether the sale can still **complete**.

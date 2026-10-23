@@ -128,6 +128,24 @@ export interface LoanSalePendingState {
   offerIdVerifyFailed: boolean;
   /** The listing's sale rate (bps); null when the id is unknown. */
   saleRateBps: bigint | null;
+  /** The listing's expiry (seconds), from its own offer record; null when
+   *  that record was not read (#1848). */
+  expiresAt: bigint | null;
+  /** Whether a buyer has accepted the listing; null when not read. */
+  accepted: boolean | null;
+  /** Can a buyer still TAKE the listing now (#1848)? THREE-valued on
+   *  purpose: `'unknown'` when the listing's record was not read, and it
+   *  never collapses into either answer. `'no'` when the loan is no longer
+   *  active, a buyer has already accepted, or the listing has expired. A
+   *  `'yes'` says only that the listing's own terms still admit a buyer: the
+   *  seller bounds it recorded are not readable here (#1810), so a sale can
+   *  still be refused for having moved past them. */
+  fillable: SaleListingVerdict;
+  /** Can the sale still COMPLETE, so that its costs may still fall on the
+   *  seller (#1848)? Differs from `fillable` in one case: an accepted
+   *  listing whose settlement has not finished can still complete. `'no'`
+   *  when the loan is no longer active or the listing expired unsold. */
+  completable: SaleListingVerdict;
   /** Chain time says the cancel cooldown has elapsed. */
   cancelUnlocked: boolean;
   /** What acceptance would pull right now / the approval target.
@@ -139,6 +157,27 @@ export interface LoanSalePendingState {
   fundingKnown: boolean;
   allowanceShort: boolean;
   balanceShort: boolean;
+}
+
+export type SaleListingVerdict = 'yes' | 'no' | 'unknown';
+
+/** #1848 — what a listing's own record says about it, from its offer fields
+ *  and the chain time. A record that was not read gives `'unknown'` for both,
+ *  never a guess. The expiry rule is the accept path's: a listing is expired
+ *  once chain time reaches `expiresAt` (`expiresAt == 0` never expires). */
+export function saleListingVerdicts(args: {
+  loanActive: boolean;
+  record: { expiresAt: bigint; accepted: boolean } | null;
+  chainNow: bigint;
+}): { fillable: SaleListingVerdict; completable: SaleListingVerdict } {
+  if (!args.loanActive) return { fillable: 'no', completable: 'no' };
+  if (!args.record) return { fillable: 'unknown', completable: 'unknown' };
+  const { expiresAt, accepted } = args.record;
+  if (accepted) return { fillable: 'no', completable: 'yes' };
+  const expired = expiresAt !== 0n && args.chainNow >= expiresAt;
+  return expired
+    ? { fillable: 'no', completable: 'no' }
+    : { fillable: 'yes', completable: 'yes' };
 }
 
 export function useLoanSalePending(
@@ -305,6 +344,10 @@ export function useLoanSalePending(
       }
       let saleRateBps: bigint | null = null;
       let createdAt = 0n;
+      // #1848 — the same response carries the listing's expiry and whether a
+      // buyer has accepted it; kept rather than narrowed away, so the cards can
+      // tell a listing a buyer can still take from one that is merely locked.
+      let record: { expiresAt: bigint; accepted: boolean } | null = null;
       if (resolvedId !== null) {
         try {
           const offer = (await readClient!.readContract({
@@ -312,13 +355,24 @@ export function useLoanSalePending(
             abi: DIAMOND_ABI_VIEM,
             functionName: 'getOfferDetails',
             args: [BigInt(resolvedId)],
-          })) as { interestRateBps: number; createdAt: bigint };
+          })) as {
+            interestRateBps: number | bigint;
+            createdAt: bigint;
+            expiresAt: number | bigint;
+            accepted: boolean;
+          };
           saleRateBps = BigInt(offer.interestRateBps);
           createdAt = offer.createdAt;
+          record = { expiresAt: BigInt(offer.expiresAt), accepted: offer.accepted };
         } catch {
           saleRateBps = null;
+          record = null;
         }
       }
+      const loanActive = live.status === LOAN_STATUS_ACTIVE;
+      const { fillable, completable } = listed
+        ? saleListingVerdicts({ loanActive, record, chainNow: latestBlock.timestamp })
+        : { fillable: 'no' as const, completable: 'no' as const };
 
       // An unavailable QUOTE is not an unavailable LISTING (Codex #1801 r9 P2).
       // `sellerEconomics` throws when the forfeiture window could not be read,
@@ -344,11 +398,15 @@ export function useLoanSalePending(
       }
       return {
         listed,
-        loanActive: live.status === LOAN_STATUS_ACTIVE,
+        loanActive,
         isHolder,
         offerId: resolvedId,
         offerIdVerifyFailed: verifyFailed,
         saleRateBps,
+        expiresAt: record?.expiresAt ?? null,
+        accepted: record?.accepted ?? null,
+        fillable,
+        completable,
         cancelUnlocked:
           resolvedId !== null &&
           saleRateBps !== null &&
@@ -357,15 +415,12 @@ export function useLoanSalePending(
         requiredBound,
         fundingKnown,
         // The funding watch only matters while the sale can still
-        // complete — a settled loan's listing is cancel-only.
+        // complete — a settled loan's listing, or one that expired unsold
+        // (#1848), is cancel-only.
         allowanceShort:
-          fundingKnown &&
-          live.status === LOAN_STATUS_ACTIVE &&
-          allowance < requiredNow,
+          fundingKnown && completable !== 'no' && allowance < requiredNow,
         balanceShort:
-          fundingKnown &&
-          live.status === LOAN_STATUS_ACTIVE &&
-          balance < requiredNow,
+          fundingKnown && completable !== 'no' && balance < requiredNow,
       };
     },
   });
