@@ -11,6 +11,7 @@ import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
 import {MockSanctionsList} from "../mocks/MockSanctionsList.sol";
+import {HandoverPlan} from "../../script/lib/HandoverPlan.sol";
 import {DeployLaunchGate} from "../../script/DeployLaunchGate.s.sol";
 import {LaunchGateDeployment} from "../../script/lib/LaunchGateDeployment.sol";
 import {LaunchGate} from "../../src/governance/LaunchGate.sol";
@@ -58,10 +59,22 @@ contract LaunchMockTimelock {
     }
 }
 
-/// @dev Has code; stands in for the price feed, whose readiness check only
-///      asks that a contract is registered. As a swap adapter it does NOT
-///      count: it answers no `adapterName()`.
+/// @dev Has code and implements nothing: registered as a feed, an oracle or
+///      a swap adapter, it must NOT count.
 contract LaunchCodeStub {}
+
+/// @dev A price feed stand-in: answers `latestRoundData()` with a price.
+contract LaunchFeedStub {
+    int256 internal price = 2000e8;
+
+    function setPrice(int256 p) external {
+        price = p;
+    }
+
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
+        return (1, price, 1, 1, 1);
+    }
+}
 
 /// @dev A swap adapter stand-in: answers `adapterName()` as a real one does.
 contract LaunchAdapterStub {
@@ -116,7 +129,7 @@ contract LaunchTest is Test {
     function _configure() internal {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCodeStub()));
+        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
     }
@@ -129,18 +142,28 @@ contract LaunchTest is Test {
         return address(pool);
     }
 
-    /// @dev The handover's end state for the unpause path: the Timelock holds
-    ///      UNPAUSER_ROLE, the role root and the ownership; the admin key
-    ///      holds neither role. Ownership moves before the root is renounced,
-    ///      as the Diamond requires.
+    /// @dev The handover's end state: the Timelock holds the role root, every
+    ///      Timelock role and the ownership; the admin key holds no role at
+    ///      all. Ownership moves before the root is renounced, as the Diamond
+    ///      requires.
     function _handOverUnpause(address timelock) internal {
+        bytes32[] memory tl = HandoverPlan.timelockRoles();
+        bytes32[] memory all = HandoverPlan.diamondRoles();
         vm.startPrank(admin);
         AccessControlFacet(diamond).grantRole(bytes32(0), timelock);
-        AccessControlFacet(diamond).grantRole(LibAccessControl.UNPAUSER_ROLE, timelock);
+        for (uint256 i; i < tl.length; ++i) {
+            AccessControlFacet(diamond).grantRole(tl[i], timelock);
+        }
         OwnershipFacet(diamond).transferOwnership(timelock);
-        AccessControlFacet(diamond).renounceRole(LibAccessControl.UNPAUSER_ROLE, admin);
-        AccessControlFacet(diamond).renounceRole(bytes32(0), admin);
+        for (uint256 i = all.length; i > 0; --i) {
+            if (AccessControlFacet(diamond).hasRole(all[i - 1], admin)) {
+                AccessControlFacet(diamond).renounceRole(all[i - 1], admin);
+            }
+        }
         vm.stopPrank();
+        for (uint256 i; i < all.length; ++i) {
+            assertFalse(AccessControlFacet(diamond).hasRole(all[i], admin), "admin keeps no role");
+        }
     }
 
     // ─── The deploy leaves it paused ─────────────────────────────────
@@ -169,7 +192,7 @@ contract LaunchTest is Test {
     function test_Testnet_RefusesWithoutSanctionsOracle() public {
         vm.chainId(84532);
         vm.startPrank(admin);
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCodeStub()));
+        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
         AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
@@ -181,7 +204,7 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCodeStub()));
+        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
         address adapter = address(new LaunchAdapterStub());
         AdminFacet(diamond).addSwapAdapter(adapter);
         AdminFacet(diamond).setSwapAdapterDisabled(adapter, true);
@@ -254,7 +277,7 @@ contract LaunchTest is Test {
         vm.stopPrank();
         address pool = _poolWithLane();
         vm.expectRevert(
-            bytes("Launch: the admin key still holds UNPAUSER_ROLE or the role root - the handover is not complete")
+            bytes("Launch: the admin key still holds a Diamond role - the handover is not complete")
         );
         launcher.launch(diamond, pool, timelock, admin, ADMIN_KEY);
     }
@@ -286,7 +309,7 @@ contract LaunchTest is Test {
     function _configureWithAdapter(address adapter) internal {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCodeStub()));
+        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
         AdminFacet(diamond).addSwapAdapter(adapter);
         vm.stopPrank();
     }
@@ -403,7 +426,7 @@ contract LaunchTest is Test {
         vm.chainId(8453);
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCodeStub()));
+        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
         address adapter = address(new LaunchAdapterStub());
         AdminFacet(diamond).addSwapAdapter(adapter);
         vm.stopPrank();
@@ -416,7 +439,10 @@ contract LaunchTest is Test {
         _schedule(tl, pool);
         vm.warp(block.timestamp + 2 days);
 
-        vm.prank(admin);
+        // A governance action during the delay (the Timelock holds
+        // ADMIN_ROLE after the handover) removes the only swap route.
+
+        vm.prank(address(tl));
         AdminFacet(diamond).setSwapAdapterDisabled(adapter, true);
         (address[] memory targets, uint256[] memory values, bytes[] memory payloads) = launcher.launchBatch(diamond, pool);
         bytes32 salt = launcher.launchSalt(diamond);
@@ -431,7 +457,7 @@ contract LaunchTest is Test {
         tl.executeBatch(targets, values, payloads, bytes32(0), salt);
         assertTrue(AdminFacet(diamond).paused(), "a failed re-check leaves the Diamond paused");
 
-        vm.prank(admin);
+        vm.prank(address(tl));
         AdminFacet(diamond).setSwapAdapterDisabled(adapter, false);
         _execute(tl, pool);
         assertFalse(AdminFacet(diamond).paused());
@@ -453,5 +479,58 @@ contract LaunchTest is Test {
             )
         );
         gate.assertReady(diamond, address(0));
+    }
+
+    // ─── Every role leaves the admin key (Codex #2686 r2) ────────────
+
+    /// @dev The handover completed, then the admin key got RISK_ADMIN back:
+    ///      it could still retune the protocol, so the launch refuses.
+    function test_Production_RefusesWhileAdminKeepsAnyRole() public {
+        vm.chainId(8453);
+        _configure();
+        address timelock = address(new LaunchMockTimelock());
+        _handOverUnpause(timelock);
+        vm.prank(timelock);
+        AccessControlFacet(diamond).grantRole(LibAccessControl.RISK_ADMIN_ROLE, admin);
+        address pool = _poolWithLane();
+        vm.expectRevert(bytes("Launch: the admin key still holds a Diamond role - the handover is not complete"));
+        launcher.launch(diamond, pool, timelock, admin, 0);
+    }
+
+    // ─── Contracts are probed, not just found (Codex #2686 r2) ───────
+
+    function test_Testnet_RefusesAnOracleThatIsNoSanctionsList() public {
+        vm.chainId(84532);
+        vm.startPrank(admin);
+        ProfileFacet(diamond).setSanctionsOracle(address(new LaunchCodeStub()));
+        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchFeedStub()));
+        AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
+        vm.stopPrank();
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+    }
+
+    function test_Testnet_RefusesAFeedThatIsNoFeed() public {
+        vm.chainId(84532);
+        vm.startPrank(admin);
+        ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
+        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCodeStub()));
+        AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
+        vm.stopPrank();
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+    }
+
+    function test_Testnet_RefusesAFeedWithNoPrice() public {
+        vm.chainId(84532);
+        LaunchFeedStub feed = new LaunchFeedStub();
+        feed.setPrice(0);
+        vm.startPrank(admin);
+        ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
+        OracleAdminFacet(diamond).setEthUsdFeed(address(feed));
+        AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
+        vm.stopPrank();
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
     }
 }

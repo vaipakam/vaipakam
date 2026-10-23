@@ -26,8 +26,13 @@ Diamond stays paused until it is fixed. The gate has no owner and sits at
 an address fixed by its own code, so reviewers can check exactly what the
 proposal calls; the contracts phase deploys it.
 
-A swap route now counts only when the adapter is enabled, has code and
-answers as an adapter, so an address registered by mistake is not a route.
+No requirement is met just because an address has code. The sanctions
+oracle must answer a sanctions lookup (the Diamond treats a failing lookup
+as "not sanctioned", so a wrong contract would screen nobody), the price
+feed must report a positive price, and a swap route counts only when the
+adapter is enabled and answers as an adapter. A production launch also
+refuses while the deploy key still holds any Diamond role, not only the
+unpause role.
 A Diamond that is already unpaused is recorded as launched only on
 evidence: on a production chain the Timelock must report the launch
 operation executed, and on a testnet no answered requirement may be unmet.

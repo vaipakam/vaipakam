@@ -583,11 +583,12 @@ even for the gap between the deploy and the handover.
    `contracts` phase has already deployed the LaunchGate, a stateless
    contract at a deterministic address that the launch operation calls.
 2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the five launch
-   requirements off the chain (treasury, sanctions oracle, ETH/numeraire
-   feed, an enabled swap adapter that answers `adapterName()`, a CCIP lane
-   on the VPFI pool) and refuses unless every one is met, the Timelock
-   holds `UNPAUSER_ROLE`, and the admin key holds neither that role nor the
-   role root. It broadcasts nothing.
+   requirements off the chain (treasury, a sanctions oracle that answers
+   `isSanctioned`, an ETH/numeraire feed that reports a price, an enabled
+   swap adapter that answers `adapterName()`, a CCIP lane on the VPFI
+   pool) and refuses unless every one is met, the Timelock holds
+   `UNPAUSER_ROLE`, and the admin key holds no Diamond role at all. It
+   broadcasts nothing.
 3. It prints the Timelock `scheduleBatch(...)` call. The batch has two
    calls: `LaunchGate.assertReady(diamond, vpfiTokenPool)`, then
    `diamond.unpause()`. The governance Safe proposes it. Before signing,

@@ -33,6 +33,11 @@ interface ILaunchReadableDiamond {
  *          holds at that moment, not merely when the proposal was printed
  *          a delay earlier.
  *
+ *      An address is never accepted on the strength of having code: each
+ *      contract the Diamond depends on is probed through the interface it is
+ *      registered for, because the Diamond's own reads fail OPEN on a wrong
+ *      contract (a failing `isSanctioned` reads as "not sanctioned").
+ *
  *      A check is one of three things, and none is ever read as another:
  *        - met;
  *        - NOT met — the chain was read and the requirement is missing;
@@ -42,10 +47,11 @@ interface ILaunchReadableDiamond {
  *          launch reports it.
  */
 library LibLaunchReadiness {
-    /// @dev Gas each swap adapter's `adapterName()` probe may spend. A real
-    ///      adapter returns a constant string; the bound keeps one
+    /// @dev Gas each interface probe may spend (an adapter's `adapterName()`,
+    ///      the oracle's `isSanctioned`, the feed's `latestRoundData`). A real
+    ///      implementation answers well inside it; the bound keeps one
     ///      misbehaving registration from consuming the whole execution.
-    uint256 internal constant ADAPTER_PROBE_GAS = 100_000;
+    uint256 internal constant PROBE_GAS = 200_000;
 
     /// @notice One readiness requirement and what the chain said about it.
     struct Check {
@@ -108,7 +114,11 @@ library LibLaunchReadiness {
 
     /// @dev Until a sanctions oracle is set, every wallet reads as not
     ///      sanctioned (#946). Required on every chain the retail product
-    ///      runs on, and a contract, not a placeholder address.
+    ///      runs on. The Diamond reads it with a try/catch that treats a
+    ///      failed call as "not sanctioned", so a contract that does not
+    ///      implement `isSanctioned(address)` would screen nobody: the oracle
+    ///      must answer that call, for the Diamond's own address, with a
+    ///      well-formed boolean.
     function _sanctions(address diamond) private view returns (Check memory c) {
         c.label = "sanctions oracle set";
         try ILaunchReadableDiamond(diamond).getSanctionsOracle() returns (address o) {
@@ -117,9 +127,11 @@ library LibLaunchReadiness {
                 c.detail = "getSanctionsOracle() is the zero address: every wallet would read as unsanctioned";
             } else if (o.code.length == 0) {
                 c.detail = "getSanctionsOracle() names an address with no code";
+            } else if (!_answersIsSanctioned(o, diamond)) {
+                c.detail = "getSanctionsOracle() names a contract that does not answer isSanctioned(address) with a boolean: the Diamond would read every wallet as unsanctioned";
             } else {
                 c.met = true;
-                c.detail = "getSanctionsOracle() names a contract";
+                c.detail = "getSanctionsOracle() answers isSanctioned(address)";
             }
         } catch {
             c.detail = "getSanctionsOracle() unreadable";
@@ -127,15 +139,22 @@ library LibLaunchReadiness {
     }
 
     /// @dev The ETH/numeraire feed is the anchor every price conversion in
-    ///      the risk engine goes through; `ConfigureOracle` sets it first.
+    ///      the risk engine goes through; `ConfigureOracle` sets it first. It
+    ///      must answer `latestRoundData()` with a positive price and a
+    ///      non-zero update time. Freshness is the oracle layer's rule at
+    ///      use time, not a launch requirement.
     function _priceFeed(address diamond) private view returns (Check memory c) {
         c.label = "price oracle wired";
         try ILaunchReadableDiamond(diamond).getEthNumeraireFeed() returns (address f) {
             c.checkable = true;
-            c.met = f != address(0) && f.code.length != 0;
-            c.detail = c.met
-                ? "getEthNumeraireFeed() names a contract"
-                : "getEthNumeraireFeed() is unset or has no code: run the configure phase";
+            if (f == address(0) || f.code.length == 0) {
+                c.detail = "getEthNumeraireFeed() is unset or has no code: run the configure phase";
+            } else if (!_answersPositivePrice(f)) {
+                c.detail = "getEthNumeraireFeed() does not answer latestRoundData() with a positive price";
+            } else {
+                c.met = true;
+                c.detail = "getEthNumeraireFeed() answers latestRoundData() with a positive price";
+            }
         } catch {
             c.detail = "getEthNumeraireFeed() unreadable";
         }
@@ -194,10 +213,30 @@ library LibLaunchReadiness {
     function _answersAdapterName(address adapter) private view returns (bool) {
         if (adapter.code.length == 0) return false;
         (bool ok, bytes memory ret) =
-            adapter.staticcall{gas: ADAPTER_PROBE_GAS}(abi.encodeWithSignature("adapterName()"));
+            adapter.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("adapterName()"));
         if (!ok) return false;
         (bool wellFormed, uint256 len) = _dynamicLength(ret, false);
         return wellFormed && len != 0;
+    }
+
+    /// @dev Whether `oracle` answers `isSanctioned(subject)` with exactly one
+    ///      ABI word holding 0 or 1.
+    function _answersIsSanctioned(address oracle, address subject) private view returns (bool) {
+        (bool ok, bytes memory ret) =
+            oracle.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("isSanctioned(address)", subject));
+        if (!ok || ret.length != 32) return false;
+        return abi.decode(ret, (uint256)) <= 1;
+    }
+
+    /// @dev Whether `feed` answers Chainlink's `latestRoundData()` (five ABI
+    ///      words) with a positive answer and a non-zero `updatedAt`. Read
+    ///      as full words so an out-of-range field reads as malformed rather
+    ///      than reverting the read.
+    function _answersPositivePrice(address feed) private view returns (bool) {
+        (bool ok, bytes memory ret) = feed.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("latestRoundData()"));
+        if (!ok || ret.length != 160) return false;
+        (, int256 answer,, uint256 updatedAt,) = abi.decode(ret, (uint256, int256, uint256, uint256, uint256));
+        return answer > 0 && updatedAt != 0;
     }
 
     /// @dev Reads the length of a single ABI-encoded dynamic return value

@@ -9,6 +9,7 @@ import {Deployments} from "./lib/Deployments.sol";
 import {LibLaunchReadiness} from "../src/governance/LibLaunchReadiness.sol";
 import {LaunchGate} from "../src/governance/LaunchGate.sol";
 import {LaunchGateDeployment} from "./lib/LaunchGateDeployment.sol";
+import {HandoverPlan} from "./lib/HandoverPlan.sol";
 
 /// @dev The role read this script needs of the Diamond.
 interface IRoleTable {
@@ -43,7 +44,7 @@ interface ILaunchTimelock {
  *        - **Production** (every chain `Deployments.requiresProductionGovernance`
  *          gates): every requirement must be met AND the handover must be
  *          done — the Timelock holds `UNPAUSER_ROLE` and the admin key holds
- *          neither it nor the role root. The script broadcasts NOTHING. It
+ *          no Diamond role at all (`HandoverPlan.diamondRoles()`). The script broadcasts NOTHING. It
  *          prints the `scheduleBatch` call for the Governance Safe to propose
  *          through the Timelock, the `executeBatch` call for after the delay,
  *          and the operation's current state. So a production Diamond is
@@ -167,10 +168,7 @@ contract Launch is Script {
         if (production) {
             require(timelockHolds, "Launch: the Timelock does not hold UNPAUSER_ROLE - run the handover and its gate first");
             require(admin != address(0), "Launch: set ADMIN_ADDRESS so the run can prove the admin key holds no role");
-            require(
-                !adminHolds && !IRoleTable(diamond).hasRole(bytes32(0), admin),
-                "Launch: the admin key still holds UNPAUSER_ROLE or the role root - the handover is not complete"
-            );
+            _requireAdminHoldsNoRole(diamond, admin);
             _printTimelockProposal(diamond, pool, timelock);
             return Outcome.TimelockProposalPrinted;
         }
@@ -245,6 +243,21 @@ contract Launch is Script {
             "Launch: the Diamond is unpaused but a readiness check is NOT MET - it went live before it was ready; complete the phase named above, then re-run"
         );
         return Outcome.AlreadyLive;
+    }
+
+    /// @dev The handover ends with the admin key holding NO Diamond role
+    ///      (#669), and a production Diamond goes live only in that state:
+    ///      every role `HandoverPlan.diamondRoles()` defines is checked, not
+    ///      only the two that would let the key unpause.
+    function _requireAdminHoldsNoRole(address diamond, address admin) internal view {
+        bytes32[] memory roles = HandoverPlan.diamondRoles();
+        for (uint256 i; i < roles.length; ++i) {
+            if (IRoleTable(diamond).hasRole(roles[i], admin)) {
+                console.log("  the admin key still holds role:");
+                console.logBytes32(roles[i]);
+                revert("Launch: the admin key still holds a Diamond role - the handover is not complete");
+            }
+        }
     }
 
     function _printChecks(LibLaunchReadiness.Check[] memory checks) internal pure {

@@ -331,26 +331,28 @@ contract HandoverGate is Script {
     // ── Role holders ────────────────────────────────────────────────────
 
     /// @dev The Diamond half of the plan: each known role and who must hold it.
+    ///      The role list is `HandoverPlan.diamondRoles()`, the same list the
+    ///      launch checks the admin key against.
     function _diamondPlan(Inputs memory inp) internal pure returns (bytes32[] memory roles, address[][] memory expected) {
-        bytes32[] memory tl = HandoverPlan.timelockRoles();
+        roles = HandoverPlan.diamondRoles();
         bytes32[] memory bots = HandoverPlan.botRoles();
-        uint256 n = 3 + tl.length + bots.length;
-        roles = new bytes32[](n);
-        expected = new address[][](n);
-        uint256 k;
-        roles[k] = HandoverPlan.DEFAULT_ADMIN_ROLE;
-        expected[k++] = _one(inp.timelock);
-        for (uint256 i; i < tl.length; ++i) {
-            roles[k] = tl[i];
-            expected[k++] = _one(inp.timelock);
-        }
-        roles[k] = LibAccessControl.PAUSER_ROLE;
-        expected[k++] = _one(inp.pauserSafe);
-        roles[k] = LibAccessControl.EMERGENCY_REVOKER_ROLE;
-        expected[k++] = _one(inp.governanceSafe);
-        for (uint256 i; i < bots.length; ++i) {
-            roles[k] = bots[i];
-            expected[k++] = inp.botHolders[i] == address(0) ? new address[](0) : _one(inp.botHolders[i]);
+        expected = new address[][](roles.length);
+        for (uint256 k; k < roles.length; ++k) {
+            bytes32 role = roles[k];
+            if (role == LibAccessControl.PAUSER_ROLE) {
+                expected[k] = _one(inp.pauserSafe);
+                continue;
+            }
+            if (role == LibAccessControl.EMERGENCY_REVOKER_ROLE) {
+                expected[k] = _one(inp.governanceSafe);
+                continue;
+            }
+            expected[k] = _one(inp.timelock);
+            for (uint256 i; i < bots.length; ++i) {
+                if (role == bots[i]) {
+                    expected[k] = inp.botHolders[i] == address(0) ? new address[](0) : _one(inp.botHolders[i]);
+                }
+            }
         }
     }
 
