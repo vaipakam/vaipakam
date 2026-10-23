@@ -17,6 +17,7 @@ interface ILaunchReadableDiamond {
     // forge-lint: disable-next-line(mixed-case-function)
     function getVPFIToken() external view returns (address);
     function hasRole(bytes32 role, address account) external view returns (bool);
+    function owner() external view returns (address);
 }
 
 /**
@@ -101,6 +102,10 @@ library LibLaunchReadiness {
         ///      rate-governor wiring the handover gate proved. Zero declares
         ///      no cross-chain VPFI.
         address vpfiPool;
+        /// @dev The artifact's `VpfiPoolRateGovernor`: the only rate-limit
+        ///      admin the declared pool may have, so every limit change stays
+        ///      inside the governor's bounds.
+        address rateGovernor;
         /// @dev The CCIP chain selector of every lane the pool must carry,
         ///      exactly (`CCIP_LANE_CHAIN_IDS`, the list the ccip-wire phase
         ///      wires). Empty declares none.
@@ -126,7 +131,7 @@ library LibLaunchReadiness {
         checks[1] = _sanctions(diamond);
         checks[2] = _priceFeed(diamond, declared.weth);
         checks[3] = _swapRoute(diamond);
-        checks[4] = _vpfiPool(route, declared);
+        checks[4] = _vpfiPool(diamond, route, declared);
         checks[5] = _ccipLanes(route, declared);
     }
 
@@ -343,12 +348,31 @@ library LibLaunchReadiness {
     }
 
     /// @dev The registry must route the Diamond's VPFI token through the
-    ///      DECLARED pool: the one the handover gate proved Timelock-owned
-    ///      and wired to the bounded rate governor. A registry pointing at
-    ///      any other pool (a stale artifact, a look-alike) would launch
-    ///      through a pool nobody checked (Codex #2686 r7).
-    function _vpfiPool(VpfiRoute memory route, Declared memory declared) private pure returns (Check memory c) {
-        c.label = "VPFI routes through the declared pool";
+    ///      DECLARED pool, and that route must be governed by the Diamond's
+    ///      own owner (the Timelock on production) at the moment of the read.
+    ///      Binding the address alone is not enough (Codex #2686 r7, r8):
+    ///      the handover gate proves the authorities before the proposal, but
+    ///      another operation queued in the same delay could re-point the
+    ///      pool's rate-limit admin, its owner, the governor's owner or the
+    ///      token's registry administrator, and the launch would then open a
+    ///      route someone else can uncap. So the gate re-reads, in the
+    ///      transaction that unpauses:
+    ///        - the registry's VPFI administrator is the Diamond's owner, with
+    ///          no transfer pending;
+    ///        - the pool's owner is the Diamond's owner;
+    ///        - the pool's rate-limit admin is the declared governor;
+    ///        - the governor is owned by the Diamond's owner, with no transfer
+    ///          pending, and administers this pool.
+    ///      What it cannot read: a CCIP pool keeps its pending owner private,
+    ///      so a transfer the owner has started and nobody accepted yet is
+    ///      invisible here (the handover gate reads it from the pool's
+    ///      events). Accepting it would itself need a later transaction.
+    function _vpfiPool(address diamond, VpfiRoute memory route, Declared memory declared)
+        private
+        view
+        returns (Check memory c)
+    {
+        c.label = "VPFI routes through the declared pool, governed by the Diamond's owner";
         if (!route.readable) {
             c.detail = route.detail;
             return c;
@@ -362,15 +386,64 @@ library LibLaunchReadiness {
             c.detail = "the TokenAdminRegistry maps no pool to the Diamond's VPFI token: run the ccip-wire phase";
             return c;
         }
-        if (declared.vpfiPool == address(0)) {
-            c.detail = "no VPFI pool declared (the artifact records no vpfiTokenPool) to compare the registry's pool against";
+        if (declared.vpfiPool == address(0) || declared.rateGovernor == address(0)) {
+            c.detail = "no VPFI pool or rate governor declared (the artifact records no vpfiTokenPool or vpfiPoolRateGovernor) to compare the route against";
+            return c;
+        }
+        if (route.pool != declared.vpfiPool) {
+            c.checkable = true;
+            c.detail = "the TokenAdminRegistry routes the Diamond's VPFI token through a pool other than the declared one (the pool the handover gate checked)";
+            return c;
+        }
+        address governance;
+        try ILaunchReadableDiamond(diamond).owner() returns (address o) {
+            governance = o;
+        } catch {
+            c.detail = "the Diamond's owner() unreadable";
+            return c;
+        }
+        (bool ok, bytes memory ret) = declared.tokenAdminRegistry.staticcall{gas: PROBE_GAS}(
+            abi.encodeWithSignature("getTokenConfig(address)", route.token)
+        );
+        if (!ok || ret.length != 96) {
+            c.detail = "getTokenConfig(vpfiToken) unreadable on the TokenAdminRegistry";
+            return c;
+        }
+        (uint256 administrator, uint256 pendingAdministrator,) = abi.decode(ret, (uint256, uint256, uint256));
+        (bool poolOwnerRead, address poolOwner) = _readAddress(route.pool, abi.encodeWithSignature("owner()"));
+        (bool rateAdminRead, address rateAdmin) =
+            _readAddress(route.pool, abi.encodeWithSignature("getRateLimitAdmin()"));
+        (bool govOwnerRead, address govOwner) = _readAddress(declared.rateGovernor, abi.encodeWithSignature("owner()"));
+        (bool govPendingRead, address govPending) =
+            _readAddress(declared.rateGovernor, abi.encodeWithSignature("pendingOwner()"));
+        (bool govPoolRead, address govPool) = _readAddress(declared.rateGovernor, abi.encodeWithSignature("pool()"));
+        if (
+            administrator >> 160 != 0 || pendingAdministrator >> 160 != 0 || !poolOwnerRead || !rateAdminRead
+                || !govOwnerRead || !govPendingRead || !govPoolRead
+        ) {
+            c.detail = "an authority of the VPFI route (registry administrator, pool owner or rate admin, governor owner or pool) is unreadable";
             return c;
         }
         c.checkable = true;
-        c.met = route.pool == declared.vpfiPool;
-        c.detail = c.met
-            ? "the TokenAdminRegistry routes the Diamond's VPFI token through the declared pool"
-            : "the TokenAdminRegistry routes the Diamond's VPFI token through a pool other than the declared one (the pool the handover gate checked)";
+        if (address(uint160(administrator)) != governance || pendingAdministrator != 0) {
+            c.detail = "the registry's VPFI administrator is not the Diamond's owner, or a transfer of it is pending";
+        } else if (poolOwner != governance) {
+            c.detail = "the VPFI pool's owner is not the Diamond's owner";
+        } else if (rateAdmin != declared.rateGovernor) {
+            c.detail = "the VPFI pool's rate-limit admin is not the declared rate governor, so its limits could be changed outside the governor's bounds";
+        } else if (govOwner != governance || govPending != address(0) || govPool != route.pool) {
+            c.detail = "the rate governor is not owned by the Diamond's owner, has an ownership transfer pending, or administers another pool";
+        } else {
+            c.met = true;
+            c.detail = "the TokenAdminRegistry routes VPFI through the declared pool, and the registry administrator, the pool owner and the rate governor's owner are all the Diamond's owner (a CCIP pool's pending owner is private and not read here)";
+        }
+    }
+
+    /// @dev One `address` answer from `target`, or unreadable.
+    function _readAddress(address target, bytes memory call) private view returns (bool, address) {
+        (bool ok, bytes memory ret) = target.staticcall{gas: PROBE_GAS}(call);
+        if (!ok || ret.length != 32 || uint256(bytes32(ret)) >> 160 != 0) return (false, address(0));
+        return (true, address(uint160(uint256(bytes32(ret)))));
     }
 
     /// @dev The pool CCIP actually routes VPFI through must carry EXACTLY

@@ -591,11 +591,19 @@ even for the gap between the deploy and the handover.
    - the declared WETH, an 18-decimal token contract, which the Diamond's
      own oracle prices from the ETH reference feed right now;
    - an enabled swap adapter that answers `adapterName()`;
-   - VPFI routed through the declared pool: the chain's CCIP
-     `TokenAdminRegistry` (`CCIP_TOKEN_ADMIN_REGISTRY`) must map the VPFI
-     token the Diamond records to the artifact's `vpfiTokenPool`, the pool
-     the handover gate proved Timelock-owned and bound to the rate
-     governor;
+   - VPFI routed through the declared pool, governed by the Diamond's
+     owner: the chain's CCIP `TokenAdminRegistry`
+     (`CCIP_TOKEN_ADMIN_REGISTRY`) must map the VPFI token the Diamond
+     records to the artifact's `vpfiTokenPool`; the registry's VPFI
+     administrator (with no transfer pending), the pool's owner and the
+     rate governor's owner (with no transfer pending) must all be the
+     Diamond's owner, the Timelock; and the pool's rate-limit admin must be
+     the artifact's `vpfiPoolRateGovernor`, which administers that pool.
+     The gate re-reads all of this at execution, so an operation queued in
+     the same delay cannot re-point the route's authority and still launch.
+     A CCIP pool keeps its pending owner private, so a pool transfer started
+     and not yet accepted is not visible to the gate; the handover gate
+     reads it from the pool's events;
    - exactly the declared CCIP lanes on that pool (`CCIP_LANE_CHAIN_IDS`,
      resolved per chain as the ccip-wire phase does): none missing and
      none extra, each with inbound and outbound rate limits enabled and

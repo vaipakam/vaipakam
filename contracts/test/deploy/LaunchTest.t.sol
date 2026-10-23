@@ -20,9 +20,60 @@ import {LaunchGate} from "../../src/governance/LaunchGate.sol";
 import {LibLaunchReadiness} from "../../src/governance/LibLaunchReadiness.sol";
 import {VaipakamTimelock} from "../../src/governance/VaipakamTimelock.sol";
 
+/// @dev Whoever owns the Diamond, read live: the route mocks below answer
+///      their authority reads with it unless a test overrides one.
+interface ILaunchOwnerView {
+    function owner() external view returns (address);
+}
+
+/// @dev Authority reads that follow the Diamond's owner by default.
+abstract contract LaunchFollowsOwner {
+    address internal followed;
+    address internal ownerOverride;
+
+    function follow(address diamond) external {
+        followed = diamond;
+    }
+
+    function setOwner(address o) external {
+        ownerOverride = o;
+    }
+
+    function owner() public view returns (address) {
+        if (ownerOverride != address(0) || followed == address(0)) return ownerOverride;
+        return ILaunchOwnerView(followed).owner();
+    }
+}
+
+/// @dev A `VpfiPoolRateGovernor` stand-in: its owner and the pool it
+///      administers.
+contract LaunchMockGovernor is LaunchFollowsOwner {
+    address public pool;
+    address public pendingOwner;
+
+    constructor(address pool_) {
+        pool = pool_;
+    }
+
+    function setPendingOwner(address p) external {
+        pendingOwner = p;
+    }
+}
+
 /// @dev A CCIP pool stand-in: its lanes, and each lane's rate-limiter
-///      buckets (enabled at the starting values by default).
-contract LaunchMockPool {
+///      buckets (enabled at the starting values by default), its owner and
+///      its rate-limit admin.
+contract LaunchMockPool is LaunchFollowsOwner {
+    address internal rateLimitAdmin;
+
+    function setRateLimitAdmin(address a) external {
+        rateLimitAdmin = a;
+    }
+
+    function getRateLimitAdmin() external view returns (address) {
+        return rateLimitAdmin;
+    }
+
     /// @dev CCIP's `RateLimiter.TokenBucket`, field for field.
     struct Bucket {
         uint128 tokens;
@@ -60,9 +111,26 @@ contract LaunchMockPool {
     }
 }
 
-/// @dev A CCIP TokenAdminRegistry stand-in: only `getPool(token)` is read.
-contract LaunchMockRegistry {
+/// @dev A CCIP TokenAdminRegistry stand-in: `getPool(token)` and
+///      `getTokenConfig(token)`, whose administrator follows the Diamond's
+///      owner by default.
+contract LaunchMockRegistry is LaunchFollowsOwner {
+    struct TokenConfig {
+        address administrator;
+        address pendingAdministrator;
+        address tokenPool;
+    }
+
     mapping(address => address) internal pools;
+    address internal pendingAdministrator;
+
+    function setPendingAdministrator(address p) external {
+        pendingAdministrator = p;
+    }
+
+    function getTokenConfig(address token) external view returns (TokenConfig memory) {
+        return TokenConfig(owner(), pendingAdministrator, pools[token]);
+    }
 
     function setPool(address token, address pool) external {
         pools[token] = pool;
@@ -239,7 +307,13 @@ contract LaunchTest is Test {
         pool.setLanes(l);
         LaunchMockRegistry registry = new LaunchMockRegistry();
         registry.setPool(VPFI, address(pool));
+        LaunchMockGovernor governor = new LaunchMockGovernor(address(pool));
+        pool.setRateLimitAdmin(address(governor));
+        pool.follow(diamond);
+        registry.follow(diamond);
+        governor.follow(diamond);
         wiredPool[address(registry)] = address(pool);
+        wiredGovernor[address(registry)] = address(governor);
         return address(registry);
     }
 
@@ -247,6 +321,7 @@ contract LaunchTest is Test {
     ///      no external call (it is evaluated between `vm.expectRevert` and
     ///      the call under test).
     mapping(address => address) internal wiredPool;
+    mapping(address => address) internal wiredGovernor;
 
     /// @dev What a launch declares for `registry`: the pool and lane
     ///      `_registryWithLane` wired for it (nothing for a registry built by
@@ -256,6 +331,7 @@ contract LaunchTest is Test {
         d.tokenAdminRegistry = registry;
         d.weth = weth;
         d.vpfiPool = wiredPool[registry];
+        d.rateGovernor = wiredGovernor[registry];
         if (d.vpfiPool != address(0)) {
             d.lanes = new uint64[](1);
             d.lanes[0] = 1;
@@ -630,7 +706,7 @@ contract LaunchTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 LaunchGate.LaunchNotReady.selector,
-                "VPFI routes through the declared pool",
+                "VPFI routes through the declared pool, governed by the Diamond's owner",
                 "NOT CHECKED",
                 "no CCIP TokenAdminRegistry given (CCIP_TOKEN_ADMIN_REGISTRY), so the VPFI pool is unknown"
             )
@@ -1128,7 +1204,7 @@ contract LaunchTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 LaunchGate.LaunchNotReady.selector,
-                "VPFI routes through the declared pool",
+                "VPFI routes through the declared pool, governed by the Diamond's owner",
                 "NOT MET",
                 "the TokenAdminRegistry routes the Diamond's VPFI token through a pool other than the declared one (the pool the handover gate checked)"
             )
@@ -1238,5 +1314,63 @@ contract LaunchTest is Test {
         d.lanes = new uint64[](0);
         Launch.Outcome o = launcher.launch(diamond, d, address(0), admin, ADMIN_KEY);
         assertEq(uint8(o), uint8(Launch.Outcome.Unpaused));
+    }
+
+    // ─── Round 8 (Codex #2686): the route's authorities at execution ────
+
+    function _expectRouteRefused(string memory detail) internal {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchGate.LaunchNotReady.selector,
+                "VPFI routes through the declared pool, governed by the Diamond's owner",
+                "NOT MET",
+                detail
+            )
+        );
+    }
+
+    /// @dev The pool's rate-limit admin is re-pointed during the delay:
+    ///      its in-bounds limits could then be lifted at once, so the launch
+    ///      reverts and the Diamond stays paused.
+    function test_Production_RateAdminRepointedDuringDelayRevertsTheLaunch() public {
+        (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
+        _pool(registry).setRateLimitAdmin(address(0xBAD));
+        (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
+            launcher.launchBatch(diamond, _d(registry), admin, epoch);
+        bytes32 salt = launcher.launchSalt(diamond);
+        _expectRouteRefused(
+            "the VPFI pool's rate-limit admin is not the declared rate governor, so its limits could be changed outside the governor's bounds"
+        );
+        tl.executeBatch(targets, values, payloads, bytes32(0), salt);
+        assertTrue(AdminFacet(diamond).paused());
+    }
+
+    function test_Gate_RefusesAPoolOwnedByAnotherAccount() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        _pool(registry).setOwner(address(0xBAD));
+        _expectRouteRefused("the VPFI pool's owner is not the Diamond's owner");
+        _gate().assertReady(diamond, _d(registry), admin);
+    }
+
+    function test_Gate_RefusesAPendingRegistryAdministratorTransfer() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        LaunchMockRegistry(registry).setPendingAdministrator(address(0xBAD));
+        _expectRouteRefused("the registry's VPFI administrator is not the Diamond's owner, or a transfer of it is pending");
+        _gate().assertReady(diamond, _d(registry), admin);
+    }
+
+    function test_Gate_RefusesAGovernorWithAPendingOwner() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        LaunchMockGovernor(wiredGovernor[registry]).setPendingOwner(address(0xBAD));
+        _expectRouteRefused(
+            "the rate governor is not owned by the Diamond's owner, has an ownership transfer pending, or administers another pool"
+        );
+        _gate().assertReady(diamond, _d(registry), admin);
     }
 }

@@ -83,7 +83,15 @@ reviewed. The pool Chainlink's registry routes VPFI through must be the pool
 the deploy recorded, the one the handover check proved is owned by the
 Timelock; the handover check itself now also fails when the registry routes
 VPFI through any other pool, or when that pool's rate limits can be set by
-anyone but the bounded rate governor. The configured WETH must be a token
+anyone but the bounded rate governor. The launch-gate contract re-reads that
+authority when the Timelock executes the launch: the token's registry
+administrator, the pool's owner and the rate governor's owner must all still
+be the Timelock, with no transfer pending where one can be seen, and the
+pool's rate-limit admin must still be the governor, so a change queued in the
+same 48-hour wait cannot hand the route to someone who could lift its limits.
+(A Chainlink pool keeps a started ownership transfer private, so the gate
+cannot see one; the handover check reads it from the pool's events.) The
+configured WETH must be a token
 contract with 18 decimals, because the price oracle prices whatever address
 is stored as WETH from the ETH feed. Nothing on-chain records which token is
 a chain's bridged WETH, so the Timelock proposal prints the WETH (with the

@@ -454,9 +454,10 @@ contract Launch is Script {
     ///         itself wired from, never read back from the configuration
     ///         under test:
     ///           - the CCIP registry: `CCIP_TOKEN_ADMIN_REGISTRY`;
-    ///           - the VPFI pool: the artifact's `vpfiTokenPool`, the pool
-    ///             the handover gate proves Timelock-owned and bound to the
-    ///             registry;
+    ///           - the VPFI pool and its rate governor: the artifact's
+    ///             `vpfiTokenPool` and `vpfiPoolRateGovernor`, which the
+    ///             handover gate proves Timelock-owned and bound to the
+    ///             registry and to each other;
     ///           - the lanes: `CCIP_LANE_CHAIN_IDS` (the deploy wrappers
     ///             resolve the per-chain `CCIP_LANE_CHAIN_IDS_<SLUG>` into
     ///             it), as CCIP chain selectors;
@@ -468,6 +469,7 @@ contract Launch is Script {
     function declaredFromEnv(address diamond) public view returns (LibLaunchReadiness.Declared memory d) {
         d.tokenAdminRegistry = vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0));
         d.vpfiPool = Deployments.readVpfiTokenPoolOptional();
+        d.rateGovernor = Deployments.readVpfiPoolRateGovernorOptional();
         uint256[] memory ids = vm.envOr("CCIP_LANE_CHAIN_IDS", ",", new uint256[](0));
         d.lanes = new uint64[](ids.length);
         for (uint256 i; i < ids.length; ++i) {
@@ -535,6 +537,7 @@ contract Launch is Script {
         console.log("    declared - REVIEW each value before signing; the gate refuses anything else:");
         console.log("      tokenAdminRegistry:", declared.tokenAdminRegistry);
         console.log("      VPFI pool (the artifact's vpfiTokenPool, checked by the handover gate):", declared.vpfiPool);
+        console.log("      rate governor (the artifact's vpfiPoolRateGovernor):", declared.rateGovernor);
         console.log("      CCIP lane selectors (CCIP_LANE_CHAIN_IDS), exactly:", declared.lanes.length);
         for (uint256 i; i < declared.lanes.length; ++i) {
             console.log("        ", uint256(declared.lanes[i]));

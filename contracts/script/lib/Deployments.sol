@@ -425,6 +425,8 @@ library Deployments {
     function readTimelockOptional() internal view returns (address) { return _tryReadAddr(".timelock"); }
     /// @notice The chain's CCIP VPFI pool, or zero when none is recorded (#945).
     function readVpfiTokenPoolOptional() internal view returns (address) { return _tryReadAddr(".vpfiTokenPool"); }
+    /// @notice The chain's VPFI pool rate governor, or zero when none is recorded (#945).
+    function readVpfiPoolRateGovernorOptional() internal view returns (address) { return _tryReadAddr(".vpfiPoolRateGovernor"); }
     /// @notice #2583 — optional, non-reverting read of `.serviceCapacityEscrow`.
     ///         Zero on a chain whose escrow has not been bound and recorded.
     function readServiceCapacityEscrowOptional() internal view returns (address) { return _tryReadAddr(".serviceCapacityEscrow"); }
