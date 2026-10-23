@@ -169,37 +169,59 @@ console.log(
       ? ` — ${catchUp.runs.map((x) => `${x.from}–${x.to}: ${x.chunks} window(s) = ${x.scans} scan(s)`).join(', ')}`
       : ''),
 );
+// ONE verdict, decided at the end: FAIL > UNRESOLVED > PASS. Nothing exits
+// early, so an UNRESOLVED reason can never hide a defect the drive had
+// already observed — a write the read-only session aborted fails the run even
+// when no RPC succeeded (#2710 r3).
+const unresolved = [];
+
 // No SUCCESSFUL RPC in the window means there was no RPC behaviour to
-// audit — BLOCKED, not a budget PASS (Codex #1621 r7).
+// audit — UNRESOLVED, not a budget PASS (Codex #1621 r7). The budgets are
+// CEILINGS: an unreachable or misconfigured chain endpoint scores zero and
+// would otherwise pass them, so they are not judged at all.
 if (rpcOk === 0) {
-  await blocked(
+  unresolved.push(
     'the page received no successful JSON-RPC response in the 60s window, so' +
-      ' there was no RPC behaviour to audit. The budgets below are CEILINGS —' +
-      ' an unreachable or misconfigured chain endpoint scores zero and would' +
+      ' there was no RPC behaviour to audit. The budgets are CEILINGS: an' +
+      ' unreachable or misconfigured chain endpoint scores zero and would' +
       ' otherwise pass them.',
   );
+} else {
+  check(
+    `JSON-RPC calls within budget, each catch-up run charged as the fewest scans that produce it (${budgeted} <= ${BUDGET_TOTAL}; ${total} raw)`,
+    budgeted <= BUDGET_TOTAL,
+  );
+  check(
+    `eth_blockNumber within budget (${counts['eth_blockNumber'] ?? 0} <= ${BUDGET_BLOCKNUMBER})`,
+    (counts['eth_blockNumber'] ?? 0) <= BUDGET_BLOCKNUMBER,
+  );
+  // The diet must not blank the surface it protects.
+  const body = await page.locator('body').innerText();
+  check('book still renders', body.length > 300);
 }
-check(
-  `JSON-RPC calls within budget, each catch-up run charged as the fewest scans that produce it (${budgeted} <= ${BUDGET_TOTAL}; ${total} raw)`,
-  budgeted <= BUDGET_TOTAL,
-);
-check(
-  `eth_blockNumber within budget (${counts['eth_blockNumber'] ?? 0} <= ${BUDGET_BLOCKNUMBER})`,
-  (counts['eth_blockNumber'] ?? 0) <= BUDGET_BLOCKNUMBER,
-);
-// The scan's shape, held to the app's own rules (`bookCatchUp.ts`).
+// The scan's shape, held to the app's own rules (`bookCatchUp.ts`). One
+// window is one request, so this is certain whether or not it succeeded.
 check(
   `every catch-up window is at most ${CHUNK_BLOCKS} blocks`,
   catchUp.oversized.length === 0,
   catchUp.oversized.join(', '),
 );
-// The diet must not blank the surface it protects.
-const body = await page.locator('body').innerText();
-check('book still renders', body.length > 300);
+// A run of catch-up windows longer than one scan may be is either a scan
+// past the skip cap or adjacent scans the wire cannot separate
+// (`catchUpTally.mjs`), so it is never a product FAIL on its own — but it is
+// not a PASS either.
+if (catchUp.longRuns.length > 0) {
+  unresolved.push(
+    `catch-up run(s) longer than one scan may be (${MAX_CHUNKS_PER_SCAN} windows): ` +
+      `${catchUp.longRuns.join(', ')}. Either the page scanned past the skip cap, or` +
+      ' adjacent scans met exactly where the indexer cursor landed; the wire cannot' +
+      ' say which, so look at the page before trusting a PASS.',
+  );
+}
 
 // A read-only session that had to ABORT a write the page attempted has
-// found a defect, whatever the budget says (#2710 r2). Read after the
-// teardown, so an attempt made while the context closes still counts.
+// found a defect, whatever else held (#2710 r2). Read after the teardown,
+// so an attempt made while the context closes still counts.
 await done();
 const { violations } = splitBlocked(blockedRequests ?? [], [SITE]);
 check(
@@ -208,21 +230,10 @@ check(
   violations.map((v) => v.reason).join(' | ').slice(0, 300),
 );
 
-// FAIL > UNRESOLVED > PASS. A run of catch-up windows longer than one scan
-// may be is either a scan past the skip cap or adjacent scans the wire
-// cannot separate (`catchUpTally.mjs`), so it is never a product FAIL on its
-// own — but it is not a PASS either.
 if (fails > 0) {
-  console.log(`${fails} FAILURES`);
+  console.log(`${fails} FAILURES${unresolved.length ? ` (also unresolved: ${unresolved.length})` : ''}`);
   process.exit(1);
 }
-if (catchUp.longRuns.length > 0) {
-  await blocked(
-    `catch-up run(s) longer than one scan may be (${MAX_CHUNKS_PER_SCAN} windows): ` +
-      `${catchUp.longRuns.join(', ')}. Either the page scanned past the skip cap, or` +
-      ' adjacent scans met exactly where the indexer cursor landed; the wire cannot' +
-      ' say which, so look at the page before trusting a PASS.',
-  );
-}
+if (unresolved.length > 0) await blocked(unresolved.join('\n  '));
 console.log('ALL PASS');
 process.exit(0);
