@@ -15,8 +15,16 @@ import {HelperTest} from "./HelperTest.sol";
 ///         `docs/ops/DeploymentRunbook.md` §6: after the deployer hands
 ///         every role to the governance multisig / admin timelock /
 ///         pauser multisig, the deployer must hold **zero** roles on
-///         the Diamond. A runbook that is not enforced by CI is a
-///         runbook that drifts — this test is that enforcement.
+///         the Diamond.
+///
+///         **This is a unit model, not the live gate** (#944). It builds
+///         its own throwaway Diamond and walks the rotation by hand, so it
+///         says nothing about any deployed chain — it would pass whatever a
+///         chain held. The live exit gate is `script/HandoverGate.s.sol`
+///         (`--phase handover-gate`), which rebuilds every role holder from
+///         the chain's role events; its tests are
+///         `test/deploy/HandoverGateTest.t.sol`, which also drive the real
+///         `Handover` body rather than a hand-written copy of it.
 ///
 /// @dev Modeled on the canonical launch-check pattern: once the bootstrap
 ///      key has walked through its grants+renounces, the test asserts

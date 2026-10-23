@@ -342,9 +342,12 @@ Expected end-state:
 | EMERGENCY_REVOKER_ROLE | — | ✓ | — | — |
 | ERC-173 owner | ✓ | — | — | — |
 
-`WATCHER_ROLE`, `NOTIF_BILLER_ROLE` and `KEEPER_ROLE` stay on the admin
-EOA until the per-bot keys are set up; nothing else may. If the admin
-column has any other ✓, step E did not complete.
+`KEEPER_ROLE`, `WATCHER_ROLE` and `NOTIF_BILLER_ROLE` go to their bot
+keys in the same run (`KEEPER_ADDRESS`, `WATCHER_ADDRESS`,
+`NOTIF_BILLER_ADDRESS`; the zero address leaves one unheld), and the admin
+EOA ends with **no** Diamond role (#669). If the admin column has any ✓,
+step E did not complete. `--phase handover-gate` checks this table against
+the chain, holder by holder, and fails on any key it does not name (#944).
 
 ### F.3 Optional: gate execution behind the gov Safe
 

@@ -305,6 +305,10 @@ Phases (mirror mainnet phase-for-phase except pause-rehearsal):
                      the launch posture leaves VPFI unpriced (#884).
   handover         — Rotate roles + ownership to governance topology.
                      Requires --confirm-i-have-multisig-ready
+  handover-gate    — Read-only live exit gate (HandoverGate.s.sol): the
+                     chain's role holders, owners and CCT admin must
+                     match the governance topology. Run after the Safe
+                     has executed every acceptOwnership.
   abi-sync         — packages/contracts ABI + deployments.json sync
                      + sibling keeper-bot repo (when present).
   cf-app          — Build + wrangler deploy apps/app (the dApp).
@@ -1528,7 +1532,7 @@ Refusing --phase handover without --confirm-i-have-multisig-ready.
 This phase rotates DEFAULT_ADMIN_ROLE / Timelock-bound roles /
 PAUSER_ROLE / ERC-173 ownership / cross-chain-contract ownership off ADMIN. The
 multi-party Safe ceremony that follows (acceptOwnership on each
-OApp + DeployerZeroRolesTest as exit gate) MUST run within the
+OApp, then --phase handover-gate as exit gate) MUST run within the
 Ownable2Step pending-owner window — i.e. the multisig signers
 need to be reachable.
 
@@ -1644,6 +1648,27 @@ EOF
   echo "deploy-testnet.sh — handover  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
 
+  # #944 — the three bot roles move to their own keys in this same
+  # ceremony and the admin key renounces every role. Each holder must be
+  # SET (the zero address leaves that role unheld on purpose), so a
+  # forgotten variable stops here rather than as a mid-script revert.
+  local unset_bots=()
+  for v in KEEPER_ADDRESS WATCHER_ADDRESS NOTIF_BILLER_ADDRESS; do
+    [ -n "${!v:-}" ] || unset_bots+=("$v")
+  done
+  if [ ${#unset_bots[@]} -gt 0 ]; then
+    cat >&2 <<EOF
+Refusing --phase handover: bot-role holder(s) unset: ${unset_bots[*]}
+
+Handover gives KEEPER_ROLE, WATCHER_ROLE and NOTIF_BILLER_ROLE to their
+bot keys and the admin key renounces every role. Set each variable to
+its bot EOA (KEEPER_ADDRESS is the keeper's signer, the same EOA as
+KEEPER_BOT_OWNER), or to 0x0000000000000000000000000000000000000000 to
+leave that role unheld until a Timelock proposal grants it.
+EOF
+    exit 1
+  fi
+
   CHAIN_SLUG="$CHAIN_SLUG" forge script script/Handover.s.sol \
     --rpc-url "$RPC" --broadcast --slow
 
@@ -1654,10 +1679,42 @@ EOF
   echo "✓ handover phase done. Multi-sig follow-up:"
   echo "  1. acceptOwnership() on each OApp via the governance Safe UI"
   echo "     — calldata + addresses are printed above."
-  echo "  2. Run DeployerZeroRolesTest as the hard exit gate:"
-  echo "       forge test --match-path test/DeployerZeroRolesTest.t.sol \\"
-  echo "         --fork-url \$$RPC_VAR"
-  echo "     The test must pass before this chain is considered handed-off."
+  echo "     The same goes for acceptAdminRole on the CCIP TokenAdminRegistry"
+  echo "     when the script printed it."
+  echo "  2. Run the live exit gate (read-only, no key):"
+  echo "       bash contracts/script/deploy-testnet.sh $CHAIN_SLUG --phase handover-gate"
+  echo "     The chain is not handed off until it passes."
+}
+
+# ── Phase: handover-gate ──────────────────────────────────────────────
+# The live exit gate (#944, #669). HandoverGate.s.sol reads THIS chain:
+# every Diamond and Timelock role holder rebuilt from the role events since
+# `deployBlock`, the Diamond owner and role admins, the Timelock delay and
+# floor, every two-step target's owner and pending owner, and the VPFI CCT
+# administrator. Read-only: no --broadcast, no key. It replaced
+# DeployerZeroRolesTest, which built a throwaway Diamond and never read the
+# chain, so it passed whatever the chain held.
+
+phase_handover_gate() {
+  _assert_rpc_chain
+  # The local marker is advisory here: this phase only reads, and the chain,
+  # not a file, decides whether the handover happened. A handover run
+  # outside this wrapper, or one that died after broadcasting but before
+  # writing its marker, must still be checkable (Codex #2660 r1).
+  if ! phase_already_done "handover"; then
+    echo "NOTE: no local handover marker for $CHAIN_SLUG; checking the chain anyway." >&2
+  fi
+
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "deploy-testnet.sh — handover-gate  ($CHAIN_SLUG)"
+  echo "═══════════════════════════════════════════════════════════════"
+
+  CHAIN_SLUG="$CHAIN_SLUG" forge script script/HandoverGate.s.sol \
+    --rpc-url "$RPC"
+
+  mark_phase_done "handover-gate"
+  echo
+  echo "✓ handover-gate passed: the chain holds the governance topology."
 }
 
 # ── Phase: abi-sync ───────────────────────────────────────────────────
@@ -2376,6 +2433,7 @@ case "$PHASE" in
   testnet-mocks)    phase_testnet_mocks ;;
   configure)        phase_configure ;;
   handover)         phase_handover ;;
+  handover-gate)    phase_handover_gate ;;
   abi-sync)         phase_abi_sync ;;
   cf-app)          phase_cf_app ;;
   cf-www)           phase_cf_www ;;

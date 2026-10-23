@@ -1376,8 +1376,9 @@ unfreeze it — `UNPAUSER_ROLE` sits behind the timelock, so a compromised or mi
 cannot undo a freeze without the configured review delay. Role-gated surfaces are never keeper-executable: all admin, treasury, NFT-ownership, vault-upgrade, pause, oracle-admin, and role-management functions remain role-gated or owner-gated, and third-party keepers hold no Diamond role.
 
 Key-rotation posture. The deploying hot key exists only to bootstrap: after handover it must
-renounce every privileged role, and `DeployerZeroRolesTest` enforces "deployer holds zero roles" as
-a cutover invariant. `AccessControlFacet.transferAdmin` provides a single-transaction role-and-ownership handoff that relinquishes `DEFAULT_ADMIN_ROLE` last and rejects zero-address or self-transfer targets. Handover preflight refuses to grant roles until bytecode is verified at the
+renounce every privileged role, bot roles included, and a read-only handover gate checks the live
+chain before the cutover counts as done: it rebuilds every role holder from the chain's own role
+events and fails on any key the governance plan does not name, the deployer's included. `AccessControlFacet.transferAdmin` provides a single-transaction role-and-ownership handoff that relinquishes `DEFAULT_ADMIN_ROLE` last and rejects zero-address or self-transfer targets. Handover preflight refuses to grant roles until bytecode is verified at the
 configured Governance Safe, Pauser / Guardian Safe, and Timelock addresses — on mainnet, an
 undeployed privileged recipient is a hard stop, because granting admin power to an empty address
 after deployer renounce can make recovery impossible. Worker-side signing keys and API credentials
@@ -1494,7 +1495,7 @@ A deployment must pass through layered gates before value can route through it:
    lane's limit; and the Cross-Chain Token admin entry plus every cross-chain contract's ownership
    rotated to the governance path before real value routes.
 6. **Admin handover** — the three-role topology installed with bytecode-verified recipients, the
-   deployer's roles renounced, and `DeployerZeroRolesTest` green (Section 16.1).
+   deployer's roles renounced, and the live handover gate green on every chain (Section 16.1).
 
 Redeploy is guarded too: deployment phases refuse to overwrite an existing deployment by default,
 mainnet redeploys require explicit purge and orphan-state confirmations after checking live offer /

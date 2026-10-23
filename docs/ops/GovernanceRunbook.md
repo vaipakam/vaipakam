@@ -111,13 +111,20 @@ the admin EOA:
    `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE` and `VAULT_ADMIN_ROLE` to the
    Timelock.
 4. Grants `PAUSER_ROLE` to the Pauser Safe.
+4b. Grants `KEEPER_ROLE`, `WATCHER_ROLE` and `NOTIF_BILLER_ROLE` to the
+   bot keys named by `KEEPER_ADDRESS`, `WATCHER_ADDRESS` and
+   `NOTIF_BILLER_ADDRESS` (#669). All three variables are required; the
+   zero address leaves that role unheld on purpose, to be granted later
+   by a Timelock proposal. A bot key may not be the admin, either Safe,
+   the Timelock or the Diamond.
 5. Transfers ERC-173 Diamond ownership to the Timelock. Ownership can
    only move to an address that already holds the role root (#906), which
    step 1 arranged.
-6. Renounces `PAUSER_ROLE`, the six delayed roles and, last,
-   `DEFAULT_ADMIN_ROLE` from the admin EOA. `WATCHER_ROLE`,
-   `NOTIF_BILLER_ROLE` and `KEEPER_ROLE` stay on the admin EOA until the
-   per-bot keys are set up.
+6. Renounces the three bot roles, `PAUSER_ROLE`, the six delayed roles
+   and, last, `DEFAULT_ADMIN_ROLE` from the admin EOA. The admin key ends
+   the run holding **no** Diamond role. Before #669 the three bot roles
+   stayed on it "until the per-bot keys are set up", a step nothing ever
+   ran, so the deploy key kept the keeper and billing powers for good.
 7. Proposes the Timelock as owner (`transferOwnership`, the first leg of
    Ownable2Step) on every cross-chain contract recorded for the chain:
    `ccipMessenger`, `vpfiTokenPool`, `vpfiPoolRateGovernor`,
@@ -283,9 +290,39 @@ transfer in two steps and only the second clears the pending address, so
 call `acceptOwnership()`. Checking the owner alone accepts a handover that has
 not finished.
 
-A Foundry test `test/GovernanceHandover.t.sol` can drive all of these
-in one pass against a fork of the target chain; add that to CI as a
-pre-mainnet gate alongside `LZConfig.t.sol`.
+**Run the live gate rather than reading these one by one** (#944):
+
+```bash
+bash contracts/script/deploy-mainnet.sh <chain-slug> --phase handover-gate
+# testnets: deploy-testnet.sh, same phase
+```
+
+`script/HandoverGate.s.sol` is read-only (no key, no broadcast) and checks
+every line above against the chain, plus what a list of `hasRole` reads
+cannot see. The Diamond's access control is not enumerable, so asking "does
+the admin still hold X?" never finds a THIRD key holding it. The gate
+instead rebuilds the complete holder set of every role, on the Diamond and
+on the Timelock, from the `RoleGranted` / `RoleRevoked` events since the
+artifact's `deployBlock`, confirms each holder with `hasRole`, and fails on
+any holder the plan does not name. It refuses an incomplete log range: the
+range must contain each contract's construction (the Diamond's owner set
+from the zero address, the Timelock's delay set from zero), because a first
+root grant alone proves nothing (the handover's own grant to the Timelock is
+one), and every (role, account) pair the events name must agree with
+`hasRole` in both directions. It also checks every role's admin is the
+root, the Chainlink pool's pending owner by the log rule above, a readable
+`guardian()` equal to the Pauser Safe on every `GuardianPausable` target,
+and the CCT administrator. A contract the chain must carry but
+`addresses.json` lacks, an unset `CCIP_TOKEN_ADMIN_REGISTRY`, or a missing
+VPFI token fails on production chains and is reported as not checked on
+testnets. The plan it checks against is
+`script/lib/HandoverPlan.sol`, the same file `Handover.s.sol` reads, so the
+ceremony and the gate cannot drift apart.
+
+It replaces `DeployerZeroRolesTest` as the exit gate. That test builds its
+own throwaway Diamond and never reads the chain, so it passed whatever the
+chain held; it stays as a unit check of the model, not as evidence about a
+deployment.
 
 ### 6.1 Phase 7 oracle + DEX redundancy bring-up (added 2026-04-25)
 

@@ -317,7 +317,7 @@ This repository has been reviewed internally. External audit status is tracked i
 - Phase 5 borrower LIF custody (`LibVPFIDiscount.settleBorrowerLifProper` / `forfeitBorrowerLif`) — the held VPFI must never leak through any terminal path
 - Phase 6 keeper per-action authorization (lender-side vs borrower-side scoping)
 - Permit2 integration (signature replay protection, deadline enforcement, exact scope)
-- Role separation under the post-handover timelock; `DeployerZeroRolesTest` enforces the cutover invariant
+- Role separation under the post-handover timelock; the read-only `HandoverGate.s.sol` (`--phase handover-gate`) rebuilds every role holder on the live chain from its role events and fails on any key the governance plan does not name, including the deploy key
 
 Out-of-scope by design: frontend code, The Graph indexer logic (which is a *monitor*, not a source of truth), Tenderly alert wiring, the public reference keeper bot in the sibling `vaipakam-keeper-bot` repo (it holds no Diamond role), and Cloudflare Worker quote-proxy infrastructure under [`ops/hf-watcher/`](ops/hf-watcher/).
 
