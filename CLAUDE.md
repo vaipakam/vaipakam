@@ -1662,9 +1662,14 @@ Three profiles live in `contracts/foundry.toml`:
   So there is almost no memory headroom left: the old "~5 min, ~3.2 GB"
   figure is history. That 33-file compile also depends on the CI Foundry
   pin. From v1.8.4, `forge test` stops reusing the `forge build --skip
-  test` artifacts and recompiles 469 files, and the runner dies. CI is
-  pinned to v1.8.3 for that reason; move the pin only to a version that
-  still compiles 33 files in that step.
+  test` artifacts and recompiles 469 files, and the runner dies. So
+  contracts-fast and slither (which share its forge cache) are pinned to
+  v1.8.3. Move the pin only to a version that still compiles 33 files in
+  that step. The pin is scoped to those two jobs on purpose: v1.8.3
+  predates a Foundry fix for stale cached bytecode behind
+  `type(X).runtimeCode`, which the full regression's
+  `test/helpers/LibOneTx*Fill` use, so the release gate and the e2e jobs
+  stay on `stable`.
 - **`quick`** — fast inner-loop iteration. Compiles `src/` + `lib/`
   only (skips project `test/` and `script/`); viaIR + optimizer still
   ON (some src/ facets, e.g. `VaultFactoryFacet.sol:631`,
