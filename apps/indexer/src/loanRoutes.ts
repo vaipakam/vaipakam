@@ -28,6 +28,7 @@ import {
   foldRateCandles,
   type CandleFillRow,
 } from './rateCandles';
+import { PLACED_IN_TENOR_SQL, countUnplacedOnPair, placedTenorOf } from './marketPlacement';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -136,14 +137,12 @@ function loanToJson(row: LoanRow): Record<string, unknown> {
     // Backed only on the explicit 0, for the reason above.
     initRateBps: row.init_terms_unbacked === 0 ? (row.init_rate_bps ?? null) : null,
     initDurationDays: row.init_terms_unbacked === 0 ? (row.init_duration_days ?? null) : null,
-    // #1142 — the tenor MARKET this indexer files the loan under: the
-    // initiation snapshot's duration, else the live one. The same expression
-    // the candles and the market-scoped `/loans/recent` select on, so a
-    // client re-checking a scoped page compares the key the server used.
-    // A market key, NOT a statement of the executed terms: an unbacked
-    // snapshot still files the loan somewhere, but only `initDurationDays`
-    // says what the loan executed at.
-    marketDurationDays: row.init_duration_days ?? row.duration_days,
+    // #1142 — the tenor MARKET the loan is a fill of, by the one placement
+    // rule the candles and the market-scoped `/loans/recent` select on
+    // (marketPlacement.ts), so a client re-checking a scoped page compares
+    // the key the server used. null = placed in no market: the agreed terms
+    // are not confirmed, so any tenor would be a guess.
+    marketDurationDays: placedTenorOf(row),
     collateralAmount: row.collateral_amount,
     assetType: row.asset_type,
     collateralAssetType: row.collateral_asset_type,
@@ -1268,11 +1267,13 @@ export async function handleLoansRecent(req: Request, env: Env): Promise<Respons
       binds.push(market.collateralAsset);
     }
     if (market.durationDays !== null) {
-      // #1142 — scope on the tenor the loan EXECUTED in, exactly as the
-      // candles do: `LoanExtended` rewrites the live `duration_days`, which
-      // moved an extended 30d fill out of the 30d tape and into the 60d one.
-      // Spelled like the 0032 / 0071 index expression so it rides them.
-      conds.push('COALESCE(init_duration_days, duration_days) = ?');
+      // #1142 — scope by the one placement rule the candles use
+      // (marketPlacement.ts): the AGREED tenor, and only when the agreed
+      // terms are confirmed. `LoanExtended` rewrites the live
+      // `duration_days`, which moved an extended 30d fill into the 60d tape;
+      // an unconfirmed snapshot names a tenor that may be a guess. Rides
+      // 0071's partial index.
+      conds.push(PLACED_IN_TENOR_SQL);
       binds.push(market.durationDays);
     }
     if (excludeSaleVehicles) {
@@ -1445,7 +1446,7 @@ export async function handleLoansTimeseries(
  *
  * → { chainId, buckets: [{ t, open, high, low, close, fills, principalTotal,
  *                           unrecordedPrincipalFills }],
- *     unrecorded: [{ t, fills }], truncated }
+ *     unplaced, truncated }
  *
  * Executed-rate OHLC series for ONE market (ProRateTerminalDesign.md §7). All
  * three market params are REQUIRED — a candle series is per-market by
@@ -1476,22 +1477,19 @@ export async function handleLoansTimeseries(
  * 30d fill into the 60d market at its original start_at. So BOTH the tenor
  * scope AND the selected rate/principal read the init_* snapshot columns
  * (stamped at every LoanInitiated insert path, never mutated — migration
- * 0032 §2). The tenor scope COALESCEs to the live duration so every loan is
- * filed in SOME market (the same key `marketDurationDays` serves); the
- * expression is spelled IDENTICALLY to the 0032 expression index so the
- * planner can match it textually; correctness doesn't depend on the index.
+ * 0032 §2).
  *
- * PROVENANCE (#1142, Codex #2689 r2): the rate and principal are drawn only
- * where the ledger BACKS the snapshot (`init_terms_unbacked = 0`,
- * `init_principal_unbacked = 0`, migrations 0056 / 0058). They used to be
- * COALESCEd to the live columns, so a legacy or repaired row whose terms the
- * tape calls "not recorded" was plotted, and labelled executed, at a figure
- * nobody could back. Now a fill with no recorded rate is COUNTED in
- * `unrecorded` (per bucket, so the truncation boundary below drops it with
- * its bucket) and never drawn, and a drawn fill with no recorded principal is
- * counted in its bucket's `unrecordedPrincipalFills` and left out of
- * `principalTotal`. Every rate the response does carry is a backed one, so an
- * app built before this change still reads only numbers it can trust.
+ * PLACEMENT (#1142, Codex #2689 r2–r3): the market is chosen by the one rule
+ * in marketPlacement.ts. A loan is a fill of this tenor only when its agreed
+ * terms are confirmed by the ledger (`init_terms_unbacked = 0`, 0058), so
+ * every rate drawn is a backed one. The rule used to COALESCE to the live
+ * columns, which plotted, and filed under a tenor, terms nobody could back. A
+ * loan on this pair whose terms are not confirmed is in no tenor market: the
+ * response counts those in range as `unplaced` (pair-wide, every tenor), and
+ * the desk says so, rather than drawing a guess or dropping them silently.
+ * A drawn fill whose PRINCIPAL is not confirmed (`init_principal_unbacked`,
+ * 0056) is counted in its bucket's `unrecordedPrincipalFills` and left out of
+ * `principalTotal`.
  * `start_at` needs no snapshot — it is written once at insert and no
  * handler updates it (LoanExtended/partial repay reset `start_time`, a
  * different column).
@@ -1501,7 +1499,7 @@ export async function handleLoansTimeseries(
  * JS (`foldRateCandles`). Rationale in rateCandles.ts: principal MUST be
  * BigInt-folded (the /loans/stats pattern), and SQLite has no first/last
  * aggregate for open/close, so one ordered select + one JS pass is the
- * simplest correct shape. Rides `idx_loans_market_start_at` (migration 0032).
+ * simplest correct shape. Rides `idx_loans_placed_tenor_start_at` (0071).
  *
  * Buckets: only where fills >= 1 (no empty/interpolated buckets — §5.3),
  * ascending by t. `range=all` = no lower time bound.
@@ -1556,10 +1554,9 @@ export async function handleLoansRateCandles(
       'chain_id = ?',
       'lending_asset = ?',
       'collateral_asset = ?',
-      // Tenor scope on the INIT duration (see the immutable-fill-terms
-      // header note) — an extended loan's fill stays in the market it
-      // executed in. Expression spelled exactly like the 0032 index.
-      'COALESCE(init_duration_days, duration_days) = ?',
+      // The one placement rule (see PLACEMENT above): the agreed tenor,
+      // and only when the agreed terms are confirmed.
+      PLACED_IN_TENOR_SQL,
       'is_sale_vehicle = 0',
       'asset_type = 0',
       'collateral_asset_type = 0',
@@ -1570,9 +1567,11 @@ export async function handleLoansRateCandles(
       market.collateralAsset,
       market.durationDays,
     ];
-    if (rangeDays !== null) {
+    const since =
+      rangeDays === null ? null : Math.floor(Date.now() / 1000) - rangeDays * 86400;
+    if (since !== null) {
       conds.push('start_at >= ?');
-      binds.push(Math.floor(Date.now() / 1000) - rangeDays * 86400);
+      binds.push(since);
     }
     // The INIT snapshot and its provenance flags; never the live values.
     // #1247 PAG-009 — bounded scan: `range=all` has no start bound, so
@@ -1581,8 +1580,7 @@ export async function handleLoansRateCandles(
     // (DESC + reverse for the fold's ascending order) and say so —
     // a truncated series drops the OLDEST candles, never recent ones.
     const rows = await env.DB.prepare(
-      `SELECT loan_id, start_at,
-              init_rate_bps, init_terms_unbacked,
+      `SELECT loan_id, start_at, init_rate_bps,
               init_principal, init_principal_unbacked
        FROM loans
        WHERE ${conds.join(' AND ')}
@@ -1606,15 +1604,19 @@ export async function handleLoansRateCandles(
     // series would render as "no fills in range", an active lie about
     // the market's busiest hour — keep the partial candle, and the
     // `truncated` disclosure covers its approximation.
-    // The boundary is a TIME slot, and both series share it: a slot that
-    // held only unrecorded fills is just as partial (#1142).
-    const slots = [
-      ...new Set([...folded.buckets, ...folded.unrecorded].map((b) => b.t)),
-    ].sort((a, b) => a - b);
-    const boundary = truncated && slots.length > 1 ? slots[0] : null;
-    const buckets = folded.buckets.filter((b) => b.t !== boundary);
-    const unrecorded = folded.unrecorded.filter((b) => b.t !== boundary);
-    return jsonResponse({ chainId, buckets, unrecorded, truncated }, 200, {
+    const buckets =
+      truncated && folded.length > 1 ? folded.slice(1) : folded;
+    // Loans on this pair in range that no tenor market holds (agreed terms
+    // unconfirmed), counted so the desk can say so (marketPlacement.ts).
+    // `range=all` counts from the epoch.
+    const unplaced = await countUnplacedOnPair(
+      env.DB,
+      chainId,
+      market.lendingAsset,
+      market.collateralAsset,
+      since ?? 0,
+    );
+    return jsonResponse({ chainId, buckets, unplaced, truncated }, 200, {
       'Cache-Control': 'public, max-age=60',
     });
   } catch (err) {

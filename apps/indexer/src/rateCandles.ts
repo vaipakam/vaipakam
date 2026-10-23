@@ -51,18 +51,17 @@ export const CANDLE_RANGES: Readonly<Record<string, number | null>> =
     }),
   );
 
-/** The columns the candle SQL selects per fill: the INITIATION snapshot and
- *  the two flags that say whether the ledger backs it (0056, 0058). Never the
- *  live columns, which extensions and repayments rewrite (#1142). */
+/** The columns the candle SQL selects per fill: the INITIATION snapshot,
+ *  never the live columns, which extensions and repayments rewrite (#1142).
+ *  Every row is a placed fill (marketPlacement.ts), so its agreed rate is
+ *  confirmed and present; its principal has its own flag (0056). */
 export interface CandleFillRow {
   loan_id: number;
   start_at: number; // unix seconds — the loan's start timestamp
-  init_rate_bps: number | null;
-  /** 0 = the rate and duration are backed by the initiation event. Anything
-   *  else, including an absent column, is "not known to be backed". */
-  init_terms_unbacked: number | null;
+  init_rate_bps: number;
   init_principal: string | null; // decimal string, raw base units
-  /** 0 = the principal is backed by the initiation event. */
+  /** 0 = the principal is backed by the initiation event. Anything else,
+   *  including an absent column, is "not known to be backed". */
   init_principal_unbacked: number | null;
 }
 
@@ -72,33 +71,13 @@ export interface RateCandleBucket {
   high: number;
   low: number;
   close: number; // last fill's rate (bps) in the bucket, chronological
-  /** Fills drawn in this bucket: every one has a recorded rate. */
   fills: number;
-  /** BigInt-folded decimal string (never a JSON number) over the drawn fills
+  /** BigInt-folded decimal string (never a JSON number) over the fills
    *  whose principal is recorded. */
   principalTotal: string;
-  /** Drawn fills whose principal is NOT recorded, so `principalTotal` leaves
-   *  them out. The total is a floor whenever this is above zero. */
+  /** Fills whose principal is NOT recorded, so `principalTotal` leaves them
+   *  out. The total is a floor whenever this is above zero. */
   unrecordedPrincipalFills: number;
-}
-
-/** Fills in a bucket whose executed rate is not recorded. They happened, so
- *  they are counted; their rate is unknown, so nothing is drawn for them. */
-export interface UnrecordedRateBucket {
-  t: number;
-  fills: number;
-}
-
-export interface FoldedRateCandles {
-  buckets: RateCandleBucket[];
-  unrecorded: UnrecordedRateBucket[];
-}
-
-/** The executed rate, or null when the snapshot is not backed. */
-function recordedRate(row: CandleFillRow): number | null {
-  if (row.init_terms_unbacked !== 0) return null;
-  const rate = row.init_rate_bps;
-  return typeof rate === 'number' && Number.isFinite(rate) ? rate : null;
 }
 
 /** The initiated principal, or null when it is not backed or not a number. */
@@ -122,17 +101,15 @@ function recordedPrincipal(row: CandleFillRow): bigint | null {
  *   on the caller.
  * - Only buckets with >= 1 fill are emitted — NO empty/interpolated buckets
  *   (§5.3 rule 1: gaps render as gaps). Output sorted ascending by `t`.
- * - PROVENANCE (#1142): a fill is drawn only when its executed rate is
- *   recorded. A fill whose rate is not recorded is counted in `unrecorded`
- *   instead, never drawn at the live rate or at an unverified snapshot, which
- *   would plot a figure nobody can stand behind as executed. A drawn fill
- *   whose principal is not recorded adds to `unrecordedPrincipalFills` and
- *   nothing to `principalTotal`.
+ * - PROVENANCE (#1142): the rows are placed fills, so every rate is a
+ *   confirmed agreed rate (the caller's SQL applies marketPlacement.ts). A
+ *   fill whose principal is not recorded adds to `unrecordedPrincipalFills`
+ *   and nothing to `principalTotal`, never a live or unverified amount.
  */
 export function foldRateCandles(
   rows: CandleFillRow[],
   intervalSec: number,
-): FoldedRateCandles {
+): RateCandleBucket[] {
   const sorted = [...rows].sort(
     (x, y) => x.start_at - y.start_at || x.loan_id - y.loan_id,
   );
@@ -146,14 +123,9 @@ export function foldRateCandles(
     unrecordedPrincipalFills: number;
   }
   const buckets = new Map<number, Acc>();
-  const unrecorded = new Map<number, number>();
   for (const row of sorted) {
     const t = Math.floor(row.start_at / intervalSec) * intervalSec;
-    const rate = recordedRate(row);
-    if (rate === null) {
-      unrecorded.set(t, (unrecorded.get(t) ?? 0) + 1);
-      continue;
-    }
+    const rate = row.init_rate_bps;
     const principal = recordedPrincipal(row);
     const acc = buckets.get(t);
     if (!acc) {
@@ -175,21 +147,16 @@ export function foldRateCandles(
       else acc.principalTotal += principal;
     }
   }
-  return {
-    buckets: Array.from(buckets.entries())
-      .sort(([a], [b]) => a - b)
-      .map(([t, acc]) => ({
-        t,
-        open: acc.open,
-        high: acc.high,
-        low: acc.low,
-        close: acc.close,
-        fills: acc.fills,
-        principalTotal: acc.principalTotal.toString(),
-        unrecordedPrincipalFills: acc.unrecordedPrincipalFills,
-      })),
-    unrecorded: Array.from(unrecorded.entries())
-      .sort(([a], [b]) => a - b)
-      .map(([t, fills]) => ({ t, fills })),
-  };
+  return Array.from(buckets.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([t, acc]) => ({
+      t,
+      open: acc.open,
+      high: acc.high,
+      low: acc.low,
+      close: acc.close,
+      fills: acc.fills,
+      principalTotal: acc.principalTotal.toString(),
+      unrecordedPrincipalFills: acc.unrecordedPrincipalFills,
+    }));
 }

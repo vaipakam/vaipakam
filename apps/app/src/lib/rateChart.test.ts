@@ -9,7 +9,7 @@ import {
   SPARSE_FILLS_THRESHOLD,
   WHITESPACE_SLOT_CAP,
   chartEmptyKind,
-  countUnrecordedFills,
+  readUnplacedCount,
   fillPointsFromTape,
   isSparseTape,
   newestPrint,
@@ -144,29 +144,25 @@ describe('chartEmptyKind (#1139 — never-filled vs empty-in-range copy)', () =>
   });
 });
 
-describe('unrecorded fills (#1142 — counted, never drawn)', () => {
-  it('an empty series with unrecorded fills earns its own copy, never "no loans agreed"', () => {
-    expect(chartEmptyKind('all', [], 2)).toBe('unrecorded');
-    expect(chartEmptyKind('7d', null, 1)).toBe('unrecorded');
-    expect(chartEmptyKind('30d', [{}], 3)).toBe('unrecorded');
+describe('unplaced loans (#1142 — counted, never placed under a guessed tenor)', () => {
+  it('an empty series on a pair with unplaced loans claims neither "never filled" nor "none in this period"', () => {
+    expect(chartEmptyKind('all', [], 2)).toBe('unplaced');
+    expect(chartEmptyKind('7d', null, 1)).toBe('unplaced');
+    expect(chartEmptyKind('30d', [{}], 3)).toBe('unplaced');
   });
 
-  it('sums the per-slot counts', () => {
-    expect(countUnrecordedFills([{ t: 0, fills: 2 }, { t: 3600, fills: 3 }])).toBe(5);
-    expect(countUnrecordedFills([])).toBe(0);
+  it('reads the count, and an absent field as none (a Worker that predates it)', () => {
+    expect(readUnplacedCount(4)).toBe(4);
+    expect(readUnplacedCount(0)).toBe(0);
+    expect(readUnplacedCount(undefined)).toBe(0);
   });
 
-  it('reads an absent field as none (a Worker that predates it)', () => {
-    expect(countUnrecordedFills(undefined)).toBe(0);
-  });
-
-  it('fails closed on a malformed field, so the hook reports the chart unavailable', () => {
-    expect(countUnrecordedFills(null)).toBeNull();
-    expect(countUnrecordedFills({ t: 0, fills: 1 })).toBeNull();
-    expect(countUnrecordedFills([{ t: 0 }])).toBeNull();
-    expect(countUnrecordedFills([{ t: 0, fills: -1 }])).toBeNull();
-    expect(countUnrecordedFills([{ t: 0, fills: 1.5 }])).toBeNull();
-    expect(countUnrecordedFills([null])).toBeNull();
+  it('fails closed on a malformed count, so the hook reports the chart unavailable', () => {
+    expect(readUnplacedCount(null)).toBeNull();
+    expect(readUnplacedCount(-1)).toBeNull();
+    expect(readUnplacedCount(1.5)).toBeNull();
+    expect(readUnplacedCount('2')).toBeNull();
+    expect(readUnplacedCount([{ t: 0, fills: 1 }])).toBeNull();
   });
 });
 

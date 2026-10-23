@@ -4,8 +4,9 @@
  * bucket-boundary assignment per interval, chronological OHLC with the
  * loan_id tiebreak, BigInt principal folding past 2^53, and the
  * "candles only where fills >= 1, ascending t" output shape, and the
- * #1142 provenance rule: only a fill whose executed rate the ledger backs
- * is drawn; the rest are counted, never plotted.
+ * #1142 principal provenance: an unconfirmed amount is counted, never summed.
+ * (Which loans are fills of the market at all is the placement rule,
+ * pinned in marketTapeTenor.test.ts and rateCandlesRoute.test.ts.)
  *
  * (The SQL-side row scoping — is_sale_vehicle = 0, ERC-20 both legs,
  * market equality, range bound — is exercised against a real SQLite
@@ -20,7 +21,7 @@ import {
   type CandleFillRow,
 } from '../src/rateCandles';
 
-/** A fill whose initiation snapshot the ledger backs (both flags 0). */
+/** A placed fill whose principal the ledger backs. */
 function fill(
   loanId: number,
   startAt: number,
@@ -31,15 +32,10 @@ function fill(
     loan_id: loanId,
     start_at: startAt,
     init_rate_bps: rateBps,
-    init_terms_unbacked: 0,
     init_principal: principal,
     init_principal_unbacked: 0,
   };
 }
-
-/** The drawn buckets only, for the tests that pin the OHLC fold. */
-const fold = (rows: CandleFillRow[], intervalSec: number) =>
-  foldRateCandles(rows, intervalSec).buckets;
 
 describe('enums', () => {
   it('pins the spec intervals and ranges exactly', () => {
@@ -65,7 +61,7 @@ describe('enums', () => {
 describe('bucket boundary assignment', () => {
   it('floors start_at to the interval for 1h buckets', () => {
     // 3600..7199 all belong to t=3600; 7200 starts the next bucket.
-    const buckets = fold(
+    const buckets = foldRateCandles(
       [fill(1, 3600, 500), fill(2, 7199, 600), fill(3, 7200, 700)],
       3600,
     );
@@ -76,13 +72,13 @@ describe('bucket boundary assignment', () => {
 
   it('assigns the same fills to wider buckets under 4h and 1d intervals', () => {
     const rows = [fill(1, 3600, 500), fill(2, 7200, 600), fill(3, 90000, 700)];
-    const fourH = fold(rows, 14400);
+    const fourH = foldRateCandles(rows, 14400);
     // 3600 and 7200 share the [0, 14400) bucket; 90000 → floor = 86400.
     expect(fourH.map((b) => [b.t, b.fills])).toEqual([
       [0, 2],
       [86400, 1],
     ]);
-    const oneD = fold(rows, 86400);
+    const oneD = foldRateCandles(rows, 86400);
     expect(oneD.map((b) => [b.t, b.fills])).toEqual([
       [0, 2],
       [86400, 1],
@@ -90,7 +86,7 @@ describe('bucket boundary assignment', () => {
   });
 
   it('emits NO empty buckets between sparse fills (gaps render as gaps)', () => {
-    const buckets = fold(
+    const buckets = foldRateCandles(
       [fill(1, 0, 500), fill(2, 10 * 86400, 600)],
       86400,
     );
@@ -101,7 +97,7 @@ describe('bucket boundary assignment', () => {
 
 describe('OHLC ordering', () => {
   it('open = chronologically first, close = last, high/low = extremes', () => {
-    const buckets = fold(
+    const buckets = foldRateCandles(
       [
         fill(1, 100, 520),
         fill(2, 200, 480), // low
@@ -127,20 +123,20 @@ describe('OHLC ordering', () => {
   it('breaks same-second ties by loan_id (on-chain execution order)', () => {
     // Same start_at; loan 7 executed before loan 9 → open=7's rate,
     // close=9's rate, regardless of input array order.
-    const buckets = fold([fill(9, 500, 700), fill(7, 500, 400)], 3600);
+    const buckets = foldRateCandles([fill(9, 500, 700), fill(7, 500, 400)], 3600);
     expect(buckets[0].open).toBe(400);
     expect(buckets[0].close).toBe(700);
   });
 
   it('does not depend on caller-side row ordering (defensive sort)', () => {
     const shuffled = [fill(3, 900, 300), fill(1, 100, 100), fill(2, 500, 200)];
-    const buckets = fold(shuffled, 3600);
+    const buckets = foldRateCandles(shuffled, 3600);
     expect(buckets[0].open).toBe(100);
     expect(buckets[0].close).toBe(300);
   });
 
   it('sorts buckets ascending by t even when rows arrive newest-first', () => {
-    const buckets = fold(
+    const buckets = foldRateCandles(
       [fill(2, 7200, 600), fill(1, 0, 500)],
       3600,
     );
@@ -154,13 +150,13 @@ describe('principal folding (BigInt, never Number)', () => {
     // 18-dec wei-scale principals whose exact sum a float would corrupt:
     const a = '9007199254740993'; // 2^53 + 1
     const b = '9007199254740995'; // 2^53 + 3
-    const buckets = fold(
+    const buckets = foldRateCandles(
       [fill(1, 0, 500, a), fill(2, 1, 500, b)],
       3600,
     );
     expect(buckets[0].principalTotal).toBe('18014398509481988'); // exact
     // And a full 18-dec pair for good measure (1e24 + 1 wei).
-    const big = fold(
+    const big = foldRateCandles(
       [
         fill(1, 0, 500, '1000000000000000000000000'),
         fill(2, 1, 500, '1'),
@@ -171,13 +167,13 @@ describe('principal folding (BigInt, never Number)', () => {
   });
 
   it('emits principalTotal as a decimal string (JSON-safe)', () => {
-    const buckets = fold([fill(1, 0, 500, '42')], 3600);
+    const buckets = foldRateCandles([fill(1, 0, 500, '42')], 3600);
     expect(typeof buckets[0].principalTotal).toBe('string');
     expect(buckets[0].principalTotal).toBe('42');
   });
 
   it('draws a malformed-principal fill at its rate and counts its principal as unrecorded', () => {
-    const buckets = fold(
+    const buckets = foldRateCandles(
       [fill(1, 0, 500, '100'), fill(2, 1, 900, 'not-a-number')],
       3600,
     );
@@ -188,7 +184,7 @@ describe('principal folding (BigInt, never Number)', () => {
   });
 
   it('treats an empty principal as unrecorded, never as zero', () => {
-    const buckets = fold([fill(1, 0, 500, '')], 3600);
+    const buckets = foldRateCandles([fill(1, 0, 500, '')], 3600);
     expect(buckets[0].fills).toBe(1);
     expect(buckets[0].principalTotal).toBe('0');
     expect(buckets[0].unrecordedPrincipalFills).toBe(1);
@@ -196,61 +192,27 @@ describe('principal folding (BigInt, never Number)', () => {
 });
 
 describe('empty input', () => {
-  it('folds no rows to no buckets and no unrecorded counts', () => {
-    expect(foldRateCandles([], 3600)).toEqual({ buckets: [], unrecorded: [] });
+  it('folds no rows to no buckets', () => {
+    expect(foldRateCandles([], 3600)).toEqual([]);
   });
 });
 
-describe('provenance (#1142): only a backed rate is drawn', () => {
-  const unbacked = (loanId: number, startAt: number, flag: number | null): CandleFillRow => ({
-    ...fill(loanId, startAt, 9_999),
-    init_terms_unbacked: flag,
-  });
-
-  it('counts a fill whose terms are unbacked and draws nothing for it', () => {
-    const out = foldRateCandles([unbacked(1, 0, 1)], 3600);
-    expect(out.buckets).toEqual([]);
-    expect(out.unrecorded).toEqual([{ t: 0, fills: 1 }]);
-  });
-
-  it('keeps a mixed bucket honest: OHLC over backed fills, the rest counted', () => {
-    const out = foldRateCandles(
-      [fill(1, 100, 500), unbacked(2, 200, 1), fill(3, 300, 600)],
-      3600,
-    );
-    expect(out.buckets).toHaveLength(1);
-    expect(out.buckets[0]).toMatchObject({ open: 500, high: 600, low: 500, close: 600, fills: 2 });
-    expect(out.unrecorded).toEqual([{ t: 0, fills: 1 }]);
-  });
-
-  it('treats an absent or unexpected flag as unbacked (only an explicit 0 backs)', () => {
-    const out = foldRateCandles([unbacked(1, 0, null), unbacked(2, 1, 2)], 3600);
-    expect(out.buckets).toEqual([]);
-    expect(out.unrecorded).toEqual([{ t: 0, fills: 2 }]);
-  });
-
-  it('treats a backed flag with no rate as unrecorded', () => {
-    const out = foldRateCandles([{ ...fill(1, 0, 500), init_rate_bps: null }], 3600);
-    expect(out.buckets).toEqual([]);
-    expect(out.unrecorded).toEqual([{ t: 0, fills: 1 }]);
-  });
-
-  it('draws a backed rate whose principal is unbacked, leaving it out of the total', () => {
+describe('principal provenance (#1142)', () => {
+  it('draws a fill whose principal is unbacked, leaving it out of the total', () => {
     const out = foldRateCandles(
       [fill(1, 0, 500, '100'), { ...fill(2, 1, 700, '5000'), init_principal_unbacked: 1 }],
       3600,
     );
-    expect(out.buckets[0]).toMatchObject({
+    expect(out[0]).toMatchObject({
       fills: 2,
       close: 700,
       principalTotal: '100',
       unrecordedPrincipalFills: 1,
     });
-    expect(out.unrecorded).toEqual([]);
   });
 
-  it('sorts unrecorded counts ascending by t', () => {
-    const out = foldRateCandles([unbacked(2, 7_200, 1), unbacked(1, 0, 1)], 3600);
-    expect(out.unrecorded.map((u) => u.t)).toEqual([0, 7_200]);
+  it('treats an absent principal flag as unbacked (only an explicit 0 backs)', () => {
+    const out = foldRateCandles([{ ...fill(1, 0, 500, '100'), init_principal_unbacked: null }], 3600);
+    expect(out[0]).toMatchObject({ principalTotal: '0', unrecordedPrincipalFills: 1 });
   });
 });

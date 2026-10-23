@@ -294,12 +294,12 @@ export interface IndexedLoan {
    *  through `initiatedTerms`. */
   initRateBps?: number | null;
   initDurationDays?: number | null;
-  /** #1142 — the tenor market the indexer files this loan under (its
-   *  initiation snapshot's duration, else the live one): the key the
-   *  candles and the market-scoped tape select on. A market key only, not
-   *  a statement of the executed terms; optional because older workers
-   *  omit it. */
-  marketDurationDays?: number;
+  /** #1142 — the tenor market this loan is a fill of: its agreed duration
+   *  when the indexer has confirmed the agreed terms, `null` when it has not
+   *  (the loan is in no market, since any tenor would be a guess). The key
+   *  the candles and the market-scoped tape select on. Absent from older
+   *  workers. */
+  marketDurationDays?: number | null;
   collateralAmount: string;
   assetType: number;
   collateralAssetType: number;
@@ -410,25 +410,17 @@ export interface RateCandleBucket {
   high: number;
   low: number;
   close: number;
-  /** Drawn fills in the bucket (>= 1 by construction): every one has a
-   *  recorded executed rate (#1142). */
+  /** Fill count in the bucket (>= 1 by construction). */
   fills: number;
   /** Total principal as a decimal STRING in the lending asset's raw
    *  base units — format with the token's decimals metadata, same as
-   *  every other indexer amount field. Sums only the drawn fills whose
+   *  every other indexer amount field. Sums only the fills whose
    *  principal is recorded. */
   principalTotal: string;
-  /** #1142 — drawn fills whose principal is NOT recorded and so is left
-   *  out of `principalTotal`; above zero the total is a floor. Optional
-   *  so an older Worker parses (absent = 0). */
+  /** #1142 — fills whose principal is NOT recorded and so is left out of
+   *  `principalTotal`; above zero the total is a floor. Optional so an
+   *  older Worker parses (absent = 0). */
   unrecordedPrincipalFills?: number;
-}
-
-/** #1142 — fills in a time slot whose executed rate is not recorded.
- *  They happened, so they are counted; nothing is drawn for them. */
-export interface UnrecordedRateSlot {
-  t: number;
-  fills: number;
 }
 
 export interface RateCandlesResponse {
@@ -438,9 +430,10 @@ export interface RateCandlesResponse {
    *  dropped older fills (the OLDEST candles are missing, never recent
    *  ones). Optional so a not-yet-redeployed Worker parses fine. */
   truncated?: boolean;
-  /** #1142 — per-slot counts of fills with no recorded rate. Optional
-   *  so a not-yet-redeployed Worker parses fine (absent = none). */
-  unrecorded?: UnrecordedRateSlot[];
+  /** #1142 — loans on this PAIR in the range (any tenor) that no tenor
+   *  market holds, because their agreed terms are not confirmed. Optional so
+   *  a not-yet-redeployed Worker parses fine (absent = none known). */
+  unplaced?: number;
 }
 
 /** Executed-rate candles for one (pair, tenor) market — the Rate Desk

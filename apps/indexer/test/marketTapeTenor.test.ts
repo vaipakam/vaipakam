@@ -1,14 +1,17 @@
 /**
- * #1142 — the market-scoped tape (`/loans/recent` with a tenor) files a
- * loan under the tenor it EXECUTED in, the key the candles use, so an
- * extension cannot move a past fill into another market's tape. Every row
- * carries that key as `marketDurationDays`, beside (never instead of) the
- * backed `initDurationDays` and the live `durationDays`.
+ * #1142 — the market-scoped tape (`/loans/recent` with a tenor) places a
+ * loan by the one rule the candles use (marketPlacement.ts): the tenor it
+ * was AGREED at, and only when the agreed terms are confirmed. So an
+ * extension cannot move a past fill into another market's tape, and an
+ * unconfirmed snapshot never files a loan under a guessed tenor. Every row
+ * carries the result as `marketDurationDays` (null = in no market), beside
+ * the backed `initDurationDays` and the live `durationDays`.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
 import { handleLoansRecent } from '../src/loanRoutes';
+import { PLACED_IN_TENOR_SQL, placedTenorOf } from '../src/marketPlacement';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
 const DIR = new URL('../migrations/', import.meta.url);
@@ -45,7 +48,7 @@ function harness() {
     );
     return ((await res.json()) as { loans: Array<Record<string, unknown>> }).loans;
   };
-  return { ...h, loan, tape };
+  return { ...h, env, loan, tape };
 }
 
 describe('market tape tenor (#1142)', () => {
@@ -64,34 +67,48 @@ describe('market tape tenor (#1142)', () => {
     });
   });
 
-  it('files an unbacked snapshot by its best figure but never serves it as the executed terms', async () => {
+  it('places an unconfirmed snapshot in no market: not under its own tenor, not under the live one', async () => {
     const h = harness();
     h.loan(3, [900, 60], [800, 30], false);
-    const rows = await h.tape(30);
-    expect(rows.map((l) => l.loanId)).toEqual([3]);
-    expect(rows[0]).toMatchObject({ marketDurationDays: 30, initDurationDays: null, initRateBps: null });
+    expect(await h.tape(30)).toEqual([]);
+    expect(await h.tape(60)).toEqual([]);
+    const all = await (
+      await handleLoansRecent(new Request('https://idx/loans/recent?chainId=84532'), h.env)
+    ).json() as { loans: Array<Record<string, unknown>> };
+    expect(all.loans[0]).toMatchObject({
+      loanId: 3,
+      marketDurationDays: null,
+      initDurationDays: null,
+      initRateBps: null,
+    });
   });
 
-  it('falls back to the live tenor for a row with no snapshot at all', async () => {
+  it('places a row with no snapshot at all in no market', async () => {
     const h = harness();
     h.loan(4, [500, 45], [null, null], false);
-    const rows = await h.tape(45);
-    expect(rows.map((l) => l.loanId)).toEqual([4]);
-    expect(rows[0]).toMatchObject({ marketDurationDays: 45 });
+    expect(await h.tape(45)).toEqual([]);
   });
 
-  it('pages the scoped tape through the tenor index, not a scan', () => {
+  it('agrees with its JS twin on every flag shape', () => {
+    expect(placedTenorOf({ init_terms_unbacked: 0, init_rate_bps: 500, init_duration_days: 30 })).toBe(30);
+    expect(placedTenorOf({ init_terms_unbacked: 1, init_rate_bps: 500, init_duration_days: 30 })).toBeNull();
+    expect(placedTenorOf({ init_terms_unbacked: undefined, init_rate_bps: 500, init_duration_days: 30 })).toBeNull();
+    expect(placedTenorOf({ init_terms_unbacked: 0, init_rate_bps: null, init_duration_days: 30 })).toBeNull();
+    expect(placedTenorOf({ init_terms_unbacked: 0, init_rate_bps: 500, init_duration_days: null })).toBeNull();
+  });
+
+  it('pages the scoped tape through the placement index, not a scan', () => {
     const h = harness();
     const plan = h.db
       .prepare(
         `EXPLAIN QUERY PLAN SELECT * FROM loans
          WHERE chain_id = ? AND lending_asset = ? AND collateral_asset = ?
-           AND COALESCE(init_duration_days, duration_days) = ? AND is_sale_vehicle = 0
+           AND ${PLACED_IN_TENOR_SQL} AND is_sale_vehicle = 0
          ORDER BY loan_id DESC LIMIT ?`,
       )
       .all(84532, LEND, COLL, 30, 50) as Array<{ detail: string }>;
     const text = plan.map((r) => r.detail).join(' | ');
-    expect(text).toContain('idx_loans_market_init_tenor_loan');
+    expect(text).toContain('idx_loans_placed_tenor_loan');
     expect(text).not.toContain('TEMP B-TREE');
   });
 });

@@ -1101,7 +1101,8 @@ async function handler(req, res) {
       return json(200, {
         chainId: CHAIN_ID,
         buckets: foldRateCandles(fills, intervalSec),
-        unrecorded: [],
+        // Fork terms are read from chain, so every loan is placed (#1142).
+        unplaced: 0,
       });
     }
 

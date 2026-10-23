@@ -55,4 +55,8 @@ describe('marketTenorOf (#1142)', () => {
   it('falls back to the live tenor for an older worker, which scoped on it', () => {
     expect(marketTenorOf(loan({}))).toBe(60);
   });
+
+  it('keeps a loan the indexer placed in no market out of every tenor', () => {
+    expect(marketTenorOf(loan({ marketDurationDays: null }))).toBeNull();
+  });
 });

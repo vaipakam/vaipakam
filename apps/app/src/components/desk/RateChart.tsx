@@ -151,10 +151,28 @@ export default function RateChart({
   // unavailable, [] empty).
   const buckets = candles.data == null ? candles.data : candles.data.buckets;
   const candlesTruncated = candles.data?.truncated === true;
-  // #1142 — fills in range the indexer counts but cannot draw (no recorded
-  // rate). Stated beside the chart so the drawn series never reads as the
-  // whole of what happened.
-  const unrecordedFills = candles.data?.unrecordedFills ?? 0;
+  // #1142 — loans on this pair in range that no tenor market holds (their
+  // agreed terms are unconfirmed). Stated with the chart so the drawn series
+  // never reads as everything the pair did.
+  const unplaced = candles.data?.unplaced ?? 0;
+  // What the response says about its own scope, shown in EVERY data state:
+  // an empty series can be clipped or leave loans out just as a drawn one
+  // can (Codex #2689 r3).
+  const scopeNotes = (
+    <>
+      {candlesTruncated ? (
+        // #1247 PAG-009 (Codex #1269 r1) — the server scanned only the
+        // newest fills; never let a clipped range read as the market's
+        // complete history.
+        <p className="muted desk-chart-sparse-note">{text.truncatedNote}</p>
+      ) : null}
+      {unplaced > 0 ? (
+        <p className="muted desk-chart-sparse-note" data-testid="desk-chart-unplaced">
+          {text.unplacedNote(unplaced)}
+        </p>
+      ) : null}
+    </>
+  );
   const sparse = useMemo(
     () => (Array.isArray(buckets) ? isSparseTape(buckets) : false),
     [buckets],
@@ -486,13 +504,16 @@ export default function RateChart({
         // P3, tightened round 4): the market copy is only claimable
         // when the evidence covers the whole history AND the tape holds
         // no fill (candle-cache skew) — see chartEmptyKind.
-        <p className="muted">
-          {(() => {
-            const kind = chartEmptyKind(range, tape, unrecordedFills);
-            if (kind === 'unrecorded') return text.emptyUnrecorded(unrecordedFills);
-            return kind === 'market' ? text.empty : text.emptyRange;
-          })()}
-        </p>
+        <>
+          <p className="muted">
+            {(() => {
+              const kind = chartEmptyKind(range, tape, unplaced);
+              if (kind === 'unplaced') return text.emptyUnplaced;
+              return kind === 'market' ? text.empty : text.emptyRange;
+            })()}
+          </p>
+          {scopeNotes}
+        </>
       ) : (
         <>
           {sparse ? (
@@ -500,19 +521,7 @@ export default function RateChart({
               {text.sparseNote(totalFills(buckets))}
             </p>
           ) : null}
-          {candlesTruncated ? (
-            // #1247 PAG-009 (Codex #1269 r1) — the server scanned only
-            // the newest fills; never let a clipped range read as the
-            // market's complete history.
-            <p className="muted desk-chart-sparse-note">
-              {text.truncatedNote}
-            </p>
-          ) : null}
-          {unrecordedFills > 0 ? (
-            <p className="muted desk-chart-sparse-note" data-testid="desk-chart-unrecorded">
-              {text.unrecordedNote(unrecordedFills)}
-            </p>
-          ) : null}
+          {scopeNotes}
           <div className="desk-chart-plot">
             <div ref={containerRef} className="desk-chart-canvas" />
             <div ref={tooltipRef} className="desk-chart-tooltip" />

@@ -14,6 +14,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
 import { handleLoansRateCandles } from '../src/loanRoutes';
+import { PLACED_IN_TENOR_SQL } from '../src/marketPlacement';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -32,7 +33,7 @@ const CAP = 10_000;
 interface CandlesBody {
   chainId: number;
   buckets: Array<{ t: number; open: number; close: number; fills: number }>;
-  unrecorded: Array<{ t: number; fills: number }>;
+  unplaced: number;
   truncated: boolean;
 }
 
@@ -122,33 +123,44 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
     ]);
   });
 
-  it('counts an unbacked fill under unrecorded and never draws its rate (#1142)', async () => {
+  it('places only confirmed fills and counts the rest pair-wide as unplaced (#1142)', async () => {
     const h = makeHarness();
     h.seed(1, 0, 400);
-    h.seed(2, 100, 9_999, 1); // same bucket, rate NOT backed by the ledger
-    h.seed(3, 7_200, 9_999, 1); // a bucket with no drawable fill at all
+    h.seed(2, 100, 9_999, 1); // same pair and tenor, agreed terms NOT confirmed
+    h.seed(3, 7_200, 9_999, 1);
     const body = await h.call();
     expect(body.truncated).toBe(false);
     expect(body.buckets.map((b) => [b.t, b.open, b.close, b.fills])).toEqual([[0, 400, 400, 1]]);
-    expect(body.unrecorded).toEqual([
-      { t: 0, fills: 1 },
-      { t: 7_200, fills: 1 },
-    ]);
+    expect(body.unplaced).toBe(2);
   });
 
-  it('drops the truncation boundary slot from unrecorded too, even when only unrecorded fills sit there', async () => {
-    // The oldest slot holds ONLY unbacked fills; truncation cuts through it,
-    // so its count would understate. The boundary is the oldest slot across
-    // BOTH arrays, not the oldest drawn bucket.
+  it('files a fill by its agreed tenor, never the live one, and counts an unconfirmed loan whatever tenor it names', async () => {
     const h = makeHarness();
-    h.db.exec('BEGIN');
-    h.seed(1, 1_000, 0, 1);
-    h.seed(2, 1_001, 0, 1);
-    for (let i = 3; i <= CAP + 1; i++) h.seed(i, 3_600 + i, 500);
-    h.db.exec('COMMIT');
+    h.seed(1, 0, 400);
+    // Agreed at another tenor: not this market's fill, and not unplaced.
+    h.db
+      .prepare('UPDATE loans SET init_duration_days = ? WHERE loan_id = 1')
+      .run(DAYS + 30);
+    h.seed(2, 10, 500, 1);
+    h.db
+      .prepare('UPDATE loans SET init_duration_days = ? WHERE loan_id = 2')
+      .run(DAYS + 30);
     const body = await h.call();
-    expect(body.truncated).toBe(true);
-    expect(body.unrecorded).toEqual([]);
-    expect(body.buckets[0].t).toBe(3_600);
+    expect(body.buckets).toEqual([]);
+    expect(body.unplaced).toBe(1);
+  });
+
+  it('range-scans the placed fills through the placement index', () => {
+    const h = makeHarness();
+    const plan = h.db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT loan_id FROM loans
+         WHERE chain_id = ? AND lending_asset = ? AND collateral_asset = ?
+           AND ${PLACED_IN_TENOR_SQL} AND is_sale_vehicle = 0
+           AND asset_type = 0 AND collateral_asset_type = 0 AND start_at >= ?
+         ORDER BY start_at DESC, loan_id DESC LIMIT ?`,
+      )
+      .all(CHAIN_ID, LEND, COLL, DAYS, 0, 10) as Array<{ detail: string }>;
+    expect(plan.map((r) => r.detail).join(' | ')).toContain('idx_loans_placed_tenor_start_at');
   });
 });

@@ -4313,17 +4313,14 @@ const copySource = {
       empty:
         'No loans agreed yet for this pair — the chart only shows rates people actually agreed.',
       emptyRange: 'No loans agreed in this period — try a longer one.',
-      // #1142 — the indexer counts these fills but holds no recorded rate
-      // for them, so nothing is drawn. Never "no loans agreed".
-      emptyUnrecorded: tmpl(
-        '{{count}} loans were agreed in this period, but none has a recorded rate, so nothing is drawn.',
+      // #1142 — the pair has loans in range whose agreed terms are not
+      // confirmed, so no duration holds them and one may belong here. The
+      // empty line claims only what is known; `unplacedNote` gives the count.
+      emptyUnplaced: 'No loans with confirmed terms at this duration in this period.',
+      unplacedNote: tmpl(
+        '{{count}} loans on this pair in this period are not shown under any duration, because their agreed terms are not confirmed from their opening record.',
         ['count'],
-        { one: '{{count}} loan was agreed in this period, but its rate is not recorded, so nothing is drawn.' },
-      ),
-      unrecordedNote: tmpl(
-        '{{count}} more loans in this period have no recorded rate, so they are not drawn.',
-        ['count'],
-        { one: '{{count}} more loan in this period has no recorded rate, so it is not drawn.' },
+        { one: '{{count}} loan on this pair in this period is not shown under any duration, because its agreed terms are not confirmed from its opening record.' },
       ),
       unavailable: 'We couldn’t load the rate history right now.',
       retry: 'Retry',

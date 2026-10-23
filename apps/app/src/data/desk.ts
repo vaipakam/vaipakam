@@ -57,7 +57,7 @@ import {
 } from '../lib/signedOffer';
 import { readOfferRowsBatchLive } from './chainPositions';
 import { initiatedPrincipal, initiatedTerms } from '../lib/positionAmounts';
-import { countUnrecordedFills, type TapeFillLike } from '../lib/rateChart';
+import { readUnplacedCount, type TapeFillLike } from '../lib/rateChart';
 import { isMissingSelectorError } from '../contracts/preflights';
 
 const REFRESH_MS = 30_000;
@@ -400,10 +400,13 @@ export function deskFillOf(loan: IndexedLoan): DeskFill {
   };
 }
 
-/** The tenor market a loan is filed under: the indexer's own key when it
- *  sends one, else (an older worker, which scoped on it) the live tenor. */
-export function marketTenorOf(loan: Pick<IndexedLoan, 'marketDurationDays' | 'durationDays'>): number {
-  return typeof loan.marketDurationDays === 'number' ? loan.marketDurationDays : loan.durationDays;
+/** The tenor market a loan is a fill of: the indexer's own key when it
+ *  sends one (`null` = in no market, its agreed terms unconfirmed), else
+ *  (an older worker, which scoped on it) the live tenor. */
+export function marketTenorOf(
+  loan: Pick<IndexedLoan, 'marketDurationDays' | 'durationDays'>,
+): number | null {
+  return loan.marketDurationDays === undefined ? loan.durationDays : loan.marketDurationDays;
 }
 
 /** Executed fills for the (pair, tenor) market, newest first. */
@@ -508,7 +511,7 @@ export function useDeskCandles(
     queryFn: async (): Promise<{
       buckets: RateCandleBucket[];
       truncated: boolean;
-      unrecordedFills: number;
+      unplaced: number;
     } | null> => {
       if (!indexerConfigured()) return null;
       const res = await fetchRateCandles(
@@ -526,13 +529,9 @@ export function useDeskCandles(
       // treat it as unavailable, never render it.
       if (res.chainId !== readChain.chainId) return null;
       if (!Array.isArray(res.buckets)) return null;
-      const unrecordedFills = countUnrecordedFills(res.unrecorded);
-      if (unrecordedFills === null) return null;
-      return {
-        buckets: res.buckets,
-        truncated: res.truncated === true,
-        unrecordedFills,
-      };
+      const unplaced = readUnplacedCount(res.unplaced);
+      if (unplaced === null) return null;
+      return { buckets: res.buckets, truncated: res.truncated === true, unplaced };
     },
   });
 }

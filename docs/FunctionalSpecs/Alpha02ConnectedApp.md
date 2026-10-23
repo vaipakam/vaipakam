@@ -4518,9 +4518,13 @@ Its intended behaviour, as the test oracle for this surface:
   per-fill markers show the rate and amount the loan was agreed at,
   and it stays in the tenor market it was agreed in. An extension,
   a partial repayment or a match changing the loan later moves none of
-  that. Where the agreed terms cannot be confirmed from the loan's
-  opening record, the fill still appears but its terms read as not
-  recorded; the loan's current terms are never shown in their place. Positions show under the book with their health
+  that. A loan belongs to a tenor market only once its agreed terms are
+  confirmed from its opening record. Until then its tenor is unknown, so
+  it is shown under no duration, never under a guessed or current one,
+  and the chart states how many such loans the pair has in the period.
+  Where only the agreed amount cannot be confirmed, the fill appears and
+  its amount reads as not recorded. The loan's current terms are never
+  shown in place of agreed ones. Positions show under the book with their health
   status and lead to the existing manage flows. A rate-history chart
   shows the market's **executed** rates over a chosen interval and
   range, under strict thin-market honesty rules: points exist only
@@ -4532,13 +4536,12 @@ Its intended behaviour, as the test oracle for this surface:
   candlestick shapes, which would misrepresent a thin market as a
   liquid one; every plotted bucket's hover detail discloses the number
   of fills and the total principal it aggregates, never bare
-  open/high/low/close alone; the chart draws only rates the loans'
-  opening records confirm — a fill whose agreed rate cannot be confirmed
-  is counted and stated beside the chart (or, when no fill in the range
-  can be drawn, in place of it, never as "no loans agreed") but nothing
-  is plotted for it, and a bucket whose total leaves out fills whose
+  open/high/low/close alone; a bucket whose total leaves out fills whose
   agreed amount cannot be confirmed says the total is a minimum and how
-  many it leaves out; the order book's current quoted mid may be
+  many it leaves out; when the pair has loans in the period whose agreed
+  terms are unconfirmed, an empty chart claims only that no confirmed
+  loan sits at this duration, never that none was agreed; a clipped
+  history is disclosed whether or not anything is drawn; the order book's current quoted mid may be
   overlaid for context but must be drawn in a visibly distinct style
   and labelled as a quote — a resting intention, never blended with
   executed rates; and the chart area shows no daily percent-change

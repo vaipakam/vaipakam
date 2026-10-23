@@ -7,7 +7,6 @@ import type {
   CandleInterval,
   CandleRange,
   RateCandleBucket,
-  UnrecordedRateSlot,
 } from '../data/indexer';
 
 /** Client-side mirror of the worker's interval enum (bucket width in
@@ -82,23 +81,14 @@ export function newestPrint(
   return { source: 'bucket', rateBps: last.close, at: last.t };
 }
 
-/** #1142 — the total of fills the candle response counts but cannot draw
- *  (no recorded rate). Absent = 0 (a Worker that predates the field).
- *  A present but malformed value returns `null`, which the hook turns into
- *  "unavailable": a chart that silently dropped the count would present
- *  the drawn fills as the whole history. */
-export function countUnrecordedFills(raw: unknown): number | null {
+/** #1142 — the candle response's count of loans on the pair that no tenor
+ *  market holds (agreed terms unconfirmed). Absent = 0 (a Worker that
+ *  predates the field). A present but malformed value returns `null`, which
+ *  the hook turns into "unavailable": a chart that silently dropped the
+ *  count would present the placed fills as everything that happened. */
+export function readUnplacedCount(raw: unknown): number | null {
   if (raw === undefined) return 0;
-  if (!Array.isArray(raw)) return null;
-  let total = 0;
-  for (const slot of raw as unknown[]) {
-    const fills = (slot as Partial<UnrecordedRateSlot> | null)?.fills;
-    if (typeof fills !== 'number' || !Number.isInteger(fills) || fills < 0) {
-      return null;
-    }
-    total += fills;
-  }
-  return total;
+  return typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 ? raw : null;
 }
 
 /**
@@ -125,12 +115,13 @@ export function countUnrecordedFills(raw: unknown): number | null {
 export function chartEmptyKind(
   range: CandleRange,
   tape: readonly unknown[] | null | undefined,
-  unrecordedFills: number,
-): 'unrecorded' | 'market' | 'range' {
-  // #1142 — the candle response itself counts fills in this range whose
-  // rate is not recorded. Nothing is drawn, but "no loans agreed" would
-  // be false: say they happened and why they are not shown.
-  if (unrecordedFills > 0) return 'unrecorded';
+  unplaced: number,
+): 'unplaced' | 'market' | 'range' {
+  // #1142 — the pair has loans in this range that no tenor market holds
+  // (agreed terms unconfirmed). One of them may belong to this tenor, so
+  // neither "never filled" nor "none in this period" is claimable: say what
+  // is known instead.
+  if (unplaced > 0) return 'unplaced';
   // A non-empty tape PROVES a fill exists — the market copy is never
   // honest, regardless of range (candle-cache skew, see above).
   if (Array.isArray(tape) && tape.length > 0) return 'range';
