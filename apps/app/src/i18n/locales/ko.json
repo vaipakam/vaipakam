@@ -2338,9 +2338,9 @@
       "repairBody": "체인을 확인한 결과 이 대출은 블록 {{block}}까지 {{status}} 상태였습니다. 언제, 어떻게 종료되었는지는 기록되지 않아 표시할 거래가 없습니다.",
       "repairCheckedAgo": "{{ago}} 확인",
       "statusEdgeLabels": {
-        "Repaid": "loan repaid",
-        "Defaulted": "loan defaulted",
-        "Settled": "loan settled",
+        "Repaid": "대출 상환됨",
+        "Defaulted": "대출 채무 불이행",
+        "Settled": "대출 정산됨",
         "FallbackPending": "매각 실패 후 정산 대기 중",
         "InternalMatched": "내부 매칭으로 대출 종료됨"
       },
