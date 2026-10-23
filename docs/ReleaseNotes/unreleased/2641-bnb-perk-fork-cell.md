@@ -1,4 +1,4 @@
-## Thread — BNB Testnet's priority-routing perk: the fork check, and a correction to the record (PR #<n>)
+## Thread — BNB Testnet's priority-routing perk: the fork check, and a correction to the record (PR #2719)
 
 The fork check that proves the priority-routing perk works against a deployed Diamond now has a BNB Testnet cell, alongside Base Sepolia and Arbitrum Sepolia. It uses the WETH stand-in and the mock liquid token that the 2026-10-22 testnet mocks priced. On 2026-10-23 it passed against a fork of BNB's live Diamond: a fill the solver's capacity covers is charged to the solver, fills it refuses are refused by name, and a fill that capacity would refuse goes through on exactly one of the intent owner's credits.
 
