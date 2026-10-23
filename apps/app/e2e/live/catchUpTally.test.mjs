@@ -45,10 +45,10 @@ describe('tallyCalls (#2097)', () => {
     const t = tallyCalls(calls);
     expect(t.total).toBe(14);
     expect(t.catchUp.chunks).toBe(10);
-    expect(t.catchUp.scans).toHaveLength(2);
+    expect(t.catchUp.runs).toHaveLength(2);
     expect(t.budgeted).toBe(6);
     expect(t.catchUp.oversized).toEqual([]);
-    expect(t.catchUp.overlong).toEqual([]);
+    expect(t.catchUp.longRuns).toEqual([]);
   });
 
   it('gives a current cache the same budgeted figure as a stalled one', () => {
@@ -67,14 +67,14 @@ describe('tallyCalls (#2097)', () => {
     const [a1, a2] = scan(100, 2_000);
     const [b1, b2] = scan(150, 2_000);
     const t = tallyCalls([a1, b1, a2, b2]);
-    expect(t.catchUp.scans).toHaveLength(2);
-    expect(t.catchUp.scans.every((s) => s.chunks === 2)).toBe(true);
+    expect(t.catchUp.runs).toHaveLength(2);
+    expect(t.catchUp.runs.every((s) => s.chunks === 2)).toBe(true);
   });
 
   it('keeps a retry of a FAILED chunk with its scan', () => {
     const [c1, c2] = scan(100, 2_000);
     const t = tallyCalls([{ ...c1, outcome: 'failed' }, { ...c1, outcome: 'failed' }, { ...c1, outcome: 'ok' }, c2]);
-    expect(t.catchUp.scans).toHaveLength(1);
+    expect(t.catchUp.runs).toHaveLength(1);
     expect(t.catchUp.retries).toBe(2);
     expect(t.budgeted).toBe(1);
   });
@@ -86,7 +86,7 @@ describe('tallyCalls (#2097)', () => {
     for (let i = 0; i < 8; i++) calls.push(head, { ...chunk(500, 619), outcome: 'ok' });
     const t = tallyCalls(calls);
     expect(t.catchUp.retries).toBe(0);
-    expect(t.catchUp.scans).toHaveLength(8);
+    expect(t.catchUp.runs).toHaveLength(8);
     expect(t.budgeted).toBe(16);
   });
 
@@ -94,20 +94,35 @@ describe('tallyCalls (#2097)', () => {
     const c = chunk(500, 619);
     const t = tallyCalls([c, c]);
     expect(t.catchUp.retries).toBe(0);
-    expect(t.catchUp.scans).toHaveLength(2);
+    expect(t.catchUp.runs).toHaveLength(2);
   });
 
   it('keeps two scans issued at once over the identical range apart', () => {
     const [a1, a2] = scan(100, 2_000);
     const t = tallyCalls([{ ...a1, outcome: 'ok' }, { ...a1, outcome: 'ok' }, a2, a2]);
-    expect(t.catchUp.scans).toHaveLength(2);
-    expect(t.catchUp.scans.every((x) => x.chunks === 2)).toBe(true);
+    expect(t.catchUp.runs).toHaveLength(2);
+    expect(t.catchUp.runs.every((x) => x.chunks === 2)).toBe(true);
   });
 
   it('fails the shape rules the app sets for itself', () => {
     const wide = tallyCalls([chunk(1, Number(CHUNK_BLOCKS) + 1)]);
     expect(wide.catchUp.oversized).toHaveLength(1);
-    const long = tallyCalls(scan(1, (MAX_CHUNKS_PER_SCAN + 1) * Number(CHUNK_BLOCKS)));
-    expect(long.catchUp.overlong).toHaveLength(1);
+  });
+
+  it('reports a run longer than one scan as unresolved, charged the fewest scans (#2710 r2)', () => {
+    // One scan of exactly 20 full windows, then the indexer lands on its end
+    // and the next tick scans on from there: block numbers alone read one run.
+    const full = MAX_CHUNKS_PER_SCAN * Number(CHUNK_BLOCKS);
+    const t = tallyCalls([head, ...scan(1, full), head, ...scan(1 + full, 2_500)]);
+    expect(t.catchUp.runs).toHaveLength(1);
+    expect(t.catchUp.longRuns).toHaveLength(1);
+    expect(t.catchUp.scansCharged).toBe(2);
+    expect(t.budgeted).toBe(4);
+  });
+
+  it('still charges a page that scans far past the skip cap', () => {
+    const t = tallyCalls(scan(1, 50 * Number(CHUNK_BLOCKS)));
+    expect(t.catchUp.scansCharged).toBe(3);
+    expect(t.catchUp.longRuns).toHaveLength(1);
   });
 });

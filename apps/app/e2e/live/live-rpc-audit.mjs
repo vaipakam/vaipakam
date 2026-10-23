@@ -15,16 +15,19 @@
 //
 // A scan's eth_getLogs count grows with the indexer's lag by design
 // (serialized 1000-block windows over the un-ingested tail), so the
-// budget counts each SCAN once and holds the scan's shape to the app's
-// own rules separately — see `catchUpTally.mjs` (#2097). The figure is
-// the page's own traffic, never a lag read at another moment.
-import { blocked, launch, visit } from './driver.mjs';
+// budget charges each run of windows as the fewest SCANS that produce it
+// and holds the windows to the app's own rules separately — see
+// `catchUpTally.mjs` (#2097). The figure is the page's own traffic, never
+// a lag read at another moment. A write the read-only session had to
+// abort is a FAIL; a run the wire cannot attribute is UNRESOLVED.
+import { SITE, blocked, launch, visit } from './driver.mjs';
+import { splitBlocked } from './readOnlyFindings.mjs';
 import { CHUNK_BLOCKS, MAX_CHUNKS_PER_SCAN, tallyCalls } from './catchUpTally.mjs';
 
 const BUDGET_TOTAL = 12; // all JSON-RPC calls in the 60s window
 const BUDGET_BLOCKNUMBER = 5;
 
-const { page, done } = await launch({ role: 'public', keyless: true, readOnly: true });
+const { page, done, blockedRequests } = await launch({ role: 'public', keyless: true, readOnly: true });
 let fails = 0;
 const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`);
@@ -160,10 +163,10 @@ const tally = tallyCalls(calls);
 const { counts, total, budgeted, catchUp } = tally;
 console.log('tally:', JSON.stringify(counts), `| successful rpc responses: ${rpcOk}`);
 console.log(
-  `catch-up: ${catchUp.chunks} eth_getLogs in ${catchUp.scans.length} scan(s)` +
+  `catch-up: ${catchUp.chunks} eth_getLogs, charged as ${catchUp.scansCharged} scan(s)` +
     (catchUp.retries ? `, ${catchUp.retries} of them retries` : '') +
-    (catchUp.scans.length
-      ? ` — ${catchUp.scans.map((x) => `${x.from}–${x.to} in ${x.chunks}`).join(', ')}`
+    (catchUp.runs.length
+      ? ` — ${catchUp.runs.map((x) => `${x.from}–${x.to}: ${x.chunks} window(s) = ${x.scans} scan(s)`).join(', ')}`
       : ''),
 );
 // No SUCCESSFUL RPC in the window means there was no RPC behaviour to
@@ -177,7 +180,7 @@ if (rpcOk === 0) {
   );
 }
 check(
-  `JSON-RPC calls within budget, each catch-up scan counted once (${budgeted} <= ${BUDGET_TOTAL}; ${total} raw)`,
+  `JSON-RPC calls within budget, each catch-up run charged as the fewest scans that produce it (${budgeted} <= ${BUDGET_TOTAL}; ${total} raw)`,
   budgeted <= BUDGET_TOTAL,
 );
 check(
@@ -190,15 +193,36 @@ check(
   catchUp.oversized.length === 0,
   catchUp.oversized.join(', '),
 );
-check(
-  `no catch-up scan runs past the skip cap (${MAX_CHUNKS_PER_SCAN} windows)`,
-  catchUp.overlong.length === 0,
-  catchUp.overlong.join(', '),
-);
 // The diet must not blank the surface it protects.
 const body = await page.locator('body').innerText();
 check('book still renders', body.length > 300);
 
-console.log(fails === 0 ? 'ALL PASS' : `${fails} FAILURES`);
+// A read-only session that had to ABORT a write the page attempted has
+// found a defect, whatever the budget says (#2710 r2). Read after the
+// teardown, so an attempt made while the context closes still counts.
 await done();
-process.exit(fails === 0 ? 0 : 1);
+const { violations } = splitBlocked(blockedRequests ?? [], [SITE]);
+check(
+  'the page attempted no write in a read-only session',
+  violations.length === 0,
+  violations.map((v) => v.reason).join(' | ').slice(0, 300),
+);
+
+// FAIL > UNRESOLVED > PASS. A run of catch-up windows longer than one scan
+// may be is either a scan past the skip cap or adjacent scans the wire
+// cannot separate (`catchUpTally.mjs`), so it is never a product FAIL on its
+// own — but it is not a PASS either.
+if (fails > 0) {
+  console.log(`${fails} FAILURES`);
+  process.exit(1);
+}
+if (catchUp.longRuns.length > 0) {
+  await blocked(
+    `catch-up run(s) longer than one scan may be (${MAX_CHUNKS_PER_SCAN} windows): ` +
+      `${catchUp.longRuns.join(', ')}. Either the page scanned past the skip cap, or` +
+      ' adjacent scans met exactly where the indexer cursor landed; the wire cannot' +
+      ' say which, so look at the page before trusting a PASS.',
+  );
+}
+console.log('ALL PASS');
+process.exit(0);

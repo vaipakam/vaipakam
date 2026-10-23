@@ -21,33 +21,41 @@
  *     book's terminal-event set, derived from the same rules file the app
  *     reads (`src/data/bookCatchUpRules.json`), so the two cannot drift.
  *     Nothing else in the app asks for that set.
- *   - Chunks are grouped into SCANS: a chunk starting one block after an
- *     open scan's last chunk continues it; any other chunk starts a scan.
+ *   - Chunks are grouped into RUNS: a chunk starting one block after an
+ *     open run's last chunk continues it; any other chunk starts a run.
  *     Two refetches whose scans interleave are kept apart because each
- *     continuation is matched to exactly one open scan. Only a full-width
+ *     continuation is matched to exactly one open run. Only a full-width
  *     chunk can be continued, because the app cuts a window short only at
  *     a scan's end.
  *   - A RETRY is established from the WIRE, never from a range alone: a
- *     chunk is a retry only when it repeats the range of a scan's latest
+ *     chunk is a retry only when it repeats the range of a run's latest
  *     attempt AND that attempt was OBSERVED TO FAIL (a non-200 response, a
  *     failed request, a JSON-RPC error, or no answer at all). Each call's
  *     `outcome` is recorded by the drive. A repeat of a range that
- *     succeeded is a new scan, so a page re-scanning an unchanged range
+ *     succeeded starts a new run, so a page re-scanning an unchanged range
  *     over and over — the polling regression this audit exists for —
  *     counts every scan (#2710 r1). An unknown outcome (a body that could
  *     not be read) is never read as a failure.
- *     ONE LIMIT, stated, because the wire cannot tell the two apart
- *     (#1672 records why): a later scan that starts exactly one block
- *     after an earlier scan's last chunk, when that chunk was itself
- *     exactly full width, is read as its continuation. It costs one call
+ *   - ADJACENT SCANS, stated, because block numbers cannot separate them
+ *     (#1672 records why): a later scan that starts exactly one block after
+ *     an earlier scan's last full-width chunk reads as its continuation.
+ *     That happens when the indexer's cursor lands exactly on the earlier
+ *     scan's end. So a contiguous RUN of chunks is not always one scan, and
+ *     nothing on the wire can say it is.
+ *   - The BUDGET counts each run as the FEWEST scans a correct page could
+ *     have issued to produce it: one per `MAX_CHUNKS_PER_SCAN` windows,
+ *     rounded up. That matches the steady-state design ("one eth_getLogs
+ *     per tick") whatever the lag, and a page that ignores the skip cap
+ *     still pays for every 20 windows it reads. Two adjacent scans that
+ *     merge into a run short enough for one are charged as one: one call
  *     in the lenient direction, and only on that exact coincidence.
- *   - The BUDGET counts each scan once, as the steady-state design does
- *     ("one eth_getLogs per tick"), so it audits how often the page scans,
- *     whatever the lag.
- *   - The SCAN SHAPE is then held to the app's own rules: no chunk wider
- *     than `CHUNK_BLOCKS`, no scan longer than `MAX_CATCHUP_BLOCKS` allows.
- *     A page that scanned in oversized windows, or kept scanning past the
- *     skip cap, fails on that rule rather than hiding inside a lag excuse.
+ *   - The SCAN SHAPE is held to the app's own rules where the wire can
+ *     establish them. No chunk is wider than `CHUNK_BLOCKS` — a chunk is
+ *     one request, so this is certain, and a violation is a FAIL. A run
+ *     LONGER than one scan may be (`longRuns`) is either a scan past the
+ *     skip cap or adjacent scans, and the wire cannot say which, so it is
+ *     reported as UNRESOLVED for a human to look at, never as a product
+ *     FAIL (#2710 r2; the verdict rule is #2180's).
  *
  * Pure: `catchUpTally.test.mjs` pins it.
  */
@@ -112,8 +120,8 @@ export function catchUpRange(call) {
  */
 export function tallyCalls(calls) {
   const counts = {};
-  const scans = [];
-  /** next expected `from` → open scans waiting on it */
+  const runs = [];
+  /** next expected `from` → open runs waiting on it */
   const open = new Map();
   let chunks = 0;
   let retries = 0;
@@ -126,11 +134,11 @@ export function tallyCalls(calls) {
     chunks += 1;
     if (r.to - r.from + 1n > CHUNK_BLOCKS) oversized.push(`${r.from}–${r.to}`);
     const failed = call.outcome === 'failed';
-    // A RETRY repeats the range of a scan's latest attempt, and that attempt
+    // A RETRY repeats the range of a run's latest attempt, and that attempt
     // was observed to fail (the transport retries a failed request with the
-    // same body). It belongs to that scan and does not advance it. A repeat
-    // of a range that SUCCEEDED is a new scan, counted as one.
-    const retried = scans.find((s) => s.lastFailed && s.lastFrom === r.from && s.to === r.to);
+    // same body). It belongs to that run and does not advance it. A repeat
+    // of a range that SUCCEEDED starts a new run.
+    const retried = runs.find((s) => s.lastFailed && s.lastFrom === r.from && s.to === r.to);
     if (retried) {
       retries += 1;
       retried.lastFailed = failed;
@@ -138,40 +146,49 @@ export function tallyCalls(calls) {
     }
     const key = String(r.from);
     const waiting = open.get(key);
-    let scan;
+    let run;
     if (waiting && waiting.length > 0) {
-      scan = waiting.shift();
+      run = waiting.shift();
       if (waiting.length === 0) open.delete(key);
     } else {
-      scan = { from: r.from, to: r.to, lastFrom: r.from, lastFailed: false, chunks: 0 };
-      scans.push(scan);
+      run = { from: r.from, to: r.to, lastFrom: r.from, lastFailed: false, chunks: 0 };
+      runs.push(run);
     }
-    scan.chunks += 1;
-    scan.lastFrom = r.from;
-    scan.to = r.to;
-    scan.lastFailed = failed;
+    run.chunks += 1;
+    run.lastFrom = r.from;
+    run.to = r.to;
+    run.lastFailed = failed;
     // Only a FULL-WIDTH chunk can be followed by another of the same scan:
     // the app's loop cuts a window short only at the scan's end
-    // (`chunkedGetLogs`). So a short chunk closes its scan, and a later scan
-    // that happens to start one block after it is counted as its own.
+    // (`chunkedGetLogs`). So a short chunk closes its run, and a later scan
+    // that happens to start one block after it starts a run of its own.
     if (r.to - r.from + 1n === CHUNK_BLOCKS) {
       const next = String(r.to + 1n);
       if (!open.has(next)) open.set(next, []);
-      open.get(next).push(scan);
+      open.get(next).push(run);
     }
   }
   const total = Object.values(counts).reduce((a, n) => a + n, 0);
+  // The fewest scans a correct page could have issued to produce each run.
+  const charge = (run) => Math.ceil(run.chunks / MAX_CHUNKS_PER_SCAN);
+  const scansCharged = runs.reduce((a, run) => a + charge(run), 0);
   return {
     counts,
     total,
-    /** The budgeted figure: every call, with each catch-up scan counted once. */
-    budgeted: total - chunks + scans.length,
+    /** The budgeted figure: every call, with each run of catch-up chunks
+     *  charged as the fewest scans that produce it. */
+    budgeted: total - chunks + scansCharged,
     catchUp: {
       chunks,
       retries,
-      scans: scans.map((s) => ({ from: s.from, to: s.to, chunks: s.chunks })),
+      scansCharged,
+      runs: runs.map((run) => ({ from: run.from, to: run.to, chunks: run.chunks, scans: charge(run) })),
       oversized,
-      overlong: scans.filter((s) => s.chunks > MAX_CHUNKS_PER_SCAN).map((s) => `${s.from}–${s.to} (${s.chunks} chunks)`),
+      /** Runs longer than one scan may be: a scan past the skip cap, or
+       *  adjacent scans the wire cannot separate. Unresolved, not a FAIL. */
+      longRuns: runs
+        .filter((run) => run.chunks > MAX_CHUNKS_PER_SCAN)
+        .map((run) => `${run.from}–${run.to} (${run.chunks} windows)`),
     },
   };
 }
