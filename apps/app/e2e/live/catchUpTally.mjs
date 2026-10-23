@@ -18,21 +18,29 @@
  * requests instead:
  *
  *   - A CATCH-UP CHUNK is an `eth_getLogs` whose topic-0 set is exactly the
- *     book's terminal-event set (`offerTerminalTopics()`, imported, so the
- *     two cannot drift). Nothing else in the app asks for that set.
+ *     book's terminal-event set, derived from the same rules file the app
+ *     reads (`src/data/bookCatchUpRules.json`), so the two cannot drift.
+ *     Nothing else in the app asks for that set.
  *   - Chunks are grouped into SCANS: a chunk starting one block after an
  *     open scan's last chunk continues it; any other chunk starts a scan.
  *     Two refetches whose scans interleave are kept apart because each
- *     continuation is matched to exactly one open scan, and a retry (the
- *     same range as a scan's latest chunk) stays with that scan.
- *     Only a full-width chunk can be continued, because the app cuts a
- *     window short only at a scan's end.
- *     TWO LIMITS, stated, both of them about requests the wire cannot tell
- *     apart (#1672 records why): a later scan that starts exactly one block
- *     after an earlier scan's last chunk, when that chunk was itself exactly
- *     full width, is read as its continuation; and two scans issued at once
- *     over the identical range read as one scan and a retry. Each costs one
- *     call in the lenient direction, and only on that exact coincidence.
+ *     continuation is matched to exactly one open scan. Only a full-width
+ *     chunk can be continued, because the app cuts a window short only at
+ *     a scan's end.
+ *   - A RETRY is established from the WIRE, never from a range alone: a
+ *     chunk is a retry only when it repeats the range of a scan's latest
+ *     attempt AND that attempt was OBSERVED TO FAIL (a non-200 response, a
+ *     failed request, a JSON-RPC error, or no answer at all). Each call's
+ *     `outcome` is recorded by the drive. A repeat of a range that
+ *     succeeded is a new scan, so a page re-scanning an unchanged range
+ *     over and over — the polling regression this audit exists for —
+ *     counts every scan (#2710 r1). An unknown outcome (a body that could
+ *     not be read) is never read as a failure.
+ *     ONE LIMIT, stated, because the wire cannot tell the two apart
+ *     (#1672 records why): a later scan that starts exactly one block
+ *     after an earlier scan's last chunk, when that chunk was itself
+ *     exactly full width, is read as its continuation. It costs one call
+ *     in the lenient direction, and only on that exact coincidence.
  *   - The BUDGET counts each scan once, as the steady-state design does
  *     ("one eth_getLogs per tick"), so it audits how often the page scans,
  *     whatever the lag.
@@ -47,12 +55,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { toEventSelector } from 'viem';
-import { CHUNK_BLOCKS, MAX_CATCHUP_BLOCKS, OFFER_TERMINAL_EVENTS } from '../../src/data/bookCatchUpRules.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const DIAMOND_ABI = JSON.parse(
-  fs.readFileSync(path.resolve(HERE, '../../../../packages/contracts/src/diamondAbi.json'), 'utf8'),
-);
+const readJson = (rel) => JSON.parse(fs.readFileSync(path.resolve(HERE, rel), 'utf8'));
+const DIAMOND_ABI = readJson('../../../../packages/contracts/src/diamondAbi.json');
+// The scan's own rules, read from the data file the app imports, so this
+// plain-Node drive loads no TypeScript (any Node the repo supports).
+const RULES = readJson('../../src/data/bookCatchUpRules.json');
+const CHUNK_BLOCKS = BigInt(RULES.chunkBlocks);
+const MAX_CATCHUP_BLOCKS = BigInt(RULES.maxCatchUpBlocks);
 
 /**
  * The scan's topic-0 set, derived the way `bookCatchUp.ts` derives it: from
@@ -60,7 +71,7 @@ const DIAMOND_ABI = JSON.parse(
  * name list. `catchUpTally.test.mjs` checks it equals the app's own set.
  */
 export function terminalTopics() {
-  return OFFER_TERMINAL_EVENTS.map((name) => {
+  return RULES.offerTerminalEvents.map((name) => {
     const ev = DIAMOND_ABI.find((i) => i.type === 'event' && i.name === name);
     if (!ev) throw new Error(`event ${name} not found in the Diamond ABI`);
     return toEventSelector(ev);
@@ -94,8 +105,10 @@ export function catchUpRange(call) {
 }
 
 /**
- * @param {Array<{ method?: string, params?: unknown }>} calls every JSON-RPC
- *   call the page made in the window, in the order the requests started.
+ * @param {Array<{ method?: string, params?: unknown, outcome?: 'ok' | 'failed' }>} calls
+ *   every JSON-RPC call the page made in the window, in the order the
+ *   requests started, each with the outcome the drive observed for it
+ *   (absent when unknown).
  */
 export function tallyCalls(calls) {
   const counts = {};
@@ -112,12 +125,15 @@ export function tallyCalls(calls) {
     if (!r) continue;
     chunks += 1;
     if (r.to - r.from + 1n > CHUNK_BLOCKS) oversized.push(`${r.from}–${r.to}`);
-    // A RETRY repeats the range of a scan's latest chunk exactly (the
-    // transport retries a failed request with the same body). It belongs to
-    // that scan and does not advance it.
-    const retried = scans.find((s) => s.lastFrom === r.from && s.to === r.to);
+    const failed = call.outcome === 'failed';
+    // A RETRY repeats the range of a scan's latest attempt, and that attempt
+    // was observed to fail (the transport retries a failed request with the
+    // same body). It belongs to that scan and does not advance it. A repeat
+    // of a range that SUCCEEDED is a new scan, counted as one.
+    const retried = scans.find((s) => s.lastFailed && s.lastFrom === r.from && s.to === r.to);
     if (retried) {
       retries += 1;
+      retried.lastFailed = failed;
       continue;
     }
     const key = String(r.from);
@@ -127,12 +143,13 @@ export function tallyCalls(calls) {
       scan = waiting.shift();
       if (waiting.length === 0) open.delete(key);
     } else {
-      scan = { from: r.from, to: r.to, lastFrom: r.from, chunks: 0 };
+      scan = { from: r.from, to: r.to, lastFrom: r.from, lastFailed: false, chunks: 0 };
       scans.push(scan);
     }
     scan.chunks += 1;
     scan.lastFrom = r.from;
     scan.to = r.to;
+    scan.lastFailed = failed;
     // Only a FULL-WIDTH chunk can be followed by another of the same scan:
     // the app's loop cuts a window short only at the scan's end
     // (`chunkedGetLogs`). So a short chunk closes its scan, and a later scan

@@ -71,12 +71,37 @@ describe('tallyCalls (#2097)', () => {
     expect(t.catchUp.scans.every((s) => s.chunks === 2)).toBe(true);
   });
 
-  it('keeps a retried chunk with its scan', () => {
+  it('keeps a retry of a FAILED chunk with its scan', () => {
     const [c1, c2] = scan(100, 2_000);
-    const t = tallyCalls([c1, c1, c2]);
+    const t = tallyCalls([{ ...c1, outcome: 'failed' }, { ...c1, outcome: 'failed' }, { ...c1, outcome: 'ok' }, c2]);
     expect(t.catchUp.scans).toHaveLength(1);
-    expect(t.catchUp.retries).toBe(1);
+    expect(t.catchUp.retries).toBe(2);
     expect(t.budgeted).toBe(1);
+  });
+
+  it('counts every re-scan of an unchanged range that succeeded (#2710 r1)', () => {
+    // The head and cursor have not moved, so each refetch asks for the
+    // identical window — the over-frequent polling the audit exists to catch.
+    const calls = [];
+    for (let i = 0; i < 8; i++) calls.push(head, { ...chunk(500, 619), outcome: 'ok' });
+    const t = tallyCalls(calls);
+    expect(t.catchUp.retries).toBe(0);
+    expect(t.catchUp.scans).toHaveLength(8);
+    expect(t.budgeted).toBe(16);
+  });
+
+  it('never reads an unknown outcome as a failure', () => {
+    const c = chunk(500, 619);
+    const t = tallyCalls([c, c]);
+    expect(t.catchUp.retries).toBe(0);
+    expect(t.catchUp.scans).toHaveLength(2);
+  });
+
+  it('keeps two scans issued at once over the identical range apart', () => {
+    const [a1, a2] = scan(100, 2_000);
+    const t = tallyCalls([{ ...a1, outcome: 'ok' }, { ...a1, outcome: 'ok' }, a2, a2]);
+    expect(t.catchUp.scans).toHaveLength(2);
+    expect(t.catchUp.scans.every((x) => x.chunks === 2)).toBe(true);
   });
 
   it('fails the shape rules the app sets for itself', () => {

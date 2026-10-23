@@ -67,11 +67,22 @@ const recordedRequests = new WeakSet();
 // the audit falsely BLOCKS (Codex #1621 r10).
 const awaitingResponse = new Set();
 const bodyReads = [];
+// The calls each recorded request carried, so its observed OUTCOME can be
+// written onto them. The tally discounts a repeated catch-up window as a
+// retry only when the earlier attempt was observed to fail (#2710 r1), so
+// the outcome comes from the wire, never from a range coincidence.
+const callsOf = new WeakMap();
+const markAll = (req, outcome) => {
+  for (const c of callsOf.get(req) ?? []) c.outcome = outcome;
+};
 page.on('response', (res) => {
   const req = res.request();
   if (!recordedRequests.has(req)) return;
   awaitingResponse.delete(req);
-  if (res.status() !== 200) return;
+  if (res.status() !== 200) {
+    markAll(req, 'failed');
+    return;
+  }
   // Playwright fires `response` on HEADERS and does not await handlers,
   // so the body read is still in flight; collect the promises and settle
   // them before the floor is judged, or a slow body reads as "no
@@ -81,9 +92,14 @@ page.on('response', (res) => {
       .text()
       .then((text) => {
         const parsed = JSON.parse(text);
+        const sent = callsOf.get(req) ?? [];
         for (const r of Array.isArray(parsed) ? parsed : [parsed]) {
           // A JSON-RPC envelope carrying a result, not an error object.
-          if (r && r.jsonrpc && r.error === undefined && r.result !== undefined) rpcOk++;
+          const ok = Boolean(r && r.jsonrpc && r.error === undefined && r.result !== undefined);
+          if (ok) rpcOk++;
+          // The call this envelope answers: by id, or the only one sent.
+          const call = sent.length === 1 ? sent[0] : sent.find((c) => c.id !== undefined && c.id === r?.id);
+          if (call && r?.jsonrpc) call.outcome = ok ? 'ok' : 'failed';
         }
       })
       .catch(() => {
@@ -95,7 +111,10 @@ page.on('response', (res) => {
 // `awaitingResponse` for the whole grace period. Registered up front with
 // the other handlers — registering it after the wait loop, as I first
 // wrote it, meant it could not drain anything during that loop.
-page.on('requestfailed', (req) => awaitingResponse.delete(req));
+page.on('requestfailed', (req) => {
+  awaitingResponse.delete(req);
+  markAll(req, 'failed');
+});
 page.on('request', (req) => {
   if (!recording) return;
   const body = req.postData();
@@ -104,9 +123,14 @@ page.on('request', (req) => {
   awaitingResponse.add(req);
   try {
     const parsed = JSON.parse(body);
+    const sent = [];
     for (const call of Array.isArray(parsed) ? parsed : [parsed]) {
-      if (call?.method) calls.push({ method: call.method, params: call.params });
+      if (!call?.method) continue;
+      const recorded = { method: call.method, params: call.params, id: call.id };
+      calls.push(recorded);
+      sent.push(recorded);
     }
+    callsOf.set(req, sent);
   } catch {
     /* not JSON-RPC */
   }
@@ -128,6 +152,9 @@ while (awaitingResponse.size > 0 && Date.now() < settleBy) {
   await page.waitForTimeout(500);
 }
 await Promise.allSettled(bodyReads);
+// A request still unanswered after the grace period delivered nothing: it
+// failed, as far as the page was concerned.
+for (const req of awaitingResponse) markAll(req, 'failed');
 
 const tally = tallyCalls(calls);
 const { counts, total, budgeted, catchUp } = tally;
