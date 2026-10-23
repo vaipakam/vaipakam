@@ -2449,7 +2449,7 @@
         "SwapAdapterAttempted": "स्वैप मार्ग आज़माया गया",
         "SwapAdapterSucceeded": "स्वैप मार्ग उपयोग हुआ",
         "SwapAllAdaptersFailed": "सभी स्वैप मार्ग विफल",
-        "TierExclusionUpdated": "ऋण के लिए रखा VPFI छूट स्तर से बाहर",
+        "TierExclusionUpdated": "छूट स्तर से VPFI का अपवर्जन अपडेट किया गया",
         "VPFIDiscountApplied": "शुल्क छूट लागू (VPFI में भुगतान)",
         "VPFIYieldFeeDiscountApplied": "यील्ड शुल्क छूट लागू (VPFI में भुगतान)",
         "VaultRentalUpdated": "किराया पहुँच अपडेट की गई",

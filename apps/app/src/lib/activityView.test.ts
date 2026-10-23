@@ -1,7 +1,6 @@
-import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { refScopedKinds } from '@vaipakam/lib/activityRefs';
+import { actorAttributedKinds } from '@vaipakam/lib/activityActor';
 import {
   coalesceByTx,
   legText,
@@ -97,56 +96,25 @@ describe('activity feed labels are translatable (extraction guard)', () => {
     }
   });
 
-  // #2658 — the label set covers every event the indexer files under a
-  // loan or an offer, DERIVED from the compiled Diamond ABI and the
-  // indexer's own reference policy rather than kept as a hand list. #1794
-  // made the indexer file every such event by one rule, so a wallet's
-  // Activity page receives them through its loan ids; a hand list here
-  // (Codex #1343 r1's) fell behind that rule by forty-odd kinds, each of
-  // which then rendered a generated English name in every locale.
-  //
-  // The match is the policy's own `refShape` on a scalar integer input, at
-  // any depth of a named tuple. It errs towards MORE kinds than the indexer
-  // files (an event whose candidates the indexer leaves unresolved is still
-  // required here), never fewer. The only kinds excused are those whose
-  // every reference the policy lists as `notScoped`: companion payloads
-  // whose primary event carries the reference.
-  it('labels every event the indexer files under a loan or offer', () => {
-    const policy = JSON.parse(
-      fs.readFileSync(
-        fileURLToPath(new URL('../../../indexer/src/activityRefsPolicy.json', import.meta.url)),
-        'utf8',
-      ),
-    ) as { refShape: Record<'loanId' | 'offerId', string>; notScoped: Record<string, unknown> };
-    const shape = {
-      loanId: new RegExp(policy.refShape.loanId),
-      offerId: new RegExp(policy.refShape.offerId),
-    };
-    type Input = { name?: string; type: string; indexed?: boolean; components?: readonly Input[] };
-    const refFields = (inputs: readonly Input[]): Set<'loanId' | 'offerId'> => {
-      const out = new Set<'loanId' | 'offerId'>();
-      for (const i of inputs) {
-        if (i.components) {
-          if (!/\]$/.test(i.type) && !i.indexed) refFields(i.components).forEach((f) => out.add(f));
-        } else if (/^u?int(\d+)?$/.test(i.type)) {
-          for (const f of ['loanId', 'offerId'] as const) if (shape[f].test(i.name ?? '')) out.add(f);
-        }
-      }
-      return out;
-    };
-    const filed = new Set<string>();
-    for (const item of DIAMOND_ABI_VIEM as readonly { type: string; name?: string; inputs?: readonly Input[] }[]) {
-      if (item.type !== 'event' || !item.name || !item.inputs) continue;
-      const fields = [...refFields(item.inputs)].filter(
-        (f) => !Object.hasOwn(policy.notScoped, `${item.name}.${f}`),
-      );
-      if (fields.length > 0) filed.add(item.name);
-    }
-    // The derivation must find the long-mapped core, or it is reading nothing.
-    expect(filed.has('LoanRepaid')).toBe(true);
-    expect(filed.has('OfferCreated')).toBe(true);
-    const missing = [...filed].filter((k) => ACTIVITY_LABELS[k] === undefined).sort();
-    expect(missing, 'event kinds filed under a loan or offer with no Activity label').toEqual([]);
+  // #2658 — the label set covers every kind the indexer files where a
+  // wallet's Activity page can receive it: under a loan or an offer (the
+  // page's loan match), or under the wallet as its actor (the actor match).
+  // Both sets are READ from the rule the indexer runs, in the shared library
+  // (`@vaipakam/lib/activityRefs`, `@vaipakam/lib/activityActor`), never
+  // re-derived here. A hand list (Codex #1343 r1's) fell forty-odd kinds
+  // behind #1794's rule, and a test-side copy of that rule ignored the
+  // policy's `extraAliases` (#2702 r1); each missed kind would render a
+  // generated English name in every locale.
+  it('labels every kind the indexer files under a loan, an offer or a wallet', () => {
+    const refScoped = refScopedKinds();
+    const attributed = actorAttributedKinds();
+    // Each set must find its long-mapped core, or it is reading nothing.
+    expect(refScoped.has('LoanRepaid')).toBe(true);
+    expect(refScoped.has('OfferCreated')).toBe(true);
+    expect(attributed.has('VPFIDepositedToVault')).toBe(true);
+    const filed = new Set([...refScoped, ...attributed]);
+    const missing = [...filed].filter((k) => !Object.hasOwn(ACTIVITY_LABELS, k)).sort();
+    expect(missing, 'event kinds the indexer files for a wallet with no Activity label').toEqual([]);
   });
 
   // Not filed under a loan (its number is not always a loan), but it names
@@ -161,23 +129,47 @@ describe('activity feed labels are translatable (extraction guard)', () => {
 });
 
 describe('coalesceByTx', () => {
-  // #2658 — an HF liquidation whose every swap route failed: the row is
-  // named by the outcome, and the steps inside it are counted, not shown.
-  it('names a failed-sale liquidation by its outcome, not its steps', () => {
-    const rows = coalesceByTx(
-      [
-        'HFLiquidationTriggered',
-        'SwapAdapterAttempted',
-        'SwapAllAdaptersFailed',
-        'LiquidationFallback',
-        'FallbackCustodyMoved',
-        'LoanStatusChanged',
-        'LoanFallbackPending',
-      ].map((kind, logIndex) => ev({ kind, logIndex, loanId: 9 })),
-    );
+  // #2658 — a liquidation whose every swap route failed, with the log sets
+  // the two producers emit (#2702 r1). Both reach the shared fallback entry
+  // (FallbackCustodyFacet.enterFallback), which emits, in order: the failed
+  // route attempts, the custody move, the tier-exclusion sync, the status
+  // edge, then LiquidationFallback + LiquidationFallbackSplit (+ the
+  // no-price event when the oracle could not price the split). The row is
+  // named by the outcome; every step inside it is counted, not shown.
+  const FALLBACK_ENTRY = [
+    'SwapAdapterAttempted',
+    'SwapAllAdaptersFailed',
+    'FallbackCustodyMoved',
+    'TierExclusionUpdated',
+    'LoanStatusChanged',
+    'LiquidationFallback',
+    'LiquidationFallbackSplit',
+  ];
+  const rowOf = (kinds: string[]) =>
+    coalesceByTx(kinds.map((kind, logIndex) => ev({ kind, logIndex, loanId: 9 })));
+
+  it('names a failed-sale HF liquidation by its outcome, not its steps', () => {
+    // RiskFacet.triggerLiquidation returns straight after the fallback entry:
+    // no HFLiquidationTriggered (a successful sale's event) and no
+    // LoanFallbackPending (the time-default path's).
+    const rows = rowOf(FALLBACK_ENTRY);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('Collateral sale failed');
+    expect(rows[0].hiddenCount).toBe(FALLBACK_ENTRY.length - 1);
+  });
+
+  it('says when the failed sale also had no price for the split', () => {
+    const rows = rowOf([...FALLBACK_ENTRY, 'LiquidationFallbackOracleUnavailable']);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('Collateral sale failed: no price available');
+  });
+
+  it('names a failed-sale time default by the pending settlement', () => {
+    // DefaultedFacet emits LoanFallbackPending after the same entry.
+    const rows = rowOf([...FALLBACK_ENTRY, 'LoanFallbackPending']);
     expect(rows).toHaveLength(1);
     expect(rows[0].label).toBe('Settlement pending after a failed sale');
-    expect(rows[0].hiddenCount).toBe(6);
+    expect(rows[0].hiddenCount).toBe(FALLBACK_ENTRY.length);
   });
 
   it('collapses one transaction to its highest-priority event', () => {

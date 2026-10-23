@@ -35,14 +35,14 @@ const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
 const ABI_DIR = join(REPO_ROOT, 'packages', 'contracts', 'src', 'abis');
 
 /**
- * THE POLICY lives in `src/activityRefsPolicy.json` (#1794) and is read here
- * and by the runtime (`src/activityRefs.ts`) from that one file, so the rule
+ * THE POLICY lives in `packages/lib/src/activityRefsPolicy.json` (#1794) and is read here
+ * and by the runtime (`packages/lib/src/activityRefs.ts`) from that one file, so the rule
  * this guardrail checks and the rule the indexer runs cannot drift apart.
  * Until #1794 the guardrail held the policy and the indexer held a separate
  * hand-written `case` per event; the 60 `TODO(#1794)` entries that used to
  * sit here were the distance between the two.
  */
-const POLICY_PATH = join(__dirname, '..', '..', 'src', 'activityRefsPolicy.json');
+const POLICY_PATH = join(REPO_ROOT, 'packages', 'lib', 'src', 'activityRefsPolicy.json');
 const POLICY = JSON.parse(readFileSync(POLICY_PATH, 'utf8'));
 
 /**
@@ -621,7 +621,7 @@ export function deriveActivityRefsSurface() {
     }
     if (problems.length) {
       throw new Error(
-        '[activity-refs surface] malformed entries in src/activityRefsPolicy.json:\n' +
+        '[activity-refs surface] malformed entries in packages/lib/src/activityRefsPolicy.json:\n' +
           problems.map((p) => `    ${p}`).join('\n') +
           '\n  An exemption or choice without its reason is an undocumented gap.',
       );

@@ -2449,7 +2449,7 @@
         "SwapAdapterAttempted": "மாற்று வழி முயற்சிக்கப்பட்டது",
         "SwapAdapterSucceeded": "மாற்று வழி பயன்படுத்தப்பட்டது",
         "SwapAllAdaptersFailed": "எல்லா மாற்று வழிகளும் தோல்வியடைந்தன",
-        "TierExclusionUpdated": "கடனுக்காக வைக்கப்பட்ட VPFI தள்ளுபடி நிலையிலிருந்து விலக்கப்பட்டது",
+        "TierExclusionUpdated": "தள்ளுபடி நிலையிலிருந்து VPFI விலக்கு புதுப்பிக்கப்பட்டது",
         "VPFIDiscountApplied": "கட்டணத் தள்ளுபடி பயன்படுத்தப்பட்டது (VPFI-இல் செலுத்தப்பட்டது)",
         "VPFIYieldFeeDiscountApplied": "வருவாய்க் கட்டணத் தள்ளுபடி பயன்படுத்தப்பட்டது (VPFI-இல் செலுத்தப்பட்டது)",
         "VaultRentalUpdated": "வாடகை அணுகல் புதுப்பிக்கப்பட்டது",

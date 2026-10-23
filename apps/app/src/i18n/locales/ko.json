@@ -2449,7 +2449,7 @@
         "SwapAdapterAttempted": "스왑 경로 시도됨",
         "SwapAdapterSucceeded": "스왑 경로 사용됨",
         "SwapAllAdaptersFailed": "모든 스왑 경로 실패",
-        "TierExclusionUpdated": "대출용으로 보유된 VPFI는 할인 등급에서 제외됨",
+        "TierExclusionUpdated": "할인 등급의 VPFI 제외 업데이트됨",
         "VPFIDiscountApplied": "수수료 할인 적용됨 (VPFI로 지불)",
         "VPFIYieldFeeDiscountApplied": "수익 수수료 할인 적용됨 (VPFI로 지불)",
         "VaultRentalUpdated": "대여 이용 권한 업데이트됨",

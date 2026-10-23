@@ -2449,7 +2449,7 @@
         "SwapAdapterAttempted": "已尝试兑换路径",
         "SwapAdapterSucceeded": "已使用兑换路径",
         "SwapAllAdaptersFailed": "所有兑换路径均失败",
-        "TierExclusionUpdated": "为贷款持有的 VPFI 不计入折扣等级",
+        "TierExclusionUpdated": "VPFI 折扣等级排除已更新",
         "VPFIDiscountApplied": "已应用费用折扣（以 VPFI 支付）",
         "VPFIYieldFeeDiscountApplied": "已应用收益费折扣（以 VPFI 支付）",
         "VaultRentalUpdated": "租赁使用权已更新",

@@ -2449,7 +2449,7 @@
         "SwapAdapterAttempted": "Swap-Route versucht",
         "SwapAdapterSucceeded": "Swap-Route verwendet",
         "SwapAllAdaptersFailed": "Alle Swap-Routen fehlgeschlagen",
-        "TierExclusionUpdated": "Für einen Kredit gehaltenes VPFI, aus der Rabattstufe ausgenommen",
+        "TierExclusionUpdated": "Ausnahme von VPFI aus der Rabattstufe aktualisiert",
         "VPFIDiscountApplied": "Gebührenrabatt angewendet (in VPFI bezahlt)",
         "VPFIYieldFeeDiscountApplied": "Rabatt auf die Ertragsgebühr angewendet (in VPFI bezahlt)",
         "VaultRentalUpdated": "Mietzugang aktualisiert",

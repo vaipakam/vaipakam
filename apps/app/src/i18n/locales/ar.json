@@ -2449,7 +2449,7 @@
         "SwapAdapterAttempted": "تمت تجربة مسار المبادلة",
         "SwapAdapterSucceeded": "تم استخدام مسار المبادلة",
         "SwapAllAdaptersFailed": "فشلت جميع مسارات المبادلة",
-        "TierExclusionUpdated": "VPFI المحتجز لقرض مستبعد من مستوى الخصم",
+        "TierExclusionUpdated": "تحديث استبعاد VPFI من مستوى الخصم",
         "VPFIDiscountApplied": "تم تطبيق خصم الرسوم (مدفوع بـ VPFI)",
         "VPFIYieldFeeDiscountApplied": "تم تطبيق خصم رسوم العائد (مدفوع بـ VPFI)",
         "VaultRentalUpdated": "تم تحديث صلاحية الإيجار",

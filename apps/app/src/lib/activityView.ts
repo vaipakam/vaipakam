@@ -176,7 +176,9 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   LenderBackstopOptInSet: { label: 'Backstop exit choice updated', category: 'loan-modify', priority: 45 },
   LiquidationDiscounted: { label: 'Liquidated at a discount', category: 'loan-default', priority: 89 },
   LiquidationFallback: { label: 'Collateral sale failed', category: 'loan-default', priority: 84 },
-  LiquidationFallbackOracleUnavailable: { label: 'Collateral sale failed: no price available', category: 'loan-default', priority: 84 },
+  // Emitted beside LiquidationFallback when the split had no price: one
+  // above it, so the more specific outcome names the row.
+  LiquidationFallbackOracleUnavailable: { label: 'Collateral sale failed: no price available', category: 'loan-default', priority: 85 },
   LiquidationFallbackSplit: { label: 'Collateral split recorded', category: 'loan-default', priority: 12 },
   LoanCuredFromFallback: { label: 'Loan restored by adding collateral', category: 'collateral', priority: 85 },
   LoanFallbackPending: { label: 'Settlement pending after a failed sale', category: 'loan-default', priority: 87 },
@@ -199,7 +201,11 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   SwapAdapterAttempted: { label: 'Swap route tried', category: 'other', priority: 6 },
   SwapAdapterSucceeded: { label: 'Swap route used', category: 'other', priority: 6 },
   SwapAllAdaptersFailed: { label: 'Every swap route failed', category: 'loan-default', priority: 14 },
-  TierExclusionUpdated: { label: 'VPFI held for a loan, left out of the discount tier', category: 'other', priority: 12 },
+  // Records BOTH directions: a closed loan's owed VPFI entering a vault
+  // owner's fee-tier exclusion, and leaving it (cleared, with no owner and a
+  // zero amount, when the position NFT returns to the stored party). One
+  // static label serves both, so it names the update, not a direction.
+  TierExclusionUpdated: { label: 'VPFI discount-tier exclusion updated', category: 'other', priority: 12 },
   VPFIDiscountApplied: { label: 'Fee discount applied (paid in VPFI)', category: 'loan-open', priority: 12 },
   VPFIYieldFeeDiscountApplied: { label: 'Yield fee discount applied (paid in VPFI)', category: 'loan-close', priority: 12 },
   VaultRentalUpdated: { label: 'Rental access updated', category: 'loan-modify', priority: 12 },

@@ -5445,7 +5445,7 @@ const copySource = {
       SwapAdapterAttempted: 'Swap route tried',
       SwapAdapterSucceeded: 'Swap route used',
       SwapAllAdaptersFailed: 'Every swap route failed',
-      TierExclusionUpdated: 'VPFI held for a loan, left out of the discount tier',
+      TierExclusionUpdated: 'VPFI discount-tier exclusion updated',
       VPFIDiscountApplied: 'Fee discount applied (paid in VPFI)',
       VPFIYieldFeeDiscountApplied: 'Yield fee discount applied (paid in VPFI)',
       VaultRentalUpdated: 'Rental access updated',

@@ -2449,7 +2449,7 @@
         "SwapAdapterAttempted": "Ruta de intercambio probada",
         "SwapAdapterSucceeded": "Ruta de intercambio usada",
         "SwapAllAdaptersFailed": "Todas las rutas de intercambio fallaron",
-        "TierExclusionUpdated": "VPFI retenido para un préstamo, excluido del nivel de descuento",
+        "TierExclusionUpdated": "Exclusión de VPFI del nivel de descuento actualizada",
         "VPFIDiscountApplied": "Descuento de comisión aplicado (pagado en VPFI)",
         "VPFIYieldFeeDiscountApplied": "Descuento en la comisión sobre rendimiento aplicado (pagado en VPFI)",
         "VaultRentalUpdated": "Acceso de alquiler actualizado",
