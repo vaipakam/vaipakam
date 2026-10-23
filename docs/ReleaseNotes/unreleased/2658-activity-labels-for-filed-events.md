@@ -1,4 +1,4 @@
-## Thread — Activity names every event filed under a loan or offer (PR #<n>)
+## Thread — Activity names every event filed under a loan or offer (PR #2702)
 
 The indexer now files every event that names a loan or an offer under it (#1794), read from the contract interface by one rule. A wallet's Activity page lists events for the wallet's loans, so about forty-five kinds of event that used to arrive with no loan attached now reach it: a lender selling a loan, collateral added or withdrawn, liquidations and their steps, failed collateral sales and what followed, fees recorded against a loan, keeper and auto-extension settings, rental access updates and others. The app had no name for them, so each showed a name generated from the contract's event, in English, in every language.
 
