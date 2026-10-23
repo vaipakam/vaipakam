@@ -1,0 +1,11 @@
+## Thread — A wallet's Activity page shows the events it took part in, by one rule (PR #NNNN)
+
+A wallet's Activity page used to keep an event when the wallet's address appeared anywhere in its details. That let about two hundred kinds of event onto the page with no name of their own, most of them administrative: a role grant, a treasury setting, an operator being approved. It also offered no way to say which events a wallet's page was meant to show.
+
+The page now keeps an event when it concerns one of the wallet's loans, as before, or when the wallet is one of the event's participants. A participant is the wallet that acted in the event, or a wallet the event names as affected: a counterparty, a buyer, or the owner of a setting, a lending intent, a vault, a perk or a reward. Assets, contracts, the treasury, and addresses an event only approves or permits are never participants. Administrative and treasury records, accounting between deployments, a service operator's own accounting, and sanctions screening records are not shown on a wallet's page. Each of those groups is written down with its reason.
+
+The rule lives in the shared library beside the rule the history service already uses to file each event's wallet, so the two cannot drift apart. Its test checks every address in every event the platform emits. Each one has to be a participant, never a participant, or part of an event recorded as not shown with its reason. A new kind of event that names a wallet therefore fails the test until someone decides whether it belongs on the page.
+
+Thirty kinds the rule admits now have a plain-language name in all ten app languages. They cover a wallet's own settings and consents, lending intents, vault creation and token recovery, terms acceptance, perks, reward claim windows and expiry, and reward delivery. The funds consequences for a flagged wallet (rewards set aside or forfeited, and set-aside rewards becoming claimable) use the in-app flagged wording only, with no list or provider named.
+
+One gap remains and is tracked as #2707. Risk-access consents that are recorded against a wallet's vault, not the wallet itself, are not shown yet. They never reached the page before either. Closes #2703.

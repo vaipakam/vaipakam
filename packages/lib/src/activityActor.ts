@@ -47,8 +47,8 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
   // table) before this mapper runs — `actor = creator` then
   // makes server-side per-wallet filters surface the sold row to
   // the borrower as expected. The `executor` address stays in
-  // `args.executor` for the unfiltered Activity feed's
-  // address-walk participant derivation.
+  // `args.executor`; it is never a participant (#2703,
+  // `activityParticipants.ts`).
   [
     'OfferConsumedBySale',
     (args) =>
