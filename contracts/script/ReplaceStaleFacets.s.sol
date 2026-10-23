@@ -26,6 +26,7 @@ import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
 
@@ -59,7 +60,7 @@ import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
  * Env vars: DEPLOYER_PRIVATE_KEY, DIAMOND_ADDRESS
  *
  * Usage:
- *   forge script script/ReplaceStaleFacets.s.sol \
+ *   forge script script/ReplaceStaleFacets.s.sol --ffi \
  *     --rpc-url $SEPOLIA_RPC_URL --broadcast -vvv
  */
 contract ReplaceStaleFacets is DeployDiamond {
@@ -86,6 +87,12 @@ contract ReplaceStaleFacets is DeployDiamond {
      */
     function runWith(address diamond, uint256 deployerKey) public {
         console.log("Diamond:", diamond);
+        // #2092 item 1 — refuse code that drops a storage-layout fact this
+        // chain records, before anything is broadcast (needs `--ffi`); the
+        // record is rewritten once the cut is in. In this body rather than in
+        // {run}, so `--sig runWith(...)` cannot skip it; the in-process tests
+        // skip it by the library's own rule ({StorageLayoutRecord.active}).
+        StorageLayoutRecord.requireAppendOnly("ReplaceStaleFacets", diamond);
         // #2407 — see RefinanceRecordRollout.
         RefinanceRecordRollout.assertInstalled(diamond);
         // #902 - refuse a Diamond from before the per-rental renter rows; see
@@ -305,6 +312,7 @@ contract ReplaceStaleFacets is DeployDiamond {
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
         vm.stopBroadcast();
+        StorageLayoutRecord.record(diamond);
 
         console.log("DiamondCut applied; cuts:", n);
     }

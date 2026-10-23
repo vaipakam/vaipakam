@@ -8,6 +8,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 
 /**
@@ -36,7 +37,7 @@ import {FacetSelectors} from "./lib/FacetSelectors.sol";
  *   - DIAMOND_ADDRESS    (Diamond to upgrade)
  *
  * Usage:
- *   forge script script/UpgradeOracleFacet.s.sol \
+ *   forge script script/UpgradeOracleFacet.s.sol --ffi \
  *     --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow -vvv
  */
 contract UpgradeOracleFacet is Script {
@@ -48,6 +49,10 @@ contract UpgradeOracleFacet is Script {
 
         console.log("Diamond:", diamond);
         console.log("Admin:  ", admin);
+
+        // #2092 item 1 — refuse code that drops a storage-layout fact this
+        // chain records, before anything is broadcast (needs `--ffi`).
+        StorageLayoutRecord.requireAppendOnly("UpgradeOracleFacet", diamond);
 
         // ── Deployer: fund admin gas (if low) + deploy new facet ────────
         vm.startBroadcast(deployerKey);
@@ -87,6 +92,7 @@ contract UpgradeOracleFacet is Script {
         console.log("OracleFacet cut complete.");
         console.log("  selectors added:   ", toAdd.length);
         console.log("  selectors replaced:", toReplace.length);
+        StorageLayoutRecord.record(diamond);
     }
 
     /// @dev Split `selectors` into those NOT yet routed on `diamond` (need Add,

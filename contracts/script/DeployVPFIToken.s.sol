@@ -7,6 +7,7 @@ import {console} from "forge-std/console.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 
 /**
  * @title DeployVPFIToken
@@ -162,6 +163,19 @@ contract DeployVPFIToken is Script {
     }
 
     function run() external returns (address token) {
+        address diamond = Deployments.readDiamond();
+        require(diamond != address(0), "DeployVPFIToken: diamond not deployed yet");
+        // #2092 — the token proxy joins the code the chain's storage-layout
+        // record governs: the record must already hold this checkout's layout
+        // (checked before any transaction), and is rewritten with its anchor
+        // after. A dry run sends nothing and on a fresh chain has no record
+        // yet, so only a run that writes its artifact checks.
+        if (Deployments.artifactWritesEnabled()) StorageLayoutRecord.requireAppendOnly("DeployVPFIToken", diamond);
+        token = _deployToken();
+        StorageLayoutRecord.record(diamond);
+    }
+
+    function _deployToken() internal returns (address token) {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address admin = vm.envAddress("ADMIN_ADDRESS");
         address treasury = vm.envAddress("TREASURY_ADDRESS");

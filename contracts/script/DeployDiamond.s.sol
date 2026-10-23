@@ -111,6 +111,7 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 
 contract DeployDiamond is Script, ArtifactRootBase {
     // ── Deployed addresses (logged at the end) ──────────────────────────
@@ -125,7 +126,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @notice Operator entry point — reads `ADMIN_ADDRESS`,
     ///         `TREASURY_ADDRESS`, `DEPLOYER_PRIVATE_KEY` from env and
     ///         delegates to `runWith(...)`. Foundry's `forge script
-    ///         DeployDiamond --broadcast` invokes this.
+    ///         DeployDiamond --ffi --broadcast` invokes this (the storage-layout
+    ///         record in {runWith} needs `--ffi`).
     function run() external virtual {
         runWith(
             vm.envAddress("ADMIN_ADDRESS"),
@@ -208,7 +210,19 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #2070 r27 P1 — a live broadcast carrying DEPLOY_SKIP_ARTIFACTS is
         // refused HERE, before anything is deployed: the simulation fails, so
         // no transaction is sent and no Diamond reaches a chain unrecorded.
-        Deployments.artifactWritesEnabled();
+        //
+        // #2092 item 1 — a run that writes the artifact also writes the chain's
+        // storage-layout record and its anchor at the end of Step 7 (the layout
+        // every later in-place refresh of this Diamond is checked against;
+        // {StorageLayoutRecord}). Both guard calls go through ffi, so such a
+        // run needs `--ffi`. This precondition runs FIRST, before any
+        // transaction and any artifact write: a run without `--ffi`, or from a
+        // checkout whose golden layout is stale, is refused while nothing has
+        // changed, rather than after `addresses.json` already names the new
+        // Diamond. In `runWith`, not `run`, so `--sig runWith(...)` cannot skip
+        // it; `forge test` and a redirected artifact root skip it by the
+        // library's own rule ({StorageLayoutRecord.active}).
+        if (Deployments.artifactWritesEnabled()) StorageLayoutRecord.requireCurrentGolden("DeployDiamond");
 
         console.log("=== Vaipakam Diamond Deployment ===");
         console.log("Admin:   ", admin);
@@ -1262,6 +1276,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // run overwrote before re-reverting, so a caught omission does not
         // leave the inventory describing a Diamond that was never deployed.
         Deployments.finalizeArtifact(diamond, _facetRecordingFailure);
+
+        // #2092 item 1 — the chain now runs this checkout's layout. A fresh
+        // Diamond replaces any record an earlier deployment left: the anchor
+        // names this Diamond, so the old one's record can no longer be used.
+        StorageLayoutRecord.record(diamond);
 
         console.log("");
         console.log("Admin:                ", admin);

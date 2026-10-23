@@ -137,8 +137,12 @@ addresses written by §2.1's deployment artifacts on every chain.
 
 ```bash
 forge script script/DeployCrosschain.s.sol \
-  --rpc-url $<CHAIN>_RPC_URL --broadcast --verify
+  --rpc-url $<CHAIN>_RPC_URL --ffi --broadcast --verify
 ```
+
+`--ffi` is required: the script checks the chain's storage-layout record
+before its first transaction and rewrites the record and its anchor at the
+end, because the proxies it deploys are code that record governs (#2092).
 
 Per-chain, branches on `block.chainid ∈ {8453, 84532}` = canonical:
 

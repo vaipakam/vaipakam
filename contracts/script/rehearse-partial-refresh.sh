@@ -248,7 +248,7 @@ rehearse() {
   # The script broadcasts the diamondCut, so its signer must be the Diamond
   # owner; post-handover that is the admin key.
   DEPLOYER_PRIVATE_KEY="$ADMIN_KEY" \
-    forge script "script/$refresh_script.s.sol" --rpc-url "$RPC" --broadcast \
+    forge script "script/$refresh_script.s.sol" --rpc-url "$RPC" --ffi --broadcast \
       > "$WORKDIR/refresh.log" 2>&1 \
     || { tail -30 "$WORKDIR/refresh.log"; fail "$refresh_script broadcast failed"; }
   grep -E "RiskPreview selectors" "$WORKDIR/refresh.log" || true
