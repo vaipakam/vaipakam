@@ -178,8 +178,11 @@ const MANIFEST = createManifest({
     ...(SUBMIT ? CLOSE_ONLY : []),
     {
       id: 'pageHealth',
-      claim: 'the page threw no uncaught error',
-      checks: { noPageErrors: 'no PAGEERROR in the console capture' },
+      claim: 'the page threw no uncaught error and sent no malformed chain request',
+      checks: {
+        noPageErrors: 'no PAGEERROR in the console capture',
+        noMalformedRpc: 'no chain request the page sent was refused as malformed by a reachable provider (#1633)',
+      },
     },
     {
       id: 'writeDiscipline',
@@ -785,7 +788,8 @@ const ownHold = (b) => String(b.reason).includes(HELD_REFUSAL);
 // Every count of what stands before a send sets that one marked refusal
 // aside, so a stop after a gate hold is still resolved as the hold rather
 // than counted as a failure of its own (#2505 r32).
-const preSendFails = () => failedCount() + violationsSoFar().filter((b) => !ownHold(b)).length + pageErrors().length;
+const preSendFails = () =>
+  failedCount() + violationsSoFar().filter((b) => !ownHold(b)).length + pageErrors().length + rpc.sessionFaults().length;
 /** Why the gate withheld the planned request, when it did; null otherwise. */
 const gateHeldReason = () => {
   if (!heldMarked || wrote()) return null;
@@ -1110,6 +1114,7 @@ const settled = await settleRun({
   closeBrowser,
   judgeLedgers: () => {
     check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
+    check('pageHealth', 'noMalformedRpc', 'no malformed chain request', rpc.sessionFaults().length === 0, rpc.sessionFaults().join(' | ').slice(0, 300));
     // The gate's marked refusal of the one request it withheld is this
     // drive's own doing, never a finding (`ownHold`); every other refusal is.
     const violations = violationsSoFar().filter((b) => !ownHold(b));

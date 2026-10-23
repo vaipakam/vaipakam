@@ -46,7 +46,7 @@ import {
 import { privateKeyToAccount } from 'viem/accounts';
 import { baseSepolia, arbitrumSepolia, bscTestnet } from 'viem/chains';
 import { walletGateDecision } from './walletGate.mjs';
-import { classifyRpcResponse, isChainRpcMethod } from './rpc-verdict.mjs';
+import { classifyRpcResponse, createSocketCalls, isChainRpcMethod } from './rpc-verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Dev TEST wallets only — throwaway keys holding testnet dust. The
@@ -250,8 +250,8 @@ export async function precondition(what, fn) {
  *     sent a malformed request to a healthy endpoint — the one
  *     misclassification that HIDES a product defect rather than
  *     over-reporting one. A client fault now counts as an answer, so the
- *     drive judges the page, and `faults()` names each one so the drive can
- *     report it.
+ *     drive judges the page, and `sessionFaults()` names each one, from any
+ *     window, so the drive FAILS on it rather than only reporting it.
  *
  * Both transports, HTTP and WebSocket: a deployment whose wagmi transport
  * rides a socket must not read as "answered nothing" (two drives used to
@@ -261,7 +261,9 @@ export async function precondition(what, fn) {
  *
  * Usage: `const rpc = watchPageRpc(page)` once after launch; `rpc.reset()`
  * just before the critical wait; `await rpc.settled()` in the failure
- * path, and treat `0` as BLOCKED.
+ * path, and treat `0` as BLOCKED; and fold `rpc.sessionFaults()` into the
+ * drive's final verdict as a FAIL (a structural test holds every drive that
+ * attaches this helper to that).
  *
  * Counted from the page's traffic rather than an endpoint the driver
  * picks, because the served SPA chooses its RPC at build time — the only
@@ -270,7 +272,7 @@ export async function precondition(what, fn) {
  */
 export function watchPageRpc(page) {
   let answered = 0;
-  const clientFaults = [];
+  const sessionFaults = [];
   const bodyReads = [];
   // Membership is decided when the REQUEST starts, not when its response
   // arrives. A slow hydration request issued before `reset()` can land
@@ -297,15 +299,21 @@ export function watchPageRpc(page) {
   // async: a response that passed the gate in the `response` handler can
   // finish parsing after a later `reset()` and would otherwise increment the
   // freshly-zeroed counter — the fifth way this helper got the window wrong.
+  //
+  // A client fault is recorded for the whole SESSION, whatever window it
+  // fell in (#1633 r1). It counts as an answer for the BLOCKED question (the
+  // provider was reachable), and that is exactly why it must not stop there:
+  // a fault in the window a drive's absence-check rests on left `settled()`
+  // non-zero, so the drive went on to PASS on a banner that was absent only
+  // because the clearing simulation was refused. A malformed request the
+  // page sent is a FAIL wherever it happened, so every drive folds
+  // `sessionFaults()` into its final verdict.
   const credit = (gen, outcomes) => {
-    if (gen !== generation) return;
     for (const o of outcomes) {
       if (!isChainRpcMethod(o.method)) continue;
-      if (o.verdict === 'ok') answered++;
-      if (o.verdict === 'client-fault') {
-        answered++;
-        clientFaults.push(`${o.method}: ${o.why}`);
-      }
+      if (o.verdict === 'client-fault') sessionFaults.push(`${o.method}: ${o.why}`);
+      if (gen !== generation) continue;
+      if (o.verdict === 'ok' || o.verdict === 'client-fault') answered++;
     }
   };
   page.on('request', (req) => {
@@ -320,7 +328,11 @@ export function watchPageRpc(page) {
     const req = res.request();
     outstanding.delete(req);
     const gen = startedIn.get(req);
-    if (gen !== generation) return;
+    // Not a POST the page sent: nothing to classify.
+    if (gen === undefined) return;
+    // Read even when the request started in an earlier window: it no longer
+    // counts as an answer (`credit` checks the generation), but a client
+    // fault in it is still a defect the session must fail on.
     const requestBody = req.postData?.() ?? undefined;
     // `response` fires on HEADERS and does not await handlers, so the body
     // is still in flight; collect the promises and settle before judging.
@@ -334,37 +346,34 @@ export function watchPageRpc(page) {
     );
   });
   page.on('websocket', (ws) => {
-    // JSON-RPC id -> the call sent under it, per connection. A socket has
-    // no HTTP status, so each answer is classified as a delivered message.
-    const sent = new Map();
-    const messages = (payload) => {
-      try {
-        const parsed = JSON.parse(String(payload));
-        return Array.isArray(parsed) ? parsed : [parsed];
-      } catch {
-        return [];
-      }
-    };
+    // The calls outstanding on this connection, matched by id; a reused id
+    // comes back from `send` as a collision for the classifier to judge
+    // (`createSocketCalls`). A socket has no HTTP status, so each answer is
+    // classified as a delivered message.
+    const calls = createSocketCalls();
     ws.on('framesent', (f) => {
-      for (const m of messages(f.payload)) {
-        if (!m || !('id' in m) || !isChainRpcMethod(m.method)) continue;
+      const collisions = calls.send(f.payload, (m) => {
+        if (!isChainRpcMethod(m.method)) return null;
         const token = {};
         outstanding.add(token);
-        sent.set(m.id, { gen: generation, body: JSON.stringify(m), token });
+        return { gen: generation, token };
+      });
+      for (const { entries, requestBody } of collisions) {
+        const outcomes = classifyRpcResponse(200, '[]', requestBody);
+        entries.forEach(({ tag }, i) => {
+          outstanding.delete(tag.token);
+          credit(tag.gen, outcomes.slice(i, i + 1));
+        });
       }
     });
     ws.on('framereceived', (f) => {
-      for (const m of messages(f.payload)) {
-        const call = m && sent.get(m.id);
-        if (!call) continue;
-        sent.delete(m.id);
-        outstanding.delete(call.token);
-        credit(call.gen, classifyRpcResponse(200, JSON.stringify(m), call.body));
+      for (const { tag, reply, requestBody } of calls.receive(f.payload)) {
+        outstanding.delete(tag.token);
+        credit(tag.gen, classifyRpcResponse(200, reply, requestBody));
       }
     });
     ws.on('close', () => {
-      for (const call of sent.values()) outstanding.delete(call.token);
-      sent.clear();
+      for (const { tag } of calls.close()) outstanding.delete(tag.token);
     });
   });
   return {
@@ -377,7 +386,6 @@ export function watchPageRpc(page) {
     reset() {
       generation++;
       answered = 0;
-      clientFaults.length = 0;
       bodyReads.length = 0;
       outstanding.clear();
     },
@@ -399,12 +407,13 @@ export function watchPageRpc(page) {
       return answered;
     },
     /**
-     * The calls in this window a reachable provider rejected as malformed,
-     * as `method: why` lines. Each is a defect in what the PAGE sent;
-     * read it after `settled()`, and report it with the drive's FAIL.
+     * Every call this SESSION a reachable provider rejected as malformed, as
+     * `method: why` lines, whatever window it fell in. Each is a defect in
+     * what the PAGE sent, so a drive FAILS on any of them; read it after
+     * `settled()` (or once the browser is closed) so in-flight answers land.
      */
-    faults() {
-      return [...clientFaults];
+    sessionFaults() {
+      return [...sessionFaults];
     },
   };
 }

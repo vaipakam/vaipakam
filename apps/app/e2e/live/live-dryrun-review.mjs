@@ -112,7 +112,7 @@ const any = verdicts.passed || verdicts.approval;
 // about the dry run either way. BLOCKED, scoped to exactly that case — a
 // would-fail verdict is a finding whatever the network did, and a silent
 // footer beside an endpoint that DID answer is the app's to explain.
-if (!any && !verdicts.wouldFail && (await rpc.settled()) === 0) {
+if (!any && !verdicts.wouldFail && (await rpc.settled()) === 0 && rpc.sessionFaults().length === 0) {
   await done();
   await blocked(
     'the review never showed a dry-run verdict and the page received no answer' +
@@ -120,11 +120,17 @@ if (!any && !verdicts.wouldFail && (await rpc.settled()) === 0) {
       ` never ran. Footer state: ${JSON.stringify(verdicts)}.`,
   );
 }
-const faults = rpc.faults();
-if (faults.length) console.log(`page requests refused as malformed by a reachable provider: ${faults.join(', ')}`);
+// A request the page sent that a reachable provider refused as malformed is
+// a defect in the page, so it FAILS the run beside a truthful verdict too
+// (#1633 r1): the verdict says the dry run rendered, not that the page's
+// requests were sound.
+await rpc.settled();
+const faults = rpc.sessionFaults();
+if (faults.length) console.log(`FAIL — page requests refused as malformed by a reachable provider: ${faults.join(', ')}`);
+const passed = any && faults.length === 0;
 console.log(
   any
-    ? 'PASS — truthful dry-run verdict rendered'
+    ? `${passed ? 'PASS' : 'FAIL'} — truthful dry-run verdict rendered`
     : `FAIL — verdicts: ${JSON.stringify(verdicts)}`,
 );
 {
@@ -135,4 +141,4 @@ console.log(
   if (i !== -1) console.log('REVERT TEXT:', body.slice(i, i + 400));
 }
 await done();
-process.exit(any ? 0 : 1);
+process.exit(passed ? 0 : 1);

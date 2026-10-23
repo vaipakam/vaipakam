@@ -20,6 +20,7 @@ import {
   callsTargetContract,
   classifyRpcFailure,
   classifyRpcResponse,
+  createSocketCalls,
   isChainRpcMethod,
   isTransportFailure,
   recordRpcResponse,
@@ -1920,5 +1921,49 @@ describe('isChainRpcMethod', () => {
   it('admits the Ethereum namespaces and nothing else', () => {
     expect(['eth_call', 'net_version', 'web3_clientVersion'].every(isChainRpcMethod)).toBe(true);
     expect(['irn_publish', 'wallet_switchEthereumChain', 'anvil_mine', '', undefined].some(isChainRpcMethod)).toBe(false);
+  });
+});
+
+describe('createSocketCalls (#1633 r1)', () => {
+  const c = (id, method = 'eth_call') => ({ jsonrpc: '2.0', id, method });
+  const track = () => ({});
+
+  it('matches each answer to the call sent under its id, with that call as its request', () => {
+    const calls = createSocketCalls();
+    expect(calls.send(JSON.stringify([c(1), c(2, 'eth_blockNumber')]), track)).toEqual([]);
+    const [a] = calls.receive(JSON.stringify({ jsonrpc: '2.0', id: 2, result: '0x1' }));
+    expect(JSON.parse(a.requestBody)).toEqual(c(2, 'eth_blockNumber'));
+    expect(classifyRpcResponse(200, a.reply, a.requestBody).map((o) => [o.id, o.method, o.verdict])).toEqual([
+      [2, 'eth_blockNumber', 'ok'],
+    ]);
+    expect(calls.close().map((e) => e.message.id)).toEqual([1]);
+  });
+
+  it('returns a reused id as a collision the classifier refuses, and stops tracking it', () => {
+    const calls = createSocketCalls();
+    const inFrame = calls.send(JSON.stringify([c(1), c(1, 'eth_getLogs')]), track);
+    calls.send(JSON.stringify(c(2)), track);
+    const acrossFrames = calls.send(JSON.stringify(c(2, 'eth_chainId')), track);
+    for (const [col, methods] of [
+      [inFrame, ['eth_call', 'eth_getLogs']],
+      [acrossFrames, ['eth_call', 'eth_chainId']],
+    ]) {
+      expect(col).toHaveLength(1);
+      expect(col[0].entries.map((e) => e.message.method)).toEqual(methods);
+      expect(classifyRpcResponse(200, '[]', col[0].requestBody).map((o) => o.verdict)).toEqual([
+        'client-fault',
+        'client-fault',
+      ]);
+    }
+    // Neither id is open any more: a late answer settles nothing.
+    expect(calls.receive(JSON.stringify([{ jsonrpc: '2.0', id: 1, result: '0x' }, { jsonrpc: '2.0', id: 2, result: '0x' }]))).toEqual([]);
+  });
+
+  it('skips notifications and the messages the caller does not track', () => {
+    const calls = createSocketCalls();
+    calls.send(JSON.stringify([{ jsonrpc: '2.0', method: 'eth_subscription' }, c(3, 'irn_publish')]), (m) =>
+      m.method.startsWith('eth_') ? {} : null,
+    );
+    expect(calls.close()).toEqual([]);
   });
 });

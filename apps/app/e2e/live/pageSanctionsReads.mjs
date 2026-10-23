@@ -33,6 +33,8 @@ import {
   toFunctionSelector,
 } from 'viem';
 
+import { createSocketCalls } from './rpc-verdict.mjs';
+
 const lower = (hex) => String(hex ?? '').toLowerCase();
 
 /**
@@ -271,7 +273,11 @@ export function attachLedger(page, ledger, readMethods) {
       .catch(() => ledger.onResponse(pending, null, { status: null }));
   });
   page.on('websocket', (ws) => {
-    const open = new Map(); // JSON-RPC id -> { pending, body }, per connection
+    // The calls outstanding on this connection, matched by id. A reused id
+    // comes back from `send` as a collision, settled at once against a
+    // request holding every colliding call, so the ledger's classifier
+    // judges it as the duplicate id it is (`createSocketCalls`, #1633 r1).
+    const calls = createSocketCalls();
     ws.on('framesent', (f) => {
       try {
         for (const m of asList(JSON.parse(String(f.payload)))) {
@@ -284,37 +290,24 @@ export function attachLedger(page, ledger, readMethods) {
       }
       const pending = ledger.onRequest(String(f.payload));
       if (pending === null) return;
-      // Each call's own message, so its answer is classified against the
-      // request it answers (a socket answers per message, not per frame).
-      const sentById = new Map();
-      try {
-        for (const m of asList(JSON.parse(String(f.payload)))) if (m && 'id' in m) sentById.set(m.id, m);
-      } catch {
-        /* onRequest parsed it, so this cannot fail */
+      const collisions = calls.send(f.payload, (m) => (pending.has(m.id) ? pending : null));
+      for (const { entries, requestBody } of collisions) {
+        for (const { message, tag } of entries) {
+          ledger.onResponse(new Map([[message.id, tag.get(message.id)]]), '[]', { status: null, requestBody });
+        }
       }
-      for (const [id] of pending) open.set(id, { pending, body: JSON.stringify(sentById.get(id)) });
     });
     ws.on('framereceived', (f) => {
-      let msgs;
-      try {
-        msgs = asList(JSON.parse(String(f.payload)));
-      } catch {
-        return;
-      }
-      for (const m of msgs) {
-        const sent = m && open.get(m.id);
-        if (!sent) continue;
-        open.delete(m.id);
-        // A socket has no HTTP status: a delivered message is the answer.
-        ledger.onResponse(new Map([[m.id, sent.pending.get(m.id)]]), JSON.stringify(m), {
-          status: null,
-          requestBody: sent.body,
-        });
+      // A socket has no HTTP status: a delivered message is the answer, and
+      // each is classified against its own call's message.
+      for (const { message, tag, reply, requestBody } of calls.receive(f.payload)) {
+        ledger.onResponse(new Map([[message.id, tag.get(message.id)]]), reply, { status: null, requestBody });
       }
     });
     ws.on('close', () => {
-      for (const [id, sent] of open) ledger.onResponse(new Map([[id, sent.pending.get(id)]]), null, { status: null });
-      open.clear();
+      for (const { message, tag } of calls.close()) {
+        ledger.onResponse(new Map([[message.id, tag.get(message.id)]]), null, { status: null });
+      }
     });
   });
   return { wsViolations };

@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeFunctionData, encodeFunctionResult, multicall3Abi } from 'viem';
 import { attachLedger, createReadLedger, isRefusedSocketMethod, watchedRead } from './pageSanctionsReads.mjs';
+import { createCallLedger } from './catchUpTally.mjs';
 
 const DIAMOND = '0xd89fd7F787e4415460b23891E97570a4881fb995';
 const OTHER = '0x2E4033Ae1200CC14D33E09021C4098d12b54341c';
@@ -167,6 +168,49 @@ describe('attachLedger hands the ledger the status and the request (#1633)', () 
 
   it('reports no response as no body and no status', async () => {
     expect(await fedOnce({ status: null, body: null, request: '{}' })).toEqual([{ text: null, meta: { status: null } }]);
+  });
+});
+
+describe('attachLedger on a WebSocket (#1633 r1)', () => {
+  /** A fake page that opens one socket; returns its frame handlers. */
+  function socketFor(ledger) {
+    const handlers = {};
+    attachLedger({ on: (ev, fn) => (handlers[ev] = fn) }, ledger, new Set(['eth_call', 'eth_getLogs', 'eth_blockNumber']));
+    const ws = {};
+    handlers.websocket({ url: () => 'wss://rpc.example/ws', on: (ev, fn) => (ws[ev] = fn) });
+    return {
+      send: (m) => ws.framesent({ payload: JSON.stringify(m) }),
+      receive: (m) => ws.framereceived({ payload: JSON.stringify(m) }),
+    };
+  }
+  const c = (id, method) => ({ jsonrpc: '2.0', id, method, params: [] });
+
+  it('hands a reused id to the ledger as the duplicate it is, inside a frame or across frames', () => {
+    const l = createCallLedger();
+    const ws = socketFor(l);
+    ws.send([c(1, 'eth_call'), c(1, 'eth_getLogs')]);
+    ws.send(c(2, 'eth_call'));
+    ws.send(c(2, 'eth_blockNumber'));
+    ws.receive({ jsonrpc: '2.0', id: 1, result: '0x' });
+    ws.receive({ jsonrpc: '2.0', id: 2, result: '0x' });
+    expect(l.calls.map((x) => [x.method, x.outcome])).toEqual([
+      ['eth_call', 'client-fault'],
+      ['eth_getLogs', 'client-fault'],
+      ['eth_call', 'client-fault'],
+      ['eth_blockNumber', 'client-fault'],
+    ]);
+  });
+
+  it('settles each distinct call against its own answer', () => {
+    const l = createCallLedger();
+    const ws = socketFor(l);
+    ws.send([c(1, 'eth_call'), c(2, 'eth_blockNumber')]);
+    ws.receive({ jsonrpc: '2.0', id: 2, result: '0x10' });
+    ws.receive({ jsonrpc: '2.0', id: 1, error: { code: -32005, message: 'limit' } });
+    expect(l.calls.map((x) => [x.method, x.outcome])).toEqual([
+      ['eth_call', 'failed'],
+      ['eth_blockNumber', 'ok'],
+    ]);
   });
 });
 

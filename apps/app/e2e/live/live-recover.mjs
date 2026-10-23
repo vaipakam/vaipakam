@@ -409,7 +409,13 @@ try {
   // the spot — so one failed RPC read discarded every defect already found
   // on those served pages. A failed re-read leaves only the posture
   // UNJUDGED, which the end of the run reports in its place.
+  //
+  // A failed re-read is NOT recorded here (#1633 r1): only the two postures
+  // whose correctness depends on the oracle need it, and the posture is not
+  // known yet. Recording it up front let a transient failure of this
+  // separate client hide a posture that is wrong whatever the oracle says.
   let oracleSetNow = null;
+  let oracleReadError = null;
   try {
     const oracleNow = await pub.readContract({
       address: DIAMOND,
@@ -418,10 +424,7 @@ try {
     });
     oracleSetNow = oracleNow.toLowerCase() !== ZERO;
   } catch (err) {
-    unresolved.push(
-      'could not re-read the sanctions oracle before the /recover posture check, so the' +
-        ` posture was not judged against it: ${String(err?.message ?? err).split('\n')[0].slice(0, 200)}`,
-    );
+    oracleReadError = String(err?.message ?? err).split('\n')[0].slice(0, 200);
   }
   if (oracleSetNow !== null && oracleSetNow !== oracleSet) {
     console.log(
@@ -445,45 +448,59 @@ try {
   const posture = await settledPosture(page);
   check(`/recover settles on a definite state (got ${posture ?? 'STILL PROBING'})`, posture !== null);
 
-  // WALLET-SPECIFIC postures are correct whatever the oracle says, and
-  // they render AHEAD of the availability state — a durable unresolved
-  // record locks the page before it ever asks about the oracle, and a
-  // flagged wallet is blocked either way. Judging them against the
-  // oracle branch made a correct page look like a deployment failure
-  // the moment the oracle was reset under a profile carrying a pending
-  // record (Codex #1561 r3). The driver can't clear either condition
-  // from a read-only run, so both are skips wherever they appear.
+  // Each posture is judged by what its correctness depends on, so the
+  // oracle is consulted ONLY for the two postures it decides (#1633 r1):
+  //
+  //  - `form` / `unavailable` — the availability arms: right or wrong
+  //    according to whether the oracle is configured, judged against the
+  //    RE-READ setting (re-reading and then asserting on the stale value
+  //    would have been no fix at all). Unjudged when that re-read failed.
+  //  - `sanctioned` / `pending` — WALLET-SPECIFIC: correct whatever the
+  //    oracle says, and they render AHEAD of the availability state — a
+  //    durable unresolved record locks the page before it ever asks about
+  //    the oracle, and a flagged wallet is blocked either way. Judging them
+  //    against the oracle made a correct page look like a deployment failure
+  //    the moment the oracle was reset under a profile carrying a pending
+  //    record (Codex #1561 r3). The driver can't clear either condition from
+  //    a read-only run, so both are skips.
+  //  - `wrongChain` / `contractWallet` — WRONG whatever the oracle says:
+  //    `launch` injects a plain EOA already on the review chain, so the page
+  //    has misread the wallet. No oracle value is needed to say so.
+  //  - `unreachable` — the page's OWN chain probe could not reach the chain.
+  //    It says so, which is the honest posture for that, and says nothing
+  //    about whether recovery is correctly offered or withheld; judging it
+  //    against the oracle recorded an outage as a FAIL (#1633). Unresolved,
+  //    so a run whose only problem it is exits BLOCKED.
   if (posture === 'unreachable') {
-    // The page's OWN chain probe could not reach the chain — it says so,
-    // which is the honest posture for that, and says nothing about whether
-    // recovery is correctly offered or withheld. Judging it against the
-    // oracle branch recorded an outage as a FAIL (#1633). Unresolved, so a
-    // run whose only problem it is exits BLOCKED; any defect found
-    // elsewhere still fails the run.
     unresolved.push(
       '/recover showed its own "couldn\'t check whether recovery is available" state: the' +
         ' page could not reach the chain, so the configured/unconfigured posture was not observed.',
     );
-  } else if (oracleSetNow === null) {
-    // Reported above, where the re-read failed.
   } else if (posture === 'sanctioned' || posture === 'pending') {
     console.log(
       `skip  this wallet is in the "${posture}" posture — the form is correctly ` +
         'withheld regardless of the oracle setting; re-run with a clean, unflagged ' +
         'wallet with no outstanding attempt to exercise the availability arms.',
     );
-  } else if (oracleSetNow) {
-    // Configured deployment: the form is the correct posture for a
-    // clean wallet with nothing outstanding. Judged against the RE-READ
-    // setting, not the run-opening snapshot — re-reading and then
-    // asserting on the stale value would have been no fix at all.
-    check('oracle configured → form offered', posture === 'form');
-  } else {
-    // Shipped retail default: recovery must be presented as
-    // unavailable, never as a form that could only produce a doomed
-    // signature.
-    check('oracle unset → recovery presented as unavailable', posture === 'unavailable');
+  } else if (posture === 'wrongChain' || posture === 'contractWallet') {
+    check(`/recover reads the injected EOA on the review chain as usable (got ${posture})`, false);
+  } else if (posture === 'form' || posture === 'unavailable') {
+    if (oracleSetNow === null) {
+      unresolved.push(
+        `/recover settled on "${posture}", but the sanctions oracle could not be re-read to say` +
+          ` whether that is the right availability arm: ${oracleReadError}`,
+      );
+    } else if (oracleSetNow) {
+      // Configured deployment: the form is the correct posture for a clean
+      // wallet with nothing outstanding.
+      check('oracle configured → form offered', posture === 'form');
+    } else {
+      // Shipped retail default: recovery must be presented as unavailable,
+      // never as a form that could only produce a doomed signature.
+      check('oracle unset → recovery presented as unavailable', posture === 'unavailable');
+    }
   }
+  // (A null posture already failed its "settles on a definite state" check.)
 
   // 4. Meta robots too — belt and braces with the header above, since
   //    the two are set in different places and can drift apart.

@@ -192,7 +192,7 @@ if (fixtureProblem !== null) {
         // exiting 2 here would discard it and report "verified nothing"
         // about a run that verified something real. Same evidence-precedence
         // rule live-ux-sweep and live-recover-locales apply.
-        if (failures === 0 && (await rpc.settled()) === 0) {
+        if (failures === 0 && (await rpc.settled()) === 0 && rpc.sessionFaults().length === 0) {
           await done();
           await blocked(
             'the submit gate never resolved and the page received no answer from' +
@@ -201,8 +201,6 @@ if (fixtureProblem !== null) {
               ' that the lender wallet still holds the faucet fixture token.',
           );
         }
-        const faults = rpc.faults();
-        if (faults.length) console.log(`  page requests refused as malformed by a reachable provider: ${faults.join(', ')}`);
         console.log('FAIL — sign button never enabled with a live RPC (a closed gate or the kill switch)');
         break;
       }
@@ -211,6 +209,15 @@ if (fixtureProblem !== null) {
     if (!reviewOk) failures++;
   }
 
+}
+// A request the page sent that a reachable provider refused as malformed is
+// a defect in the page wherever the sweep met it, so it FAILS the run
+// (#1633 r1) — including beside a review that otherwise passed.
+await rpc.settled();
+const rpcFaults = rpc.sessionFaults();
+if (rpcFaults.length) {
+  console.log(`FAIL page requests refused as malformed by a reachable provider: ${rpcFaults.join(', ')}`);
+  failures++;
 }
 await done();
 process.exit(failures === 0 ? 0 : 1);

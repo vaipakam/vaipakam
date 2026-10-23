@@ -352,12 +352,20 @@ Which failures are preconditions, driver by driver:
   provider that answers 400 with a well-formed `-32602` has answered, and
   the fault is the page's. Counting only status 200 turned that into
   BLOCKED, the one misclassification that HIDES a product defect.
-  `faults()` names such calls so the drive can report them, and the RPC
-  audit's call ledger takes the same verdicts, so a page whose requests a
-  reachable provider refuses as malformed FAILS there too. All of this is
-  pinned by `e2e/live/watchPageRpc.test.mjs` — this helper was wrong six
-  times, each time in a way that read as correct, so it is unit-tested
-  rather than trusted.
+  Counting it as an answer is right for the BLOCKED question and wrong as
+  the end of it: a drive whose PASS rests on an ABSENCE read a refused
+  recompute as "answered" and passed. So `sessionFaults()` keeps every such
+  call for the whole session, whatever window it fell in, and EVERY drive
+  that attaches the helper FAILS on any of them (a structural test holds
+  each one to reading it). The RPC audit's call ledger takes the same
+  verdicts, so a page whose requests a reachable provider refuses as
+  malformed FAILS there too. On a WebSocket, calls are matched to answers
+  by ONE correlator (`createSocketCalls`) shared by both observers: an id
+  reused while its call is still waiting, in a frame or across frames, is
+  the same duplicate-id fault as in an HTTP batch, never two answers. All
+  of this is pinned by `e2e/live/watchPageRpc.test.mjs` — this helper was
+  wrong seven times, each time in a way that read as correct, so it is
+  unit-tested rather than trusted.
 - **Cleanup capacity, for any drive that MUTATES shared chain state** —
   reserved BEFORE the mutation, not discovered after it, and read at the
   PENDING block so an aborted earlier run's un-mined spend counts. Asset

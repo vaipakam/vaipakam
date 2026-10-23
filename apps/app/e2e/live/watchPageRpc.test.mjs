@@ -1,7 +1,7 @@
 // Regression tests for `watchPageRpc` (driver.mjs).
 //
 // Several drives read their BLOCKED-vs-FAIL verdict from this helper, and its
-// behaviour has been wrong SIX times — each time in a way that reads as
+// behaviour has been wrong SEVEN times — each time in a way that reads as
 // correct on inspection, which is exactly why it is pinned here:
 //
 //   1. Session-wide counting. The page-load reads satisfy it immediately, so
@@ -25,10 +25,17 @@
 //      request to a healthy endpoint was reported BLOCKED — a hidden defect.
 //      What counts is now the shared classifier's verdict, over HTTP and
 //      WebSocket alike.
+//   7. Faults kept per WINDOW, beside a count that also takes them as
+//      answers (#1633 r1). A drive whose PASS rests on an absence read a
+//      refused recompute as "answered" and passed; faults are now kept for
+//      the session and every drive fails on them. And a socket's calls were
+//      reduced to a map by id, so a reused id was never seen as one.
 //
 // Each case below pins one of those. Following the precedent redact.test.mjs
 // set: driver logic worth trusting belongs in the suite, not in a scratch
 // script.
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { watchPageRpc } from './driver.mjs';
 import { FakePage, FakeWebSocket } from './fakePage.mjs';
@@ -117,7 +124,7 @@ describe('watchPageRpc', () => {
       response(req, 400, { jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'invalid params' } }),
     );
     expect(await rpc.settled()).toBe(1);
-    expect(rpc.faults()).toEqual(['eth_call: json-rpc -32602']);
+    expect(rpc.sessionFaults()).toEqual(['eth_call: json-rpc -32602']);
   });
 
   it('does not count a rate-limit or unavailable answer as the endpoint working', async () => {
@@ -131,7 +138,7 @@ describe('watchPageRpc', () => {
       response(req, 200, { jsonrpc: '2.0', id: 1, error: { code: -32005, message: 'limit exceeded' } }),
     );
     expect(await rpc.settled()).toBe(0);
-    expect(rpc.faults()).toEqual([]);
+    expect(rpc.sessionFaults()).toEqual([]);
   });
 
   it('counts only chain calls, never another JSON-RPC protocol', async () => {
@@ -243,6 +250,59 @@ describe('watchPageRpc', () => {
     expect(await rpc.settled(600)).toBe(1);
   });
 
+  it('keeps a client fault for the session, whatever window it fell in (#1633 r1)', async () => {
+    const page = new FakePage();
+    const rpc = watchPageRpc(page);
+    const stale = request();
+    page.emit('request', stale);
+    rpc.reset(); // the faulted call started in the previous window
+    page.emit(
+      'response',
+      response(stale, 400, { jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'invalid params' } }),
+    );
+    // Not an answer in THIS window, but a defect the drive must still fail on.
+    expect(await rpc.settled()).toBe(0);
+    expect(rpc.sessionFaults()).toEqual(['eth_call: json-rpc -32602']);
+    rpc.reset();
+    expect(rpc.sessionFaults()).toEqual(['eth_call: json-rpc -32602']);
+  });
+
+  it('reads a socket id reused while outstanding as a client fault, not two answers (#1633 r1)', async () => {
+    const page = new FakePage();
+    const rpc = watchPageRpc(page);
+    rpc.reset();
+    const ws = new FakeWebSocket();
+    page.emit('websocket', ws);
+    // Inside one frame…
+    ws.emit('framesent', { payload: JSON.stringify([call(4, 'eth_call'), call(4, 'eth_getBalance')]) });
+    // …and across frames, while the first call is still waiting.
+    ws.emit('framesent', { payload: JSON.stringify(call(5, 'eth_call')) });
+    ws.emit('framesent', { payload: JSON.stringify(call(5, 'eth_blockNumber')) });
+    ws.emit('framereceived', { payload: JSON.stringify({ jsonrpc: '2.0', id: 4, result: '0x1' }) });
+    ws.emit('framereceived', { payload: JSON.stringify({ jsonrpc: '2.0', id: 5, result: '0x1' }) });
+    expect(await rpc.settled(600)).toBe(4);
+    expect(rpc.sessionFaults()).toEqual([
+      'eth_call: duplicate id in the request batch',
+      'eth_getBalance: duplicate id in the request batch',
+      'eth_call: duplicate id in the request batch',
+      'eth_blockNumber: duplicate id in the request batch',
+    ]);
+  });
+
+  it('takes an id reused after its call was answered as a fresh call', async () => {
+    const page = new FakePage();
+    const rpc = watchPageRpc(page);
+    rpc.reset();
+    const ws = new FakeWebSocket();
+    page.emit('websocket', ws);
+    for (const n of [1, 2]) {
+      ws.emit('framesent', { payload: JSON.stringify(call(3, 'eth_blockNumber')) });
+      ws.emit('framereceived', { payload: JSON.stringify({ jsonrpc: '2.0', id: 3, result: `0x${n}` }) });
+    }
+    expect(await rpc.settled(600)).toBe(2);
+    expect(rpc.sessionFaults()).toEqual([]);
+  });
+
   it('stops waiting on socket calls when the socket closes', async () => {
     const page = new FakePage();
     const rpc = watchPageRpc(page);
@@ -254,5 +314,25 @@ describe('watchPageRpc', () => {
     const started = Date.now();
     expect(await rpc.settled(10_000)).toBe(0);
     expect(Date.now() - started).toBeLessThan(2_000);
+  });
+});
+
+// Structural: a fault the helper records only matters if the drive FAILS on
+// it, and the gap Codex found in #1633 r1 was a drive that never asked. So
+// every drive attaching the helper must read `sessionFaults()`. A mention is
+// the floor, not proof the verdict uses it; the per-drive wiring is reviewed.
+describe('drives that attach watchPageRpc', () => {
+  const dir = fileURLToPath(new URL('.', import.meta.url));
+  const drives = fs
+    .readdirSync(dir)
+    .filter((f) => /^live-.*\.mjs$/.test(f))
+    .filter((f) => /\bwatchPageRpc\(/.test(fs.readFileSync(`${dir}${f}`, 'utf8')));
+
+  it('exist', () => {
+    expect(drives.length).toBeGreaterThan(0);
+  });
+
+  it.each(drives)('%s folds the session\'s client faults into its verdict', (f) => {
+    expect(fs.readFileSync(`${dir}${f}`, 'utf8')).toMatch(/\brpc\.sessionFaults\(\)/);
   });
 });

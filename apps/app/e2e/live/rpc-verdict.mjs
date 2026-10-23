@@ -1063,6 +1063,81 @@ export function classifyRpcResponse(status, body, requestBody) {
 }
 
 /**
+ * The JSON-RPC calls outstanding on ONE WebSocket connection, matched to
+ * their answers by id (#1633 r1).
+ *
+ * A socket answers per MESSAGE, so each call is classified against its own
+ * message rather than its frame. But an id is only an attribution key while
+ * it is unique among the calls still waiting on that connection: reuse one,
+ * inside a frame or across frames, and a single answer settles two calls,
+ * the same malformation `classifyRpcResponse` refuses in an HTTP batch.
+ * Reducing the calls to a map by id before classifying hid exactly that —
+ * the earlier call was overwritten and the later answer credited to both.
+ *
+ * So the collision is decided HERE, once, for every socket observer: the
+ * colliding calls leave the open set at once and come back from `send` with
+ * a request body holding all of them, which the shared classifier then
+ * judges as the duplicate id it is. An id reused after its first call was
+ * answered is a fresh call, as the spec allows.
+ *
+ * `tagFor(message)` decides which messages the caller tracks (null skips
+ * one) and returns whatever the caller needs back with the answer.
+ */
+export function createSocketCalls() {
+  const open = new Map(); // id -> { message, tag }
+  const messages = (payload) => {
+    try {
+      const parsed = JSON.parse(String(payload));
+      return Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      return [];
+    }
+  };
+  return {
+    /** Record a sent frame. Returns the collisions it caused, each
+     *  `{ entries: [{ message, tag }], requestBody }`. */
+    send(payload, tagFor) {
+      const collided = new Map(); // id -> entries
+      for (const m of messages(payload)) {
+        if (!m || typeof m !== 'object' || !('id' in m)) continue;
+        const tag = tagFor(m);
+        if (tag == null) continue;
+        const prior = collided.get(m.id) ?? (open.has(m.id) ? [open.get(m.id)] : null);
+        if (prior !== null) {
+          open.delete(m.id);
+          prior.push({ message: m, tag });
+          collided.set(m.id, prior);
+          continue;
+        }
+        open.set(m.id, { message: m, tag });
+      }
+      return [...collided.values()].map((entries) => ({
+        entries,
+        requestBody: JSON.stringify(entries.map((e) => e.message)),
+      }));
+    },
+    /** Match a received frame's answers. Returns `[{ message, tag, reply,
+     *  requestBody }]`, one per call it answers. */
+    receive(payload) {
+      const out = [];
+      for (const r of messages(payload)) {
+        if (!r || typeof r !== 'object' || !('id' in r) || !open.has(r.id)) continue;
+        const { message, tag } = open.get(r.id);
+        open.delete(r.id);
+        out.push({ message, tag, reply: JSON.stringify(r), requestBody: JSON.stringify(message) });
+      }
+      return out;
+    },
+    /** The connection closed: every call still open went unanswered. */
+    close() {
+      const left = [...open.values()];
+      open.clear();
+      return left;
+    },
+  };
+}
+
+/**
  * Append a routed response's per-call outcomes to the run's ledger.
  *
  * A LEDGER rather than the two verdict buckets directly, because a single

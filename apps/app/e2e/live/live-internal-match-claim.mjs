@@ -234,8 +234,11 @@ const MANIFEST = createManifest({
     ...(SUBMIT_CLAIM ? CLAIM_ONLY : []),
     {
       id: 'pageHealth',
-      claim: 'the page threw no uncaught error',
-      checks: { noPageErrors: 'no PAGEERROR in the console capture' },
+      claim: 'the page threw no uncaught error and sent no malformed chain request',
+      checks: {
+        noPageErrors: 'no PAGEERROR in the console capture',
+        noMalformedRpc: 'no chain request the page sent was refused as malformed by a reachable provider (#1633)',
+      },
     },
     {
       id: 'writeDiscipline',
@@ -524,11 +527,12 @@ const violationsSoFar = () => [
 ];
 /** Pre-claim FAILs — a check that failed, a request the wallet gate or the
  *  egress guard already refused (an early claim attempt, a chain switch, a
- *  page write), or an uncaught page exception (a page that threw is not one
- *  to sign from, however much of its DOM survived). The claim is one-shot,
+ *  page write), an uncaught page exception (a page that threw is not one
+ *  to sign from, however much of its DOM survived), or a chain request a
+ *  reachable provider refused as malformed (#1633). The claim is one-shot,
  *  so it never runs after one. */
 const pageErrors = () => consoleErrors.filter((e) => e.startsWith('PAGEERROR'));
-const preClaimFails = () => failedCount() + violationsSoFar().length + pageErrors().length;
+const preClaimFails = () => failedCount() + violationsSoFar().length + pageErrors().length + rpc.sessionFaults().length;
 /**
  * BLOCKED for a precondition met before any write, unless a failure was
  * already recorded, which stands: the drive then stops there and the verdict
@@ -925,6 +929,7 @@ const settled = await settleRun({
   closeBrowser: done,
   judgeLedgers: () => {
     check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
+    check('pageHealth', 'noMalformedRpc', 'no malformed chain request', rpc.sessionFaults().length === 0, rpc.sessionFaults().join(' | ').slice(0, 300));
     // Every refused request, bar the recognised Cloudflare edge beacon. CLAIM
     // session: the plan's refusals, the chain pin's (recorded at the wallet
     // boundary before the gate is asked), and any page write the egress guard

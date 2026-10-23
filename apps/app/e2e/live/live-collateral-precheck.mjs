@@ -118,6 +118,17 @@ const rpc = watchPageRpc(page);
 // an infrastructure excuse — the inverse of the mislabelling this
 // contract exists to prevent (Codex #1621 r16).
 let awaitingSimulation = false;
+// A request the page sent that a reachable provider refused as malformed is
+// a FAIL wherever it happened (#1633 r1). It also counts as an answer, so on
+// the NEGATIVE case it is the one thing that can make an absent banner look
+// verified: the clearing simulation was refused, nothing recomputed, and the
+// window still reads as answered. Checked after each simulation settles.
+const assertNoRpcFaults = (when) => {
+  const faults = rpc.sessionFaults();
+  if (faults.length) {
+    throw new Error(`${when}, the page had sent chain requests a reachable provider refused as malformed: ${faults.join(', ')}`);
+  }
+};
 try {
   console.log('wallet:', account.address, '| site:', SITE);
   step(`goto ${SITE}/borrow`);
@@ -166,6 +177,7 @@ try {
   if (/MaxLendingAboveCeiling|MinCollateralBelowFloor|0x[0-9a-fA-F]{8}/.test(text)) {
     throw new Error(`banner leaked a raw contract error name / selector: "${text}"`);
   }
+  assertNoRpcFaults('when the banner showed');
   console.log(`\nPASS ✓ under-collateral precheck banner shown with friendly copy:\n  "${text}"`);
   await evidenceShot('1112-precheck-warn');
 
@@ -191,6 +203,8 @@ try {
   await page.waitForTimeout(9_000); // debounce + createOffer eth_call round-trip
   awaitingSimulation = false;
   if ((await rpc.settled()) === 0) {
+    // A fault from an earlier window outranks the silence (FAIL > BLOCKED).
+    assertNoRpcFaults('before the collateral was raised');
     await done();
     await blocked(
       'the collateral was raised but the page received no answer from its' +
@@ -199,12 +213,17 @@ try {
         ' negative case being verified.',
     );
   }
+  assertNoRpcFaults('after the collateral was raised');
   for (let i = 0; i < 4; i++) {
     if (await banner.isVisible().catch(() => false)) {
       throw new Error('under-collateral banner re-appeared after the recomputed simulation settled — negative case failed');
     }
     await page.waitForTimeout(1_000);
   }
+  // Again, after the stability window: a refused recompute that landed
+  // during it is the same false negative.
+  await rpc.settled();
+  assertNoRpcFaults('while the banner stayed cleared');
   console.log('PASS ✓ banner stays cleared after the recomputed simulation settled');
   await evidenceShot('1112-precheck-clear');
 
@@ -215,7 +234,8 @@ try {
   // revert IS the expected result, so requiring `result` would have missed
   // the one call the verdict rests on and mislabelled every run.
   const answered = awaitingSimulation ? await rpc.settled() : 1;
-  if (answered === 0) {
+  // FAIL outranks BLOCKED: a malformed request from any window is a finding.
+  if (answered === 0 && rpc.sessionFaults().length === 0) {
     await shot('1112-precheck-blocked').catch(() => {});
     // `done()` FIRST, then the shared blocked exit: `blocked()` ends the
     // process, so anything after it never runs.
@@ -228,8 +248,10 @@ try {
     );
   }
   console.error('\nLIVE REVIEW FAILED:', e.message);
-  const faults = rpc.faults();
-  if (faults.length) console.error(`  page requests refused as malformed by a reachable provider: ${faults.join(', ')}`);
+  const faults = rpc.sessionFaults();
+  if (faults.length && !e.message.includes('refused as malformed')) {
+    console.error(`  page requests refused as malformed by a reachable provider: ${faults.join(', ')}`);
+  }
   await shot('1112-precheck-fail').catch(() => {});
   await done();
   process.exit(1);
