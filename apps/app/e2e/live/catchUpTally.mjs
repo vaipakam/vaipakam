@@ -261,7 +261,9 @@ export function createCallLedger(isRecording = () => true) {
       // by identity (#1633 r3).
       const sameId = (a, b) => JSON.stringify(a) === JSON.stringify(b);
       for (const [id, list] of pending) {
-        const v = verdicts.find((o) => 'id' in o && sameId(o.id, id));
+        // A call sent without an id (a malformed envelope can lack one) is
+        // matched by that absence.
+        const v = verdicts.find((o) => sameId(o.id, id));
         const outcome = v?.verdict === 'ok' || v?.verdict === 'client-fault' ? v.verdict : 'failed';
         for (const call of list) {
           call.outcome = outcome;

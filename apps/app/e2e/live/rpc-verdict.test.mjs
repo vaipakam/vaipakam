@@ -1959,6 +1959,25 @@ describe('createSocketCalls (#1633 r1)', () => {
     expect(calls.receive(JSON.stringify([{ jsonrpc: '2.0', id: 1, result: '0x' }, { jsonrpc: '2.0', id: 2, result: '0x' }]))).toEqual([]);
   });
 
+  it('returns a malformed envelope at once, alone, and never opens it (#1633 r4)', () => {
+    const calls = createSocketCalls();
+    const now = calls.send(
+      JSON.stringify([
+        { jsonrpc: '2.0', id: { n: 1 }, method: 'eth_call', params: [] },
+        { jsonrpc: '1.0', method: 'eth_chainId' },
+        c(9),
+      ]),
+      track,
+    );
+    expect(now.map((x) => x.entries.map((e) => e.message.method))).toEqual([['eth_call'], ['eth_chainId']]);
+    for (const { requestBody } of now) {
+      expect(classifyRpcResponse(200, '[]', requestBody).map((o) => [o.verdict, o.why])).toEqual([
+        ['client-fault', 'malformed json-rpc envelope'],
+      ]);
+    }
+    expect(calls.close().map((e) => e.message.id)).toEqual([9]);
+  });
+
   it('skips notifications and the messages the caller does not track', () => {
     const calls = createSocketCalls();
     calls.send(JSON.stringify([{ jsonrpc: '2.0', method: 'eth_subscription' }, c(3, 'irn_publish')]), (m) =>

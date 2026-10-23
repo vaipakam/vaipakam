@@ -201,6 +201,17 @@ describe('attachLedger on a WebSocket (#1633 r1)', () => {
     ]);
   });
 
+  it('hands a malformed envelope to the ledger as a client fault when it is sent (#1633 r4)', () => {
+    const l = createCallLedger();
+    const ws = socketFor(l);
+    ws.send({ jsonrpc: '1.0', method: 'eth_call', params: [] });
+    ws.send({ jsonrpc: '2.0', id: { n: 2 }, method: 'eth_getLogs', params: [] });
+    expect(l.calls.map((x) => [x.method, x.outcome])).toEqual([
+      ['eth_call', 'client-fault'],
+      ['eth_getLogs', 'client-fault'],
+    ]);
+  });
+
   it('settles each distinct call against its own answer', () => {
     const l = createCallLedger();
     const ws = socketFor(l);

@@ -145,10 +145,10 @@ async function assertSelectionMatchesChain(context) {
 // clean right before the raise mines (Codex #1539 r7).
 let raiseClicked = false;
 // Set before this run's FIRST tier write (the UI normalization or the
-// raise). Until then the tier is as the run found it, so the cleanup owes
-// nothing to this run's verdict: an unconfirmed restore of a state the run
-// never touched says nothing about the page, and must not turn a BLOCKED
-// precondition into a FAIL (#1633 r2).
+// raise). Until then the tier is as the run found it, so the cleanup has
+// nothing to restore and writes nothing: a restore of a state the run never
+// touched would change shared chain state, and its failure says nothing
+// about the page (#1633 r2, r4).
 let tierWriteBegan = false;
 let lowerConfirmed = false;
 let raiseSeenBlock = 0n;
@@ -178,9 +178,6 @@ async function tierZeroAtOrAfter(minBlock) {
 // or the read-path assertions must still restore the wallet and close
 // the context — not leave the manual driver stuck.
 let driveError = null;
-/** An unconfirmed cleanup of a tier this run never wrote: stated beside the
- *  verdict, never counted as a finding (`tierWriteBegan`). */
-let cleanupNote = null;
 try {
 // Reachability FIRST, before anything mutates the wallet (Codex #1621
 // r2). A BLOCKED exit uses `process.exit`, so it skips the cleanup
@@ -440,136 +437,131 @@ check(
   // failed, and any other throw is a failure as it always was.
   driveError = err;
 } finally {
-  // The cleanup's own verdict, kept apart until the end: it is this run's
-  // finding only once this run wrote a tier (`tierWriteBegan`).
+  // The cleanup's verdict. It exists only once this run wrote a tier
+  // (`tierWriteBegan`): before that there is nothing to restore.
   const cleanupFails = [];
   try {
-    // The cleanup GATE read gets the same transient-error tolerance
-    // pollUntil gives everything else (Codex #1539 r6): one flaky RPC
-    // response must not skip restoration entirely.
-    let cleanupTier = null;
-    for (let i = 0; i < 5 && cleanupTier === null; i++) {
-      try {
-        cleanupTier = Number(await rawTierOf());
-      } catch {
-        await new Promise((r) => setTimeout(r, 3000));
-      }
-    }
-    // Unreadable after retries → attempt restoration anyway; the
-    // chain-confirmed check below is the arbiter.
-    if (cleanupTier === 0 && raiseClicked && !lowerConfirmed) {
-      // The confirmed tier reads clean, but a broadcast raise may
-      // still be pending. A direct lowering write from the same
-      // account takes the NEXT nonce — it orders AFTER any pending
-      // raise and guarantees the terminal state (Codex #1539 r7). If
-      // nothing was actually pending this is a same-tier no-op write.
-      console.log('cleanup: nonce-ordered lowering behind a possibly-pending raise');
-      // Load-balanced public RPCs can hand out a pending-nonce that
-      // misses the in-flight raise, making the lowering COMPETE with
-      // it instead of following it (Codex #1539 r8). The receipt alone
-      // is therefore not proof: re-read the confirmed tier and keep
-      // submitting a fresh lowering until Blue-chip is confirmed
-      // (bounded).
-      const w = clientsFor(84532).wallet('borrower');
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const hash = await w.writeContract({
-          address: DIAMOND,
-          abi: WRITE_ABI,
-          functionName: 'setVaultRiskTier',
-          args: [0],
-        });
-        const receipt = await pub.waitForTransactionReceipt({ hash });
-        // The receipt may belong to a same-nonce replacement (the
-        // raise) — and a lagging backend can serve a pre-raise 0
-        // (Codex #1539 r9). Confirm only from at least the receipt's
-        // own block.
-        if (receipt.blockNumber > confirmFloor) confirmFloor = receipt.blockNumber;
-        const settled = await pollUntil(
-          `cleanup write ${attempt + 1} confirmed Blue-chip`,
-          () => tierZeroAtOrAfter(confirmFloor),
-          { timeoutMs: 45000 },
-        );
-        if (settled) break;
-      }
-    }
-    if (cleanupTier !== 0) {
-      console.log('cleanup: restoring Blue-chip');
-      try {
-        await page
-          .getByRole('radio', { name: /Blue-chip only/i })
-          .click({ timeout: 10000 });
-      } catch {
-        /* page may be wedged — the direct write below still restores */
-      }
-      const restored = await pollUntil(
-        'cleanup lower',
-        () => tierZeroAtOrAfter(confirmFloor),
-        { timeoutMs: 60000 },
-      );
-      if (!restored) {
-        // Direct write with the role's own key — the cleanup
-        // contract is CHAIN state, not UI reachability.
-        const w = clientsFor(84532).wallet('borrower');
-        const hash = await w.writeContract({
-          address: DIAMOND,
-          abi: WRITE_ABI,
-          functionName: 'setVaultRiskTier',
-          args: [0],
-        });
-        // #2183. Unlike the normalization above, a revert here does NOT
-        // slip through — the block-floored `check` below re-reads the
-        // tier and fails the run whatever path got it there. What a bare
-        // wait costs is the LOG: "restored via direct write" would be
-        // printed for a write that restored nothing, so the operator
-        // reading the transcript is told the opposite of what the
-        // failure beneath it means.
-        const receipt = await pub.waitForTransactionReceipt({ hash });
-        if (receipt.status === 'success') {
-          console.log('cleanup: restored via direct write');
-        } else {
-          console.log(
-            `cleanup: direct write tx ${hash} mined but REVERTED ` +
-              `(status=${receipt.status}) — wallet NOT restored here; ` +
-              `the confirmation below is what decides the run`,
-          );
+    if (!tierWriteBegan) {
+      // Nothing to restore (#1633 r4): this run wrote no tier, and the
+      // restore is a write of its own. Lowering a tier the run never touched
+      // would change shared chain state while the verdict says the tier is
+      // as found, and spend gas doing it.
+      console.log('cleanup: this run wrote no tier, so none is restored');
+    } else {
+      // The cleanup GATE read gets the same transient-error tolerance
+      // pollUntil gives everything else (Codex #1539 r6): one flaky RPC
+      // response must not skip restoration entirely.
+      let cleanupTier = null;
+      for (let i = 0; i < 5 && cleanupTier === null; i++) {
+        try {
+          cleanupTier = Number(await rawTierOf());
+        } catch {
+          await new Promise((r) => setTimeout(r, 3000));
         }
       }
+      // Unreadable after retries → attempt restoration anyway; the
+      // chain-confirmed check below is the arbiter.
+      if (cleanupTier === 0 && raiseClicked && !lowerConfirmed) {
+        // The confirmed tier reads clean, but a broadcast raise may
+        // still be pending. A direct lowering write from the same
+        // account takes the NEXT nonce — it orders AFTER any pending
+        // raise and guarantees the terminal state (Codex #1539 r7). If
+        // nothing was actually pending this is a same-tier no-op write.
+        console.log('cleanup: nonce-ordered lowering behind a possibly-pending raise');
+        // Load-balanced public RPCs can hand out a pending-nonce that
+        // misses the in-flight raise, making the lowering COMPETE with
+        // it instead of following it (Codex #1539 r8). The receipt alone
+        // is therefore not proof: re-read the confirmed tier and keep
+        // submitting a fresh lowering until Blue-chip is confirmed
+        // (bounded).
+        const w = clientsFor(84532).wallet('borrower');
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const hash = await w.writeContract({
+            address: DIAMOND,
+            abi: WRITE_ABI,
+            functionName: 'setVaultRiskTier',
+            args: [0],
+          });
+          const receipt = await pub.waitForTransactionReceipt({ hash });
+          // The receipt may belong to a same-nonce replacement (the
+          // raise) — and a lagging backend can serve a pre-raise 0
+          // (Codex #1539 r9). Confirm only from at least the receipt's
+          // own block.
+          if (receipt.blockNumber > confirmFloor) confirmFloor = receipt.blockNumber;
+          const settled = await pollUntil(
+            `cleanup write ${attempt + 1} confirmed Blue-chip`,
+            () => tierZeroAtOrAfter(confirmFloor),
+            { timeoutMs: 45000 },
+          );
+          if (settled) break;
+        }
+      }
+      if (cleanupTier !== 0) {
+        console.log('cleanup: restoring Blue-chip');
+        try {
+          await page
+            .getByRole('radio', { name: /Blue-chip only/i })
+            .click({ timeout: 10000 });
+        } catch {
+          /* page may be wedged — the direct write below still restores */
+        }
+        const restored = await pollUntil(
+          'cleanup lower',
+          () => tierZeroAtOrAfter(confirmFloor),
+          { timeoutMs: 60000 },
+        );
+        if (!restored) {
+          // Direct write with the role's own key — the cleanup
+          // contract is CHAIN state, not UI reachability.
+          const w = clientsFor(84532).wallet('borrower');
+          const hash = await w.writeContract({
+            address: DIAMOND,
+            abi: WRITE_ABI,
+            functionName: 'setVaultRiskTier',
+            args: [0],
+          });
+          // #2183. Unlike the normalization above, a revert here does NOT
+          // slip through — the block-floored `check` below re-reads the
+          // tier and fails the run whatever path got it there. What a bare
+          // wait costs is the LOG: "restored via direct write" would be
+          // printed for a write that restored nothing, so the operator
+          // reading the transcript is told the opposite of what the
+          // failure beneath it means.
+          const receipt = await pub.waitForTransactionReceipt({ hash });
+          if (receipt.status === 'success') {
+            console.log('cleanup: restored via direct write');
+          } else {
+            console.log(
+              `cleanup: direct write tx ${hash} mined but REVERTED ` +
+                `(status=${receipt.status}) — wallet NOT restored here; ` +
+                `the confirmation below is what decides the run`,
+            );
+          }
+        }
+      }
+      // The restore is a CHECK, not best-effort logging (Codex #1539
+      // r3): a run that leaves the production wallet raised must exit
+      // non-zero, whatever path got it there. Block-floored like every
+      // other confirmation (r9) — a stale final read must not report a
+      // false success.
+      const leftClean = await pollUntil(
+        'final Blue-chip confirmation',
+        () => tierZeroAtOrAfter(confirmFloor),
+        { timeoutMs: 45000 },
+      );
+      console.log(`${leftClean ? 'ok ' : 'FAIL'} cleanup: wallet left at Blue-chip on-chain`);
+      if (!leftClean) cleanupFails.push('cleanup: wallet left at Blue-chip on-chain');
     }
-    // The restore is a CHECK, not best-effort logging (Codex #1539
-    // r3): a run that leaves the production wallet raised must exit
-    // non-zero, whatever path got it there. Block-floored like every
-    // other confirmation (r9) — a stale final read must not report a
-    // false success.
-    const leftClean = await pollUntil(
-      'final Blue-chip confirmation',
-      () => tierZeroAtOrAfter(confirmFloor),
-      { timeoutMs: 45000 },
-    );
-    console.log(`${leftClean ? 'ok ' : 'FAIL'} cleanup: wallet left at Blue-chip on-chain`);
-    if (!leftClean) cleanupFails.push('cleanup: wallet left at Blue-chip on-chain');
   } catch (e) {
     console.log('cleanup failed:', String(e).slice(0, 200));
     cleanupFails.push('cleanup: wallet restored to Blue-chip');
   } finally {
     await done();
   }
-  if (tierWriteBegan) {
-    fails.push(...cleanupFails);
-  } else if (cleanupFails.length) {
-    // The run wrote no tier, so this is the state it FOUND (an earlier
-    // run's leftover, or a chain it could not read), not a finding about
-    // /risk-access. Stated, never dropped.
-    cleanupNote =
-      `${cleanupFails.join(' | ')} could not be confirmed — this run wrote no tier, so the` +
-      ' tier is as it was found; check the borrower wallet by hand';
-    console.log(`note: ${cleanupNote}`);
-  }
+  fails.push(...cleanupFails);
 }
 if (driveError instanceof LivePreconditionError && fails.length === 0) {
-  await blocked(
-    driveError.message +
-      (cleanupNote ? `; also, ${cleanupNote}` : ''),
-  );
+  await blocked(driveError.message);
 }
 if (driveError) {
   console.log('drive error:', String(driveError?.stack ?? driveError).split('\n').slice(0, 4).join('\n'));

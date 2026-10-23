@@ -1111,7 +1111,8 @@ export function classifyRpcResponse(status, body, requestBody) {
  * colliding calls leave the open set at once and come back from `send` with
  * a request body holding all of them, which the shared classifier then
  * judges as the duplicate id it is. An id reused after its first call was
- * answered is a fresh call, as the spec allows.
+ * answered is a fresh call, as the spec allows. A message whose envelope is
+ * malformed comes back from `send` the same way, alone, and is never opened.
  *
  * `tagFor(message)` decides which messages the caller tracks (null skips
  * one) and returns whatever the caller needs back with the answer.
@@ -1127,14 +1128,28 @@ export function createSocketCalls() {
     }
   };
   return {
-    /** Record a sent frame. Returns the collisions it caused, each
-     *  `{ entries: [{ message, tag }], requestBody }`. */
+    /** Record a sent frame. Returns the calls to settle NOW, each
+     *  `{ entries: [{ message, tag }], requestBody }`: a message whose
+     *  envelope is malformed, and the calls an id collision took out. */
     send(payload, tagFor) {
+      const settleNow = [];
       const collided = new Map(); // id -> entries
       for (const m of messages(payload)) {
-        if (!m || typeof m !== 'object' || !('id' in m)) continue;
+        if (!m || typeof m !== 'object' || Array.isArray(m)) continue;
+        // A malformed envelope is judged when it is SENT (#1633 r4), as the
+        // classifier judges one in an HTTP request: its fault is a fact
+        // about what the page asked. Waiting for a reply lost it twice — an
+        // object id never matches the newly parsed one in the reply, and a
+        // message without an id was never tracked at all.
+        const malformed = rpcRequestCalls(m) === undefined;
+        // A well-formed notification expects no answer: nothing to track.
+        if (!malformed && !('id' in m)) continue;
         const tag = tagFor(m);
         if (tag == null) continue;
+        if (malformed) {
+          settleNow.push({ entries: [{ message: m, tag }], requestBody: JSON.stringify(m) });
+          continue;
+        }
         const prior = collided.get(m.id) ?? (open.has(m.id) ? [open.get(m.id)] : null);
         if (prior !== null) {
           open.delete(m.id);
@@ -1144,10 +1159,10 @@ export function createSocketCalls() {
         }
         open.set(m.id, { message: m, tag });
       }
-      return [...collided.values()].map((entries) => ({
-        entries,
-        requestBody: JSON.stringify(entries.map((e) => e.message)),
-      }));
+      for (const entries of collided.values()) {
+        settleNow.push({ entries, requestBody: JSON.stringify(entries.map((e) => e.message)) });
+      }
+      return settleNow;
     },
     /** Match a received frame's answers. Returns `[{ message, tag, reply,
      *  requestBody }]`, one per call it answers. */

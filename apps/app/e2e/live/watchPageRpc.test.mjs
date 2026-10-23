@@ -320,6 +320,35 @@ describe('watchPageRpc', () => {
     ]);
   });
 
+  it('records a malformed socket envelope when it is sent, object id or none (#1633 r4)', async () => {
+    const page = new FakePage();
+    const rpc = watchPageRpc(page);
+    rpc.reset();
+    const ws = new FakeWebSocket();
+    page.emit('websocket', ws);
+    ws.emit('framesent', { payload: JSON.stringify({ jsonrpc: '2.0', id: { n: 1 }, method: 'eth_call', params: [] }) });
+    ws.emit('framesent', { payload: JSON.stringify({ jsonrpc: '1.0', method: 'eth_blockNumber' }) });
+    // The reply cannot be matched to an object id; the fault does not wait for it.
+    ws.emit('framereceived', { payload: JSON.stringify({ jsonrpc: '2.0', id: { n: 1 }, error: { code: -32600, message: 'x' } }) });
+    expect(await rpc.settled(600)).toBe(2);
+    expect(rpc.sessionFaults()).toEqual([
+      'eth_call: malformed json-rpc envelope',
+      'eth_blockNumber: malformed json-rpc envelope',
+    ]);
+  });
+
+  it('does not wait past its grace for a body that never finishes (#1633 r4)', async () => {
+    const page = new FakePage();
+    const rpc = watchPageRpc(page);
+    rpc.reset();
+    const req = request();
+    page.emit('request', req);
+    page.emit('response', { request: () => req, status: () => 200, text: () => new Promise(() => {}) });
+    const started = Date.now();
+    expect(await rpc.settled(200)).toBe(0);
+    expect(Date.now() - started).toBeLessThan(3_000);
+  });
+
   it('takes an id reused after its call was answered as a fresh call', async () => {
     const page = new FakePage();
     const rpc = watchPageRpc(page);

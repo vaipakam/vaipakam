@@ -409,13 +409,14 @@ export function watchPageRpc(page) {
     // classified as a delivered message.
     const calls = createSocketCalls();
     ws.on('framesent', (f) => {
-      const collisions = calls.send(f.payload, (m) => {
+      const settleNow = calls.send(f.payload, (m) => {
         if (!isChainRpcMethod(m.method)) return null;
         const token = {};
         track(token);
         return { gen: generation, token };
       });
-      for (const { entries, requestBody } of collisions) {
+      // A malformed envelope or an id collision: judged from the request.
+      for (const { entries, requestBody } of settleNow) {
         const outcomes = classifyRpcResponse(200, '[]', requestBody);
         entries.forEach(({ tag }, i) => {
           untrack(tag.token);
@@ -433,6 +434,24 @@ export function watchPageRpc(page) {
       for (const { tag } of calls.close()) untrack(tag.token);
     });
   });
+  /** Await the body reads in flight, but never past `until` (#1633 r4): a
+   *  response whose headers arrived and whose body stalls would otherwise
+   *  hold every exit that waits on it, in exactly the partial outage a
+   *  drive must still report. A read still pending at the deadline simply
+   *  did not land. Never less than a second, so a body that arrived as the
+   *  call drain ran out still gets parsed. */
+  const readsUntil = async (until) => {
+    const left = Math.max(1_000, until - Date.now());
+    if (bodyReads.size === 0) return;
+    let timer;
+    await Promise.race([
+      Promise.allSettled([...bodyReads]),
+      new Promise((r) => {
+        timer = setTimeout(r, left);
+      }),
+    ]);
+    clearTimeout(timer);
+  };
   /** Wait, bounded, for everything still in flight this SESSION, so the
    *  faults it carries are recorded before a verdict is decided. */
   const drain = async (graceMs) => {
@@ -440,7 +459,7 @@ export function watchPageRpc(page) {
     while (sessionOutstanding.size > 0 && Date.now() < until) {
       await new Promise((r) => setTimeout(r, 250));
     }
-    await Promise.allSettled([...bodyReads]);
+    await readsUntil(until);
   };
   WATCHER_DRAINS.add(drain);
   return {
@@ -469,7 +488,7 @@ export function watchPageRpc(page) {
       while (outstanding.size > 0 && Date.now() < until) {
         await new Promise((r) => setTimeout(r, 250));
       }
-      await Promise.allSettled([...bodyReads]);
+      await readsUntil(until);
       return answered;
     },
     /**

@@ -290,23 +290,31 @@ export function attachLedger(page, ledger, readMethods) {
       }
       const pending = ledger.onRequest(String(f.payload));
       if (pending === null) return;
-      const collisions = calls.send(f.payload, (m) => (pending.has(m.id) ? pending : null));
-      for (const { entries, requestBody } of collisions) {
-        for (const { message, tag } of entries) {
-          ledger.onResponse(new Map([[message.id, tag.get(message.id)]]), '[]', { status: null, requestBody });
+      // The ledger's own key for this message's id, found by VALUE: the
+      // correlator parses the frame afresh, so an object id is a different
+      // object from the one the ledger keyed (#1633 r4).
+      const keys = [...pending.keys()];
+      const tagFor = (m) => {
+        const i = keys.findIndex((k) => JSON.stringify(k) === JSON.stringify(m.id));
+        return i === -1 ? null : { entries: pending.get(keys[i]), key: keys[i] };
+      };
+      // A malformed envelope or an id collision: settled now, from the request.
+      for (const { entries, requestBody } of calls.send(f.payload, tagFor)) {
+        for (const { tag } of entries) {
+          ledger.onResponse(new Map([[tag.key, tag.entries]]), '[]', { status: null, requestBody });
         }
       }
     });
     ws.on('framereceived', (f) => {
       // A socket has no HTTP status: a delivered message is the answer, and
       // each is classified against its own call's message.
-      for (const { message, tag, reply, requestBody } of calls.receive(f.payload)) {
-        ledger.onResponse(new Map([[message.id, tag.get(message.id)]]), reply, { status: null, requestBody });
+      for (const { tag, reply, requestBody } of calls.receive(f.payload)) {
+        ledger.onResponse(new Map([[tag.key, tag.entries]]), reply, { status: null, requestBody });
       }
     });
     ws.on('close', () => {
-      for (const { message, tag } of calls.close()) {
-        ledger.onResponse(new Map([[message.id, tag.get(message.id)]]), null, { status: null });
+      for (const { tag } of calls.close()) {
+        ledger.onResponse(new Map([[tag.key, tag.entries]]), null, { status: null });
       }
     });
   });
