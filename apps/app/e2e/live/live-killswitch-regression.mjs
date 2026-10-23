@@ -126,7 +126,6 @@ try {
   fixtureProblem = `the lender's fixture-token balance could not be read: ${String(err?.message ?? err).split('\n')[0].slice(0, 200)}`;
 }
 if (fixtureProblem !== null && failures === 0) {
-  await done();
   await blocked(
     `${fixtureProblem}, so the post-offer review's submit gate cannot open and nothing` +
       ' was observed about its kill switch. Top up the lender with the faucet token.',
@@ -157,6 +156,11 @@ if (fixtureProblem !== null) {
     await pasteAssetLive(page, 'collateral-asset', COLLATERAL_ASSET);
     await page.waitForTimeout(1500);
     await page.locator('input[placeholder="0.0"]:visible').last().fill('100');
+    // The window opens immediately before the click (#1633 r5): the review's
+    // gating reads start on the click, and a reset after the wait below
+    // orphaned the ones that had already answered, so a fast RPC read as
+    // silent and the drive went BLOCKED.
+    rpc.reset();
     await page.getByRole('button', { name: /continue to review/i }).click();
     await page.waitForTimeout(3000);
     const post = page.getByRole('button', { name: /post lending offer/i });
@@ -166,8 +170,8 @@ if (fixtureProblem !== null) {
     // redeployed — none of those settle, the button never enables, and the
     // deadline below used to spend a FAIL on it. The old message admitted as
     // much ("a closed gate or the kill switch") while still reporting a
-    // kill-switch product regression for an outage (Codex #1621 r13).
-    rpc.reset();
+    // kill-switch product regression for an outage (Codex #1621 r13). The
+    // RPC window opened just before the click above.
     let reviewOk = false;
     const reviewDeadline = Date.now() + 90_000;
     for (;;) {
@@ -193,7 +197,6 @@ if (fixtureProblem !== null) {
         // about a run that verified something real. Same evidence-precedence
         // rule live-ux-sweep and live-recover-locales apply.
         if (failures === 0 && (await rpc.settled()) === 0) {
-          await done();
           await blocked(
             'the submit gate never resolved and the page received no answer from' +
               ' its JSON-RPC endpoint in that window, so nothing was observed' +

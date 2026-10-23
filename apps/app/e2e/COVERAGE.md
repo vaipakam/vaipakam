@@ -363,11 +363,15 @@ Which failures are preconditions, driver by driver:
   drive's BLOCKED branch can hide one; `blocked()` first waits (bounded)
   for the page's in-flight chain answers, and a body still parsing when a
   window reset is still awaited, so a fault cannot lose the race to the
-  exit. A request whose JSON-RPC envelope is itself malformed (a wrong
+  exit. `launch()`'s `done()` waits the same way before ITS close, so a
+  drive that closes and then exits BLOCKED loses nothing either; the
+  ordering of a drive's exits is not load-bearing. A request whose JSON-RPC envelope is itself malformed (a wrong
   `jsonrpc`, scalar `params`, an id that is not a string, number or null)
   is a client fault too, judged from the request like a reused id. The RPC audit's call ledger takes the same
   verdicts, so a page whose requests a reachable provider refuses as
-  malformed FAILS there too. On a WebSocket, calls are matched to answers
+  malformed FAILS there too, and so does the sanctions-banner drive's
+  read ledger (`pageSanctionsReads.mjs`): a flag read refused as malformed
+  is a FAIL ahead of every banner state, never an RPC outage. On a WebSocket, calls are matched to answers
   by ONE correlator (`createSocketCalls`) shared by both observers: an id
   reused while its call is still waiting, in a frame or across frames, is
   the same duplicate-id fault as in an HTTP batch, never two answers. All

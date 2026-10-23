@@ -92,6 +92,40 @@ describe('page sanctions read ledger', () => {
     expect(l.judge('flag', 0, true)).toEqual({ state: 'unanswered', attempts: 1 });
   });
 
+  it('a read the provider refused as malformed is a fault, ahead of every other state (#1633 r5)', () => {
+    // -32602 at 200 and at 400: the provider reached and refused the request.
+    for (const status of [200, 400]) {
+      const l = ledgerAt([100, 101, 102, 103]);
+      const a = l.onRequest(JSON.stringify(plain(1, DIAMOND, flagRead.calldata)));
+      l.onResponse(a, JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'bad' } }), { status });
+      // a later read that agrees does not make the malformed one right
+      const b = l.onRequest(JSON.stringify(plain(2, DIAMOND, flagRead.calldata)));
+      l.onResponse(b, JSON.stringify({ jsonrpc: '2.0', id: 2, result: bool(true) }));
+      expect(l.judge('flag', 0, true)).toEqual({ state: 'fault', why: 'json-rpc -32602' });
+      expect(l.faults()).toEqual([{ kind: 'flag', why: 'json-rpc -32602' }]);
+    }
+  });
+
+  it('a malformed envelope or a reused batch id is a fault, not an outage (#1633 r5)', () => {
+    const l = ledgerAt([100, 101, 102, 103]);
+    const bad = { ...plain(1, DIAMOND, flagRead.calldata), jsonrpc: '1.0' };
+    const a = l.onRequest(JSON.stringify(bad));
+    l.onResponse(a, JSON.stringify({ jsonrpc: '2.0', id: 1, result: bool(true) }));
+    expect(l.judge('flag', 0, true).state).toBe('fault');
+    const m = ledgerAt([100, 101]);
+    const b = m.onRequest(JSON.stringify([plain(5, DIAMOND, flagRead.calldata), plain(5, OTHER, '0x')]));
+    m.onResponse(b, JSON.stringify([{ jsonrpc: '2.0', id: 5, result: bool(true) }]));
+    expect(m.judge('flag', 0, true)).toEqual({ state: 'fault', why: expect.stringMatching(/duplicate/) });
+  });
+
+  it('a fault answered after `until` is not yet known at `until`', () => {
+    const l = ledgerAt([100, 200]);
+    const a = l.onRequest(JSON.stringify(plain(1, DIAMOND, flagRead.calldata)));
+    l.onResponse(a, JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'bad' } }));
+    expect(l.judge('flag', 0, true, 150)).toEqual({ state: 'unanswered', attempts: 1 });
+    expect(l.judge('flag', 0, true).state).toBe('fault');
+  });
+
   it('matches answers to requests by id within a batch', () => {
     const l = ledgerAt([100]);
     const p = l.onRequest(JSON.stringify([plain(1, OTHER, '0x'), plain(2, DIAMOND, flagRead.calldata)]));
@@ -210,6 +244,16 @@ describe('attachLedger on a WebSocket (#1633 r1)', () => {
       ['eth_call', 'client-fault'],
       ['eth_getLogs', 'client-fault'],
     ]);
+  });
+
+  it('the read ledger records a socket read sent under a reused id as a fault (#1633 r5)', () => {
+    const l = createReadLedger({ flag: flagRead });
+    const ws = socketFor(l);
+    ws.send(plain(3, DIAMOND, flagRead.calldata));
+    ws.send(plain(3, DIAMOND, flagRead.calldata));
+    ws.receive({ jsonrpc: '2.0', id: 3, result: bool(true) });
+    expect(l.judge('flag', 0, true).state).toBe('fault');
+    expect(l.faults().length).toBe(2);
   });
 
   it('settles each distinct call against its own answer', () => {

@@ -203,7 +203,6 @@ try {
   await page.waitForTimeout(9_000); // debounce + createOffer eth_call round-trip
   awaitingSimulation = false;
   if ((await rpc.settled()) === 0) {
-    await done();
     await blocked(
       'the collateral was raised but the page received no answer from its' +
         ' JSON-RPC endpoint afterwards, so the clearing simulation never ran.' +
@@ -234,9 +233,8 @@ try {
   const answered = awaitingSimulation ? await rpc.settled() : 1;
   if (answered === 0) {
     await shot('1112-precheck-blocked').catch(() => {});
-    // `done()` FIRST, then the shared blocked exit: `blocked()` ends the
-    // process, so anything after it never runs.
-    await done();
+    // The shared blocked exit alone: it drains the page's in-flight RPC,
+    // then closes the browser itself (#1633 r5).
     await blocked(
       'the page received no successful JSON-RPC response, so the createOffer' +
         ' simulation this drive reads its verdict from never ran. Nothing was' +

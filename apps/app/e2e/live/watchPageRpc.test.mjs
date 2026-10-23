@@ -396,3 +396,26 @@ describe('drives that attach watchPageRpc', () => {
     expect(fs.readFileSync(`${dir}${f}`, 'utf8')).toMatch(/\brpc\.sessionFaults\(\)/);
   });
 });
+
+// Structural: every browser close the shared driver performs lets the
+// watchers' in-flight reads land first (#1633 r5). `blocked()` did; `done()`
+// did not, so a drive that closed and then exited `blocked()` lost a fault
+// still being read and exited BLOCKED over a finding. `done()` belongs to
+// `launch()`, which needs a real browser, so the order is pinned by text.
+describe('the shared closes drain the watchers first', () => {
+  const src = fs.readFileSync(fileURLToPath(new URL('./driver.mjs', import.meta.url)), 'utf8');
+  const body = (start) => src.slice(src.indexOf(start), src.indexOf('\n    },\n', src.indexOf(start)));
+
+  it('done() drains before it closes the context', () => {
+    const done = body('    done: async () => {');
+    expect(done.indexOf('await drainWatchers()')).toBeGreaterThan(-1);
+    expect(done.indexOf('await drainWatchers()')).toBeLessThan(done.indexOf('await ctx.close()'));
+  });
+
+  it('blocked() drains before it closes the browser', () => {
+    const start = src.indexOf('export async function blocked(');
+    const blk = src.slice(start, src.indexOf('\n}\n', start));
+    expect(blk.indexOf('await drainWatchers()')).toBeGreaterThan(-1);
+    expect(blk.indexOf('await drainWatchers()')).toBeLessThan(blk.indexOf('LIVE_BROWSER?.close()'));
+  });
+});

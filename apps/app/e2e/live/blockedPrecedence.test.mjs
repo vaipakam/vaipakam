@@ -62,4 +62,18 @@ describe('BLOCKED exits and recorded page RPC faults', () => {
     expect(errors.join('\n')).toContain('eth_call: json-rpc -32602');
     expect(errors.join('\n')).toContain('the drive then stopped BLOCKED: fixture missing');
   });
+
+  it('a watcher whose page closed is not waited on (#1633 r5)', async () => {
+    const page = new FakePage();
+    watchPageRpc(page);
+    // a request that will never answer, then the page closes
+    page.emit('request', {
+      method: () => 'POST',
+      postData: () => JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'eth_blockNumber', params: [] }),
+    });
+    page.emit('close');
+    const started = Date.now();
+    await exitCode(() => blocked('rpc silent'));
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
 });

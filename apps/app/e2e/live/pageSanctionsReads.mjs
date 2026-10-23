@@ -33,7 +33,7 @@ import {
   toFunctionSelector,
 } from 'viem';
 
-import { createSocketCalls } from './rpc-verdict.mjs';
+import { classifyRpcResponse, createSocketCalls } from './rpc-verdict.mjs';
 
 const lower = (hex) => String(hex ?? '').toLowerCase();
 
@@ -122,7 +122,9 @@ const asList = (v) => (Array.isArray(v) ? v : [v]);
 
 /**
  * The ledger. `reads` maps a kind to a `watchedRead`. Entries are
- * `{ kind, startedAt, answeredAt, answered, value, block }`; `answered` stays undefined while
+ * `{ kind, startedAt, answeredAt, answered, value, fault, block, match, requestBody }`;
+ * `fault` is the classifier's reason when the provider refused the read as
+ * malformed; `answered` stays undefined while
  * the read is in flight.
  */
 export function createReadLedger(reads, now = () => Date.now()) {
@@ -144,7 +146,19 @@ export function createReadLedger(reads, now = () => Date.now()) {
         // (the app's periodic snapshot), a tag (`latest` when none is given)
         // for an unpinned one (its submit-time screen).
         const block = lower(c.params?.[1] ?? 'latest');
-        const entry = { kind: m.kind, startedAt: now(), answeredAt: undefined, answered: undefined, value: undefined, block, match: m };
+        // The request it rode in, so its answer is judged as a PAIR by the
+        // shared classifier (#1633 r5).
+        const entry = {
+          kind: m.kind,
+          startedAt: now(),
+          answeredAt: undefined,
+          answered: undefined,
+          value: undefined,
+          fault: undefined,
+          block,
+          match: m,
+          requestBody: bodyText,
+        };
         entries.push(entry);
         if (!pending.has(c.id)) pending.set(c.id, []);
         pending.get(c.id).push(entry);
@@ -153,11 +167,26 @@ export function createReadLedger(reads, now = () => Date.now()) {
     return pending.size > 0 ? pending : null;
   }
 
-  /** Settle the entries of `pending` from a response body (null = no
-   *  usable response: every pending entry is unanswered). A non-2xx status
-   *  is no answer either: the page's transport does not hand that body to
-   *  the app as a result, so the page never learned a value from it. */
-  function onResponse(pending, bodyText, { status = null } = {}) {
+  /**
+   * Settle the entries of `pending` from a response body (null = no usable
+   * response: every pending entry is unanswered).
+   *
+   * The pair goes through the shared classifier FIRST (#1633 r5), the same
+   * rule `watchPageRpc` and the RPC audit's ledger apply, so this ledger
+   * cannot call a request the provider refused as malformed (`-32602`, an
+   * invalid envelope, a reused batch id) an RPC outage. A `client-fault` is
+   * recorded as such — a defect in what the page SENT — and `judge` reports
+   * it ahead of every other state. Only an `ok` call is decoded for a value,
+   * and only from a 2xx body: the page's transport does not hand a non-2xx
+   * body to the app as a result, so the page never learned a value from it.
+   *
+   * `requestBody` is the request this answer belongs to; a socket passes the
+   * one message it answers. Absent, the body the entries rode in is used.
+   */
+  function onResponse(pending, bodyText, { status = null, requestBody } = {}) {
+    const request = requestBody ?? [...pending.values()][0]?.[0]?.requestBody;
+    // A socket answer carries no HTTP status; it was delivered.
+    const verdicts = bodyText == null ? [] : classifyRpcResponse(status ?? 200, bodyText, request);
     let responses = [];
     const pageSawIt = status === null || (status >= 200 && status < 300);
     if (bodyText != null && pageSawIt) {
@@ -167,15 +196,31 @@ export function createReadLedger(reads, now = () => Date.now()) {
         responses = [];
       }
     }
-    const byId = new Map(responses.filter((r) => r && 'id' in r).map((r) => [r.id, r]));
+    // Ids compared by VALUE: two parses of an object id never match by
+    // identity, and a malformed envelope may carry one (#1633 r3).
+    const sameId = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    const responseFor = (id) => responses.find((r) => r && 'id' in r && sameId(r.id, id));
     for (const [id, list] of pending) {
+      const v = verdicts.find((o) => sameId(o.id, id));
       for (const e of list) {
-        const a = readAnswer(byId.get(id), e.match);
-        e.answered = a.answered;
-        e.value = a.value;
+        if (v?.verdict === 'client-fault') {
+          e.answered = false;
+          e.value = undefined;
+          e.fault = v.why;
+        } else {
+          const a = v?.verdict === 'ok' ? readAnswer(responseFor(id), e.match) : { answered: false };
+          e.answered = a.answered;
+          e.value = a.value;
+        }
         e.answeredAt = now();
       }
     }
+  }
+
+  /** Every watched read a reachable provider refused as malformed, across
+   *  the whole session — a finding whatever window a drive is judging. */
+  function faults() {
+    return entries.filter((e) => e.fault !== undefined).map((e) => ({ kind: e.kind, why: e.fault }));
   }
 
   /**
@@ -184,6 +229,8 @@ export function createReadLedger(reads, now = () => Date.now()) {
    * banner observed at `until` is judged against what the page knew when
    * it showed it, not against a later refresh:
    *   - `none`       — the page never started one: the app did not ask;
+   *   - `fault`      — a reachable provider refused one as malformed (the
+   *                    classifier's `client-fault`), whatever else answered;
    *   - `unanswered` — it asked and no answer came back (in flight counts);
    *   - `disagrees`  — the latest answer says the opposite of `expected`;
    *   - `agrees`     — the latest answer says `expected`.
@@ -191,13 +238,17 @@ export function createReadLedger(reads, now = () => Date.now()) {
   function judge(kind, since, expected, until = Infinity) {
     const inWindow = entries.filter((e) => e.kind === kind && e.startedAt >= since && e.startedAt <= until);
     if (inWindow.length === 0) return { state: 'none' };
+    // A refused-as-malformed read outranks every other state: it is a
+    // defect in the request, and no later answer makes it right.
+    const faulted = inWindow.find((e) => e.fault !== undefined && e.answeredAt <= until);
+    if (faulted) return { state: 'fault', why: faulted.fault };
     const answered = inWindow.filter((e) => e.answered === true && e.answeredAt <= until);
     if (answered.length === 0) return { state: 'unanswered', attempts: inWindow.length };
     const latest = answered[answered.length - 1];
     return { state: latest.value === expected ? 'agrees' : 'disagrees', value: latest.value };
   }
 
-  return { entries, onRequest, onResponse, judge };
+  return { entries, onRequest, onResponse, judge, faults };
 }
 
 /**
@@ -247,14 +298,20 @@ export function isRefusedSocketMethod(socketUrl, method, readMethods) {
  *  method the page SENDS on a socket is checked against `readMethods`
  *  (`isRefusedSocketMethod`, whose one exemption is WalletConnect's relay),
  *  and one outside it is recorded in the returned `wsViolations` —
- *  observed, not prevented, so the drive must fail on any entry. */
+ *  observed, not prevented, so the drive must fail on any entry.
+ *
+ *  `settled(graceMs)` waits, bounded, for the HTTP reads still in flight;
+ *  call it before deciding a verdict. */
 export function attachLedger(page, ledger, readMethods) {
   const wsViolations = [];
+  // Each HTTP read still waiting for its answer, so `settled` can let it
+  // land before a drive decides (#1633 r5).
+  const inFlight = new Set();
   page.on('request', (req) => {
     if (req.method() !== 'POST') return;
     const pending = ledger.onRequest(req.postData());
     if (pending === null) return;
-    req
+    const settling = req
       .response()
       .then(async (res) => {
         if (res === null) return ledger.onResponse(pending, null, { status: null });
@@ -270,7 +327,9 @@ export function attachLedger(page, ledger, readMethods) {
         // malformed request and said so at 400 has answered.
         ledger.onResponse(pending, text, { status: res.status(), requestBody: req.postData() ?? undefined });
       })
-      .catch(() => ledger.onResponse(pending, null, { status: null }));
+      .catch(() => ledger.onResponse(pending, null, { status: null }))
+      .finally(() => inFlight.delete(settling));
+    inFlight.add(settling);
   });
   page.on('websocket', (ws) => {
     // The calls outstanding on this connection, matched by id. A reused id
@@ -318,5 +377,20 @@ export function attachLedger(page, ledger, readMethods) {
       }
     });
   });
-  return { wsViolations };
+  /** Wait, at most `graceMs`, for the HTTP reads still in flight, so a
+   *  verdict decided next sees what they carry — a malformed read the
+   *  provider is still refusing outranks the BLOCKED exit a drive is about
+   *  to take. A read still pending at the deadline simply did not land. */
+  const settled = async (graceMs = 5_000) => {
+    if (inFlight.size === 0) return;
+    let timer;
+    await Promise.race([
+      Promise.allSettled([...inFlight]),
+      new Promise((r) => {
+        timer = setTimeout(r, graceMs);
+      }),
+    ]);
+    clearTimeout(timer);
+  };
+  return { wsViolations, settled };
 }

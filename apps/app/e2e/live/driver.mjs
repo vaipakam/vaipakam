@@ -87,11 +87,19 @@ export function trackBrowser(browser) {
  * BLOCKED exits below can honour evidence precedence by themselves.
  */
 const OBSERVED_RPC_FAULTS = [];
-/** Each attached watcher's session drain, awaited by `blocked()` before it
- *  decides (and before the browser closes, which would cut the reads off). */
+/** Each attached watcher's session drain, awaited by `blocked()` and by
+ *  `done()` before the browser closes (which would cut the reads off). A
+ *  watcher leaves the set when its page closes. */
 const WATCHER_DRAINS = new Set();
-/** How long `blocked()` waits for a watcher's in-flight page RPC. */
+/** How long a close waits for a watcher's in-flight page RPC. */
 const BLOCKED_DRAIN_MS = 5_000;
+
+/** Wait, bounded, for every attached watcher's in-flight page RPC. Run
+ *  before ANY browser close — `blocked()`'s and `done()`'s — because the
+ *  close cuts the body reads off (#1633 r3, r5). */
+async function drainWatchers() {
+  await Promise.allSettled([...WATCHER_DRAINS].map((d) => d(BLOCKED_DRAIN_MS)));
+}
 
 /**
  * FAIL outranks BLOCKED, and a malformed request the page already sent is a
@@ -146,7 +154,9 @@ export async function blocked(why, err, cleanup) {
   // Let in-flight page RPC land first (#1633 r3): a fault still parsing
   // when the drive gave up outranks this exit, and closing the browser
   // would cut its body read off. Bounded, so a hung request cannot hold it.
-  await Promise.allSettled([...WATCHER_DRAINS].map((d) => d(BLOCKED_DRAIN_MS)));
+  // `done()` drains the same way before ITS close, so a drive that closed
+  // first lost nothing either (#1633 r5).
+  await drainWatchers();
   try {
     await LIVE_BROWSER?.close();
   } catch {
@@ -462,6 +472,9 @@ export function watchPageRpc(page) {
     await readsUntil(until);
   };
   WATCHER_DRAINS.add(drain);
+  // A closed page has nothing left to land; a later launch's close need not
+  // wait on it.
+  page.on('close', () => WATCHER_DRAINS.delete(drain));
   return {
     /**
      * Start a fresh window. Call immediately before the critical wait.
@@ -1764,6 +1777,14 @@ export async function launch({
       return path.join(dir, `${name}.png`);
     },
     done: async () => {
+      // Let in-flight page RPC land BEFORE the close (#1633 r5), exactly as
+      // `blocked()` does: closing cuts every body read off, so a malformed
+      // request still being refused would be lost, and a drive that closes
+      // and then exits `blocked()` would exit BLOCKED over a finding. Doing
+      // it here rather than asking every caller to order its exits makes
+      // the close itself safe; the drain is bounded and immediate when
+      // nothing is in flight.
+      await drainWatchers();
       // Only the CLOSE may reject: a caller settles a run on whether the
       // browser closed, and a temp-dir cleanup error is not that (#2505 r51).
       await ctx.close();

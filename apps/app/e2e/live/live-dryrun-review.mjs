@@ -113,7 +113,6 @@ const any = verdicts.passed || verdicts.approval;
 // would-fail verdict is a finding whatever the network did, and a silent
 // footer beside an endpoint that DID answer is the app's to explain.
 if (!any && !verdicts.wouldFail && (await rpc.settled()) === 0) {
-  await done();
   await blocked(
     'the review never showed a dry-run verdict and the page received no answer' +
       ' from its JSON-RPC endpoint after the review opened, so the simulation' +
