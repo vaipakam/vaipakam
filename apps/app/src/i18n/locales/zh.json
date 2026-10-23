@@ -2698,7 +2698,7 @@
       "secondaryOracleMaxDeviation": "次级预言机最大偏差",
       "secondaryOracleMaxStaleness": "次级预言机最长陈旧时间",
       "pythOracle": "Pyth 预言机",
-      "pythOracleHint": "对主价格读数进行交叉核对。未设置表示交叉核对已关闭。",
+      "pythOracleHint": "交叉核对主价格读数。只有在此预言机和下方的喂价 ID 都已设置时才会核对；任一未设置，交叉核对即关闭。",
       "pythFeedId": "Pyth 交叉核对喂价 ID",
       "pythMaxStaleness": "Pyth 最长陈旧时间",
       "pythMaxDeviation": "Pyth 交叉核对最大偏差",
@@ -2727,7 +2727,7 @@
       "treasuryHeading": "金库",
       "treasuryAddress": "金库地址",
       "notSet": "未设置",
-      "unsetDefault": "未设置，因此适用协议内置的默认值",
+      "unsetDefault": "{{value}}（未设置，因此适用协议文档中的默认值）",
       "numeraireUnits": "{{amount}}（参考货币单位）",
       "chainProvenance": "于区块 {{block}} 直接读取自该链上的合约（{{age}}）。此处任何数值都可在公共区块浏览器上调用同一合约进行核对。",
       "chainWhyMissing": "公开索引器没有该链的配置快照，或无法连接，因此本页直接读取了合约。",
@@ -2736,7 +2736,10 @@
       "chainWhyOld": "索引器的快照早于其常规刷新，因此本页直接读取了合约。",
       "chainWhyUnlabelled": "索引器的快照缺少本页所需的名称，因此本页直接读取了合约。",
       "chainWhyIncomplete": "索引器的快照未涵盖此处显示的所有设置，因此本页直接读取了合约。",
-      "numeraireDefault": "{{symbol}}（从未更改，因此为协议默认值）"
+      "numeraireDefault": "{{symbol}}（从未更改，因此为协议默认值）",
+      "pythFeedIdHint": "交叉核对所读取的 Pyth 喂价。未设置时，即使已设置预言机，交叉核对也会关闭。",
+      "keepersHint": "暂停后，keeper 不能再对他人的仓位执行操作。所有者仍可操作自己的仓位，清算仍对任何人开放。它不会阻止 keeper 密钥提交奖励承诺，因此泄露的密钥还必须被撤销 keeper 角色。",
+      "eventlessSnapshotNote": "更改此设置不会在链上发出任何通知，因此此快照只会在下一次定期刷新时反映更改，在此之前可能显示之前的值。"
     },
     "forcedClose": {
       "title": "这笔贷款已逾期",

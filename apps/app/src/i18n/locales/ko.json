@@ -2698,7 +2698,7 @@
       "secondaryOracleMaxDeviation": "보조 오라클 최대 편차",
       "secondaryOracleMaxStaleness": "보조 오라클 최대 경과 시간",
       "pythOracle": "Pyth 오라클",
-      "pythOracleHint": "주요 가격 판독값을 교차 확인합니다. 설정되지 않음은 교차 확인이 꺼져 있다는 뜻입니다.",
+      "pythOracleHint": "주 가격 판독값을 교차 확인합니다. 이 오라클과 아래 피드 ID가 모두 설정되어 있을 때만 작동하며, 둘 중 하나라도 설정되지 않으면 교차 확인이 꺼집니다.",
       "pythFeedId": "Pyth 교차 확인 피드 ID",
       "pythMaxStaleness": "Pyth 최대 경과 시간",
       "pythMaxDeviation": "Pyth 교차 확인 최대 편차",
@@ -2727,7 +2727,7 @@
       "treasuryHeading": "트레저리",
       "treasuryAddress": "트레저리 주소",
       "notSet": "설정되지 않음",
-      "unsetDefault": "설정되지 않아 프로토콜 기본 내장값이 적용됨",
+      "unsetDefault": "{{value}} (설정되지 않아 프로토콜에 문서화된 기본값이 적용됨)",
       "numeraireUnits": "{{amount}} (기준 통화 단위)",
       "chainProvenance": "이 체인의 컨트랙트에서 블록 {{block}} 시점에 직접 읽음, {{age}}. 여기의 모든 수치는 공개 블록 탐색기에서 같은 컨트랙트를 호출해 확인할 수 있습니다.",
       "chainWhyMissing": "공개 인덱서에 이 체인의 설정 스냅샷이 없거나 연결할 수 없어서, 이 페이지가 컨트랙트를 직접 읽었습니다.",
@@ -2736,7 +2736,10 @@
       "chainWhyOld": "인덱서의 스냅샷이 정기 갱신보다 오래되어서, 이 페이지가 컨트랙트를 직접 읽었습니다.",
       "chainWhyUnlabelled": "인덱서의 스냅샷이 이 페이지에 필요한 이름 없이 도착해서, 이 페이지가 컨트랙트를 직접 읽었습니다.",
       "chainWhyIncomplete": "인덱서의 스냅샷이 여기 표시되는 모든 설정을 포함하지 않아서, 이 페이지가 컨트랙트를 직접 읽었습니다.",
-      "numeraireDefault": "{{symbol}} (변경된 적이 없어 프로토콜 기본값)"
+      "numeraireDefault": "{{symbol}} (변경된 적이 없어 프로토콜 기본값)",
+      "pythFeedIdHint": "교차 확인이 읽는 Pyth 가격 피드입니다. 설정되지 않으면 오라클이 설정되어 있어도 교차 확인이 꺼집니다.",
+      "keepersHint": "일시 중지되면 키퍼는 다른 사람의 포지션에 대해 작업할 수 없습니다. 소유자는 자신의 포지션에 대해 계속 작업할 수 있고, 청산은 누구에게나 열려 있습니다. 키퍼 키의 보상 약정 제출은 막지 않으므로, 유출된 키는 키퍼 역할도 회수해야 합니다.",
+      "eventlessSnapshotNote": "이 설정을 변경해도 온체인에 아무것도 알리지 않으므로, 이 스냅샷은 다음 예정된 새로 고침 때에야 변경을 반영하며 그 전까지는 이전 값을 보여 줄 수 있습니다."
     },
     "forcedClose": {
       "title": "이 대출은 연체되었습니다",

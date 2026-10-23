@@ -2698,7 +2698,7 @@
       "secondaryOracleMaxDeviation": "Écart maximal de l'oracle secondaire",
       "secondaryOracleMaxStaleness": "Ancienneté maximale de l'oracle secondaire",
       "pythOracle": "Oracle Pyth",
-      "pythOracleHint": "Recoupe la lecture de prix principale. Non défini signifie que le recoupement est désactivé.",
+      "pythOracleHint": "Vérifie par recoupement la lecture de prix principale. Le recoupement ne fonctionne que si cet oracle et l’identifiant de flux ci-dessous sont tous deux définis ; si l’un des deux manque, il est désactivé.",
       "pythFeedId": "Identifiant du flux de recoupement Pyth",
       "pythMaxStaleness": "Ancienneté maximale de Pyth",
       "pythMaxDeviation": "Écart maximal du recoupement Pyth",
@@ -2727,7 +2727,7 @@
       "treasuryHeading": "Trésorerie",
       "treasuryAddress": "Adresse de la trésorerie",
       "notSet": "non défini",
-      "unsetDefault": "non défini, donc la valeur par défaut intégrée au protocole s'applique",
+      "unsetDefault": "{{value}} (non défini, donc la valeur par défaut documentée du protocole s’applique)",
       "numeraireUnits": "{{amount}} (unités de la devise de référence)",
       "chainProvenance": "Lu directement dans les contrats de cette chaîne au bloc {{block}}, {{age}}. Tout chiffre ici peut être vérifié en appelant le même contrat sur un explorateur de blocs public.",
       "chainWhyMissing": "L'indexeur public n'avait pas d'instantané de configuration pour cette chaîne, ou était injoignable ; cette page a donc lu les contrats.",
@@ -2736,7 +2736,10 @@
       "chainWhyOld": "L'instantané de l'indexeur était plus ancien que son actualisation régulière ; cette page a donc lu les contrats.",
       "chainWhyUnlabelled": "L'instantané de l'indexeur est arrivé sans les noms dont cette page a besoin ; cette page a donc lu les contrats.",
       "chainWhyIncomplete": "L'instantané de l'indexeur ne couvrait pas tous les réglages affichés ici ; cette page a donc lu les contrats.",
-      "numeraireDefault": "{{symbol}} (jamais modifiée, donc la valeur par défaut du protocole)"
+      "numeraireDefault": "{{symbol}} (jamais modifiée, donc la valeur par défaut du protocole)",
+      "pythFeedIdHint": "Le flux de prix Pyth lu par le recoupement. Non défini, il désactive le recoupement, même si un oracle est défini.",
+      "keepersHint": "En pause, les keepers ne peuvent plus agir sur les positions d’autrui. Les propriétaires peuvent toujours agir sur les leurs, et la liquidation reste ouverte à tous. Cela n’empêche pas une clé de keeper de soumettre des engagements de récompenses : une clé compromise doit donc aussi perdre son rôle de keeper.",
+      "eventlessSnapshotNote": "Modifier ce réglage n’annonce rien sur la chaîne : cet instantané ne prend en compte un changement qu’à sa prochaine actualisation programmée et peut afficher la valeur précédente d’ici là."
     },
     "forcedClose": {
       "title": "Ce prêt est en retard",

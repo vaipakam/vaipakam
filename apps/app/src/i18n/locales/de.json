@@ -2698,7 +2698,7 @@
       "secondaryOracleMaxDeviation": "Maximale Abweichung des Zweitorakels",
       "secondaryOracleMaxStaleness": "Maximales Alter des Zweitorakels",
       "pythOracle": "Pyth-Orakel",
-      "pythOracleHint": "Gleicht den Hauptpreis ab. Nicht gesetzt heißt, dass der Abgleich aus ist.",
+      "pythOracleHint": "Gleicht den Hauptpreis ab. Der Abgleich läuft nur, solange sowohl dieses Orakel als auch die Feed-ID unten gesetzt sind; fehlt eines von beiden, ist er aus.",
       "pythFeedId": "Feed-ID des Pyth-Abgleichs",
       "pythMaxStaleness": "Maximales Alter bei Pyth",
       "pythMaxDeviation": "Maximale Abweichung des Pyth-Abgleichs",
@@ -2727,7 +2727,7 @@
       "treasuryHeading": "Treasury",
       "treasuryAddress": "Treasury-Adresse",
       "notSet": "nicht gesetzt",
-      "unsetDefault": "nicht gesetzt, daher gilt der eingebaute Standardwert des Protokolls",
+      "unsetDefault": "{{value}} (nicht gesetzt, daher gilt der dokumentierte Standardwert des Protokolls)",
       "numeraireUnits": "{{amount}} (Einheiten der Referenzwährung)",
       "chainProvenance": "Direkt aus den Contracts dieser Chain gelesen, bei Block {{block}}, {{age}}. Jeder Wert hier lässt sich prüfen, indem man denselben Contract in einem öffentlichen Block-Explorer aufruft.",
       "chainWhyMissing": "Der öffentliche Indexer hatte für diese Chain keinen Konfigurations-Snapshot oder war nicht erreichbar, daher hat diese Seite die Contracts gelesen.",
@@ -2736,7 +2736,10 @@
       "chainWhyOld": "Der Snapshot des Indexers war älter als seine regelmäßige Aktualisierung, daher hat diese Seite die Contracts gelesen.",
       "chainWhyUnlabelled": "Der Snapshot des Indexers kam ohne die Namen, die diese Seite braucht, daher hat diese Seite die Contracts gelesen.",
       "chainWhyIncomplete": "Der Snapshot des Indexers deckte nicht jede hier gezeigte Einstellung ab, daher hat diese Seite die Contracts gelesen.",
-      "numeraireDefault": "{{symbol}} (nie geändert, daher der Standardwert des Protokolls)"
+      "numeraireDefault": "{{symbol}} (nie geändert, daher der Standardwert des Protokolls)",
+      "pythFeedIdHint": "Der Pyth-Preisfeed, den der Abgleich liest. Nicht gesetzt schaltet den Abgleich aus, auch wenn ein Orakel gesetzt ist.",
+      "keepersHint": "Pausiert können Keeper nicht mehr an fremden Positionen handeln. Eigentümer können weiterhin an ihren eigenen handeln, und die Liquidation bleibt für alle offen. Ein Keeper-Schlüssel kann aber weiter Reward-Commitments einreichen, daher muss einem kompromittierten Schlüssel auch die Keeper-Rolle entzogen werden.",
+      "eventlessSnapshotNote": "Eine Änderung dieser Einstellung wird on-chain nicht angekündigt. Dieser Snapshot übernimmt eine Änderung daher erst bei seiner nächsten geplanten Aktualisierung und kann bis dahin den vorherigen Wert zeigen."
     },
     "forcedClose": {
       "title": "Dieses Darlehen ist überfällig",

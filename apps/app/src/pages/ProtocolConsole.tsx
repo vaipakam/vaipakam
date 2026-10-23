@@ -69,6 +69,7 @@ import {
   type SnapshotGap,
 } from '../data/protocolConsoleRead';
 import { CONSOLE_SECTIONS, type ConsoleRow } from '../data/protocolConsoleRows';
+import { EVENTLESS_PROTOCOL_KNOBS } from '@vaipakam/lib/protocolKnobs';
 import { useActiveChain } from '../chain/useActiveChain';
 import { exactAmountString, localeDecimalString, localeNumber } from '../lib/format';
 import { VPFI_DECIMALS } from '../data/vpfi';
@@ -145,7 +146,10 @@ function makeFormatters(locale: string | undefined) {
       case 'seconds':
         return seconds(str);
       case 'secondsOrDefault':
-        return str === '0' ? copy.protocolConsole.unsetDefault : seconds(str);
+        if (str !== '0') return seconds(str);
+        return row.documentedDefaultSeconds === undefined
+          ? copy.protocolConsole.notSet
+          : copy.protocolConsole.unsetDefault(seconds(String(row.documentedDefaultSeconds)));
       case 'days':
         return plain(str, ` ${copy.protocolConsole.days}`);
       case 'flag':
@@ -237,7 +241,7 @@ function flag(v: boolean | undefined): string {
   return v ? copy.protocolConsole.enabled : copy.protocolConsole.disabled;
 }
 
-function Row({ label, value, note }: { label: string; value: string; note?: string }) {
+function Row({ label, value, notes = [] }: { label: string; value: string; notes?: readonly string[] }) {
   const reported = value !== '—';
   return (
     <div className="pc-row">
@@ -246,7 +250,11 @@ function Row({ label, value, note }: { label: string; value: string; note?: stri
         {value}
         {!reported && <span className="pc-row-note"> {copy.protocolConsole.notReported}</span>}
       </div>
-      {note && <div className="pc-row-hint">{note}</div>}
+      {notes.map((n) => (
+        <div key={n} className="pc-row-hint">
+          {n}
+        </div>
+      ))}
     </div>
   );
 }
@@ -474,7 +482,14 @@ export function ProtocolConsole() {
                   key={row.key}
                   label={copy.protocolConsole[row.label]}
                   value={rowValue(row, v)}
-                  note={row.hint && copy.protocolConsole[row.hint]}
+                  notes={[
+                    ...(row.hint ? [copy.protocolConsole[row.hint]] : []),
+                    // Codex #2683 r3 — a setting whose change emits no event
+                    // can lag in the snapshot; the chain read cannot.
+                    ...(reading?.source === 'snapshot' && EVENTLESS_PROTOCOL_KNOBS.has(row.key)
+                      ? [copy.protocolConsole.eventlessSnapshotNote]
+                      : []),
+                  ]}
                 />
               ))}
             </section>

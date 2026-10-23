@@ -20,8 +20,8 @@ export type RowFormat =
   | 'bps'
   /** A duration in seconds. */
   | 'seconds'
-  /** A duration in seconds where zero means "unset, the contract's
-   *  built-in default applies" (#2681). */
+  /** A duration in seconds where zero means "unset, the documented
+   *  default applies" (#2681); the row names that default. */
   | 'secondsOrDefault'
   /** A whole number of days. */
   | 'days'
@@ -47,6 +47,9 @@ export interface ConsoleRow {
   label: ConsoleCopyKey;
   hint?: ConsoleCopyKey;
   format: RowFormat;
+  /** For `secondsOrDefault`: the documented default that applies while the
+   *  setting is unset, in seconds. */
+  documentedDefaultSeconds?: number;
 }
 
 export interface ConsoleSection {
@@ -57,6 +60,16 @@ export interface ConsoleSection {
 
 /** Every section of value rows, in page order. The VPFI tier table is
  *  rendered on its own after these (two parallel arrays, keyed by tier). */
+/**
+ * Codex #2683 r3 — the day-close grace window that applies while governance
+ * never set one. Source: the parameter reference
+ * (`docs/ops/AdminConfigurableKnobsAndSwitches.md`, "Reward grace seconds":
+ * "Default is 4 hours"). The app states it because the contract's getter
+ * returns the raw zero instead of the window in force (#2681); once #2681
+ * lands the getter answers the effective value and this constant goes.
+ */
+export const REWARD_GRACE_DOCUMENTED_DEFAULT_SECONDS = 4 * 3600;
+
 export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
   {
     id: 'pc-fees',
@@ -89,7 +102,7 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
       { key: 'secondaryOracleMaxDeviationBps', label: 'secondaryOracleMaxDeviation', format: 'bps' },
       { key: 'secondaryOracleMaxStalenessSeconds', label: 'secondaryOracleMaxStaleness', format: 'seconds' },
       { key: 'pythOracle', label: 'pythOracle', hint: 'pythOracleHint', format: 'address' },
-      { key: 'pythCrossCheckFeedId', label: 'pythFeedId', format: 'bytes32' },
+      { key: 'pythCrossCheckFeedId', label: 'pythFeedId', hint: 'pythFeedIdHint', format: 'bytes32' },
       { key: 'pythMaxStalenessSeconds', label: 'pythMaxStaleness', format: 'seconds' },
       { key: 'pythCrossCheckMaxDeviationBps', label: 'pythMaxDeviation', format: 'bps' },
       { key: 'pythConfidenceMaxBps', label: 'pythConfidenceMax', format: 'bps' },
@@ -131,14 +144,20 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
       { key: 'autoLendEnabled', label: 'autoLend', format: 'flag' },
       { key: 'autoRefinanceEnabled', label: 'autoRefinance', format: 'flag' },
       { key: 'autoExtendEnabled', label: 'autoExtend', format: 'flag' },
-      { key: 'keepersPaused', label: 'keepers', format: 'pause' },
+      { key: 'keepersPaused', label: 'keepers', hint: 'keepersHint', format: 'pause' },
     ],
   },
   {
     id: 'pc-crosschain',
     heading: 'crossChainHeading',
     rows: [
-      { key: 'rewardGraceSeconds', label: 'rewardGrace', hint: 'rewardGraceHint', format: 'secondsOrDefault' },
+      {
+        key: 'rewardGraceSeconds',
+        label: 'rewardGrace',
+        hint: 'rewardGraceHint',
+        format: 'secondsOrDefault',
+        documentedDefaultSeconds: REWARD_GRACE_DOCUMENTED_DEFAULT_SECONDS,
+      },
     ],
   },
   {

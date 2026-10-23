@@ -36,6 +36,12 @@ export interface ProtocolKnobGetter {
   readonly key: string;
   /** The Diamond view that answers it: no arguments, one output. */
   readonly getter: string;
+  /** Codex #2683 r3 — its setter emits no event, so nothing on chain says
+   *  when it changed. A snapshot of it is refreshed only on the indexer's
+   *  schedule and can show the previous value until then; every surface
+   *  that shows a snapshot of it says so. The contract-side fix (an event)
+   *  is #2685. */
+  readonly eventless?: true;
 }
 
 /**
@@ -58,7 +64,7 @@ export const PROTOCOL_KNOB_GETTERS = [
   { key: 'pythMaxStalenessSeconds', getter: 'getPythMaxStalenessSeconds' },
   { key: 'pythCrossCheckMaxDeviationBps', getter: 'getPythNumeraireMaxDeviationBps' },
   { key: 'pythConfidenceMaxBps', getter: 'getPythConfidenceMaxBps' },
-  { key: 'sequencerUptimeFeed', getter: 'getSequencerUptimeFeed' },
+  { key: 'sequencerUptimeFeed', getter: 'getSequencerUptimeFeed', eventless: true },
   // Cross-chain reward reporting
   { key: 'rewardGraceSeconds', getter: 'getRewardGraceSeconds' },
   // Periodic interest and the numeraire
@@ -75,6 +81,12 @@ export const PROTOCOL_KNOB_GETTERS = [
   // Treasury
   { key: 'treasury', getter: 'getTreasury' },
 ] as const satisfies readonly ProtocolKnobGetter[];
+
+/** The settings whose change announces nothing on chain (see
+ *  {@link ProtocolKnobGetter.eventless}). */
+export const EVENTLESS_PROTOCOL_KNOBS: ReadonlySet<string> = new Set(
+  PROTOCOL_KNOB_GETTERS.filter((k): boolean => 'eventless' in k && k.eventless === true).map((k) => k.key),
+);
 
 /** Every published setting's name, as a type, so a consumer can prove at
  *  compile time that it declares each one. */

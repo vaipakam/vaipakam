@@ -2698,7 +2698,7 @@
       "secondaryOracleMaxDeviation": "Desviación máxima del oráculo secundario",
       "secondaryOracleMaxStaleness": "Antigüedad máxima del oráculo secundario",
       "pythOracle": "Oráculo Pyth",
-      "pythOracleHint": "Contrasta la lectura de precio principal. Sin definir significa que el contraste está desactivado.",
+      "pythOracleHint": "Contrasta la lectura de precio principal. Solo funciona mientras estén configurados tanto este oráculo como el id de feed de abajo; si falta cualquiera de los dos, el contraste está desactivado.",
       "pythFeedId": "Id del feed de contraste de Pyth",
       "pythMaxStaleness": "Antigüedad máxima de Pyth",
       "pythMaxDeviation": "Desviación máxima del contraste de Pyth",
@@ -2727,7 +2727,7 @@
       "treasuryHeading": "Tesorería",
       "treasuryAddress": "Dirección de la tesorería",
       "notSet": "sin definir",
-      "unsetDefault": "sin definir, así que se aplica el valor predeterminado integrado del protocolo",
+      "unsetDefault": "{{value}} (sin configurar, así que se aplica el valor predeterminado documentado del protocolo)",
       "numeraireUnits": "{{amount}} (unidades de la moneda de referencia)",
       "chainProvenance": "Leído directamente de los contratos de esta cadena en el bloque {{block}}, {{age}}. Cualquier cifra de aquí puede comprobarse llamando al mismo contrato en un explorador de bloques público.",
       "chainWhyMissing": "El indexador público no tenía instantánea de configuración para esta cadena, o no se pudo contactar, así que esta página leyó los contratos.",
@@ -2736,7 +2736,10 @@
       "chainWhyOld": "La instantánea del indexador era más antigua que su actualización regular, así que esta página leyó los contratos.",
       "chainWhyUnlabelled": "La instantánea del indexador llegó sin los nombres que esta página necesita, así que esta página leyó los contratos.",
       "chainWhyIncomplete": "La instantánea del indexador no cubría todos los ajustes que se muestran aquí, así que esta página leyó los contratos.",
-      "numeraireDefault": "{{symbol}} (nunca cambiada, así que es el valor predeterminado del protocolo)"
+      "numeraireDefault": "{{symbol}} (nunca cambiada, así que es el valor predeterminado del protocolo)",
+      "pythFeedIdHint": "El feed de precios de Pyth que lee el contraste. Sin configurar, el contraste queda desactivado aunque haya un oráculo configurado.",
+      "keepersHint": "En pausa, los keepers no pueden actuar sobre posiciones ajenas. Los propietarios pueden seguir actuando sobre las suyas y la liquidación sigue abierta a cualquiera. No impide que una clave de keeper envíe compromisos de recompensas, así que a una clave comprometida también hay que retirarle su rol de keeper.",
+      "eventlessSnapshotNote": "Cambiar este ajuste no anuncia nada en la cadena, así que esta instantánea solo recoge un cambio en su próxima actualización programada y hasta entonces puede mostrar el valor anterior."
     },
     "forcedClose": {
       "title": "Este préstamo está vencido",

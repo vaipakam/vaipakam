@@ -6149,8 +6149,13 @@ const copySource = {
     secondaryOracleMaxDeviation: 'Secondary-oracle max deviation',
     secondaryOracleMaxStaleness: 'Secondary-oracle max staleness',
     pythOracle: 'Pyth oracle',
-    pythOracleHint: 'Cross-checks the main price reading. Not set means the cross-check is off.',
+    /* Codex #2683 r3 — the cross-check needs BOTH the oracle and the feed
+       id; the contracts skip it when either is unset. */
+    pythOracleHint:
+      'Cross-checks the main price reading. It runs only while both this oracle and the feed id below are set; if either is not set, the cross-check is off.',
     pythFeedId: 'Pyth cross-check feed id',
+    pythFeedIdHint:
+      'The Pyth price feed the cross-check reads. Not set turns the cross-check off, even when an oracle is set.',
     pythMaxStaleness: 'Pyth max staleness',
     pythMaxDeviation: 'Pyth cross-check max deviation',
     pythConfidenceMax: 'Pyth confidence ceiling',
@@ -6179,6 +6184,10 @@ const copySource = {
     autoRefinance: 'Auto-refinance',
     autoExtend: 'Auto-extend',
     keepers: 'Keepers',
+    /* Codex #2683 r3 — the pause's scope, as the parameter reference
+       records it, so "paused" is not read as "every keeper key is inert". */
+    keepersHint:
+      'Paused stops keepers from acting on other people’s positions. Owners can still act on their own, and liquidation stays open to anyone. It does not stop a keeper key from submitting reward commitments, so a compromised key must also lose its keeper role.',
     paused: 'paused',
     running: 'running',
     crossChainHeading: 'Cross-chain reporting',
@@ -6189,10 +6198,13 @@ const copySource = {
     treasuryAddress: 'Treasury address',
     notSet: 'not set',
     // #2681 — the getter returns zero when governance never set the
-    // window, and the protocol then uses its built-in default. The page
-    // does not repeat that default's figure: it would be a contract
-    // constant copied into the app, free to drift.
-    unsetDefault: 'not set, so the protocol’s built-in default applies',
+    // window, and the protocol then applies its documented default. The
+    // page names that default (Codex #2683 r3) and marks it as the default,
+    // never as a configured value.
+    unsetDefault: tmpl('{{value}} (not set, so the protocol’s documented default applies)', ['value']),
+    /* Codex #2683 r3 — a setting whose change emits no event (#2685). */
+    eventlessSnapshotNote:
+      'Changing this setting announces nothing on chain, so this snapshot picks up a change only at its next scheduled refresh and can show the previous value until then.',
     numeraireUnits: tmpl('{{amount}} (reference-currency units)', ['amount']),
     /* Codex #2683 r1 — the contracts read an empty numeraire symbol as
        their USD default, so the page names it and says it is the default

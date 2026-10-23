@@ -1259,9 +1259,10 @@ word would conclude the window is zero.
 **Candidate bug in the code, not the doc.** The doc states the intent: the
 setting has a default and the read should report what is in force. The fix
 belongs in the contracts and is filed as #2681. Until it lands, the protocol
-console does not repeat the contract's zero: it reports the window as "not
-set, so the protocol's built-in default applies", and does not quote the
-default's figure, which would be a contract constant copied into the app and
-free to drift from it.
+console does not repeat the contract's zero: it reports the documented
+four-hour default and says the window is not set, so that default applies.
+The figure comes from the parameter reference, not from the contract, and
+is held in one place in the app that names this entry; once #2681 makes the
+read report the window in force, that copy goes.
 
 **Status:** open, tracked by #2681.

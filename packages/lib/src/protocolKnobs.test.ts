@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
+  EVENTLESS_PROTOCOL_KNOBS,
   PROTOCOL_KNOB_GETTERS,
   abiDescribesGetterAt,
   abiOutputNames,
@@ -45,6 +46,12 @@ describe('PROTOCOL_KNOB_GETTERS', () => {
     const bundle = abiOutputNames(DIAMOND_ABI_VIEM, 'getProtocolConfigBundle') ?? [];
     expect(bundle.length).toBeGreaterThan(0);
     for (const k of PROTOCOL_KNOB_GETTERS) expect(bundle).not.toContain(k.key);
+  });
+
+  it('marks exactly the settings whose setter emits no event (Codex #2683 r3, #2685)', () => {
+    // When #2685 adds the event, this list empties and the console's
+    // disclosure goes with it.
+    expect([...EVENTLESS_PROTOCOL_KNOBS]).toEqual(['sequencerUptimeFeed']);
   });
 });
 

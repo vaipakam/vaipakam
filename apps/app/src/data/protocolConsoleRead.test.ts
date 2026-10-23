@@ -14,7 +14,7 @@ import {
   type ChainConsoleRead,
 } from './protocolConsoleRead';
 import type { ProtocolKnobSnapshot, ProtocolKnobValues } from './indexer';
-import { RENDERED_KEYS } from './protocolConsoleRows';
+import { CONSOLE_SECTIONS, RENDERED_KEYS } from './protocolConsoleRows';
 
 const NOW = 1_800_000_000;
 
@@ -53,6 +53,12 @@ describe('rendered values', () => {
     const bundle = new Set(abiOutputNames(DIAMOND_ABI_VIEM, 'getProtocolConfigBundle') ?? []);
     const knobs = new Set<string>(PROTOCOL_KNOB_GETTERS.map((k) => k.key));
     expect([...RENDERED_KEYS].filter((k) => !bundle.has(k) && !knobs.has(k))).toEqual([]);
+  });
+
+  it('name the documented default wherever an unset value falls back to one (Codex #2683 r3)', () => {
+    const rows = CONSOLE_SECTIONS.flatMap((s) => s.rows).filter((r) => r.format === 'secondsOrDefault');
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) expect(r.documentedDefaultSeconds, r.key).toBeGreaterThan(0);
   });
 });
 

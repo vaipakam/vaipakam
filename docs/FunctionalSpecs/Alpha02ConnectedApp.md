@@ -143,12 +143,20 @@ including people who never will.
   the keeper pause, the cross-chain reporting window and the treasury
   address are shown.
 - A setting that is unset is reported as unset, never as a figure or a
-  blank. Where an unset setting means the protocol falls back to a built-in
-  default, the console says that the default applies rather than quoting
-  the default's value. The reference currency is the exception that
-  proves the rule: the protocol documents its default by name, so a
-  reference currency governance never changed is named, and marked as
-  the default.
+  blank. Where an unset setting means the protocol falls back to a
+  documented default, the console names that default and marks it as the
+  default, never as a configured value: an unset day-close grace window
+  reads as the documented four hours, and a reference currency governance
+  never changed is named and marked as the default.
+- Where a value's meaning depends on another setting, or a switch does less
+  than its name suggests, the row says so: the Pyth cross-check runs only
+  while both its oracle and its feed id are set, and the keeper pause stops
+  delegated keeper actions on other people's positions but leaves owners'
+  own actions, liquidation and reward-commitment submission running, so a
+  compromised keeper key must also lose its role.
+- A setting whose change announces nothing on chain (today the layer-2
+  sequencer uptime feed) can lag in the indexer's snapshot until its next
+  scheduled refresh. While the console shows the snapshot, that row says so.
 - The console shows the public indexer's snapshot only while that snapshot
   can stand in for the chain: it is dated, recent enough that the indexer's
   regular refresh is still running, not known to be behind a governance
