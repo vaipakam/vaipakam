@@ -3,7 +3,7 @@
  * naming the chains. An unset, unnamed or unreadable setting arms nothing.
  */
 import { describe, expect, it } from 'vitest';
-import { discountPathBlocker, discountPathChains } from '../src/discountPath';
+import { discountPathBlocker, discountPathChains, discountPathPosture } from '../src/discountPath';
 
 describe('DISCOUNT_PATH_CHAIN_IDS', () => {
   it('arms no chain when unset or empty', () => {
@@ -32,5 +32,16 @@ describe('DISCOUNT_PATH_CHAIN_IDS', () => {
 
   it('arms nothing when a chain is named twice', () => {
     expect(discountPathBlocker('8453,8453', 8453)).toBe('DISCOUNT_PATH_CHAIN_IDS names chain 8453 twice, so no chain is armed');
+  });
+
+  it('states the whole posture, including chains with no liquidator', () => {
+    expect(discountPathPosture(undefined)).toBe('DISCOUNT_PATH_CHAIN_IDS is unset, so no chain is armed');
+    expect(discountPathPosture('8453,8453')).toBe('DISCOUNT_PATH_CHAIN_IDS names chain 8453 twice, so no chain is armed');
+    expect(discountPathPosture('8453,true')).toBe('DISCOUNT_PATH_CHAIN_IDS entry 2 of 2 is not a chain id, so no chain is armed');
+    // No chain configures a FlashLoanLiquidator today, so each one says so.
+    expect(discountPathPosture('42161,8453')).toBe(
+      'DISCOUNT_PATH_CHAIN_IDS arms chains 8453 (no FlashLoanLiquidator configured, so the path stays off there), ' +
+        '42161 (no FlashLoanLiquidator configured, so the path stays off there)',
+    );
   });
 });

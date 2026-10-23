@@ -19,6 +19,13 @@
 //
 // A value that cannot be read arms no chain and says why. The path moves
 // funds, so an unknown never arms it.
+//
+// The machine runtime states the whole posture once at start-up and in
+// `--check` (`discountPathPosture`), so the journal answers "is it armed,
+// and where" from the same parser the passes use, whether or not a loan has
+// reached the branch since.
+
+import { getFlashLoanProvider } from './flashLoanProviders';
 
 export const DISCOUNT_PATH_VAR = 'DISCOUNT_PATH_CHAIN_IDS';
 
@@ -37,9 +44,9 @@ export function discountPathChains(raw: string | undefined): DiscountPathChains 
   const parts = text.split(',');
   for (let i = 0; i < parts.length; i += 1) {
     const entry = parts[i].trim();
-    // The entry is described by position, never echoed: the variable is
-    // bound as `secret_text` on a Worker, like the other arming flags, and a
-    // paste error is how a credential ends up in the wrong one.
+    // The entry is described by position, never echoed: the setting sits
+    // among the keeper's secrets in its env file, and a paste error is how a
+    // credential ends up on the wrong line.
     if (!CHAIN_ID.test(entry) || !Number.isSafeInteger(Number(entry))) {
       return { unread: `${DISCOUNT_PATH_VAR} entry ${i + 1} of ${parts.length} is not a chain id` };
     }
@@ -60,4 +67,23 @@ export function discountPathBlocker(raw: string | undefined, chainId: number): s
       : `${DISCOUNT_PATH_VAR} does not name chain ${chainId}`;
   }
   return null;
+}
+
+/**
+ * The whole posture, for the start-up line: which chains are armed, and for
+ * each one whether this build configures a FlashLoanLiquidator there, since
+ * without one the branch stays off on that chain whatever the setting says.
+ */
+export function discountPathPosture(raw: string | undefined): string {
+  const read = discountPathChains(raw);
+  if ('unread' in read) return `${read.unread}, so no chain is armed`;
+  if (read.chains.size === 0) return `${DISCOUNT_PATH_VAR} is unset, so no chain is armed`;
+  const chains = [...read.chains]
+    .sort((a, b) => a - b)
+    .map((id) =>
+      getFlashLoanProvider(id) === undefined
+        ? `${id} (no FlashLoanLiquidator configured, so the path stays off there)`
+        : `${id}`,
+    );
+  return `${DISCOUNT_PATH_VAR} arms chain${chains.length === 1 ? '' : 's'} ${chains.join(', ')}`;
 }

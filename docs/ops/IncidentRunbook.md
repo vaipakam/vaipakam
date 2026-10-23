@@ -557,8 +557,8 @@ The restart waits for the tick in flight, then the flash-loan
 branch skips from the first tick after it → legacy
 partial/split/atomic still runs while the keeper is armed. Affects
 ONLY our bot; external liquidators are unaffected (use Tier 3 for
-that). See the box above: until the code carries the flag through,
-this changes nothing.
+that). On a chain with no FlashLoanLiquidator deployed the branch was
+not running anyway; see the box above.
 
 **Tier 2 — pull our receiver from the per-chain config**
 
@@ -599,8 +599,8 @@ can always be closed out (see the `assetPaused` note in
 discounted path fully callable by external liquidators.
 
 So post-handover the immediate levers are **Tier 1** (our bot
-only — and see the box above, which makes it a no-op until the
-keeper reads the flag) and the **§3 global protocol pause**
+only — and a no-op on a chain with no FlashLoanLiquidator
+deployed, per the box above) and the **§3 global protocol pause**
 (everyone). If the
 defect is in the diamond's discount-path code and external
 callers must be stopped now, the global pause is the only

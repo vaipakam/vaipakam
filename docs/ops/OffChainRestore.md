@@ -545,6 +545,7 @@ then deploy.
       | `REWARD_DELIVERY_PROOF_ENABLED` | delivery pass skips — epoch days stay unindexed (their value funds nothing a claim can find) and an armed delivery gate holds every funded day | indexing every mirror delivery's epoch days and proving no-epoch day lists (#1944) |
       | `REWARD_SANCTIONS_KEEPER_ENABLED` | sanctions-hold observer skips — a held reward claimant goes unobserved, so its hold (and the custody-activation block it carries) can run past its window | observing held claimants, the owner settlement and resolving their held staging records (#2450) |
       | `REWARD_DAY_CLOSE_ENABLED` | day-close pass skips — no reward day is reported, finalized or broadcast unless someone makes those calls by hand, so the remit pass has no finalized day to fund and mirror users cannot claim | closing each elapsed reward day on every chain, finalizing it on Base and broadcasting it to the mirrors (#2612) |
+      | `DISCOUNT_PATH_CHAIN_IDS` | the flash-loan discount branch skips on every chain; the partial / split / atomic branches still run | the discounted, flash-loan-funded liquidation on each chain it names that also has a FlashLoanLiquidator (none today; #2633, sizing #2697). A chain list, not `true`; ships empty |
       | `REWARD_HORIZON_HEARTBEAT_ENABLED` | horizon heartbeat skips — no reward's claim-horizon clock is observed, so an armed horizon expires nothing and files no final notice (the safe direction: nothing is reaped) | touching every live reward entry about every 12 hours so its executable-time clock advances (#2517) |
 
       The keeper's ops alert channel, `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID`, is
@@ -1836,7 +1837,8 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `KEEPER_ENABLED=false` and every per-pass flag (`REWARD_REMIT_ENABLED`,
    `REWARD_COMMIT_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED`,
    `GRACE_DEFAULT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`,
-   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`) empty — by editing the
+   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
+   `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 

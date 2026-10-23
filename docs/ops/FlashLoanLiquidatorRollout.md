@@ -306,9 +306,16 @@ env-file change" (`sudo systemctl try-restart vaipakam-keeper`, then a
 tick that began after the restart). Then do §6 below at once.
 
 A value that cannot be read (an entry that is not a chain id, or a
-chain named twice) arms no chain. Each skipped loan logs
-`flash-loan-skip not-armed:` with the reason, without echoing the
-value.
+chain named twice) arms no chain. Confirm what the keeper read from
+the line it logs at every start, which also names any armed chain the
+running build has no FlashLoanLiquidator for:
+
+```bash
+journalctl -u vaipakam-keeper --grep 'discount path:' -n 1 --no-pager
+```
+
+Each skipped loan also logs `flash-loan-skip not-armed:` with the
+reason. Neither line echoes the value.
 
 **Why a separate keeper-side flag rather than reading the
 on-chain flag every tick**: cost. An on-chain read every tick ×
@@ -463,9 +470,13 @@ logs `flash-loan-skip not-armed:` with the reason for each loan it
 skips on that account. Verify on the machine:
 
 ```bash
-# Confirm the setting names chain 8453 (prints armed / not-armed only).
-sudo grep -qE '^DISCOUNT_PATH_CHAIN_IDS=(.*,)? *8453 *(,.*)?$' /etc/vaipakam/keeper.env \
-  && echo armed || echo not-armed
+# The keeper states how it read the setting once at every start, from the
+# same parser the passes use: which chains are armed, and which of them have
+# no FlashLoanLiquidator configured in the running build. A value it cannot
+# read (a malformed entry, a chain named twice) arms no chain and says so
+# here, so this line, not a read of the env file, is the answer.
+journalctl -u vaipakam-keeper --grep 'discount path:' -n 1 --no-pager
+# Per-loan skips, once a distressed loan has reached the branch:
 journalctl -u vaipakam-keeper --since -10min | grep -m3 'flash-loan-skip not-armed'
 
 # Confirm the running release carries the address. Search for the
