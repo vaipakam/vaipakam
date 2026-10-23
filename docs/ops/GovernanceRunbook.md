@@ -1286,12 +1286,20 @@ read back on every chain:
   checks none of it — so an emergency pause left on after a partial recovery
   passes every wiring readback and then stops the propagation the arm depends on.
   The remit itself lives on the Diamond: Base's `remitRewardBudget` is
-  `whenNotPaused`, and a mirror rejects the receiver's `onRewardBudgetReceived`
-  call at the SAME guard — so a Base Diamond or any mirror Diamond left paused
-  after an incident breaks the path even when every cross-chain contract is
-  unpaused and every wiring readback is clean. Require `AdminFacet.paused() ==
-  false` on Base AND every participating mirror, not just on the transport
-  contracts.
+  `whenNotPaused`, so a Base Diamond left paused after an incident stops every
+  remit even when every cross-chain contract is unpaused and every wiring
+  readback is clean. A paused MIRROR Diamond fails differently, and the
+  difference is easy to miss. Its budget ingress, `onRewardBudgetReceivedD6`, is
+  deliberately NOT `whenNotPaused` (migration mode, design §5c), so a delivery
+  still lands on a paused mirror. Only the transport stops it, at the edge: the
+  destination `CcipMessenger` and the `RewardRemittanceReceiver` each carry their
+  own guardian pause, set independently, and either one paused refuses the
+  delivery. When a budget is stuck, read both. What the mirror's pause does stop is the
+  mirror's own side of the loop: `closeDay`, which sends the report Base's
+  coverage waits on, and every claim. So a paused mirror looks healthy on the
+  funding path while Base either waits for its report or grace-finalizes the day
+  without it. Require `AdminFacet.paused() == false` on Base AND every
+  participating mirror, not just on the transport contracts.
 
 **If ANY of this was rotated, matching readbacks are not enough — the lane has
 to be DRAINED first.** `CcipMessenger` resolves the destination handler at
@@ -2243,7 +2251,7 @@ DEAD-END LIST so the next person does not re-derive them under time pressure:
 | Remit + receipts BEFORE arming | `broadcastGlobal`'s only day-state gate is `dailyGlobalFinalized`; arming is irrelevant to it. A pre-arm application used to spend that day for propagation; since #1944 it does not — `_applyBroadcastV2Core`'s replay installs `armedFromDay` on a mirror that has none — so this row's remaining force is the first sentence, not the day cost. |
 | Pause, fund the candidate, unpause, broadcast | `broadcastGlobal` accepts ANY finalized day, so unpausing re-opens every other unfunded finalized day at once. |
 | Reconcile every broadcastable day first | An applied-but-unfunded day is ALREADY open and pausing Base cannot close it; and `finalizeDay` is permissionless, so new broadcastable days can appear after the inventory. |
-| Contain the destination's claim path meanwhile | `AdminFacet.pause()` is the Diamond's single global flag: `claimInteractionRewards` and `onRewardBudgetReceived` are BOTH `whenNotPaused`, so pausing claims also blocks the remittance receipt. "Wait until every pending day is funded" is unreachable — funding cannot land while claims are stopped, and unpausing to admit it re-opens the race. |
+| Contain the destination's claim path meanwhile | `AdminFacet.pause()` on the mirror stops `claimInteractionRewards` and does NOT stop funding: `onRewardBudgetReceivedD6` is deliberately not `whenNotPaused` (migration mode, design §5c), and neither is the broadcast apply, so the days already in flight can be funded while claims are stopped. The procedure fails at the unpause instead. Unpausing is never atomic with the check that every applied day is funded: `finalizeDay` is permissionless, so a day finalized and broadcast after that check is applied but unfunded when claims reopen. That is row 3's inventory gap, moved to the mirror, and holding broadcasts back with a messenger pause only moves it to that unpause (row 2). The pause is also the Diamond's single global flag, so for as long as it is held it halts every other `whenNotPaused` path on that chain, lending and the mirror's own `closeDay` reports included. |
 | Safe-only executor + fresh reconciliation before execution | Restricting the executor controls only WHO unpauses. It does not make reconciliation and unpause atomic, and `finalizeDay` — permissionless and not routed through the paused messenger — lets a new unfunded day be created after the inventory, including by front-running the Safe's own unpause. |
 
 *(Scope, #1944 consequence 1: every row above, and the one safe branch below,
