@@ -206,12 +206,23 @@ fi
 # one (or none) recorded, or if what is installed differs from that kit: an
 # older updater installed this release without a file it did not know of.
 # Until a recorded kit is put back, the keeper refuses to start.
+# The comparison is best-effort: if the release's kit cannot be extracted
+# (its commit no longer in the checkout, say), the run goes on as it would
+# have without it. A recorded kit that is not the release's still has to be
+# put back, and a failure to extract it then stops the run as always.
 running="$(running_commit)"
+reinstall=no
+kit_dir=""
 if [ -n "$running" ]; then
-  kit_dir="$(extract_kit "$running")"
+  if [ "$(cat "$KIT_COMMIT" 2>/dev/null || true)" != "$running" ]; then
+    reinstall=yes
+  elif kit_dir="$(extract_kit "$running")" && ! kit_installed "$kit_dir"; then
+    reinstall=yes
+  fi
 fi
-if [ -n "$running" ] && { [ "$(cat "$KIT_COMMIT" 2>/dev/null || true)" != "$running" ] || ! kit_installed "$kit_dir"; }; then
+if [ "$reinstall" = yes ]; then
   log "installing the units of $running, which is the release in use"
+  if [ -z "$kit_dir" ]; then kit_dir="$(extract_kit "$running")"; fi
   rm -f "$KIT_COMMIT"
   install_kit "$kit_dir"
   record_kit "$running"

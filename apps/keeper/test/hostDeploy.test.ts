@@ -137,8 +137,9 @@ describe('host deploy kit paths', () => {
     const update = read('update.sh');
     // A kit file an older updater did not install goes in at the next run,
     // not at the next build.
-    expect(update).toContain('if [ -n "$running" ] && { [ "$(cat "$KIT_COMMIT" 2>/dev/null || true)" != "$running" ] || ! kit_installed "$kit_dir"; }; then');
-    expect(update.indexOf('! kit_installed')).toBeLessThan(update.indexOf('git -C "$REPO" fetch'));
+    expect(update).toContain('elif kit_dir="$(extract_kit "$running")" && ! kit_installed "$kit_dir"; then');
+    expect(update.indexOf('! kit_installed')).toBeLessThan(update.indexOf('if [ "$reinstall" = yes ]; then'));
+    expect(update.indexOf('if [ "$reinstall" = yes ]; then')).toBeLessThan(update.indexOf('git -C "$REPO" fetch'));
     for (const file of ['"$ROOT/update.sh"', '"$ROOT/build-source.sh"', '"/etc/systemd/system/$unit"']) {
       expect(update.slice(update.indexOf('kit_installed() {'), update.indexOf('record_kit() {')), file).toContain(file);
     }
