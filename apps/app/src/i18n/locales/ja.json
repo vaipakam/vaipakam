@@ -2334,6 +2334,17 @@
       "valueNotRecorded": "金額は記録されていません",
       "heldForLenderNote": "貸し手の請求では、以前の追加入金により貸し手のために保留されている資金も支払われます。表示額には含まれていません。",
       "viewTx": "トランザクションを表示",
+      "repairTitle": "ローン #{{loanId}} は終了しています",
+      "repairBody": "チェーンを確認したところ、このローンはブロック {{block}} までに{{status}}でした。いつ・どのように終了したかは記録されていないため、表示できるトランザクションはありません。",
+      "repairCheckedAgo": "{{ago}}に確認",
+      "repairStatus": {
+        "repaid": "返済済み",
+        "defaulted": "デフォルト",
+        "settled": "清算済み",
+        "internal_matched": "内部マッチングで終了"
+      },
+      "repairStatusOther": "終了",
+      "repairUnknownNote": "終了イベントが記録されなかったローンの終了が、この一覧から抜けている可能性があります。履歴のその部分は現在読み取れませんでした。",
       "loadMore": "古いアクティビティを読み込む",
       "loadingMore": "読み込み中…",
       "labels": {

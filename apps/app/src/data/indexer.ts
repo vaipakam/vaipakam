@@ -598,6 +598,11 @@ export interface IndexedActivityEvent {
 export interface ActivityPage {
   chainId: number;
   events: IndexedActivityEvent[];
+  /** #2643 — repaired loans' endings, merged into the page's order, when
+   *  asked for with `repairObservations`. Raw: read it only through
+   *  `readRepairObservations` (`lib/repairObservation.ts`), which treats
+   *  null, absent and malformed alike as NOT KNOWN. */
+  repairObservations?: unknown;
   nextBefore: string | null;
 }
 
@@ -607,12 +612,16 @@ export interface ActivityPage {
  *  and filter client-side by participation, like apps/defi does. */
 export function fetchActivity(
   chainId: number,
-  opts: { actor?: string; limit?: number; before?: string } = {},
+  opts: { actor?: string; limit?: number; before?: string; repairObservations?: boolean } = {},
 ): Promise<ActivityPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
   if (opts.actor) params.set('actor', opts.actor.toLowerCase());
   if (opts.limit) params.set('limit', String(opts.limit));
   if (opts.before) params.set('before', opts.before);
+  // #2643 — opt-in: the merged entries take page slots, so only a caller
+  // that renders them asks. The indexer serves them only on an unfiltered
+  // feed (no actor, offer or kind), which is how Activity reads it.
+  if (opts.repairObservations) params.set('repairObservations', '1');
   return getJson<ActivityPage>(`/activity?${params}`);
 }
 

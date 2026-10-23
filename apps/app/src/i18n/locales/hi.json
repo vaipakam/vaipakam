@@ -2334,6 +2334,17 @@
       "valueNotRecorded": "राशि दर्ज नहीं",
       "heldForLenderNote": "ऋणदाता का दावा पहले के टॉप-अप से ऋणदाता के लिए रखी गई राशि भी चुकाता है — वह दिखाई गई राशि में शामिल नहीं है।",
       "viewTx": "Transaction देखें",
+      "repairTitle": "ऋण #{{loanId}} समाप्त हो चुका है",
+      "repairBody": "चेन की जाँच में यह ऋण ब्लॉक {{block}} तक {{status}} पाया गया। यह कब और कैसे समाप्त हुआ, यह दर्ज नहीं हुआ, इसलिए दिखाने के लिए कोई लेनदेन नहीं है।",
+      "repairCheckedAgo": "{{ago}} जाँचा गया",
+      "repairStatus": {
+        "repaid": "चुकाया गया",
+        "defaulted": "डिफ़ॉल्ट",
+        "settled": "निपटाया गया",
+        "internal_matched": "आंतरिक मिलान से बंद"
+      },
+      "repairStatusOther": "बंद",
+      "repairUnknownNote": "इस सूची में किसी ऐसे ऋण का अंत छूट सकता है जिसकी समाप्ति की घटना कभी दर्ज नहीं हुई: इतिहास का वह हिस्सा अभी पढ़ा नहीं जा सका।",
       "loadMore": "Older activity load करें",
       "loadingMore": "Loading…",
       "labels": {

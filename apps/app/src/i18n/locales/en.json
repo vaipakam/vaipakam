@@ -2442,6 +2442,17 @@
       "valueNotRecorded": "Amount not recorded",
       "heldForLenderNote": "A lender claim also pays out any funds held for the lender from earlier top-ups — those are not included in the amount shown.",
       "viewTx": "View transaction",
+      "repairTitle": "Loan #{{loanId}} has ended",
+      "repairBody": "A check of the chain found this loan {{status}} by block {{block}}. When and how it ended was not recorded, so there is no transaction to show.",
+      "repairCheckedAgo": "checked {{ago}}",
+      "repairStatus": {
+        "repaid": "repaid",
+        "defaulted": "defaulted",
+        "settled": "settled",
+        "internal_matched": "closed by internal matching"
+      },
+      "repairStatusOther": "closed",
+      "repairUnknownNote": "This list may be missing the ending of a loan whose closing event was never recorded: that part of the history could not be read just now.",
       "loadMore": "Load older activity",
       "loadingMore": "Loading…",
       "labels": {

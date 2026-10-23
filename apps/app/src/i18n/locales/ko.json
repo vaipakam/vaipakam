@@ -2334,6 +2334,17 @@
       "valueNotRecorded": "금액이 기록되지 않음",
       "heldForLenderNote": "대출자 청구 시 이전 추가 입금으로 대출자를 위해 보관된 자금도 함께 지급되며, 이는 표시된 금액에 포함되지 않습니다.",
       "viewTx": "트랜잭션 보기",
+      "repairTitle": "대출 #{{loanId}}이(가) 종료되었습니다",
+      "repairBody": "체인을 확인한 결과 이 대출은 블록 {{block}}까지 {{status}} 상태였습니다. 언제, 어떻게 종료되었는지는 기록되지 않아 표시할 거래가 없습니다.",
+      "repairCheckedAgo": "{{ago}} 확인",
+      "repairStatus": {
+        "repaid": "상환됨",
+        "defaulted": "채무 불이행",
+        "settled": "정산됨",
+        "internal_matched": "내부 매칭으로 종료됨"
+      },
+      "repairStatusOther": "종료됨",
+      "repairUnknownNote": "종료 이벤트가 기록되지 않은 대출의 종료가 이 목록에서 빠져 있을 수 있습니다. 해당 기록은 지금 읽을 수 없었습니다.",
       "loadMore": "이전 활동 불러오기",
       "loadingMore": "불러오는 중…",
       "labels": {

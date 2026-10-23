@@ -3605,6 +3605,18 @@ Its intended behaviour, as the test oracle for this surface:
   the history service answers participant-history queries (a tracked
   indexer follow-up), and until then the feed must not present its
   narrower scope as the wallet's complete history.
+- A position of the wallet's whose ending the platform found by checking the
+  chain, because the ending itself was never announced, appears in the feed
+  as an observation and is worded as one: the position had ended, in the
+  state the chain showed, by a given block, and when and how it ended was not
+  recorded. It carries no transaction link and names no one who acted,
+  because neither was seen, and any time it shows is the time of the checked
+  block, not of the ending. It sits in the feed in the order of that block and
+  opens the position. Only the wallet's own positions are shown, by the same
+  participation rule as every other row. When the history cannot say whether
+  any such entries exist, the feed states that a position's ending may be
+  missing rather than presenting itself as complete. (#2643; the history
+  side of this is stated under the record corrections above.)
 - Each activity row states the asset and amount its transaction moved or
   offered, when that is known: a loan start states the principal, an offer
   creation or cancellation states the offer's size (as "X–Y" when the offer
