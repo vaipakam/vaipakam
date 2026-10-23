@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibAccessControl} from "../libraries/LibAccessControl.sol";
+
 /// @dev The Diamond reads the launch requirements need. Declared here rather
 ///      than imported from the facets so the readiness rule depends on the
 ///      Diamond's public surface only, never on a facet's implementation.
@@ -10,6 +12,9 @@ interface ILaunchReadableDiamond {
     function getEthNumeraireFeed() external view returns (address);
     function getSwapAdapters() external view returns (address[] memory);
     function isSwapAdapterDisabled(address adapter) external view returns (bool);
+    // forge-lint: disable-next-line(mixed-case-function)
+    function getVPFIToken() external view returns (address);
+    function hasRole(bytes32 role, address account) external view returns (bool);
 }
 
 /**
@@ -41,8 +46,8 @@ interface ILaunchReadableDiamond {
  *      A check is one of three things, and none is ever read as another:
  *        - met;
  *        - NOT met — the chain was read and the requirement is missing;
- *        - not checkable — the chain could not answer (no pool recorded, a
- *          read that reverted or returned a malformed answer). Never read
+ *        - not checkable — the chain could not answer (no CCIP registry
+ *          given, a read that reverted or returned a malformed answer). Never read
  *          as met: the gate and a production launch refuse it, a testnet
  *          launch reports it.
  */
@@ -65,15 +70,17 @@ library LibLaunchReadiness {
 
     /// @notice Reads every launch requirement off the live chain.
     /// @param diamond The Diamond to read.
-    /// @param vpfiTokenPool The chain's CCIP VPFI pool, or zero when none is
-    ///        recorded (reported as not checkable).
-    function check(address diamond, address vpfiTokenPool) internal view returns (Check[] memory checks) {
+    /// @param tokenAdminRegistry The chain's CCIP `TokenAdminRegistry`, or
+    ///        zero when none is known (the lane check is then not checkable).
+    ///        The VPFI pool is read FROM it, for the token the Diamond itself
+    ///        records, so no pool address is ever taken on trust.
+    function check(address diamond, address tokenAdminRegistry) internal view returns (Check[] memory checks) {
         checks = new Check[](5);
         checks[0] = _treasury(diamond);
         checks[1] = _sanctions(diamond);
         checks[2] = _priceFeed(diamond);
         checks[3] = _swapRoute(diamond);
-        checks[4] = _ccipLanes(vpfiTokenPool);
+        checks[4] = _ccipLanes(diamond, tokenAdminRegistry);
     }
 
     /// @notice Whether every check was answered and met.
@@ -90,6 +97,16 @@ library LibLaunchReadiness {
             if (checks[i].checkable && !checks[i].met) return false;
         }
         return true;
+    }
+
+    /// @notice The first Diamond role (`LibAccessControl.knownRoles()`)
+    ///         `account` holds, if any. A handed-over Diamond's deploy key
+    ///         holds none (#669); the launch refuses until that is so.
+    function firstRoleHeld(address diamond, address account) internal view returns (bool held, bytes32 role) {
+        bytes32[] memory roles = LibAccessControl.knownRoles();
+        for (uint256 i; i < roles.length; ++i) {
+            if (ILaunchReadableDiamond(diamond).hasRole(roles[i], account)) return (true, roles[i]);
+        }
     }
 
     /// @notice The one-word state a check is printed with.
@@ -140,8 +157,9 @@ library LibLaunchReadiness {
 
     /// @dev The ETH/numeraire feed is the anchor every price conversion in
     ///      the risk engine goes through; `ConfigureOracle` sets it first. It
-    ///      must answer `latestRoundData()` with a positive price and a
-    ///      non-zero update time. Freshness is the oracle layer's rule at
+    ///      must answer `decimals()` and `latestRoundData()` as a Chainlink
+    ///      aggregator does, with a positive price and a non-zero update
+    ///      time. Freshness is the oracle layer's rule at
     ///      use time, not a launch requirement.
     function _priceFeed(address diamond) private view returns (Check memory c) {
         c.label = "price oracle wired";
@@ -150,10 +168,10 @@ library LibLaunchReadiness {
             if (f == address(0) || f.code.length == 0) {
                 c.detail = "getEthNumeraireFeed() is unset or has no code: run the configure phase";
             } else if (!_answersPositivePrice(f)) {
-                c.detail = "getEthNumeraireFeed() does not answer latestRoundData() with a positive price";
+                c.detail = "getEthNumeraireFeed() does not answer decimals() and latestRoundData() as an aggregator with a positive price";
             } else {
                 c.met = true;
-                c.detail = "getEthNumeraireFeed() answers latestRoundData() with a positive price";
+                c.detail = "getEthNumeraireFeed() answers as an aggregator with a positive price";
             }
         } catch {
             c.detail = "getEthNumeraireFeed() unreadable";
@@ -189,23 +207,51 @@ library LibLaunchReadiness {
         }
     }
 
-    /// @dev The CCIP VPFI pool needs at least one lane, so the per-lane rate
-    ///      limits the mainnet gate requires can exist.
-    function _ccipLanes(address pool) private view returns (Check memory c) {
+    /// @dev The VPFI pool CCIP actually routes through needs at least one
+    ///      lane, so the per-lane rate limits the mainnet gate requires can
+    ///      exist. The pool is the one the `TokenAdminRegistry` maps the
+    ///      Diamond's own VPFI token to: a stale or look-alike pool address
+    ///      from an artifact can never stand in for it.
+    function _ccipLanes(address diamond, address registry) private view returns (Check memory c) {
         c.label = "CCIP lanes wired";
-        if (pool == address(0)) {
-            c.detail = "no vpfiTokenPool recorded";
+        if (registry == address(0)) {
+            c.detail = "no CCIP TokenAdminRegistry given (CCIP_TOKEN_ADMIN_REGISTRY), so the VPFI pool is unknown";
             return c;
         }
-        (bool ok, bytes memory ret) = pool.staticcall(abi.encodeWithSignature("getSupportedChains()"));
+        address token;
+        try ILaunchReadableDiamond(diamond).getVPFIToken() returns (address t) {
+            token = t;
+        } catch {
+            c.detail = "getVPFIToken() unreadable";
+            return c;
+        }
+        if (token == address(0)) {
+            c.checkable = true;
+            c.detail = "the Diamond records no VPFI token: run the configure phase";
+            return c;
+        }
+        (bool ok, bytes memory ret) = registry.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("getPool(address)", token));
+        if (!ok || ret.length != 32 || uint256(bytes32(ret)) >> 160 != 0) {
+            c.detail = "getPool(vpfiToken) unreadable on the TokenAdminRegistry";
+            return c;
+        }
+        address pool = address(uint160(uint256(bytes32(ret))));
+        if (pool == address(0)) {
+            c.checkable = true;
+            c.detail = "the TokenAdminRegistry maps no pool to the Diamond's VPFI token: run the ccip-wire phase";
+            return c;
+        }
+        (ok, ret) = pool.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("getSupportedChains()"));
         (bool wellFormed, uint256 lanes) = ok ? _dynamicLength(ret, true) : (false, 0);
         if (!wellFormed) {
-            c.detail = "getSupportedChains() unreadable on vpfiTokenPool";
+            c.detail = "getSupportedChains() unreadable on the registry's VPFI pool";
             return c;
         }
         c.checkable = true;
         c.met = lanes != 0;
-        c.detail = c.met ? "vpfiTokenPool has at least one lane" : "vpfiTokenPool has no lane: run the ccip-wire phase";
+        c.detail = c.met
+            ? "the registry's VPFI pool has at least one lane"
+            : "the registry's VPFI pool has no lane: run the ccip-wire phase";
     }
 
     /// @dev Whether `adapter` is a contract that answers `adapterName()`
@@ -228,15 +274,20 @@ library LibLaunchReadiness {
         return abi.decode(ret, (uint256)) <= 1;
     }
 
-    /// @dev Whether `feed` answers Chainlink's `latestRoundData()` (five ABI
-    ///      words) with a positive answer and a non-zero `updatedAt`. Read
-    ///      as full words so an out-of-range field reads as malformed rather
+    /// @dev Whether `feed` answers the two Chainlink reads the oracle layer
+    ///      makes of it: `decimals()` with one word that fits a `uint8`, and
+    ///      `latestRoundData()` with five words whose round ids fit a
+    ///      `uint80`, a positive answer and a non-zero `updatedAt`. Read as
+    ///      full words so an out-of-range field reads as malformed rather
     ///      than reverting the read.
     function _answersPositivePrice(address feed) private view returns (bool) {
-        (bool ok, bytes memory ret) = feed.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("latestRoundData()"));
+        (bool ok, bytes memory ret) = feed.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("decimals()"));
+        if (!ok || ret.length != 32 || abi.decode(ret, (uint256)) > type(uint8).max) return false;
+        (ok, ret) = feed.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("latestRoundData()"));
         if (!ok || ret.length != 160) return false;
-        (, int256 answer,, uint256 updatedAt,) = abi.decode(ret, (uint256, int256, uint256, uint256, uint256));
-        return answer > 0 && updatedAt != 0;
+        (uint256 roundId, int256 answer,, uint256 updatedAt, uint256 answeredInRound) =
+            abi.decode(ret, (uint256, int256, uint256, uint256, uint256));
+        return roundId <= type(uint80).max && answeredInRound <= type(uint80).max && answer > 0 && updatedAt != 0;
     }
 
     /// @dev Reads the length of a single ABI-encoded dynamic return value

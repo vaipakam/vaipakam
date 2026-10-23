@@ -1744,7 +1744,9 @@ phase_handover_gate() {
 # refuses while any is NOT MET. One the chain cannot answer is printed as
 # NOT CHECKED. The admin key then unpauses; after a rehearsal handover the
 # Timelock holds UNPAUSER_ROLE and the phase prints its gated batch instead
-# (LaunchGate.assertReady then unpause()), which needs every check met. An
+# (LaunchGate.assertReady then unpauseIfPauseEpoch), which needs every
+# check met and the admin key to hold no role. The lane check reads the
+# VPFI pool from CCIP_TOKEN_ADMIN_REGISTRY. An
 # already-unpaused Diamond is recorded only while no answered check is NOT
 # MET; Launch.s.sol refuses otherwise.
 phase_launch() {
@@ -1756,7 +1758,11 @@ phase_launch() {
   CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol \
     --rpc-url "$RPC" --broadcast --slow
 
-  if [ "$(cast call "$(jq -r '.diamond' "$DEPLOY_DIR/addresses.json")" 'paused()(bool)' --rpc-url "$RPC")" = "false" ]; then
+  # Recorded by Launch.requireLaunched(), the same evidence rule a re-run
+  # applies (unpaused, and no answered check NOT MET), not by the pause bit
+  # alone.
+  if CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --sig "requireLaunched()" \
+       --rpc-url "$RPC" >/dev/null 2>&1; then
     mark_phase_done "launch"
     echo
     echo "✓ launch: the Diamond is live."

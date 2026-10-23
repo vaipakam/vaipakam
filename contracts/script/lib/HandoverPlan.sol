@@ -63,25 +63,12 @@ library HandoverPlan {
         r[2] = LibAccessControl.NOTIF_BILLER_ROLE;
     }
 
-    /// @notice Every Diamond role the protocol defines: the role root, the
-    ///         Timelock roles, the Pauser Safe's, the governance Safe's and
-    ///         the bot roles. The handover gate checks each one's holders
-    ///         against the plan, and the launch refuses while the admin key
-    ///         holds any of them.
-    function diamondRoles() internal pure returns (bytes32[] memory r) {
-        bytes32[] memory tl = timelockRoles();
-        bytes32[] memory bots = botRoles();
-        r = new bytes32[](3 + tl.length + bots.length);
-        uint256 k;
-        r[k++] = DEFAULT_ADMIN_ROLE;
-        for (uint256 i; i < tl.length; ++i) {
-            r[k++] = tl[i];
-        }
-        r[k++] = LibAccessControl.PAUSER_ROLE;
-        r[k++] = LibAccessControl.EMERGENCY_REVOKER_ROLE;
-        for (uint256 i; i < bots.length; ++i) {
-            r[k++] = bots[i];
-        }
+    /// @notice Every Diamond role the protocol defines
+    ///         (`LibAccessControl.knownRoles()`, the one list). The handover
+    ///         gate checks each one's holders against the plan; the launch
+    ///         gate refuses while the deploy key holds any of them.
+    function diamondRoles() internal pure returns (bytes32[] memory) {
+        return LibAccessControl.knownRoles();
     }
 
     /// @notice The env variable naming each bot role's holder, parallel to

@@ -1705,10 +1705,13 @@ phase_handover_gate() {
 # hold UNPAUSER_ROLE and the admin key to hold neither it nor the role
 # root, then prints the Timelock `scheduleBatch` call for the Governance
 # Safe, the `executeBatch` call for after the delay, and the operation's
-# state. The batch is LaunchGate.assertReady then unpause(), so the checks
-# are read again on-chain when it executes. An unpaused Diamond is
-# recorded only when the Timelock reports that operation done; any other
-# unpause makes Launch.s.sol refuse, so nothing below marks it.
+# state. The batch is LaunchGate.assertReady (every check, and the admin
+# key holding no role) then unpauseIfPauseEpoch(epoch), so the checks are
+# read again on-chain when it executes and an incident pause recorded
+# during the delay makes it revert. The lane check reads the VPFI pool from
+# CCIP_TOKEN_ADMIN_REGISTRY. The phase is recorded only when
+# Launch.requireLaunched() finds the Timelock reporting that operation
+# done; any other unpause makes Launch.s.sol refuse.
 phase_launch() {
   _assert_rpc_chain
   if ! phase_already_done "handover-gate"; then
@@ -1727,7 +1730,11 @@ EOF
 
   CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --rpc-url "$RPC"
 
-  if [ "$(cast call "$(jq -r '.diamond' "$DEPLOY_DIR/addresses.json")" 'paused()(bool)' --rpc-url "$RPC")" = "false" ]; then
+  # Recorded only on the Timelock's own evidence (Launch.requireLaunched:
+  # this checkout's launch operation DONE), never from the pause bit — an
+  # unpause by anyone else must not be written down as the launch.
+  if CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --sig "requireLaunched()" \
+       --rpc-url "$RPC" >/dev/null 2>&1; then
     mark_phase_done "launch"
     echo
     echo "✓ launch: the Timelock has executed the unpause; the Diamond is live."

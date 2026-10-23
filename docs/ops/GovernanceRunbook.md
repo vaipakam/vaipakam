@@ -584,28 +584,45 @@ even for the gap between the deploy and the handover.
    contract at a deterministic address that the launch operation calls.
 2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the five launch
    requirements off the chain (treasury, a sanctions oracle that answers
-   `isSanctioned`, an ETH/numeraire feed that reports a price, an enabled
-   swap adapter that answers `adapterName()`, a CCIP lane on the VPFI
-   pool) and refuses unless every one is met, the Timelock holds
-   `UNPAUSER_ROLE`, and the admin key holds no Diamond role at all. It
-   broadcasts nothing.
+   `isSanctioned`, an ETH/numeraire feed that answers `decimals()` and
+   reports a price, an enabled swap adapter that answers `adapterName()`,
+   a CCIP lane on the VPFI pool) and refuses unless every one is met, the
+   Timelock holds `UNPAUSER_ROLE`, and the admin key holds no Diamond role
+   at all. It broadcasts nothing. The VPFI pool is not taken from the
+   deploy artifact: the step reads it from the chain's CCIP
+   `TokenAdminRegistry` (`CCIP_TOKEN_ADMIN_REGISTRY`) for the VPFI token
+   the Diamond records, so the lane check is about the pool CCIP actually
+   routes through.
 3. It prints the Timelock `scheduleBatch(...)` call. The batch has two
-   calls: `LaunchGate.assertReady(diamond, vpfiTokenPool)`, then
-   `diamond.unpause()`. The governance Safe proposes it. Before signing,
-   check that the gate address printed is the one the launch phase
-   reports, and that the pool is the chain's VPFI pool. The salt is fixed
-   per chain and Diamond, so a re-run finds the same operation and prints
-   its state (not scheduled, pending, ready, done).
+   calls: `LaunchGate.assertReady(diamond, tokenAdminRegistry, adminKey)`,
+   then `diamond.unpauseIfPauseEpoch(epoch)`. The governance Safe proposes
+   it. Before signing, check that the gate address printed is the one the
+   launch phase reports, that the registry is the chain's CCIP
+   `TokenAdminRegistry`, and that the admin key is the deploy-time admin
+   address. The salt is fixed per chain and Diamond, so a re-run finds the
+   same operation and prints its state (not scheduled, pending, ready,
+   done).
 4. After the delay, anyone sends the printed `executeBatch(...)` call. The
-   gate reads all five requirements again inside that transaction. If one
+   gate reads all five requirements again inside that transaction, and
+   checks that the admin key still holds no Diamond role. If a requirement
    stopped holding during the delay (an adapter was removed, the oracle was
    cleared), the execution reverts with `LaunchNotReady(label, state,
-   detail)` and the Diamond stays paused; fix the requirement and execute
-   the same operation again.
-5. Re-run the launch phase. It records the launch only when the Timelock
-   reports the operation done. If the Diamond is unpaused and the operation
-   is not done, something unpaused it outside this step: the phase
-   refuses, and that is an incident to investigate, not a launch.
+   detail)`; if the admin key was given a role back, with
+   `DeployKeyHoldsRole(key, role)`. Either way the Diamond stays paused;
+   fix it and execute the same operation again.
+5. The epoch in the second call is the pause library's transition count
+   when the proposal was printed. Every pause, auto-pause and unpause moves
+   it. If the Guardian pauses or the watcher auto-pauses during the delay,
+   the execution reverts with `PauseEpochMoved(expected, live)`, so a launch
+   decided before an incident never clears the incident's pause. That
+   operation can never execute; once the incident is closed, re-run the
+   launch phase for a fresh proposal at the new epoch.
+6. Re-run the launch phase. It records the launch only when the Timelock
+   reports a launch operation done (it searches every earlier epoch, so a
+   later incident pause does not hide it). If the Diamond is unpaused and
+   no launch operation is done, something unpaused it outside this step:
+   the phase refuses, and that is an incident to investigate, not a
+   launch.
 
 The Pauser Safe can cancel the queued launch like any other operation.
 

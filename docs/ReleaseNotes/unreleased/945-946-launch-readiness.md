@@ -18,25 +18,35 @@ for the governance Safe, so the first unpause waits out the same 48-hour
 window as any governance action (owner decision 2026-10-23).
 
 The proposal is not a bare unpause. It is a batch of two calls: a new
-stateless launch-gate contract reads every requirement again, then the
-Diamond is unpaused. The Timelock runs both in one transaction, so if a
-requirement stopped holding during the 48-hour wait (a swap route was
-removed, the sanctions oracle was cleared), the execution fails and the
-Diamond stays paused until it is fixed. The gate has no owner and sits at
+stateless launch-gate contract reads every requirement again, and checks
+that the deploy key still holds no role, then the Diamond is unpaused. The
+Timelock runs both in one transaction, so if a requirement stopped holding
+during the 48-hour wait (a swap route was removed, the sanctions oracle was
+cleared, the deploy key was given a role back), the execution fails and the
+Diamond stays paused until it is fixed. The unpause is also tied to the
+pause count at the time of the proposal: if the Guardian pauses or the
+watcher auto-pauses during the wait, the launch can no longer execute, so a
+launch decided before an incident never lifts the incident's pause. A fresh
+proposal is needed once the incident is closed. The gate has no owner and sits at
 an address fixed by its own code, so reviewers can check exactly what the
 proposal calls; the contracts phase deploys it.
 
 No requirement is met just because an address has code. The sanctions
 oracle must answer a sanctions lookup (the Diamond treats a failing lookup
 as "not sanctioned", so a wrong contract would screen nobody), the price
-feed must report a positive price, and a swap route counts only when the
-adapter is enabled and answers as an adapter. A production launch also
+feed must answer as a price aggregator (its decimals and a well-formed
+round with a positive price), and a swap route counts only when the adapter
+is enabled and answers as an adapter. The cross-chain lane check reads the
+VPFI pool from Chainlink's token registry for the token the Diamond itself
+records, rather than trusting a pool address from the deploy files. A production launch also
 refuses while the deploy key still holds any Diamond role, not only the
 unpause role.
 A Diamond that is already unpaused is recorded as launched only on
 evidence: on a production chain the Timelock must report the launch
 operation executed, and on a testnet no answered requirement may be unmet.
-Any other unpause makes the launch step refuse instead of recording it. On
+Any other unpause makes the launch step refuse instead of recording it,
+and the deploy scripts record the launch from that same evidence rather
+than from whether the Diamond happens to be unpaused. On
 a testnet no answered requirement may be unmet and the admin unpauses
 directly. A local development chain only warns. The deploy scripts' verify
 phases print the same report, and fail if a Diamond was unpaused outside

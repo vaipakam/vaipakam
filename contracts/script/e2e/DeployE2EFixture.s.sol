@@ -98,7 +98,7 @@ contract DeployE2EFixture is DeployDiamond, DeployTestnetMocks {
         // the readiness checks the mocks do not meet, then the admin unpauses.
         new Launch().launch(
             diamond,
-            Deployments.readVpfiTokenPoolOptional(),
+            vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0)),
             Deployments.readTimelockOptional(),
             vm.addr(adminKey),
             adminKey
