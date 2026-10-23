@@ -2744,7 +2744,9 @@
       "lenderIntentFills": "상시 인텐트 체결",
       "lenderIntentFillsHint": "등록된 대출 인텐트를 체결할 수 있는지 여부입니다. 꺼짐은 인텐트 체결을 멈추며, 대출자는 여전히 인텐트를 등록할 수 있습니다.",
       "autoRefinanceHint": "꺼짐은 키퍼와 주문 매처가 재융자를 완료하지 못하게 합니다. 차입자가 자신의 대출을 재융자하거나 대출자가 재융자 요청을 직접 수락하는 것은 여전히 진행됩니다.",
-      "autoExtendHint": "꺼짐은 차입자가 직접 요청하는 연장을 포함해 모든 현장 대출 연장을 막습니다."
+      "autoExtendHint": "꺼짐은 차입자가 직접 요청하는 연장을 포함해 모든 현장 대출 연장을 막습니다.",
+      "numeraireFeed": "기준 통화 기준 ETH 가격 피드",
+      "numeraireFeedHint": "기준 통화로 ETH 가격을 매기는 Chainlink 피드입니다. 기준 통화와 함께 바뀝니다."
     },
     "forcedClose": {
       "title": "이 대출은 연체되었습니다",

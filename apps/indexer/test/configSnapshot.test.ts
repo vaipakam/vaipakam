@@ -97,6 +97,8 @@ describe('configSnapshot', () => {
       'GraceBucketsUpdated',
       'AssetMinPartialBpsUpdated',
       'TierTableVersionBumped',
+      // Codex #2683 r5 — a cut can change any getter's code.
+      'DiamondCut',
     ]) {
       expect(isConfigEventName(name), name).toBe(true);
     }

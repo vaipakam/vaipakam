@@ -132,6 +132,10 @@ const CONFIG_EVENT_NAMES: ReadonlySet<string> = new Set([
   'NumeraireUpdated',
   'MinPrincipalForFinerCadenceSet',
   'PreNotifyDaysSet',
+  // Codex #2683 r5 — a cut can replace the code behind any getter the
+  // snapshot shows without any setter event, so it refreshes like one; the
+  // re-read then re-runs the host binding and withholds labels if it fails.
+  'DiamondCut',
 ]);
 
 /** Backstop refresh age: config flips are event-driven within one scan

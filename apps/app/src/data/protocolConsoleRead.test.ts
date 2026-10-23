@@ -159,6 +159,21 @@ describe('loadProtocolConsole', () => {
     expect(ok).toMatchObject({ source: 'chain', why: 'old' });
   });
 
+  it('needs a block strictly past a known-stale snapshot (Codex #2683 r5)', async () => {
+    const at = await loadProtocolConsole({
+      fetchSnapshot: async () => snapshot({ stale: true, sourceBlock: 123 }),
+      readChain: async () => CHAIN, // block 123
+      nowSec: () => NOW,
+    });
+    expect(at).toMatchObject({ source: 'snapshot', chainReadFailed: 'known-stale' });
+    const past = await loadProtocolConsole({
+      fetchSnapshot: async () => snapshot({ stale: true, sourceBlock: 122 }),
+      readChain: async () => CHAIN,
+      nowSec: () => NOW,
+    });
+    expect(past).toMatchObject({ source: 'chain', why: 'known-stale' });
+  });
+
   it('throws when there is neither a snapshot nor a chain read', async () => {
     await expect(
       loadProtocolConsole({

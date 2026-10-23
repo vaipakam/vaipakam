@@ -177,7 +177,12 @@ including people who never will.
   counts as failed rather than labelling values by their position.
 - A snapshot that is not current is shown only when the direct read fails
   too. A direct read that answers from a block older than the snapshot's
-  own block counts as failed: it is not a fresher reading. The console then says the contracts could not be read and that the
+  own block counts as failed: it is not a fresher reading. When the
+  snapshot is already known to be behind a governance change, the direct
+  read must come from a later block than the snapshot's.
+- The indexer refreshes its snapshot after any change to the Diamond's
+  code, not only after a setting changes, since an upgrade can change what
+  a setting's read returns. The console then says the contracts could not be read and that the
   values may be out of date, alongside whatever the snapshot's own
   warnings are. With neither source readable, the console says the values
   are unknown, not unset.

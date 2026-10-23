@@ -33,7 +33,13 @@ export type NotShownReason =
   | 'explanatory';
 
 export type DocCoverage =
-  | { shown: readonly (keyof ProtocolKnobValues)[] }
+  | {
+      shown: readonly (keyof ProtocolKnobValues)[];
+      /** Codex #2683 r5 — a heading that documents several settings names
+       *  each one it does NOT show here, with the reason, so showing one of
+       *  them cannot pass for covering the whole heading. */
+      alsoNotShown?: Readonly<Record<string, NotShownReason>>;
+    }
   | { notShown: NotShownReason };
 
 /** Keyed by the heading text exactly as the document writes it, after `### `. */
@@ -102,7 +108,17 @@ export const DOC_COVERAGE: Readonly<Record<string, DocCoverage>> = {
   'Per-tier liquidator discount (BPS)': { notShown: 'not-yet' },
   'Periodic interest enabled flag (periodicInterestEnabled)': { shown: ['periodicInterestEnabled'] },
   'Numeraire swap enabled flag (numeraireSwapEnabled)': { shown: ['numeraireSwapEnabled'] },
-  'Numeraire-rotation surface — Generalizing Numeraire (B1)': { shown: ['numeraireSymbol'] },
+  // The heading's feed-side slots are the symbol, the ETH feed, the
+  // Chainlink denominator and the Pyth feed id (its own heading above);
+  // its value-side knobs are the finer-cadence threshold (its own heading)
+  // and the KYC tier thresholds.
+  'Numeraire-rotation surface — Generalizing Numeraire (B1)': {
+    shown: ['numeraireSymbol', 'ethNumeraireFeed'],
+    alsoNotShown: {
+      numeraireChainlinkDenominator: 'no-getter',
+      kycTierThresholdsNumeraire: 'not-on-retail',
+    },
+  },
   'Predominantly Available Denominator (PAD)': { notShown: 'not-yet' },
   'Min principal for finer cadence (minPrincipalForFinerCadence)': { shown: ['minPrincipalForFinerCadence'] },
   'Pre-notify lead time in days (preNotifyDays)': { shown: ['preNotifyDays'] },

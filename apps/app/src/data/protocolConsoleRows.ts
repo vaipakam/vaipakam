@@ -134,6 +134,7 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
       { key: 'minPrincipalForFinerCadence', label: 'finerCadenceMinPrincipal', hint: 'finerCadenceMinPrincipalHint', format: 'numeraireAmount' },
       { key: 'preNotifyDays', label: 'preNotifyDays', hint: 'preNotifyDaysHint', format: 'days' },
       { key: 'numeraireSymbol', label: 'numeraire', format: 'symbol' },
+      { key: 'ethNumeraireFeed', label: 'numeraireFeed', hint: 'numeraireFeedHint', format: 'address' },
       { key: 'numeraireSwapEnabled', label: 'numeraireRotation', hint: 'numeraireRotationHint', format: 'flag' },
     ],
   },

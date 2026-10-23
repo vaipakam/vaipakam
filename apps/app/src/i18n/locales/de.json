@@ -2744,7 +2744,9 @@
       "lenderIntentFills": "Ausführung stehender Intents",
       "lenderIntentFillsHint": "Ob registrierte Kredit-Intents ausgeführt werden können. Aus stoppt ihre Ausführung; Kreditgeber können weiterhin Intents registrieren.",
       "autoRefinanceHint": "Aus hindert Keeper und den Order-Matcher daran, Refinanzierungen abzuschließen. Ein Kreditnehmer, der seinen eigenen Kredit refinanziert, oder ein Kreditgeber, der eine Refinanzierungsanfrage direkt annimmt, kommt weiterhin durch.",
-      "autoExtendHint": "Aus blockiert jede Verlängerung eines Kredits an Ort und Stelle, auch eine, die der Kreditnehmer direkt anfordert."
+      "autoExtendHint": "Aus blockiert jede Verlängerung eines Kredits an Ort und Stelle, auch eine, die der Kreditnehmer direkt anfordert.",
+      "numeraireFeed": "ETH-Preisfeed in der Referenzwährung",
+      "numeraireFeedHint": "Der Chainlink-Feed, der ETH in der Referenzwährung bewertet. Er ändert sich zusammen mit der Referenzwährung."
     },
     "forcedClose": {
       "title": "Dieses Darlehen ist überfällig",

@@ -993,6 +993,7 @@ export interface ProtocolKnobValues {
   periodicInterestEnabled?: boolean;
   numeraireSwapEnabled?: boolean;
   numeraireSymbol?: string;
+  ethNumeraireFeed?: string;
   minPrincipalForFinerCadence?: string;
   preNotifyDays?: string;
   autoLendEnabled?: boolean;

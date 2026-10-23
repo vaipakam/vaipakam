@@ -2744,7 +2744,9 @@
       "lenderIntentFills": "Ejecución de intenciones permanentes",
       "lenderIntentFillsHint": "Si las intenciones de préstamo registradas pueden ejecutarse. Desactivado detiene su ejecución; los prestamistas aún pueden registrar intenciones.",
       "autoRefinanceHint": "Desactivado impide que los keepers y el emparejador de órdenes completen refinanciaciones. Un prestatario que refinancia su propio préstamo, o un prestamista que acepta directamente una solicitud de refinanciación, sigue adelante.",
-      "autoExtendHint": "Desactivado bloquea toda extensión de préstamo en el sitio, incluida la que pide directamente el prestatario."
+      "autoExtendHint": "Desactivado bloquea toda extensión de préstamo en el sitio, incluida la que pide directamente el prestatario.",
+      "numeraireFeed": "Feed de precio de ETH en la moneda de referencia",
+      "numeraireFeedHint": "El feed de Chainlink que cotiza ETH en la moneda de referencia. Cambia junto con la moneda de referencia."
     },
     "forcedClose": {
       "title": "Este préstamo está vencido",

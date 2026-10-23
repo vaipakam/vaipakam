@@ -6177,6 +6177,9 @@ const copySource = {
     preNotifyDays: 'Advance reminder',
     preNotifyDaysHint: 'How many days before an interest checkpoint or a maturity date reminders go out.',
     numeraire: 'Reference currency',
+    numeraireFeed: 'Reference-currency ETH price feed',
+    numeraireFeedHint:
+      'The Chainlink feed that prices ETH in the reference currency. It changes together with the reference currency.',
     numeraireRotation: 'Reference-currency change',
     numeraireRotationHint: 'Whether governance may switch the reference currency.',
     automationHeading: 'Automation',

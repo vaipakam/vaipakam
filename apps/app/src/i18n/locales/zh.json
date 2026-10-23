@@ -2744,7 +2744,9 @@
       "lenderIntentFills": "常设意向成交",
       "lenderIntentFillsHint": "已登记的出借意向能否成交。关闭会停止意向成交；出借人仍可登记意向。",
       "autoRefinanceHint": "关闭会阻止 keeper 和订单撮合器完成再融资。借款人为自己的贷款再融资，或出借人直接接受再融资请求，仍可进行。",
-      "autoExtendHint": "关闭会阻止所有就地展期，包括借款人直接申请的展期。"
+      "autoExtendHint": "关闭会阻止所有就地展期，包括借款人直接申请的展期。",
+      "numeraireFeed": "以参考货币计价的 ETH 价格喂价",
+      "numeraireFeedHint": "以参考货币为 ETH 定价的 Chainlink 喂价。它随参考货币一同更改。"
     },
     "forcedClose": {
       "title": "这笔贷款已逾期",

@@ -2744,7 +2744,9 @@
       "lenderIntentFills": "Exécution des intentions permanentes",
       "lenderIntentFillsHint": "Si les intentions de prêt enregistrées peuvent être exécutées. Désactivé arrête leur exécution ; les prêteurs peuvent toujours enregistrer des intentions.",
       "autoRefinanceHint": "Désactivé empêche les keepers et l’apparieur d’ordres de finaliser des refinancements. Un emprunteur qui refinance son propre prêt, ou un prêteur qui accepte directement une demande de refinancement, passe toujours.",
-      "autoExtendHint": "Désactivé bloque toute prolongation de prêt sur place, y compris celle que l’emprunteur demande directement."
+      "autoExtendHint": "Désactivé bloque toute prolongation de prêt sur place, y compris celle que l’emprunteur demande directement.",
+      "numeraireFeed": "Flux de prix ETH dans la devise de référence",
+      "numeraireFeedHint": "Le flux Chainlink qui cote l’ETH dans la devise de référence. Il change en même temps que la devise de référence."
     },
     "forcedClose": {
       "title": "Ce prêt est en retard",

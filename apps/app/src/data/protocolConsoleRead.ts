@@ -182,9 +182,13 @@ export async function loadProtocolConsole(opts: {
     // the snapshot it was meant to replace. That is not a fresher reading,
     // so it counts as a failed chain read and the newer snapshot stays,
     // marked as not current.
+    // A known-stale snapshot was followed by a governance event after its
+    // block, so a read AT that block is no newer either (Codex #2683 r5).
     const snapBlock = snap?.sourceBlock;
-    if (snapBlock !== undefined && Number.isSafeInteger(snapBlock) && live.blockNumber < BigInt(snapBlock)) {
-      throw new Error('chain read is behind the snapshot');
+    if (snapBlock !== undefined && Number.isSafeInteger(snapBlock)) {
+      const floor = BigInt(snapBlock);
+      const behind = gap === 'known-stale' ? live.blockNumber <= floor : live.blockNumber < floor;
+      if (behind) throw new Error('chain read is not newer than the snapshot');
     }
     return { source: 'chain', why: gap ?? 'missing', readAtSec: opts.nowSec(), ...live };
   } catch (err) {

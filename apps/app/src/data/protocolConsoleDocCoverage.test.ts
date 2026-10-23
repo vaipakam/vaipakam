@@ -43,6 +43,13 @@ describe('Protocol Console coverage of the knob reference', () => {
     expect(claimed.filter((k) => !RENDERED_KEYS.has(k))).toEqual([]);
   });
 
+  it('never lists a rendered value among a heading\'s unshown settings', () => {
+    const unshown = Object.values(DOC_COVERAGE).flatMap((c) =>
+      'shown' in c && c.alsoNotShown ? Object.keys(c.alsoNotShown) : [],
+    );
+    expect(unshown.filter((k) => RENDERED_KEYS.has(k as never))).toEqual([]);
+  });
+
   it('renders every setting the shared reader publishes', () => {
     for (const k of PROTOCOL_KNOB_GETTERS) {
       expect(RENDERED_KEYS.has(k.key as never), k.key).toBe(true);

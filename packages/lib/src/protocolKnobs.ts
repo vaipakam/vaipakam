@@ -71,6 +71,7 @@ export const PROTOCOL_KNOB_GETTERS = [
   { key: 'periodicInterestEnabled', getter: 'getPeriodicInterestEnabled' },
   { key: 'numeraireSwapEnabled', getter: 'getNumeraireSwapEnabled' },
   { key: 'numeraireSymbol', getter: 'getNumeraireSymbol' },
+  { key: 'ethNumeraireFeed', getter: 'getEthNumeraireFeed' },
   { key: 'minPrincipalForFinerCadence', getter: 'getMinPrincipalForFinerCadence' },
   { key: 'preNotifyDays', getter: 'getPreNotifyDays' },
   // Automation and pauses
