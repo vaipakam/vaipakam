@@ -4382,6 +4382,27 @@ Its intended behaviour, as the test oracle for this surface:
   an offer that hasn't become a loan yet names that offer. The
   verdict is always scoped to the current network, with a visible
   reminder that token ids repeat across networks.
+- The verifier is built to be held up against a copy of itself,
+  because a copied page can render any verdict and can add a step
+  that asks the visitor to connect a wallet and sign, which is how a
+  wallet is drained. No page can prevent being copied, so the real
+  one states what a visitor can check without trusting the page:
+  - it says permanently, on the page itself, that checking a token
+    never needs a wallet, a signature or an approval, and that a
+    "verifier" asking for any of those is not Vaipakam's;
+  - it names, in full and never shortened, the contract address the
+    token was checked against, linked to the network's block explorer,
+    and says that this address, not a name or picture, is what makes a
+    token a Vaipakam position;
+  - every verdict, "live" or "does not exist", links the same token on
+    the block explorer, labelled as an independent view that may run a
+    few blocks behind.
+- Help lists the Vaipakam contract address for every supported network
+  in full, and explains how to recognise a fake verifier or a fake
+  position NFT: the real verifier never asks for a wallet, names and
+  pictures can be copied but contract addresses cannot, and the app is
+  best opened by typing its address or from the visitor's own bookmark
+  rather than from a link inside an NFT, a message or an email.
 - Advanced mode's loan-health detail states, alongside the health
   factor and loan-to-value, roughly how far the collateral's value
   can fall before liquidation begins — explicitly framed as

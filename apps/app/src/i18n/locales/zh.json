@@ -69,8 +69,8 @@
         "description": "可选：在 vault 中持有 VPFI 以降低协议手续费。出借、借入或租赁都不要求持有 VPFI。"
       },
       "nftVerifier": {
-        "title": "NFT 租赁验证器 — Vaipakam",
-        "description": "检查 Vaipakam 上列出的 NFT 租赁是否真实，并直接从链上查看该 token 的当前租赁状态。"
+        "title": "持仓 NFT 验证器 — Vaipakam",
+        "description": "直接在链上检查任何 Vaipakam 持仓 NFT：它是否存在于此网络、由谁持有、控制哪笔贷款，以及能否转移。只读：从不需要你的钱包。"
       },
       "help": {
         "title": "帮助 — Vaipakam",
@@ -502,7 +502,11 @@
         },
         "nftVerifier": {
           "q": "在平台外购买前如何检查持仓 NFT？",
-          "a": "NFT verifier（在导航中）会直接从链上读取任何 Vaipakam 持仓 NFT，并显示其真实贷款条款和状态 — 这样您在相信二级市场出售前，可以确认 listing 实际代表什么。"
+          "a": "NFT 验证器（在导航中）直接从链上读取任何 Vaipakam 持仓 NFT：它是否存在于此网络、由谁持有、控制哪笔贷款，以及能否转移。在信任二级市场交易之前先检查。"
+        },
+        "fakeVerifier": {
+          "q": "如何识别假的验证器或假的持仓 NFT？",
+          "a": "Vaipakam 的验证器只读取区块链。它从不要求你连接钱包、签署消息或批准转移，所以这样做的页面不是我们的，无论它看起来多像。任何人都能复制 token 的名称和图片。让一个 token 成为 Vaipakam 持仓的，是它所在的合约地址，下面列出了每个网络的地址。请通过输入网址或使用你自己的书签打开 Vaipakam，而不是通过 NFT、消息或邮件中的链接。"
         }
       },
       "disclaimer": "Vaipakam 是去中心化、非保管协议。无需 KYC。用户需自行负责适用的监管合规。",
@@ -513,7 +517,9 @@
         "出借：只有借款人还款时才赚取利息。违约时，您的回收取决于锁定抵押品最终的实际价值。",
         "NFT 租赁：租用者获得临时使用权，不获得所有权；NFT 留在所有者的 vault 中。租赁费预付，并带有小额可退还缓冲金。",
         "智能合约风险：Vaipakam 是公网上的代码。Bug、网络故障或极端市场状况可能造成损失 — 切勿投入无法承受损失的资金。"
-      ]
+      ],
+      "contractsTitle": "Vaipakam 合约",
+      "contractsLede": "每个 Vaipakam 持仓 NFT 都位于以下地址之一，每个网络一个。位于其他地址的 token 不是 Vaipakam 持仓，无论它叫什么名字。"
     },
     "consentParts": {
       "prefix": "我理解并同意 ",
@@ -916,7 +922,13 @@
       "inKindNote": "如果关联贷款的借款人违约，此领取权会以实物支付贷款的原始抵押品 — 协议不会为您定价或出售。购买此持仓前，请评估您实际会收到什么。",
       "liveNote": "Live 的含义正是：token 在这里存在，其持有者控制关联持仓。它不担保贷款健康或另一方行为。",
       "goneTitle": "Token #{{id}} 当前不存在于此网络",
-      "goneBody": "要么其领取已完成且 token 已退役，要么它从未在这里铸造 — 网络不会记录是哪一种。请将任何出售或转让此 token id 的报价视为在此网络上无价值。"
+      "goneBody": "要么其领取已完成且 token 已退役，要么它从未在这里铸造 — 网络不会记录是哪一种。请将任何出售或转让此 token id 的报价视为在此网络上无价值。",
+      "readOnlyTitle": "此检查从不需要你的钱包",
+      "readOnlyBody": "它只读取区块链。本页面不会要求你连接钱包、签署消息或批准转移。如果一个自称 Vaipakam 验证器的页面要求其中任何一项，那它不是我们的：请关闭它。",
+      "contractLabel": "{{chain}} 上的 Vaipakam 合约",
+      "contractWhy": "正是这个地址让一个 token 成为 Vaipakam 持仓。任何人都能复制 token 的名称和图片，但无法复制它的合约地址。",
+      "explorerLink": "在 {{explorer}} 上查看 token #{{id}}",
+      "explorerNote": "由区块浏览器而非 Vaipakam 提供的同一合约的独立视图。它可能比本页面落后几个区块。"
     },
     "recover": {
       "title": "取回卡住的代币",

@@ -69,8 +69,8 @@
         "description": "Optional: protocol fees घटाने के लिए अपने vault में VPFI रखें। Lend, borrow या rent करने के लिए यह कभी required नहीं है।"
       },
       "nftVerifier": {
-        "title": "NFT किराया वेरिफ़ायर — Vaipakam",
-        "description": "जाँचें कि Vaipakam पर listed NFT rental genuine है या नहीं, और token का current rental status सीधे chain से देखें।"
+        "title": "Position NFT की जाँच — Vaipakam",
+        "description": "किसी भी Vaipakam position NFT को सीधे chain पर check करें: क्या वह इस network पर मौजूद है, किसके पास है, कौन सा loan control करता है, और क्या उसे transfer किया जा सकता है। सिर्फ़ पढ़ता है: यह कभी आपका wallet नहीं माँगता।"
       },
       "help": {
         "title": "सहायता — Vaipakam",
@@ -502,7 +502,11 @@
         },
         "nftVerifier": {
           "q": "Platform के बाहर खरीदने से पहले position NFT कैसे check करूं?",
-          "a": "NFT verifier (navigation में) किसी भी Vaipakam position NFT को chain से सीधे पढ़ता है और उसकी real loan terms और status दिखाता है — ताकि secondary-market sale पर भरोसा करने से पहले आप confirm कर सकें कि listing असल में क्या represent करती है।"
+          "a": "NFT verifier (navigation में) किसी भी Vaipakam position NFT को सीधे chain से पढ़ता है: क्या वह इस network पर मौजूद है, किसके पास है, कौन सा loan control करता है, और क्या उसे transfer किया जा सकता है। Secondary-market sale पर भरोसा करने से पहले check करें।"
+        },
+        "fakeVerifier": {
+          "q": "नकली verifier या नकली position NFT को कैसे पहचानूं?",
+          "a": "Vaipakam का verifier सिर्फ़ blockchain पढ़ता है। यह कभी आपसे wallet connect करने, message sign करने या transfer approve करने को नहीं कहता, इसलिए जो page ऐसा करे वह हमारा नहीं है, चाहे वह कैसा भी दिखे। किसी token का नाम और तस्वीर कोई भी copy कर सकता है। किसी token को Vaipakam position बनाता है वह contract address जिस पर वह है, और ये addresses नीचे हर network के लिए दिए गए हैं। Vaipakam को उसका address type करके या अपने bookmark से खोलें, किसी NFT, message या email के अंदर के link से नहीं।"
         }
       },
       "disclaimer": "Vaipakam एक decentralized, non-custodial protocol है। KYC required नहीं है। Users अपने regulatory compliance के लिए खुद responsible हैं।",
@@ -513,7 +517,9 @@
         "Lending: interest तभी earn होता है जब borrower repay करता है। Default पर आपकी recovery locked collateral की actual worth पर निर्भर है।",
         "NFT rentals: renters को temporary use rights मिलते हैं, ownership कभी नहीं; NFT owner के vault में रहता है। Rental fees prepaid होती हैं, साथ में छोटा refundable buffer।",
         "Smart-contract risk: Vaipakam public network पर code है। Bugs, network failures या extreme market conditions loss कर सकते हैं — ऐसे funds commit न करें जिन्हें खोना afford नहीं कर सकते।"
-      ]
+      ],
+      "contractsTitle": "Vaipakam के contracts",
+      "contractsLede": "हर Vaipakam position NFT इनमें से किसी एक address पर है, हर network का एक। किसी और address पर मौजूद token Vaipakam position नहीं है, चाहे उसका नाम कुछ भी हो।"
     },
     "consentParts": {
       "prefix": "मैं समझता/समझती हूँ और ",
@@ -916,7 +922,13 @@
       "inKindNote": "Linked loan का borrower default करे तो यह claim loan की raw collateral in kind pay करता है — protocol आपके लिए price या sell नहीं करता। यह position खरीदने से पहले actually क्या receive होगा, value करें।",
       "liveNote": "Live का मतलब ठीक यही है: token यहाँ exists करता है और holder linked position control करता है। यह loan health या दूसरे side के behaviour की guarantee नहीं है।",
       "goneTitle": "Token #{{id}} अभी इस network पर मौजूद नहीं है",
-      "goneBody": "या तो इसका claim complete हुआ और token retired हुआ, या यह यहाँ कभी mint ही नहीं हुआ — network कौन सा record नहीं करता। इस token id को sell या transfer करने का कोई offer इस network पर worthless मानें।"
+      "goneBody": "या तो इसका claim complete हुआ और token retired हुआ, या यह यहाँ कभी mint ही नहीं हुआ — network कौन सा record नहीं करता। इस token id को sell या transfer करने का कोई offer इस network पर worthless मानें।",
+      "readOnlyTitle": "इस check को कभी आपके wallet की ज़रूरत नहीं",
+      "readOnlyBody": "यह सिर्फ़ blockchain पढ़ता है। इस page पर कुछ भी आपसे wallet connect करने, message sign करने या transfer approve करने को नहीं कहता। अगर खुद को Vaipakam verifier बताने वाला कोई page इनमें से कुछ भी माँगे, तो वह हमारा नहीं है: उसे बंद कर दें।",
+      "contractLabel": "{{chain}} पर Vaipakam contract",
+      "contractWhy": "यही address किसी token को Vaipakam position बनाता है। Token का नाम और तस्वीर कोई भी copy कर सकता है; उसका contract address नहीं।",
+      "explorerLink": "{{explorer}} पर token #{{id}} देखें",
+      "explorerNote": "उसी contract का एक स्वतंत्र view, जिसे Vaipakam नहीं बल्कि block explorer चलाता है। यह इस page से कुछ blocks पीछे हो सकता है।"
     },
     "recover": {
       "title": "फँसे हुए टोकन वापस पाएँ",

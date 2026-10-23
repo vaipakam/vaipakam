@@ -69,8 +69,8 @@
         "description": "Optionnel : conservez des VPFI dans votre vault pour réduire les frais du protocole. Jamais obligatoire pour prêter, emprunter ou louer."
       },
       "nftVerifier": {
-        "title": "Vérificateur de location NFT — Vaipakam",
-        "description": "Vérifiez si une location de NFT listée sur Vaipakam est authentique, et consultez l'état de location actuel du token directement depuis la chaîne."
+        "title": "Vérificateur de NFT de position — Vaipakam",
+        "description": "Vérifiez n’importe quel NFT de position Vaipakam directement sur la chaîne : s’il existe sur ce réseau, qui le détient, quel prêt il contrôle et s’il peut être transféré. Lecture seule : il ne demande jamais votre wallet."
       },
       "help": {
         "title": "Aide — Vaipakam",
@@ -502,7 +502,11 @@
         },
         "nftVerifier": {
           "q": "Comment vérifier un NFT de position avant de l’acheter hors plateforme ?",
-          "a": "Le vérificateur NFT (dans la navigation) lit tout NFT de position Vaipakam directement depuis la chaîne et affiche ses vraies conditions de prêt et son statut — pour confirmer ce qu’une annonce représente vraiment avant de faire confiance à une vente sur le marché secondaire."
+          "a": "Le vérificateur NFT (dans la navigation) lit n’importe quel NFT de position Vaipakam directement sur la chaîne : s’il existe sur ce réseau, qui le détient, quel prêt il contrôle et s’il peut être transféré. Vérifiez-le avant de faire confiance à une vente sur le marché secondaire."
+        },
+        "fakeVerifier": {
+          "q": "Comment repérer un faux vérificateur ou un faux NFT de position ?",
+          "a": "Le vérificateur de Vaipakam ne fait que lire la blockchain. Il ne vous demande jamais de connecter un wallet, de signer un message ou d’approuver un transfert : une page qui le fait n’est pas la nôtre, quelle que soit son apparence. N’importe qui peut copier le nom et l’image d’un token. Ce qui fait d’un token une position Vaipakam, c’est l’adresse du contrat où il se trouve, et ces adresses sont listées ci-dessous pour chaque réseau. Ouvrez Vaipakam en tapant son adresse ou depuis votre propre favori, pas depuis un lien dans un NFT, un message ou un e-mail."
         }
       },
       "disclaimer": "Vaipakam est un protocole décentralisé et non dépositaire. Aucun KYC n'est requis. Les utilisateurs sont responsables de leur propre conformité réglementaire.",
@@ -513,7 +517,9 @@
         "Prêt : les intérêts ne sont gagnés que si l'emprunteur rembourse. En cas de défaut, votre récupération dépend de la valeur réelle de la garantie verrouillée.",
         "Locations de NFT : les locataires reçoivent des droits d'usage temporaires, jamais la propriété ; le NFT reste dans le vault du propriétaire. Les frais de location sont prépayés, avec un petit tampon remboursable.",
         "Risque de smart contract : Vaipakam est du code sur un réseau public. Bugs, pannes réseau ou conditions de marché extrêmes peuvent provoquer des pertes — n'engagez jamais des fonds que vous ne pouvez pas vous permettre de perdre."
-      ]
+      ],
+      "contractsTitle": "Contrats Vaipakam",
+      "contractsLede": "Chaque NFT de position Vaipakam se trouve à l’une de ces adresses, une par réseau. Un token à une autre adresse n’est pas une position Vaipakam, quel que soit son nom."
     },
     "consentParts": {
       "prefix": "Je comprends et j'accepte les ",
@@ -916,7 +922,13 @@
       "inKindNote": "Si l'emprunteur du prêt lié fait défaut, ce retrait paie la garantie brute du prêt en nature — le protocole ne la valorise ni ne la vend pour vous. Évaluez ce que vous recevriez réellement avant d'acheter cette position.",
       "liveNote": "Live signifie exactement ceci : le token existe ici et son détenteur contrôle la position liée. Cela ne garantit pas la santé du prêt ni le comportement de l'autre côté.",
       "goneTitle": "Le token n°{{id}} n’existe pas actuellement sur ce réseau",
-      "goneBody": "Soit son retrait a été effectué et le token a été retiré, soit il n'a jamais été minté ici — le réseau ne précise pas lequel. Traitez toute offre de vente ou transfert de ce token id comme sans valeur sur ce réseau."
+      "goneBody": "Soit son retrait a été effectué et le token a été retiré, soit il n'a jamais été minté ici — le réseau ne précise pas lequel. Traitez toute offre de vente ou transfert de ce token id comme sans valeur sur ce réseau.",
+      "readOnlyTitle": "Cette vérification n’a jamais besoin de votre wallet",
+      "readOnlyBody": "Elle ne fait que lire la blockchain. Rien sur cette page ne vous demande de connecter un wallet, de signer un message ou d’approuver un transfert. Si une page se présentant comme un vérificateur Vaipakam vous demande l’un de ces éléments, ce n’est pas la nôtre : fermez-la.",
+      "contractLabel": "Contrat Vaipakam sur {{chain}}",
+      "contractWhy": "C’est cette adresse qui fait d’un token une position Vaipakam. N’importe qui peut copier le nom et l’image d’un token ; pas son adresse de contrat.",
+      "explorerLink": "Voir le token #{{id}} sur {{explorer}}",
+      "explorerNote": "Une vue indépendante du même contrat, tenue par l’explorateur de blocs et non par Vaipakam. Elle peut avoir quelques blocs de retard sur cette page."
     },
     "recover": {
       "title": "Récupérer des tokens bloqués",

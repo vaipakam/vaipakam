@@ -11,6 +11,13 @@
  * possibilities rather than guessing. (Recorded as a spec divergence
  * in docs/FunctionalSpecs/_CodeVsDocsAudit.md — the spec wants the
  * three-way distinction; that needs a contract view.)
+ *
+ * Clone resistance (#745): a copied verifier can render any verdict it
+ * likes and add a "connect to confirm" step that drains the wallet. No
+ * page can stop being copied, so this one states what a reader can hold
+ * any copy to: the real check never asks for a wallet, and it names the
+ * contract address it checked, with a link to the same token on the
+ * chain's block explorer, a view Vaipakam does not serve.
  */
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -21,7 +28,7 @@ import {
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
 } from 'viem';
-import { BadgeCheck, ShieldQuestion } from 'lucide-react';
+import { BadgeCheck, ShieldCheck, ShieldQuestion } from 'lucide-react';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
@@ -79,6 +86,18 @@ export function NftVerifier() {
   }
 
   const validId = tokenIdParam !== undefined && /^[1-9]\d*$/.test(tokenIdParam);
+  const explorerHost = new URL(readChain.blockExplorer).host;
+  const explorerTokenUrl = `${readChain.blockExplorer}/nft/${readChain.diamondAddress}/${tokenIdParam}`;
+  // Offered on both verdicts: it is the reader's own cross-check, and a
+  // "does not exist" answer deserves one as much as a "live" answer does.
+  const explorerCheck = (
+    <p className="muted" style={{ marginTop: 8 }}>
+      <a href={explorerTokenUrl} target="_blank" rel="noreferrer noopener">
+        {copy.nftVerifier.explorerLink(tokenIdParam ?? '', explorerHost)}
+      </a>
+      <span style={{ display: 'block' }}>{copy.nftVerifier.explorerNote}</span>
+    </p>
+  );
 
   const result = useQuery({
     queryKey: ['nftVerify', readChain.chainId, tokenIdParam],
@@ -215,6 +234,16 @@ export function NftVerifier() {
         <p className="page-lede">{copy.nftVerifier.lede}</p>
       </div>
 
+      {/* #745 — permanent, not dismissible: the statement only protects a
+          reader who has seen it before a copy asks them to sign. */}
+      <div className="banner banner-info" role="note">
+        <ShieldCheck aria-hidden />
+        <div className="banner-body">
+          <div className="banner-title">{copy.nftVerifier.readOnlyTitle}</div>
+          {copy.nftVerifier.readOnlyBody}
+        </div>
+      </div>
+
       <section className="card">
         <div className="cluster">
           <input
@@ -237,6 +266,19 @@ export function NftVerifier() {
         </div>
         <p className="muted" style={{ marginTop: 8 }}>
           {copy.nftVerifier.chainNote(readChain.name)}
+        </p>
+        {/* The full address, never shortened: a lookalike differs in the
+            middle as easily as at the ends. */}
+        <p className="muted" style={{ marginTop: 8, overflowWrap: 'anywhere' }}>
+          {copy.nftVerifier.contractLabel(readChain.name)}:{' '}
+          <a
+            href={`${readChain.blockExplorer}/address/${readChain.diamondAddress}`}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            <code>{readChain.diamondAddress}</code>
+          </a>
+          . {copy.nftVerifier.contractWhy}
         </p>
       </section>
 
@@ -327,6 +369,7 @@ export function NftVerifier() {
           <p className="muted" style={{ marginTop: 8 }}>
             {copy.nftVerifier.liveNote}
           </p>
+          {explorerCheck}
         </section>
       ) : (
         <section className="card">
@@ -337,6 +380,7 @@ export function NftVerifier() {
             </h3>
           </div>
           <p className="muted">{copy.nftVerifier.goneBody}</p>
+          {explorerCheck}
         </section>
       )}
     </div>

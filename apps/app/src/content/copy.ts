@@ -117,9 +117,9 @@ const copySource = {
         'Optional: hold VPFI in your vault to reduce protocol fees. Never required to lend, borrow, or rent.',
     },
     nftVerifier: {
-      title: 'NFT rental verifier — Vaipakam',
+      title: 'Position NFT verifier — Vaipakam',
       description:
-        'Check whether an NFT rental listed on Vaipakam is genuine, and see the token’s current rental status straight from the chain.',
+        'Check any Vaipakam position NFT straight from the chain: whether it exists on this network, who holds it, which loan it controls, and whether it can be transferred. Read-only: it never asks for your wallet.',
     },
     help: {
       title: 'Help — Vaipakam',
@@ -1067,9 +1067,20 @@ const copySource = {
       },
       nftVerifier: {
         q: 'How do I check a position NFT before buying it off-platform?',
-        a: 'The NFT verifier (in the navigation) reads any Vaipakam position NFT straight from the chain and shows its real loan terms and status — so you can confirm what a listing actually represents before you trust a secondary-market sale.',
+        a: 'The NFT verifier (in the navigation) reads any Vaipakam position NFT straight from the chain: whether it exists on this network, who holds it, which loan it controls, and whether it can be transferred. Check before you trust a secondary-market sale.',
+      },
+      // #745 — the clone-verifier / wallet-drainer surface. What a user can
+      // check for themselves, since a copied page can claim anything.
+      fakeVerifier: {
+        q: 'How do I spot a fake verifier or a fake position NFT?',
+        a: 'Vaipakam’s verifier only reads the blockchain. It never asks you to connect a wallet, sign a message, or approve a transfer, so a page that does is not ours, however it looks. Anyone can copy a token’s name and picture. What makes a token a Vaipakam position is the contract address it lives at, and those addresses are listed below for every network. Open Vaipakam by typing its address or from your own bookmark, not from a link inside an NFT, a message, or an email.',
       },
     },
+    // #745 — the canonical contract per network, so "is this the real
+    // contract?" has an answer a copied page cannot change for the reader.
+    contractsTitle: 'Vaipakam contracts',
+    contractsLede:
+      'Every Vaipakam position NFT lives at one of these addresses, one per network. A token at any other address is not a Vaipakam position, whatever it is called.',
     disclaimer:
       'Vaipakam is a decentralized, non-custodial protocol. No KYC is required. Users are responsible for their own regulatory compliance.',
     risksTitle: 'Risk disclosures',
@@ -1938,6 +1949,17 @@ const copySource = {
       'If the borrower of the linked loan defaults, this claim pays out the loan’s raw collateral in kind — the protocol does not price or sell it for you. Value what you would actually receive before buying this position.',
     liveNote:
       'Live means exactly this: the token exists here and its holder controls the linked position. It does not vouch for the loan’s health or the other side’s behaviour.',
+    // #745 — a copied verifier can render any verdict and add a "connect
+    // to confirm" step that drains the wallet. The real one never asks.
+    readOnlyTitle: 'This check never needs your wallet',
+    readOnlyBody:
+      'It only reads the blockchain. Nothing on this page asks you to connect a wallet, sign a message, or approve a transfer. If a page calling itself a Vaipakam verifier asks for any of those, it is not ours: close it.',
+    contractLabel: tmpl(`Vaipakam contract on {{chain}}`, ['chain']),
+    contractWhy:
+      'That address is what makes a token a Vaipakam position. A token’s name and picture can be copied by anyone; its contract address cannot.',
+    explorerLink: tmpl(`See token #{{id}} on {{explorer}}`, ['id', 'explorer']),
+    explorerNote:
+      'An independent view of the same contract, run by the block explorer rather than by Vaipakam. It can lag a few blocks behind this page.',
     goneTitle: tmpl(`Token #{{id}} does not currently exist on this network`, ['id']),
     goneBody:
       'Either its claim was completed and the token was retired, or it was never minted here at all — the network doesn’t record which. Treat any offer to sell or transfer this token id as worthless on this network.',
