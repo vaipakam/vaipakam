@@ -1291,8 +1291,10 @@ read back on every chain:
   readback is clean. A paused MIRROR Diamond fails differently, and the
   difference is easy to miss. Its budget ingress, `onRewardBudgetReceivedD6`, is
   deliberately NOT `whenNotPaused` (migration mode, design §5c), so a delivery
-  still lands on a paused mirror; only the `RewardRemittanceReceiver`'s own
-  guardian pause stops it, at the edge. What the mirror's pause does stop is the
+  still lands on a paused mirror. Only the transport stops it, at the edge: the
+  destination `CcipMessenger` and the `RewardRemittanceReceiver` each carry their
+  own guardian pause, set independently, and either one paused refuses the
+  delivery. When a budget is stuck, read both. What the mirror's pause does stop is the
   mirror's own side of the loop: `closeDay`, which sends the report Base's
   coverage waits on, and every claim. So a paused mirror looks healthy on the
   funding path while Base either waits for its report or grace-finalizes the day
