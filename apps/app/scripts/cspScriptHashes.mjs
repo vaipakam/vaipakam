@@ -26,33 +26,39 @@
  * I/O. Covered by `src/lib/cspScriptHashes.test.ts`.
  */
 import { createHash } from 'node:crypto';
+import { parse } from 'parse5';
 
 /** The token `_headers.base` carries where the hashes go. Not a valid CSP
  *  source expression, so a policy that somehow shipped with it unreplaced
  *  would allow no inline script, which is the safe direction. */
 export const SCRIPT_HASHES_PLACEHOLDER = '__INLINE_SCRIPT_HASHES__';
 
-const SCRIPT_ELEMENT = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
-const HAS_SRC = /(?:^|\s)src\s*=/i;
-
 /**
  * The text of every inline `<script>` element in `html`, in document
  * order. An element with a `src` attribute is not inline: `'self'`
  * covers it, and its body (if any) never runs.
  *
- * A regular expression is enough here because the input is our own
- * `index.html` after Vite, not arbitrary markup. The test pins it
- * against that file.
+ * The page is read with parse5, which implements the WHATWG HTML parsing
+ * algorithm browsers use. That matters twice over: the hash must be of
+ * the exact text a browser takes as the script (after the parser's own
+ * input normalisation, such as CRLF to LF), and the elements found must
+ * be the ones a browser would find, whatever the spelling of a tag or an
+ * end tag. A hand-written pattern answers both only for the markup its
+ * author thought of. A `<template>`'s content is a separate fragment a
+ * browser does not run, so it is not walked.
  *
  * @param {string} html
  * @returns {string[]}
  */
 export function inlineScriptBodies(html) {
   const out = [];
-  for (const m of html.matchAll(SCRIPT_ELEMENT)) {
-    if (HAS_SRC.test(m[1])) continue;
-    out.push(m[2]);
-  }
+  const walk = (node) => {
+    if (node.nodeName === 'script' && !node.attrs.some((a) => a.name === 'src')) {
+      out.push(node.childNodes.map((c) => (c.nodeName === '#text' ? c.value : '')).join(''));
+    }
+    for (const child of node.childNodes ?? []) walk(child);
+  };
+  walk(parse(html));
   return out;
 }
 

@@ -120,6 +120,16 @@ function e2eDeploymentsBundle(): Plugin {
 // `script-src`. Runs after Vite writes the client output (the public
 // directory, and so `_headers`, is in place by then), and throws rather
 // than ship a policy it could not complete. See scripts/cspScriptHashes.mjs.
+/** `file`'s text, or `null` when it does not exist (any other error throws). */
+function readIfPresent(file: string): string | null {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw e;
+  }
+}
+
 function cspScriptHashes(): Plugin {
   return {
     name: 'vaipakam-csp-script-hashes',
@@ -127,18 +137,18 @@ function cspScriptHashes(): Plugin {
     writeBundle(options) {
       const outDir = options.dir;
       if (!outDir) return;
-      const page = path.join(outDir, 'index.html');
+      // Each file is read once and its absence handled from that read, so
+      // what is hashed and rewritten is exactly what was read.
+      const page = readIfPresent(path.join(outDir, 'index.html'));
       // The worker environment of the Cloudflare plugin writes no page.
-      if (!fs.existsSync(page)) return;
+      if (page === null) return;
       const headersFile = path.join(outDir, '_headers');
-      if (!fs.existsSync(headersFile)) {
+      const headers = readIfPresent(headersFile);
+      if (headers === null) {
         this.error(`[csp] ${headersFile} is missing; run the prebuild (scripts/generate-seo.mjs) first.`);
       }
-      const sources = scriptHashSources(fs.readFileSync(page, 'utf8'));
-      fs.writeFileSync(
-        headersFile,
-        applyScriptHashes(fs.readFileSync(headersFile, 'utf8'), sources),
-      );
+      const sources = scriptHashSources(page);
+      fs.writeFileSync(headersFile, applyScriptHashes(headers, sources));
       console.log(`[csp] script-src allows ${sources.length} inline script hash(es)`);
     },
   };

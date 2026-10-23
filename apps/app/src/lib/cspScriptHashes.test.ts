@@ -62,7 +62,7 @@ describe('inlineScriptBodies', () => {
   it('finds the inline boot scripts in index.html and skips the module entry', () => {
     // Calibration against the real page: three inline scripts (theme,
     // language and direction, splash timer) and one `src` entry that
-    // `'self'` covers. A regex that stopped matching would otherwise
+    // `'self'` covers. An extractor that stopped finding them would otherwise
     // produce an empty hash list and a policy that blocks all three.
     const bodies = inlineScriptBodies(indexHtml);
     expect(bodies).toHaveLength(3);
@@ -82,6 +82,22 @@ describe('inlineScriptBodies', () => {
       '<script src="/a.js"></script><script type="module" crossorigin src="/b.js"></script>' +
       '<script\nsrc="/c.js"></script><script data-src="x">kept()</script>';
     expect(inlineScriptBodies(html)).toEqual(['kept()']);
+  });
+
+  it('ends a script where a browser does, whatever the spelling of the end tag', () => {
+    // An end tag may carry whitespace and junk attributes before `>`, and
+    // its name is case-insensitive. A pattern written for `</script>`
+    // missed these; the HTML parser does not.
+    const html = '<script>a()</script\t\n bar><SCRIPT>b()</Script ><p>c()</p>';
+    expect(inlineScriptBodies(html)).toEqual(['a()', 'b()']);
+  });
+
+  it('hashes the text after the parser normalises line endings, as a browser does', () => {
+    expect(inlineScriptBodies('<script>a();\r\nb();\r</script>')).toEqual(['a();\nb();\n']);
+  });
+
+  it('does not walk into a template, whose content a browser does not run', () => {
+    expect(inlineScriptBodies('<template><script>t()</script></template><script>r()</script>')).toEqual(['r()']);
   });
 });
 
