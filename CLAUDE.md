@@ -223,7 +223,12 @@ runs half of it on old code:
   consumer refreshed without the host reverts `FunctionDoesNotExist` on every
   health-factor read or KYC comparison — every liquidation, every borrow and
   every default (a hard revert, never a misread value). All three refresh
-  scripts carry the host. Values were whole numeraire units before #2419,
+  scripts carry the host, but only `RefreshAllFacetsInPlace` carries the whole
+  behaviour: the oracle's liquidity probe and pair LTV preview, AdminFacet's
+  dust floor and the offer bounds move with it. So `RedeployFacets` and
+  `ReplaceStaleFacets` refuse a Diamond that does not already route
+  `getLiquidNumeraireValue` (`PredatesNumeraireValueRule`); the #2419 crossing
+  is the all-facets refresh or a fresh deploy. Values were whole numeraire units before #2419,
   and the partial-liquidation dust
   floor is now 1e18-scaled too: a floor stored on the old scale is below the
   one-unit minimum, so it reads as no floor (dust handling off, and the

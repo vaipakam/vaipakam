@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, stdError} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -359,21 +359,21 @@ contract OracleFacetTest is Test {
         OracleFacet(address(diamond)).calculateLTV(mockAsset, 1000 ether, mockAsset2, 0);
     }
 
-    /// #2418 r2 — a leg too small to register at ANY fixed scale still
-    /// counts: the ratio is taken in one step, never from rounded legs. One
-    /// base unit of a 1-decimal token at 9e-18 per whole token (9e-19) against
-    /// one unit of a 0-decimal token at 1e-18 is 0.9 — 9000 bps, not 0.
-    function testCalculateLTVTinyLegsUseTheExactRatio() public {
+    /// #2418 r2 / #2419 — a borrow too small to register at the 1e18 scale
+    /// still counts: its value rounds UP, so it never reads as 0. One base
+    /// unit of a 1-decimal token at 9e-18 per whole token (9e-19) is valued at
+    /// 1e-18, against one unit of a 0-decimal token at 1e-18 — 10000 bps, the
+    /// figure the loan-level path would report, never 0.
+    function testCalculateLTVTinyLegsNeverReadZero() public {
         address b1 = address(new ERC20Mock("B1", "B1", 1));
         address c0 = address(new ERC20Mock("C0", "C0", 0));
         _mockRegistryFeed(b1, mockFeed);
         _mockRegistryFeed(c0, mockFeed2);
         _mockFeedFull(mockFeed, int256(9), 18);
         _mockFeedFull(mockFeed2, int256(1), 18);
-        // Borrowed scale (19) above collateral scale (18): the divide-after branch.
-        assertEq(OracleFacet(address(diamond)).calculateLTV(b1, 1, c0, 1), 9000);
-        // And the other way round — the multiply-before branch: 81 units of
-        // C0 (8.1e-17) against 100 units of B1 (9e-17) is 0.9 too.
+        assertEq(OracleFacet(address(diamond)).calculateLTV(b1, 1, c0, 1), 10000);
+        // A collateral leg rounds DOWN: 81 units of C0 (8.1e-17) against 100
+        // units of B1 (9e-17, exact at the 1e18 scale) is 0.9 — 9000 bps.
         assertEq(OracleFacet(address(diamond)).calculateLTV(c0, 81, b1, 100), 9000);
     }
 
@@ -393,11 +393,10 @@ contract OracleFacetTest is Test {
         assertEq(OracleFacet(address(diamond)).calculateLTV(b36, 2e74, c0, 1), 2e42);
     }
 
-    /// #2418 r3 — the widest gap the borrowed-larger branch represents (77):
-    /// a 36-decimal borrowed token (the #2419 cap) with a 41-decimal feed
-    /// answering 1, against a 0-decimal collateral on a 0-decimal feed
-    /// answering 1 — the same arithmetic as the reviewer's original 77-decimal
-    /// token: 2e73 base units against 1 is 2 bps.
+    /// #2418 r3 / #2419 — a leg at a 77-decimal scale (a 36-decimal token, the
+    /// #2419 cap, on a 41-decimal feed answering 1) against a 0-decimal
+    /// collateral on a 0-decimal feed answering 1: 2e73 base units against 1
+    /// is 2 bps.
     function testCalculateLTVWidestBorrowedGapIsExact() public {
         address b36 = address(new ERC20Mock("B36", "B36", 36));
         address c0 = address(new ERC20Mock("C0", "C0", 0));
@@ -408,20 +407,19 @@ contract OracleFacetTest is Test {
         assertEq(OracleFacet(address(diamond)).calculateLTV(b36, 2e73, c0, 1), 2);
     }
 
-    /// #2418 r3 — a gap beyond what a branch represents exactly is refused BY
-    /// NAME, never by an arithmetic panic: a collateral scale of 74 (LTV_SCALE ·
-    /// 10**74 would not fit), reached since #2419 by a 36-decimal token on a
-    /// 38-decimal feed. A 74-decimal TOKEN is refused before that, as
-    /// unreadable: #2419 caps token decimals at 36.
-    function testCalculateLTVRefusesAnUnsupportedScaleGap() public {
+    /// #2418 r3 / #2419 — a wide gap between the legs' decimal scales is
+    /// valued, not refused: each leg is reduced to the 1e18 scale on its own,
+    /// so a collateral scale of 74 (a 36-decimal token on a 38-decimal feed)
+    /// against a scale of 0 is an ordinary ratio. A 74-decimal TOKEN is
+    /// refused, as unreadable: #2419 caps token decimals at 36.
+    function testCalculateLTVValuesAWideScaleGap() public {
         address b0 = address(new ERC20Mock("B0", "B0", 0));
         address c36 = address(new ERC20Mock("C36", "C36", 36));
         _mockRegistryFeed(b0, mockFeed);
         _mockRegistryFeed(c36, mockFeed2);
         _mockFeedFull(mockFeed, int256(1), 0);
         _mockFeedFull(mockFeed2, int256(1), 38);
-        vm.expectRevert(abi.encodeWithSelector(OracleFacet.DecimalScaleUnsupported.selector, 74));
-        OracleFacet(address(diamond)).calculateLTV(b0, 1, c36, 1e74);
+        assertEq(OracleFacet(address(diamond)).calculateLTV(b0, 1, c36, 1e74), 10000);
 
         address c74 = address(new ERC20Mock("C74", "C74", 74));
         _mockRegistryFeed(c74, mockFeed2);
@@ -430,43 +428,33 @@ contract OracleFacetTest is Test {
         OracleFacet(address(diamond)).calculateLTV(b0, 1, c74, 1e74);
     }
 
-    /// #2418 r4 — the reviewer's case: a 1-decimal gap with a maximal borrow
-    /// returns the representable result instead of overflowing the
-    /// intermediate quotient. max units of B1 against 1000 of C0, unit prices:
-    /// max · 1e4 / (10 · 1000) == max.
-    function testCalculateLTVMaximalBorrowSmallGap() public {
-        address b1 = address(new ERC20Mock("B1", "B1", 1));
-        address c0 = address(new ERC20Mock("C0", "C0", 0));
-        _mockRegistryFeed(b1, mockFeed);
-        _mockRegistryFeed(c0, mockFeed2);
-        _mockFeedFull(mockFeed, int256(1), 0);
-        _mockFeedFull(mockFeed2, int256(1), 0);
-        assertEq(OracleFacet(address(diamond)).calculateLTV(b1, type(uint256).max, c0, 1000), type(uint256).max);
+    /// #2419 — no intermediate product overflows while both values fit: equal
+    /// 18-decimal legs of 1e70 base units at a 1e8 price (8-decimal feed),
+    /// whose raw amount × price products exceed 256 bits, are 10000 bps.
+    function testCalculateLTVHugeLegsDoNotOverflow() public {
+        _mockRegistryFeed(mockAsset, mockFeed);
+        _mockRegistryFeed(mockAsset2, mockFeed2);
+        _mockFeedFull(mockFeed, int256(1e8), 8);
+        _mockFeedFull(mockFeed2, int256(1e8), 8);
+        assertEq(OracleFacet(address(diamond)).calculateLTV(mockAsset, 1e70, mockAsset2, 1e70), 10000);
+        // The other order of magnitude on each side still resolves.
+        assertEq(OracleFacet(address(diamond)).calculateLTV(mockAsset, 1e70, mockAsset2, 2e70), 5000);
     }
 
-    /// #2418 r4 — when 10**gap · collateral does NOT fit, both orderings stay
-    /// exact and never overflow: the larger divisor goes inside mulDiv.
-    function testCalculateLTVOverflowingDenominatorBothOrders() public {
-        address c0 = address(new ERC20Mock("C0", "C0", 0));
-        _mockRegistryFeed(c0, mockFeed2);
-        _mockFeedFull(mockFeed2, int256(1), 0);
-        _mockFeedFull(mockFeed, int256(1), 0);
-        // 10**gap larger: a borrowed scale of 77 (a 36-decimal token, the
-        // #2419 cap, on a 41-decimal feed answering 1), max units against
-        // 1000. floor(max · 1e4 / 1e80) == 11.
-        address b36 = address(new ERC20Mock("B36", "B36", 36));
-        _mockRegistryFeed(b36, mockFeed);
-        _mockFeedFull(mockFeed, int256(1), 41);
-        assertEq(OracleFacet(address(diamond)).calculateLTV(b36, type(uint256).max, c0, 1000), 11);
-        _mockFeedFull(mockFeed, int256(1), 0);
-        // Collateral larger: 1-decimal borrowed, max against max:
-        // max · 1e4 / (10 · max) == 1000.
+    /// #2419 — the stated limit: a leg whose value does not fit in 256 bits
+    /// at the 1e18 scale (here the maximal amount of a 1-decimal token at a
+    /// price of 1) reverts, on either side, as the loan-level path does.
+    function testCalculateLTVLegValueBeyond256BitsReverts() public {
         address b1 = address(new ERC20Mock("B1", "B1", 1));
+        address c0 = address(new ERC20Mock("C0", "C0", 0));
         _mockRegistryFeed(b1, mockFeed);
-        assertEq(
-            OracleFacet(address(diamond)).calculateLTV(b1, type(uint256).max, c0, type(uint256).max),
-            1000
-        );
+        _mockRegistryFeed(c0, mockFeed2);
+        _mockFeedFull(mockFeed, int256(1), 0);
+        _mockFeedFull(mockFeed2, int256(1), 0);
+        vm.expectRevert(stdError.arithmeticError);
+        OracleFacet(address(diamond)).calculateLTV(b1, type(uint256).max, c0, 1000);
+        vm.expectRevert(stdError.arithmeticError);
+        OracleFacet(address(diamond)).calculateLTV(c0, 1000, b1, type(uint256).max);
     }
 
     /// #2418 r4 — a price that resolves to zero (a composed price can floor to

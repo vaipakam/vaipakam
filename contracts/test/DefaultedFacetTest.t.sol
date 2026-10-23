@@ -2077,6 +2077,44 @@ contract DefaultedFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @dev #2419 — a loan illiquid on either leg at origination defaults in
+    ///      kind on its consent without consulting the live market check, so
+    ///      a distrusted collateral price (the check would refuse it, #666)
+    ///      cannot hold the default up.
+    function testTriggerDefaultIlliquidAtOriginationSkipsTheLiveCheck() public {
+        uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0
+        );
+        {
+            LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+            l.principalLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
+            l.riskAndTermsConsentFromBoth = true;
+            TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        }
+        vm.warp(block.timestamp + 33 days + 3);
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.checkLiquidityOnActiveNetwork.selector, mockCollateralERC20),
+            abi.encodeWithSelector(OracleFacet.OraclePriceDivergence.selector)
+        );
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.checkLiquidityOnActiveNetwork.selector, mockCollateralERC20),
+            0
+        );
+
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
+        (address asset, uint256 amount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        assertEq(asset, mockCollateralERC20, "lender claims the collateral in kind");
+        assertEq(amount, 2000 ether);
+        vm.clearMockedCalls();
+    }
+
     /// @dev Tests triggerDefault liquid path with successful swap where borrower has surplus.
     function testTriggerDefaultLiquidWithBorrowerSurplus() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,

@@ -81,6 +81,9 @@ contract RedeployFacets is Script {
     /// @notice #902 - the target Diamond predates the per-rental renter rows;
     ///         see {_requirePerRentalRenterRows}.
     error PredatesPerRentalRenterRows(address diamond);
+    /// @notice #2419 - the target Diamond predates the 1e18 numeraire value
+    ///         rule; see {_requireNumeraireValueRule}.
+    error PredatesNumeraireValueRule(address diamond);
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -128,6 +131,9 @@ contract RedeployFacets is Script {
         // #902 - and one from before the per-rental renter rows; see
         // {_requirePerRentalRenterRows}.
         _requirePerRentalRenterRows(diamond);
+        // #2419 - and one from before the 1e18 numeraire value rule; see
+        // {_requireNumeraireValueRule}.
+        _requireNumeraireValueRule(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -244,7 +250,8 @@ contract RedeployFacets is Script {
         // RiskPreviewFacet (LibRiskMath) and every KYC comparison (Defaulted,
         // RiskSplitLiquidation, and Loan, Preclose and EarlyWithdrawalDirect
         // through LibCompliance) value through it by self-call, so it rides
-        // the same cut. A selector the target Diamond does not route yet
+        // the same cut. The target already routes it
+        // ({_requireNumeraireValueRule}); a selector added to the host later
         // partitions to an Add below.
         NumeraireValueFacet numeraireValueFacet = new NumeraireValueFacet();
 
@@ -727,6 +734,28 @@ contract RedeployFacets is Script {
             IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.vaultSetRentalUser.selector)
                 == address(0)
         ) revert PredatesPerRentalRenterRows(diamond);
+    }
+
+    /// @dev #2419 - refuse a Diamond from before the 1e18 numeraire value
+    ///      rule. The rule is one behaviour spread over facets this curated
+    ///      set does not carry: OracleFacet (the liquidity probe that
+    ///      classifies a token with unreadable decimals Illiquid, which the
+    ///      strict KYC valuation relies on, and the pair loan-to-value
+    ///      preview), AdminFacet (the dust-floor setter and getter, now on the
+    ///      1e18 scale) and the offer facets (the create-time bounds). Run
+    ///      across the boundary it would leave the new valuation beside an old
+    ///      classifier and an old dust-floor setter, so the sizing getter and
+    ///      the risk code would disagree and a default could revert on a token
+    ///      the old probe still calls liquid. Crossing the boundary is a fresh
+    ///      deploy or `RefreshAllFacetsInPlace`, which carries every facet,
+    ///      never this refresh. The marker is the routing of
+    ///      `getLiquidNumeraireValue`, which #2419 introduced. Called before
+    ///      the broadcast starts, so a refused run sends nothing.
+    function _requireNumeraireValueRule(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(NumeraireValueFacet.getLiquidNumeraireValue.selector)
+                == address(0)
+        ) revert PredatesNumeraireValueRule(diamond);
     }
 
     function _replace(address facet, bytes4[] memory selectors)

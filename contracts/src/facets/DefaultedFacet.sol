@@ -334,10 +334,14 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             );
             unpricedPair = !pairPriced;
         }
-        // Not read for an unpriced pair: that route needs no market check.
-        LibVaipakam.LiquidityStatus liquidity = unpricedPair
-            ? LibVaipakam.LiquidityStatus.Illiquid
-            : OracleFacet(address(this)).checkLiquidityOnActiveNetwork(loan.collateralAsset);
+        // The live market check is read only where it can change the route:
+        // a loan liquid at origination whose pair is priced. An unpriced pair
+        // needs no market check, and a loan that began illiquid on either leg
+        // defaults in kind whatever the check would say, so neither consults
+        // the classifier (which refuses a distrusted collateral price, #666).
+        LibVaipakam.LiquidityStatus liquidity = (liquidLoan && !unpricedPair)
+            ? OracleFacet(address(this)).checkLiquidityOnActiveNetwork(loan.collateralAsset)
+            : LibVaipakam.LiquidityStatus.Illiquid;
 
         // Terminal NFT status for this default — README §7: "Loan Defaulted" or
         // "Loan Liquidated". Each branch below sets the appropriate label.
@@ -389,19 +393,19 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // A DISTRUSTED price reverts the whole default instead (#666:
             // refuse and retry once the feeds agree), except where the other
             // leg has no usable price at all, where the unpriced route wins.
-            // `liquidLoan` / `unpricedPair` were settled above, before the
-            // live classifier ran.
+            // `liquidLoan` / `unpricedPair` were settled above, and with them
+            // `liquidity`: Liquid only for a priced loan liquid at origination
+            // whose collateral the live check still finds liquid, Illiquid for
+            // every other loan.
             bool isLtvCollapsed;
-            if (liquidLoan && !unpricedPair && liquidity == LibVaipakam.LiquidityStatus.Liquid) {
+            if (liquidity == LibVaipakam.LiquidityStatus.Liquid) {
                 isLtvCollapsed = RiskFacet(address(this)).calculateLTV(loanId)
                     > LibVaipakam.cfgVolatilityLtvThresholdBps();
             }
 
             if (
                 unpricedPair ||
-                (liquidLoan &&
-                    liquidity == LibVaipakam.LiquidityStatus.Liquid &&
-                    !isLtvCollapsed)
+                (liquidity == LibVaipakam.LiquidityStatus.Liquid && !isLtvCollapsed)
             ) {
                 // #1005 (S9) — a liquid time-based default must attempt at least
                 // one enabled swap route: `LibSwap.swapWithFailover` (below)
@@ -644,7 +648,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             } else if (
                 ((liquidity == LibVaipakam.LiquidityStatus.Liquid &&
                     isLtvCollapsed) ||
-                    ((liquidity == LibVaipakam.LiquidityStatus.Illiquid || !liquidLoan) &&
+                    (liquidity == LibVaipakam.LiquidityStatus.Illiquid &&
                         loan.riskAndTermsConsentFromBoth))
             ) {
                 // Illiquid or value collapsed: Move collateral from borrower's vault to lender's vault

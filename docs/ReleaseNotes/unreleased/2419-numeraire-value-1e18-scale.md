@@ -16,7 +16,8 @@ check uses: a health-factor bound is exactly the tightest value that check
 accepts, and a loan-to-value bound holds the unrounded ratio to the cap, so it
 is never looser than the check and at most one basis point stricter. A small
 loan's risk figures are therefore exact to a billionth of a billionth of a
-unit, and the binding check and the pair-level preview agree. Offers so small
+unit, and the pair-level loan-to-value preview reports the binding check's own
+figure, computed by the same rule, rather than an approximation of it. Offers so small
 that they fell below one numeraire unit now meet the same collateral bounds as
 any other offer.
 
@@ -27,10 +28,13 @@ given value, and the value a KYC comparison uses (zero for an asset that is
 not liquid). It reads the price through the oracle, so staleness, sequencer
 and quorum refusals apply unchanged. A price of zero is refused rather than
 used, and a token whose decimal count cannot be read is refused by name and is
-not classified as liquid. The new facet is carried by the full in-place
-refresh and by both curated refresh scripts; a facet that values through it,
+not classified as liquid. A facet that values through the new facet,
 refreshed onto a Diamond without it, fails with a clear "function does not
-exist" revert rather than misreading a value.
+exist" revert rather than misreading a value. The change spans more facets
+than either curated refresh script carries (the oracle's liquidity check, the
+admin facet's dust floor, the offer bounds), so a Diamond reaches it only by a
+fresh deploy or the full in-place refresh; both curated scripts refuse a
+Diamond that has not crossed it, by name, before sending anything.
 
 A time-based default now takes its route first from what the loan was when it
 began. A loan whose two legs were both liquid when it began, and whose pair
@@ -42,16 +46,19 @@ curable until claimed. A missing collateral price no longer leaves such a loan
 to the illiquid route, where a loan without both parties' illiquid consent
 could not default at all. A loan that began illiquid on either leg keeps its
 consented in-kind transfer, even when its collateral has since become liquid,
-instead of failing in the risk calculation. A token whose decimal count cannot be
+instead of failing in the risk calculation; its default does not consult the
+live market check at all, so a price the oracle's sources disagree on cannot
+hold it up. A token whose decimal count cannot be
 read counts as having no usable price there, so such a loan takes the same
 unpriced fallback. A price the
 oracle's sources disagree on still refuses the default until they agree,
 except where the other leg has no price at all, where the missing-price rule
 wins as before.
 
-Health factor and loan-to-value readings are computed at full precision, from
-one shared health-factor rule, so a very large loan never fails on an
-intermediate figure when the reading itself can be stated.
+Health factor and loan-to-value readings, the pair-level preview included,
+are computed at full precision, from one shared rule, so a very large loan
+never fails on an intermediate figure when each leg's value and the reading
+itself can be stated.
 
 An asset whose decimal count cannot be read is now classified illiquid before
 any other check, including the wrapped-ether shortcut, so no part of the
@@ -64,10 +71,7 @@ sit between one and one hundred thousand numeraire units, and the setter
 refuses a value written on the old whole-unit scale by name. A floor already
 stored on the old scale is below that minimum, so after the refresh it reads
 as no floor: dust handling is off, and the sizing getter reports a floor of
-zero. Set it again on the new scale if dust handling should stay on; the
-setter lives in the admin facet, so a curated refresh that leaves the admin
-facet on older code cannot set a floor on the new scale until that facet is
-refreshed too. Changing the active numeraire now also resets the floor to
+zero. Set it again on the new scale if dust handling should stay on. Changing the active numeraire now also resets the floor to
 zero (dust handling off) until governance sets one in the new numeraire. Dust
 handling ships off by default, so a deployment that never set a floor needs
 nothing.

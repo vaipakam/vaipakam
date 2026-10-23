@@ -68,6 +68,9 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #902 - the target Diamond predates the per-rental renter rows;
     ///         see {_requirePerRentalRenterRows}.
     error PredatesPerRentalRenterRows(address diamond);
+    /// @notice #2419 - the target Diamond predates the 1e18 numeraire value
+    ///         rule; see {_requireNumeraireValueRule}.
+    error PredatesNumeraireValueRule(address diamond);
 
     function run() external override {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -99,6 +102,9 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #902 - refuse a Diamond from before the per-rental renter rows; see
         // {_requirePerRentalRenterRows}.
         _requirePerRentalRenterRows(diamond);
+        // #2419 - and one from before the 1e18 numeraire value rule; see
+        // {_requireNumeraireValueRule}.
+        _requireNumeraireValueRule(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -140,10 +146,10 @@ contract ReplaceStaleFacets is DeployDiamond {
         TreasuryFeeFacet treasuryFeeFacet = new TreasuryFeeFacet();
         // #2419 — the valuation host. The refreshed offer facets and
         // RiskPreviewFacet value through it by self-call (LibRiskMath), and
-        // OfferAcceptFacet values its KYC comparison through it; a Diamond
-        // that does not route these selectors yet would revert every bounded
-        // offer, preview and accept `FunctionDoesNotExist` if they were
-        // refreshed without it. Deployed alongside; partitioned below.
+        // OfferAcceptFacet values its KYC comparison through it. The target
+        // already routes it ({_requireNumeraireValueRule}); deployed
+        // alongside so the host matches the refreshed callers, and
+        // partitioned below.
         NumeraireValueFacet numeraireValueFacet = new NumeraireValueFacet();
 
         console.log("OfferFacet:          ", address(offerCreateFacet));
@@ -401,6 +407,24 @@ contract ReplaceStaleFacets is DeployDiamond {
             IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.vaultSetRentalUser.selector)
                 == address(0)
         ) revert PredatesPerRentalRenterRows(diamond);
+    }
+
+    /// @dev #2419 - refuse a Diamond from before the 1e18 numeraire value
+    ///      rule. This set carries the offer facets (the create-time bounds,
+    ///      now on the 1e18 rule) and OfferAcceptFacet's KYC comparison, but
+    ///      not RiskFacet (the binding LTV / health-factor values), the
+    ///      default path or AdminFacet (the dust floor, now 1e18-scaled), so
+    ///      run across the boundary the offer bounds would be computed on a
+    ///      different scale from the gate that enforces them. Crossing the
+    ///      boundary is a fresh deploy or `RefreshAllFacetsInPlace`, never
+    ///      this refresh. The marker is the routing of
+    ///      `getLiquidNumeraireValue`, which #2419 introduced. Called before
+    ///      the broadcast starts, so a refused run sends nothing.
+    function _requireNumeraireValueRule(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(NumeraireValueFacet.getLiquidNumeraireValue.selector)
+                == address(0)
+        ) revert PredatesNumeraireValueRule(diamond);
     }
 
     /// @dev RL-1 (Codex #1302 P2) — split `selectors` into the subset the
