@@ -4,30 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-
-/// @dev Minimal Aave V3 Pool interface — only the supply + withdraw
-///      methods Phase 0 of the productive treasury reserve needs.
-interface IAaveV3Pool {
-    function supply(
-        address asset,
-        uint256 amount,
-        address onBehalfOf,
-        uint16 referralCode
-    ) external;
-
-    function withdraw(
-        address asset,
-        uint256 amount,
-        address to
-    ) external returns (uint256);
-}
-
-/// @dev Minimal Lido staking interface — the canonical
-///      `submit(referral) payable returns (uint256)` shape returns
-///      stETH shares (1:1 with stETH wei at submission time).
-interface ILidoStaking {
-    function submit(address _referral) external payable returns (uint256);
-}
+import {IAaveV3Pool, IPoolAddressesProvider} from "../interfaces/IAaveV3Pool.sol";
 
 /**
  * @title LibTreasuryYield — T-087 Sub 3 add-on #473
@@ -76,6 +53,17 @@ library LibTreasuryYield {
     /// @notice The requested withdraw / unstake exceeds the
     ///         currently-deployed amount.
     error InsufficientDeployedBalance(uint256 requested, uint256 deployed);
+    /// @notice The token's configured venue is a value this library has
+    ///         no routing for (#964). Routing is exhaustive: a venue added
+    ///         to the setter without a branch here refuses instead of
+    ///         moving the accounting while the tokens stay put.
+    error UnsupportedVenue(address token, uint8 venue);
+    /// @notice The venue took a different amount from the Diamond than
+    ///         was supplied (#965). Measured, not assumed.
+    error VenueSupplyMismatch(address token, uint256 supplied, uint256 taken);
+    /// @notice The venue reported withdrawing a different amount than was
+    ///         requested (#965).
+    error VenueWithdrawMismatch(address token, uint256 requested, uint256 reported);
 
     // ─── Events ──────────────────────────────────────────────────────
 
@@ -84,6 +72,18 @@ library LibTreasuryYield {
         address indexed token,
         uint8 venue,
         uint256 amount
+    );
+    /// @notice Principal returned from a venue. `received` is what the
+    ///         Diamond measurably gained and is what the treasury balance
+    ///         is credited with; it is below `amount` only for a token that
+    ///         charges on transfer, and the difference is stated here
+    ///         rather than booked as if it had arrived (#965).
+    /// @custom:event-category state-change/treasury-yield
+    event TreasuryYieldWithdrawn(
+        address indexed token,
+        uint8 venue,
+        uint256 amount,
+        uint256 received
     );
     /// @custom:event-category state-change/treasury-yield
     event TreasuryYieldHarvested(
@@ -172,20 +172,9 @@ library LibTreasuryYield {
         }
 
         // ── Venue routing ───────────────────────────────────────────
-        if (venue == LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3) {
-            address pool = s.cfgAaveV3Pool;
-            if (pool == address(0)) revert VenueAddressNotSet(venue);
-            IERC20(token).forceApprove(pool, amount);
-            IAaveV3Pool(pool).supply(token, amount, address(this), 0);
-        } else if (venue == LibVaipakam.TREASURY_YIELD_VENUE_LIDO_STETH) {
-            // Codex Sub 3 add-on #473 round-1 P1 — the Lido path
-            // requires WETH unwrap + native ETH `submit{value: ...}`
-            // plumbing the diamond doesn't yet have. Reverting before
-            // the accounting moves prevents the silently-broken
-            // failure mode where treasuryBalances debits but no ETH
-            // is staked. Phase 1 wires the unwrap path.
-            revert LidoVenueNotYetSupported();
-        }
+        // Exhaustive (#964): `_supply` reverts for any venue it has no
+        // branch for, which unwinds the accounting above with it.
+        _supply(s, venue, token, amount);
 
         emit TreasuryYieldDeployed(token, venue, amount);
     }
@@ -218,7 +207,6 @@ library LibTreasuryYield {
         }
         uint256 newDeployed = deployed - amount;
         s.treasuryDeployedExternal[token] = newDeployed;
-        s.treasuryBalances[token] += amount;
         // Codex round-2 P1 #1 — decrement counter if Aave-side
         // principal drops to 0 for this token.
         if (
@@ -228,15 +216,90 @@ library LibTreasuryYield {
             s.aaveDeployedTokenCount -= 1;
         }
 
+        // Credit what ARRIVED (#965), never the request: a token that
+        // charges on transfer would otherwise book a treasury balance
+        // with nothing behind it, which a later claim pays out of other
+        // buckets the Diamond holds. The deployed principal still drops
+        // by the full `amount` — that is what left the venue.
+        uint256 received = _withdraw(s, venue, token, amount);
+        s.treasuryBalances[token] += received;
+        emit TreasuryYieldWithdrawn(token, venue, amount, received);
+    }
+
+    // ─── Venue routing ───────────────────────────────────────────────
+
+    /// @dev Moves `amount` of `token` into `venue`, measuring that the
+    ///      venue took exactly `amount` from the Diamond. Every venue
+    ///      without a supply path reverts — none falls through (#964).
+    function _supply(LibVaipakam.Storage storage s, uint8 venue, address token, uint256 amount) private {
         if (venue == LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3) {
             address pool = s.cfgAaveV3Pool;
             if (pool == address(0)) revert VenueAddressNotSet(venue);
-            IAaveV3Pool(pool).withdraw(token, amount, address(this));
-        } else if (venue == LibVaipakam.TREASURY_YIELD_VENUE_LIDO_STETH) {
-            // Phase 0 — Lido withdrawal queue not auto-managed.
-            revert WrongVenue(
-                token, venue, LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3
-            );
+            uint256 before = IERC20(token).balanceOf(address(this));
+            IERC20(token).forceApprove(pool, amount);
+            IAaveV3Pool(pool).supply(token, amount, address(this), 0);
+            uint256 afterBal = IERC20(token).balanceOf(address(this));
+            uint256 taken = before > afterBal ? before - afterBal : 0;
+            if (taken != amount) revert VenueSupplyMismatch(token, amount, taken);
+            return;
         }
+        if (venue == LibVaipakam.TREASURY_YIELD_VENUE_LIDO_STETH) revert LidoVenueNotYetSupported();
+        if (venue == LibVaipakam.TREASURY_YIELD_VENUE_NONE) revert VenueNotConfigured(token);
+        revert UnsupportedVenue(token, venue);
+    }
+
+    /// @dev Pulls `amount` of `token` back from `venue` and returns what the
+    ///      Diamond measurably gained, capped at `amount` so nothing the
+    ///      venue did not return is ever credited. Every venue without a
+    ///      withdraw path reverts (#964).
+    function _withdraw(LibVaipakam.Storage storage s, uint8 venue, address token, uint256 amount)
+        private
+        returns (uint256 received)
+    {
+        if (venue == LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3) {
+            address pool = s.cfgAaveV3Pool;
+            if (pool == address(0)) revert VenueAddressNotSet(venue);
+            uint256 before = IERC20(token).balanceOf(address(this));
+            uint256 reported = IAaveV3Pool(pool).withdraw(token, amount, address(this));
+            if (reported != amount) revert VenueWithdrawMismatch(token, amount, reported);
+            uint256 afterBal = IERC20(token).balanceOf(address(this));
+            received = afterBal > before ? afterBal - before : 0;
+            if (received > amount) received = amount;
+            return received;
+        }
+        if (venue == LibVaipakam.TREASURY_YIELD_VENUE_LIDO_STETH) {
+            // Phase 0 — Lido withdrawal queue not auto-managed.
+            revert WrongVenue(token, venue, LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3);
+        }
+        if (venue == LibVaipakam.TREASURY_YIELD_VENUE_NONE) revert VenueNotConfigured(token);
+        revert UnsupportedVenue(token, venue);
+    }
+
+    /// @notice Whether `pool` is the canonical Pool of its own Aave market:
+    ///         its `ADDRESSES_PROVIDER()` is a contract whose `getPool()`
+    ///         names `pool` back (#965).
+    /// @dev    This is a fat-finger gate, not proof of authenticity: a
+    ///         mistyped address, or any contract that merely has code,
+    ///         fails it, but a look-alike deployed together with its own
+    ///         provider passes. The defence against a deliberate swap is
+    ///         that the setter is ADMIN_ROLE, which the governance
+    ///         Timelock holds after handover, so the change is public for
+    ///         the whole review window before it can take effect.
+    function isCanonicalAavePool(address pool) internal view returns (bool) {
+        (bool ok, bytes memory ret) = pool.staticcall(abi.encodeCall(IAaveV3Pool.ADDRESSES_PROVIDER, ()));
+        address provider = _decodeAddress(ok, ret);
+        if (provider == address(0) || provider.code.length == 0) return false;
+        (ok, ret) = provider.staticcall(abi.encodeCall(IPoolAddressesProvider.getPool, ()));
+        return _decodeAddress(ok, ret) == pool;
+    }
+
+    /// @dev One ABI-encoded address from a low-level call, or zero when the
+    ///      call failed or returned anything else. Never reverts: a word
+    ///      with high bits set is not an address and reads as "no answer".
+    function _decodeAddress(bool ok, bytes memory ret) private pure returns (address) {
+        if (!ok || ret.length != 32) return address(0);
+        uint256 word = abi.decode(ret, (uint256));
+        if (word > type(uint160).max) return address(0);
+        return address(uint160(word));
     }
 }

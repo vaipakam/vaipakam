@@ -1558,6 +1558,7 @@ DELETE FROM recycle_prelaunch; \
 DELETE FROM recycle_chain_reported; \
 DELETE FROM recycle_backing_snapshot; \
 DELETE FROM prenotify_scan_cursor; \
+DELETE FROM push_rail_status; \
 DELETE FROM indexer_deployment; \
 DELETE FROM indexer_cursor"
 ```
@@ -1568,6 +1569,12 @@ Diamond and — with the row gone — resets nothing, which is right: the tables
 above are already empty. Leaving it would be wrong only in the other
 direction (a row naming a Diamond the bundle no longer does would trigger a
 reset of tables the replay is already filling).
+
+`push_rail_status` (#2667) is not chain data either: it is the keeper's
+Push rail readiness, which the keeper republishes on every watcher run.
+Clearing it costs at most a minute of the agent's `GET /push/status`
+answering for its own rail alone. Keeping it would let a restored row vouch for a
+configuration the keeper may no longer have.
 
 `prenotify_scan_cursor` (#2219) is a watermark like `indexer_cursor`,
 not data: it records the DEADLINE at which the pre-notify scan resumes.

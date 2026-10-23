@@ -32,8 +32,8 @@ const MIGRATION_0067 = readFileSync(
   new URL('../migrations/0067_protocol_config_label_binding.sql', import.meta.url),
   'utf8',
 );
-const MIGRATION_0069 = readFileSync(
-  new URL('../migrations/0069_protocol_config_knobs.sql', import.meta.url),
+const MIGRATION_0070 = readFileSync(
+  new URL('../migrations/0070_protocol_config_knobs.sql', import.meta.url),
   'utf8',
 );
 
@@ -52,7 +52,7 @@ function refreshHarness(opts?: {
    *  that read fails and the row stores no settings. */
   multicall?: (args: { contracts: readonly { functionName: string }[]; blockNumber?: bigint }) => Promise<unknown>;
 }) {
-  const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067, MIGRATION_0069]);
+  const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067, MIGRATION_0070]);
   const reads: string[] = [];
   const client = {
     readContract: async (args: { functionName: string }) => {
@@ -660,7 +660,7 @@ describe('configSnapshot', () => {
       true, true, true, '100', '1800', '365',
     ];
     async function serve(knobs: string | null, bundleNames: readonly string[] | null = BUNDLE_NAMES) {
-      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067, MIGRATION_0069]);
+      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067, MIGRATION_0070]);
       db.prepare(
         `INSERT INTO protocol_config
            (chain_id, bundle_json, master_flags_json, source_block, updated_at,

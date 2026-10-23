@@ -76,7 +76,7 @@ import {
   undeliveredAlertFooter,
   undeliveredAlertHeader,
   undeliveredAlertKey,
-  undeliveredAlertPattern,
+  undeliveredAlertPrefix,
   undeliveredReason,
   type LateOutstanding,
   type RemitPath,
@@ -845,7 +845,7 @@ async function deliverUndelivered(
     if (!r || Date.now() >= deadline) continue;
     try {
       // eslint-disable-next-line no-await-in-loop
-      const open = await listOpsAlertKeys(env.KEEPER_DB, undeliveredAlertPattern(r.path, baseChainId, diamond));
+      const open = await listOpsAlertKeys(env.KEEPER_DB, undeliveredAlertPrefix(r.path, baseChainId, diamond));
       for (const key of open) {
         const k = parseUndeliveredAlertKey(key);
         if (!k || !r.holding.has(k.remitId) || r.holding.get(k.remitId) === k.reason) continue;
@@ -874,7 +874,7 @@ async function clearSettledPendingAlerts(
   terminal: ReadonlySet<number>,
 ): Promise<void> {
   try {
-    const open = await listOpsAlertKeys(env.KEEPER_DB, undeliveredAlertPattern('pending', baseChainId, diamond));
+    const open = await listOpsAlertKeys(env.KEEPER_DB, undeliveredAlertPrefix('pending', baseChainId, diamond));
     for (const key of open) {
       const k = parseUndeliveredAlertKey(key);
       if (!k || (k.remitId >= frontier && !terminal.has(k.remitId))) continue;
@@ -1122,7 +1122,7 @@ async function resolveFinishedLateAlerts(
   if (finished.length === 0) return;
   try {
     const done = new Set(finished);
-    for (const key of await listOpsAlertKeys(env.KEEPER_DB, undeliveredAlertPattern('late', baseChainId, diamond))) {
+    for (const key of await listOpsAlertKeys(env.KEEPER_DB, undeliveredAlertPrefix('late', baseChainId, diamond))) {
       const k = parseUndeliveredAlertKey(key);
       // eslint-disable-next-line no-await-in-loop
       if (k && done.has(k.remitId)) await resolveOpsAlert(env, key);

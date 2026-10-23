@@ -36,7 +36,7 @@ vi.mock('@pushprotocol/restapi', () => ({
   CONSTANTS: { ENV: { PROD: 'prod' } },
 }));
 
-const { sendPush, pushRailStatus } = await import('./index');
+const { sendPush, pushRailStatus, publishedRailRow, readPublishedRail } = await import('./index');
 
 /** A throwaway key, generated per run so none is ever written down. */
 const usableKey = Wallet.createRandom().privateKey;
@@ -271,5 +271,44 @@ describe('what the rail says about itself without sending (#2251)', () => {
   it('carries no part of the key', () => {
     const status = JSON.stringify(pushRailStatus({ channelPk: usableKey }));
     expect(status).not.toContain(usableKey.slice(2, 18));
+  });
+});
+
+describe('a published rail status round-trips, and nothing else reads back (#2667)', () => {
+  it('reads back exactly what a sender wrote', () => {
+    const channel = '0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b';
+    expect(readPublishedRail(publishedRailRow({ usable: true, channel, delegated: true }, 100))).toEqual({
+      status: { usable: true, channel },
+      observedAt: 100,
+    });
+    expect(readPublishedRail(publishedRailRow({ usable: false, reason: 'channel-malformed' }, 7))).toEqual({
+      status: { usable: false, reason: 'channel-malformed' },
+      observedAt: 7,
+    });
+  });
+
+  it('publishes no key and no delegation, only the status and its time', () => {
+    expect(Object.keys(publishedRailRow({ usable: true, channel: '0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b', delegated: true }, 1)).sort()).toEqual(
+      ['channel', 'observed_at', 'reason', 'usable'],
+    );
+  });
+
+  it('reads any other row as unknown', () => {
+    for (const row of [
+      null,
+      undefined,
+      { usable: 1, reason: null, channel: null, observed_at: 1 },
+      { usable: 1, reason: null, channel: '0x6f5847a0ca1f2cb1bbef944124ce5995988a1d6B', observed_at: 1 },
+      { usable: 0, reason: 'unheard-of', channel: null, observed_at: 1 },
+      { usable: 0, reason: 'signer-unset', channel: null, observed_at: 0 },
+      { usable: 3, reason: null, channel: null, observed_at: 1 },
+      // Contradictory rows: neither shape the writer emits (Codex #2682 r1).
+      { usable: 1, reason: 'signer-unset', channel: '0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b', observed_at: 1 },
+      { usable: 0, reason: 'signer-unset', channel: '0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b', observed_at: 1 },
+      // A channel the writer would have checksummed.
+      { usable: 1, reason: null, channel: '0x6f5847a0ca1f2cb1bbef944124ce5995988a1d6b', observed_at: 1 },
+    ]) {
+      expect(readPublishedRail(row)).toBeUndefined();
+    }
   });
 });

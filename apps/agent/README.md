@@ -78,7 +78,7 @@ pnpm --filter @vaipakam/agent exec tsc -p . --noEmit
 Worker `wrangler.jsonc:vars`:
 
 - `FRONTEND_ORIGIN`, `TG_BOT_USERNAME`, `DIAG_*` knobs.
-- `PUSH_CHANNEL_ADDRESS` (optional, #1456) — the Push channel the signer posts for. Unset, the channel is the signer's own address; set, `PUSH_CHANNEL_PK` signs as that channel's delegate. `GET /push/status` reports the channel the rail will use, and the app's subscribe link reads it from there.
+- `PUSH_CHANNEL_ADDRESS` (optional, #1456) — the Push channel the signer posts for. Unset, the channel is the signer's own address; set, `PUSH_CHANNEL_PK` signs as that channel's delegate. `GET /push/status` reports the channel the rail will use, and the app's subscribe link reads it from there. Since #2667 it also covers the keeper's rail, as the keeper last published it to the shared `push_rail_status` row: `scope: 'service'` while that row is under 15 minutes old (both rails must be able to send, on the same channel), `scope: 'agent'` otherwise.
 
 Worker secrets (via `wrangler secret put`):
 
@@ -98,7 +98,7 @@ No `KEEPER_PRIVATE_KEY` here — that's `apps/keeper` exclusively.
 The `DB` binding in `wrangler.jsonc` points at the **`vaipakam-warm`** D1 database (id `e5e927cf-56c3-42c7-9820-179a235cc84f`), the **staging** database the Cloudflare staging deploy uses — see [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](../../docs/DesignsAndPlans/CloudflareStagingDeployPlan.md) §3 for the staging-vs-primary split. The same db is **shared** with `apps/indexer` and `apps/keeper`.
 
 Agent writes: `user_thresholds`, `notify_state`, `telegram_links`, `loans`, `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `support_tickets` (#1040 phase 1 — `POST /support/ticket`).
-Agent reads-only: (none — every table the agent reads, it also writes.)
+Agent reads-only: `push_rail_status` (#2667 — the keeper's published Push rail readiness, read by `GET /push/status` and the `PUT /thresholds` opt-in check; the keeper writes it).
 
 **There is no `apps/agent/migrations/` directory by design.** The canonical schema for every table this Worker touches lives in [`apps/indexer/migrations/`](../indexer/migrations/) — the indexer owns the schema, the other two Workers share the database. Schema changes for tables only agent writes still land as a new `apps/indexer/migrations/NNNN_*.sql` file; applying it via `wrangler d1 migrations apply vaipakam-warm --remote` from inside `apps/indexer/` updates the live staging db for all three consumers.
 

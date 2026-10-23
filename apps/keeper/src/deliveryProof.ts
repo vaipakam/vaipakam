@@ -464,7 +464,7 @@ export async function raiseDeliveryAlerts(env: Env, chainId: number, m: Delivery
   const prefix = `delivery-revert:${chainId}:`;
   let open: Set<string>;
   try {
-    open = new Set(await listOpsAlertKeys(env.KEEPER_DB, `delivery-%:${chainId}:%`));
+    open = new Set(await listOpsAlertKeys(env.KEEPER_DB, 'delivery-', chainId));
   } catch (err) {
     // Nothing is cleared on an unread alert table, but this run's refusals are
     // still raised: the next run cannot measure them again.

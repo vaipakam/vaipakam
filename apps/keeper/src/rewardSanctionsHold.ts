@@ -1036,7 +1036,7 @@ export function landedOn(
 async function departedAlertOwners(env: Env, chainId: number, candidates: ReadonlySet<string>): Promise<string[]> {
   let keys: string[];
   try {
-    keys = await listOpsAlertKeys(env.KEEPER_DB, `sanctions-%:${chainId}:%`);
+    keys = await listOpsAlertKeys(env.KEEPER_DB, 'sanctions-', chainId);
   } catch {
     return [];
   }
@@ -1528,7 +1528,7 @@ export async function raiseAlerts(
   try {
     // Settled by the alert deadline like the digest's own D1 work (#2565 r1).
     open = new Set(
-      await settleBy(listOpsAlertKeys(env.KEEPER_DB, `sanctions-%:${chainId}:%`), alertDeadline, () => {
+      await settleBy(listOpsAlertKeys(env.KEEPER_DB, 'sanctions-', chainId), alertDeadline, () => {
         throw new Error('open-alert read still in flight at the alert deadline');
       }),
     );

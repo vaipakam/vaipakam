@@ -573,7 +573,7 @@ export async function handleConfigSnapshot(
     };
     // The route must tolerate the previous schema while a migration has not
     // reached the database yet: each step drops the columns the newest
-    // migration added (0069, then 0067), so a missing later column never
+    // migration added (0070, then 0067), so a missing later column never
     // costs what an earlier one already provides. Three STATIC statements,
     // so the SQL-vs-schema guard prepares every one of them against the
     // migrated schema rather than skipping a built string.

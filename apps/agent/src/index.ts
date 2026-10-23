@@ -94,8 +94,7 @@ import {
 } from '@vaipakam/lib/d1Maintenance';
 import { createSchemaGate, schemaDeclineNotice } from '@vaipakam/lib/d1SchemaGate';
 import { runPeriodicPreNotify } from './periodicPreNotify';
-import { decidePushOptIn, handlePushStatus, pushRailConfigOf } from './pushRail';
-import { pushRailStatus } from '@vaipakam/push';
+import { decidePushOptIn, handlePushStatus, servicePushStatus } from './pushRail';
 import { handle0xQuote, handle1inchQuote, handleQuoteReadiness } from './quoteProxy';
 import { handleOpenSeaListingPost } from './openseaProxy';
 import { handleIntentFusionPost } from './intentFusionPost';
@@ -353,10 +352,11 @@ export default {
     if (url.pathname === '/quote/readiness' && req.method === 'GET') {
       return handleQuoteReadiness(resolved, resolveAllowedOrigin(req, resolved));
     }
-    // #2251 — the Push rail's own status, read by the app before it offers
-    // the opt-in. Same shape and CORS handling as the readiness probe above.
+    // #2251 — whether Push can be sent, read by the app before it offers the
+    // opt-in; both senders' rails when the keeper's is known (#2667). Same
+    // shape and CORS handling as the readiness probe above.
     if (url.pathname === '/push/status' && req.method === 'GET') {
-      return handlePushStatus(resolved, resolveAllowedOrigin(req, resolved));
+      return await handlePushStatus(resolved, resolveAllowedOrigin(req, resolved));
     }
     if (url.pathname === '/quote/1inch' && req.method === 'POST') {
       return handle1inchQuote(req, resolved, resolveAllowedOrigin(req, resolved));
@@ -572,11 +572,13 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
       );
     }
   }
-  // #2251 — a NEW Push opt-in is accepted only where this deployment's rail
-  // can honour it; see `decidePushOptIn` for what is refused and what is kept.
+  // #2251 — a NEW Push opt-in is accepted only where Push can honour it: the
+  // same answer `GET /push/status` gives, so both senders' rails when the
+  // keeper's is known (#2667); see `decidePushOptIn` for what is refused and
+  // what is kept.
   const decision = await decidePushOptIn(
     parsed,
-    pushRailStatus(pushRailConfigOf(env)),
+    await servicePushStatus(env),
     () => hasStoredPushOptIn(env.DB, parsed.wallet, parsed.chain_id),
   );
   if ('refused' in decision) {

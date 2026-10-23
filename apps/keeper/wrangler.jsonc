@@ -166,6 +166,9 @@
   //   - `liquidity_confidence` (liquidity probe)
   //   - `keeper_commitment_reconciled` (reconciled-day rediscovery; the
   //                          indexer writes it, so it stays shared)
+  //   - `push_rail_status`  (WRITE, #2667 — this keeper's Push rail
+  //                          readiness, one row replaced on every watcher
+  //                          run; shared because the agent reads it)
   //
   // The keeper's OWN operational tables — `hf_band_state`,
   // `keeper_commitment_scan`, `keeper_commitment_day`,

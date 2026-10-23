@@ -13,6 +13,7 @@
 
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { chunkD1InList, maxD1InListWidth } from '@vaipakam/lib/d1Binds';
+import type { PublishedRailRow } from '@vaipakam/push';
 import type { KeeperD1 } from './env';
 import { assertGuardedWriteLanded, epochWriteGuard } from './epochFence';
 
@@ -334,6 +335,29 @@ export async function linkTelegram(
 export async function sweepExpiredLinks(db: D1Database): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   await db.prepare(`DELETE FROM telegram_links WHERE expires_at < ?`).bind(now).run();
+}
+
+// ─── #2667 — this keeper's Push rail readiness, for the agent to read ──
+
+/**
+ * Publish what this keeper's Push rail can do, so the agent's
+ * `GET /push/status` can answer for both senders. One row, `sender =
+ * 'keeper'`, replaced each time; the encoding is the shared rail's
+ * (`publishedRailRow`), so the agent reads back exactly what was written.
+ * Shared database, unfenced: the row describes this Worker's configuration,
+ * carries no chain_id, and no Diamond change resets it.
+ */
+export async function publishPushRailStatus(db: D1Database, row: PublishedRailRow): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO push_rail_status (sender, usable, reason, channel, observed_at)
+       VALUES ('keeper', ?1, ?2, ?3, ?4)
+       ON CONFLICT(sender) DO UPDATE SET
+         usable = excluded.usable, reason = excluded.reason,
+         channel = excluded.channel, observed_at = excluded.observed_at`,
+    )
+    .bind(row.usable, row.reason, row.channel, row.observed_at)
+    .run();
 }
 
 // ─── Depth-tiered LTV — liquidity-confidence relay state ──────────────
@@ -1370,14 +1394,31 @@ export async function recordOpsAlertsSent(db: KeeperD1, keys: readonly string[],
     .run();
 }
 
-/** The open ops-alert keys matching a SQL `LIKE` pattern (a pass's own key
- *  prefix), so a pass clears only the alerts that are actually open. */
-export async function listOpsAlertKeys(db: KeeperD1, likePattern: string): Promise<string[]> {
+/**
+ * The open ops-alert keys that begin with `prefix`, optionally on one chain,
+ * so a pass clears only the alerts that are actually open.
+ *
+ * The prefix is LITERAL and compared with `substr`, not a `LIKE` pattern
+ * (#2677). D1 refuses any LIKE or GLOB pattern over 50 bytes ("pattern too
+ * complex"), and a pattern built from a key carries whatever the key does: the
+ * undelivered-remittance prefix names a Diamond address and is about 76 bytes,
+ * so every lookup of those alerts failed on D1 while passing locally. A
+ * literal comparison has no length cap and no wildcard characters to escape.
+ *
+ * `chainId` selects keys whose SECOND `:` segment is that chain — the shape
+ * every per-chain family uses (`<family>-<kind>:<chainId>:…`) — and is
+ * applied here rather than in SQL, so the statement stays one literal
+ * comparison. Leave it out for a prefix that already names the chain.
+ */
+export async function listOpsAlertKeys(db: KeeperD1, prefix: string, chainId?: number): Promise<string[]> {
   const rows = await db
-    .prepare(`SELECT alert_key FROM keeper_ops_alert WHERE alert_key LIKE ?1`)
-    .bind(likePattern)
+    .prepare(`SELECT alert_key FROM keeper_ops_alert WHERE substr(alert_key, 1, length(?1)) = ?1`)
+    .bind(prefix)
     .all<{ alert_key: string }>();
-  return (rows.results ?? []).map((r) => r.alert_key);
+  const keys = (rows.results ?? []).map((r) => r.alert_key);
+  if (chainId === undefined) return keys;
+  const chain = String(chainId);
+  return keys.filter((key) => key.split(':')[1] === chain);
 }
 
 /** Forget `key` once its condition has cleared, so a recurrence alerts at once. */
