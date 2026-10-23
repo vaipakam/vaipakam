@@ -26,7 +26,8 @@ describe('terminalTopics', () => {
 describe('catchUpRange', () => {
   it('recognises only the book terminal-event set', () => {
     expect(catchUpRange(chunk(10, 20))).toEqual({ from: 10n, to: 20n });
-    expect(catchUpRange(chunk(10, 20, offerTerminalTopics().slice(1)))).toBeNull();
+    const [, ...missingOne] = offerTerminalTopics();
+    expect(catchUpRange(chunk(10, 20, missingOne))).toBeNull();
     expect(catchUpRange({ method: 'eth_getLogs', params: [{ topics: ['0xabc'] }] })).toBeNull();
     expect(catchUpRange(head)).toBeNull();
   });
