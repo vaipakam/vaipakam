@@ -260,7 +260,9 @@
 // drives, so there is no loan this drive could default to that stays
 // drivable: REFI_LOAN_ID is REQUIRED (an Active, illiquid-collateral,
 // both-parties-consented loan whose stored borrower is the `borrower`
-// role and whose lender is not the `lender` role). For the same reason it
+// role and whose lender is not the `lender` role).
+// `live-seed-illiquid-loan.mjs` originates exactly such a loan through
+// the deployed app and prints its REFI_LOAN_ID. For the same reason it
 // is listed in `MANUAL_ONLY_DRIVERS` (verdictContract.mjs): the batch
 // runner skips it, and says so, instead of running a drive that would
 // BLOCK on every batch after its loan closed. Loan 22 — the loan that
@@ -1477,6 +1479,16 @@ const pre = await precondition('reading the preconditions from chain', async () 
   const head = await pub.getBlockNumber();
   const block = await pub.getBlock({ blockNumber: head });
   const loan = await loanOf(LOAN_ID, head);
+  // A loan that is not Active is not a fixture, and its position NFTs may
+  // already be burned (a claimed loan's are), so the holder reads below would
+  // revert and report an `ownerOf` failure instead of the real reason. Say
+  // the real reason first.
+  if (loan.status !== LOAN_STATUS.ACTIVE) {
+    throw new Error(
+      `loan ${LOAN_ID} is not Active (status ${loan.status}) — not a refinance fixture. ` +
+        'Seed one with live-seed-illiquid-loan.mjs and pass the REFI_LOAN_ID it prints.',
+    );
+  }
   // Who holds each position NOW (#2422 r3 P2) — read first, because the old
   // lender position's holder is one of the participants the snapshot screens.
   const [borrowerPositionHolder, lenderPositionHolder] = await Promise.all([

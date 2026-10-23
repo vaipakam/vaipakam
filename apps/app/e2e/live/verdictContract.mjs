@@ -188,6 +188,17 @@ export const FOUR_VERDICT_DRIVERS = new Map([
       'was expected and showed nothing that says why, even when the nonce ' +
       'proves nothing was sent (#2505 r48)',
   ],
+  [
+    'live-seed-illiquid-loan.mjs',
+    // Exits 2 only BEFORE its first write (build mismatch, chain facts that
+    // would not yield a refinance fixture, short balances, a covering Permit2
+    // approval the plan does not cover, Terms not accepted, credentials, a
+    // browser session that could not be set up). Also MANUAL-ONLY — see
+    // MANUAL_ONLY_DRIVERS below.
+    'after its first write, a stop that no chain read shows to be a defect is ' +
+      'UNDETERMINED (exit 3), with what was sent and what is left standing ' +
+      '(an open request holding the collateral, a leftover approval) printed',
+  ],
 ]);
 
 /**
@@ -240,6 +251,12 @@ export const MANUAL_ONLY_DRIVERS = new Map([
     'live-refinance.mjs',
     'one-shot on-chain refinance: a success closes the loan it drives, and it ' +
       'needs REFI_LOAN_ID naming a fresh eligible loan — run it by hand',
+  ],
+  [
+    'live-seed-illiquid-loan.mjs',
+    'writes to the testnet to originate ONE loan — the fixture live-refinance.mjs ' +
+      'consumes — so an unattended batch would open a loan on every run; run it ' +
+      'by hand right before the refinance review',
   ],
   [
     'live-sanctions-banner.mjs',
