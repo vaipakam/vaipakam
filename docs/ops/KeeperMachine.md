@@ -17,6 +17,7 @@ before it does anything. Read §2 before starting anything.
 | Unit | Runs as | Does |
 | --- | --- | --- |
 | `vaipakam-keeper.service` | a dynamic user, with the env file as a private credential | the keeper itself: one tick every UTC minute |
+| `vaipakam.slice` | (a slice, not a process) | the keeper's own top-level slice, so the keeper's memory protection takes effect |
 | `vaipakam-keeper-update.timer` → `.service` | root, building in a throwaway sandbox | every 5 minutes: deploy the branch's latest commit if it is not running (`update.sh`) |
 
 A merge to `main` is the deploy. Each run of `update.sh` does the following:
@@ -69,9 +70,31 @@ rules now keep builds out of the keeper's way:
   As a result, the release the keeper reports can be older than the tip of
   `main`. That is expected: it is the newest commit whose build source
   differs.
-- **A build never competes with the keeper.** The updater and its build run
-  at the lowest CPU and disk priority (`Nice=19`, `CPUWeight=1`,
-  `IOWeight=1`, `IOSchedulingClass=idle`), so the keeper's ticks come first.
+- **A build never competes with the keeper.**
+  - **CPU.** The updater and its build run at the lowest CPU priority
+    (`Nice=19`, `CPUWeight=1`), so the keeper's ticks come first.
+  - **Memory.** The keeper runs in a top-level slice of its own,
+    `vaipakam.slice`, with `MemoryLow=320M` on both the slice and the keeper.
+    The kernel reclaims the keeper's memory, up to that figure, only once
+    nothing unprotected is left to reclaim. So a build, an updater run or
+    anything else on the machine is swapped out before the keeper is. Before
+    this, the keeper itself was being pushed into swap: 112 MiB of it at one
+    reading, which every tick then had to read back. The protection reserves
+    nothing, so memory the keeper is not using stays free for the rest. The
+    slice is needed because, under cgroup v2, a unit's protection holds only
+    as far as its parent grants it, and `system.slice` grants none. The
+    figure is the keeper's measured footprint (about 140 MiB resident plus
+    110 MiB swapped, 2026-10-23) with room to grow. If memory runs out anyway,
+    the OOM killer picks the build (`OOMScoreAdjust=500`) before the keeper
+    (`-500`), and the next deploy run retries the build.
+  - **The build is not memory-capped.** A cap has to be sized from the
+    build's peak, and systemd's logged peak for the build unit is not a usable
+    figure: it reads 256K to 1.8M for builds that use nearly two CPU-minutes.
+    Protecting the keeper does not depend on the build's size.
+  - **Disk.** The units also ask for the lowest disk priority (`IOWeight=1`,
+    `IOSchedulingClass=idle`). That has no effect on this machine, because
+    its disk scheduler is `none`, which ignores both. The settings are kept
+    so that they take effect on a host whose scheduler honours them.
 
 The units and the release are bound by one file, `kit-commit`, naming the
 commit whose units are installed and loaded. A deploy removes it before it
@@ -81,7 +104,10 @@ So however a deploy is interrupted, the keeper never starts one commit's code
 under another commit's units: a start in between fails (`cmp` reports the two
 files differ, in `journalctl -u vaipakam-keeper`) and retries every 30
 seconds. Every deploy run first puts back the units of whatever `current` is,
-which makes the keeper startable again; with deploys paused, `sudo
+which makes the keeper startable again. It does the same when any installed
+kit file differs from that release's kit, so a file an older updater did not
+know to install (such as `vaipakam.slice`) goes in at the next run. With
+deploys paused, `sudo
 /opt/vaipakam-keeper/update.sh --kit-only` does that one step by hand. A
 reinstall and a deploy share one lock, so they never interleave.
 

@@ -114,6 +114,36 @@ describe('host deploy kit paths', () => {
     expect(update.indexOf('build-source.sh" export')).toBeLessThan(update.indexOf('systemd-run'));
   });
 
+  it('protects the keeper\'s memory in a slice of its own, and has the OOM killer take a build first (#2651)', () => {
+    const memoryLow = (text: string) => text.match(/^MemoryLow=(\S+)$/m)?.[1];
+    const slice = read('vaipakam.slice');
+    const unit = read('vaipakam-keeper.service');
+    // Protection holds only as far as the parent grants it, so the slice and
+    // the keeper carry the same figure, and the slice is top-level (no dash).
+    expect(memoryLow(slice)).toMatch(/^\d+M$/);
+    expect(memoryLow(unit)).toBe(memoryLow(slice));
+    expect(unit).toMatch(/^Slice=vaipakam\.slice$/m);
+    expect(unit).toMatch(/^OOMScoreAdjust=-\d+$/m);
+    const update = read('update.sh');
+    expect(update).toMatch(/-p OOMScoreAdjust=500 \\\n  -p Nice=19/);
+    // The slice is a kit unit that restarts the keeper when it changes, and
+    // the only one an older kit may lack (installing that kit removes it).
+    expect(update).toContain('KIT_UNITS="vaipakam.slice vaipakam-keeper.service vaipakam-keeper-update.service vaipakam-keeper-update.timer"');
+    expect(update).toContain('OPTIONAL_UNITS="vaipakam.slice"');
+    expect(update).toContain('KEEPER_UNITS="vaipakam.slice vaipakam-keeper.service"');
+  });
+
+  it('puts back the running release\'s kit whenever what is installed differs from it', () => {
+    const update = read('update.sh');
+    // A kit file an older updater did not install goes in at the next run,
+    // not at the next build.
+    expect(update).toContain('if [ -n "$running" ] && { [ "$(cat "$KIT_COMMIT" 2>/dev/null || true)" != "$running" ] || ! kit_installed "$kit_dir"; }; then');
+    expect(update.indexOf('! kit_installed')).toBeLessThan(update.indexOf('git -C "$REPO" fetch'));
+    for (const file of ['"$ROOT/update.sh"', '"$ROOT/build-source.sh"', '"/etc/systemd/system/$unit"']) {
+      expect(update.slice(update.indexOf('kit_installed() {'), update.indexOf('record_kit() {')), file).toContain(file);
+    }
+  });
+
   it('keeps what the keeper runs root-owned, and never starts the keeper from the install', () => {
     const install = read('install.sh');
     expect(install).toContain('install -d -o root -g root -m 755 "$ROOT" "$ROOT/releases"');
@@ -154,7 +184,7 @@ describe('host deploy kit paths', () => {
     expect(update).toContain('git -C "$REPO" archive "$1" apps/keeper/host/deploy');
     expect(update).toContain('$build_script:/run/keeper-build.sh');
     expect(update).not.toContain('$ROOT/build.sh');
-    for (const unit of ['vaipakam-keeper.service', 'vaipakam-keeper-update.service', 'vaipakam-keeper-update.timer']) {
+    for (const unit of ['vaipakam.slice', 'vaipakam-keeper.service', 'vaipakam-keeper-update.service', 'vaipakam-keeper-update.timer']) {
       expect(update, unit).toContain(unit);
     }
     expect(update).toContain('place "$dir/$unit" "/etc/systemd/system/$unit" 644');
