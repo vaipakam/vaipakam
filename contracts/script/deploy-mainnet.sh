@@ -91,6 +91,15 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #       every role holder from the chain's role events and fails on any
 #       key the governance plan does not name.
 #
+#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase launch
+#       The first unpause (#945). The contracts phase leaves the Diamond
+#       PAUSED, so it is never live under the hot admin key. After the
+#       handover gate, Launch.s.sol reads every readiness requirement off
+#       the chain (treasury, sanctions oracle, price feed, swap route,
+#       CCIP lanes), and prints the Timelock `schedule` / `execute` calls
+#       for the Governance Safe. Broadcasts nothing; re-run after the
+#       Timelock executes to confirm and record it.
+#
 #   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase abi-sync
 #       Runs the three export scripts. No on-chain effect — safe to
 #       re-run. Usually run after `--phase contracts` lands.
@@ -304,6 +313,11 @@ Phases:
                     chain's role holders, owners and CCT admin must
                     match the governance topology. Run after the Safe
                     has executed every acceptOwnership.
+  launch          — The first unpause (Launch.s.sol, #945). Broadcasts
+                    nothing: requires every readiness check met and the
+                    handover done, then prints the Timelock proposal the
+                    Governance Safe schedules. Re-run to record it once
+                    executed.
   abi-sync        — packages/contracts ABI + deployments.json sync
                     + sibling keeper-bot repo (when present).
   cf-app         — Build + wrangler deploy apps/app (the dApp).
@@ -1674,6 +1688,46 @@ phase_handover_gate() {
   echo "✓ handover-gate passed: the chain holds the governance topology."
 }
 
+# ── Phase: launch ─────────────────────────────────────────────────────
+# The first unpause of a production Diamond (#945; owner decision
+# 2026-10-23: the Timelock unpauses after handover). DeployDiamond leaves
+# the Diamond paused, so it is never live under the hot admin key. This
+# phase BROADCASTS NOTHING: Launch.s.sol requires every LaunchReadiness
+# check to be met (NOT MET and NOT CHECKED both refuse), the Timelock to
+# hold UNPAUSER_ROLE and the admin key to hold neither it nor the role
+# root, then prints the Timelock `schedule` call for the Governance Safe,
+# the `execute` call for after the delay, and the operation's state.
+phase_launch() {
+  _assert_rpc_chain
+  if ! phase_already_done "handover-gate"; then
+    cat >&2 <<EOF
+Refusing --phase launch on MAINNET: the handover gate has not passed here.
+A production Diamond is unpaused only by the Timelock, after the live gate
+has proven the governance topology. Run:
+  bash contracts/script/deploy-mainnet.sh $CHAIN_SLUG --phase handover-gate
+EOF
+    exit 1
+  fi
+
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "deploy-mainnet.sh — launch  ($CHAIN_SLUG)"
+  echo "═══════════════════════════════════════════════════════════════"
+
+  CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --rpc-url "$RPC"
+
+  if [ "$(cast call "$(jq -r '.diamond' "$DEPLOY_DIR/addresses.json")" 'paused()(bool)' --rpc-url "$RPC")" = "false" ]; then
+    mark_phase_done "launch"
+    echo
+    echo "✓ launch: the Timelock has executed the unpause; the Diamond is live."
+  else
+    echo
+    echo "launch: readiness passed and the Timelock proposal is printed above."
+    echo "The Diamond stays PAUSED until the Governance Safe schedules it and,"
+    echo "after the delay, it is executed. Re-run --phase launch afterwards to"
+    echo "confirm and record it."
+  fi
+}
+
 # ── Phase: abi-sync ───────────────────────────────────────────────────
 
 phase_abi_sync() {
@@ -2115,6 +2169,33 @@ phase_verify() {
   echo "  ✓ governor is rateLimitAdmin + lanes present — rate limits enforced."
 
   echo
+  echo
+  echo "[5] Pause state and launch readiness (#945, #946)"
+  # The contracts phase leaves the Diamond PAUSED and only --phase launch
+  # unpauses it. A Diamond that is live with no launch recorded went live
+  # some other way, before anything proved it was configured: fail.
+  VERIFY_PAUSED=$(cast call "$DIAMOND" 'paused()(bool)' --rpc-url "$RPC" 2>/dev/null || echo "")
+  if [ -z "$VERIFY_PAUSED" ]; then
+    echo "  ✗ FAIL: paused() unreadable on $DIAMOND." >&2
+    exit 1
+  fi
+  if phase_already_done "launch"; then
+    echo "  launch recorded; paused() = $VERIFY_PAUSED"
+  elif [ "$VERIFY_PAUSED" != "true" ]; then
+    echo "  ✗ FAIL: the Diamond is UNPAUSED but no launch is recorded for $CHAIN_SLUG." >&2
+    echo "          It went live outside --phase launch, before the readiness" >&2
+    echo "          checks were read. Investigate who unpaused it." >&2
+    exit 1
+  else
+    echo "  ✓ paused, as it must be until --phase launch"
+  fi
+  # The same readiness list --phase launch enforces, reported here so a
+  # green verify never implies a launch would pass. A NOT MET line (the
+  # sanctions oracle above all, #946) is printed, not hidden; the launch
+  # phase is where it refuses.
+  CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --sig "report()" --rpc-url "$RPC"
+
+  echo
   echo "verify OK. Continue with the role-rotation ceremony (DeploymentRunbook §6)."
   mark_phase_done "verify"
 }
@@ -2129,6 +2210,7 @@ case "$PHASE" in
   configure)     phase_configure ;;
   handover)      phase_handover ;;
   handover-gate) phase_handover_gate ;;
+  launch)        phase_launch ;;
   abi-sync)      phase_abi_sync ;;
   cf-app)       phase_cf_app ;;
   cf-www)        phase_cf_www ;;

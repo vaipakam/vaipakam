@@ -16,9 +16,11 @@ import {HelperTest} from "./HelperTest.sol";
  * @title DiamondBornPausedTest
  * @notice Pins the post-rehearsal hardening from
  *         `docs/internal/ContractFollowupsFromRehearsal-2026-05-06.md`
- *         Item 2: the Diamond MUST be paused at construction time and
- *         stay paused until the deploy script's final
- *         {AdminFacet.unpause} call.
+ *         Item 2: the Diamond MUST be paused at construction time.
+ *         Since #945 the deploy script no longer unpauses at all: the
+ *         Diamond stays paused until `Launch.s.sol` has read every launch
+ *         readiness check off the chain (on production, until the
+ *         Timelock executes the unpause).
  *
  *         Why it matters: the deploy script lands two `diamondCut`
  *         transactions (split because the full 32-facet cut blows
@@ -31,8 +33,9 @@ import {HelperTest} from "./HelperTest.sol";
  *         {EnforcedPause} regardless of the fallback's behavior.
  *
  *         The matching contract surface is at
- *         {VaipakamDiamond.constructor} (last write before exit) and
- *         {DeployDiamond.s.sol} step 5e.
+ *         {VaipakamDiamond.constructor} (last write before exit),
+ *         {DeployDiamond.s.sol} step 5e (which now leaves it paused) and
+ *         `Launch.s.sol` (`test/deploy/LaunchTest.t.sol`).
  */
 contract DiamondBornPausedTest is Test {
     VaipakamDiamond internal diamond;

@@ -572,6 +572,29 @@ No schedule / delay — the call lands inside one block. Pause event
 emitted on-chain; off-chain alerting should trigger a broader
 incident-response runbook.
 
+### Launch — the first unpause (#945)
+
+A production Diamond is born paused and the deploy leaves it paused. Its
+first unpause is a Timelock operation like any later one (owner decision
+2026-10-23): the hot admin key never runs a live production Diamond, not
+even for the gap between the deploy and the handover.
+
+1. Finish the deploy phases, then `handover` and `handover-gate`.
+2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the five launch
+   requirements off the chain (treasury, sanctions oracle, ETH/numeraire
+   feed, an enabled swap adapter, a CCIP lane on the VPFI pool) and refuses
+   unless every one is met, the Timelock holds `UNPAUSER_ROLE`, and the
+   admin key holds neither that role nor the role root. It broadcasts
+   nothing.
+3. It prints the Timelock `schedule(...)` call. The governance Safe
+   proposes it. The salt is fixed per chain and Diamond, so a re-run finds
+   the same operation and prints its state (not scheduled, pending, ready,
+   done).
+4. After the delay, anyone sends the printed `execute(...)` call. Re-run
+   the launch phase to confirm the Diamond is live and record the phase.
+
+The Pauser Safe can cancel the queued launch like any other operation.
+
 ### Incident response — unpause
 
 Unpause goes through the full Timelock path (48h). Recovery cannot

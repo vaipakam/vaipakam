@@ -309,6 +309,11 @@ Phases (mirror mainnet phase-for-phase except pause-rehearsal):
                      chain's role holders, owners and CCT admin must
                      match the governance topology. Run after the Safe
                      has executed every acceptOwnership.
+  launch           — The first unpause (Launch.s.sol, #945). The deploy
+                     leaves the Diamond paused; this refuses while any
+                     readiness check (treasury, sanctions oracle, price
+                     feed, swap route, CCIP lanes) is NOT MET, then the
+                     admin key unpauses. Run after configure.
   abi-sync         — packages/contracts ABI + deployments.json sync
                      + sibling keeper-bot repo (when present).
   cf-app          — Build + wrangler deploy apps/app (the dApp).
@@ -1513,6 +1518,14 @@ EOF
     forge script script/DiamondConfigSpell.s.sol \
     --rpc-url "$RPC" --broadcast --slow
 
+  # #946 — the sanctions screen is part of configuring a chain, not an
+  # operator's memory. Until it is set every wallet reads as unsanctioned;
+  # on a testnet the screen is the admin's TestnetSanctionsOverlay (#2439),
+  # kept when the Diamond already screens against a fit one. `--phase launch`
+  # refuses to unpause a Diamond without it.
+  forge script script/ConfigureSanctionsOracle.s.sol \
+    --rpc-url "$RPC" --broadcast --slow
+
   mark_phase_done "configure"
 }
 
@@ -1715,6 +1728,32 @@ phase_handover_gate() {
   mark_phase_done "handover-gate"
   echo
   echo "✓ handover-gate passed: the chain holds the governance topology."
+}
+
+# ── Phase: launch ─────────────────────────────────────────────────────
+# The first unpause (#945). DeployDiamond leaves the Diamond paused; this
+# phase reads every LaunchReadiness requirement off the chain (treasury,
+# sanctions oracle, price feed, an enabled swap route, CCIP lanes) and
+# refuses while any is NOT MET. One the chain cannot answer is printed as
+# NOT CHECKED. The admin key then unpauses; after a rehearsal handover the
+# Timelock holds UNPAUSER_ROLE and the phase prints its proposal instead.
+phase_launch() {
+  _assert_rpc_chain
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "deploy-testnet.sh — launch  ($CHAIN_SLUG)"
+  echo "═══════════════════════════════════════════════════════════════"
+
+  CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol \
+    --rpc-url "$RPC" --broadcast --slow
+
+  if [ "$(cast call "$(jq -r '.diamond' "$DEPLOY_DIR/addresses.json")" 'paused()(bool)' --rpc-url "$RPC")" = "false" ]; then
+    mark_phase_done "launch"
+    echo
+    echo "✓ launch: the Diamond is live."
+  else
+    echo
+    echo "launch: the Diamond is still paused - the Timelock proposal printed above must be scheduled and executed. Re-run --phase launch afterwards to record it."
+  fi
 }
 
 # ── Phase: abi-sync ───────────────────────────────────────────────────
@@ -2177,6 +2216,33 @@ phase_verify() {
   echo "  ✓ governor is rateLimitAdmin + lanes present — rate limits enforced."
 
   echo
+  echo
+  echo "[5] Pause state and launch readiness (#945, #946)"
+  # The contracts phase leaves the Diamond PAUSED and only --phase launch
+  # unpauses it. A Diamond that is live with no launch recorded went live
+  # some other way, before anything proved it was configured: fail.
+  VERIFY_PAUSED=$(cast call "$DIAMOND" 'paused()(bool)' --rpc-url "$RPC" 2>/dev/null || echo "")
+  if [ -z "$VERIFY_PAUSED" ]; then
+    echo "  ✗ FAIL: paused() unreadable on $DIAMOND." >&2
+    exit 1
+  fi
+  if phase_already_done "launch"; then
+    echo "  launch recorded; paused() = $VERIFY_PAUSED"
+  elif [ "$VERIFY_PAUSED" != "true" ]; then
+    echo "  ✗ FAIL: the Diamond is UNPAUSED but no launch is recorded for $CHAIN_SLUG." >&2
+    echo "          It went live outside --phase launch, before the readiness" >&2
+    echo "          checks were read. Investigate who unpaused it." >&2
+    exit 1
+  else
+    echo "  ✓ paused, as it must be until --phase launch"
+  fi
+  # The same readiness list --phase launch enforces, reported here so a
+  # green verify never implies a launch would pass. A NOT MET line (the
+  # sanctions oracle above all, #946) is printed, not hidden; the launch
+  # phase is where it refuses.
+  CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --sig "report()" --rpc-url "$RPC"
+
+  echo
   echo "verify OK. Continue with the role-rotation ceremony (DeploymentRunbook §6)."
   mark_phase_done "verify"
 }
@@ -2434,6 +2500,7 @@ case "$PHASE" in
   configure)        phase_configure ;;
   handover)         phase_handover ;;
   handover-gate)    phase_handover_gate ;;
+  launch)           phase_launch ;;
   abi-sync)         phase_abi_sync ;;
   cf-app)          phase_cf_app ;;
   cf-www)           phase_cf_www ;;

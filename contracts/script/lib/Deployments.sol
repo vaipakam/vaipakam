@@ -421,6 +421,10 @@ library Deployments {
     ///         `.rewardCustodyHolder`. Zero on a chain that predates the
     ///         holder and has not yet run `DeployRewardCustodyHolder`.
     function readRewardCustodyHolderOptional() internal view returns (address) { return _tryReadAddr(".rewardCustodyHolder"); }
+    /// @notice The chain's Timelock, or zero before `DeployTimelock` ran (#945).
+    function readTimelockOptional() internal view returns (address) { return _tryReadAddr(".timelock"); }
+    /// @notice The chain's CCIP VPFI pool, or zero when none is recorded (#945).
+    function readVpfiTokenPoolOptional() internal view returns (address) { return _tryReadAddr(".vpfiTokenPool"); }
     /// @notice #2583 — optional, non-reverting read of `.serviceCapacityEscrow`.
     ///         Zero on a chain whose escrow has not been bound and recorded.
     function readServiceCapacityEscrowOptional() internal view returns (address) { return _tryReadAddr(".serviceCapacityEscrow"); }
