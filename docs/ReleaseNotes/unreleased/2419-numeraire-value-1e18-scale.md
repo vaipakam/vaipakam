@@ -32,15 +32,17 @@ refresh and by both curated refresh scripts; a facet that values through it,
 refreshed onto a Diamond without it, fails with a clear "function does not
 exist" revert rather than misreading a value.
 
-A time-based default on collateral that is liquid, or was liquid when the loan
-began, whose pair cannot be priced (either leg has no price, or a price of
-zero) still completes. It attempts no sale, because a sale with no oracle
-floor is not one the protocol will make, and enters the fallback directly, the
-same entry a failed sale takes: the lender's claim is the collateral, and the
-loan stays curable until claimed. A missing collateral price no longer leaves
-such a loan to the illiquid route, where a loan without both parties'
-illiquid consent could not default at all. A loan that began on illiquid
-collateral keeps its consented in-kind transfer. A price the oracle's sources
+A time-based default now takes its route first from what the loan was when it
+began. A loan whose two legs were both liquid when it began, and whose pair
+cannot be priced (either leg has no price, or a price of zero), still
+completes. It attempts no sale, because a sale with no oracle floor is not one
+the protocol will make, and enters the fallback directly, the same entry a
+failed sale takes: the lender's claim is the collateral, and the loan stays
+curable until claimed. A missing collateral price no longer leaves such a loan
+to the illiquid route, where a loan without both parties' illiquid consent
+could not default at all. A loan that began illiquid on either leg keeps its
+consented in-kind transfer, even when its collateral has since become liquid,
+instead of failing in the risk calculation. A price the oracle's sources
 disagree on still refuses the default until they agree.
 
 An asset whose decimal count cannot be read is now classified illiquid before

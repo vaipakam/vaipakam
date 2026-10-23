@@ -1962,6 +1962,40 @@ contract DefaultedFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @dev #2419 — a loan that began illiquid on a leg (here the principal)
+    ///      was consented as illiquid and defaults IN KIND, whatever the live
+    ///      probe says about the collateral now: no swap, no risk math (which
+    ///      would refuse such a loan with IlliquidLoanNoRiskMath), the lender
+    ///      takes the collateral.
+    function testTriggerDefaultIlliquidAtOriginationDefaultsInKindWhenCollateralLiquidNow() public {
+        uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0
+        );
+        {
+            LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+            l.principalLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
+            l.riskAndTermsConsentFromBoth = true;
+            TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        }
+        vm.warp(block.timestamp + 33 days + 3);
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+
+        vm.expectCall(
+            address(ZeroExProxyMock(mockZeroExProxy)),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            0
+        );
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
+        (address asset, uint256 amount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        assertEq(asset, mockCollateralERC20, "lender claims the collateral in kind");
+        assertEq(amount, 2000 ether);
+        vm.clearMockedCalls();
+    }
+
     /// @dev Tests triggerDefault liquid path with successful swap where borrower has surplus.
     function testTriggerDefaultLiquidWithBorrowerSurplus() public {
         uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
