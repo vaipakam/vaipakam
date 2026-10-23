@@ -256,6 +256,23 @@ describe('attachLedger on a WebSocket (#1633 r1)', () => {
     expect(l.faults().length).toBe(2);
   });
 
+  it('a later reply never erases a fault: a malformed and a well-formed message sharing an id (#1633 r7)', () => {
+    const l = createCallLedger();
+    const ws = socketFor(l);
+    ws.send([{ jsonrpc: '1.0', id: 1, method: 'eth_blockNumber', params: [] }, c(1, 'eth_blockNumber')]);
+    ws.receive({ jsonrpc: '2.0', id: 1, result: '0x10' });
+    expect(l.calls.map((x) => [x.method, x.outcome])).toEqual([
+      ['eth_blockNumber', 'client-fault'],
+      ['eth_blockNumber', 'ok'],
+    ]);
+    const r = createReadLedger({ flag: flagRead });
+    const rs = socketFor(r);
+    rs.send([{ ...plain(4, DIAMOND, flagRead.calldata), jsonrpc: '1.0' }, plain(4, DIAMOND, flagRead.calldata)]);
+    rs.receive({ jsonrpc: '2.0', id: 4, result: bool(true) });
+    expect(r.judge('flag', 0, true).state).toBe('fault');
+    expect(r.faults()).toEqual([{ kind: 'flag', why: 'malformed json-rpc envelope' }]);
+  });
+
   it('settles each distinct call against its own answer', () => {
     const l = createCallLedger();
     const ws = socketFor(l);

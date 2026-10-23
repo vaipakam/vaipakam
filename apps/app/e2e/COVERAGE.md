@@ -377,7 +377,10 @@ Which failures are preconditions, driver by driver:
   is a FAIL ahead of every banner state, never an RPC outage. On a WebSocket, calls are matched to answers
   by ONE correlator (`createSocketCalls`) shared by both observers: an id
   reused while its call is still waiting, in a frame or across frames, is
-  the same duplicate-id fault as in an HTTP batch, never two answers. All
+  the same duplicate-id fault as in an HTTP batch, never two answers. Each
+  socket message is recorded on its own, so a settlement touches only the
+  message it belongs to, and a recorded fault is never overwritten by a
+  later answer. All
   of this is pinned by `e2e/live/watchPageRpc.test.mjs` — this helper was
   wrong seven times, each time in a way that read as correct, so it is
   unit-tested rather than trusted.

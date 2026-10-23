@@ -266,6 +266,8 @@ export function createCallLedger(isRecording = () => true) {
         const v = verdicts.find((o) => sameId(o.id, id));
         const outcome = v?.verdict === 'ok' || v?.verdict === 'client-fault' ? v.verdict : 'failed';
         for (const call of list) {
+          // A fault is a fact about the request: no later answer undoes it.
+          if (call.outcome === 'client-fault') continue;
           call.outcome = outcome;
           if (outcome === 'client-fault') call.why = v.why;
         }

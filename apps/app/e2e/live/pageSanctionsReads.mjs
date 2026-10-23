@@ -203,6 +203,8 @@ export function createReadLedger(reads, now = () => Date.now()) {
     for (const [id, list] of pending) {
       const v = verdicts.find((o) => sameId(o.id, id));
       for (const e of list) {
+        // A fault is a fact about the request: no later answer undoes it.
+        if (e.fault !== undefined) continue;
         if (v?.verdict === 'client-fault') {
           e.answered = false;
           e.value = undefined;
@@ -347,33 +349,29 @@ export function attachLedger(page, ledger, readMethods) {
       } catch {
         /* not JSON-RPC: nothing to judge */
       }
-      const pending = ledger.onRequest(String(f.payload));
-      if (pending === null) return;
-      // The ledger's own key for this message's id, found by VALUE: the
-      // correlator parses the frame afresh, so an object id is a different
-      // object from the one the ledger keyed (#1633 r4).
-      const keys = [...pending.keys()];
-      const tagFor = (m) => {
-        const i = keys.findIndex((k) => JSON.stringify(k) === JSON.stringify(m.id));
-        return i === -1 ? null : { entries: pending.get(keys[i]), key: keys[i] };
-      };
+      // Each message is recorded on its OWN, at the moment the correlator
+      // takes it, so its tag is its own ledger entries and a settlement can
+      // only ever touch the message it belongs to (#1633 r7). Recording the
+      // whole frame keyed by id let a malformed message and a well-formed one
+      // reusing its id share one entry list, and the later reply overwrote
+      // the fault. A well-formed notification (no id) expects no answer and
+      // is not recorded.
+      const tagFor = (m) => ledger.onRequest(JSON.stringify(m));
       // A malformed envelope or an id collision: settled now, from the request.
       for (const { entries, requestBody } of calls.send(f.payload, tagFor)) {
-        for (const { tag } of entries) {
-          ledger.onResponse(new Map([[tag.key, tag.entries]]), '[]', { status: null, requestBody });
-        }
+        for (const { tag } of entries) ledger.onResponse(tag, '[]', { status: null, requestBody });
       }
     });
     ws.on('framereceived', (f) => {
       // A socket has no HTTP status: a delivered message is the answer, and
       // each is classified against its own call's message.
       for (const { tag, reply, requestBody } of calls.receive(f.payload)) {
-        ledger.onResponse(new Map([[tag.key, tag.entries]]), reply, { status: null, requestBody });
+        ledger.onResponse(tag, reply, { status: null, requestBody });
       }
     });
     ws.on('close', () => {
       for (const { tag } of calls.close()) {
-        ledger.onResponse(new Map([[tag.key, tag.entries]]), null, { status: null });
+        ledger.onResponse(tag, null, { status: null });
       }
     });
   });
