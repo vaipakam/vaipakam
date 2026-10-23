@@ -207,8 +207,9 @@ interface BaseEnv {
   PARTIAL_LIQ_MIN_HF_BPS?: string;
 
   /** #2633 — the chains the flash-loan discount path is armed on: a comma
-   *  list of decimal chain ids (`discountPath.ts`). Unset arms none. Like the
-   *  other arming flags it is `secret_text` on a Worker. */
+   *  list of decimal chain ids (`discountPath.ts`). Unset arms none. A plain
+   *  var (`PLAIN_VAR_KEYS`), not a secret; it is never echoed when it cannot
+   *  be read. */
   DISCOUNT_PATH_CHAIN_IDS?: string;
 }
 

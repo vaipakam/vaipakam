@@ -5,8 +5,9 @@
 //
 // The path is the keeper's `tryFlashLoanDiscountedPath` branch: a discounted
 // liquidation funded by a flash loan through the chain's FlashLoanLiquidator.
-// It runs on a chain only when that chain has a liquidator deployed AND the
-// operator has named the chain here. Arming is the operator's affirmative
+// It runs on a chain only when this build has a route there (our liquidator
+// and a flash-loan provider, `flashLoanRoute`) AND the operator has named the
+// chain here. Arming is the operator's affirmative
 // step, taken once the Diamond's own discount-path switch is on.
 //
 // The variable is one plain knob, `DISCOUNT_PATH_CHAIN_IDS`: a comma list of
