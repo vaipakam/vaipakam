@@ -1,4 +1,4 @@
-## Thread — A wallet's Activity page shows the events it took part in, by one rule (PR #NNNN)
+## Thread — A wallet's Activity page shows the events it took part in, by one rule (PR #2708)
 
 A wallet's Activity page used to keep an event when the wallet's address appeared anywhere in its details. That let about two hundred kinds of event onto the page with no name of their own, most of them administrative: a role grant, a treasury setting, an operator being approved. It also offered no way to say which events a wallet's page was meant to show.
 
