@@ -115,9 +115,10 @@ fs_permissions = [
 # under this profile instead of the full build (~17.7 GB / 30 min), which
 # was OOM-killing the standard-runner job that gated PR #288. When written
 # it peaked at ~3.2 GB RSS in ~5:22. Measured cold on CI on 2026-10-23
-# (#2603, Foundry v1.8.3) it takes ~43 min and peaks at ~15.8 GB of the
-# runner's 16 GB, almost all of it in the deploy-sanity compile; the
-# headroom is tracked in #2712.
+# (#2603, Foundry v1.8.3) it took ~43 min and peaked at ~15.8 GB of the
+# runner's 16 GB, almost all of it in the deploy-sanity compile.
+# predeploy-check.sh now runs that suite in chunks (#2712): ~63 min cold,
+# solc peak under 10 GB.
 #
 # IN scope (compiled):
 #   - all of src/

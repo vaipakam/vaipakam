@@ -410,9 +410,11 @@ passes `--full`), so a deploy cannot proceed past a failing check; it is
 also runnable standalone (`bash script/predeploy-check.sh`).
 
 `--full` **delegates to `run-regression.sh`** (#1620) — it does not carry
-its own regression command. There is exactly one chunking implementation;
-if the viaIR ceiling moves again, `run-regression.sh` is the only place to
-fix, and both the mainnet preflight and the release-track
+its own regression command. There is exactly one chunking implementation,
+`contracts/script/lib/forge-chunks.sh`, which `run-regression.sh` and the
+non-full deploy-sanity step both use (#2712); if the viaIR ceiling or the
+runner's memory moves again, that file and the two chunk-size knobs are the
+only places to fix, and both the mainnet preflight and the release-track
 `mainnet-gate.yml` inherit the fix. Don't re-inline a `forge test` call
 here: an un-chunked pass trips the ceiling as a COMPILE failure, which this
 gate reports with the same "regression failed" wording as a red test — a
@@ -1692,11 +1694,16 @@ Three profiles live in `contracts/foundry.toml`:
   `forge doc --build` under `quick` instead — #1493).
   Skips the 94 non-positive top-level test files + invariants + fork
   tests — those run locally at end-of-step under the default profile.
-  **Measured cold on CI (2026-10-23, #2603): about 43 min for the
-  contracts-fast job, peaking at 15.8 GB of the runner's 16 GB.** The
-  peak comes in the deploy-sanity compile (33 files, solc at 14.7 GB).
-  So there is almost no memory headroom left: the old "~5 min, ~3.2 GB"
-  figure is history. That 33-file compile also depends on the CI Foundry
+  **Measured cold on CI (2026-10-23): about 63 min for the
+  contracts-fast job, with solc peaking under 10 GB of the runner's
+  16 GB.** The peak comes in the deploy-sanity compile, which
+  `predeploy-check.sh` runs in chunks of 16 suites (#2712). Run as one
+  `forge test` it peaked at 14.7 GB (15.8 GB for the whole runner,
+  #2603), which left no headroom. Chunking costs time, because each chunk
+  re-pays the codegen of the deploy scripts its tests instantiate: step 2
+  went from 22 to 29–38 minutes, and the job's timeout is 90 (#2718 tracks
+  the repeated codegen). The
+  old "~5 min, ~3.2 GB" figure is history. That compile also depends on the CI Foundry
   pin. From v1.8.4, `forge test` stops reusing the `forge build --skip
   test` artifacts and recompiles 469 files, and the runner dies. So
   contracts-fast and slither (which share its forge cache) are pinned to
