@@ -274,3 +274,85 @@ export async function sendPush(
   }
   return 'accepted';
 }
+
+/**
+ * A rail's status as one sender PUBLISHES it for another to read (#2667).
+ *
+ * The keeper sends the risky-loan warnings from its own copy of the key on
+ * its own machine, so the agent cannot ask that rail directly. The keeper
+ * writes this row (shared D1 `push_rail_status`) each time its watcher runs,
+ * and the agent reads it back. Both directions go through the two functions
+ * below, so the writer and the reader cannot disagree about the encoding. The
+ * row carries no part of the key — it is `PushRailStatus` and a timestamp.
+ */
+export interface PublishedRailRow {
+  usable: number;
+  reason: string | null;
+  channel: string | null;
+  observed_at: number;
+}
+
+const UNAVAILABLE_REASONS: readonly PushRailUnavailableReason[] = [
+  'signer-unset',
+  'signer-malformed',
+  'signer-unsupported',
+  'channel-malformed',
+];
+
+/** The row a sender writes for `status`, observed at `nowSec`. */
+export function publishedRailRow(status: PushRailStatus, nowSec: number): PublishedRailRow {
+  return status.usable
+    ? { usable: 1, reason: null, channel: status.channel, observed_at: nowSec }
+    : { usable: 0, reason: status.reason, channel: null, observed_at: nowSec };
+}
+
+/**
+ * What a reader learns from a published row: whether that sender's rail can
+ * issue a request, and on which channel or why not. Narrower than
+ * `PushRailStatus` on purpose — whether the sender posts as a delegate is not
+ * published, so a reader is never handed a value for it.
+ */
+export type PublishedRailStatus =
+  | { usable: true; channel: string }
+  | { usable: false; reason: PushRailUnavailableReason };
+
+/**
+ * Read a published row back, strictly: a row is accepted only when it is
+ * EXACTLY what `publishedRailRow` writes for the status it decodes to, so a
+ * contradictory row (usable with a reason, unusable with a channel, a
+ * lowercase channel the writer would have checksummed) reads as `undefined`
+ * (unknown), never as a guess about which field to believe.
+ */
+export function readPublishedRail(
+  row: PublishedRailRow | null | undefined,
+): { status: PublishedRailStatus; observedAt: number } | undefined {
+  if (!row || !Number.isSafeInteger(row.observed_at) || row.observed_at <= 0) return undefined;
+  const decoded = decodeRailFields(row);
+  if (decoded === undefined) return undefined;
+  const rewritten = publishedRailRow(
+    decoded.usable ? { ...decoded, delegated: false } : decoded,
+    row.observed_at,
+  );
+  const same =
+    rewritten.usable === row.usable &&
+    rewritten.reason === row.reason &&
+    rewritten.channel === row.channel;
+  return same ? { status: decoded, observedAt: row.observed_at } : undefined;
+}
+
+/** The status a row's own fields name, before the round-trip check. */
+function decodeRailFields(row: PublishedRailRow): PublishedRailStatus | undefined {
+  if (row.usable === 1) {
+    if (typeof row.channel !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(row.channel)) return undefined;
+    try {
+      return { usable: true, channel: getAddress(row.channel) };
+    } catch {
+      return undefined;
+    }
+  }
+  if (row.usable === 0) {
+    const reason = row.reason as PushRailUnavailableReason;
+    return UNAVAILABLE_REASONS.includes(reason) ? { usable: false, reason } : undefined;
+  }
+  return undefined;
+}

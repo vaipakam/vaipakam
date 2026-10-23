@@ -30,7 +30,7 @@ import {
   putNotifyState,
   sweepExpiredLinks,
 } from './db';
-import { AlertDelivery } from './alertDelivery';
+import { AlertDelivery, publishRailStatus } from './alertDelivery';
 import { formatAlert, pushTitle } from './i18n';
 
 // Diamond ABIs sourced from `@vaipakam/contracts/abis` — same per-facet
@@ -59,6 +59,10 @@ const BAND_RANK: Record<Band, number> = {
 export async function runWatcher(env: Env): Promise<void> {
   // Sweep expired handshake codes first so the table stays bounded.
   await sweepExpiredLinks(env.DB);
+  // #2667 — say what this keeper's Push rail can do, for the agent's status
+  // answer. Here because this pass is the risky-loan sender and runs every
+  // tick: a row that stops being refreshed means the sender stopped too.
+  await publishRailStatus(env);
 
   const chains = getChainConfigs(env);
   if (chains.length === 0) {

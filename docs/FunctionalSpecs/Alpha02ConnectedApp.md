@@ -2571,12 +2571,17 @@ is the borrower's own money.
   Push can't be switched on right now and offers nothing; when the app could
   not ask, it says that instead, and offers nothing either. Neither state is
   shown as Push being on.
-- The answer covers only the sender that gives it. Today that is the service
-  sending payment reminders; the warnings when a loan gets risky come from a
-  separate sender whose Push readiness the app cannot see, so while Push is
-  offered the card says the check covers payment reminders and that those
-  warnings may not reach Push, and suggests keeping another alert channel on.
-  The caveat goes only when one answer covers every sender.
+- The answer covers every sender it can vouch for, and says which. Payment
+  reminders and the warnings when a loan gets risky come from two separate
+  senders. The warnings' sender regularly publishes what it can do, and when
+  that record is recent the answer covers both: Push is offered only when both
+  can send, and on the same channel, since a user subscribes to one channel.
+  When that record is missing, unreadable or out of date, nothing is known
+  about the warnings' sender. The answer then covers payment reminders alone and
+  says so. While Push is offered on such an answer, the card says the check
+  covers payment reminders, that the warnings may not reach Push, and suggests
+  keeping another alert channel on. The caveat goes only when one answer
+  covers every sender.
 - A new Push opt-in is stored only where it can be honoured. If the service
   cannot send when the opt-in is saved, it refuses that save as a whole and
   stores nothing, in a way every version of the app reads as "not saved"; the

@@ -799,7 +799,9 @@ identity), so rotation is time-sensitive.
   agent, and a line in the keeper machine's env file. Both send through the
   shared rail (`packages/push`, #2248), so both honour it the same way: unset,
   each posts as its own signer's address. Set it in BOTH places, or the two
-  senders post as different channels.
+  senders post as different channels. A mismatch is visible: once the keeper
+  has published its rail (#2667), `GET /push/status` answers `available:
+  false` with `reason: 'channel-mismatch'`, and the app stops offering Push.
 - **Frontend:** nothing to set since #2251. The Alerts card links to the
   channel the agent reports from `GET /push/status`.
 
