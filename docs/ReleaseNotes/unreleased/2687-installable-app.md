@@ -1,4 +1,4 @@
-## Thread — The connected app can be installed to a home screen (PR #<n>)
+## Thread — The connected app can be installed to a home screen (PR #2700)
 
 The connected app now carries a web app manifest, so a phone browser offers to add it to the home screen and a desktop browser offers to install it. The installed app uses the Vaipakam name, colour and icons, and its long-press shortcuts open the Offer Book, My positions, the VPFI page and the alert settings. The only manifest that existed before was a leftover on the marketing site from the retired app, whose shortcuts landed on marketing pages and included a purchase route that no longer exists; that file was removed in an earlier change.
 
