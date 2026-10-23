@@ -53,7 +53,7 @@ import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
  *            the actual diamondCut. This test does, and additionally walks
  *            the loupe to confirm: facet count matches the cuts array
  *            length, every facet address is non-zero, the diamond is
- *            unpaused, ownership and roles are on the configured admin
+ *            still paused (#945), ownership and roles are on the configured admin
  *            (post-handover), and the vault implementation is
  *            initialized.
  *
@@ -284,16 +284,18 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
 
     // ─── 4. Post-deploy initialization landed correctly ───────────────
 
-    /// @notice The diamond is unpaused after `run()` completes.
-    /// @dev    `VaipakamDiamond.constructor` paused the diamond; Step 5e
-    ///         unpauses it. A revert anywhere in Steps 1–5 would leave it
-    ///         paused, making this a smoke check that the full init
-    ///         sequence reached Step 5e.
-    function test_DeployedDiamond_Unpaused() public {
+    /// @notice The diamond is still PAUSED after `run()` completes (#945).
+    /// @dev    `VaipakamDiamond.constructor` paused the diamond and the
+    ///         deploy no longer unpauses it: the contracts phase runs before
+    ///         the price feeds, sanctions screen, swap routes and CCIP lanes
+    ///         are configured, so the first unpause belongs to `Launch.s.sol`
+    ///         (see `LaunchTest`). A deploy that went live by itself would
+    ///         open `createOffer` / `acceptOffer` on an unconfigured Diamond.
+    function test_DeployedDiamond_StaysPaused() public {
         (address diamond,,) = _deploy(true);
-        assertFalse(
+        assertTrue(
             AdminFacet(diamond).paused(),
-            "diamond should be unpaused after Step 5e"
+            "the deploy must leave the diamond paused; Launch.s.sol unpauses it"
         );
     }
 

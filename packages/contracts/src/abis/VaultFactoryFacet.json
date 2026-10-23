@@ -1075,6 +1075,11 @@
   },
   {
     "type": "error",
+    "name": "AlreadyLaunched",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "AmountZero",
     "inputs": []
   },
@@ -2738,6 +2743,11 @@
         "internalType": "uint64"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "LaunchGateCallInvalid",
+    "inputs": []
   },
   {
     "type": "error",

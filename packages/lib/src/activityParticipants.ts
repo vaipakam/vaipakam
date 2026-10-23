@@ -241,6 +241,7 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
       'EmergencyRoleRevoked',
       'FeedOverrideSet',
       'FusionLimitOrderProtocolSet',
+      'LaunchedThroughGate',
       'LidoStakingSet',
       'MirrorRewardDeploymentSet',
       'NumeraireUpdated',

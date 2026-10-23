@@ -409,6 +409,16 @@ interface IVaipakamErrors {
     /// @param expected The transition count the caller expected.
     /// @param live     The current transition count.
     error PauseEpochMoved(uint64 expected, uint64 live);
+    /// @notice #945 (Codex #2686 r9 P1) — {AdminFacet.launch} was called on
+    ///         a Diamond that has already been live once. A launch is the
+    ///         first unpause only; lifting a later pause is incident
+    ///         response, through `unpause` / `unpauseIfPauseEpoch`.
+    error AlreadyLaunched();
+    /// @notice #945 (Codex #2686 r9 P1) — the call {AdminFacet.launch} was
+    ///         asked to make on the launch gate is not
+    ///         `ILaunchGate.assertReady` for THIS Diamond, so its success
+    ///         would vouch for nothing about it.
+    error LaunchGateCallInvalid();
     /// @notice #1566 slice 4 PR A (Codex #2158 r8 P2) — the foreign-token
     ///         sweep was asked to move the configured VPFI token. VPFI in a
     ///         holder IS the custody the attribution ledger describes and

@@ -960,23 +960,19 @@ contract DeployDiamond is Script, ArtifactRootBase {
         console.log("Reward custody holder bound:", rewardCustodyHolder);
         console.log("Slice 4: fresh deployment marked rebased (0).");
 
-        // 5e. Unpause the protocol. The Diamond is born paused (see
-        //     `VaipakamDiamond.constructor` — `LibPausable.pause()` is
-        //     the last constructor write) so the half-cut window
-        //     between `diamondCut 1/2` and `diamondCut 2/2` cannot be
-        //     exploited via half-2 selectors. By this point every
-        //     facet in `cuts` is cut, every init call above has
-        //     landed, and the post-cut facet-count assertion
-        //     (`actualAfterCut2 == cuts.length`) has passed — safe
-        //     to flip the bit back. The deployer holds PAUSER_ROLE
-        //     from Step 5a's `initializeAccessControl`, so this call
-        //     succeeds without an extra grant. Mainnet operators that
-        //     want a multi-eye review window before unpausing can
-        //     comment this line out and run a separate manual
-        //     `setPaused(false)` after `--phase verify` confirms the
-        //     post-cut state.
-        AdminFacet(diamond).unpause();
-        console.log("Protocol unpaused.");
+        // 5e. The Diamond STAYS PAUSED (#945). It is born paused (see
+        //     `VaipakamDiamond.constructor`) so the half-cut window between
+        //     `diamondCut 1/2` and `2/2` cannot be exploited, and it used to
+        //     be unpaused here. But this script is only the contracts phase:
+        //     the price feeds, the sanctions screen, the swap routes and the
+        //     CCIP lanes are configured by LATER phases, and the admin key
+        //     still owns the Diamond until the handover. Unpausing here made
+        //     `createOffer` / `acceptOffer` public before any of that existed.
+        //     The first unpause is now `Launch.s.sol`, which reads every
+        //     `LibLaunchReadiness` requirement off the chain first, and on a
+        //     production chain only prints the Timelock proposal (owner
+        //     decision 2026-10-23: the Timelock unpauses after handover).
+        console.log("Protocol left PAUSED - run Launch.s.sol once the chain is configured.");
 
         // 5f. Enable the canonical-limit-order (GTC) master flags
         //     (Issue #102 / ADR-0010). Each is governance-tunable via
@@ -1330,7 +1326,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getAccessControlSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](16);
+        s = new bytes4[](17);
         s[0] = AccessControlFacet.initializeAccessControl.selector;
         s[1] = AccessControlFacet.grantRole.selector;
         s[2] = AccessControlFacet.revokeRole.selector;
@@ -1356,10 +1352,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // Gated by `onlyRole(DEFAULT_ADMIN_ROLE)`.
         s[14] = AccessControlFacet.transferAdmin.selector;
         s[15] = AccessControlFacet.EMERGENCY_REVOKER_ROLE.selector;
+        // #945 — the role epoch a Timelock launch is bound to.
+        s[16] = AccessControlFacet.roleEpoch.selector;
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](49);
+        s = new bytes4[](50);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -1421,6 +1419,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[46] = AdminFacet.getRateModelMaxDeviationBps.selector;
         s[47] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
         s[48] = AdminFacet.unpauseIfPauseEpoch.selector;
+        // #945 — the gated first unpause (the launch).
+        s[49] = AdminFacet.launch.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
@@ -1507,7 +1507,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](34);
+        s = new bytes4[](35);
         s[0] = OracleAdminFacet.setChainlinkRegistry.selector;
         s[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
         s[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
@@ -1560,6 +1560,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // reference asset list (constitution-level governance set).
         s[32] = OracleAdminFacet.setTierReferenceAssets.selector;
         s[33] = OracleAdminFacet.getTierReferenceAssets.selector;
+        // #945 — the launch readiness check prices WETH through the
+        // Diamond's own oracle, so it reads which WETH is configured.
+        s[34] = OracleAdminFacet.getWethContract.selector;
     }
 
     function _getNftSelectors() internal pure returns (bytes4[] memory s) {

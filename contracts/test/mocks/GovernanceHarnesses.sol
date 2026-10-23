@@ -116,6 +116,18 @@ contract ChainlinkStyleOwnable2StepHarness {
         s_owner = owner_;
     }
 
+    /// @dev The pool's rate-limit admin, as the CCIP `TokenPool` exposes it.
+    ///      Unrestricted here: the gate only reads it.
+    address private s_rateLimitAdmin;
+
+    function setRateLimitAdmin(address admin_) external {
+        s_rateLimitAdmin = admin_;
+    }
+
+    function getRateLimitAdmin() external view returns (address) {
+        return s_rateLimitAdmin;
+    }
+
     function owner() external view returns (address) {
         return s_owner;
     }
@@ -161,6 +173,12 @@ contract TokenAdminRegistryStub {
 
     function seed(address token, address administrator_) external {
         configs[token].administrator = administrator_;
+    }
+
+    /// @dev The pool the registry routes `token` through (`setPool` on the
+    ///      real registry, administrator-only there).
+    function setPool(address token, address pool) external {
+        configs[token].tokenPool = pool;
     }
 
     function getTokenConfig(address token) external view returns (TokenConfig memory) {

@@ -149,6 +149,15 @@ contract OracleAdminFacet {
         LibVaipakam.setWethContract(weth);
     }
 
+    /// @notice The WETH ERC-20 the oracle layer prices from the ETH
+    ///         reference feed ({setWethContract}); zero when unset.
+    /// @dev Read by the launch readiness check (#945), which asks the
+    ///      Diamond's own oracle for WETH's price instead of re-deriving
+    ///      the oracle's acceptance rules.
+    function getWethContract() external view returns (address) {
+        return LibVaipakam.storageSlot().wethContract;
+    }
+
     /**
      * @notice Sets the direct Chainlink ETH/USD AggregatorV3 feed.
      * @dev Owner-only. REQUIRED — used to price WETH itself, to

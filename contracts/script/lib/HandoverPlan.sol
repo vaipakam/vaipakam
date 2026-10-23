@@ -63,6 +63,14 @@ library HandoverPlan {
         r[2] = LibAccessControl.NOTIF_BILLER_ROLE;
     }
 
+    /// @notice Every Diamond role the protocol defines
+    ///         (`LibAccessControl.knownRoles()`, the one list). The handover
+    ///         gate checks each one's holders against the plan; the launch
+    ///         gate refuses while the deploy key holds any of them.
+    function diamondRoles() internal pure returns (bytes32[] memory) {
+        return LibAccessControl.knownRoles();
+    }
+
     /// @notice The env variable naming each bot role's holder, parallel to
     ///         `botRoles()`. A zero address means the role is deliberately
     ///         left unheld after the handover.

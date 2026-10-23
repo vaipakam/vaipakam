@@ -563,13 +563,7 @@ contract ConfigureCcip is Script {
                     new TokenPool.ChainUpdate[](1);
                 adds[0] = TokenPool.ChainUpdate({
                     remoteChainSelector: selector,
-                    remotePoolAddresses: _wrap(
-                        abi.encode(
-                            Deployments.readAddressForChain(
-                                cid, ".vpfiTokenPool"
-                            )
-                        )
-                    ),
+                    remotePoolAddresses: _wrap(abi.encode(_remotePool(cid))),
                     remoteTokenAddress: abi.encode(_remoteToken(cid)),
                     outboundRateLimiterConfig: off,
                     inboundRateLimiterConfig: off
@@ -741,15 +735,28 @@ contract ConfigureCcip is Script {
     // ── Helpers ──────────────────────────────────────────────────────────
 
     function _isCanonical(uint256 chainId) internal pure returns (bool) {
-        return chainId == 8453 || chainId == 84532;
+        return Deployments.isCanonicalVpfiChainId(chainId);
     }
 
     /// @dev A remote chain's VPFI token address — `.vpfiToken` on a
-    ///      canonical chain, `.vpfiMirror` on a mirror.
-    function _remoteToken(uint256 chainId) internal view returns (address) {
-        return _isCanonical(chainId)
-            ? Deployments.readAddressForChain(chainId, ".vpfiToken")
-            : Deployments.readAddressForChain(chainId, ".vpfiMirror");
+    ///      canonical chain, `.vpfiMirror` on a mirror — from the derivation
+    ///      the launch declares the lane's peer with, so the two never
+    ///      disagree. A cross-chain wire fails loud on a missing one.
+    function _remoteToken(uint256 chainId) internal view returns (address t) {
+        t = Deployments.vpfiLaneTokenOptionalForChain(chainId);
+        require(
+            t != address(0),
+            string.concat("ConfigureCcip: chain ", vm.toString(chainId), "'s artifact records no VPFI token")
+        );
+    }
+
+    /// @dev A remote chain's VPFI pool, from the same derivation.
+    function _remotePool(uint256 chainId) internal view returns (address p) {
+        p = Deployments.vpfiLanePoolOptionalForChain(chainId);
+        require(
+            p != address(0),
+            string.concat("ConfigureCcip: chain ", vm.toString(chainId), "'s artifact records no vpfiTokenPool")
+        );
     }
 
     /// @dev Wrap one `bytes` value into a single-element `bytes[]` — the

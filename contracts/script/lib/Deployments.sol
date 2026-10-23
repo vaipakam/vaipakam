@@ -421,6 +421,12 @@ library Deployments {
     ///         `.rewardCustodyHolder`. Zero on a chain that predates the
     ///         holder and has not yet run `DeployRewardCustodyHolder`.
     function readRewardCustodyHolderOptional() internal view returns (address) { return _tryReadAddr(".rewardCustodyHolder"); }
+    /// @notice The chain's Timelock, or zero before `DeployTimelock` ran (#945).
+    function readTimelockOptional() internal view returns (address) { return _tryReadAddr(".timelock"); }
+    /// @notice The chain's CCIP VPFI pool, or zero when none is recorded (#945).
+    function readVpfiTokenPoolOptional() internal view returns (address) { return _tryReadAddr(".vpfiTokenPool"); }
+    /// @notice The chain's VPFI pool rate governor, or zero when none is recorded (#945).
+    function readVpfiPoolRateGovernorOptional() internal view returns (address) { return _tryReadAddr(".vpfiPoolRateGovernor"); }
     /// @notice #2583 — optional, non-reverting read of `.serviceCapacityEscrow`.
     ///         Zero on a chain whose escrow has not been bound and recorded.
     function readServiceCapacityEscrowOptional() internal view returns (address) { return _tryReadAddr(".serviceCapacityEscrow"); }
@@ -451,6 +457,27 @@ library Deployments {
     ///         `ConfigureSanctionsClearance` last deployed on this chain. Zero
     ///         where none was deployed.
     function readSanctionsClearanceAttestorOptional() internal view returns (address) { return _tryReadAddr(".sanctionsClearanceAttestor"); }
+    /// @notice Whether `chainId` hosts the canonical VPFI token (Base, Base
+    ///         Sepolia) rather than a mirror.
+    function isCanonicalVpfiChainId(uint256 chainId) internal pure returns (bool) {
+        return chainId == 8453 || chainId == 84532;
+    }
+    /// @notice The VPFI token a CCIP lane to `chainId` must reach — the
+    ///         `.vpfiToken` on the canonical chain, the `.vpfiMirror` on a
+    ///         mirror — or zero when that chain's artifact records none. The
+    ///         ONE derivation `ConfigureCcip` wires a lane's remote token
+    ///         from and `Launch` declares it from (#945, Codex #2686 r11).
+    function vpfiLaneTokenOptionalForChain(uint256 chainId) internal view returns (address) {
+        return _tryReadAddrAt(
+            pathForChainId(chainId), isCanonicalVpfiChainId(chainId) ? ".vpfiToken" : ".vpfiMirror"
+        );
+    }
+    /// @notice The VPFI pool a CCIP lane to `chainId` must reach (that
+    ///         chain's `.vpfiTokenPool`), or zero when none is recorded. The
+    ///         same single derivation as {vpfiLaneTokenOptionalForChain}.
+    function vpfiLanePoolOptionalForChain(uint256 chainId) internal view returns (address) {
+        return _tryReadAddrAt(pathForChainId(chainId), ".vpfiTokenPool");
+    }
     /// @notice #2443 — {readSanctionsClearanceAttestorOptional} for another
     ///         chain's artifact: zero when that artifact or its key is absent.
     function readSanctionsClearanceAttestorOptionalForChain(uint256 chainId) internal view returns (address) {

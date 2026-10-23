@@ -50,6 +50,10 @@ contract RefreshChangedFacetsTest is Test {
         loupe = IDiamondLoupe(diamond);
         owner = OwnershipFacet(diamond).owner();
         assertEq(owner, vm.addr(DEPLOYER_KEY), "fixture: the deployer key owns the Diamond");
+        // The deploy leaves the Diamond paused until `Launch.s.sol` (#945);
+        // a refresh runs against a LAUNCHED Diamond, so model one here.
+        vm.prank(owner);
+        AdminFacet(diamond).unpause();
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────

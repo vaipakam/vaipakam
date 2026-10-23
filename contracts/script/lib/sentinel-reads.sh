@@ -14,7 +14,8 @@
 
 # The sentinels, as "<label>|<cast signature>". Each is a zero-argument view
 # that must answer on any correctly cut Diamond, live or empty:
-#   paused()               — PausableFacet; a deploy must not land paused
+#   paused()               — PausableFacet; true until the launch step (#945):
+#                            the contracts phase leaves the Diamond paused
 #   getTreasury()          — the fee sink the configure phase sets
 #   getActiveOffersCount() — MetricsFacet; replaces the retired nextOfferId()
 #   getActiveLoansCount()  — MetricsFacet; replaces the retired nextLoanId()

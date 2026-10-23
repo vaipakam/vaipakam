@@ -290,6 +290,29 @@
   },
   {
     "type": "function",
+    "name": "launch",
+    "inputs": [
+      {
+        "name": "expectedEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "gate",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "gateCall",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "pause",
     "inputs": [],
     "outputs": [],
@@ -799,6 +822,25 @@
   },
   {
     "type": "event",
+    "name": "LaunchedThroughGate",
+    "inputs": [
+      {
+        "name": "gate",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "PancakeswapV2FactorySet",
     "inputs": [
       {
@@ -1099,6 +1141,22 @@
         "internalType": "bytes32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "AddressEmptyCode",
+    "inputs": [
+      {
+        "name": "target",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AlreadyLaunched",
+    "inputs": []
   },
   {
     "type": "error",
@@ -2265,6 +2323,11 @@
   },
   {
     "type": "error",
+    "name": "FailedCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "FeeEntitlementChargeFailed",
     "inputs": []
   },
@@ -2738,6 +2801,11 @@
         "internalType": "uint64"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "LaunchGateCallInvalid",
+    "inputs": []
   },
   {
     "type": "error",

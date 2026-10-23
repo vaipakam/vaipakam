@@ -104,6 +104,27 @@ library LibAccessControl {
     bytes32 internal constant EMERGENCY_REVOKER_ROLE =
         keccak256("EMERGENCY_REVOKER_ROLE");
 
+    /// @notice Every role this library defines — the ONE list of Diamond
+    ///         roles. The handover gate checks each one's holders against
+    ///         the governance plan, and the launch gate refuses while the
+    ///         deploy key holds any of them. Add a new role constant here as
+    ///         well, or neither check will see it.
+    function knownRoles() internal pure returns (bytes32[] memory r) {
+        r = new bytes32[](12);
+        r[0] = DEFAULT_ADMIN_ROLE;
+        r[1] = ADMIN_ROLE;
+        r[2] = PAUSER_ROLE;
+        r[3] = UNPAUSER_ROLE;
+        r[4] = KYC_ADMIN_ROLE;
+        r[5] = ORACLE_ADMIN_ROLE;
+        r[6] = RISK_ADMIN_ROLE;
+        r[7] = VAULT_ADMIN_ROLE;
+        r[8] = WATCHER_ROLE;
+        r[9] = NOTIF_BILLER_ROLE;
+        r[10] = KEEPER_ROLE;
+        r[11] = EMERGENCY_REVOKER_ROLE;
+    }
+
     struct RoleData {
         mapping(address => bool) hasRole;
         bytes32 adminRole;
@@ -113,6 +134,17 @@ library LibAccessControl {
     ///      rename, or change types of existing fields on live diamonds.
     struct AccessControlStorage {
         mapping(bytes32 => RoleData) roles;
+        // #945 (Codex #2686 r9 P1) — a strictly monotonic count of role-table
+        // changes: every grant or revoke that changes a holder, every
+        // renounce that does, every role-admin assignment. The ROLE EPOCH a
+        // launch decision is bound to: the handover gate proves the exact
+        // holder of every role from the role events at epoch N, and the
+        // launch the Timelock executes after its delay refuses unless the
+        // epoch is still N, so no grant (or revoke) lands unreviewed between
+        // that proof and users being admitted. The holder sets themselves
+        // are not enumerable on-chain; this count is what makes "unchanged
+        // since the proof" checkable there.
+        uint64 roleTransitions;
     }
 
     // ─── Events ──────────────────────────────────────────────────────────
@@ -160,9 +192,16 @@ library LibAccessControl {
         return _storage().roles[role].adminRole;
     }
 
+    /// @dev The role epoch: the count of role-table changes ({AccessControlStorage}).
+    function roleTransitions() internal view returns (uint64) {
+        return _storage().roleTransitions;
+    }
+
     function grantRole(bytes32 role, address account) internal {
         if (!hasRole(role, account)) {
-            _storage().roles[role].hasRole[account] = true;
+            AccessControlStorage storage acs = _storage();
+            acs.roles[role].hasRole[account] = true;
+            ++acs.roleTransitions;
             emit RoleGranted(role, account, msg.sender);
         }
     }
@@ -170,7 +209,9 @@ library LibAccessControl {
     function revokeRole(bytes32 role, address account) internal {
         _assertNotOwnerRootRemoval(role, account);
         if (hasRole(role, account)) {
-            _storage().roles[role].hasRole[account] = false;
+            AccessControlStorage storage acs = _storage();
+            acs.roles[role].hasRole[account] = false;
+            ++acs.roleTransitions;
             emit RoleRevoked(role, account, msg.sender);
         }
     }
@@ -181,7 +222,9 @@ library LibAccessControl {
         }
         _assertNotOwnerRootRemoval(role, msg.sender);
         if (hasRole(role, msg.sender)) {
-            _storage().roles[role].hasRole[msg.sender] = false;
+            AccessControlStorage storage acs = _storage();
+            acs.roles[role].hasRole[msg.sender] = false;
+            ++acs.roleTransitions;
             emit RoleRevoked(role, msg.sender, msg.sender);
         }
     }
@@ -201,7 +244,9 @@ library LibAccessControl {
 
     function setRoleAdmin(bytes32 role, bytes32 adminRole) internal {
         bytes32 previousAdminRole = getRoleAdmin(role);
-        _storage().roles[role].adminRole = adminRole;
+        AccessControlStorage storage acs = _storage();
+        acs.roles[role].adminRole = adminRole;
+        ++acs.roleTransitions;
         emit RoleAdminChanged(role, previousAdminRole, adminRole);
     }
 

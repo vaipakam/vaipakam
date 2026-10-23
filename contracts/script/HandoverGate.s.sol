@@ -7,6 +7,7 @@ import {console} from "forge-std/console.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {HandoverPlan} from "./lib/HandoverPlan.sol";
+import {LibLaunchReadiness} from "../src/governance/LibLaunchReadiness.sol";
 
 /**
  * @title HandoverGate
@@ -81,6 +82,11 @@ contract HandoverGate is Script {
         address[] botHolders;
         HandoverPlan.Target[] targets;
         address vpfiToken;
+        /// @dev The artifact's VPFI pool and its rate governor: the pool
+        ///      whose ownership `_checkTargets` proves, and the governor it
+        ///      must be bound to.
+        address vpfiPool;
+        address rateGovernor;
         address cctRegistry;
         /// @dev `Deployments.requiresProductionGovernance()` for the chain.
         bool production;
@@ -131,6 +137,41 @@ contract HandoverGate is Script {
         if (failures.length > 0) {
             revert(string.concat("HandoverGate: FAILED with ", vm.toString(failures.length), " finding(s) - see above"));
         }
+        _printHandoverProof(inp.diamond, inp.timelock);
+    }
+
+    /// @dev What this run proved, on lines of their own that the deploy
+    ///      wrappers record (`lib/handover-proof.sh`) and the launch binds
+    ///      its Timelock call to (#945):
+    ///        - the Diamond's role epoch (Codex #2686 r9), so a role that
+    ///          changes hands after this proof makes the launch revert
+    ///          instead of admitting users under holders nobody checked;
+    ///        - the Timelock's executed-call count (Codex #2686 r14), so any
+    ///          governance call executed after this proof (a queued pool
+    ///          `transferOwnership` whose pending owner this run's event
+    ///          scan never saw, say) makes the launch proposal refuse and
+    ///          the gate run again.
+    ///      Both are read in the same state as every holder, role admin and
+    ///      owner this run compared, so a change after that state moves
+    ///      one of them, and the launch never binds a value newer than the
+    ///      state proved.
+    function _printHandoverProof(address diamond, address timelock) internal view returns (uint64 epoch, uint64 calls) {
+        try IAccessControlRead(diamond).roleEpoch() returns (uint64 e) {
+            epoch = e;
+        } catch {
+            revert("HandoverGate: the Diamond has no roleEpoch() - it predates the launch binding (#945); fresh deploy");
+        }
+        bool readable;
+        (readable, calls) = LibLaunchReadiness.timelockCalls(timelock);
+        if (!readable) {
+            revert(
+                "HandoverGate: the Timelock does not count its executed calls (executedCalls) - it predates the launch binding (#945); fresh deploy"
+            );
+        }
+        console.log("HandoverGate: every role's holders proven at role epoch", uint256(epoch));
+        console.log("HandoverGate: proven after the Timelock's executed call", uint256(calls));
+        console.log(string.concat("HANDOVER_ROLE_EPOCH=", vm.toString(uint256(epoch))));
+        console.log(string.concat("HANDOVER_TIMELOCK_CALLS=", vm.toString(uint256(calls))));
     }
 
     // ── The check ───────────────────────────────────────────────────────
@@ -319,38 +360,88 @@ contract HandoverGate is Script {
             _fail("VPFI CCT administrator unreadable on CCIP_TOKEN_ADMIN_REGISTRY");
             return;
         }
-        (address administrator, address pendingAdministrator,) = abi.decode(ret, (address, address, address));
+        (address administrator, address pendingAdministrator, address tokenPool) =
+            abi.decode(ret, (address, address, address));
         if (administrator != inp.timelock) {
             _fail(string.concat("VPFI CCT administrator is ", vm.toString(administrator), ", not the Timelock"));
         }
         if (pendingAdministrator != address(0)) {
             _fail(string.concat("VPFI CCT administrator transfer to ", vm.toString(pendingAdministrator), " is still pending"));
         }
+        _checkRoutedPool(inp, tokenPool);
+    }
+
+    /// @dev The ownership checks above cover the ARTIFACT's pool; CCIP routes
+    ///      through the REGISTRY's (Codex #2686 r7). The two must be the same
+    ///      pool, or a stale artifact proves an unused pool Timelock-owned
+    ///      while VPFI moves through one nobody checked. That pool's rate
+    ///      limits must also be settable only through the bounded
+    ///      `VpfiPoolRateGovernor` the artifact records (itself
+    ///      Timelock-owned, above): a different rate-limit admin could
+    ///      disable every lane's limit outside the governor's bounds.
+    function _checkRoutedPool(Inputs memory inp, address tokenPool) internal {
+        if (inp.vpfiPool == address(0)) {
+            _notCheckable("VPFI pool binding NOT CHECKED: addresses.json records no vpfiTokenPool");
+            return;
+        }
+        if (tokenPool != inp.vpfiPool) {
+            _fail(
+                string.concat(
+                    "the CCIP registry routes VPFI through ",
+                    vm.toString(tokenPool),
+                    ", not the artifact's vpfiTokenPool ",
+                    vm.toString(inp.vpfiPool)
+                )
+            );
+            return;
+        }
+        if (inp.rateGovernor == address(0)) {
+            _notCheckable("VPFI pool rate-limit admin NOT CHECKED: addresses.json records no vpfiPoolRateGovernor");
+            return;
+        }
+        (bool ok, bytes memory ret) = tokenPool.staticcall(abi.encodeWithSignature("getRateLimitAdmin()"));
+        if (!ok || ret.length < 32) {
+            _fail("VPFI pool getRateLimitAdmin() unreadable");
+            return;
+        }
+        address rateAdmin = abi.decode(ret, (address));
+        if (rateAdmin != inp.rateGovernor) {
+            _fail(
+                string.concat(
+                    "VPFI pool rate-limit admin is ",
+                    vm.toString(rateAdmin),
+                    ", not the artifact's VpfiPoolRateGovernor ",
+                    vm.toString(inp.rateGovernor)
+                )
+            );
+        }
     }
 
     // ── Role holders ────────────────────────────────────────────────────
 
     /// @dev The Diamond half of the plan: each known role and who must hold it.
+    ///      The role list is `HandoverPlan.diamondRoles()`, the same list the
+    ///      launch checks the admin key against.
     function _diamondPlan(Inputs memory inp) internal pure returns (bytes32[] memory roles, address[][] memory expected) {
-        bytes32[] memory tl = HandoverPlan.timelockRoles();
+        roles = HandoverPlan.diamondRoles();
         bytes32[] memory bots = HandoverPlan.botRoles();
-        uint256 n = 3 + tl.length + bots.length;
-        roles = new bytes32[](n);
-        expected = new address[][](n);
-        uint256 k;
-        roles[k] = HandoverPlan.DEFAULT_ADMIN_ROLE;
-        expected[k++] = _one(inp.timelock);
-        for (uint256 i; i < tl.length; ++i) {
-            roles[k] = tl[i];
-            expected[k++] = _one(inp.timelock);
-        }
-        roles[k] = LibAccessControl.PAUSER_ROLE;
-        expected[k++] = _one(inp.pauserSafe);
-        roles[k] = LibAccessControl.EMERGENCY_REVOKER_ROLE;
-        expected[k++] = _one(inp.governanceSafe);
-        for (uint256 i; i < bots.length; ++i) {
-            roles[k] = bots[i];
-            expected[k++] = inp.botHolders[i] == address(0) ? new address[](0) : _one(inp.botHolders[i]);
+        expected = new address[][](roles.length);
+        for (uint256 k; k < roles.length; ++k) {
+            bytes32 role = roles[k];
+            if (role == LibAccessControl.PAUSER_ROLE) {
+                expected[k] = _one(inp.pauserSafe);
+                continue;
+            }
+            if (role == LibAccessControl.EMERGENCY_REVOKER_ROLE) {
+                expected[k] = _one(inp.governanceSafe);
+                continue;
+            }
+            expected[k] = _one(inp.timelock);
+            for (uint256 i; i < bots.length; ++i) {
+                if (role == bots[i]) {
+                    expected[k] = inp.botHolders[i] == address(0) ? new address[](0) : _one(inp.botHolders[i]);
+                }
+            }
         }
     }
 
@@ -545,6 +636,8 @@ contract HandoverGate is Script {
         }
         inp.targets = HandoverPlan.read(json);
         inp.vpfiToken = HandoverPlan.vpfiToken(json);
+        inp.vpfiPool = HandoverPlan.readOptional(json, "vpfiTokenPool");
+        inp.rateGovernor = HandoverPlan.readOptional(json, "vpfiPoolRateGovernor");
         inp.cctRegistry = vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0));
         inp.production = Deployments.requiresProductionGovernance();
     }
@@ -723,6 +816,7 @@ contract HandoverGate is Script {
 interface IAccessControlRead {
     function hasRole(bytes32 role, address account) external view returns (bool);
     function getRoleAdmin(bytes32 role) external view returns (bytes32);
+    function roleEpoch() external view returns (uint64);
 }
 
 interface IOwnerRead {

@@ -82,9 +82,14 @@ selector set). Post-check:
 
 ```bash
 DIAMOND=$(jq -r .diamond deployments/base-sepolia/addresses.json)
-cast call $DIAMOND "paused()(bool)" --rpc-url $BASE_SEPOLIA_RPC_URL          # → false
+cast call $DIAMOND "paused()(bool)" --rpc-url $BASE_SEPOLIA_RPC_URL          # → true (born paused; see §10.9)
 cast call $DIAMOND "getTreasury()(address)" --rpc-url $BASE_SEPOLIA_RPC_URL  # → $TREASURY_ADDRESS
 ```
+
+The deploy leaves the Diamond **paused** (#945). `paused()` returning `true`
+here is the healthy result, not a failure: do not unpause it by hand. It is
+unpaused only by the `launch` phase (§10.9), after the configure phases have
+set what that phase checks.
 
 ---
 
@@ -534,6 +539,28 @@ REMOTE_EID=40245 REMOTE_PEER=$BASE_SEPOLIA_VPFI_BUY_RECEIVER \
 Same pattern — `LOCAL_OAPP=$REWARD_OAPP_PROXY` on each side with the counterpart's address. Since the proxy is deterministic, `LOCAL_OAPP` and `REMOTE_PEER` are often the same value on both sides.
 
 ---
+
+## 10.9. Launch — the first unpause (#945)
+
+Run the configure phases first (`bash script/deploy-testnet.sh base-sepolia
+--phase configure` sets, among the rest, the test sanctions list as the
+Diamond's oracle), then:
+
+```bash
+bash script/deploy-testnet.sh base-sepolia --phase launch
+```
+
+It reads the six launch requirements off the chain (treasury, sanctions
+oracle, priced WETH, an enabled swap adapter, the VPFI pool route and its
+exact CCIP lanes) and refuses while any is NOT MET. The admin key then
+unpauses. After a rehearsal handover the phase prints the Timelock call
+instead (see DeploymentRunbook, `launch` row). Never unpause with `cast`: an
+unpause outside this phase leaves no launch-gate record, and the launch step
+then accepts it only while every answered requirement is met.
+
+```bash
+cast call $DIAMOND "paused()(bool)" --rpc-url $BASE_SEPOLIA_RPC_URL  # → false after launch
+```
 
 ## 11. Smoke tests
 
