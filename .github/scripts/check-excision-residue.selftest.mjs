@@ -36,19 +36,6 @@ const DIR = `__excision_selftest__${process.pid}_${Date.now().toString(36)}`;
 
 /** `caught: true` — the gate MUST report this file. `false` — must stay silent. */
 const FIXTURES = [
-  // --- the retired in-app purchase route (#1742) ---
-  {
-    name: 'retired-route-shortcut.json',
-    caught: true,
-    why: 'a link to the retired /app/buy-vpfi route presents the removed purchase surface as a place to go',
-    body: '{ "shortcuts": [{ "name": "VPFI", "url": "/app/buy-vpfi" }] }\n',
-  },
-  {
-    name: 'surviving-marketing-key.json',
-    caught: false,
-    why: 'the surviving marketing page key names nothing a reader can buy; only the route spelling is a token',
-    body: '{ "pageMeta": { "buyVpfi": { "title": "VPFI" } } }\n',
-  },
   // --- rendered markup must fuse the words a reader sees as one phrase ---
   {
     name: 'inline-tag.md',

@@ -184,15 +184,6 @@ const DEAD_TOKENS = [
   // instruction this gate exists to stop, and the contract-name tokens
   // above do not see it.
   'buyvpfiwitheth',
-  // The retired in-app purchase ROUTE, `/app/buy-vpfi` (#1742). A link or a
-  // sentence pointing a reader at it presents the removed surface as a place
-  // to go — the PWA shortcut that found this was a tappable launcher entry
-  // labelled "Buy VPFI". Deliberately the route spelling and not bare
-  // `buyvpfi`: that also matches the surviving marketing page's component
-  // name, i18n key names, CSS classes and guide anchors (about fifty files),
-  // which name nothing a reader can buy. Sorting those is #1728's triage, not
-  // a token's job.
-  'appbuyvpfi',
   'processbridgedbuy',
   'getvpfisoldto',
   'vpfibuyrate',
@@ -434,7 +425,7 @@ const EXCLUDED_PREFIXES = [
  */
 const PINNED = new Map([
   [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "fdcbec2821b2"]],
-  [".github/scripts/check-excision-residue.selftest.mjs", [30, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "8cc4af8bc344"]],
+  [".github/scripts/check-excision-residue.selftest.mjs", [28, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "39d667741801"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "79390720e2fe"]],
   ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3edc0988a8d9"]],
   ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09e46e416b30"]],

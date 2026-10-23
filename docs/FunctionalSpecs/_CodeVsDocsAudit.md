@@ -1275,9 +1275,12 @@ VPFI Vault and Alerts, and a production-only service worker that never
 caches live data. The connected app has no manifest and no service worker.
 
 The only manifest in the tree was a leftover on the marketing site from the
-retired app. No page linked it, every shortcut pointed at a path the site
-does not serve, and one was a "Buy VPFI" shortcut to the retired purchase
-route. #1742 deletes it. That changes nothing about installability, since
+retired app. The marketing site never linked it; the retired app linked its
+own copy on its own host, removed with that app. None of its shortcuts
+reached what it named: the marketing site reads an unknown first path
+segment as a language, so they landed on marketing pages. One was a "Buy
+VPFI" shortcut to the retired purchase route, which the site redirects to
+its VPFI information page. #1742 deletes it. That changes nothing about installability, since
 nothing could install it, but it removes a file that described the removed
 purchase surface.
 
