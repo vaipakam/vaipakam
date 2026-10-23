@@ -45,7 +45,9 @@ other governance action ran after that check (a facet change, a pool
 ownership transfer, a rate-governor upgrade, anything). The proposal itself
 refuses to be printed once the count has moved, because an action executed
 between the check and the proposal is one the check never saw; the
-handover check is then run again. Everything the
+handover check is then run again. The Timelock also refuses to start one
+governance action while another is still running, so no action can run
+the launch from inside itself before it has been counted. Everything the
 launch depends on is governed by the Timelock, and not every effect of a
 governance action can be read back on-chain, so this binds the launch to
 exactly the state the Safe reviewed. Other queued operations are run or

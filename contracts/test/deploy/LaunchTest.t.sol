@@ -239,6 +239,44 @@ contract LaunchExtraFacet {
     }
 }
 
+/// @dev A governance target that, when the Timelock calls it, executes
+///      another ready Timelock operation from INSIDE that call (Codex #2686
+///      r15): a queued upgrade whose initializer runs the launch before its
+///      own call has been counted. `swallow` catches the inner refusal, so
+///      the outer call completes anyway.
+contract LaunchReenterer {
+    VaipakamTimelock internal tl;
+    address[] internal targets;
+    uint256[] internal values;
+    bytes[] internal payloads;
+    bytes32 internal salt;
+    bool internal swallow;
+
+    function arm(
+        VaipakamTimelock tl_,
+        address[] memory targets_,
+        uint256[] memory values_,
+        bytes[] memory payloads_,
+        bytes32 salt_,
+        bool swallow_
+    ) external {
+        tl = tl_;
+        targets = targets_;
+        values = values_;
+        payloads = payloads_;
+        salt = salt_;
+        swallow = swallow_;
+    }
+
+    function reenter() external {
+        if (swallow) {
+            try tl.executeBatch(targets, values, payloads, bytes32(0), salt) {} catch {}
+        } else {
+            tl.executeBatch(targets, values, payloads, bytes32(0), salt);
+        }
+    }
+}
+
 /// @dev A WETH stand-in: a contract answering `decimals()` with 18, as every
 ///      chain's bridged WETH9 does.
 contract LaunchWethStub {
@@ -1808,6 +1846,54 @@ contract LaunchTest is Test {
         vm.warp(block.timestamp + 2 days);
         _execute(tl, registry, _epoch());
         assertFalse(AdminFacet(diamond).paused());
+    }
+
+    /// @dev A governance call that runs the ready launch from inside itself
+    ///      (a governor upgrade whose initializer re-enters the Timelock):
+    ///      its own effects are in place but not yet counted, so the
+    ///      completed-call count alone would admit the launch. The Timelock
+    ///      refuses nested execution, so the whole outer call reverts and
+    ///      the Diamond stays paused; the launch itself still executes on its
+    ///      own afterwards.
+    function test_Production_NestedLaunchInsideAGovernanceCallIsRefused() public {
+        (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
+        LaunchReenterer r = _armedReenterer(tl, registry, epoch, false);
+        bytes memory payload = abi.encodeCall(LaunchReenterer.reenter, ());
+        vm.prank(PROPOSER);
+        tl.schedule(address(r), 0, payload, bytes32(0), bytes32("nest"), 2 days);
+        vm.warp(block.timestamp + 2 days);
+        vm.expectRevert(VaipakamTimelock.NestedExecution.selector);
+        tl.execute(address(r), 0, payload, bytes32(0), bytes32("nest"));
+        assertTrue(AdminFacet(diamond).paused(), "no launch from inside another call");
+        assertEq(tl.executedCalls(), 0);
+        _execute(tl, registry, epoch);
+        assertFalse(AdminFacet(diamond).paused(), "the launch on its own still executes");
+    }
+
+    /// @dev The same call catching the refusal: it completes, is counted,
+    ///      and the launch then reverts as acted-during-the-delay.
+    function test_Production_SwallowedNestedLaunchStillBlocksTheLaunch() public {
+        (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
+        LaunchReenterer r = _armedReenterer(tl, registry, epoch, true);
+        _governs(tl, address(r), abi.encodeCall(LaunchReenterer.reenter, ()), bytes32("nest"));
+        assertTrue(AdminFacet(diamond).paused(), "the nested launch did not run");
+        assertEq(tl.executedCalls(), 1);
+        (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
+            launcher.launchBatch(diamond, _d(registry), _h(), epoch);
+        bytes32 salt = launcher.launchSalt(diamond);
+        vm.expectRevert(abi.encodeWithSelector(LaunchGate.TimelockActedDuringDelay.selector, 0, 1));
+        tl.executeBatch(targets, values, payloads, bytes32(0), salt);
+        assertTrue(AdminFacet(diamond).paused());
+    }
+
+    function _armedReenterer(VaipakamTimelock tl, address registry, uint64 epoch, bool swallow)
+        internal
+        returns (LaunchReenterer r)
+    {
+        (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
+            launcher.launchBatch(diamond, _d(registry), _h(), epoch);
+        r = new LaunchReenterer();
+        r.arm(tl, targets, values, payloads, launcher.launchSalt(diamond), swallow);
     }
 
     /// @dev The Timelock counts every call it completes, each call of a

@@ -696,7 +696,12 @@ even for the gap between the deploy and the handover.
    one the gate's event scan never saw, so the proposal refuses until the
    gate runs again. Execute every other queued operation first, or cancel
    it, then run `handover-gate` and the launch phase; if one executes
-   during the delay, do both again for a fresh proposal. What changes
+   during the delay, do both again for a fresh proposal. The count only
+   moves when a call completes, so the Timelock also refuses to start a
+   call while another of its calls is still executing (`NestedExecution`):
+   an operation whose effect runs the ready launch from inside itself (a
+   rate-governor upgrade whose initializer calls `executeBatch`, say) is
+   refused whole, rather than launching before its own call is counted. What changes
    without the Timelock is bound separately: the pause by the epoch below,
    and the role table (a holder renouncing, the emergency revoker) by the
    role epoch.

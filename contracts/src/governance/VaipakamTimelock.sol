@@ -114,6 +114,21 @@ contract VaipakamTimelock is TimelockController {
     ///         proposal was decided on (#945, Codex #2686 r12).
     uint64 private _executedCalls;
 
+    /// @dev Set while a call is executing ({_execute}), cleared when it
+    ///      returns (a revert unwinds it with the call).
+    bool private _executing;
+
+    /// @notice A call tried to execute while another of this timelock's
+    ///         calls was still executing (Codex #2686 r15). The inherited
+    ///         controller lets a running call execute a DIFFERENT ready
+    ///         operation; this timelock refuses, so every call runs to
+    ///         completion before the next one starts and {executedCalls}
+    ///         always counts every call that ran before the one reading it.
+    ///         Without it, a governance call could run another operation
+    ///         (the launch, say) from inside itself, while its own effects
+    ///         were already in place but not yet counted.
+    error NestedExecution();
+
     /// @dev The caller tried to cancel the operation that removes its own
     ///      CANCELLER_ROLE, without holding PROPOSER_ROLE.
     error CancellerRemovalNotCancellable(bytes32 id);
@@ -244,9 +259,16 @@ contract VaipakamTimelock is TimelockController {
 
     /// @dev Counts the call AFTER it completes, so while a call is running
     ///      the count still excludes it: a call can read the count and see
-    ///      exactly the calls that ran before it.
+    ///      exactly the calls that ran before it. Refuses to start while
+    ///      another call is executing ({NestedExecution}), which is what
+    ///      makes "the calls that ran before it" mean every call whose
+    ///      effects are in place: no call can begin inside another one,
+    ///      before that one has been counted.
     function _execute(address target, uint256 value, bytes calldata data) internal virtual override {
+        if (_executing) revert NestedExecution();
+        _executing = true;
         super._execute(target, value, data);
+        _executing = false;
         unchecked {
             ++_executedCalls;
         }
