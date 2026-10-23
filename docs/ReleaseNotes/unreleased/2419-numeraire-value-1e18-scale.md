@@ -42,9 +42,9 @@ curable until claimed. A missing collateral price no longer leaves such a loan
 to the illiquid route, where a loan without both parties' illiquid consent
 could not default at all. A loan that began illiquid on either leg keeps its
 consented in-kind transfer, even when its collateral has since become liquid,
-instead of failing in the risk calculation. A token whose decimal count can no
-longer be read counts as having no usable price there, so such a loan takes
-the same unpriced fallback rather than being left with no route. A price the
+instead of failing in the risk calculation. A token whose decimal count cannot be
+read counts as having no usable price there, so such a loan takes the same
+unpriced fallback. A price the
 oracle's sources disagree on still refuses the default until they agree,
 except where the other leg has no price at all, where the missing-price rule
 wins as before.
