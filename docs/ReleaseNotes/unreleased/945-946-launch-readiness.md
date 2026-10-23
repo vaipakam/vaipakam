@@ -11,7 +11,10 @@ The launch step reads six requirements off the live chain and prints each
 as met, not met, or not checked: a treasury is set, a sanctions oracle
 contract is set, the declared WETH is configured and priced, at least one
 enabled swap adapter exists, VPFI is routed through the declared
-cross-chain pool, and that pool carries exactly the declared lanes. A
+cross-chain pool, and that pool carries exactly the declared lanes, each
+reaching exactly the remote token and the one remote pool the other
+chain's deployment records (a lane whose remote pool was removed, or that
+points at the wrong token, is refused even with its rate limits in place). A
 requirement the chain cannot answer is never read as met. On a production
 chain every requirement must be met and the governance handover must be
 complete, and the step broadcasts nothing: it prints the Timelock proposal
@@ -32,7 +35,14 @@ requirement stopped holding during the 48-hour wait (a swap route was
 removed, the sanctions oracle was cleared, the deploy key was given a role
 back, or another queued operation gave an administrator role to someone
 new), the execution fails and the Diamond stays paused. A moved role count
-needs the handover check run again and a fresh proposal. The unpause is
+needs the handover check run again and a fresh proposal. The proposal also
+records the Diamond's facet table as it stood when the proposal was made,
+and the launch refuses if any facet was added, replaced or removed during
+the wait: every requirement is read through the Diamond's own facets, so a
+replaced one could report a requirement as met from state the protocol's
+own logic never reads. The launch is thereby bound to everything governance
+can change on the Diamond: its configuration, owner, roles, code and pause.
+The unpause is
 also tied to the pause count at the time of the proposal: if the Guardian
 pauses or the watcher auto-pauses during the wait, the launch can no longer
 execute, so a launch decided before an incident never lifts the incident's

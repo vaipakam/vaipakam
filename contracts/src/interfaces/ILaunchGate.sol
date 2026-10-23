@@ -20,10 +20,15 @@ interface ILaunchGate {
     /// @param roleEpoch The Diamond's role epoch when the handover gate
     ///                  proved every role's holders
     ///                  (`AccessControlFacet.roleEpoch`).
+    /// @param facetTable The Diamond's facet table when the launch was
+    ///                  decided: the hash of its loupe's `facets()` answer
+    ///                  (`LibLaunchReadiness.facetTable`), so the code every
+    ///                  check reads through is the code the decision read.
     struct Handover {
         address deployKey;
         address owner;
         uint64 roleEpoch;
+        bytes32 facetTable;
     }
 
     /// @notice Returns only when every launch requirement for `diamond`

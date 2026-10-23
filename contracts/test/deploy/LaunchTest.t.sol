@@ -18,6 +18,7 @@ import {DeployLaunchGate} from "../../script/DeployLaunchGate.s.sol";
 import {LaunchGateDeployment} from "../../script/lib/LaunchGateDeployment.sol";
 import {LaunchGate} from "../../src/governance/LaunchGate.sol";
 import {ILaunchGate} from "../../src/interfaces/ILaunchGate.sol";
+import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {LibLaunchReadiness} from "../../src/governance/LibLaunchReadiness.sol";
 import {VaipakamTimelock} from "../../src/governance/VaipakamTimelock.sol";
 
@@ -86,13 +87,42 @@ contract LaunchMockPool is LaunchFollowsOwner {
 
     uint64[] internal lanes;
     mapping(uint64 => mapping(bool => Bucket)) internal buckets;
+    mapping(uint64 => bytes[]) internal remotePools;
+    mapping(uint64 => bytes) internal remoteTokens;
+
+    /// @dev The peer every lane reaches unless a test sets another: the
+    ///      values `LaunchTest._decl` declares.
+    address public constant REMOTE_POOL = address(0x9001);
+    address public constant REMOTE_TOKEN = address(0x9002);
 
     function setLanes(uint64[] memory l) external {
         lanes = l;
         for (uint256 i; i < l.length; ++i) {
             buckets[l[i]][true] = Bucket(50_000 ether, 0, true, 50_000 ether, 6 ether);
             buckets[l[i]][false] = Bucket(50_000 ether, 0, true, 50_000 ether, 6 ether);
+            delete remotePools[l[i]];
+            remotePools[l[i]].push(abi.encode(REMOTE_POOL));
+            remoteTokens[l[i]] = abi.encode(REMOTE_TOKEN);
         }
+    }
+
+    function setRemotePools(uint64 lane, bytes[] memory pools) external {
+        delete remotePools[lane];
+        for (uint256 i; i < pools.length; ++i) {
+            remotePools[lane].push(pools[i]);
+        }
+    }
+
+    function setRemoteToken(uint64 lane, bytes memory token) external {
+        remoteTokens[lane] = token;
+    }
+
+    function getRemotePools(uint64 lane) external view returns (bytes[] memory) {
+        return remotePools[lane];
+    }
+
+    function getRemoteToken(uint64 lane) external view returns (bytes memory) {
+        return remoteTokens[lane];
     }
 
     function setLimit(uint64 lane, bool inbound, bool enabled, uint128 capacity, uint128 rate) external {
@@ -179,6 +209,13 @@ contract LaunchCodeStub {}
 ///      `assertReady` included, without reading the Diamond.
 contract LaunchPermissiveGate {
     fallback() external {}
+}
+
+/// @dev A facet a governance cut adds during the launch delay.
+contract LaunchExtraFacet {
+    function launchTestExtra() external pure returns (uint256) {
+        return 1;
+    }
 }
 
 /// @dev A WETH stand-in: a contract answering `decimals()` with 18, as every
@@ -341,10 +378,7 @@ contract LaunchTest is Test {
         d.weth = weth;
         d.vpfiPool = wiredPool[registry];
         d.rateGovernor = wiredGovernor[registry];
-        if (d.vpfiPool != address(0)) {
-            d.lanes = new uint64[](1);
-            d.lanes[0] = 1;
-        }
+        if (d.vpfiPool != address(0)) d.lanes = _decl(1, 0);
     }
 
     function _epoch() internal view returns (uint64) {
@@ -378,15 +412,17 @@ contract LaunchTest is Test {
         handedTo = timelock;
         provenEpoch = AccessControlFacet(diamond).roleEpoch();
         launcher.setHandoverProof(provenEpoch);
+        (, provenTable) = LibLaunchReadiness.facetTable(diamond);
     }
 
     /// @dev The last handover's end state, as a launch binds it. Call-free,
     ///      like `_d`.
     address internal handedTo;
     uint64 internal provenEpoch;
+    bytes32 internal provenTable;
 
     function _h() internal view returns (ILaunchGate.Handover memory) {
-        return ILaunchGate.Handover({deployKey: admin, owner: handedTo, roleEpoch: provenEpoch});
+        return ILaunchGate.Handover({deployKey: admin, owner: handedTo, roleEpoch: provenEpoch, facetTable: provenTable});
     }
 
     // ─── The deploy leaves it paused ─────────────────────────────────
@@ -783,7 +819,7 @@ contract LaunchTest is Test {
         LaunchGate gate = LaunchGate(LaunchGateDeployment.predicted());
         address registry = _registryWithLane();
         vm.expectRevert(LaunchGate.NoDeployKey.selector);
-        gate.assertReady(diamond, _d(registry), ILaunchGate.Handover(address(0), address(0), 0));
+        gate.assertReady(diamond, _d(registry), ILaunchGate.Handover(address(0), address(0), 0, bytes32(0)));
     }
 
     /// @dev A launched production Diamond paused and unpaused again for an
@@ -1173,13 +1209,21 @@ contract LaunchTest is Test {
         if (b != 0) l[1] = b;
     }
 
+    /// @dev Declared lanes `a` (and `b`), each with the peer the mock pool
+    ///      reaches by default.
+    function _decl(uint64 a, uint64 b) internal pure returns (LibLaunchReadiness.Lane[] memory l) {
+        l = new LibLaunchReadiness.Lane[](b == 0 ? 1 : 2);
+        l[0] = LibLaunchReadiness.Lane(a, address(0x9001), address(0x9002));
+        if (b != 0) l[1] = LibLaunchReadiness.Lane(b, address(0x9001), address(0x9002));
+    }
+
     /// @dev A destination of the declared topology was never wired: the
     ///      pool's one in-bounds lane does not make the launch ready.
     function test_Gate_RefusesAMissingDeclaredLane() public {
         _configure();
         _handOverUnpause(address(new LaunchMockTimelock()));
         LibLaunchReadiness.Declared memory d = _d(_registryWithLane());
-        d.lanes = _lanes(1, 2);
+        d.lanes = _decl(1, 2);
         vm.expectRevert(
             abi.encodeWithSelector(
                 LaunchGate.LaunchNotReady.selector,
@@ -1216,7 +1260,7 @@ contract LaunchTest is Test {
         address registry = _registryWithLane();
         _pool(registry).setLanes(_lanes(1, 2));
         LibLaunchReadiness.Declared memory d = _d(registry);
-        d.lanes = _lanes(1, 1);
+        d.lanes = _decl(1, 1);
         vm.expectRevert(
             abi.encodeWithSelector(
                 LaunchGate.LaunchNotReady.selector,
@@ -1325,7 +1369,7 @@ contract LaunchTest is Test {
     function test_UndeclaredLanes_NotCheckedOnTestnet_RefusedOnProduction() public {
         _configure();
         LibLaunchReadiness.Declared memory d = _d(_registryWithLane());
-        d.lanes = new uint64[](0);
+        d.lanes = new LibLaunchReadiness.Lane[](0);
         LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, d);
         assertFalse(c[5].checkable);
         assertEq(c[5].detail, "no lane set declared (CCIP_LANE_CHAIN_IDS), so whether every destination is wired is unknown");
@@ -1345,7 +1389,7 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         _configure();
         LibLaunchReadiness.Declared memory d = _d(_registryWithLane());
-        d.lanes = new uint64[](0);
+        d.lanes = new LibLaunchReadiness.Lane[](0);
         Launch.Outcome o = launcher.launch(diamond, d, address(0), admin, ADMIN_KEY);
         assertEq(uint8(o), uint8(Launch.Outcome.Unpaused));
     }
@@ -1655,5 +1699,126 @@ contract LaunchTest is Test {
                 ", and unpaused now; a readiness check is NOT MET now (listed above) - restore it through governance"
             )
         );
+    }
+
+    // ─── Round 11 (Codex #2686): the code and the lanes' peers ──────────
+
+    /// @dev A `diamondCut` lands during the delay (the Timelock owns the
+    ///      Diamond, so another queued operation can make it): every check
+    ///      would read through code the decision never saw, so the launch
+    ///      reverts and the Diamond stays paused.
+    function test_Production_DiamondCutDuringDelayRevertsTheLaunch() public {
+        (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](1);
+        bytes4[] memory sel = new bytes4[](1);
+        sel[0] = LaunchExtraFacet.launchTestExtra.selector;
+        cut[0] = IDiamondCut.FacetCut(address(new LaunchExtraFacet()), IDiamondCut.FacetCutAction.Add, sel);
+        vm.prank(address(tl));
+        IDiamondCut(diamond).diamondCut(cut, address(0), "");
+        (, bytes32 live) = LibLaunchReadiness.facetTable(diamond);
+        assertTrue(live != provenTable, "a cut moves the facet table");
+        (address[] memory targets, uint256[] memory values, bytes[] memory payloads) =
+            launcher.launchBatch(diamond, _d(registry), _h(), epoch);
+        bytes32 salt = launcher.launchSalt(diamond);
+        vm.expectRevert(abi.encodeWithSelector(LaunchGate.FacetTableMoved.selector, provenTable, live));
+        tl.executeBatch(targets, values, payloads, bytes32(0), salt);
+        assertTrue(AdminFacet(diamond).paused());
+    }
+
+    /// @dev The proposal binds the facet table it was decided against.
+    function test_Production_ProposalBindsTheFacetTable() public {
+        vm.chainId(8453);
+        _configure();
+        address timelock = address(new LaunchMockTimelock());
+        _handOverUnpause(timelock);
+        Launch.Decision memory d = launcher.decide(diamond, _d(_registryWithLane()), timelock, admin, false);
+        assertEq(uint8(d.path), uint8(Launch.Path.TimelockProposal));
+        (bool read, bytes32 table) = LibLaunchReadiness.facetTable(diamond);
+        assertTrue(read);
+        assertEq(d.handover.facetTable, table);
+    }
+
+    function _expectLaneRefused(string memory state, string memory detail) internal {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchGate.LaunchNotReady.selector, "CCIP lanes are exactly the declared set, rate-limited", state, detail
+            )
+        );
+    }
+
+    function _one(address a) internal pure returns (bytes[] memory p) {
+        p = new bytes[](1);
+        p[0] = abi.encode(a);
+    }
+
+    /// @dev The lane exists and is rate-limited, but reaches another pool.
+    function test_Gate_RefusesALaneWithAWrongRemotePool() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        _pool(registry).setRemotePools(1, _one(address(0xBAD)));
+        _expectLaneRefused(
+            "NOT MET",
+            "lane 1: its remote pools are not exactly the declared one (missing, wrong, or an extra pool the review never saw): run the ccip-wire phase"
+        );
+        _gate().assertReady(diamond, _d(registry), _h());
+    }
+
+    /// @dev The last remote pool was removed: the selector stays supported
+    ///      and its limiter in bounds, but every inbound message would fail.
+    function test_Gate_RefusesALaneWithNoRemotePool() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        _pool(registry).setRemotePools(1, new bytes[](0));
+        _expectLaneRefused(
+            "NOT MET",
+            "lane 1: its remote pools are not exactly the declared one (missing, wrong, or an extra pool the review never saw): run the ccip-wire phase"
+        );
+        _gate().assertReady(diamond, _d(registry), _h());
+    }
+
+    /// @dev A second remote pool beside the declared one is an inbound
+    ///      source the review never saw.
+    function test_Gate_RefusesALaneWithAnExtraRemotePool() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        bytes[] memory two = new bytes[](2);
+        two[0] = abi.encode(address(0x9001));
+        two[1] = abi.encode(address(0xBAD));
+        _pool(registry).setRemotePools(1, two);
+        _expectLaneRefused(
+            "NOT MET",
+            "lane 1: its remote pools are not exactly the declared one (missing, wrong, or an extra pool the review never saw): run the ccip-wire phase"
+        );
+        _gate().assertReady(diamond, _d(registry), _h());
+    }
+
+    function test_Gate_RefusesALaneWithAWrongRemoteToken() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        _pool(registry).setRemoteToken(1, abi.encode(address(0xBAD)));
+        _expectLaneRefused(
+            "NOT MET",
+            "lane 1: its remote token is not the declared one, so outbound transfers would mint or release another asset: run the ccip-wire phase"
+        );
+        _gate().assertReady(diamond, _d(registry), _h());
+    }
+
+    /// @dev A lane declared without a peer (the remote chain's artifact
+    ///      records none) cannot be compared: NOT CHECKED, never met.
+    function test_Gate_ALaneWithoutADeclaredPeerIsNotChecked() public {
+        _configure();
+        _handOverUnpause(address(new LaunchMockTimelock()));
+        address registry = _registryWithLane();
+        LibLaunchReadiness.Declared memory d = _d(registry);
+        d.lanes[0].remotePool = address(0);
+        _expectLaneRefused(
+            "NOT CHECKED",
+            "lane 1: no remote pool or token declared (that chain's artifact records none) to compare its peer against"
+        );
+        _gate().assertReady(diamond, d, _h());
     }
 }

@@ -612,7 +612,14 @@ even for the gap between the deploy and the handover.
    - exactly the declared CCIP lanes on that pool (`CCIP_LANE_CHAIN_IDS`,
      resolved per chain as the ccip-wire phase does): none missing and
      none extra, each with inbound and outbound rate limits enabled and
-     inside the `VpfiPoolRateGovernor` bounds.
+     inside the `VpfiPoolRateGovernor` bounds, and each reaching exactly
+     its declared peer: the remote chain's VPFI token (`vpfiToken` on Base,
+     `vpfiMirror` on a mirror) and that chain's `vpfiTokenPool` as the one
+     and only remote pool. A supported selector says nothing about where its
+     messages go: a lane whose remote pool was removed fails every inbound
+     transfer, and one pointing at the wrong token sends the wrong asset.
+     The peers come from each remote chain's artifact, through the same
+     helper the ccip-wire phase wires them with.
 
    The launch checks the chain against these DECLARED values rather than
    against itself: a check that only read the configuration back would
@@ -632,8 +639,10 @@ even for the gap between the deploy and the handover.
    call, `diamond.launch(epoch, gate, gateCall)`, where `gateCall` is
    `LaunchGate.assertReady(diamond, declared, handover)`. The governance
    Safe proposes it. `declared` carries the registry, the VPFI pool, its
-   rate governor, the lane selectors and the WETH; `handover` carries the
-   admin key, the Diamond owner (the Timelock) and the proven role epoch.
+   rate governor, each lane with its remote pool and token, and the WETH;
+   `handover` carries the admin key, the Diamond owner (the Timelock), the
+   proven role epoch and the facet table (a hash of the Diamond's
+   `facets()` when the proposal was printed).
    The step prints each one. Before signing, check that the gate address
    printed is the one the launch phase reports, that the registry is the
    chain's CCIP `TokenAdminRegistry`, that the lanes are the full
@@ -649,8 +658,8 @@ even for the gap between the deploy and the handover.
 4. After the delay, anyone sends the printed `executeBatch(...)` call. The
    Diamond itself calls the gate, which reads all six requirements again
    inside that transaction, then checks that the Diamond's owner is still
-   the one signed, that the admin key still holds no Diamond role, and that
-   the role epoch has not moved. The Diamond unpauses only when the gate
+   the one signed, that the admin key still holds no Diamond role, that
+   the role epoch has not moved, and that the facet table has not moved. The Diamond unpauses only when the gate
    returns, and refuses a gate call that is not `assertReady` for itself.
    If a requirement stopped holding during the delay (an adapter was
    removed, the oracle was cleared), the execution reverts with
@@ -659,10 +668,17 @@ even for the gap between the deploy and the handover.
    with `DeployKeyHoldsRole(key, role)`; if any role was granted, revoked
    or renounced (for example an operation queued in the same delay that
    gives an administrator role to a new account), with
-   `RoleEpochMoved(expected, live)`. Every case leaves the Diamond paused.
+   `RoleEpochMoved(expected, live)`; if a `diamondCut` landed (every check
+   reads through the Diamond's facets, so a replaced getter could answer
+   from state the protocol's own code never reads), with
+   `FacetTableMoved(expected, live)`. Every case leaves the Diamond paused.
    Fix a readiness or ownership failure and execute the same operation
    again. A moved role epoch cannot come back: re-run `handover-gate` to
-   prove the new holders, then the launch phase for a fresh proposal.
+   prove the new holders, then the launch phase for a fresh proposal. A
+   moved facet table needs a fresh proposal too. Together these bind the
+   launch to every piece of Diamond state governance can change: its
+   configuration (the six checks), its owner, its roles, its code and its
+   pause.
    The role epoch covers the Diamond's roles. The Timelock's own role set
    is not in it, because no change to that set removes the delay: the
    delay can only be changed by a Timelock operation, and never below its

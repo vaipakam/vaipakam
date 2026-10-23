@@ -70,7 +70,7 @@ library LibLaunchReadiness {
     ///      misbehaving registration from consuming the whole execution.
     uint256 internal constant PROBE_GAS = 200_000;
 
-    /// @dev The most lanes the CCIP check reads. Every lane costs two probes,
+    /// @dev The most lanes the CCIP check reads. Every lane costs four probes,
     ///      so the bound keeps the gate's execution bounded; a pool with more
     ///      is reported NOT CHECKED rather than read in part.
     uint256 internal constant MAX_LANES = 32;
@@ -107,16 +107,46 @@ library LibLaunchReadiness {
         ///      admin the declared pool may have, so every limit change stays
         ///      inside the governor's bounds.
         address rateGovernor;
-        /// @dev The CCIP chain selector of every lane the pool must carry,
-        ///      exactly (`CCIP_LANE_CHAIN_IDS`, the list the ccip-wire phase
-        ///      wires). Empty declares none.
-        uint64[] lanes;
+        /// @dev Every lane the pool must carry, exactly (`CCIP_LANE_CHAIN_IDS`,
+        ///      the list the ccip-wire phase wires), each with the peer it
+        ///      must reach. Empty declares none.
+        Lane[] lanes;
         /// @dev The WETH the proposal names for review. No on-chain record
         ///      says which token is the chain's bridged WETH9 (the
         ///      `setWethContract` policy names the bridge registry as the
         ///      source), so its identity is the reviewers' to establish; the
         ///      check refuses any other configured WETH.
         address weth;
+    }
+
+    /// @notice One declared CCIP lane: the remote chain and the peer the
+    ///         pool must reach there (Codex #2686 r11). A lane is a route only
+    ///         with its peer: a selector whose remote pool is missing or wrong
+    ///         fails every inbound message or sends outbound tokens to the
+    ///         wrong asset, whatever its rate limits say.
+    struct Lane {
+        /// @dev The remote chain's CCIP selector.
+        uint64 selector;
+        /// @dev The pool on that chain the lane must accept, and only it
+        ///      (that chain's artifact `vpfiTokenPool`). Zero declares none.
+        address remotePool;
+        /// @dev The VPFI token on that chain (`vpfiToken` on the canonical
+        ///      chain, `vpfiMirror` on a mirror). Zero declares none.
+        address remoteToken;
+    }
+
+    /// @notice The Diamond's facet table as the launch binds it: the hash of
+    ///         its loupe's `facets()` answer, every facet with its selectors
+    ///         in the loupe's order. Any `diamondCut` changes it, so a launch
+    ///         decided against one table cannot execute against another
+    ///         (Codex #2686 r11). `readable` is false when the loupe does not
+    ///         answer.
+    /// @dev Not gas-bounded like the third-party probes: the loupe is the
+    ///      Diamond's own facet, and the whole table has to be read.
+    function facetTable(address diamond) internal view returns (bool readable, bytes32 table) {
+        (bool ok, bytes memory ret) = diamond.staticcall(abi.encodeWithSignature("facets()"));
+        if (!ok || ret.length == 0) return (false, bytes32(0));
+        return (true, keccak256(ret));
     }
 
     /// @notice Reads every launch requirement off the live chain.
@@ -457,7 +487,10 @@ library LibLaunchReadiness {
     ///      bounds. A lane whose limiter is disabled moves tokens with no
     ///      cap at all (CCIP skips a disabled bucket), which is the state a
     ///      wiring run leaves when the lane landed and its limits did not
-    ///      (Codex #2686 r6).
+    ///      (Codex #2686 r6). And every declared lane must reach exactly its
+    ///      declared peer, the remote token and the one remote pool, since a
+    ///      selector alone says nothing about where its messages go (Codex
+    ///      #2686 r11).
     function _ccipLanes(VpfiRoute memory route, Declared memory declared) private view returns (Check memory c) {
         c.label = "CCIP lanes are exactly the declared set, rate-limited";
         if (!route.readable) {
@@ -505,10 +538,10 @@ library LibLaunchReadiness {
         // Both containments, so the sets are equal whatever duplicates the
         // declared list carries.
         for (uint256 i; i < declared.lanes.length; ++i) {
-            if (!_contains(selectors, count, declared.lanes[i])) {
+            if (!_contains(selectors, count, declared.lanes[i].selector)) {
                 c.detail = string.concat(
                     "declared lane ",
-                    Strings.toString(declared.lanes[i]),
+                    Strings.toString(declared.lanes[i].selector),
                     " is not on the registry's VPFI pool: run the ccip-wire phase for every chain in CCIP_LANE_CHAIN_IDS"
                 );
                 return c;
@@ -521,6 +554,14 @@ library LibLaunchReadiness {
                     Strings.toString(selectors[i]),
                     ", which is not declared: an undeclared lane is an unreviewed route"
                 );
+                return c;
+            }
+        }
+        for (uint256 i; i < declared.lanes.length; ++i) {
+            (bool peerRead, string memory peerDetail) = _lanePeer(route.pool, declared.lanes[i]);
+            if (bytes(peerDetail).length != 0) {
+                c.checkable = peerRead;
+                c.detail = peerDetail;
                 return c;
             }
         }
@@ -544,8 +585,39 @@ library LibLaunchReadiness {
         c.detail = string.concat(
             "the registry's VPFI pool carries exactly the ",
             Strings.toString(count),
-            " declared lane(s), each rate-limited both ways within the governor's bounds"
+            " declared lane(s), each reaching exactly its declared remote pool and token and rate-limited both ways within the governor's bounds"
         );
+    }
+
+    /// @dev Whether `lane`'s peer on `pool` is exactly the declared one: the
+    ///      remote token, and the remote pool as the ONLY pool the lane
+    ///      accepts (a second one is an unreviewed inbound source). Compared
+    ///      byte for byte with the canonical encoding of the declared value,
+    ///      so a malformed answer is a mismatch, never a revert. Returns an
+    ///      empty detail when the peer matches; otherwise the detail, with
+    ///      `readable` false when the pool could not answer or nothing was
+    ///      declared to compare it with.
+    function _lanePeer(address pool, Lane memory lane) private view returns (bool readable, string memory detail) {
+        string memory which = Strings.toString(lane.selector);
+        if (lane.remotePool == address(0) || lane.remoteToken == address(0)) {
+            return (false, string.concat("lane ", which, ": no remote pool or token declared (that chain's artifact records none) to compare its peer against"));
+        }
+        (bool tokenOk, bytes memory token) =
+            pool.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("getRemoteToken(uint64)", lane.selector));
+        (bool poolsOk, bytes memory pools) =
+            pool.staticcall{gas: PROBE_GAS}(abi.encodeWithSignature("getRemotePools(uint64)", lane.selector));
+        if (!tokenOk || !poolsOk) {
+            return (false, string.concat("lane ", which, ": getRemoteToken or getRemotePools unreadable on the registry's VPFI pool"));
+        }
+        bytes[] memory expectedPools = new bytes[](1);
+        expectedPools[0] = abi.encode(lane.remotePool);
+        if (keccak256(token) != keccak256(abi.encode(abi.encode(lane.remoteToken)))) {
+            return (true, string.concat("lane ", which, ": its remote token is not the declared one, so outbound transfers would mint or release another asset: run the ccip-wire phase"));
+        }
+        if (keccak256(pools) != keccak256(abi.encode(expectedPools))) {
+            return (true, string.concat("lane ", which, ": its remote pools are not exactly the declared one (missing, wrong, or an extra pool the review never saw): run the ccip-wire phase"));
+        }
+        return (true, "");
     }
 
     function _contains(uint256[] memory words, uint256 count, uint64 value) private pure returns (bool) {
@@ -555,9 +627,9 @@ library LibLaunchReadiness {
         return false;
     }
 
-    function _declares(uint64[] memory lanes, uint64 value) private pure returns (bool) {
+    function _declares(Lane[] memory lanes, uint64 value) private pure returns (bool) {
         for (uint256 i; i < lanes.length; ++i) {
-            if (lanes[i] == value) return true;
+            if (lanes[i].selector == value) return true;
         }
         return false;
     }

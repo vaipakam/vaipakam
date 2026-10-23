@@ -20,11 +20,12 @@ import {ILaunchGate} from "../interfaces/ILaunchGate.sol";
  *      `gateCall` is `assertReady(diamond, declared, handover)` on this gate:
  *
  *        - `declared` ({LibLaunchReadiness.Declared}) is the CCIP registry
- *          and the WETH, VPFI pool, rate governor and lane set the chain
- *          must match, and `handover` ({ILaunchGate.Handover}) is the deploy
- *          key, the Diamond owner and the role epoch the handover gate
- *          proved — all in the calldata, so the Safe reviews exactly what is
- *          enforced;
+ *          and the WETH, VPFI pool, rate governor and lanes (each with its
+ *          remote pool and token) the chain must match, and `handover`
+ *          ({ILaunchGate.Handover}) is the deploy key, the Diamond owner, the
+ *          role epoch the handover gate proved and the facet table the
+ *          launch was decided against — all in the calldata, so the Safe
+ *          reviews exactly what is enforced;
  *        - the Diamond makes the call itself, refuses one that is not
  *          `assertReady` for itself, unpauses only when it returns and only
  *          while the pause epoch is still `epoch`, and records this gate as
@@ -66,6 +67,15 @@ contract LaunchGate is ILaunchGate {
     ///         sets the Safe approved are no longer known to hold.
     error RoleEpochMoved(uint64 expected, uint64 live);
 
+    /// @notice The Diamond's facet table is not the one the launch was
+    ///         decided against (Codex #2686 r11 P1): a `diamondCut` landed
+    ///         during the delay, so every check above read code the decision
+    ///         never saw.
+    error FacetTableMoved(bytes32 expected, bytes32 live);
+
+    /// @notice The Diamond's loupe did not answer `facets()`.
+    error FacetTableUnreadable();
+
     /// @notice Every launch requirement and what the chain says about it now.
     function checks(address diamond, LibLaunchReadiness.Declared calldata declared)
         external
@@ -81,7 +91,8 @@ contract LaunchGate is ILaunchGate {
     ///         `handover.owner`, {DeployKeyHoldsRole} while the deploy key
     ///         holds any Diamond role (`LibAccessControl.knownRoles()`), or
     ///         {RoleEpochMoved} unless the Diamond's role epoch is still
-    ///         `handover.roleEpoch`; returns otherwise.
+    ///         `handover.roleEpoch`, or {FacetTableMoved} unless its facet
+    ///         table is still `handover.facetTable`; returns otherwise.
     /// @dev The role epoch stands for every holder of every Diamond role:
     ///      they are not enumerable on-chain, so the gate cannot re-read
     ///      them, but it can tell that not one has changed since the proof.
@@ -89,6 +100,14 @@ contract LaunchGate is ILaunchGate {
     ///      change only through the Timelock, and no change to it removes
     ///      the delay: `updateDelay` is the Timelock's own call and refuses
     ///      anything below its immutable floor.
+    ///
+    ///      Together these bind the launch to every piece of Diamond state
+    ///      governance can change: the configuration (the readiness checks
+    ///      themselves), the owner, the role table (the role epoch), the
+    ///      code (the facet table) and the pause (the epoch `launch` checks).
+    ///      The facet table is checked because every check reads through the
+    ///      Diamond's facets: a facet replaced during the delay could answer
+    ///      a getter from state the protocol's own code never reads.
     function assertReady(
         address diamond,
         LibLaunchReadiness.Declared calldata declared,
@@ -107,5 +126,8 @@ contract LaunchGate is ILaunchGate {
         if (held) revert DeployKeyHoldsRole(handover.deployKey, role);
         uint64 liveEpoch = ILaunchReadableDiamond(diamond).roleEpoch();
         if (liveEpoch != handover.roleEpoch) revert RoleEpochMoved(handover.roleEpoch, liveEpoch);
+        (bool readable, bytes32 liveTable) = LibLaunchReadiness.facetTable(diamond);
+        if (!readable) revert FacetTableUnreadable();
+        if (liveTable != handover.facetTable) revert FacetTableMoved(handover.facetTable, liveTable);
     }
 }

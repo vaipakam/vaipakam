@@ -462,7 +462,13 @@ contract Launch is Script {
                 "Launch: no role epoch from the handover gate (HANDOVER_ROLE_EPOCH) - run the handover-gate phase first; the deploy wrapper passes the epoch it proved";
             return d;
         }
-        d.handover = ILaunchGate.Handover({deployKey: admin, owner: timelock, roleEpoch: liveRoles});
+        (bool tableRead, bytes32 table) = LibLaunchReadiness.facetTable(diamond);
+        if (!tableRead) {
+            d.reason = "Launch: the Diamond's loupe does not answer facets() - the launch cannot bind the code it was decided against";
+            return d;
+        }
+        d.handover =
+            ILaunchGate.Handover({deployKey: admin, owner: timelock, roleEpoch: liveRoles, facetTable: table});
         d.roleEpochProven = proven;
         if (!LaunchGateDeployment.isDeployed()) {
             d.reason =
@@ -602,9 +608,15 @@ contract Launch is Script {
         d.vpfiPool = Deployments.readVpfiTokenPoolOptional();
         d.rateGovernor = Deployments.readVpfiPoolRateGovernorOptional();
         uint256[] memory ids = vm.envOr("CCIP_LANE_CHAIN_IDS", ",", new uint256[](0));
-        d.lanes = new uint64[](ids.length);
+        d.lanes = new LibLaunchReadiness.Lane[](ids.length);
         for (uint256 i; i < ids.length; ++i) {
-            d.lanes[i] = Deployments.ccipSelectorForChainId(ids[i]);
+            // The peer comes from the remote chain's artifact, through the
+            // derivation ConfigureCcip wires the lane with.
+            d.lanes[i] = LibLaunchReadiness.Lane({
+                selector: Deployments.ccipSelectorForChainId(ids[i]),
+                remotePool: Deployments.vpfiLanePoolOptionalForChain(ids[i]),
+                remoteToken: Deployments.vpfiLaneTokenOptionalForChain(ids[i])
+            });
         }
         try ILaunchReadableDiamond(diamond).getWethContract() returns (address w) {
             d.weth = w;
@@ -686,9 +698,11 @@ contract Launch is Script {
         console.log("      tokenAdminRegistry:", declared.tokenAdminRegistry);
         console.log("      VPFI pool (the artifact's vpfiTokenPool, checked by the handover gate):", declared.vpfiPool);
         console.log("      rate governor (the artifact's vpfiPoolRateGovernor):", declared.rateGovernor);
-        console.log("      CCIP lane selectors (CCIP_LANE_CHAIN_IDS), exactly:", declared.lanes.length);
+        console.log("      CCIP lanes (CCIP_LANE_CHAIN_IDS), exactly:", declared.lanes.length);
         for (uint256 i; i < declared.lanes.length; ++i) {
-            console.log("        ", uint256(declared.lanes[i]));
+            console.log("        selector:", uint256(declared.lanes[i].selector));
+            console.log("          remote pool, the only one accepted (that chain's vpfiTokenPool):", declared.lanes[i].remotePool);
+            console.log("          remote token (that chain's vpfiToken or vpfiMirror):", declared.lanes[i].remoteToken);
         }
         console.log("      WETH:", declared.weth);
         console.log("        verify it against the chain's official bridge registry: the bridged WETH9,");
@@ -707,6 +721,9 @@ contract Launch is Script {
                 ? "        revoke or renounce before execution makes the launch revert"
                 : "        a launch on production refuses without that proof"
         );
+        console.log("      facet table (hash of the loupe's facets(), read when this proposal was printed):");
+        console.logBytes32(d.handover.facetTable);
+        console.log("        any diamondCut before execution makes the launch revert; propose again then");
         console.log("  1. The Governance Safe calls the Timelock with:");
         console.log("     to:  ", timelock);
         console.logBytes(
