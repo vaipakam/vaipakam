@@ -146,12 +146,21 @@ library StorageLayoutRecord {
     ///
     ///      A Diamond getter that does not exist (an older facet set) reads
     ///      as no candidate, never as a revert.
+    ///
+    ///      `codeHashes` binds the CODE at those locations, not only the
+    ///      addresses (Codex #2684 r4 P1). An address is not an identity for
+    ///      code: a broadcast whose simulation wrote the record and anchor but
+    ///      never sent leaves the anchor naming addresses another checkout can
+    ///      then fill with different bytecode from the same deployer nonce.
+    ///      It hashes the runtime `codehash` of every facet, both templates,
+    ///      every proxy and every implementation, in that order.
     struct CodeMap {
         address[] facets;
         address vaultTemplate;
         address adapterTemplate;
         address[] proxies;
         address[] implementations;
+        bytes32 codeHashes;
     }
 
     /// The {CodeMap} of `diamond`'s chain now.
@@ -160,17 +169,32 @@ library StorageLayoutRecord {
         m.vaultTemplate = _readWord(diamond, "getVaipakamVaultImplementationAddress()", 0);
         m.adapterTemplate = _readWord(diamond, "aggregatorAdapterTemplate()", 0);
         (m.proxies, m.implementations) = _liveProxies(diamond);
+        m.codeHashes = _codeHashes(m);
+    }
+
+    /// Digest of the runtime code at every location in `m` (see {CodeMap}).
+    function _codeHashes(CodeMap memory m) private view returns (bytes32) {
+        uint256 n = m.facets.length + 2 + m.proxies.length + m.implementations.length;
+        bytes32[] memory h = new bytes32[](n);
+        uint256 k;
+        for (uint256 i = 0; i < m.facets.length; ++i) h[k++] = m.facets[i].codehash;
+        h[k++] = m.vaultTemplate.codehash;
+        h[k++] = m.adapterTemplate.codehash;
+        for (uint256 i = 0; i < m.proxies.length; ++i) h[k++] = m.proxies[i].codehash;
+        for (uint256 i = 0; i < m.implementations.length; ++i) h[k++] = m.implementations[i].codehash;
+        return keccak256(abi.encode(h));
     }
 
     /// Fingerprint of {liveCodeMap}: any facet cut, template retarget or
-    /// proxy upgrade, and any proxy added to or dropped from what the chain
-    /// reaches, changes it.
+    /// proxy upgrade, any proxy added to or dropped from what the chain
+    /// reaches, and any different bytecode at an address it names, changes
+    /// it.
     function liveCodeFingerprint(address diamond) internal view returns (bytes32) {
         return codeFingerprint(liveCodeMap(diamond));
     }
 
     function codeFingerprint(CodeMap memory m) internal pure returns (bytes32) {
-        return keccak256(abi.encode(m.facets, m.vaultTemplate, m.adapterTemplate, m.proxies, m.implementations));
+        return keccak256(abi.encode(m.facets, m.vaultTemplate, m.adapterTemplate, m.proxies, m.implementations, m.codeHashes));
     }
 
     function _liveProxies(address diamond)
@@ -392,7 +416,7 @@ library StorageLayoutRecord {
         CHEATS.serializeString(
             key,
             "_readme",
-            "Binds storage-layout.json beside it to the chain it describes (#2092). Written with the record; an in-place change is refused unless the Diamond, the fingerprint of every code location the record governs (facets, vault and adapter templates, every UUPS proxy the chain reaches) and the record hash still match. The parts beside codeFingerprint are there to say which code moved. Do not edit by hand."
+            "Binds storage-layout.json beside it to the chain it describes (#2092). Written with the record; an in-place change is refused unless the Diamond, the fingerprint of every code location the record governs (facets, vault and adapter templates, every UUPS proxy the chain reaches, and the runtime code at each) and the record hash still match. The parts beside codeFingerprint are there to say which code moved. Do not edit by hand."
         );
         CHEATS.serializeAddress(key, "diamond", diamond);
         CodeMap memory m = liveCodeMap(diamond);
@@ -403,6 +427,7 @@ library StorageLayoutRecord {
         CHEATS.serializeAddress(key, "proxies", m.proxies);
         CHEATS.serializeAddress(key, "implementations", m.implementations);
         CHEATS.serializeBytes32(key, "facetsFingerprint", keccak256(abi.encode(m.facets)));
+        CHEATS.serializeBytes32(key, "codeHashes", m.codeHashes);
         CHEATS.serializeBytes32(key, "codeFingerprint", codeFingerprint(m));
         string memory json = CHEATS.serializeBytes32(key, "recordHash", keccak256(bytes(CHEATS.readFile(rec))));
         CHEATS.writeJson(json, anchorPath());
@@ -451,6 +476,9 @@ library StorageLayoutRecord {
         console.log("storage-layout anchor: the live code differs from the anchor in:");
         if (_anchorBytes32(json, ".facetsFingerprint") != keccak256(abi.encode(live.facets))) {
             console.log("  the Diamond's facet set");
+        }
+        if (_anchorBytes32(json, ".codeHashes") != live.codeHashes) {
+            console.log("  the bytecode at one or more of the addresses below (or the same addresses, now running other code)");
         }
         if (_anchorAddress(json, ".vaultTemplate") != live.vaultTemplate) {
             console.log("  the vault template, now", live.vaultTemplate);

@@ -271,7 +271,11 @@ satellite the Diamond names, and the `messenger()` each of those trusts. The
 proxies are found rather than listed, so a new one cannot be left out by
 forgetting to name it. A fingerprint over the facets alone let a receiver
 upgraded by an interrupted refresh pass as unchanged (Codex #2684 r2). The
-parts are written beside the fingerprint so a refusal can say which code
+fingerprint also hashes the runtime code at every one of those addresses,
+because an address is not an identity for code: a broadcast whose simulation
+wrote the anchor but never sent leaves it naming addresses another checkout
+can fill with different bytecode from the same deployer nonce (Codex #2684
+r4). The parts are written beside the fingerprint so a refusal can say which code
 moved. A change is refused unless the live chain still matches the anchor and
 the record is the one the anchor names, so a chain changed from
 elsewhere fails here instead of being checked against a record that no longer
