@@ -48,7 +48,11 @@ function fakePort(init: {
     connectors = [...connectors, c];
     status = 'connected';
   };
-  return { port, closed, connectMeanwhile };
+  /** A restore replacing one placeholder with its live connector. */
+  const restore = (c: FakeConnector) => {
+    connectors = connectors.map((x) => (x.id === c.id ? c : x));
+  };
+  return { port, closed, connectMeanwhile, restore };
 }
 
 describe('planWalletTeardown', () => {
@@ -92,8 +96,28 @@ describe('planWalletTeardown', () => {
     });
     const plan = planWalletTeardown(port);
     await expect(plan.first!()).rejects.toBeInstanceOf(ReconnectPendingError);
-    await expect(plan.last!()).rejects.toBeInstanceOf(ReconnectPendingError);
+    // Reported once, by the teardown of its own kind.
+    await expect(plan.last!()).resolves.toBe(false);
     expect(closed).toEqual([]);
+  });
+
+  it('closes a live wallet whose neighbour is still restoring, then reports the restore (Codex #2670 r7)', async () => {
+    const walletConnect = { id: 'walletConnect', live: true };
+    const { port, closed, restore } = fakePort({
+      status: 'reconnecting',
+      connectors: [
+        { id: 'walletConnect', live: false },
+        { id: 'metaMask', live: false },
+      ],
+      // Restored one at a time: WalletConnect is back, MetaMask is wedged.
+      settle: 'timeout',
+    });
+    const plan = planWalletTeardown(port);
+    restore(walletConnect);
+    await expect(plan.first!()).rejects.toBeInstanceOf(ReconnectPendingError);
+    expect(closed).toEqual(['walletConnect']);
+    // The other kind has nothing pending and nothing live.
+    await expect(plan.last!()).resolves.toBe(false);
   });
 
   it('treats a placeholder still in the map as not settled, whatever the status says', async () => {

@@ -493,13 +493,15 @@ const copySource = {
     eraseWalletReconnecting:
       'Your wallet was still reconnecting to this site, so it could not be disconnected yet, and it may sign you back in when it finishes. Once it has, erase again — or disconnect from your wallet directly.',
     /* #2035 — a wallet connection that reloads the page as it closes is
-       closed last, after everything else has been erased, and this report
-       is the copy kept just before that step. It knows the step was ASKED
+       closed last, after the other erasure steps have finished, and this
+       report is the copy kept just before that step. Those steps FINISHED;
+       whether they all succeeded is what the report's other lines say, so
+       this line never claims they did (Codex #2670 r7). It knows the step was ASKED
        for and the page reloaded during it; it does not know the step's
        outcome, so it claims neither — "asked to close", never "closed"
        (Codex #2670 r4). Additive and outcome-neutral. */
     eraseWalletReloaded:
-      'One wallet connection reloads the page as it closes, so it was asked to close last, after everything else had been erased — and the page reloaded during that step or shortly after it, before the app could confirm whether it closed. If your wallet still lists this site as connected, disconnect it there.',
+      'One wallet connection reloads the page as it closes, so it was asked to close last, after the other erasure steps had finished — and the page reloaded during that step or shortly after it, before the app could confirm whether it closed. If your wallet still lists this site as connected, disconnect it there.',
     /* Round 14 P2: ordinary storage could not be VERIFIED, but the wallet
        store was reachable and gave up records. `eraseBlocked` says nothing
        was removed, which contradicts a non-zero count; this reports what was

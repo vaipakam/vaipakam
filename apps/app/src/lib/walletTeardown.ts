@@ -12,9 +12,9 @@
  *    method-less records and `reconnect()` is free to install the real
  *    connection afterwards — there is no cancel. Closing the placeholder
  *    stops nothing. So the teardown waits for the reconnect to settle and
- *    closes whatever is then live; if the bound passes first it raises
- *    `ReconnectPendingError`, and the page says the wallet could not be
- *    closed YET rather than that it refused.
+ *    closes whatever of the request is then live; a wallet still restoring
+ *    when the bound passes is reported as `ReconnectPendingError`, and the
+ *    page says it could not be closed YET rather than that it refused.
  * 2. RELOAD-PRONE CONNECTIONS GO LAST (#2035). A connection whose disconnect
  *    reloads the page is closed by a separate teardown, which the erasure
  *    runs only after everything it counts has been cleared.
@@ -68,8 +68,8 @@ export interface WalletTeardownOptions {
   /** See `DisconnectEveryOptions.onStragglerSettled`. */
   readonly onStragglerSettled?: () => void;
   /**
-   * Called once, when the reconnect has settled and before anything is
-   * closed. The erasure re-takes its connection mark here: a reconnect
+   * Called once, when the wait for the reconnect has ended — settled or
+   * not — and before anything is closed. The erasure re-takes its connection mark here: a reconnect
    * completing during the wait installs the very session being erased, and
    * must not read as a session that postdates the request.
    */
@@ -114,7 +114,11 @@ export interface WalletTeardownPlan {
  * no longer asked to close. The settle starts HERE too, not when a teardown
  * first runs (Codex #2670 r4): a caller may hold a plan while it waits its
  * turn, and the request is what the map held when it was made, not when the
- * turn came. Each teardown closes
+ * turn came. When the wait ends — settled or not — each wallet of the
+ * request is sorted on its own (Codex #2670 r7): a live one is closed by the
+ * teardown of its kind, and one still restoring makes that teardown raise
+ * `ReconnectPendingError` AFTER closing the live ones, so a wedged restore
+ * cannot keep a live neighbour attached. Each teardown closes
  * those of its targets still in the map when it runs, and resolves `false`
  * when there are none: the session that was being restored at the request
  * is gone either way, and the erasure removed what would have restored it,
@@ -126,55 +130,77 @@ export function planWalletTeardown<C>(
 ): WalletTeardownPlan {
   const atRequest = port.connectors();
   if (atRequest.length === 0) return {};
-  const requested = new Set(atRequest.map((connector) => port.identify(connector)));
-  const request = port
+  // Identity → the connector the request saw, which stands for an identity
+  // the map no longer shows while its restore is still running.
+  const requested = new Map(
+    atRequest.map((connector) => [port.identify(connector), connector]),
+  );
+  const request: Promise<RequestTargets<C>> = port
     .whenSettled(options.settleTimeoutMs ?? RECONNECT_SETTLE_TIMEOUT_MS)
     .then(() => {
-      // The status is re-read rather than trusting the boolean, and the map
-      // is checked as well: a placeholder still in it means the reconnect has
-      // not replaced it, whatever the status says.
-      const connected = port.connectors();
-      if (
-        port.status() === 'reconnecting' ||
-        connected.some((connector) => !port.isLive(connector))
-      ) {
-        throw new ReconnectPendingError();
-      }
       options.onSettled?.();
-      return connected.filter((connector) =>
-        requested.has(port.identify(connector)),
-      );
+      // Sorted PER WALLET, not decided for the whole map (Codex #2670 r7):
+      // wagmi restores persisted wallets one after another, so one can be
+      // live while another is still restoring, and a live one must be closed
+      // whatever its neighbour is doing. The status is re-read rather than
+      // trusting the boolean, and the map is read as well: a placeholder
+      // still in it has not been replaced, whatever the status says.
+      const now = port.connectors();
+      const restoring = port.status() === 'reconnecting';
+      const live: C[] = [];
+      const pending: C[] = [];
+      for (const [identity, asked] of requested) {
+        const current = now.find(
+          (connector) => port.identify(connector) === identity,
+        );
+        if (current && port.isLive(current)) live.push(current);
+        // Still a placeholder, or gone from the map while the restore is
+        // still running (it may yet come back). Gone once the restore has
+        // ended means a failed reconnect dropped it: nothing to close.
+        else if (current || restoring) pending.push(current ?? asked);
+      }
+      return { live, pending };
     });
-  // Each teardown awaits it and meets the error there; this only keeps a
-  // plan nobody runs from surfacing an unhandled rejection.
+  // Each teardown awaits it; this only keeps a plan nobody runs from
+  // surfacing an unhandled rejection.
   request.catch(() => {});
-  const settle = () => request;
   const close = (targets: readonly C[]) =>
     disconnectEvery(targets, ({ connector }) => port.disconnect(connector), {
       onStragglerSettled: options.onStragglerSettled,
       perConnectorTimeoutMs: options.perConnectorTimeoutMs,
     })();
-  // The request's connections of one kind that are still connected now.
-  const group = (request: readonly C[], reloads: boolean) => {
-    const now = new Set(port.connectors());
-    return request.filter(
-      (connector) =>
-        now.has(connector) && port.reloadsOnDisconnect(connector) === reloads,
+  const ofKind = (connectors: readonly C[], reloads: boolean) =>
+    connectors.filter(
+      (connector) => port.reloadsOnDisconnect(connector) === reloads,
     );
-  };
-  return {
-    first: async () => {
-      const targets = group(await settle(), false);
-      if (targets.length === 0) return false;
-      await close(targets);
-      return true;
-    },
-    last: async (beforeClosing) => {
-      const targets = group(await settle(), true);
-      if (targets.length === 0) return false;
+  // One teardown: the request's live connections of its kind that are still
+  // connected now are closed, and a wallet of its kind still restoring is
+  // then reported as `ReconnectPendingError` — after the live ones, so a
+  // wedged restore never keeps a live wallet attached.
+  const teardown = async (
+    reloads: boolean,
+    beforeClosing?: () => void,
+  ): Promise<boolean> => {
+    const { live, pending } = await request;
+    const now = new Set(port.connectors());
+    const targets = ofKind(live, reloads).filter((c) => now.has(c));
+    if (targets.length > 0) {
       beforeClosing?.();
       await close(targets);
-      return true;
-    },
+    }
+    if (ofKind(pending, reloads).length > 0) throw new ReconnectPendingError();
+    return targets.length > 0;
   };
+  return {
+    first: () => teardown(false),
+    last: (beforeClosing) => teardown(true, beforeClosing),
+  };
+}
+
+/** The request's wallets, sorted once the restore wait has ended. */
+interface RequestTargets<C> {
+  /** Live now: closed by the teardown of their kind. */
+  readonly live: readonly C[];
+  /** Still restoring: reported, since a placeholder cannot be closed. */
+  readonly pending: readonly C[];
 }

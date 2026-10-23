@@ -264,7 +264,7 @@
       "eraseSessionHeld": "No se pudo borrar la sesión almacenada de la cartera, así que puede seguir en este dispositivo. Borrar los datos del sitio desde los ajustes de tu navegador la eliminará.",
       "eraseWalletHeld": "La cartera no se desconectó, así que este sitio sigue conectado a ella. Desconéctate directamente desde tu cartera y vuelve a borrar.",
       "eraseWalletReconnecting": "Tu cartera aún se estaba reconectando a este sitio, así que todavía no se pudo desconectar, y puede que vuelva a iniciar tu sesión cuando termine. Cuando lo haga, vuelve a borrar, o desconéctate directamente desde tu cartera.",
-      "eraseWalletReloaded": "Una conexión de cartera recarga la página al cerrarse, así que se pidió cerrarla al final, después de borrar todo lo demás, y la página se recargó durante ese paso o poco después, antes de que la aplicación pudiera confirmar si se cerró. Si tu cartera todavía muestra este sitio como conectado, desconéctalo allí.",
+      "eraseWalletReloaded": "Una conexión de cartera recarga la página al cerrarse, así que se pidió cerrarla al final, después de que terminaran los demás pasos del borrado, y la página se recargó durante ese paso o poco después, antes de que la aplicación pudiera confirmar si se cerró. Si tu cartera todavía muestra este sitio como conectado, desconéctalo allí.",
       "eraseStoresUnreadable": "Este navegador no permitió que la aplicación abriera el almacenamiento de sesión de la cartera, así que lo guardado allí puede seguir en este dispositivo. Borrar los datos del sitio desde los ajustes de tu navegador lo eliminará."
     },
     "killSwitch": {

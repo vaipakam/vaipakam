@@ -2938,7 +2938,11 @@ is the borrower's own money.
   and then closes whatever is live; if the wait runs out it says the wallet
   could not be disconnected YET, that it may sign the user back in, and that
   erasing again once it has will finish the job. That is a different remedy
-  from a wallet that declined, and the page keeps the two apart.
+  from a wallet that declined, and the page keeps the two apart. Each wallet
+  is judged on its own: wallets are restored one after another, so when one
+  is back and another is still restoring, the one that is back is closed and
+  only the other is reported as not closed yet. A restore that is stuck must
+  never keep a live wallet attached.
 - **A refusal must be reported as a refusal, and the kinds are
   distinguishable.** The session records can fail to clear, the browser can
   refuse to expose that storage at all, and a wallet can decline to
