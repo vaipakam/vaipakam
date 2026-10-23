@@ -11,10 +11,11 @@ import { usePageMeta } from '../lib/usePageMeta';
 /**
  * Public-route marketing page for VPFI (mounted at `/vpfi`).
  *
- * Pure pitch — no wallet connection. The actual deposit / withdraw
- * surface lives inside the app at `/app/buy-vpfi` (wallet-gated like
- * every other in-app page). The CTA at the bottom opens that surface
- * in a new tab so a marketing-page visitor never has to navigate
+ * Pure pitch — no wallet connection. The deposit / withdraw surface
+ * is the connected app's VPFI vault page (`appUrl('vpfiVault')`,
+ * wallet-gated like every other in-app page). There is no protocol
+ * VPFI purchase surface (#687-A). The CTA at the bottom opens the vault
+ * page in a new tab so a marketing-page visitor never has to navigate
  * back to read more.
  *
  * The page explains why holding VPFI is useful — the time-weighted

@@ -20,9 +20,9 @@ import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 type NavLink = {
   labelKey: string;
   href: string;
-  /** Open in a new browser tab. Used for VPFI dropdown's action items
-   *  (Buy / Stake-Unstake) which jump from the public marketing site
-   *  into the wallet-gated app at `/app/buy-vpfi`. */
+  /** Open in a new browser tab. Used for the links that jump from the
+   *  public marketing site into the connected app (analytics, the NFT
+   *  verifier, the protocol console). */
   newTab?: boolean;
 };
 

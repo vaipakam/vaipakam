@@ -184,6 +184,15 @@ const DEAD_TOKENS = [
   // instruction this gate exists to stop, and the contract-name tokens
   // above do not see it.
   'buyvpfiwitheth',
+  // The retired in-app purchase ROUTE, `/app/buy-vpfi` (#1742). A link or a
+  // sentence pointing a reader at it presents the removed surface as a place
+  // to go — the PWA shortcut that found this was a tappable launcher entry
+  // labelled "Buy VPFI". Deliberately the route spelling and not bare
+  // `buyvpfi`: that also matches the surviving marketing page's component
+  // name, i18n key names, CSS classes and guide anchors (about fifty files),
+  // which name nothing a reader can buy. Sorting those is #1728's triage, not
+  // a token's job.
+  'appbuyvpfi',
   'processbridgedbuy',
   'getvpfisoldto',
   'vpfibuyrate',
