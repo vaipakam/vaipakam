@@ -25,7 +25,7 @@
 // and where" from the same parser the passes use, whether or not a loan has
 // reached the branch since.
 
-import { getFlashLoanProvider } from './flashLoanProviders';
+import { flashLoanRoute } from './flashLoanProviders';
 
 export const DISCOUNT_PATH_VAR = 'DISCOUNT_PATH_CHAIN_IDS';
 
@@ -71,7 +71,8 @@ export function discountPathBlocker(raw: string | undefined, chainId: number): s
 
 /**
  * The whole posture, for the start-up line: which chains are armed, and for
- * each one whether this build configures a FlashLoanLiquidator there, since
+ * each one whether this build can run the branch there at all — the same
+ * `flashLoanRoute` the branch resolves (a liquidator and a provider), since
  * without one the branch stays off on that chain whatever the setting says.
  */
 export function discountPathPosture(raw: string | undefined): string {
@@ -80,10 +81,11 @@ export function discountPathPosture(raw: string | undefined): string {
   if (read.chains.size === 0) return `${DISCOUNT_PATH_VAR} is unset, so no chain is armed`;
   const chains = [...read.chains]
     .sort((a, b) => a - b)
-    .map((id) =>
-      getFlashLoanProvider(id) === undefined
-        ? `${id} (no FlashLoanLiquidator configured, so the path stays off there)`
-        : `${id}`,
-    );
+    .map((id) => {
+      const resolved = flashLoanRoute(id);
+      return 'missing' in resolved
+        ? `${id} (${resolved.missing}, so the path stays off there)`
+        : `${id} (via ${resolved.route.via})`;
+    });
   return `${DISCOUNT_PATH_VAR} arms chain${chains.length === 1 ? '' : 's'} ${chains.join(', ')}`;
 }

@@ -53,7 +53,7 @@ import {
   type ServerOrchestrationResult,
   type ServerRankedQuote,
 } from './serverQuotes';
-import { getFlashLoanProvider } from './flashLoanProviders';
+import { flashLoanRoute } from './flashLoanProviders';
 import { discountPathBlocker } from './discountPath';
 import {
   BPS,
@@ -1174,13 +1174,14 @@ async function tryFlashLoanDiscountedPath(
 ): Promise<boolean> {
   const { env, chain, ctx, publicClient, loanId, loanIdBig, loan, quotes } = args;
 
-  // Gate 1 — per-chain provider config.
-  const provider = getFlashLoanProvider(chain.id);
-  if (!provider) {
-    // Either chain unsupported OR FlashLoanLiquidator not deployed
-    // yet. Silent skip — the bot continues with the legacy branches.
-    return false;
-  }
+  // Gate 1 — the static route: our FlashLoanLiquidator and a provider on
+  // this chain (`flashLoanRoute`, the same reading the start-up posture line
+  // makes). Silent per loan, because the posture line already names every
+  // armed chain this build has no route on; the bot continues with the
+  // legacy branches.
+  const resolvedRoute = flashLoanRoute(chain.id);
+  if ('missing' in resolvedRoute) return false;
+  const { route } = resolvedRoute;
 
   // Gate 2 — the operator has armed this chain (`DISCOUNT_PATH_CHAIN_IDS`,
   // discountPath.ts, #2633). The Diamond has its own discount-path
@@ -1255,13 +1256,6 @@ async function tryFlashLoanDiscountedPath(
     return false;
   }
 
-  // Provider preference — Aave V3 first (broader asset coverage,
-  // 5 BPS premium), Balancer V2 fallback (zero-fee but narrower
-  // asset list).
-  const useAave = !!provider.aaveV3Pool;
-  const useBalancer = !useAave && !!provider.balancerV2Vault;
-  if (!useAave && !useBalancer) return false;
-
   const account = ctx.wallet.account;
   if (!account) return false;
 
@@ -1277,7 +1271,7 @@ async function tryFlashLoanDiscountedPath(
     sellToken: loan.collateralAsset,
     buyToken: loan.principalAsset,
     sellAmount: loan.collateralAmount,
-    taker: provider.liquidator as Address,
+    taker: route.liquidator,
   });
   if (directQuotes.ranked.length === 0) {
     console.log(
@@ -1302,9 +1296,9 @@ async function tryFlashLoanDiscountedPath(
   }
 
   try {
-    const fnName = useAave ? 'liquidateViaAaveV3' : 'liquidateViaBalancerV2';
+    const fnName = route.via === 'aave-v3' ? 'liquidateViaAaveV3' : 'liquidateViaBalancerV2';
     const hash = await ctx.wallet.writeContract({
-      address: provider.liquidator as Address,
+      address: route.liquidator,
       abi: FlashLoanLiquidatorABI,
       functionName: fnName,
       args: [
@@ -1321,7 +1315,7 @@ async function tryFlashLoanDiscountedPath(
     });
     console.log(
       `[keeper] loan=${loanId} chain=${chain.name} submitted-flashloan ` +
-        `tx=${hash} via=${useAave ? 'aave-v3' : 'balancer-v2'} ` +
+        `tx=${hash} via=${route.via} ` +
         `swap=${bestDirect.kind} expected=${bestDirect.expectedOutput}`,
     );
     return true;

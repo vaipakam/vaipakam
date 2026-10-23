@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { discountPathBlocker, discountPathChains, discountPathPosture } from '../src/discountPath';
+import { flashLoanRoute } from '../src/flashLoanProviders';
 
 describe('DISCOUNT_PATH_CHAIN_IDS', () => {
   it('arms no chain when unset or empty', () => {
@@ -38,10 +39,36 @@ describe('DISCOUNT_PATH_CHAIN_IDS', () => {
     expect(discountPathPosture(undefined)).toBe('DISCOUNT_PATH_CHAIN_IDS is unset, so no chain is armed');
     expect(discountPathPosture('8453,8453')).toBe('DISCOUNT_PATH_CHAIN_IDS names chain 8453 twice, so no chain is armed');
     expect(discountPathPosture('8453,true')).toBe('DISCOUNT_PATH_CHAIN_IDS entry 2 of 2 is not a chain id, so no chain is armed');
-    // No chain configures a FlashLoanLiquidator today, so each one says so.
-    expect(discountPathPosture('42161,8453')).toBe(
-      'DISCOUNT_PATH_CHAIN_IDS arms chains 8453 (no FlashLoanLiquidator configured, so the path stays off there), ' +
+    // No chain configures a FlashLoanLiquidator today, so each one says so;
+    // a chain absent from the table says that instead.
+    expect(discountPathPosture('42161,8453,999')).toBe(
+      'DISCOUNT_PATH_CHAIN_IDS arms chains 999 (this build has no flash-loan entry for the chain, so the path stays off there), ' +
+        '8453 (no FlashLoanLiquidator configured, so the path stays off there), ' +
         '42161 (no FlashLoanLiquidator configured, so the path stays off there)',
     );
+  });
+});
+
+describe('flashLoanRoute — the one static reading the branch and the posture share', () => {
+  const liquidator = '0x00000000000000000000000000000000000000aa' as const;
+  const pool = '0x00000000000000000000000000000000000000bb' as const;
+  const vault = '0x00000000000000000000000000000000000000cc' as const;
+
+  it('needs a liquidator AND a provider, naming the first missing', () => {
+    expect(flashLoanRoute(1, {})).toEqual({ missing: 'this build has no flash-loan entry for the chain' });
+    expect(flashLoanRoute(1, { 1: { aaveV3Pool: pool } })).toEqual({ missing: 'no FlashLoanLiquidator configured' });
+    // The Base Sepolia rehearsal shape: a liquidator added, no provider yet.
+    expect(flashLoanRoute(1, { 1: { liquidator } })).toEqual({
+      missing: 'no flash-loan provider (Aave V3 pool or Balancer V2 vault) configured',
+    });
+  });
+
+  it('prefers Aave V3, falls back to Balancer V2', () => {
+    expect(flashLoanRoute(1, { 1: { liquidator, aaveV3Pool: pool, balancerV2Vault: vault } })).toEqual({
+      route: { liquidator, via: 'aave-v3' },
+    });
+    expect(flashLoanRoute(1, { 1: { liquidator, balancerV2Vault: vault } })).toEqual({
+      route: { liquidator, via: 'balancer-v2' },
+    });
   });
 });

@@ -307,8 +307,10 @@ tick that began after the restart). Then do §6 below at once.
 
 A value that cannot be read (an entry that is not a chain id, or a
 chain named twice) arms no chain. Confirm what the keeper read from
-the line it logs at every start, which also names any armed chain the
-running build has no FlashLoanLiquidator for:
+the line it logs at every start. For each armed chain it also says
+whether the running build can run the branch there: `via aave-v3` or
+`via balancer-v2`, or what is missing (no FlashLoanLiquidator, or no
+flash-loan provider in `flashLoanProviders.ts`):
 
 ```bash
 journalctl -u vaipakam-keeper --grep 'discount path:' -n 1 --no-pager
@@ -464,15 +466,18 @@ at the top of this runbook.
 ### Profitable trades available but bot logs nothing
 
 Probably the `liquidator` slot in `flashLoanProviders.ts`
-wasn't populated (Step 4 skipped), or the machine has not deployed
-the commit that populated it, or the chain is not armed. The keeper
+wasn't populated (Step 4 skipped), or the chain's entry has no
+`aaveV3Pool` or `balancerV2Vault` (the testnet entries ship empty), or
+the machine has not deployed the commit that populated them, or the
+chain is not armed. The keeper
 logs `flash-loan-skip not-armed:` with the reason for each loan it
 skips on that account. Verify on the machine:
 
 ```bash
 # The keeper states how it read the setting once at every start, from the
-# same parser the passes use: which chains are armed, and which of them have
-# no FlashLoanLiquidator configured in the running build. A value it cannot
+# same parser the passes use: which chains are armed, and for each one the
+# route the running build resolves (`via aave-v3` / `via balancer-v2`) or
+# what is missing (liquidator or provider). A value it cannot
 # read (a malformed entry, a chain named twice) arms no chain and says so
 # here, so this line, not a read of the env file, is the answer.
 journalctl -u vaipakam-keeper --grep 'discount path:' -n 1 --no-pager
