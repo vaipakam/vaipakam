@@ -30,7 +30,7 @@ import {
   putNotifyState,
   sweepExpiredLinks,
 } from './db';
-import { deliverAlert } from './alertDelivery';
+import { AlertDelivery } from './alertDelivery';
 import { formatAlert, pushTitle } from './i18n';
 
 // Diamond ABIs sourced from `@vaipakam/contracts/abis` — same per-facet
@@ -66,9 +66,10 @@ export async function runWatcher(env: Env): Promise<void> {
     return;
   }
 
+  const alerts = new AlertDelivery(env);
   for (const chain of chains) {
     try {
-      await watchChain(env, chain);
+      await watchChain(env, chain, alerts);
     } catch (err) {
       // Keep the loop going — one bad RPC shouldn't kill the whole tick.
       console.error(
@@ -76,12 +77,13 @@ export async function runWatcher(env: Env): Promise<void> {
       );
     }
   }
+  alerts.disclose('watcher');
 }
 
 /** Loans per `aggregate3`. Matches the liquidator's bound (#1946). */
 const HF_MULTICALL_CHUNK = 100;
 
-async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
+async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): Promise<void> {
   const users = await listThresholdsForChain(env.DB, chain.id);
   if (users.length === 0) return;
 
@@ -179,7 +181,7 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
           // built-in: recovering to healthy updates last_band but does
           // NOT alert, so toggling around a threshold doesn't storm.
           if (BAND_RANK[band] > BAND_RANK[prev.last_band]) {
-            await dispatchAlert(env, user, chain, loanId, hf, band);
+            await dispatchAlert(env, alerts, user, chain, loanId, hf, band);
           }
 
           // (Autonomous liquidation moved to `runLiquidator` — its
@@ -207,6 +209,7 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
 
 async function dispatchAlert(
   env: Env,
+  alerts: AlertDelivery,
   user: UserThresholds,
   chain: ChainConfig,
   loanId: number,
@@ -229,7 +232,7 @@ async function dispatchAlert(
     frontendOrigin,
   });
 
-  await deliverAlert(env, {
+  await alerts.deliver({
     tgChatId: user.tg_chat_id,
     pushSubscriber: user.push_channel ? user.wallet : null,
     text,

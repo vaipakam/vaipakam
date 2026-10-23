@@ -2383,9 +2383,9 @@ about the machine.
      IS the channel owner. Set, the signer may instead be a delegate of
      the channel (Push `addDelegate`), which is what lets a later key
      rotation be a signer swap rather than a channel migration. The
-     keeper reads the same setting once it moves onto the shared rail
-     (`packages/push`, #2248); until then it posts as its key's own
-     address.
+     keeper reads the same setting from its machine's env file (it sends
+     through the same shared rail, `packages/push`, since #2248); set it
+     there too, or the two senders post as different channels.
 3. **Channel signer privkey → worker secret.**
    ```bash
    # Shared Secrets Store, same reasoning as TG_BOT_TOKEN in §8a

@@ -71,7 +71,7 @@ import {
   putPreGraceNotifyState,
 } from './db';
 import { batchedRead } from './batchRead';
-import { deliverAlert } from './alertDelivery';
+import { AlertDelivery } from './alertDelivery';
 
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
@@ -164,9 +164,10 @@ export async function runPreGraceWatcher(env: Env): Promise<void> {
     return;
   }
   const chains = getChainConfigs(env);
+  const alerts = new AlertDelivery(env);
   for (const chain of chains) {
     try {
-      await watchChain(env, chain);
+      await watchChain(env, chain, alerts);
     } catch (err) {
       console.error(
         `[keeper] preGraceWatcher chain=${chain.id} failed:`,
@@ -174,9 +175,10 @@ export async function runPreGraceWatcher(env: Env): Promise<void> {
       );
     }
   }
+  alerts.disclose('preGraceWatcher');
 }
 
-async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
+async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): Promise<void> {
   if (!chain.diamond) return;
   const publicClient = createPublicClient({
     transport: http(chain.rpc),
@@ -356,6 +358,7 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
       // eslint-disable-next-line no-await-in-loop
       await notifyLoan(
         env,
+        alerts,
         chain,
         loanIdBig,
         r.result as Address,
@@ -513,6 +516,7 @@ function _hasViableLenderForLoan(
  */
 async function notifyLoan(
   env: Env,
+  alerts: AlertDelivery,
   chain: ChainConfig,
   loanIdBig: bigint,
   ownerAddr: Address,
@@ -548,7 +552,7 @@ async function notifyLoan(
     frontendOrigin,
   );
 
-  await deliverAlert(env, {
+  await alerts.deliver({
     tgChatId: sub.tg_chat_id,
     pushSubscriber: sub.push_channel ? sub.wallet : null,
     text,

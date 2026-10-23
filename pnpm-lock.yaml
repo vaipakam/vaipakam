@@ -177,18 +177,15 @@ importers:
 
   apps/keeper:
     dependencies:
-      '@pushprotocol/restapi':
-        specifier: ^1.7.32
-        version: 1.7.32(@types/react@19.2.14)(bufferutil@4.1.0)(ethers@6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(react@19.2.6)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)
       '@vaipakam/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@vaipakam/lib':
         specifier: workspace:*
         version: link:../../packages/lib
-      ethers:
-        specifier: ^6.13.0
-        version: 6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+      '@vaipakam/push':
+        specifier: workspace:*
+        version: link:../../packages/push
       viem:
         specifier: ^2.48.4
         version: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)
@@ -5998,37 +5995,6 @@ snapshots:
       uuid: 9.0.1
       video-stream-merger: 4.0.1
       viem: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.22.4)
-    optionalDependencies:
-      ethers: 6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
-    transitivePeerDependencies:
-      - '@types/react'
-      - bufferutil
-      - debug
-      - encoding
-      - react
-      - supports-color
-      - typescript
-      - utf-8-validate
-      - zod
-
-  '@pushprotocol/restapi@1.7.32(@types/react@19.2.14)(bufferutil@4.1.0)(ethers@6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(react@19.2.6)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)':
-    dependencies:
-      '@metamask/eth-sig-util': 5.1.0
-      axios: 1.16.1
-      buffer: 6.0.3
-      crypto-js: 4.2.0
-      immer: 10.2.0
-      joi: 17.13.8
-      livepeer: 2.9.2(@types/react@19.2.14)(immer@10.2.0)(react@19.2.6)
-      lru-cache: 10.4.3
-      openpgp: 5.11.3
-      simple-peer: 9.11.1
-      socket.io-client: 4.8.3(bufferutil@4.1.0)(utf-8-validate@5.0.10)
-      tslib: 2.8.1
-      unique-names-generator: 4.7.1
-      uuid: 9.0.1
-      video-stream-merger: 4.0.1
-      viem: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)
     optionalDependencies:
       ethers: 6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
     transitivePeerDependencies:

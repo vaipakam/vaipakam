@@ -18,7 +18,7 @@
  *
  *   - a transaction: `withSubmissionSlot` (`submissionQueue.ts`), which every
  *     send passes through, asserts the fence before the signature;
- *   - an alert to a subscriber: `deliverAlert` (`alertDelivery.ts`) asserts
+ *   - an alert to a subscriber: `AlertDelivery.deliver` (`alertDelivery.ts`) asserts
  *     it before either channel;
  *   - an operator alert about a chain: `sendOpsAlert` (`opsAlert.ts`) asserts
  *     it before the post (a global ops alert names no chain and is not held);
