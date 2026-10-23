@@ -221,6 +221,21 @@ including people who never will.
 - Display names may be shown for convenience, but names never decide asset
   identity, ownership, authorization, or safety.
 
+## Page Integrity
+
+- The app runs only script it serves from its own address. The few
+  scripts that must run inside the page before anything else loads (the
+  theme, the language and direction, and the start-up failure notice)
+  are each allowed by their exact content, so any other script placed
+  in the page is refused, including one an attacker manages to inject.
+- The app never turns text into code at run time, and its policy says
+  so: a dependency that needs that is a finding to investigate, not a
+  reason to loosen the policy.
+- This narrows what an injected script can do inside the app. It does
+  not protect against a compromised deployment, which serves its own
+  policy, or against software on the user's own device such as a
+  browser extension. The app does not claim otherwise.
+
 ## Data Authority and Freshness
 
 The app uses chain reads and indexed reads for different jobs.
