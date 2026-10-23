@@ -23,8 +23,37 @@
  * on D1. Tests for the chunking therefore assert the SHAPE — how many
  * statements, how many binds each — and never rely on this engine refusing
  * anything.
+ *
+ * ONE D1 limit it does enforce (#2677): a LIKE or GLOB pattern over 50 bytes
+ * is refused, with D1's own message, by overriding `like()` and `glob()` (the
+ * functions SQLite evaluates the operators through). The match itself is still
+ * SQLite's: the override checks the length and hands the operands to a second,
+ * un-overridden connection. Without it, a pattern built from a Diamond address
+ * passed every test here and failed every run on D1.
  */
 import { DatabaseSync } from 'node:sqlite';
+
+/** D1's cap on a LIKE or GLOB pattern, in bytes. */
+export const D1_MAX_PATTERN_BYTES = 50;
+
+function enforceD1PatternCap(db: DatabaseSync): void {
+  const native = new DatabaseSync(':memory:');
+  for (const op of ['LIKE', 'GLOB'] as const) {
+    const plain = native.prepare(`SELECT (?2 ${op} ?1) AS r`);
+    const escaped = op === 'LIKE' ? native.prepare(`SELECT (?2 LIKE ?1 ESCAPE ?3) AS r`) : null;
+    // `X op Y` is evaluated as `op(Y, X)`: the pattern comes first.
+    db.function(op.toLowerCase(), { varargs: true, deterministic: true }, (...args) => {
+      const [pattern, value, escape] = args as SqlValue[];
+      if (pattern !== null && Buffer.byteLength(String(pattern)) > D1_MAX_PATTERN_BYTES) {
+        throw new Error('LIKE or GLOB pattern too complex');
+      }
+      const row = (escape === undefined || escaped === null ? plain.get(pattern, value) : escaped.get(pattern, value, escape)) as {
+        r: SqlValue;
+      };
+      return row.r;
+    });
+  }
+}
 
 type SqlValue = number | string | bigint | null;
 
@@ -37,6 +66,7 @@ export interface SqliteD1 {
 
 export function createSqliteD1(ddl: string[]): SqliteD1 {
   const db = new DatabaseSync(':memory:');
+  enforceD1PatternCap(db);
   for (const sql of ddl) db.exec(sql);
   const makeStatement = (sql: string, args: SqlValue[]) => ({
     first: async () => db.prepare(sql).get(...args) ?? null,

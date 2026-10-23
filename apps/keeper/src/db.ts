@@ -1370,14 +1370,31 @@ export async function recordOpsAlertsSent(db: KeeperD1, keys: readonly string[],
     .run();
 }
 
-/** The open ops-alert keys matching a SQL `LIKE` pattern (a pass's own key
- *  prefix), so a pass clears only the alerts that are actually open. */
-export async function listOpsAlertKeys(db: KeeperD1, likePattern: string): Promise<string[]> {
+/**
+ * The open ops-alert keys that begin with `prefix`, optionally on one chain,
+ * so a pass clears only the alerts that are actually open.
+ *
+ * The prefix is LITERAL and compared with `substr`, not a `LIKE` pattern
+ * (#2677). D1 refuses any LIKE or GLOB pattern over 50 bytes ("pattern too
+ * complex"), and a pattern built from a key carries whatever the key does: the
+ * undelivered-remittance prefix names a Diamond address and is about 76 bytes,
+ * so every lookup of those alerts failed on D1 while passing locally. A
+ * literal comparison has no length cap and no wildcard characters to escape.
+ *
+ * `chainId` selects keys whose SECOND `:` segment is that chain — the shape
+ * every per-chain family uses (`<family>-<kind>:<chainId>:…`) — and is
+ * applied here rather than in SQL, so the statement stays one literal
+ * comparison. Leave it out for a prefix that already names the chain.
+ */
+export async function listOpsAlertKeys(db: KeeperD1, prefix: string, chainId?: number): Promise<string[]> {
   const rows = await db
-    .prepare(`SELECT alert_key FROM keeper_ops_alert WHERE alert_key LIKE ?1`)
-    .bind(likePattern)
+    .prepare(`SELECT alert_key FROM keeper_ops_alert WHERE substr(alert_key, 1, length(?1)) = ?1`)
+    .bind(prefix)
     .all<{ alert_key: string }>();
-  return (rows.results ?? []).map((r) => r.alert_key);
+  const keys = (rows.results ?? []).map((r) => r.alert_key);
+  if (chainId === undefined) return keys;
+  const chain = String(chainId);
+  return keys.filter((key) => key.split(':')[1] === chain);
 }
 
 /** Forget `key` once its condition has cleared, so a recurrence alerts at once. */
