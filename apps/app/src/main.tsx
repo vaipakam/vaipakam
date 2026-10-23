@@ -15,6 +15,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import './i18n';
 import { LanguageRemount } from './i18n/LanguageRemount';
 import './styles/global.css';
+import { registerServiceWorker } from './lib/registerServiceWorker';
 
 // UX-005 (Codex #1169 r1) — with route-level code splitting, a user who
 // keeps the app open across a production deploy holds a STALE entry that
@@ -85,6 +86,9 @@ function ConnectKitThemed({ children }: { children: React.ReactNode }) {
     </ConnectKitProvider>
   );
 }
+
+// #2687 — production builds only; a no-op everywhere else.
+registerServiceWorker();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

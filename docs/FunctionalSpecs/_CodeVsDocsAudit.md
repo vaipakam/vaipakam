@@ -1288,4 +1288,21 @@ purchase surface.
 the shortcut list it names has no purchase entry. The work is filed as
 #2687.
 
-**Status:** open, tracked by #2687.
+**Resolution (#2687, 2026-10-23).** The connected app now links a web
+manifest with the four shortcuts the spec names (Offer Book, My positions
+for My Loans, VPFI, and Alerts, which live in Settings), and a production
+build registers a service worker that caches only this build's static shell
+files and answers nothing else: no page load, no cross-origin request, no
+request with a query string.
+
+One point is a reading of the spec rather than a copy of it. The spec asks
+navigational HTML to "prefer a network-first strategy". Network-first
+usually means a cached page is served when the network fails. The app does
+not do that: a page load always goes to the network, offline included,
+because a cached page would run an old build against contract addresses
+and interfaces it cannot know are retired. The spec's stated purpose, that
+a deploy replaces the shell on the next load, holds more strongly this way,
+and the spec now says so in its own words. If an offline page is wanted
+later, it has to be a page that runs no app code.
+
+**Status:** resolved by #2687.
