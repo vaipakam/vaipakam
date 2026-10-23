@@ -763,6 +763,25 @@
   },
   {
     "type": "event",
+    "name": "MandatoryVaultVersionSet",
+    "inputs": [
+      {
+        "name": "previousVersion",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "version",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RewardCustodyRowDebited",
     "inputs": [
       {
@@ -2925,6 +2944,22 @@
       },
       {
         "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MandatoryVaultVersionUnreachable",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "currentVersion",
         "type": "uint256",
         "internalType": "uint256"
       }
