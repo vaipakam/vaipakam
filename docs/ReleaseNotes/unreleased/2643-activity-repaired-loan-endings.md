@@ -1,4 +1,4 @@
-## Thread — The Activity page shows a repaired loan's ending (PR #<n>)
+## Thread — The Activity page shows a repaired loan's ending (PR #2701)
 
 When the indexer misses a loan's ending event for good, its reconciliation pass reads the loan's status from the chain and closes the loan's record. Since #2195 the indexer serves what that check observed beside the activity feed, but the app ignored it, so such a loan's history on the Activity page simply stopped, with no ending.
 
