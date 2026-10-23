@@ -26,7 +26,7 @@ The discount table is governance-configurable on the canonical chain. The dapp r
 | 3 | tier-3 floor … tier-3 ceiling | step-3 BPS |
 | 4 | > tier-3 ceiling | step-4 BPS |
 
-Floors and ceilings are governance-set on the canonical chain only. The cached tier carries the canonical discount BPS with it to every mirror; mirror chains do NOT re-resolve the user's tier against any mirror-local table. The dapp's `/app/buy-vpfi` page renders the live canonical table.
+Floors and ceilings are governance-set on the canonical chain only. The cached tier carries the canonical discount BPS with it to every mirror; mirror chains do NOT re-resolve the user's tier against any mirror-local table. The connected app's VPFI vault page (`/vpfi`) renders the live canonical table.
 
 ## 3. Canonical-chain lifecycle
 

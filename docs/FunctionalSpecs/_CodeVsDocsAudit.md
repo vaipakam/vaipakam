@@ -1266,3 +1266,26 @@ is held in one place in the app that names this entry; once #2681 makes the
 read report the window in force, that copy goes.
 
 **Status:** open, tracked by #2681.
+
+## The connected app is not installable (#2687, 2026-10-23)
+
+The website spec's PWA requirements say the dApp should be installable from
+the browser, with a manifest whose shortcuts reach Offer Book, My Loans,
+VPFI Vault and Alerts, and a production-only service worker that never
+caches live data. The connected app has no manifest and no service worker.
+
+The only manifest in the tree was a leftover on the marketing site from the
+retired app. The marketing site never linked it; the retired app linked its
+own copy on its own host, removed with that app. None of its shortcuts
+reached what it named: the marketing site reads an unknown first path
+segment as a language, so they landed on marketing pages. One was a "Buy
+VPFI" shortcut to the retired purchase route, which the site redirects to
+its VPFI information page. #1742 deletes it. That changes nothing about installability, since
+nothing could install it, but it removes a file that described the removed
+purchase surface.
+
+**Candidate gap in the code, not the doc.** The spec states the intent, and
+the shortcut list it names has no purchase entry. The work is filed as
+#2687.
+
+**Status:** open, tracked by #2687.
