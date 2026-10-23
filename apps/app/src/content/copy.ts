@@ -6139,7 +6139,11 @@ const copySource = {
       'The health factor a new loan must clear when it opens. Open loans keep the floor they opened under.',
     swapToRepaySlippage: 'Swap-to-repay max slippage',
     rateModel: 'Quote-time rate model',
-    rateModelHint: 'The contract that suggests rates when offers are quoted. Not set means none is in use.',
+    /* Codex #2683 r1 — the quote is a DORMANT opt-in: no offer path calls
+       it today, so a registered model changes no rate. Said, so a set
+       address does not read as live rate guidance. */
+    rateModelHint:
+      'A contract registered to suggest rates when offers are quoted. Nothing calls it yet, so even when one is set it changes no rate today. Not set means none is registered.',
     rateModelMaxDeviation: 'Rate-model max deviation',
     oraclesHeading: 'Price oracles',
     secondaryOracleMaxDeviation: 'Secondary-oracle max deviation',
@@ -6164,7 +6168,7 @@ const copySource = {
     periodicInterest: 'Periodic interest payments',
     finerCadenceMinPrincipal: 'Minimum principal for shorter payment periods',
     finerCadenceMinPrincipalHint:
-      'Above this principal a lender may choose interest periods shorter than the mandatory one.',
+      'At or above this principal a lender may choose interest periods shorter than the mandatory one.',
     preNotifyDays: 'Advance reminder',
     preNotifyDaysHint: 'How many days before an interest checkpoint or a maturity date reminders go out.',
     numeraire: 'Reference currency',
@@ -6190,6 +6194,10 @@ const copySource = {
     // constant copied into the app, free to drift.
     unsetDefault: 'not set, so the protocol’s built-in default applies',
     numeraireUnits: tmpl('{{amount}} (reference-currency units)', ['amount']),
+    /* Codex #2683 r1 — the contracts read an empty numeraire symbol as
+       their USD default, so the page names it and says it is the default
+       rather than calling the reference currency "not set". */
+    numeraireDefault: tmpl('{{symbol}} (never changed, so the protocol’s default)', ['symbol']),
     tiersHeading: 'VPFI discount tiers',
     tiers: 'Tiers',
     tierThreshold: tmpl('Tier {{n}} threshold', ['n']),

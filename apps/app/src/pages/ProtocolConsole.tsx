@@ -157,15 +157,16 @@ function makeFormatters(locale: string | undefined) {
       case 'bytes32':
         return ZERO_WORD.test(str) ? copy.protocolConsole.notSet : str;
       case 'symbol': {
-        const text = symbolText(str);
-        return text === null ? copy.protocolConsole.notSet : text;
+        const n = numeraireOf(str);
+        if (n === null) return str;
+        return n.isDefault ? copy.protocolConsole.numeraireDefault(n.symbol) : n.symbol;
       }
       case 'wad':
         return exactDecimal(exactAmountString(BigInt(str), 18));
       case 'numeraireAmount': {
         const amount = exactDecimal(exactAmountString(BigInt(str), 18));
-        const sym = values.numeraireSymbol === undefined ? null : symbolText(values.numeraireSymbol);
-        return sym === null ? copy.protocolConsole.numeraireUnits(amount) : `${amount} ${sym}`;
+        const n = values.numeraireSymbol === undefined ? null : numeraireOf(values.numeraireSymbol);
+        return n === null ? copy.protocolConsole.numeraireUnits(amount) : `${amount} ${n.symbol}`;
       }
     }
   }
@@ -173,13 +174,25 @@ function makeFormatters(locale: string | undefined) {
   return { bps, exactDecimal, rowValue };
 }
 
-/** A symbol packed into 32 bytes, or null when it is empty or not text. */
-function symbolText(word: string): string | null {
+/** The empty word's meaning, as the contracts and the canonical parameter
+ *  reference both state it: a deployment where governance never set the
+ *  numeraire runs on USD. */
+const DEFAULT_NUMERAIRE = 'USD';
+
+/**
+ * The active reference currency from its packed 32-byte symbol (Codex #2683
+ * r1). The empty word is not "unset" in the sense of "none": the protocol
+ * reads it as its USD default, so the page says USD and that it is the
+ * default. A word that is not printable text is returned as null, and the
+ * caller shows the raw word rather than invent a name for it.
+ */
+function numeraireOf(word: string): { symbol: string; isDefault: boolean } | null {
   if (!/^0x[0-9a-fA-F]{64}$/.test(word)) return null;
+  if (/^0x0{64}$/.test(word)) return { symbol: DEFAULT_NUMERAIRE, isDefault: true };
   try {
     // With a size, viem trims the trailing zero bytes itself.
     const text = hexToString(word as Hex, { size: 32 });
-    return /^[\x20-\x7e]+$/.test(text) ? text : null;
+    return /^[\x20-\x7e]+$/.test(text) ? { symbol: text.toUpperCase(), isDefault: false } : null;
   } catch {
     return null;
   }
@@ -306,7 +319,7 @@ export function ProtocolConsole() {
         fetchSnapshot: () => fetchProtocolKnobs(chainId),
         readChain: () => {
           if (!publicClient) throw new Error('no client for this chain');
-          return readProtocolConsoleLive(publicClient, readChain.diamondAddress);
+          return readProtocolConsoleLive(publicClient, chainId, readChain.diamondAddress);
         },
         nowSec: () => Math.floor(Date.now() / 1000),
       }),

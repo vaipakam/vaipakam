@@ -28,7 +28,7 @@
  * runtime dependency on `@vaipakam/contracts`; both callers pass the
  * Diamond ABI they already compile against.
  */
-import type { Abi, Address, PublicClient } from 'viem';
+import { getAbiItem, toFunctionSelector, type Abi, type Address, type PublicClient } from 'viem';
 import { MULTICALL3_ADDRESS } from './multicall.js';
 
 export interface ProtocolKnobGetter {
@@ -154,4 +154,56 @@ export function abiOutputNames(abi: Abi, functionName: string): readonly string[
   if (!outputs || outputs.length === 0) return null;
   const names = outputs.map((o) => o.name ?? '');
   return names.every((n) => n.length > 0) ? names : null;
+}
+
+/** The deployment-artifact facet key that hosts each labelled getter. Both
+ *  live on ConfigFacet; read by every caller of {@link abiDescribesGetterAt}
+ *  so the indexer and the app look the host up under the same key. */
+export const LABELLED_GETTER_HOST = {
+  getProtocolConfigBundle: 'configFacet',
+  getMasterFlags: 'configFacet',
+} as const;
+
+/**
+ * #2073 / #2074 — whether `abi` describes the code that answered
+ * `functionName` at `blockNumber`: the Diamond loupe's
+ * `facetAddress(selector)` AT THAT BLOCK equals `expectedHost`, the host the
+ * caller's deployment artifact records for the getter.
+ *
+ * Output NAMES are only true of the implementation they were compiled
+ * from. An in-place facet refresh that reorders same-typed outputs keeps
+ * the tuple's arity, so a length check alone would put a real value under
+ * the wrong name. The artifact and the ABI ship together, and a facet
+ * address cannot change its code, so a match ties the names to the code
+ * that ran. Anything else (no expected host, a different host, a failed
+ * loupe read) is "cannot establish", and the caller withholds the names.
+ *
+ * ONE rule for both readers of the labelled bundle: the indexer before it
+ * stores names beside a captured tuple, and the connected app before it
+ * labels a bundle it read from the chain itself.
+ */
+export async function abiDescribesGetterAt(opts: {
+  client: PublicClient;
+  diamond: Address;
+  abi: Abi;
+  functionName: string;
+  /** The getter's host in the caller's deployment artifact. */
+  expectedHost: string | undefined;
+  blockNumber: bigint;
+}): Promise<boolean> {
+  if (!opts.expectedHost) return false;
+  try {
+    const item = getAbiItem({ abi: opts.abi, name: opts.functionName });
+    if (!item || item.type !== 'function') return false;
+    const host = (await opts.client.readContract({
+      address: opts.diamond,
+      abi: opts.abi,
+      functionName: 'facetAddress',
+      args: [toFunctionSelector(item)],
+      blockNumber: opts.blockNumber,
+    })) as string;
+    return host.toLowerCase() === opts.expectedHost.toLowerCase();
+  } catch {
+    return false;
+  }
 }

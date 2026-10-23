@@ -2692,7 +2692,7 @@
       "minHealthFactorHint": "Le facteur de santé qu'un nouveau prêt doit dépasser à son ouverture. Les prêts ouverts conservent le plancher sous lequel ils ont été ouverts.",
       "swapToRepaySlippage": "Slippage maximal du swap-to-repay",
       "rateModel": "Modèle de taux à la cotation",
-      "rateModelHint": "Le contrat qui suggère des taux lorsque des offres sont cotées. Non défini signifie qu'aucun n'est utilisé.",
+      "rateModelHint": "Un contrat enregistré pour suggérer des taux lorsque des offres sont cotées. Rien ne l'appelle encore : même défini, il ne change aucun taux aujourd'hui. Non défini signifie qu'aucun n'est enregistré.",
       "rateModelMaxDeviation": "Écart maximal du modèle de taux",
       "oraclesHeading": "Oracles de prix",
       "secondaryOracleMaxDeviation": "Écart maximal de l'oracle secondaire",
@@ -2708,7 +2708,7 @@
       "periodicHeading": "Intérêts périodiques",
       "periodicInterest": "Paiements d'intérêts périodiques",
       "finerCadenceMinPrincipal": "Principal minimal pour des périodes de paiement plus courtes",
-      "finerCadenceMinPrincipalHint": "Au-delà de ce principal, un prêteur peut choisir des périodes d'intérêts plus courtes que la période obligatoire.",
+      "finerCadenceMinPrincipalHint": "À partir de ce principal (inclus), un prêteur peut choisir des périodes d'intérêts plus courtes que la période obligatoire.",
       "preNotifyDays": "Rappel anticipé",
       "preNotifyDaysHint": "Combien de jours avant un point de contrôle d'intérêts ou une échéance les rappels sont envoyés.",
       "numeraire": "Devise de référence",
@@ -2735,7 +2735,8 @@
       "chainWhyUndated": "L'instantané de l'indexeur ne portait aucun horodatage utilisable ; cette page a donc lu les contrats.",
       "chainWhyOld": "L'instantané de l'indexeur était plus ancien que son actualisation régulière ; cette page a donc lu les contrats.",
       "chainWhyUnlabelled": "L'instantané de l'indexeur est arrivé sans les noms dont cette page a besoin ; cette page a donc lu les contrats.",
-      "chainWhyIncomplete": "L'instantané de l'indexeur ne couvrait pas tous les réglages affichés ici ; cette page a donc lu les contrats."
+      "chainWhyIncomplete": "L'instantané de l'indexeur ne couvrait pas tous les réglages affichés ici ; cette page a donc lu les contrats.",
+      "numeraireDefault": "{{symbol}} (jamais modifiée, donc la valeur par défaut du protocole)"
     },
     "forcedClose": {
       "title": "Ce prêt est en retard",

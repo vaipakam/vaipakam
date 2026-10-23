@@ -2692,7 +2692,7 @@
       "minHealthFactorHint": "El factor de salud que un préstamo nuevo debe superar al abrirse. Los préstamos abiertos conservan el mínimo con el que se abrieron.",
       "swapToRepaySlippage": "Slippage máximo de swap-to-repay",
       "rateModel": "Modelo de tasas al cotizar",
-      "rateModelHint": "El contrato que sugiere tasas cuando se cotizan ofertas. Sin definir significa que no se usa ninguno.",
+      "rateModelHint": "Un contrato registrado para sugerir tasas cuando se cotizan ofertas. Nada lo llama todavía, así que aunque haya uno definido hoy no cambia ninguna tasa. Sin definir significa que no hay ninguno registrado.",
       "rateModelMaxDeviation": "Desviación máxima del modelo de tasas",
       "oraclesHeading": "Oráculos de precios",
       "secondaryOracleMaxDeviation": "Desviación máxima del oráculo secundario",
@@ -2708,7 +2708,7 @@
       "periodicHeading": "Intereses periódicos",
       "periodicInterest": "Pagos de intereses periódicos",
       "finerCadenceMinPrincipal": "Principal mínimo para periodos de pago más cortos",
-      "finerCadenceMinPrincipalHint": "Por encima de este principal, un prestamista puede elegir periodos de interés más cortos que el obligatorio.",
+      "finerCadenceMinPrincipalHint": "A partir de este principal (inclusive), un prestamista puede elegir periodos de interés más cortos que el obligatorio.",
       "preNotifyDays": "Recordatorio anticipado",
       "preNotifyDaysHint": "Cuántos días antes de un punto de control de intereses o de un vencimiento se envían los recordatorios.",
       "numeraire": "Moneda de referencia",
@@ -2735,7 +2735,8 @@
       "chainWhyUndated": "La instantánea del indexador no tenía una marca de tiempo utilizable, así que esta página leyó los contratos.",
       "chainWhyOld": "La instantánea del indexador era más antigua que su actualización regular, así que esta página leyó los contratos.",
       "chainWhyUnlabelled": "La instantánea del indexador llegó sin los nombres que esta página necesita, así que esta página leyó los contratos.",
-      "chainWhyIncomplete": "La instantánea del indexador no cubría todos los ajustes que se muestran aquí, así que esta página leyó los contratos."
+      "chainWhyIncomplete": "La instantánea del indexador no cubría todos los ajustes que se muestran aquí, así que esta página leyó los contratos.",
+      "numeraireDefault": "{{symbol}} (nunca cambiada, así que es el valor predeterminado del protocolo)"
     },
     "forcedClose": {
       "title": "Este préstamo está vencido",

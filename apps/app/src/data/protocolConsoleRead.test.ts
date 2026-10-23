@@ -2,10 +2,14 @@
  * #2074 — which source the Protocol Console shows, and why.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { PROTOCOL_KNOB_GETTERS } from '@vaipakam/lib/protocolKnobs';
+import type { PublicClient } from 'viem';
+import { getDeployment } from '@vaipakam/contracts/deployments';
+import { PROTOCOL_KNOB_GETTERS, abiOutputNames } from '@vaipakam/lib/protocolKnobs';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   CONSOLE_SNAPSHOT_MAX_AGE_SEC,
   loadProtocolConsole,
+  readProtocolConsoleLive,
   snapshotGap,
   type ChainConsoleRead,
 } from './protocolConsoleRead';
@@ -118,5 +122,40 @@ describe('loadProtocolConsole', () => {
         nowSec: () => NOW,
       }),
     ).rejects.toThrow('rpc down');
+  });
+});
+
+describe('readProtocolConsoleLive — labels only what this build can tie to the deployed code (Codex #2683 r1)', () => {
+  const CHAIN = 84532;
+  const DIAMOND = '0x00000000000000000000000000000000000000d1' as const;
+  const host = getDeployment(CHAIN)?.facets?.configFacet;
+  const names = abiOutputNames(DIAMOND_ABI_VIEM, 'getProtocolConfigBundle') ?? [];
+
+  function client(loupeHost: string | undefined) {
+    return {
+      getBlockNumber: async () => 99n,
+      readContract: async (args: { functionName: string; blockNumber?: bigint }) => {
+        expect(args.blockNumber).toBe(99n);
+        if (args.functionName === 'facetAddress') return loupeHost;
+        return names.map(() => 1n);
+      },
+      multicall: async (args: { contracts: unknown[]; blockNumber?: bigint }) => {
+        expect(args.blockNumber).toBe(99n);
+        return args.contracts.map(() => ({ status: 'success', result: 1n }));
+      },
+    } as unknown as PublicClient;
+  }
+
+  it('labels the bundle when the loupe host at the read block is the artifact host', async () => {
+    expect(host).toBeTruthy();
+    const r = await readProtocolConsoleLive(client(host), CHAIN, DIAMOND);
+    expect(r.blockNumber).toBe(99n);
+    expect(r.values.treasuryFeeBps).toBe('1');
+  });
+
+  it('refuses to label by position when the deployed host is not the one this build describes', async () => {
+    await expect(
+      readProtocolConsoleLive(client('0x00000000000000000000000000000000000000bb'), CHAIN, DIAMOND),
+    ).rejects.toThrow(/cannot show/);
   });
 });

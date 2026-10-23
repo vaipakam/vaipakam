@@ -8,6 +8,7 @@ import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   PROTOCOL_KNOB_GETTERS,
+  abiDescribesGetterAt,
   abiOutputNames,
   readProtocolKnobGetters,
 } from './protocolKnobs';
@@ -104,5 +105,39 @@ describe('readProtocolKnobGetters', () => {
         blockNumber: 1n,
       }),
     ).rejects.toThrow('rpc down');
+  });
+});
+
+describe('abiDescribesGetterAt (Codex #2683 r1)', () => {
+  const DIAMOND = '0x00000000000000000000000000000000000000d1' as const;
+  const HOST = '0x00000000000000000000000000000000000000AA';
+  function client(answer: () => unknown, seen: { block?: bigint; fn?: string }[] = []) {
+    return {
+      readContract: async (args: { functionName: string; blockNumber?: bigint }) => {
+        seen.push({ block: args.blockNumber, fn: args.functionName });
+        return answer();
+      },
+    } as unknown as PublicClient;
+  }
+  const base = { diamond: DIAMOND, abi: DIAMOND_ABI_VIEM, functionName: 'getProtocolConfigBundle', blockNumber: 7n };
+
+  it('holds only when the loupe host AT THE READ BLOCK is the artifact host', async () => {
+    const seen: { block?: bigint; fn?: string }[] = [];
+    await expect(
+      abiDescribesGetterAt({ ...base, client: client(() => HOST.toLowerCase(), seen), expectedHost: HOST }),
+    ).resolves.toBe(true);
+    expect(seen).toEqual([{ block: 7n, fn: 'facetAddress' }]);
+  });
+
+  it('cannot establish it with another host, no artifact host, or a failed loupe read', async () => {
+    const other = client(() => '0x00000000000000000000000000000000000000bb');
+    await expect(abiDescribesGetterAt({ ...base, client: other, expectedHost: HOST })).resolves.toBe(false);
+    await expect(
+      abiDescribesGetterAt({ ...base, client: client(() => HOST), expectedHost: undefined }),
+    ).resolves.toBe(false);
+    const failing = client(() => {
+      throw new Error('rpc down');
+    });
+    await expect(abiDescribesGetterAt({ ...base, client: failing, expectedHost: HOST })).resolves.toBe(false);
   });
 });

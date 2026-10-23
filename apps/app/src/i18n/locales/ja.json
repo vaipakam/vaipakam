@@ -2692,7 +2692,7 @@
       "minHealthFactorHint": "新しいローンが開始時に上回る必要のあるヘルスファクターです。既存のローンは開始時の下限を維持します。",
       "swapToRepaySlippage": "Swap-to-repay の最大スリッページ",
       "rateModel": "見積もり時の金利モデル",
-      "rateModelHint": "オファーの見積もり時に金利を提案するコントラクトです。未設定の場合は使用されていません。",
+      "rateModelHint": "オファーの見積もり時に金利を提案するために登録されたコントラクトです。まだどこからも呼び出されていないため、設定されていても現在はどの金利も変わりません。未設定の場合は登録されていません。",
       "rateModelMaxDeviation": "金利モデルの最大乖離",
       "oraclesHeading": "価格オラクル",
       "secondaryOracleMaxDeviation": "セカンダリオラクルの最大乖離",
@@ -2708,7 +2708,7 @@
       "periodicHeading": "定期利息",
       "periodicInterest": "定期的な利息支払い",
       "finerCadenceMinPrincipal": "短い支払期間を選べる最低元本",
-      "finerCadenceMinPrincipalHint": "この元本を超えると、貸し手は必須期間より短い利息期間を選べます。",
+      "finerCadenceMinPrincipalHint": "元本がこの値以上であれば、貸し手は必須期間より短い利息期間を選べます。",
       "preNotifyDays": "事前リマインダー",
       "preNotifyDaysHint": "利息のチェックポイントや満期日の何日前にリマインダーを送るか。",
       "numeraire": "基準通貨",
@@ -2735,7 +2735,8 @@
       "chainWhyUndated": "インデクサーのスナップショットに使えるタイムスタンプがなかったため、このページはコントラクトを直接読み取りました。",
       "chainWhyOld": "インデクサーのスナップショットが定期更新より古かったため、このページはコントラクトを直接読み取りました。",
       "chainWhyUnlabelled": "インデクサーのスナップショットに、このページが必要とする名前が付いていなかったため、このページはコントラクトを直接読み取りました。",
-      "chainWhyIncomplete": "インデクサーのスナップショットがここに表示するすべての設定を含んでいなかったため、このページはコントラクトを直接読み取りました。"
+      "chainWhyIncomplete": "インデクサーのスナップショットがここに表示するすべての設定を含んでいなかったため、このページはコントラクトを直接読み取りました。",
+      "numeraireDefault": "{{symbol}}（変更されたことがないため、プロトコルのデフォルト）"
     },
     "forcedClose": {
       "title": "このローンは延滞しています",

@@ -2692,7 +2692,7 @@
       "minHealthFactorHint": "Der Health Factor, den ein neuer Kredit bei der Eröffnung erreichen muss. Offene Kredite behalten die Untergrenze, unter der sie eröffnet wurden.",
       "swapToRepaySlippage": "Maximaler Slippage bei Swap-to-Repay",
       "rateModel": "Zinsmodell bei der Angebotsberechnung",
-      "rateModelHint": "Der Contract, der beim Berechnen von Angeboten Zinssätze vorschlägt. Nicht gesetzt heißt, dass keiner verwendet wird.",
+      "rateModelHint": "Ein Contract, der registriert ist, um beim Berechnen von Angeboten Zinssätze vorzuschlagen. Noch ruft ihn nichts auf, daher ändert er heute keinen Zinssatz, auch wenn einer gesetzt ist. Nicht gesetzt heißt, dass keiner registriert ist.",
       "rateModelMaxDeviation": "Maximale Abweichung des Zinsmodells",
       "oraclesHeading": "Preisorakel",
       "secondaryOracleMaxDeviation": "Maximale Abweichung des Zweitorakels",
@@ -2708,7 +2708,7 @@
       "periodicHeading": "Periodische Zinsen",
       "periodicInterest": "Periodische Zinszahlungen",
       "finerCadenceMinPrincipal": "Mindestkreditbetrag für kürzere Zahlungsperioden",
-      "finerCadenceMinPrincipalHint": "Ab diesem Kreditbetrag darf ein Kreditgeber kürzere Zinsperioden als die vorgeschriebene wählen.",
+      "finerCadenceMinPrincipalHint": "Ab diesem Kreditbetrag (einschließlich) darf ein Kreditgeber kürzere Zinsperioden als die vorgeschriebene wählen.",
       "preNotifyDays": "Vorabhinweis",
       "preNotifyDaysHint": "Wie viele Tage vor einem Zinsstichtag oder einer Fälligkeit Hinweise verschickt werden.",
       "numeraire": "Referenzwährung",
@@ -2735,7 +2735,8 @@
       "chainWhyUndated": "Der Snapshot des Indexers trug keinen verwertbaren Zeitstempel, daher hat diese Seite die Contracts gelesen.",
       "chainWhyOld": "Der Snapshot des Indexers war älter als seine regelmäßige Aktualisierung, daher hat diese Seite die Contracts gelesen.",
       "chainWhyUnlabelled": "Der Snapshot des Indexers kam ohne die Namen, die diese Seite braucht, daher hat diese Seite die Contracts gelesen.",
-      "chainWhyIncomplete": "Der Snapshot des Indexers deckte nicht jede hier gezeigte Einstellung ab, daher hat diese Seite die Contracts gelesen."
+      "chainWhyIncomplete": "Der Snapshot des Indexers deckte nicht jede hier gezeigte Einstellung ab, daher hat diese Seite die Contracts gelesen.",
+      "numeraireDefault": "{{symbol}} (nie geändert, daher der Standardwert des Protokolls)"
     },
     "forcedClose": {
       "title": "Dieses Darlehen ist überfällig",

@@ -19,9 +19,11 @@
  *     a future setter missing from the allowlist) still converges.
  */
 
-import { type Address, type PublicClient, getAbiItem, toFunctionSelector } from 'viem';
+import { type Address, type PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
+  LABELLED_GETTER_HOST,
+  abiDescribesGetterAt,
   abiOutputNames as abiOutputNamesOf,
   readProtocolKnobGetters,
   type ProtocolKnobRead,
@@ -217,13 +219,6 @@ export function abiOutputNames(functionName: string): readonly string[] | null {
   return abiOutputNamesOf(DIAMOND_ABI_VIEM, functionName);
 }
 
-/** The facet this build's deployment artifact records as the host of each
- *  labelled getter. Both live on ConfigFacet. */
-const LABELLED_GETTER_HOST = {
-  getProtocolConfigBundle: 'configFacet',
-  getMasterFlags: 'configFacet',
-} as const;
-
 /**
  * #2073 (Codex #2653 r1) — whether this build's ABI describes the code that
  * answered `functionName` at `blockNumber`.
@@ -232,12 +227,9 @@ const LABELLED_GETTER_HOST = {
  * build was compiled against. During an in-place facet refresh the old
  * Worker keeps running while the Diamond already routes the getter to new
  * code, so a reorder at the same arity would be stored under the old names.
- * The evidence used: the Diamond loupe's `facetAddress(selector)` AT THE
- * CAPTURE BLOCK equals the host address in this build's deployment artifact.
- * The artifact and the ABI ship together in `@vaipakam/contracts`, and a
- * facet address cannot change code, so a match ties the decode to the code
- * that ran. Anything else (no artifact entry, a different host, a failed
- * loupe read) is "cannot establish", and the caller withholds the names.
+ * The rule (loupe host at the capture block equals this build's artifact
+ * host) lives in `@vaipakam/lib/protocolKnobs`, shared with the connected
+ * app's own read of the bundle (#2074).
  */
 export async function abiDescribesChainGetter(opts: {
   client: PublicClient;
@@ -246,22 +238,14 @@ export async function abiDescribesChainGetter(opts: {
   functionName: keyof typeof LABELLED_GETTER_HOST;
   blockNumber: bigint;
 }): Promise<boolean> {
-  const expected = getDeployment(opts.chainId)?.facets?.[LABELLED_GETTER_HOST[opts.functionName]];
-  if (!expected) return false;
-  try {
-    const item = getAbiItem({ abi: DIAMOND_ABI_VIEM, name: opts.functionName });
-    if (!item || item.type !== 'function') return false;
-    const host = (await opts.client.readContract({
-      address: opts.diamond,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'facetAddress',
-      args: [toFunctionSelector(item)],
-      blockNumber: opts.blockNumber,
-    })) as string;
-    return host.toLowerCase() === expected.toLowerCase();
-  } catch {
-    return false;
-  }
+  return abiDescribesGetterAt({
+    client: opts.client,
+    diamond: opts.diamond,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: opts.functionName,
+    expectedHost: getDeployment(opts.chainId)?.facets?.[LABELLED_GETTER_HOST[opts.functionName]],
+    blockNumber: opts.blockNumber,
+  });
 }
 
 /** The output names captured beside a tuple (#2073), or null when none were

@@ -2692,7 +2692,7 @@
       "minHealthFactorHint": "新贷款开立时必须达到的健康因子。已开立的贷款保留其开立时的下限。",
       "swapToRepaySlippage": "Swap-to-repay 最大滑点",
       "rateModel": "报价时的利率模型",
-      "rateModelHint": "在为报价提供利率建议的合约。未设置表示未使用任何模型。",
+      "rateModelHint": "为在报价时提供利率建议而登记的合约。目前尚无任何调用方，因此即使已设置，现在也不会改变任何利率。未设置表示未登记任何模型。",
       "rateModelMaxDeviation": "利率模型最大偏差",
       "oraclesHeading": "价格预言机",
       "secondaryOracleMaxDeviation": "次级预言机最大偏差",
@@ -2708,7 +2708,7 @@
       "periodicHeading": "定期利息",
       "periodicInterest": "定期利息支付",
       "finerCadenceMinPrincipal": "可选更短支付周期的最低本金",
-      "finerCadenceMinPrincipalHint": "本金高于此值时，出借人可以选择比强制周期更短的计息周期。",
+      "finerCadenceMinPrincipalHint": "本金达到或高于此值时，出借人可以选择比强制周期更短的计息周期。",
       "preNotifyDays": "提前提醒",
       "preNotifyDaysHint": "在利息检查点或到期日之前多少天发送提醒。",
       "numeraire": "参考货币",
@@ -2735,7 +2735,8 @@
       "chainWhyUndated": "索引器的快照没有可用的时间戳，因此本页直接读取了合约。",
       "chainWhyOld": "索引器的快照早于其常规刷新，因此本页直接读取了合约。",
       "chainWhyUnlabelled": "索引器的快照缺少本页所需的名称，因此本页直接读取了合约。",
-      "chainWhyIncomplete": "索引器的快照未涵盖此处显示的所有设置，因此本页直接读取了合约。"
+      "chainWhyIncomplete": "索引器的快照未涵盖此处显示的所有设置，因此本页直接读取了合约。",
+      "numeraireDefault": "{{symbol}}（从未更改，因此为协议默认值）"
     },
     "forcedClose": {
       "title": "这笔贷款已逾期",

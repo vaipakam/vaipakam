@@ -145,14 +145,21 @@ including people who never will.
 - A setting that is unset is reported as unset, never as a figure or a
   blank. Where an unset setting means the protocol falls back to a built-in
   default, the console says that the default applies rather than quoting
-  the default's value.
+  the default's value. The reference currency is the exception that
+  proves the rule: the protocol documents its default by name, so a
+  reference currency governance never changed is named, and marked as
+  the default.
 - The console shows the public indexer's snapshot only while that snapshot
   can stand in for the chain: it is dated, recent enough that the indexer's
   regular refresh is still running, not known to be behind a governance
   change, labelled, and complete for every setting the page shows. In any
   other case the console reads the same values directly from the contracts,
   all at one block, and its provenance line says so, names the block and
-  when it was read, and gives the reason the snapshot was not used.
+  when it was read, and gives the reason the snapshot was not used. A value
+  read that way is put under a name only when the console can show that its
+  names describe the code that answered at that block, by the same rule the
+  indexer applies before it stores names; when it cannot, the direct read
+  counts as failed rather than labelling values by their position.
 - A snapshot that is not current is shown only when the direct read fails
   too. The console then says the contracts could not be read and that the
   values may be out of date, alongside whatever the snapshot's own
