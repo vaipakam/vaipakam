@@ -1246,3 +1246,23 @@ kind cannot be identified.
 
 This is not code being transcribed into the spec. The intent changed first,
 in the issue, and both the spec and the code follow it.
+
+## The day-close grace window reads as zero when it was never set (#2681, 2026-10-23)
+
+The parameter reference describes the reward grace window as a setting with a
+built-in default of four hours that governance may change. The contracts'
+read for it returns the stored value as it is, so on a deployment where
+governance never set it the answer is zero, while the window the protocol
+actually applies is the four-hour default. A reader taking the read at its
+word would conclude the window is zero.
+
+**Candidate bug in the code, not the doc.** The doc states the intent: the
+setting has a default and the read should report what is in force. The fix
+belongs in the contracts and is filed as #2681. Until it lands, the protocol
+console does not repeat the contract's zero: it reports the documented
+four-hour default and says the window is not set, so that default applies.
+The figure comes from the parameter reference, not from the contract, and
+is held in one place in the app that names this entry; once #2681 makes the
+read report the window in force, that copy goes.
+
+**Status:** open, tracked by #2681.

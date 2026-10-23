@@ -46,9 +46,8 @@ Two surfaces exist to be read by people who have not connected anything,
 including people who never will.
 
 - An analytics view reports the deployment's loan and offer counts, and a
-  protocol console reports the current value of the governance-tunable
-  parameters the public indexer publishes — a bounded subset, not the
-  whole catalogue. Both are read-only. Neither offers any control that changes
+  protocol console reports the current value of the protocol-wide settings
+  governance can change — a bounded subset, not the whole catalogue. Both are read-only. Neither offers any control that changes
   protocol state; parameter changes are a governance action elsewhere.
 - Both render fully without a wallet, and both are reachable by direct
   link from outside the app. They resolve their chain the same way every
@@ -126,13 +125,70 @@ including people who never will.
 - The protocol console reports each parameter against its own name, and
   never by inferring which value belongs to which name from ordering.
 - The console states that it shows a subset rather than implying it is
-  complete. Settings that exist but are not published — lifecycle and
-  automation switches, the grace schedule, sanctions-oracle
-  configuration and several risk controls among them — are absent, and
-  a reader is pointed at the full parameter reference rather than left
-  to infer that what is shown is all there is. An incomplete view that
-  asserts completeness is worse than an incomplete view, because it
-  stops the reader looking further.
+  complete, and it names what is left out: settings that differ per asset
+  or per chain, the reward and recycling settings, and a few protocol-wide
+  settings not yet shown. A reader is pointed at the full parameter
+  reference rather than left to infer that what is shown is all there is.
+  An incomplete view that asserts completeness is worse than an incomplete
+  view, because it stops the reader looking further.
+- Every protocol-wide setting the parameter reference lists is accounted
+  for: either the console shows its current value, or the omission has a
+  recorded reason (it differs per asset or chain, it is a fixed constant,
+  it belongs to the rewards and recycling surfaces, it is off on this
+  deployment, the contracts expose no way to read it, or it is not shown
+  yet). A setting added to the reference without either is a defect the
+  build catches, so the console cannot silently fall behind the reference.
+  Within that, the fees, the risk and price-oracle limits, the periodic
+  interest and reference-currency settings, the automation switches and
+  the keeper pause, the cross-chain reporting window and the treasury
+  address are shown.
+- A setting that is unset is reported as unset, never as a figure or a
+  blank. Where an unset setting means the protocol falls back to a
+  documented default, the console names that default and marks it as the
+  default, never as a configured value: an unset day-close grace window
+  reads as the documented four hours, and a reference currency governance
+  never changed is named and marked as the default.
+- Where a value's meaning depends on another setting, or a switch does less
+  than its name suggests, the row says so: the Pyth cross-check runs only
+  while both its oracle and its feed id are set, and the keeper pause stops
+  delegated keeper actions on other people's positions but leaves owners'
+  own actions, liquidation and reward-commitment submission running, so a
+  compromised keeper key must also lose its role. Each automation switch
+  states its scope the same way: the auto-lend switch only refuses new
+  opt-ins, so the console also shows the separate switch that decides
+  whether standing lending intents are filled at all; auto-refinance
+  stops only the keeper and matcher routes; auto-extend blocks every
+  in-place extension. The layer-2 sequencer guard is described as holding
+  prices both while the sequencer is down and for the hour after it
+  returns.
+- A setting whose change announces nothing on chain (today the layer-2
+  sequencer uptime feed) can lag in the indexer's snapshot until its next
+  scheduled refresh. While the console shows the snapshot, that row says so.
+- The console shows the public indexer's snapshot only while that snapshot
+  can stand in for the chain: it is dated, recent enough that the indexer's
+  regular refresh is still running, not known to be behind a governance
+  change, labelled, and complete for every setting the page shows. In any
+  other case the console reads the same values directly from the contracts,
+  all at one block, and its provenance line says so, names the block and
+  when it was read, and gives the reason the snapshot was not used. A value
+  read that way is put under a name only when the console can show that its
+  names describe the code that answered at that block, by the same rule the
+  indexer applies before it stores names; when it cannot, the direct read
+  counts as failed rather than labelling values by their position.
+- A snapshot that is not current is shown only when the direct read fails
+  too. A direct read that answers from a block older than the snapshot's
+  own block counts as failed: it is not a fresher reading. When the
+  snapshot is already known to be behind a governance change, the direct
+  read must come from a block that includes that change: the block at
+  which the indexer saw it, when the indexer recorded one, and otherwise
+  at least a later block than the snapshot's. Until a reading reaches
+  that block, the indexer keeps its own snapshot marked as behind too.
+- The indexer refreshes its snapshot after any change to the Diamond's
+  code, not only after a setting changes, since an upgrade can change what
+  a setting's read returns. The console then says the contracts could not be read and that the
+  values may be out of date, alongside whatever the snapshot's own
+  warnings are. With neither source readable, the console says the values
+  are unknown, not unset.
 - An operator may hide the live parameter values on a deployment. In
   that state the console says so plainly, and does not direct the reader
   to any resource that the same setting has also withheld.
