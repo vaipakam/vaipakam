@@ -99,6 +99,13 @@
 /index.html
   Cache-Control: public, max-age=0, must-revalidate
 
+# The service worker (#2687). Same rule as the page: revalidated on every
+# check, so a deploy's worker (whose cache is named for that build) is
+# picked up at once rather than after the browser's own 24-hour cap.
+
+/sw.js
+  Cache-Control: public, max-age=0, must-revalidate
+
 # Immutable static assets (content-hashed filenames).
 
 /assets/*

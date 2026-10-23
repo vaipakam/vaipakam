@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv, type Plugin } from 'vite';
+import { build, defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { cloudflare } from '@cloudflare/vite-plugin';
 import { execSync } from 'node:child_process';
@@ -24,6 +24,12 @@ process.env.VITE_BUILD_HASH = (() => {
   }
 })();
 process.env.VITE_BUILD_TIME = new Date().toISOString();
+
+// #2687 — whether this build registers the service worker. Set here on
+// every build, never left to an env file (a value already in the process
+// environment outranks `.env*`): the e2e build stubs requests with
+// Playwright, which a worker would sit in front of.
+process.env.VITE_SERVICE_WORKER = process.env.APP_E2E ? 'off' : 'on';
 
 // The Cloudflare plugin boots a workerd sandbox with the dev server —
 // unnecessary for the fork-tier e2e (plain SPA serving is enough) and
@@ -154,12 +160,50 @@ function cspScriptHashes(): Plugin {
   };
 }
 
+// #2687 — builds `sw/sw.ts` into `dist/sw.js` beside the app. A second,
+// self-contained build because a service worker must be one classic script
+// at a fixed address, while the app's output is hashed ES-module chunks.
+// `__SHELL_VERSION__` names this build's cache, so the worker file changes
+// with every build (which is what makes a browser install the new one) and
+// the new worker can delete the old build's cache.
+function serviceWorker(): Plugin {
+  return {
+    name: 'vaipakam-service-worker',
+    apply: 'build',
+    async writeBundle(options, bundle) {
+      // Only the client output carries the page; the Cloudflare plugin's
+      // worker environment writes none and gets no service worker.
+      if (!options.dir || !('index.html' in bundle)) return;
+      const version = `${process.env.VITE_BUILD_HASH}-${process.env.VITE_BUILD_TIME}`;
+      await build({
+        configFile: false,
+        logLevel: 'warn',
+        publicDir: false,
+        define: { __SHELL_VERSION__: JSON.stringify(version) },
+        build: {
+          outDir: options.dir,
+          emptyOutDir: false,
+          copyPublicDir: false,
+          sourcemap: false,
+          lib: {
+            entry: fileURLToPath(new URL('./sw/sw.ts', import.meta.url)),
+            formats: ['iife'],
+            name: 'vaipakamServiceWorker',
+            fileName: () => 'sw.js',
+          },
+        },
+      });
+      console.log(`[sw] dist/sw.js written for shell ${version}`);
+    },
+  };
+}
+
 export default defineConfig(({ mode, command }) => {
   checkIndexerOrigin(mode, command);
   return {
   plugins: process.env.APP_E2E
     ? [e2eDeploymentsBundle(), react(), cspScriptHashes()]
-    : [react(), cloudflare(), cspScriptHashes()],
+    : [react(), cloudflare(), cspScriptHashes(), serviceWorker()],
   build: {
     rollupOptions: {
       output: {
