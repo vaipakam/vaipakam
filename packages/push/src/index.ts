@@ -317,28 +317,42 @@ export type PublishedRailStatus =
   | { usable: false; reason: PushRailUnavailableReason };
 
 /**
- * Read a published row back, strictly: a row that is not one of the two
- * shapes `publishedRailRow` writes reads as `undefined` (unknown), never as a
- * guess.
+ * Read a published row back, strictly: a row is accepted only when it is
+ * EXACTLY what `publishedRailRow` writes for the status it decodes to, so a
+ * contradictory row (usable with a reason, unusable with a channel, a
+ * lowercase channel the writer would have checksummed) reads as `undefined`
+ * (unknown), never as a guess about which field to believe.
  */
 export function readPublishedRail(
   row: PublishedRailRow | null | undefined,
 ): { status: PublishedRailStatus; observedAt: number } | undefined {
   if (!row || !Number.isSafeInteger(row.observed_at) || row.observed_at <= 0) return undefined;
+  const decoded = decodeRailFields(row);
+  if (decoded === undefined) return undefined;
+  const rewritten = publishedRailRow(
+    decoded.usable ? { ...decoded, delegated: false } : decoded,
+    row.observed_at,
+  );
+  const same =
+    rewritten.usable === row.usable &&
+    rewritten.reason === row.reason &&
+    rewritten.channel === row.channel;
+  return same ? { status: decoded, observedAt: row.observed_at } : undefined;
+}
+
+/** The status a row's own fields name, before the round-trip check. */
+function decodeRailFields(row: PublishedRailRow): PublishedRailStatus | undefined {
   if (row.usable === 1) {
     if (typeof row.channel !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(row.channel)) return undefined;
-    let channel: string;
     try {
-      channel = getAddress(row.channel);
+      return { usable: true, channel: getAddress(row.channel) };
     } catch {
       return undefined;
     }
-    return { status: { usable: true, channel }, observedAt: row.observed_at };
   }
   if (row.usable === 0) {
     const reason = row.reason as PushRailUnavailableReason;
-    if (!UNAVAILABLE_REASONS.includes(reason)) return undefined;
-    return { status: { usable: false, reason }, observedAt: row.observed_at };
+    return UNAVAILABLE_REASONS.includes(reason) ? { usable: false, reason } : undefined;
   }
   return undefined;
 }

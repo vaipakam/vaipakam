@@ -302,6 +302,11 @@ describe('a published rail status round-trips, and nothing else reads back (#266
       { usable: 0, reason: 'unheard-of', channel: null, observed_at: 1 },
       { usable: 0, reason: 'signer-unset', channel: null, observed_at: 0 },
       { usable: 3, reason: null, channel: null, observed_at: 1 },
+      // Contradictory rows: neither shape the writer emits (Codex #2682 r1).
+      { usable: 1, reason: 'signer-unset', channel: '0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b', observed_at: 1 },
+      { usable: 0, reason: 'signer-unset', channel: '0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b', observed_at: 1 },
+      // A channel the writer would have checksummed.
+      { usable: 1, reason: null, channel: '0x6f5847a0ca1f2cb1bbef944124ce5995988a1d6b', observed_at: 1 },
     ]) {
       expect(readPublishedRail(row)).toBeUndefined();
     }

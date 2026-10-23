@@ -89,7 +89,7 @@ describe('GET /push/status covers the keeper too, as it last published (#2667)',
   const keeperUsable = (channel = CHANNEL, observed_at = NOW - 60) => ({ usable: 1, reason: null, channel, observed_at });
 
   it('is available for the whole service when both rails post on the same channel', async () => {
-    expect(await statusFor(agentEnv, sharedDb(keeperUsable(CHANNEL.toLowerCase())))).toEqual({
+    expect(await statusFor(agentEnv, sharedDb(keeperUsable()))).toEqual({
       available: true,
       channel: CHANNEL,
       scope: 'service',
@@ -136,6 +136,8 @@ describe('GET /push/status covers the keeper too, as it last published (#2667)',
       sharedDb({ usable: 1, reason: null, channel: 'not-an-address', observed_at: NOW }),
       sharedDb({ usable: 0, reason: 'something-new', channel: null, observed_at: NOW }),
       sharedDb({ usable: 2, reason: null, channel: CHANNEL, observed_at: NOW }),
+      // Contradictory: it says usable and gives a reason (Codex #2682 r1).
+      sharedDb({ usable: 1, reason: 'signer-unset', channel: CHANNEL, observed_at: NOW }),
     ]) {
       // eslint-disable-next-line no-await-in-loop
       expect(await statusFor(agentEnv, db)).toEqual(agentOnly);
