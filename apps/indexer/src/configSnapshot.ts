@@ -585,25 +585,41 @@ export async function handleConfigSnapshot(
     // The route must tolerate the previous schema while a migration has not
     // reached the database yet: each step drops the columns the newest
     // migration added (0069, then 0067), so a missing later column never
-    // costs what an earlier one already provides.
-    const columnSets = [
-      'bundle_names_json, master_flags_names_json, knob_values_json',
-      'bundle_names_json, master_flags_names_json',
-      '',
-    ];
-    let row: Row | null = null;
-    for (let i = 0; i < columnSets.length; i++) {
-      const extra = columnSets[i] ? `, ${columnSets[i]}` : '';
-      try {
-        row = await env.DB.prepare(
-          `SELECT bundle_json, master_flags_json, source_block, updated_at${extra}
+    // costs what an earlier one already provides. Three STATIC statements,
+    // so the SQL-vs-schema guard prepares every one of them against the
+    // migrated schema rather than skipping a built string.
+    const reads: (() => Promise<Row | null>)[] = [
+      () =>
+        env.DB.prepare(
+          `SELECT bundle_json, master_flags_json, source_block, updated_at,
+                  bundle_names_json, master_flags_names_json, knob_values_json
            FROM protocol_config WHERE chain_id = ?`,
         )
           .bind(chainId)
-          .first<Row>();
+          .first<Row>(),
+      () =>
+        env.DB.prepare(
+          `SELECT bundle_json, master_flags_json, source_block, updated_at,
+                  bundle_names_json, master_flags_names_json
+           FROM protocol_config WHERE chain_id = ?`,
+        )
+          .bind(chainId)
+          .first<Row>(),
+      () =>
+        env.DB.prepare(
+          `SELECT bundle_json, master_flags_json, source_block, updated_at
+           FROM protocol_config WHERE chain_id = ?`,
+        )
+          .bind(chainId)
+          .first<Row>(),
+    ];
+    let row: Row | null = null;
+    for (let i = 0; i < reads.length; i++) {
+      try {
+        row = await reads[i]();
         break;
       } catch (err) {
-        if (i === columnSets.length - 1 || !/no such column/i.test(String(err))) throw err;
+        if (i === reads.length - 1 || !/no such column/i.test(String(err))) throw err;
       }
     }
     if (!row) return jsonResponse({ chainId, available: false });
