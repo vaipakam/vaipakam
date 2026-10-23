@@ -1810,7 +1810,21 @@
         "tooltipFills_other": "{{count}} Kredite",
         "mobileBook": "Buch",
         "mobileChart": "Chart",
-        "mobileViewLabel": "Desk-Ansicht"
+        "mobileViewLabel": "Desk-Ansicht",
+        "emptyUnrecorded_zero": "{{count}} Kredite wurden in diesem Zeitraum vereinbart, aber für keinen ist ein Zinssatz erfasst, daher wird nichts gezeichnet.",
+        "unrecordedNote_zero": "{{count}} weitere Kredite in diesem Zeitraum haben keinen erfassten Zinssatz und werden daher nicht gezeichnet.",
+        "emptyUnrecorded_one": "{{count}} Kredit wurde in diesem Zeitraum vereinbart, aber sein Zinssatz ist nicht erfasst, daher wird nichts gezeichnet.",
+        "unrecordedNote_one": "{{count}} weiterer Kredit in diesem Zeitraum hat keinen erfassten Zinssatz und wird daher nicht gezeichnet.",
+        "emptyUnrecorded_two": "{{count}} Kredite wurden in diesem Zeitraum vereinbart, aber für keinen ist ein Zinssatz erfasst, daher wird nichts gezeichnet.",
+        "unrecordedNote_two": "{{count}} weitere Kredite in diesem Zeitraum haben keinen erfassten Zinssatz und werden daher nicht gezeichnet.",
+        "emptyUnrecorded_few": "{{count}} Kredite wurden in diesem Zeitraum vereinbart, aber für keinen ist ein Zinssatz erfasst, daher wird nichts gezeichnet.",
+        "unrecordedNote_few": "{{count}} weitere Kredite in diesem Zeitraum haben keinen erfassten Zinssatz und werden daher nicht gezeichnet.",
+        "emptyUnrecorded_many": "{{count}} Kredite wurden in diesem Zeitraum vereinbart, aber für keinen ist ein Zinssatz erfasst, daher wird nichts gezeichnet.",
+        "unrecordedNote_many": "{{count}} weitere Kredite in diesem Zeitraum haben keinen erfassten Zinssatz und werden daher nicht gezeichnet.",
+        "emptyUnrecorded_other": "{{count}} Kredite wurden in diesem Zeitraum vereinbart, aber für keinen ist ein Zinssatz erfasst, daher wird nichts gezeichnet.",
+        "unrecordedNote_other": "{{count}} weitere Kredite in diesem Zeitraum haben keinen erfassten Zinssatz und werden daher nicht gezeichnet.",
+        "tooltipPrincipalFloor": "mindestens {{amount}} (Betrag für {{count}} nicht erfasst)",
+        "tooltipPrincipalUnrecorded": "Betrag nicht erfasst"
       },
       "history": {
         "tab": "Verlauf",

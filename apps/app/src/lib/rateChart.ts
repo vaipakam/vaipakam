@@ -7,6 +7,7 @@ import type {
   CandleInterval,
   CandleRange,
   RateCandleBucket,
+  UnrecordedRateSlot,
 } from '../data/indexer';
 
 /** Client-side mirror of the worker's interval enum (bucket width in
@@ -81,6 +82,25 @@ export function newestPrint(
   return { source: 'bucket', rateBps: last.close, at: last.t };
 }
 
+/** #1142 — the total of fills the candle response counts but cannot draw
+ *  (no recorded rate). Absent = 0 (a Worker that predates the field).
+ *  A present but malformed value returns `null`, which the hook turns into
+ *  "unavailable": a chart that silently dropped the count would present
+ *  the drawn fills as the whole history. */
+export function countUnrecordedFills(raw: unknown): number | null {
+  if (raw === undefined) return 0;
+  if (!Array.isArray(raw)) return null;
+  let total = 0;
+  for (const slot of raw as unknown[]) {
+    const fills = (slot as Partial<UnrecordedRateSlot> | null)?.fills;
+    if (typeof fills !== 'number' || !Number.isInteger(fills) || fills < 0) {
+      return null;
+    }
+    total += fills;
+  }
+  return total;
+}
+
 /**
  * Which empty-state copy an empty bucket array earns (Codex #1139
  * round-1 P3, tightened in round 4): "this market never filled" is
@@ -105,7 +125,12 @@ export function newestPrint(
 export function chartEmptyKind(
   range: CandleRange,
   tape: readonly unknown[] | null | undefined,
-): 'market' | 'range' {
+  unrecordedFills: number,
+): 'unrecorded' | 'market' | 'range' {
+  // #1142 — the candle response itself counts fills in this range whose
+  // rate is not recorded. Nothing is drawn, but "no loans agreed" would
+  // be false: say they happened and why they are not shown.
+  if (unrecordedFills > 0) return 'unrecorded';
   // A non-empty tape PROVES a fill exists — the market copy is never
   // honest, regardless of range (candle-cache skew, see above).
   if (Array.isArray(tape) && tape.length > 0) return 'range';
@@ -243,7 +268,7 @@ export function fillPointsFromTape(
   for (const row of inRange) {
     // #1142 — a fill whose executed terms are not recorded cannot be drawn
     // as its own marker (the live terms are a different figure). The
-    // bucket markers, which fold the indexer's best figure, stand in.
+    // bucket markers, which fold only recorded rates, stand in.
     if (row.rateBps === null || row.principal === null) return null;
     const rateBps = row.rateBps;
     let principal: bigint;

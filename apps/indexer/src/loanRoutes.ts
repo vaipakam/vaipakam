@@ -1443,7 +1443,9 @@ export async function handleLoansTimeseries(
  *   ?chainId=8453&lendingAsset=0x..&collateralAsset=0x..&durationDays=30
  *   &interval=1h|4h|1d&range=7d|30d|90d|all
  *
- * → { chainId, buckets: [{ t, open, high, low, close, fills, principalTotal }] }
+ * → { chainId, buckets: [{ t, open, high, low, close, fills, principalTotal,
+ *                           unrecordedPrincipalFills }],
+ *     unrecorded: [{ t, fills }], truncated }
  *
  * Executed-rate OHLC series for ONE market (ProRateTerminalDesign.md §7). All
  * three market params are REQUIRED — a candle series is per-market by
@@ -1474,11 +1476,22 @@ export async function handleLoansTimeseries(
  * 30d fill into the 60d market at its original start_at. So BOTH the tenor
  * scope AND the selected rate/principal read the init_* snapshot columns
  * (stamped at every LoanInitiated insert path, never mutated — migration
- * 0032 §2), COALESCEd to the mutable column only for rows written by a
- * pre-snapshot worker in the migration→deploy window (the 0032 backfill
- * fills everything that exists at apply time). The COALESCE tenor
+ * 0032 §2). The tenor scope COALESCEs to the live duration so every loan is
+ * filed in SOME market (the same key `marketDurationDays` serves); the
  * expression is spelled IDENTICALLY to the 0032 expression index so the
  * planner can match it textually; correctness doesn't depend on the index.
+ *
+ * PROVENANCE (#1142, Codex #2689 r2): the rate and principal are drawn only
+ * where the ledger BACKS the snapshot (`init_terms_unbacked = 0`,
+ * `init_principal_unbacked = 0`, migrations 0056 / 0058). They used to be
+ * COALESCEd to the live columns, so a legacy or repaired row whose terms the
+ * tape calls "not recorded" was plotted, and labelled executed, at a figure
+ * nobody could back. Now a fill with no recorded rate is COUNTED in
+ * `unrecorded` (per bucket, so the truncation boundary below drops it with
+ * its bucket) and never drawn, and a drawn fill with no recorded principal is
+ * counted in its bucket's `unrecordedPrincipalFills` and left out of
+ * `principalTotal`. Every rate the response does carry is a backed one, so an
+ * app built before this change still reads only numbers it can trust.
  * `start_at` needs no snapshot — it is written once at insert and no
  * handler updates it (LoanExtended/partial repay reset `start_time`, a
  * different column).
@@ -1561,8 +1574,7 @@ export async function handleLoansRateCandles(
       conds.push('start_at >= ?');
       binds.push(Math.floor(Date.now() / 1000) - rangeDays * 86400);
     }
-    // Aliased so CandleFillRow / foldRateCandles stay shape-agnostic: the
-    // fill's terms are the INIT snapshot, never the mutated live values.
+    // The INIT snapshot and its provenance flags; never the live values.
     // #1247 PAG-009 — bounded scan: `range=all` has no start bound, so
     // a long-lived busy market would otherwise make this an unbounded
     // D1 read per request. Scan the NEWEST CANDLE_SCAN_CAP fills
@@ -1570,8 +1582,8 @@ export async function handleLoansRateCandles(
     // a truncated series drops the OLDEST candles, never recent ones.
     const rows = await env.DB.prepare(
       `SELECT loan_id, start_at,
-              COALESCE(init_rate_bps, interest_rate_bps) AS interest_rate_bps,
-              COALESCE(init_principal, principal) AS principal
+              init_rate_bps, init_terms_unbacked,
+              init_principal, init_principal_unbacked
        FROM loans
        WHERE ${conds.join(' AND ')}
        ORDER BY start_at DESC, loan_id DESC
@@ -1594,9 +1606,15 @@ export async function handleLoansRateCandles(
     // series would render as "no fills in range", an active lie about
     // the market's busiest hour — keep the partial candle, and the
     // `truncated` disclosure covers its approximation.
-    const buckets =
-      truncated && folded.length > 1 ? folded.slice(1) : folded;
-    return jsonResponse({ chainId, buckets, truncated }, 200, {
+    // The boundary is a TIME slot, and both series share it: a slot that
+    // held only unrecorded fills is just as partial (#1142).
+    const slots = [
+      ...new Set([...folded.buckets, ...folded.unrecorded].map((b) => b.t)),
+    ].sort((a, b) => a - b);
+    const boundary = truncated && slots.length > 1 ? slots[0] : null;
+    const buckets = folded.buckets.filter((b) => b.t !== boundary);
+    const unrecorded = folded.unrecorded.filter((b) => b.t !== boundary);
+    return jsonResponse({ chainId, buckets, unrecorded, truncated }, 200, {
       'Cache-Control': 'public, max-age=60',
     });
   } catch (err) {

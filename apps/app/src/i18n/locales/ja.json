@@ -1810,7 +1810,21 @@
         "tooltipFills_other": "{{count}} 件のローン",
         "mobileBook": "ブック",
         "mobileChart": "チャート",
-        "mobileViewLabel": "デスク表示"
+        "mobileViewLabel": "デスク表示",
+        "emptyUnrecorded_zero": "この期間に {{count}} 件のローンが成立しましたが、金利が記録されていないため、何も表示していません。",
+        "unrecordedNote_zero": "この期間にはほかに {{count}} 件、金利が記録されていないローンがあり、表示していません。",
+        "emptyUnrecorded_one": "この期間に {{count}} 件のローンが成立しましたが、金利が記録されていないため、何も表示していません。",
+        "unrecordedNote_one": "この期間にはほかに {{count}} 件、金利が記録されていないローンがあり、表示していません。",
+        "emptyUnrecorded_two": "この期間に {{count}} 件のローンが成立しましたが、金利が記録されていないため、何も表示していません。",
+        "unrecordedNote_two": "この期間にはほかに {{count}} 件、金利が記録されていないローンがあり、表示していません。",
+        "emptyUnrecorded_few": "この期間に {{count}} 件のローンが成立しましたが、金利が記録されていないため、何も表示していません。",
+        "unrecordedNote_few": "この期間にはほかに {{count}} 件、金利が記録されていないローンがあり、表示していません。",
+        "emptyUnrecorded_many": "この期間に {{count}} 件のローンが成立しましたが、金利が記録されていないため、何も表示していません。",
+        "unrecordedNote_many": "この期間にはほかに {{count}} 件、金利が記録されていないローンがあり、表示していません。",
+        "emptyUnrecorded_other": "この期間に {{count}} 件のローンが成立しましたが、金利が記録されていないため、何も表示していません。",
+        "unrecordedNote_other": "この期間にはほかに {{count}} 件、金利が記録されていないローンがあり、表示していません。",
+        "tooltipPrincipalFloor": "{{amount}} 以上（{{count}} 件は金額が未記録）",
+        "tooltipPrincipalUnrecorded": "金額は未記録"
       },
       "history": {
         "tab": "履歴",

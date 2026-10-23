@@ -151,6 +151,10 @@ export default function RateChart({
   // unavailable, [] empty).
   const buckets = candles.data == null ? candles.data : candles.data.buckets;
   const candlesTruncated = candles.data?.truncated === true;
+  // #1142 — fills in range the indexer counts but cannot draw (no recorded
+  // rate). Stated beside the chart so the drawn series never reads as the
+  // whole of what happened.
+  const unrecordedFills = candles.data?.unrecordedFills ?? 0;
   const sparse = useMemo(
     () => (Array.isArray(buckets) ? isSparseTape(buckets) : false),
     [buckets],
@@ -331,6 +335,8 @@ export default function RateChart({
             rateLine: formatBpsAsPercent(p.rateBps),
             fills: p.fills,
             principalTotal: p.principalTotal,
+            // A tape point is drawn only when its principal is recorded.
+            unrecordedPrincipalFills: 0,
           }))
         : buckets.map((b) => ({
             t: b.t,
@@ -339,6 +345,7 @@ export default function RateChart({
               : `O ${formatBpsAsPercent(b.open)} · H ${formatBpsAsPercent(b.high)} · L ${formatBpsAsPercent(b.low)} · C ${formatBpsAsPercent(b.close)}`,
             fills: b.fills,
             principalTotal: b.principalTotal,
+            unrecordedPrincipalFills: b.unrecordedPrincipalFills ?? 0,
           }));
     const byTime = new Map(tipRows.map((r) => [r.t, r]));
     const onCrosshair = (param: MouseEventParams) => {
@@ -350,10 +357,19 @@ export default function RateChart({
         tip.style.display = 'none';
         return;
       }
-      const principal =
+      // #1142 — a bucket total that leaves out fills whose principal is not
+      // recorded is a floor, and says so; one with none recorded names no
+      // amount at all.
+      const amount =
         decimals !== undefined
           ? `${formatTokenAmount(b.principalTotal, decimals)}${symbol ? ` ${symbol}` : ''}`
           : '…';
+      const principal =
+        b.unrecordedPrincipalFills >= b.fills
+          ? text.tooltipPrincipalUnrecorded
+          : b.unrecordedPrincipalFills > 0
+            ? text.tooltipPrincipalFloor(amount, b.unrecordedPrincipalFills)
+            : amount;
       tip.textContent = [
         b.rateLine,
         `${text.tooltipFills(b.fills)} · ${principal}`,
@@ -471,9 +487,11 @@ export default function RateChart({
         // when the evidence covers the whole history AND the tape holds
         // no fill (candle-cache skew) — see chartEmptyKind.
         <p className="muted">
-          {chartEmptyKind(range, tape) === 'market'
-            ? text.empty
-            : text.emptyRange}
+          {(() => {
+            const kind = chartEmptyKind(range, tape, unrecordedFills);
+            if (kind === 'unrecorded') return text.emptyUnrecorded(unrecordedFills);
+            return kind === 'market' ? text.empty : text.emptyRange;
+          })()}
         </p>
       ) : (
         <>
@@ -488,6 +506,11 @@ export default function RateChart({
             // market's complete history.
             <p className="muted desk-chart-sparse-note">
               {text.truncatedNote}
+            </p>
+          ) : null}
+          {unrecordedFills > 0 ? (
+            <p className="muted desk-chart-sparse-note" data-testid="desk-chart-unrecorded">
+              {text.unrecordedNote(unrecordedFills)}
             </p>
           ) : null}
           <div className="desk-chart-plot">

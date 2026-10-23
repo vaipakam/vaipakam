@@ -57,7 +57,7 @@ import {
 } from '../lib/signedOffer';
 import { readOfferRowsBatchLive } from './chainPositions';
 import { initiatedPrincipal, initiatedTerms } from '../lib/positionAmounts';
-import type { TapeFillLike } from '../lib/rateChart';
+import { countUnrecordedFills, type TapeFillLike } from '../lib/rateChart';
 import { isMissingSelectorError } from '../contracts/preflights';
 
 const REFRESH_MS = 30_000;
@@ -508,6 +508,7 @@ export function useDeskCandles(
     queryFn: async (): Promise<{
       buckets: RateCandleBucket[];
       truncated: boolean;
+      unrecordedFills: number;
     } | null> => {
       if (!indexerConfigured()) return null;
       const res = await fetchRateCandles(
@@ -525,7 +526,13 @@ export function useDeskCandles(
       // treat it as unavailable, never render it.
       if (res.chainId !== readChain.chainId) return null;
       if (!Array.isArray(res.buckets)) return null;
-      return { buckets: res.buckets, truncated: res.truncated === true };
+      const unrecordedFills = countUnrecordedFills(res.unrecorded);
+      if (unrecordedFills === null) return null;
+      return {
+        buckets: res.buckets,
+        truncated: res.truncated === true,
+        unrecordedFills,
+      };
     },
   });
 }

@@ -1810,7 +1810,21 @@
         "tooltipFills_other": "대출 {{count}}건",
         "mobileBook": "오더북",
         "mobileChart": "차트",
-        "mobileViewLabel": "데스크 보기"
+        "mobileViewLabel": "데스크 보기",
+        "emptyUnrecorded_zero": "이 기간에 대출 {{count}}건이 체결되었지만 금리가 기록된 건이 없어 아무것도 표시하지 않습니다.",
+        "unrecordedNote_zero": "이 기간에 금리가 기록되지 않은 대출 {{count}}건이 더 있어 표시하지 않습니다.",
+        "emptyUnrecorded_one": "이 기간에 대출 {{count}}건이 체결되었지만 금리가 기록되지 않아 아무것도 표시하지 않습니다.",
+        "unrecordedNote_one": "이 기간에 금리가 기록되지 않은 대출 {{count}}건이 더 있어 표시하지 않습니다.",
+        "emptyUnrecorded_two": "이 기간에 대출 {{count}}건이 체결되었지만 금리가 기록된 건이 없어 아무것도 표시하지 않습니다.",
+        "unrecordedNote_two": "이 기간에 금리가 기록되지 않은 대출 {{count}}건이 더 있어 표시하지 않습니다.",
+        "emptyUnrecorded_few": "이 기간에 대출 {{count}}건이 체결되었지만 금리가 기록된 건이 없어 아무것도 표시하지 않습니다.",
+        "unrecordedNote_few": "이 기간에 금리가 기록되지 않은 대출 {{count}}건이 더 있어 표시하지 않습니다.",
+        "emptyUnrecorded_many": "이 기간에 대출 {{count}}건이 체결되었지만 금리가 기록된 건이 없어 아무것도 표시하지 않습니다.",
+        "unrecordedNote_many": "이 기간에 금리가 기록되지 않은 대출 {{count}}건이 더 있어 표시하지 않습니다.",
+        "emptyUnrecorded_other": "이 기간에 대출 {{count}}건이 체결되었지만 금리가 기록된 건이 없어 아무것도 표시하지 않습니다.",
+        "unrecordedNote_other": "이 기간에 금리가 기록되지 않은 대출 {{count}}건이 더 있어 표시하지 않습니다.",
+        "tooltipPrincipalFloor": "최소 {{amount}} ({{count}}건은 금액 미기록)",
+        "tooltipPrincipalUnrecorded": "금액 미기록"
       },
       "history": {
         "tab": "이력",

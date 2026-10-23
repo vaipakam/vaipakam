@@ -1810,7 +1810,21 @@
         "tooltipFills_other": "{{count}} ऋण",
         "mobileBook": "Book",
         "mobileChart": "Chart",
-        "mobileViewLabel": "Desk view"
+        "mobileViewLabel": "Desk view",
+        "emptyUnrecorded_zero": "इस अवधि में {{count}} loans तय हुए, पर किसी की दर दर्ज नहीं है, इसलिए कुछ नहीं दिखाया गया।",
+        "unrecordedNote_zero": "इस अवधि में {{count}} और loans की दर दर्ज नहीं है, इसलिए वे नहीं दिखाए गए।",
+        "emptyUnrecorded_one": "इस अवधि में {{count}} loan तय हुआ, पर उसकी दर दर्ज नहीं है, इसलिए कुछ नहीं दिखाया गया।",
+        "unrecordedNote_one": "इस अवधि में {{count}} और loan की दर दर्ज नहीं है, इसलिए वह नहीं दिखाया गया।",
+        "emptyUnrecorded_two": "इस अवधि में {{count}} loans तय हुए, पर किसी की दर दर्ज नहीं है, इसलिए कुछ नहीं दिखाया गया।",
+        "unrecordedNote_two": "इस अवधि में {{count}} और loans की दर दर्ज नहीं है, इसलिए वे नहीं दिखाए गए।",
+        "emptyUnrecorded_few": "इस अवधि में {{count}} loans तय हुए, पर किसी की दर दर्ज नहीं है, इसलिए कुछ नहीं दिखाया गया।",
+        "unrecordedNote_few": "इस अवधि में {{count}} और loans की दर दर्ज नहीं है, इसलिए वे नहीं दिखाए गए।",
+        "emptyUnrecorded_many": "इस अवधि में {{count}} loans तय हुए, पर किसी की दर दर्ज नहीं है, इसलिए कुछ नहीं दिखाया गया।",
+        "unrecordedNote_many": "इस अवधि में {{count}} और loans की दर दर्ज नहीं है, इसलिए वे नहीं दिखाए गए।",
+        "emptyUnrecorded_other": "इस अवधि में {{count}} loans तय हुए, पर किसी की दर दर्ज नहीं है, इसलिए कुछ नहीं दिखाया गया।",
+        "unrecordedNote_other": "इस अवधि में {{count}} और loans की दर दर्ज नहीं है, इसलिए वे नहीं दिखाए गए।",
+        "tooltipPrincipalFloor": "कम से कम {{amount}} ({{count}} की राशि दर्ज नहीं)",
+        "tooltipPrincipalUnrecorded": "राशि दर्ज नहीं"
       },
       "history": {
         "tab": "History",

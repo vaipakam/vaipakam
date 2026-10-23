@@ -32,6 +32,7 @@ const CAP = 10_000;
 interface CandlesBody {
   chainId: number;
   buckets: Array<{ t: number; open: number; close: number; fills: number }>;
+  unrecorded: Array<{ t: number; fills: number }>;
   truncated: boolean;
 }
 
@@ -44,12 +45,17 @@ function makeHarness() {
        lending_asset, collateral_asset, duration_days, token_id,
        collateral_token_id, lender_token_id, borrower_token_id,
        lender_current_owner, borrower_current_owner, interest_rate_bps,
-       start_time, start_block, start_at, updated_at)
+       start_time, start_block, start_at, updated_at,
+       init_rate_bps, init_duration_days, init_principal,
+       init_terms_unbacked, init_principal_unbacked)
      VALUES (?, ?, 1, 'active', '0xl', '0xb', '1000', '200', 0, 0, ?, ?,
-       ?, '0', '0', '1', '2', '0xl', '0xb', ?, 0, 0, ?, 0)`,
+       ?, '0', '0', '1', '2', '0xl', '0xb', ?, 0, 0, ?, 0,
+       ?, ?, '1000', ?, 0)`,
   );
-  const seed = (loanId: number, startAt: number, rateBps: number) =>
-    insert.run(CHAIN_ID, loanId, LEND, COLL, DAYS, rateBps, startAt);
+  // A seeded fill carries a BACKED initiation snapshot unless `termsUnbacked`
+  // is set, in which case the candle route must count it and draw nothing.
+  const seed = (loanId: number, startAt: number, rateBps: number, termsUnbacked = 0) =>
+    insert.run(CHAIN_ID, loanId, LEND, COLL, DAYS, rateBps, startAt, rateBps, DAYS, termsUnbacked);
   const call = async (): Promise<CandlesBody> => {
     const res = await handleLoansRateCandles(
       new Request(
@@ -114,5 +120,35 @@ describe('GET /loans/rate-candles — scan cap (#1247 PAG-009)', () => {
       [0, 400],
       [7_200, 600],
     ]);
+  });
+
+  it('counts an unbacked fill under unrecorded and never draws its rate (#1142)', async () => {
+    const h = makeHarness();
+    h.seed(1, 0, 400);
+    h.seed(2, 100, 9_999, 1); // same bucket, rate NOT backed by the ledger
+    h.seed(3, 7_200, 9_999, 1); // a bucket with no drawable fill at all
+    const body = await h.call();
+    expect(body.truncated).toBe(false);
+    expect(body.buckets.map((b) => [b.t, b.open, b.close, b.fills])).toEqual([[0, 400, 400, 1]]);
+    expect(body.unrecorded).toEqual([
+      { t: 0, fills: 1 },
+      { t: 7_200, fills: 1 },
+    ]);
+  });
+
+  it('drops the truncation boundary slot from unrecorded too, even when only unrecorded fills sit there', async () => {
+    // The oldest slot holds ONLY unbacked fills; truncation cuts through it,
+    // so its count would understate. The boundary is the oldest slot across
+    // BOTH arrays, not the oldest drawn bucket.
+    const h = makeHarness();
+    h.db.exec('BEGIN');
+    h.seed(1, 1_000, 0, 1);
+    h.seed(2, 1_001, 0, 1);
+    for (let i = 3; i <= CAP + 1; i++) h.seed(i, 3_600 + i, 500);
+    h.db.exec('COMMIT');
+    const body = await h.call();
+    expect(body.truncated).toBe(true);
+    expect(body.unrecorded).toEqual([]);
+    expect(body.buckets[0].t).toBe(3_600);
   });
 });

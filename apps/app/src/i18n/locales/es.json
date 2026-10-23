@@ -1810,7 +1810,21 @@
         "tooltipFills_other": "{{count}} préstamos",
         "mobileBook": "Libro",
         "mobileChart": "Gráfico",
-        "mobileViewLabel": "Vista de mesa"
+        "mobileViewLabel": "Vista de mesa",
+        "emptyUnrecorded_zero": "Se acordaron {{count}} préstamos en este periodo, pero ninguno tiene una tasa registrada, así que no se dibuja nada.",
+        "unrecordedNote_zero": "{{count}} préstamos más en este periodo no tienen tasa registrada, así que no se dibujan.",
+        "emptyUnrecorded_one": "Se acordó {{count}} préstamo en este periodo, pero su tasa no está registrada, así que no se dibuja nada.",
+        "unrecordedNote_one": "{{count}} préstamo más en este periodo no tiene tasa registrada, así que no se dibuja.",
+        "emptyUnrecorded_two": "Se acordaron {{count}} préstamos en este periodo, pero ninguno tiene una tasa registrada, así que no se dibuja nada.",
+        "unrecordedNote_two": "{{count}} préstamos más en este periodo no tienen tasa registrada, así que no se dibujan.",
+        "emptyUnrecorded_few": "Se acordaron {{count}} préstamos en este periodo, pero ninguno tiene una tasa registrada, así que no se dibuja nada.",
+        "unrecordedNote_few": "{{count}} préstamos más en este periodo no tienen tasa registrada, así que no se dibujan.",
+        "emptyUnrecorded_many": "Se acordaron {{count}} préstamos en este periodo, pero ninguno tiene una tasa registrada, así que no se dibuja nada.",
+        "unrecordedNote_many": "{{count}} préstamos más en este periodo no tienen tasa registrada, así que no se dibujan.",
+        "emptyUnrecorded_other": "Se acordaron {{count}} préstamos en este periodo, pero ninguno tiene una tasa registrada, así que no se dibuja nada.",
+        "unrecordedNote_other": "{{count}} préstamos más en este periodo no tienen tasa registrada, así que no se dibujan.",
+        "tooltipPrincipalFloor": "al menos {{amount}} (importe no registrado para {{count}})",
+        "tooltipPrincipalUnrecorded": "importe no registrado"
       },
       "history": {
         "tab": "Historial",

@@ -277,6 +277,9 @@ function foldRateCandles(rows, intervalSec) {
       close: acc.close,
       fills: acc.fills,
       principalTotal: acc.principalTotal.toString(),
+      // The fork's terms are read from chain, so every fill here is
+      // recorded (#1142) — the worker's provenance fields are all zero.
+      unrecordedPrincipalFills: 0,
     }));
 }
 
@@ -1095,7 +1098,11 @@ async function handler(req, res) {
           rateBps: l.interestRateBps,
           principal: BigInt(l.principal || '0'),
         }));
-      return json(200, { chainId: CHAIN_ID, buckets: foldRateCandles(fills, intervalSec) });
+      return json(200, {
+        chainId: CHAIN_ID,
+        buckets: foldRateCandles(fills, intervalSec),
+        unrecorded: [],
+      });
     }
 
     // GET /loans/by-participant?chainId=&wallet=&limit=&before= — Rate

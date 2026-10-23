@@ -4313,6 +4313,18 @@ const copySource = {
       empty:
         'No loans agreed yet for this pair — the chart only shows rates people actually agreed.',
       emptyRange: 'No loans agreed in this period — try a longer one.',
+      // #1142 — the indexer counts these fills but holds no recorded rate
+      // for them, so nothing is drawn. Never "no loans agreed".
+      emptyUnrecorded: tmpl(
+        '{{count}} loans were agreed in this period, but none has a recorded rate, so nothing is drawn.',
+        ['count'],
+        { one: '{{count}} loan was agreed in this period, but its rate is not recorded, so nothing is drawn.' },
+      ),
+      unrecordedNote: tmpl(
+        '{{count}} more loans in this period have no recorded rate, so they are not drawn.',
+        ['count'],
+        { one: '{{count}} more loan in this period has no recorded rate, so it is not drawn.' },
+      ),
       unavailable: 'We couldn’t load the rate history right now.',
       retry: 'Retry',
       quotedMid: 'middle rate',
@@ -4336,6 +4348,12 @@ const copySource = {
       rangeLabel: 'Period shown',
       attribution: 'Charts by TradingView',
       tooltipFills: tmpl('{{count}} loans', ['count'], { one: '{{count}} loan' }),
+      // #1142 — the bucket total leaves out loans whose amount is not recorded.
+      tooltipPrincipalFloor: tmpl(
+        'at least {{amount}} (amount not recorded for {{count}})',
+        ['amount', 'count'],
+      ),
+      tooltipPrincipalUnrecorded: 'amount not recorded',
       mobileBook: 'Book',
       mobileChart: 'Chart',
       mobileViewLabel: 'Desk view',

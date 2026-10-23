@@ -4532,7 +4532,13 @@ Its intended behaviour, as the test oracle for this surface:
   candlestick shapes, which would misrepresent a thin market as a
   liquid one; every plotted bucket's hover detail discloses the number
   of fills and the total principal it aggregates, never bare
-  open/high/low/close alone; the order book's current quoted mid may be
+  open/high/low/close alone; the chart draws only rates the loans'
+  opening records confirm — a fill whose agreed rate cannot be confirmed
+  is counted and stated beside the chart (or, when no fill in the range
+  can be drawn, in place of it, never as "no loans agreed") but nothing
+  is plotted for it, and a bucket whose total leaves out fills whose
+  agreed amount cannot be confirmed says the total is a minimum and how
+  many it leaves out; the order book's current quoted mid may be
   overlaid for context but must be drawn in a visibly distinct style
   and labelled as a quote — a resting intention, never blended with
   executed rates; and the chart area shows no daily percent-change

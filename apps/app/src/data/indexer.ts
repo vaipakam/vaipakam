@@ -410,12 +410,25 @@ export interface RateCandleBucket {
   high: number;
   low: number;
   close: number;
-  /** Fill count in the bucket (>= 1 by construction). */
+  /** Drawn fills in the bucket (>= 1 by construction): every one has a
+   *  recorded executed rate (#1142). */
   fills: number;
   /** Total principal as a decimal STRING in the lending asset's raw
    *  base units — format with the token's decimals metadata, same as
-   *  every other indexer amount field. */
+   *  every other indexer amount field. Sums only the drawn fills whose
+   *  principal is recorded. */
   principalTotal: string;
+  /** #1142 — drawn fills whose principal is NOT recorded and so is left
+   *  out of `principalTotal`; above zero the total is a floor. Optional
+   *  so an older Worker parses (absent = 0). */
+  unrecordedPrincipalFills?: number;
+}
+
+/** #1142 — fills in a time slot whose executed rate is not recorded.
+ *  They happened, so they are counted; nothing is drawn for them. */
+export interface UnrecordedRateSlot {
+  t: number;
+  fills: number;
 }
 
 export interface RateCandlesResponse {
@@ -425,6 +438,9 @@ export interface RateCandlesResponse {
    *  dropped older fills (the OLDEST candles are missing, never recent
    *  ones). Optional so a not-yet-redeployed Worker parses fine. */
   truncated?: boolean;
+  /** #1142 — per-slot counts of fills with no recorded rate. Optional
+   *  so a not-yet-redeployed Worker parses fine (absent = none). */
+  unrecorded?: UnrecordedRateSlot[];
 }
 
 /** Executed-rate candles for one (pair, tenor) market — the Rate Desk

@@ -9,6 +9,7 @@ import {
   SPARSE_FILLS_THRESHOLD,
   WHITESPACE_SLOT_CAP,
   chartEmptyKind,
+  countUnrecordedFills,
   fillPointsFromTape,
   isSparseTape,
   newestPrint,
@@ -118,28 +119,54 @@ describe('newestPrint', () => {
 
 describe('chartEmptyKind (#1139 — never-filled vs empty-in-range copy)', () => {
   it('range=all earns the market copy when the tape cannot disprove it', () => {
-    expect(chartEmptyKind('all', undefined)).toBe('market');
-    expect(chartEmptyKind('all', null)).toBe('market');
-    expect(chartEmptyKind('all', [])).toBe('market');
+    expect(chartEmptyKind('all', undefined, 0)).toBe('market');
+    expect(chartEmptyKind('all', null, 0)).toBe('market');
+    expect(chartEmptyKind('all', [], 0)).toBe('market');
   });
 
   it('a tape-proven fill NEVER earns the market copy — even at range=all (round-4: 60 s candle-cache skew after a first fill)', () => {
     // The candle response is still empty (60 s cache) but the tape —
     // and hence the last-fill header — already shows the fill; the
     // body must not claim "no fills yet" against its own header.
-    expect(chartEmptyKind('all', [{}])).toBe('range');
-    expect(chartEmptyKind('7d', [{}])).toBe('range');
-    expect(chartEmptyKind('30d', [{}, {}])).toBe('range');
+    expect(chartEmptyKind('all', [{}], 0)).toBe('range');
+    expect(chartEmptyKind('7d', [{}], 0)).toBe('range');
+    expect(chartEmptyKind('30d', [{}, {}], 0)).toBe('range');
   });
 
   it('a narrower range with a confirmed-empty tape is a never-filled market', () => {
-    expect(chartEmptyKind('7d', [])).toBe('market');
-    expect(chartEmptyKind('30d', [])).toBe('market');
+    expect(chartEmptyKind('7d', [], 0)).toBe('market');
+    expect(chartEmptyKind('30d', [], 0)).toBe('market');
   });
 
   it('a narrower range is range-scoped when the tape is unknown', () => {
-    expect(chartEmptyKind('7d', null)).toBe('range'); // tape unavailable
-    expect(chartEmptyKind('30d', undefined)).toBe('range'); // tape loading
+    expect(chartEmptyKind('7d', null, 0)).toBe('range'); // tape unavailable
+    expect(chartEmptyKind('30d', undefined, 0)).toBe('range'); // tape loading
+  });
+});
+
+describe('unrecorded fills (#1142 — counted, never drawn)', () => {
+  it('an empty series with unrecorded fills earns its own copy, never "no loans agreed"', () => {
+    expect(chartEmptyKind('all', [], 2)).toBe('unrecorded');
+    expect(chartEmptyKind('7d', null, 1)).toBe('unrecorded');
+    expect(chartEmptyKind('30d', [{}], 3)).toBe('unrecorded');
+  });
+
+  it('sums the per-slot counts', () => {
+    expect(countUnrecordedFills([{ t: 0, fills: 2 }, { t: 3600, fills: 3 }])).toBe(5);
+    expect(countUnrecordedFills([])).toBe(0);
+  });
+
+  it('reads an absent field as none (a Worker that predates it)', () => {
+    expect(countUnrecordedFills(undefined)).toBe(0);
+  });
+
+  it('fails closed on a malformed field, so the hook reports the chart unavailable', () => {
+    expect(countUnrecordedFills(null)).toBeNull();
+    expect(countUnrecordedFills({ t: 0, fills: 1 })).toBeNull();
+    expect(countUnrecordedFills([{ t: 0 }])).toBeNull();
+    expect(countUnrecordedFills([{ t: 0, fills: -1 }])).toBeNull();
+    expect(countUnrecordedFills([{ t: 0, fills: 1.5 }])).toBeNull();
+    expect(countUnrecordedFills([null])).toBeNull();
   });
 });
 
