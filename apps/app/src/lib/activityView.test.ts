@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { refScopedKinds } from '@vaipakam/lib/activityRefs';
+import { actorAttributedKinds } from '@vaipakam/lib/activityActor';
 import {
   coalesceByTx,
   legText,
@@ -8,6 +10,7 @@ import {
   humanizeKind,
   labelForKind,
   ACTIVITY_LABELS,
+  STATUS_EDGE_LABELS,
 } from './activityView';
 import { copySource } from '../content/copy';
 import type { IndexedActivityEvent } from '../data/indexer';
@@ -88,41 +91,136 @@ describe('activity feed labels are translatable (extraction guard)', () => {
     }
   });
 
+  it('every status-edge label has a matching catalog label, and no stale one', () => {
+    const catalog = copySource.activity.statusEdgeLabels;
+    for (const [status, meta] of Object.entries(STATUS_EDGE_LABELS)) {
+      expect(catalog[status], `missing status-edge catalog label for ${status}`).toBe(meta.label);
+    }
+    for (const status of Object.keys(catalog)) {
+      expect(STATUS_EDGE_LABELS[status], `stale status-edge catalog label for ${status}`).toBeDefined();
+    }
+  });
+
   it('the catalog adds no stale label for a kind the module dropped', () => {
     for (const kind of Object.keys(copySource.activity.labels)) {
       expect(ACTIVITY_LABELS[kind], `stale catalog label for ${kind}`).toBeDefined();
     }
   });
 
-  // Codex #1343 r1 — the label set must cover every event kind the
-  // indexer attributes to a wallet's OWN feed (pluckActivityRefs in
-  // apps/indexer/src/chainIndexer.ts); an attributed kind absent here
-  // renders humanized English in every locale. This list mirrors that
-  // switch's cases — add a kind here (and a label above) whenever the
-  // indexer starts attributing a new event to the activity feed.
-  it('covers every indexer-attributed activity kind', () => {
-    const ATTRIBUTED = [
-      'BackstopAbsorbedLoan', 'BorrowerFundsClaimed', 'BorrowerLifRebateClaimed',
-      'IntentLoanRolled', 'InteractionRewardsClaimed', 'InternalMatchExecuted',
-      'LenderFundsClaimed', 'LoanDefaulted', 'LoanExtended', 'LoanInitiated',
-      'LoanLiquidated', 'LoanRepaid', 'LoanSettled', 'LoanSettlementBreakdown',
-      'OfferAccepted', 'OfferCanceled', 'OfferConsumedBySale', 'OfferCreated',
-      'OfferMatched', 'OfferModified', 'PartialRepaid', 'PeriodicInterestAutoLiquidated',
-      'PeriodicInterestSettled', 'PeriodicSlippageOverBuffer', 'PrepayCollateralSaleSettled',
-      'PrepayListingCanceled', 'PrepayListingMatched', 'PrepayListingPosted',
-      'PrepayListingUpdated', 'RepayPartialPeriodAdvanced', 'RewardDeliveredToVault',
-      'SwapToRepayExecuted', 'SwapToRepayIntentCancelled', 'SwapToRepayIntentCommitted',
-      'SwapToRepayIntentFilled', 'SwapToRepayIntentForceCancelled', 'SwapToRepayPartialExecuted',
-      'Transfer', 'VPFIDepositedToVault', 'VPFIWithdrawnFromVault', 'VaultVpfiDebited',
-      'FallbackCustodyMoved', 'SwapToRepayIntentLotPulled', 'RewardEntryForfeitSettled',
-    ];
-    for (const kind of ATTRIBUTED) {
-      expect(ACTIVITY_LABELS[kind], `no activity label for indexer kind ${kind}`).toBeDefined();
-    }
+  // #2658 — the label set covers every kind the indexer files where a
+  // wallet's Activity page can receive it: under a loan or an offer (the
+  // page's loan match), or under the wallet as its actor (the actor match).
+  // Both sets are READ from the rule the indexer runs, in the shared library
+  // (`@vaipakam/lib/activityRefs`, `@vaipakam/lib/activityActor`), never
+  // re-derived here. A hand list (Codex #1343 r1's) fell forty-odd kinds
+  // behind #1794's rule, and a test-side copy of that rule ignored the
+  // policy's `extraAliases` (#2702 r1); each missed kind would render a
+  // generated English name in every locale.
+  it('labels every kind the indexer files under a loan, an offer or a wallet', () => {
+    const refScoped = refScopedKinds();
+    const attributed = actorAttributedKinds();
+    // Each set must find its long-mapped core, or it is reading nothing.
+    expect(refScoped.has('LoanRepaid')).toBe(true);
+    expect(refScoped.has('OfferCreated')).toBe(true);
+    expect(attributed.has('VPFIDepositedToVault')).toBe(true);
+    const filed = new Set([...refScoped, ...attributed]);
+    const missing = [...filed].filter((k) => !Object.hasOwn(ACTIVITY_LABELS, k)).sort();
+    expect(missing, 'event kinds the indexer files for a wallet with no Activity label').toEqual([]);
+  });
+
+  // Not filed under a loan (its number is not always a loan), but it names
+  // the recipient, so it reaches that wallet's page through the address
+  // match. Its label follows the sanctions copy rule: the in-app wording
+  // only ("while this wallet is flagged"), no list or provider named.
+  it('labels the flagged-share event with the in-app wording only', () => {
+    const label = ACTIVITY_LABELS.SanctionedProceedsLocked?.label ?? '';
+    expect(label).toContain('while this wallet is flagged');
+    expect(label).not.toMatch(/sanction|OFAC|Chainalysis|RedStone|oracle/i);
   });
 });
 
 describe('coalesceByTx', () => {
+  // #2658 — a liquidation whose every swap route failed, with the log sets
+  // the two producers emit (#2702 r1). Both reach the shared fallback entry
+  // (FallbackCustodyFacet.enterFallback), which emits, in order: the failed
+  // route attempts, the custody move, the tier-exclusion sync, the status
+  // edge, then LiquidationFallback + LiquidationFallbackSplit (+ the
+  // no-price event when the oracle could not price the split). The row is
+  // named by the outcome; every step inside it is counted, not shown.
+  const FALLBACK_ENTRY = [
+    'SwapAdapterAttempted',
+    'SwapAllAdaptersFailed',
+    'FallbackCustodyMoved',
+    'TierExclusionUpdated',
+    'LoanStatusChanged',
+    'LiquidationFallback',
+    'LiquidationFallbackSplit',
+  ];
+  // The status edge carries its destination, as the indexer stores it.
+  const argsOf = (kind: string) =>
+    kind === 'LoanStatusChanged' ? { from: 0, to: 4 } : {};
+  const rowOf = (kinds: string[]) =>
+    coalesceByTx(kinds.map((kind, logIndex) => ev({ kind, logIndex, loanId: 9, args: argsOf(kind) })));
+
+  it('names a failed-sale HF liquidation by its outcome, not its steps', () => {
+    // RiskFacet.triggerLiquidation returns straight after the fallback entry:
+    // no HFLiquidationTriggered (a successful sale's event) and no
+    // LoanFallbackPending (the time-default path's).
+    const rows = rowOf(FALLBACK_ENTRY);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('Collateral sale failed');
+    expect(rows[0].hiddenCount).toBe(FALLBACK_ENTRY.length - 1);
+  });
+
+  it('says when the failed sale also had no price for the split', () => {
+    const rows = rowOf([...FALLBACK_ENTRY, 'LiquidationFallbackOracleUnavailable']);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('Collateral sale failed: no price available');
+  });
+
+  it('names a failed-sale time default by the pending settlement', () => {
+    // DefaultedFacet emits LoanFallbackPending after the same entry.
+    const rows = rowOf([...FALLBACK_ENTRY, 'LoanFallbackPending']);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('Settlement pending after a failed sale');
+    expect(rows[0].hiddenCount).toBe(FALLBACK_ENTRY.length);
+  });
+
+  // #2702 r2 — a status edge into an end state is named by its destination
+  // when nothing else in the transaction names the outcome.
+  const edge = (to: number | string, logIndex = 0) =>
+    ev({ kind: 'LoanStatusChanged', logIndex, loanId: 5, args: { from: 0, to } });
+
+  it('names the last rental deduction by the repayment it completes', () => {
+    const rows = coalesceByTx([edge(1, 0), ev({ kind: 'AutoDailyDeducted', logIndex: 1, loanId: 5 })]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('Loan repaid');
+    expect(rows[0].labelSource).toEqual({ catalog: 'statusEdgeLabels', key: 'Repaid' });
+    expect(rows[0].category).toBe('loan-repay');
+  });
+
+  it('reads the destination whether the indexer stored a number or a numeric string', () => {
+    expect(coalesceByTx([edge('2')])[0].label).toBe('Loan defaulted');
+    expect(coalesceByTx([edge(5)])[0].label).toBe('Loan closed by internal matching');
+  });
+
+  it('leaves the row to an event that names the outcome itself', () => {
+    const repay = coalesceByTx([edge(1, 0), ev({ kind: 'LoanRepaid', logIndex: 1, loanId: 5 })]);
+    expect(repay[0].label).toBe('Loan repaid');
+    expect(repay[0].labelSource).toEqual({ catalog: 'labels', key: 'LoanRepaid' });
+    const claim = coalesceByTx([
+      ev({ kind: 'BorrowerFundsClaimed', logIndex: 0, loanId: 5 }),
+      ev({ kind: 'LoanStatusChanged', logIndex: 1, loanId: 5, args: { from: 1, to: 3 } }),
+    ]);
+    expect(claim[0].label).toBe('Collateral claimed');
+  });
+
+  it('keeps the generic name for an edge back to Active, or an unreadable one', () => {
+    expect(coalesceByTx([edge(0)])[0].label).toBe('Loan status updated');
+    expect(coalesceByTx([edge('x')])[0].label).toBe('Loan status updated');
+    expect(coalesceByTx([edge(99)])[0].labelSource).toEqual({ catalog: 'labels', key: 'LoanStatusChanged' });
+  });
+
   it('collapses one transaction to its highest-priority event', () => {
     // A loan-start tx emits LoanInitiated (90) + LoanInitiatedDetails
     // (10) + Transfer (5): one row, labelled by the real action.

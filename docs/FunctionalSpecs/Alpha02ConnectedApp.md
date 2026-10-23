@@ -3617,6 +3617,26 @@ Its intended behaviour, as the test oracle for this surface:
   any such entries exist, the feed states that a position's ending may be
   missing rather than presenting itself as complete. (#2643; the history
   side of this is stated under the record corrections above.)
+- Every kind of event the platform files under one of the wallet's loans or
+  offers, or under the wallet itself, is shown with a plain-language name in
+  the reader's language, never a name generated from the contract's event. None is hidden: each is something
+  that happened on the chain to the wallet's loan or offer. Record-keeping and
+  companion events (a status edge, a fee record, a swap route tried) never
+  name a row on their own when their transaction did something more
+  meaningful; they are counted in that row's "more in this transaction". An
+  outcome (a liquidation, a failed collateral sale, a claim) names the row
+  over the steps inside it, and a more specific outcome over a general one (a
+  failed sale with no price for the split says so). A name that one event
+  uses for changes in both directions (a loan's VPFI entering or leaving the
+  discount-tier exclusion) names the change, never one direction, and an
+  event that also confirms a setting already in place (automatic
+  grace-period listing switched on when it was already on) names the
+  resulting setting rather than a change. When a transaction's only sign of
+  the outcome is the loan's status moving into an end state (the last daily
+  rental deduction repays the loan), the row is named by that end state
+  ("Loan repaid"), not by the step that caused it. A share
+  held back because the wallet is flagged is named in the in-app wording
+  only, with no list or provider named. (#2658)
 - Each activity row states the asset and amount its transaction moved or
   offered, when that is known: a loan start states the principal, an offer
   creation or cancellation states the offer's size (as "X–Y" when the offer

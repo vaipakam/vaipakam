@@ -28,6 +28,17 @@ Current scope:
   hazard documented in full, and the next change wrote `String(err)` around a
   viem read in `apps/agent` anyway (#2213). One rule, every Worker holding an
   RPC client.
+- `activityRefs`, `activityActor` — how an activity row is filed: the loan
+  and offer an event concerns (read from the Diamond ABI by one rule, #1794)
+  and the wallet it is filed under. They live here, not in `apps/indexer`,
+  because they bind **two surfaces** (#2658). The indexer files every row by
+  them, and `apps/app`'s Activity page receives a wallet's rows through them,
+  so the app's label catalog must name every kind they file. The app's test
+  reads the filed kinds from these modules instead of keeping a copy of the
+  rule. The policy data is `activityRefsPolicy.json`, beside them; the
+  indexer's guardrail (`apps/indexer/scripts/lib/activity-refs-surface.mjs`)
+  validates it against the compiled ABI. Change them here, never in a
+  consumer.
 - `multicall` — viem-based batched RPC helpers.
 - `decodeContractError` — error normaliser for revert reasons across facets.
 - `chainPlatforms` — `chainId → CoinGecko platform slug` mapping.

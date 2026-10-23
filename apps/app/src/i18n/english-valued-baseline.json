@@ -17,206 +17,136 @@
       "hi"
     ]
   },
-  "copy.activity.labels.LoanDefaulted": {
-    "source": "Loan defaulted",
-    "locales": [
-      "ko"
-    ]
-  },
-  "copy.activity.labels.LoanLiquidated": {
-    "source": "Loan liquidated",
-    "locales": [
-      "ko"
-    ]
-  },
-  "copy.activity.labels.LoanRefinanced": {
-    "source": "Loan refinanced",
-    "locales": [
-      "ko"
-    ]
-  },
-  "copy.activity.labels.LoanRepaid": {
-    "source": "Loan repaid",
-    "locales": [
-      "ko"
-    ]
-  },
-  "copy.activity.labels.LoanSettled": {
-    "source": "Loan settled",
-    "locales": [
-      "ko"
-    ]
-  },
-  "copy.activity.labels.LoanSettlementBreakdown": {
-    "source": "Loan settled",
-    "locales": [
-      "ko"
-    ]
-  },
-  "copy.activity.labels.LoanSold": {
-    "source": "Loan sold",
-    "locales": [
-      "ko"
-    ]
-  },
   "copy.activity.labels.OfferAccepted": {
     "source": "Offer accepted",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.OfferCanceled": {
     "source": "Offer cancelled",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.OfferClosed": {
     "source": "Offer closed",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.OfferCreated": {
     "source": "Offer created",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.OfferMatched": {
     "source": "Offers matched",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.OfferModified": {
     "source": "Offer amended",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.OffsetCompleted": {
     "source": "Loan offset",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.OffsetOfferCreated": {
     "source": "Offset offer created",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.PartialRepaid": {
     "source": "Partial repayment",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.PeriodicInterestSettled": {
     "source": "Interest settled",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.PrepayCollateralSaleSettled": {
     "source": "Collateral sale settled",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.PrepayListingCanceled": {
     "source": "Collateral listing cancelled",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.PrepayListingMatched": {
     "source": "Collateral sale matched",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.PrepayListingUpdated": {
     "source": "Collateral listing updated",
     "locales": [
-      "hi",
-      "ko"
-    ]
-  },
-  "copy.activity.labels.RepayPartialPeriodAdvanced": {
-    "source": "Interest period advanced",
-    "locales": [
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.SignedOfferCancelled": {
     "source": "Signed offer cancelled",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.SignedOfferFilled": {
     "source": "Signed offer filled",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.SignedOfferMatched": {
     "source": "Signed offers matched",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.SignedOfferNonceBurned": {
     "source": "Signed offer voided",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.SwapToRepayIntentCancelled": {
     "source": "Swap-to-repay cancelled",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.SwapToRepayIntentCommitted": {
     "source": "Swap-to-repay set up",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.SwapToRepayIntentFilled": {
     "source": "Swap-to-repay filled",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.SwapToRepayIntentForceCancelled": {
     "source": "Swap-to-repay cancelled",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.activity.labels.Transfer": {

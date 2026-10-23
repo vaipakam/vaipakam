@@ -104,6 +104,14 @@
     "./protocolKnobs": {
       "types": "./src/protocolKnobs.ts",
       "default": "./src/protocolKnobs.ts"
+    },
+    "./activityRefs": {
+      "types": "./src/activityRefs.ts",
+      "default": "./src/activityRefs.ts"
+    },
+    "./activityActor": {
+      "types": "./src/activityActor.ts",
+      "default": "./src/activityActor.ts"
     }
   },
   "scripts": {
