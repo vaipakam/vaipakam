@@ -2640,7 +2640,7 @@
     },
     "protocolConsole": {
       "title": "Console du protocole",
-      "lede": "Valeurs actuelles des réglages de tout le protocole que la gouvernance peut modifier sur la chaîne {{chain}} : frais, limites de risque et d'oracles de prix, durées, interrupteurs et trésorerie. Elles proviennent de l'instantané de l'indexeur public tant qu'il est à jour, et directement des contrats sinon ; la ligne en bas de page indique laquelle. Les réglages qui varient par actif ou par chaîne, ainsi que ceux des récompenses et du recyclage, ne figurent pas ici, et quelques réglages de tout le protocole pas encore ; la référence des paramètres les répertorie tous. Public et en lecture seule — aucun portefeuille requis, et aucune commande ici ne modifie quoi que ce soit. Les changements de gouvernance passent par le timelock, pas par cette page.",
+      "lede": "Valeurs actuelles des réglages de tout le protocole que la gouvernance peut modifier sur la chaîne {{chain}} : frais, limites de risque et d'oracles de prix, durées, interrupteurs et trésorerie. Elles proviennent de l'instantané de l'indexeur public tant qu'il est à jour, et directement des contrats sinon ; la ligne en bas de page indique laquelle. Les réglages qui varient par actif ou par chaîne, ainsi que ceux des récompenses et du recyclage hormis le délai de grâce de clôture journalière, ne figurent pas ici, et quelques réglages de tout le protocole pas encore ; la référence des paramètres les répertorie tous. Public et en lecture seule — aucun portefeuille requis, et aucune commande ici ne modifie quoi que ce soit. Les changements de gouvernance passent par le timelock, pas par cette page.",
       "refresh": "Actualiser",
       "reference": "Référence des paramètres",
       "hiddenBody": "La visibilité des paramètres est désactivée sur ce déploiement, les valeurs en direct ne sont donc pas affichées ici. Il s'agit uniquement d'un réglage d'affichage — les paramètres eux-mêmes sont on-chain et lisibles par tout le monde directement depuis les contrats.",
@@ -2704,7 +2704,7 @@
       "pythMaxDeviation": "Écart maximal du recoupement Pyth",
       "pythConfidenceMax": "Plafond de confiance Pyth",
       "sequencerUptimeFeed": "Flux de disponibilité du séquenceur",
-      "sequencerUptimeFeedHint": "Sur une chaîne de couche 2, retient les prix tant que le séquenceur est en panne. Non défini signifie qu'il n'y a pas cette protection.",
+      "sequencerUptimeFeedHint": "Sur une chaîne de couche 2, retient les prix tant que le séquenceur est en panne et pendant une heure après son retour. Non défini, il n’y a pas de telle protection.",
       "periodicHeading": "Intérêts périodiques",
       "periodicInterest": "Paiements d'intérêts périodiques",
       "finerCadenceMinPrincipal": "Principal minimal pour des périodes de paiement plus courtes",
@@ -2739,7 +2739,12 @@
       "numeraireDefault": "{{symbol}} (jamais modifiée, donc la valeur par défaut du protocole)",
       "pythFeedIdHint": "Le flux de prix Pyth lu par le recoupement. Non défini, il désactive le recoupement, même si un oracle est défini.",
       "keepersHint": "En pause, les keepers ne peuvent plus agir sur les positions d’autrui. Les propriétaires peuvent toujours agir sur les leurs, et la liquidation reste ouverte à tous. Cela n’empêche pas une clé de keeper de soumettre des engagements de récompenses : une clé compromise doit donc aussi perdre son rôle de keeper.",
-      "eventlessSnapshotNote": "Modifier ce réglage n’annonce rien sur la chaîne : cet instantané ne prend en compte un changement qu’à sa prochaine actualisation programmée et peut afficher la valeur précédente d’ici là."
+      "eventlessSnapshotNote": "Modifier ce réglage n’annonce rien sur la chaîne : cet instantané ne prend en compte un changement qu’à sa prochaine actualisation programmée et peut afficher la valeur précédente d’ici là.",
+      "autoLendHint": "Si les prêteurs peuvent nouvellement activer le prêt automatique. Désactivé refuse seulement les nouvelles activations : le consentement existant demeure, et les offres permanentes déjà publiées restent au carnet jusqu’à leur annulation ou leur appariement.",
+      "lenderIntentFills": "Exécution des intentions permanentes",
+      "lenderIntentFillsHint": "Si les intentions de prêt enregistrées peuvent être exécutées. Désactivé arrête leur exécution ; les prêteurs peuvent toujours enregistrer des intentions.",
+      "autoRefinanceHint": "Désactivé empêche les keepers et l’apparieur d’ordres de finaliser des refinancements. Un emprunteur qui refinance son propre prêt, ou un prêteur qui accepte directement une demande de refinancement, passe toujours.",
+      "autoExtendHint": "Désactivé bloque toute prolongation de prêt sur place, y compris celle que l’emprunteur demande directement."
     },
     "forcedClose": {
       "title": "Ce prêt est en retard",

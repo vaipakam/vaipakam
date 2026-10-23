@@ -6064,7 +6064,7 @@ const copySource = {
   protocolConsole: {
     title: 'Protocol console',
     lede: tmpl(
-      'Current values for the protocol-wide settings governance can change on chain {{chain}}: fees, risk and price-oracle limits, durations, switches and the treasury. They come from the public indexer’s snapshot while it is current, and straight from the contracts when it is not; the line at the bottom of the page says which. Settings that differ per asset or per chain, and the reward and recycling settings, are not shown here, and a few protocol-wide ones are not yet; the parameter reference lists them all. Public and read-only — no wallet needed, and no controls here change anything. Governance changes go through the timelock, not this page.',
+      'Current values for the protocol-wide settings governance can change on chain {{chain}}: fees, risk and price-oracle limits, durations, switches and the treasury. They come from the public indexer’s snapshot while it is current, and straight from the contracts when it is not; the line at the bottom of the page says which. Settings that differ per asset or per chain, and the reward and recycling settings other than the day-close grace window, are not shown here, and a few protocol-wide ones are not yet; the parameter reference lists them all. Public and read-only — no wallet needed, and no controls here change anything. Governance changes go through the timelock, not this page.',
       ['chain'],
     ),
     refresh: 'Refresh',
@@ -6161,7 +6161,7 @@ const copySource = {
     pythConfidenceMax: 'Pyth confidence ceiling',
     sequencerUptimeFeed: 'Sequencer uptime feed',
     sequencerUptimeFeedHint:
-      'On a layer-2 chain, holds prices back while the sequencer is down. Not set means there is no such guard.',
+      'On a layer-2 chain, holds prices back while the sequencer is down and for one hour after it comes back. Not set means there is no such guard.',
     limitsHeading: 'Limits and timing',
     autoPause: 'Auto-pause duration',
     maxOfferDuration: 'Max offer duration',
@@ -6181,8 +6181,16 @@ const copySource = {
     numeraireRotationHint: 'Whether governance may switch the reference currency.',
     automationHeading: 'Automation',
     autoLend: 'Auto-lend',
+    autoLendHint:
+      'Whether lenders may newly opt in to auto-lend. Off refuses new opt-ins only: existing consent stays, and standing offers already posted stay on the book until cancelled or matched.',
+    lenderIntentFills: 'Standing-intent fills',
+    lenderIntentFillsHint:
+      'Whether registered lending intents can be filled. Off stops intent fills; lenders can still register intents.',
     autoRefinance: 'Auto-refinance',
+    autoRefinanceHint:
+      'Off stops keepers and the order matcher from completing refinances. A borrower refinancing their own loan, or a lender accepting a refinance request directly, still goes through.',
     autoExtend: 'Auto-extend',
+    autoExtendHint: 'Off blocks every in-place loan extension, including one the borrower asks for directly.',
     keepers: 'Keepers',
     /* Codex #2683 r3 — the pause's scope, as the parameter reference
        records it, so "paused" is not read as "every keeper key is inert". */

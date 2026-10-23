@@ -178,6 +178,14 @@ export async function loadProtocolConsole(opts: {
   if (snap !== null && gap === null) return { source: 'snapshot', snap };
   try {
     const live = await opts.readChain();
+    // Codex #2683 r4 — a lagging RPC can answer from a block older than
+    // the snapshot it was meant to replace. That is not a fresher reading,
+    // so it counts as a failed chain read and the newer snapshot stays,
+    // marked as not current.
+    const snapBlock = snap?.sourceBlock;
+    if (snapBlock !== undefined && Number.isSafeInteger(snapBlock) && live.blockNumber < BigInt(snapBlock)) {
+      throw new Error('chain read is behind the snapshot');
+    }
     return { source: 'chain', why: gap ?? 'missing', readAtSec: opts.nowSec(), ...live };
   } catch (err) {
     if (snap !== null) return { source: 'snapshot', snap, chainReadFailed: gap ?? 'missing' };

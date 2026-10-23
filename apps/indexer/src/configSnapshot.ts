@@ -96,6 +96,7 @@ const CONFIG_EVENT_NAMES: ReadonlySet<string> = new Set([
   'KYCEnforcementSet',
   'KYCThresholdsUpdated',
   'KeepersPausedSet',
+  'LenderIntentEnabledSet',
   'AggregatorAdaptersPausedSet',
   'PeerLtvReadsPausedSet',
   'RateModelSet',

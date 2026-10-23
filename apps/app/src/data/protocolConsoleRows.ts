@@ -141,9 +141,12 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
     id: 'pc-automation',
     heading: 'automationHeading',
     rows: [
-      { key: 'autoLendEnabled', label: 'autoLend', format: 'flag' },
-      { key: 'autoRefinanceEnabled', label: 'autoRefinance', format: 'flag' },
-      { key: 'autoExtendEnabled', label: 'autoExtend', format: 'flag' },
+      // Codex #2683 r4 — each switch states its scope, because none of
+      // them stops everything its name suggests.
+      { key: 'autoLendEnabled', label: 'autoLend', hint: 'autoLendHint', format: 'flag' },
+      { key: 'lenderIntentEnabled', label: 'lenderIntentFills', hint: 'lenderIntentFillsHint', format: 'flag' },
+      { key: 'autoRefinanceEnabled', label: 'autoRefinance', hint: 'autoRefinanceHint', format: 'flag' },
+      { key: 'autoExtendEnabled', label: 'autoExtend', hint: 'autoExtendHint', format: 'flag' },
       { key: 'keepersPaused', label: 'keepers', hint: 'keepersHint', format: 'pause' },
     ],
   },

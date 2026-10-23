@@ -78,6 +78,7 @@ export const PROTOCOL_KNOB_GETTERS = [
   { key: 'autoRefinanceEnabled', getter: 'getAutoRefinanceEnabled' },
   { key: 'autoExtendEnabled', getter: 'getAutoExtendEnabled' },
   { key: 'keepersPaused', getter: 'keepersPaused' },
+  { key: 'lenderIntentEnabled', getter: 'isLenderIntentEnabled' },
   // Treasury
   { key: 'treasury', getter: 'getTreasury' },
 ] as const satisfies readonly ProtocolKnobGetter[];

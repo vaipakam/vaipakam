@@ -153,7 +153,14 @@ including people who never will.
   while both its oracle and its feed id are set, and the keeper pause stops
   delegated keeper actions on other people's positions but leaves owners'
   own actions, liquidation and reward-commitment submission running, so a
-  compromised keeper key must also lose its role.
+  compromised keeper key must also lose its role. Each automation switch
+  states its scope the same way: the auto-lend switch only refuses new
+  opt-ins, so the console also shows the separate switch that decides
+  whether standing lending intents are filled at all; auto-refinance
+  stops only the keeper and matcher routes; auto-extend blocks every
+  in-place extension. The layer-2 sequencer guard is described as holding
+  prices both while the sequencer is down and for the hour after it
+  returns.
 - A setting whose change announces nothing on chain (today the layer-2
   sequencer uptime feed) can lag in the indexer's snapshot until its next
   scheduled refresh. While the console shows the snapshot, that row says so.
@@ -169,7 +176,8 @@ including people who never will.
   indexer applies before it stores names; when it cannot, the direct read
   counts as failed rather than labelling values by their position.
 - A snapshot that is not current is shown only when the direct read fails
-  too. The console then says the contracts could not be read and that the
+  too. A direct read that answers from a block older than the snapshot's
+  own block counts as failed: it is not a fresher reading. The console then says the contracts could not be read and that the
   values may be out of date, alongside whatever the snapshot's own
   warnings are. With neither source readable, the console says the values
   are unknown, not unset.

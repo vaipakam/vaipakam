@@ -94,6 +94,7 @@ export const DOC_COVERAGE: Readonly<Record<string, DocCoverage>> = {
     notShown: 'rewards-and-recycling',
   },
   'KYC tier 0 / tier 1 thresholds (numeraire)': { notShown: 'not-on-retail' },
+  'Standing-intent fill switch (`lenderIntentEnabled`)': { shown: ['lenderIntentEnabled'] },
   'Range Orders kill-switch flags (rangeAmountEnabled, rangeRateEnabled, partialFillEnabled)': {
     shown: ['rangeAmountEnabled', 'rangeRateEnabled', 'partialFillEnabled'],
   },

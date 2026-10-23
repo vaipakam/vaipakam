@@ -2640,7 +2640,7 @@
     },
     "protocolConsole": {
       "title": "Protokoll-Konsole",
-      "lede": "Aktuelle Werte der protokollweiten Einstellungen, die Governance auf Chain {{chain}} ändern kann: Gebühren, Risiko- und Preisorakel-Grenzen, Laufzeiten, Schalter und die Treasury. Sie stammen aus dem Snapshot des öffentlichen Indexers, solange dieser aktuell ist, und andernfalls direkt aus den Contracts; die Zeile am Seitenende sagt, woher. Einstellungen, die je Asset oder je Chain abweichen, sowie die Reward- und Recycling-Einstellungen werden hier nicht gezeigt, einige protokollweite noch nicht; die Parameterreferenz führt alle auf. Öffentlich und schreibgeschützt: keine Wallet nötig, und kein Bedienelement auf dieser Seite ändert etwas. Governance-Änderungen laufen über den Timelock, nicht über diese Seite.",
+      "lede": "Aktuelle Werte der protokollweiten Einstellungen, die Governance auf Chain {{chain}} ändern kann: Gebühren, Risiko- und Preisorakel-Grenzen, Laufzeiten, Schalter und die Treasury. Sie stammen aus dem Snapshot des öffentlichen Indexers, solange dieser aktuell ist, und andernfalls direkt aus den Contracts; die Zeile am Seitenende sagt, woher. Einstellungen, die je Asset oder je Chain abweichen, sowie die Reward- und Recycling-Einstellungen außer dem Kulanzfenster für den Tagesabschluss werden hier nicht gezeigt, einige protokollweite noch nicht; die Parameterreferenz führt alle auf. Öffentlich und schreibgeschützt: keine Wallet nötig, und kein Bedienelement auf dieser Seite ändert etwas. Governance-Änderungen laufen über den Timelock, nicht über diese Seite.",
       "refresh": "Aktualisieren",
       "reference": "Parameter-Referenz",
       "hiddenBody": "Die Sichtbarkeit der Parameter ist in diesem Deployment ausgeschaltet, daher werden die Live-Werte hier nicht angezeigt. Das ist nur eine Anzeigeeinstellung — die Parameter selbst liegen on-chain und sind für alle direkt aus den Verträgen lesbar.",
@@ -2704,7 +2704,7 @@
       "pythMaxDeviation": "Maximale Abweichung des Pyth-Abgleichs",
       "pythConfidenceMax": "Pyth-Konfidenzobergrenze",
       "sequencerUptimeFeed": "Sequencer-Verfügbarkeits-Feed",
-      "sequencerUptimeFeedHint": "Hält auf einer Layer-2-Chain Preise zurück, solange der Sequencer ausgefallen ist. Nicht gesetzt heißt, dass es diesen Schutz nicht gibt.",
+      "sequencerUptimeFeedHint": "Hält auf einer Layer-2-Chain Preise zurück, solange der Sequencer ausgefallen ist, und eine Stunde lang, nachdem er wieder läuft. Nicht gesetzt heißt, es gibt keinen solchen Schutz.",
       "periodicHeading": "Periodische Zinsen",
       "periodicInterest": "Periodische Zinszahlungen",
       "finerCadenceMinPrincipal": "Mindestkreditbetrag für kürzere Zahlungsperioden",
@@ -2739,7 +2739,12 @@
       "numeraireDefault": "{{symbol}} (nie geändert, daher der Standardwert des Protokolls)",
       "pythFeedIdHint": "Der Pyth-Preisfeed, den der Abgleich liest. Nicht gesetzt schaltet den Abgleich aus, auch wenn ein Orakel gesetzt ist.",
       "keepersHint": "Pausiert können Keeper nicht mehr an fremden Positionen handeln. Eigentümer können weiterhin an ihren eigenen handeln, und die Liquidation bleibt für alle offen. Ein Keeper-Schlüssel kann aber weiter Reward-Commitments einreichen, daher muss einem kompromittierten Schlüssel auch die Keeper-Rolle entzogen werden.",
-      "eventlessSnapshotNote": "Eine Änderung dieser Einstellung wird on-chain nicht angekündigt. Dieser Snapshot übernimmt eine Änderung daher erst bei seiner nächsten geplanten Aktualisierung und kann bis dahin den vorherigen Wert zeigen."
+      "eventlessSnapshotNote": "Eine Änderung dieser Einstellung wird on-chain nicht angekündigt. Dieser Snapshot übernimmt eine Änderung daher erst bei seiner nächsten geplanten Aktualisierung und kann bis dahin den vorherigen Wert zeigen.",
+      "autoLendHint": "Ob Kreditgeber Auto-Lend neu aktivieren dürfen. Aus lehnt nur neue Aktivierungen ab: bestehende Zustimmungen bleiben, und bereits eingestellte stehende Angebote bleiben im Orderbuch, bis sie storniert oder gematcht werden.",
+      "lenderIntentFills": "Ausführung stehender Intents",
+      "lenderIntentFillsHint": "Ob registrierte Kredit-Intents ausgeführt werden können. Aus stoppt ihre Ausführung; Kreditgeber können weiterhin Intents registrieren.",
+      "autoRefinanceHint": "Aus hindert Keeper und den Order-Matcher daran, Refinanzierungen abzuschließen. Ein Kreditnehmer, der seinen eigenen Kredit refinanziert, oder ein Kreditgeber, der eine Refinanzierungsanfrage direkt annimmt, kommt weiterhin durch.",
+      "autoExtendHint": "Aus blockiert jede Verlängerung eines Kredits an Ort und Stelle, auch eine, die der Kreditnehmer direkt anfordert."
     },
     "forcedClose": {
       "title": "Dieses Darlehen ist überfällig",

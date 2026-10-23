@@ -143,6 +143,22 @@ describe('loadProtocolConsole', () => {
     expect(r).toMatchObject({ source: 'snapshot', chainReadFailed: 'known-stale' });
   });
 
+  it('keeps a newer snapshot when the chain read answers from an older block (Codex #2683 r4)', async () => {
+    const r = await loadProtocolConsole({
+      fetchSnapshot: async () => snapshot({ sourceBlock: 200, updatedAt: NOW - 8 * 3600 }),
+      readChain: async () => CHAIN, // block 123
+      nowSec: () => NOW,
+    });
+    expect(r).toMatchObject({ source: 'snapshot', chainReadFailed: 'old' });
+    // At or past the snapshot's block, the chain read wins as usual.
+    const ok = await loadProtocolConsole({
+      fetchSnapshot: async () => snapshot({ sourceBlock: 123, updatedAt: NOW - 8 * 3600 }),
+      readChain: async () => CHAIN,
+      nowSec: () => NOW,
+    });
+    expect(ok).toMatchObject({ source: 'chain', why: 'old' });
+  });
+
   it('throws when there is neither a snapshot nor a chain read', async () => {
     await expect(
       loadProtocolConsole({

@@ -999,6 +999,7 @@ export interface ProtocolKnobValues {
   autoRefinanceEnabled?: boolean;
   autoExtendEnabled?: boolean;
   keepersPaused?: boolean;
+  lenderIntentEnabled?: boolean;
   treasury?: string;
 }
 

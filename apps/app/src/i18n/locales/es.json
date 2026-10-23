@@ -2640,7 +2640,7 @@
     },
     "protocolConsole": {
       "title": "Consola del protocolo",
-      "lede": "Valores actuales de los ajustes de todo el protocolo que la gobernanza puede cambiar en la cadena {{chain}}: comisiones, límites de riesgo y de oráculos de precios, duraciones, interruptores y la tesorería. Proceden de la instantánea del indexador público mientras está al día, y directamente de los contratos cuando no lo está; la línea al pie de la página indica cuál. Los ajustes que varían por activo o por cadena, y los de recompensas y reciclaje, no se muestran aquí, y algunos de todo el protocolo todavía no; la referencia de parámetros los enumera todos. Público y de solo lectura: no hace falta wallet y ningún control de esta página cambia nada. Los cambios de gobernanza pasan por el timelock, no por esta página.",
+      "lede": "Valores actuales de los ajustes de todo el protocolo que la gobernanza puede cambiar en la cadena {{chain}}: comisiones, límites de riesgo y de oráculos de precios, duraciones, interruptores y la tesorería. Proceden de la instantánea del indexador público mientras está al día, y directamente de los contratos cuando no lo está; la línea al pie de la página indica cuál. Los ajustes que varían por activo o por cadena, y los de recompensas y reciclaje salvo la ventana de gracia del cierre diario, no se muestran aquí, y algunos de todo el protocolo todavía no; la referencia de parámetros los enumera todos. Público y de solo lectura: no hace falta wallet y ningún control de esta página cambia nada. Los cambios de gobernanza pasan por el timelock, no por esta página.",
       "refresh": "Actualizar",
       "reference": "Referencia de parámetros",
       "hiddenBody": "La visibilidad de los parámetros está desactivada en este despliegue, así que aquí no se muestran los valores en vivo. Es solo un ajuste de visualización — los parámetros están on-chain y cualquiera puede leerlos directamente desde los contratos.",
@@ -2704,7 +2704,7 @@
       "pythMaxDeviation": "Desviación máxima del contraste de Pyth",
       "pythConfidenceMax": "Límite de confianza de Pyth",
       "sequencerUptimeFeed": "Feed de disponibilidad del secuenciador",
-      "sequencerUptimeFeedHint": "En una cadena de capa 2, retiene los precios mientras el secuenciador está caído. Sin definir significa que no hay tal protección.",
+      "sequencerUptimeFeedHint": "En una cadena de capa 2, retiene los precios mientras el secuenciador está caído y durante una hora después de que vuelva. Sin configurar, no hay tal protección.",
       "periodicHeading": "Intereses periódicos",
       "periodicInterest": "Pagos de intereses periódicos",
       "finerCadenceMinPrincipal": "Principal mínimo para periodos de pago más cortos",
@@ -2739,7 +2739,12 @@
       "numeraireDefault": "{{symbol}} (nunca cambiada, así que es el valor predeterminado del protocolo)",
       "pythFeedIdHint": "El feed de precios de Pyth que lee el contraste. Sin configurar, el contraste queda desactivado aunque haya un oráculo configurado.",
       "keepersHint": "En pausa, los keepers no pueden actuar sobre posiciones ajenas. Los propietarios pueden seguir actuando sobre las suyas y la liquidación sigue abierta a cualquiera. No impide que una clave de keeper envíe compromisos de recompensas, así que a una clave comprometida también hay que retirarle su rol de keeper.",
-      "eventlessSnapshotNote": "Cambiar este ajuste no anuncia nada en la cadena, así que esta instantánea solo recoge un cambio en su próxima actualización programada y hasta entonces puede mostrar el valor anterior."
+      "eventlessSnapshotNote": "Cambiar este ajuste no anuncia nada en la cadena, así que esta instantánea solo recoge un cambio en su próxima actualización programada y hasta entonces puede mostrar el valor anterior.",
+      "autoLendHint": "Si los prestamistas pueden activar de nuevo el préstamo automático. Desactivado solo rechaza nuevas activaciones: el consentimiento existente se mantiene y las ofertas permanentes ya publicadas siguen en el libro hasta que se cancelen o se emparejen.",
+      "lenderIntentFills": "Ejecución de intenciones permanentes",
+      "lenderIntentFillsHint": "Si las intenciones de préstamo registradas pueden ejecutarse. Desactivado detiene su ejecución; los prestamistas aún pueden registrar intenciones.",
+      "autoRefinanceHint": "Desactivado impide que los keepers y el emparejador de órdenes completen refinanciaciones. Un prestatario que refinancia su propio préstamo, o un prestamista que acepta directamente una solicitud de refinanciación, sigue adelante.",
+      "autoExtendHint": "Desactivado bloquea toda extensión de préstamo en el sitio, incluida la que pide directamente el prestatario."
     },
     "forcedClose": {
       "title": "Este préstamo está vencido",
