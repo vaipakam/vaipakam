@@ -432,8 +432,8 @@ contract LaunchTest is Test {
         // What the handover gate would prove here, as the wrapper hands it on.
         handedTo = timelock;
         provenEpoch = AccessControlFacet(diamond).roleEpoch();
-        launcher.setHandoverProof(provenEpoch);
         (, handedCalls) = LibLaunchReadiness.timelockCalls(timelock);
+        launcher.setHandoverProof(provenEpoch, handedCalls);
     }
 
     /// @dev The last handover's end state, as a launch binds it. Call-free,
@@ -1767,9 +1767,12 @@ contract LaunchTest is Test {
         assertTrue(AdminFacet(diamond).paused());
     }
 
-    /// @dev A proposal printed after governance has acted binds the count
-    ///      at that moment, so the launch it prints can still execute.
-    function test_Production_ProposalBindsTheTimelockCallCount() public {
+    /// @dev A Timelock call executed AFTER the handover gate's proof and
+    ///      before the proposal is one the gate never saw (Codex #2686 r14:
+    ///      a queued pool `transferOwnership`, whose pending owner its event
+    ///      scan would have refused). The proposal binds the count the gate
+    ///      PROVED, so it refuses instead of snapshotting the moved count.
+    function test_Production_ProposalRefusesATimelockCallAfterTheProof() public {
         vm.chainId(8453);
         _configure();
         address registry = _registryWithLane();
@@ -1778,9 +1781,29 @@ contract LaunchTest is Test {
         _governs(tl, address(tl), abi.encodeCall(tl.updateDelay, (2 days)), bytes32("delay"));
         assertEq(tl.executedCalls(), 1);
         Launch.Decision memory d = launcher.decide(diamond, _d(registry), address(tl), admin, false);
+        assertEq(uint8(d.path), uint8(Launch.Path.Refuse));
+        assertEq(
+            d.reason,
+            "Launch: the Timelock executed a call after the handover gate proved the topology (0 calls proven, 1 now) - re-run the handover-gate phase, then launch"
+        );
+    }
+
+    /// @dev Once the handover gate has run again, the proposal binds the
+    ///      count it proved, and the launch it prints executes.
+    function test_Production_ProposalBindsTheProvenTimelockCallCount() public {
+        vm.chainId(8453);
+        _configure();
+        address registry = _registryWithLane();
+        VaipakamTimelock tl = _realTimelock();
+        _handOverUnpause(address(tl));
+        _governs(tl, address(tl), abi.encodeCall(tl.updateDelay, (2 days)), bytes32("delay"));
+        // The handover gate, run again, proves the topology after that call.
+        handedCalls = tl.executedCalls();
+        launcher.setHandoverProof(provenEpoch, handedCalls);
+        Launch.Decision memory d = launcher.decide(diamond, _d(registry), address(tl), admin, false);
         assertEq(uint8(d.path), uint8(Launch.Path.TimelockProposal));
+        assertTrue(d.roleEpochProven);
         assertEq(d.handover.timelockCalls, 1);
-        handedCalls = 1;
         _schedule(tl, registry, _epoch());
         vm.warp(block.timestamp + 2 days);
         _execute(tl, registry, _epoch());

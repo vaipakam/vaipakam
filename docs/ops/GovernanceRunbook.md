@@ -583,14 +583,17 @@ even for the gap between the deploy and the handover.
    `contracts` phase has already deployed the LaunchGate, a stateless
    contract at a deterministic address that the launch operation calls.
    `handover-gate` also prints the Diamond's **role epoch**, a count of
-   every change to its role table, at the moment it proved every role's
-   holders; the wrapper records it for the launch phase.
+   every change to its role table, and the Timelock's **executed-call
+   count**, both read in the state where it proved every role's holders;
+   the wrapper records the two together (`handover-gate.proof`) for the
+   launch phase and the verify report.
 2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the six launch
    requirements off the chain and refuses unless every one is met, the
    Timelock holds `UNPAUSER_ROLE` and owns the Diamond, the admin key holds
-   no Diamond role at all, and the role epoch is still the one
-   `handover-gate` proved (if any role changed hands since, re-run
-   `handover-gate`). It broadcasts nothing. The requirements:
+   no Diamond role at all, and the role epoch and the Timelock's call count
+   are still the ones `handover-gate` proved (if any role changed hands, or
+   the Timelock executed any call, since, re-run `handover-gate`). It
+   broadcasts nothing. The requirements:
    - a treasury;
    - a sanctions oracle that answers `isSanctioned`;
    - the declared WETH, an 18-decimal token contract, which the Diamond's
@@ -645,7 +648,8 @@ even for the gap between the deploy and the handover.
    rate governor, each lane with its remote pool and token, and the WETH;
    `handover` carries the admin key, the Diamond owner (the Timelock), the
    proven role epoch and the number of calls the Timelock had executed
-   when the proposal was printed.
+   when `handover-gate` proved the topology (the proposal refuses to be
+   printed once that number has moved).
    The step prints each one. Before signing, check that the gate address
    printed is the one the launch phase reports, that the registry is the
    chain's CCIP `TokenAdminRegistry`, that the lanes are the full
@@ -663,7 +667,7 @@ even for the gap between the deploy and the handover.
    inside that transaction, then checks that the Diamond's owner is still
    the one signed, that the admin key still holds no Diamond role, that
    the role epoch has not moved, and that the Timelock has executed no other
-   call since the proposal. The Diamond unpauses only when the gate
+   call since `handover-gate` proved the topology. The Diamond unpauses only when the gate
    returns, and refuses a gate call that is not `assertReady` for itself.
    If a requirement stopped holding during the delay (an adapter was
    removed, the oracle was cleared), the execution reverts with
@@ -685,10 +689,14 @@ even for the gap between the deploy and the handover.
    every effect of a governance call can be read back at execution (a CCIP
    pool's pending owner is private, an upgraded rate governor keeps its old
    getters' answers), so instead of re-reading each one, the launch refuses
-   if the Timelock completed any other call after the proposal was
-   printed, even a harmless one. Execute every other queued operation
-   first, or cancel it, then print the proposal; if one executes during the
-   delay, re-run the launch phase for a fresh proposal. What changes
+   if the Timelock completed any other call after `handover-gate` proved
+   the topology, even a harmless one. The count is the one the gate
+   proved, not one read when the proposal is printed: a call executed in
+   between (a pool `transferOwnership` queued before the gate ran, say) is
+   one the gate's event scan never saw, so the proposal refuses until the
+   gate runs again. Execute every other queued operation first, or cancel
+   it, then run `handover-gate` and the launch phase; if one executes
+   during the delay, do both again for a fresh proposal. What changes
    without the Timelock is bound separately: the pause by the epoch below,
    and the role table (a holder renouncing, the emergency revoker) by the
    role epoch.

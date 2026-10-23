@@ -7,6 +7,7 @@ import {console} from "forge-std/console.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {HandoverPlan} from "./lib/HandoverPlan.sol";
+import {LibLaunchReadiness} from "../src/governance/LibLaunchReadiness.sol";
 
 /**
  * @title HandoverGate
@@ -136,24 +137,41 @@ contract HandoverGate is Script {
         if (failures.length > 0) {
             revert(string.concat("HandoverGate: FAILED with ", vm.toString(failures.length), " finding(s) - see above"));
         }
-        _printProvenRoleEpoch(inp.diamond);
+        _printHandoverProof(inp.diamond, inp.timelock);
     }
 
-    /// @dev The Diamond's role epoch in the state this run proved, on a line
-    ///      of its own that the deploy wrappers read (#945, Codex #2686 r9):
-    ///      the launch binds its Timelock call to it, so a role that changes
-    ///      hands after this proof makes the launch revert instead of
-    ///      admitting users under holders nobody checked. It is read in the
-    ///      same state as every holder and role admin this run compared, so
-    ///      any role change after that state moves it, and the launch refuses
-    ///      (it never binds an epoch newer than the state proved).
-    function _printProvenRoleEpoch(address diamond) internal view {
-        try IAccessControlRead(diamond).roleEpoch() returns (uint64 epoch) {
-            console.log("HandoverGate: every role's holders proven at role epoch", uint256(epoch));
-            console.log(string.concat("HANDOVER_ROLE_EPOCH=", vm.toString(uint256(epoch))));
+    /// @dev What this run proved, on lines of their own that the deploy
+    ///      wrappers record (`lib/handover-proof.sh`) and the launch binds
+    ///      its Timelock call to (#945):
+    ///        - the Diamond's role epoch (Codex #2686 r9), so a role that
+    ///          changes hands after this proof makes the launch revert
+    ///          instead of admitting users under holders nobody checked;
+    ///        - the Timelock's executed-call count (Codex #2686 r14), so any
+    ///          governance call executed after this proof (a queued pool
+    ///          `transferOwnership` whose pending owner this run's event
+    ///          scan never saw, say) makes the launch proposal refuse and
+    ///          the gate run again.
+    ///      Both are read in the same state as every holder, role admin and
+    ///      owner this run compared, so a change after that state moves
+    ///      one of them, and the launch never binds a value newer than the
+    ///      state proved.
+    function _printHandoverProof(address diamond, address timelock) internal view returns (uint64 epoch, uint64 calls) {
+        try IAccessControlRead(diamond).roleEpoch() returns (uint64 e) {
+            epoch = e;
         } catch {
             revert("HandoverGate: the Diamond has no roleEpoch() - it predates the launch binding (#945); fresh deploy");
         }
+        bool readable;
+        (readable, calls) = LibLaunchReadiness.timelockCalls(timelock);
+        if (!readable) {
+            revert(
+                "HandoverGate: the Timelock does not count its executed calls (executedCalls) - it predates the launch binding (#945); fresh deploy"
+            );
+        }
+        console.log("HandoverGate: every role's holders proven at role epoch", uint256(epoch));
+        console.log("HandoverGate: proven after the Timelock's executed call", uint256(calls));
+        console.log(string.concat("HANDOVER_ROLE_EPOCH=", vm.toString(uint256(epoch))));
+        console.log(string.concat("HANDOVER_TIMELOCK_CALLS=", vm.toString(uint256(calls))));
     }
 
     // ── The check ───────────────────────────────────────────────────────

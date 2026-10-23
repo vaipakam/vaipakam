@@ -215,6 +215,8 @@ source "$SCRIPT_DIR/lib/sentinel-reads.sh"
 source "$SCRIPT_DIR/lib/ccip-lanes.sh"
 # shellcheck source=lib/artifact-code-check.sh
 source "$SCRIPT_DIR/lib/artifact-code-check.sh"
+# shellcheck source=lib/handover-proof.sh
+source "$SCRIPT_DIR/lib/handover-proof.sh"
 # shellcheck source=lib/retired-deployment.sh
 source "$SCRIPT_DIR/lib/retired-deployment.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
@@ -1732,24 +1734,22 @@ phase_handover_gate() {
   echo "deploy-testnet.sh — handover-gate  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
 
-  # The gate prints the role epoch at which it proved every role's holders
-  # on a line of its own; the launch binds its Timelock call to it, so a
-  # role that changes hands after this proof makes the launch refuse
-  # (Codex #2686 r9). pipefail makes a failing gate fail this phase.
+  # The gate prints what it proved, the role epoch and the Timelock's
+  # executed-call count, on lines of their own; the launch binds its
+  # Timelock call to both, so a role that changes hands (Codex #2686 r9) or
+  # any Timelock call that executes (r14) after this proof makes the launch
+  # refuse. The record is cleared first, so a failing gate leaves no older
+  # proof behind; pipefail makes a failing gate fail this phase.
+  clear_handover_proof "$MARKERS_DIR"
   local hg_log="$MARKERS_DIR/handover-gate.log"
   CHAIN_SLUG="$CHAIN_SLUG" forge script script/HandoverGate.s.sol \
     --rpc-url "$RPC" 2>&1 | tee "$hg_log"
-  local proven_epoch
-  proven_epoch=$(sed -n 's/^ *HANDOVER_ROLE_EPOCH=\([0-9][0-9]*\) *$/\1/p' "$hg_log" | tail -n 1)
-  if [ -z "$proven_epoch" ]; then
-    echo "handover-gate: the gate passed but printed no HANDOVER_ROLE_EPOCH line; refusing to record it." >&2
-    exit 1
-  fi
+  record_handover_proof "$hg_log" "$MARKERS_DIR" || exit 1
+  load_handover_proof "$MARKERS_DIR" || exit 1
 
   mark_phase_done "handover-gate"
-  printf '%s\n' "$proven_epoch" > "$MARKERS_DIR/handover-gate.role-epoch"
   echo
-  echo "✓ handover-gate passed: the chain holds the governance topology (role epoch $proven_epoch)."
+  echo "✓ handover-gate passed: the chain holds the governance topology (role epoch $HANDOVER_ROLE_EPOCH, after Timelock call $HANDOVER_TIMELOCK_CALLS)."
 }
 
 # ── Phase: launch ─────────────────────────────────────────────────────
@@ -1777,14 +1777,13 @@ phase_launch() {
   # (Codex #2686 r7): the same per-chain list the ccip-wire phase wired.
   resolve_ccip_lane_chain_ids "$CCIP_SLUG" || exit 1
 
-  # After a rehearsal handover the Timelock call is bound to the role epoch
-  # the handover gate proved, when that phase ran here; without it the
-  # proposal binds the live epoch and says so (a production one refuses).
-  local proven_file="$MARKERS_DIR/handover-gate.role-epoch"
-  if [ -s "$proven_file" ]; then
-    export HANDOVER_ROLE_EPOCH
-    HANDOVER_ROLE_EPOCH="$(cat "$proven_file")"
-  fi
+  # After a rehearsal handover the Timelock call is bound to what the
+  # handover gate proved (the role epoch and the Timelock's call count),
+  # when that phase ran here; without it the proposal binds the live values
+  # and says so (a production one refuses). A malformed record refuses.
+  local proof_rc=0
+  load_handover_proof "$MARKERS_DIR" || proof_rc=$?
+  [ "$proof_rc" -eq 2 ] && exit 1
 
   CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol \
     --rpc-url "$RPC" --broadcast --slow
@@ -2288,6 +2287,13 @@ phase_verify() {
   fi
   # The lane set the launch declares, resolved as --phase launch does.
   resolve_ccip_lane_chain_ids "$CCIP_SLUG" || exit 1
+  # And the handover proof it binds, loaded as --phase launch does (Codex
+  # #2686 r14): without it the report and the verdict below judge a launch
+  # the launch phase would never propose. Absent before the handover gate
+  # has run, which the report then names as the reason.
+  local verify_proof_rc=0
+  load_handover_proof "$MARKERS_DIR" || verify_proof_rc=$?
+  [ "$verify_proof_rc" -eq 2 ] && exit 1
   # The same readiness list --phase launch enforces, reported here so a
   # green verify never implies a launch would pass. A NOT MET line (the
   # sanctions oracle above all, #946) is printed, not hidden; the launch

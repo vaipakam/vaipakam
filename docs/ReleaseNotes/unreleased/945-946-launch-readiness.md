@@ -39,9 +39,13 @@ back, or another queued operation gave an administrator role to someone
 new), the execution fails and the Diamond stays paused. A moved role count
 needs the handover check run again and a fresh proposal. The launch must
 also be the Timelock's next action: the Timelock now counts every call it
-executes, the proposal records the count, and the launch refuses if any
-other governance action ran during the wait (a facet change, a pool
-ownership transfer, a rate-governor upgrade, anything). Everything the
+executes, the handover check prints that count beside the role count, the
+proposal carries the count the check proved, and the launch refuses if any
+other governance action ran after that check (a facet change, a pool
+ownership transfer, a rate-governor upgrade, anything). The proposal itself
+refuses to be printed once the count has moved, because an action executed
+between the check and the proposal is one the check never saw; the
+handover check is then run again. Everything the
 launch depends on is governed by the Timelock, and not every effect of a
 governance action can be read back on-chain, so this binds the launch to
 exactly the state the Safe reviewed. Other queued operations are run or
@@ -80,7 +84,8 @@ unpaused. Once a Diamond has launched, the launch step never offers to
 unpause it again: a later pause is an incident and is lifted through
 incident response. The readiness
 report printed by the verify phases now reaches the same verdict the
-launch would, handover included. On
+launch would, handover included: they load the same recorded handover
+proof the launch step binds. On
 a testnet no answered requirement may be unmet and the admin unpauses
 directly. A local development chain only warns. The deploy scripts' verify
 phases print the same report, and fail if a Diamond was unpaused outside

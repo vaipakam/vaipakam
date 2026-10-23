@@ -59,7 +59,10 @@ interface ILaunchTimelock {
  *          handover: the admin key holds no role, the owner is still the
  *          Timelock, and the role epoch is still the one the handover gate
  *          proved (`HANDOVER_ROLE_EPOCH`), so no role changed hands
- *          unreviewed. One that stopped holding during the delay reverts the
+ *          unreviewed, and the Timelock has executed no call since that
+ *          proof (`HANDOVER_TIMELOCK_CALLS`): the launch must be its next
+ *          call, so no governance action the gate never saw lands first.
+ *          One that stopped holding during the delay reverts the
  *          execution and the Diamond stays paused. The epoch is the pause
  *          library's transition count when the proposal was printed, so an
  *          incident pause (a Pauser or the watcher's auto-pause) recorded
@@ -122,6 +125,12 @@ interface ILaunchTimelock {
  *            set it from the handover-gate phase's output. Required for a
  *            production proposal; a testnet one without it binds the live
  *            epoch and says so.
+ *        HANDOVER_TIMELOCK_CALLS — the Timelock's executed-call count in
+ *            the same state, which the handover gate proves alongside the
+ *            role epoch (Codex #2686 r14). Required with it: the proposal
+ *            refuses once any Timelock call has executed since that proof,
+ *            so an operation the gate never saw (a pool ownership offer
+ *            queued before the proof, say) forces the gate to run again.
  *        ADMIN_PRIVATE_KEY — the admin key; unused (and optional) on
  *            production, where only its address is read to prove it holds
  *            no role. ADMIN_ADDRESS is accepted instead there.
@@ -153,17 +162,20 @@ contract Launch is Script {
         /// @dev The pause epoch now; an unpause this run makes is bound to it.
         uint64 epoch;
         /// @dev On the Timelock path: the governance state the batch binds
-        ///      (the admin key, the Diamond owner, the role epoch), and
-        ///      whether that role epoch is one the handover gate proved.
+        ///      (the admin key, the Diamond owner, the role epoch, the
+        ///      Timelock's call count), and whether the role epoch and call
+        ///      count are the ones the handover gate proved.
         ILaunchGate.Handover handover;
         bool roleEpochProven;
     }
 
-    /// @dev The role epoch the handover gate proved, when given
-    ///      programmatically ({setHandoverProof}); otherwise read from
-    ///      `HANDOVER_ROLE_EPOCH`.
+    /// @dev The role epoch and Timelock call count the handover gate
+    ///      proved, when given programmatically ({setHandoverProof});
+    ///      otherwise read from `HANDOVER_ROLE_EPOCH` and
+    ///      `HANDOVER_TIMELOCK_CALLS`.
     bool private _proofSet;
     uint64 private _proofEpoch;
+    uint64 private _proofCalls;
 
     function run() external returns (Outcome) {
         uint256 adminKey = vm.envOr("ADMIN_PRIVATE_KEY", uint256(0));
@@ -446,7 +458,12 @@ contract Launch is Script {
             return d;
         }
         uint64 liveRoles = roleEpoch(diamond);
-        (bool proven, uint64 provenRoles) = _handoverProof();
+        (bool proven, uint64 provenRoles, bool callsProven, uint64 provenCalls) = _handoverProof();
+        if (proven && !callsProven) {
+            d.reason =
+                "Launch: the handover proof carries no Timelock call count (HANDOVER_TIMELOCK_CALLS) - re-run the handover-gate phase; the deploy wrapper passes both values it proved";
+            return d;
+        }
         if (proven && provenRoles != liveRoles) {
             d.reason = string.concat(
                 "Launch: the Diamond's roles changed after the handover gate proved them (role epoch ",
@@ -466,6 +483,21 @@ contract Launch is Script {
         if (!callsRead) {
             d.reason =
                 "Launch: the Timelock does not count its executed calls (executedCalls) - it predates the launch binding; deploy a current VaipakamTimelock";
+            return d;
+        }
+        // The batch binds the count the handover gate PROVED, never one read
+        // later (Codex #2686 r14): a Timelock call executed between the
+        // proof and this proposal is one the gate never saw (a queued pool
+        // `transferOwnership`, whose pending owner its event scan would have
+        // refused), so the proposal refuses and the gate runs again.
+        if (proven && provenCalls != calls) {
+            d.reason = string.concat(
+                "Launch: the Timelock executed a call after the handover gate proved the topology (",
+                vm.toString(uint256(provenCalls)),
+                " calls proven, ",
+                vm.toString(uint256(calls)),
+                " now) - re-run the handover-gate phase, then launch"
+            );
             return d;
         }
         d.handover =
@@ -559,12 +591,14 @@ contract Launch is Script {
         );
     }
 
-    /// @notice Supplies the role epoch the handover gate proved, in place of
-    ///         `HANDOVER_ROLE_EPOCH`, for a caller that runs this contract
-    ///         rather than the script (a test or a fixture).
-    function setHandoverProof(uint64 provenEpoch) external {
+    /// @notice Supplies the role epoch and Timelock call count the handover
+    ///         gate proved, in place of `HANDOVER_ROLE_EPOCH` and
+    ///         `HANDOVER_TIMELOCK_CALLS`, for a caller that runs this
+    ///         contract rather than the script (a test or a fixture).
+    function setHandoverProof(uint64 provenEpoch, uint64 provenCalls) external {
         _proofSet = true;
         _proofEpoch = provenEpoch;
+        _proofCalls = provenCalls;
     }
 
     /// @notice The Diamond's role epoch now (`AccessControlFacet.roleEpoch`).
@@ -579,12 +613,21 @@ contract Launch is Script {
         return address(uint160(uint256(vm.load(diamond, LibPausable.FIRST_UNPAUSE_VIA_SLOT))));
     }
 
-    /// @dev The role epoch the handover gate proved: {setHandoverProof}, or
-    ///      `HANDOVER_ROLE_EPOCH`, which the deploy wrappers set from the
-    ///      handover-gate phase's own output.
-    function _handoverProof() internal view returns (bool given, uint64 epoch) {
-        if (_proofSet) return (true, _proofEpoch);
-        if (vm.envExists("HANDOVER_ROLE_EPOCH")) return (true, uint64(vm.envUint("HANDOVER_ROLE_EPOCH")));
+    /// @dev What the handover gate proved: {setHandoverProof}, or
+    ///      `HANDOVER_ROLE_EPOCH` and `HANDOVER_TIMELOCK_CALLS`, which the
+    ///      deploy wrappers set from the handover-gate phase's own output
+    ///      (`lib/handover-proof.sh`). `given` is the role epoch's presence;
+    ///      `callsGiven` the call count's, which a given proof must carry.
+    function _handoverProof() internal view returns (bool given, uint64 epoch, bool callsGiven, uint64 calls) {
+        if (_proofSet) return (true, _proofEpoch, true, _proofCalls);
+        if (vm.envExists("HANDOVER_ROLE_EPOCH")) {
+            given = true;
+            epoch = uint64(vm.envUint("HANDOVER_ROLE_EPOCH"));
+        }
+        if (vm.envExists("HANDOVER_TIMELOCK_CALLS")) {
+            callsGiven = true;
+            calls = uint64(vm.envUint("HANDOVER_TIMELOCK_CALLS"));
+        }
     }
 
     /// @notice What this chain's launch declares it must match
@@ -729,8 +772,17 @@ contract Launch is Script {
                 : "        a launch on production refuses without that proof"
         );
         console.log("      Timelock calls executed so far:", uint256(d.handover.timelockCalls));
-        console.log("        the launch must be the Timelock's next call: if any other queued operation");
-        console.log("        executes first, the launch reverts - run those first, then propose again");
+        console.log(
+            d.roleEpochProven
+                ? "        the count the handover gate proved; the launch must be the Timelock's next call:"
+                : "        NOTE: the live count, NOT one the handover gate proved (testnet only); the launch"
+        );
+        console.log(
+            d.roleEpochProven
+                ? "        if any other queued operation executes first, it reverts - run those first, then"
+                : "        must be the Timelock's next call, or it reverts"
+        );
+        if (d.roleEpochProven) console.log("        re-run the handover gate and propose again");
         console.log("  1. The Governance Safe calls the Timelock with:");
         console.log("     to:  ", timelock);
         console.logBytes(
