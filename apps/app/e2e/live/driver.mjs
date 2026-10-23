@@ -46,6 +46,7 @@ import {
 import { privateKeyToAccount } from 'viem/accounts';
 import { baseSepolia, arbitrumSepolia, bscTestnet } from 'viem/chains';
 import { walletGateDecision } from './walletGate.mjs';
+import { classifyRpcResponse, createSocketCalls, isChainRpcMethod } from './rpc-verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Dev TEST wallets only — throwaway keys holding testnet dust. The
@@ -80,9 +81,76 @@ export function trackBrowser(browser) {
  * (`loadWallets`, `walletFor`, bundle-shape and config validation) that
  * run before any browser exists and cannot await.
  */
+/**
+ * Every chain request a reachable provider refused as malformed, across
+ * every `watchPageRpc` this process attached (#1633 r2). Module-level so the
+ * BLOCKED exits below can honour evidence precedence by themselves.
+ */
+const OBSERVED_RPC_FAULTS = [];
+/** Each attached watcher's session drain, awaited by `blocked()` and by
+ *  `done()` before the browser closes (which would cut the reads off). A
+ *  watcher leaves the set when its page closes. */
+const WATCHER_DRAINS = new Set();
+/** How long a close waits for a watcher's in-flight page RPC. */
+const BLOCKED_DRAIN_MS = 5_000;
+
+/** Wait, bounded, for every attached watcher's in-flight page RPC. Run
+ *  before ANY browser close — `blocked()`'s and `done()`'s — because the
+ *  close cuts the body reads off (#1633 r3, r5). */
+async function drainWatchers() {
+  await Promise.allSettled([...WATCHER_DRAINS].map((d) => d(BLOCKED_DRAIN_MS)));
+}
+
+/**
+ * FAIL outranks BLOCKED, and a malformed request the page already sent is a
+ * finding, so a BLOCKED exit after one exits FAIL instead, naming both
+ * (#1633 r2). Decided HERE, once, rather than at each drive's BLOCKED
+ * branches: a guard per branch was missed on the first branch reviewed (a
+ * fixture check in the kill-switch drive), and every drive has several.
+ */
+function exitBlockedOrFail(why) {
+  if (OBSERVED_RPC_FAULTS.length === 0) {
+    console.error(`\nBLOCKED: ${why}`);
+    process.exit(2);
+  }
+  failOnRecordedFaults(`the drive then stopped BLOCKED: ${why}`);
+}
+
+function failOnRecordedFaults(context) {
+  console.error(
+    `\nFAIL: the page sent chain requests a reachable provider refused as malformed:` +
+      ` ${OBSERVED_RPC_FAULTS.join(', ')}\n  (${context})`,
+  );
+  process.exit(1);
+}
+
+/**
+ * The final exit of a drive that attaches `watchPageRpc` (#1633 r6): every
+ * such drive ends here, never on a bare `process.exit` (a structural test
+ * holds each one to it).
+ *
+ * A drive's own snapshot of `sessionFaults()` is only as late as the moment
+ * it took it, and the last bounded drain is the one `done()` runs before its
+ * close — a body still parsing past the drive's `settled()` wait can land
+ * there, after the drive decided PASS. So the precedence rule is applied
+ * HERE, after one more drain, over every fault any watcher recorded: a
+ * PASS or BLOCKED code becomes FAIL, naming them, exactly as `blocked()`
+ * does. A FAIL code stands as it is. Call it after `done()`; without one it
+ * still drains first, and the process exit then takes the browser down.
+ */
+export async function exitWithVerdict(code) {
+  await drainWatchers();
+  if (code !== 1 && OBSERVED_RPC_FAULTS.length > 0) {
+    failOnRecordedFaults(code === 0 ? "the drive's own checks passed" : 'the drive otherwise stopped BLOCKED');
+  }
+  process.exit(code);
+}
+
+/** The synchronous BLOCKED exit, for a configuration refused before any
+ *  page exists. It cannot wait for in-flight page RPC; once a page is open,
+ *  exit through `blocked()`, which can. */
 export function blockedSync(why) {
-  console.error(`\nBLOCKED: ${why}`);
-  process.exit(2);
+  exitBlockedOrFail(why);
 }
 
 /**
@@ -103,10 +171,18 @@ export function blockedSync(why) {
  * a Chromium behind. Callers do not wire that themselves — it was the
  * per-driver duplication `live-position-observe.mjs`'s `discovery()`
  * wrapper existed to avoid.
+ *
+ * Exits FAIL instead when a `watchPageRpc` has already recorded a malformed
+ * page request (`exitBlockedOrFail`): that is a finding, and it outranks.
  */
 export async function blocked(why, err, cleanup) {
   const detail = err ? `\n  ${String(err.message ?? err).split('\n')[0].slice(0, 300)}` : '';
-  console.error(`\nBLOCKED: ${why}${detail}`);
+  // Let in-flight page RPC land first (#1633 r3): a fault still parsing
+  // when the drive gave up outranks this exit, and closing the browser
+  // would cut its body read off. Bounded, so a hung request cannot hold it.
+  // `done()` drains the same way before ITS close, so a drive that closed
+  // first lost nothing either (#1633 r5).
+  await drainWatchers();
   try {
     await LIVE_BROWSER?.close();
   } catch {
@@ -124,7 +200,7 @@ export async function blocked(why, err, cleanup) {
   } catch {
     /* same */
   }
-  process.exit(2);
+  exitBlockedOrFail(`${why}${detail}`);
 }
 
 /**
@@ -226,7 +302,7 @@ export async function precondition(what, fn) {
  * THREE_VERDICT_DRIVERS, so the batch TRUSTS that code and calls an
  * outage a product regression.
  *
- * Two traps, both of which a first attempt at this fell into:
+ * Three traps, each of which an earlier version of this helper fell into:
  *
  *  1. SCOPE. A whole-session counter is disarmed by the page-load reads
  *     that have nothing to do with the verdict: the endpoint answers on
@@ -234,14 +310,35 @@ export async function precondition(what, fn) {
  *     reads go out, and the drive falls through to FAIL anyway. So the
  *     window has to be reset immediately before the wait that matters.
  *
- *  2. WHAT COUNTS. A 200 carrying a JSON-RPC *error* still proves the
- *     endpoint answered — and for a revert-driven assertion that error IS
- *     the expected result. Counting only `result` misses precisely the
- *     call the verdict rests on.
+ *  2. WHAT COUNTS. Decided by the ONE classifier the repo has for a page's
+ *     JSON-RPC response, `classifyRpcResponse` (`rpc-verdict.mjs`), not by
+ *     a rule of this helper's own. Two of its outcomes prove the endpoint
+ *     answered: `ok` (a result, or a revert from a call that executes code
+ *     — for a revert-driven assertion that revert IS the expected result)
+ *     and `client-fault` (the provider parsed the page's request and
+ *     rejected it as malformed). `unreachable` does not: a 429, a 5xx, a
+ *     rate-limit or unavailable code, a body that is not JSON-RPC.
+ *
+ *  3. THE HTTP STATUS IS NOT THE ANSWER (#1633). This used to count only
+ *     status 200, so a provider answering 400 with a well-formed `-32602`
+ *     read as silence, and the drive reported BLOCKED over a page that had
+ *     sent a malformed request to a healthy endpoint — the one
+ *     misclassification that HIDES a product defect rather than
+ *     over-reporting one. A client fault now counts as an answer, so the
+ *     drive judges the page, and `sessionFaults()` names each one, from any
+ *     window, so the drive FAILS on it rather than only reporting it.
+ *
+ * Both transports, HTTP and WebSocket: a deployment whose wagmi transport
+ * rides a socket must not read as "answered nothing" (two drives used to
+ * carry their own socket counter beside this helper for that reason).
+ * Only CHAIN calls count (`isChainRpcMethod`), so WalletConnect's relay
+ * protocol never does.
  *
  * Usage: `const rpc = watchPageRpc(page)` once after launch; `rpc.reset()`
  * just before the critical wait; `await rpc.settled()` in the failure
- * path, and treat `0` as BLOCKED.
+ * path, and treat `0` as BLOCKED; and fold `rpc.sessionFaults()` into the
+ * drive's final verdict as a FAIL (a structural test holds every drive that
+ * attaches this helper to that).
  *
  * Counted from the page's traffic rather than an endpoint the driver
  * picks, because the served SPA chooses its RPC at build time — the only
@@ -250,14 +347,17 @@ export async function precondition(what, fn) {
  */
 export function watchPageRpc(page) {
   let answered = 0;
-  const bodyReads = [];
+  const sessionFaults = [];
+  // Body reads still parsing, for the whole SESSION (#1633 r3). Never
+  // cleared on `reset()`: a read that began before it can still carry a
+  // client fault, and dropping it let a BLOCKED exit run before that fault
+  // was recorded. Only the window's answer COUNT is generation-scoped.
+  const bodyReads = new Set();
   // Membership is decided when the REQUEST starts, not when its response
   // arrives. A slow hydration request issued before `reset()` can land
   // after it, and counting that as an answer makes a total outage DURING
   // the assertion look like a live endpoint — FAIL where BLOCKED is right,
-  // the exact failure this helper exists to prevent. live-rpc-audit.mjs
-  // already keys on the request object for this reason; the helper was
-  // first written without carrying that over.
+  // the exact failure this helper exists to prevent.
   //
   // Stamped with a GENERATION rather than added to a set. A set plus a
   // cleared tally is not enough and was the second wrong version of this:
@@ -268,81 +368,176 @@ export function watchPageRpc(page) {
   // approach quietly unfixable.)
   let generation = 0;
   const startedIn = new WeakMap();
-  // Recorded requests that have not yet emitted `response`. Without this,
+  // Requests (and socket calls) that have not answered yet. Without this,
   // `settled()` snapshots `bodyReads` while a request is still in flight,
   // `Promise.allSettled([])` returns instantly, and the window reports
   // ZERO answers — a false BLOCKED over whatever the drive was asserting.
-  // live-rpc-audit.mjs solved this with a bounded drain loop; this helper
-  // was written without it, the same way it was written without
-  // request-start attribution.
   const outstanding = new Set();
+  // The same, for the whole session: what `drain()` waits on before a
+  // BLOCKED exit decides whether a fault outranks it.
+  const sessionOutstanding = new Set();
+  const track = (item) => {
+    outstanding.add(item);
+    sessionOutstanding.add(item);
+  };
+  const untrack = (item) => {
+    outstanding.delete(item);
+    sessionOutstanding.delete(item);
+  };
+  // Credits one classified response to the window its request started in.
+  // Checked at the moment of crediting, because the body read before it is
+  // async: a response that passed the gate in the `response` handler can
+  // finish parsing after a later `reset()` and would otherwise increment the
+  // freshly-zeroed counter — the fifth way this helper got the window wrong.
+  //
+  // A client fault is recorded for the whole SESSION, whatever window it
+  // fell in (#1633 r1). It counts as an answer for the BLOCKED question (the
+  // provider was reachable), and that is exactly why it must not stop there:
+  // a fault in the window a drive's absence-check rests on left `settled()`
+  // non-zero, so the drive went on to PASS on a banner that was absent only
+  // because the clearing simulation was refused. A malformed request the
+  // page sent is a FAIL wherever it happened, so every drive folds
+  // `sessionFaults()` into its final verdict.
+  const credit = (gen, outcomes) => {
+    for (const o of outcomes) {
+      if (!isChainRpcMethod(o.method)) continue;
+      if (o.verdict === 'client-fault') {
+        sessionFaults.push(`${o.method}: ${o.why}`);
+        OBSERVED_RPC_FAULTS.push(`${o.method}: ${o.why}`);
+      }
+      if (gen !== generation) continue;
+      if (o.verdict === 'ok' || o.verdict === 'client-fault') answered++;
+    }
+  };
   page.on('request', (req) => {
     if (req.method() !== 'POST') return;
     startedIn.set(req, generation);
-    outstanding.add(req);
+    track(req);
   });
   // A request that fails at the transport level never emits `response`, so
   // it would otherwise hold the drain loop open for the whole grace period.
-  page.on('requestfailed', (req) => outstanding.delete(req));
+  page.on('requestfailed', (req) => untrack(req));
   page.on('response', (res) => {
-    outstanding.delete(res.request());
-    // Captured here and RE-CHECKED after the body read below. The read is
-    // async, so a response that passed this gate can finish parsing after
-    // a later `reset()` and increment the freshly-zeroed counter — making
-    // a completely unanswered window look RPC-live. Checking the
-    // generation only once, before the await, was the fifth way this
-    // helper got the window wrong.
-    const gen = startedIn.get(res.request());
-    if (gen !== generation || res.status() !== 200) return;
+    const req = res.request();
+    untrack(req);
+    const gen = startedIn.get(req);
+    // Not a POST the page sent: nothing to classify.
+    if (gen === undefined) return;
+    // Read even when the request started in an earlier window: it no longer
+    // counts as an answer (`credit` checks the generation), but a client
+    // fault in it is still a defect the session must fail on.
+    const requestBody = req.postData?.() ?? undefined;
     // `response` fires on HEADERS and does not await handlers, so the body
     // is still in flight; collect the promises and settle before judging.
-    bodyReads.push(
-      res
-        .text()
-        .then((text) => {
-          // The window may have closed while this body was in flight.
-          if (gen !== generation) return;
-          const parsed = JSON.parse(text);
-          for (const r of Array.isArray(parsed) ? parsed : [parsed]) {
-            if (r && r.jsonrpc && (r.result !== undefined || r.error !== undefined)) {
-              answered++;
-            }
-          }
-        })
-        .catch(() => {
-          /* not a JSON-RPC body, or it never arrived */
-        }),
-    );
+    const read = res
+      .text()
+      .then((text) => credit(gen, classifyRpcResponse(res.status(), text, requestBody)))
+      .catch(() => {
+        /* the body never arrived: no answer */
+      })
+      .finally(() => bodyReads.delete(read));
+    bodyReads.add(read);
   });
+  page.on('websocket', (ws) => {
+    // The calls outstanding on this connection, matched by id; a reused id
+    // comes back from `send` as a collision for the classifier to judge
+    // (`createSocketCalls`). A socket has no HTTP status, so each answer is
+    // classified as a delivered message.
+    const calls = createSocketCalls();
+    ws.on('framesent', (f) => {
+      const settleNow = calls.send(f.payload, (m) => {
+        if (!isChainRpcMethod(m.method)) return null;
+        const token = {};
+        track(token);
+        return { gen: generation, token };
+      });
+      // A malformed envelope or an id collision: judged from the request.
+      for (const { entries, requestBody } of settleNow) {
+        const outcomes = classifyRpcResponse(200, '[]', requestBody);
+        entries.forEach(({ tag }, i) => {
+          untrack(tag.token);
+          credit(tag.gen, outcomes.slice(i, i + 1));
+        });
+      }
+    });
+    ws.on('framereceived', (f) => {
+      for (const { tag, reply, requestBody } of calls.receive(f.payload)) {
+        untrack(tag.token);
+        credit(tag.gen, classifyRpcResponse(200, reply, requestBody));
+      }
+    });
+    ws.on('close', () => {
+      for (const { tag } of calls.close()) untrack(tag.token);
+    });
+  });
+  /** Await the body reads in flight, but never past `until` (#1633 r4): a
+   *  response whose headers arrived and whose body stalls would otherwise
+   *  hold every exit that waits on it, in exactly the partial outage a
+   *  drive must still report. A read still pending at the deadline simply
+   *  did not land. Never less than a second, so a body that arrived as the
+   *  call drain ran out still gets parsed. */
+  const readsUntil = async (until) => {
+    const left = Math.max(1_000, until - Date.now());
+    if (bodyReads.size === 0) return;
+    let timer;
+    await Promise.race([
+      Promise.allSettled([...bodyReads]),
+      new Promise((r) => {
+        timer = setTimeout(r, left);
+      }),
+    ]);
+    clearTimeout(timer);
+  };
+  /** Wait, bounded, for everything still in flight this SESSION, so the
+   *  faults it carries are recorded before a verdict is decided. */
+  const drain = async (graceMs) => {
+    const until = Date.now() + graceMs;
+    while (sessionOutstanding.size > 0 && Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    await readsUntil(until);
+  };
+  WATCHER_DRAINS.add(drain);
+  // A closed page has nothing left to land; a later launch's close need not
+  // wait on it.
+  page.on('close', () => WATCHER_DRAINS.delete(drain));
   return {
     /**
      * Start a fresh window. Call immediately before the critical wait.
      *
-     * Only responses to POSTs that START after this point can contribute:
-     * the generation bump orphans everything already in flight.
+     * Only calls that START after this point can contribute: the
+     * generation bump orphans everything already in flight.
      */
     reset() {
       generation++;
       answered = 0;
-      bodyReads.length = 0;
       outstanding.clear();
     },
     /**
      * Report answers seen this window.
      *
-     * Drains outstanding requests first, bounded — a request still
-     * unanswered after the grace period did not contribute an answer
-     * anyway, and must not hang the drive. Then settles the body reads,
-     * because `response` fires on HEADERS and the parse is still in
-     * flight when the handler returns.
+     * Drains outstanding calls first, bounded — a call still unanswered
+     * after the grace period did not contribute an answer anyway, and must
+     * not hang the drive. Then settles the body reads, because `response`
+     * fires on HEADERS and the parse is still in flight when the handler
+     * returns.
      */
     async settled(graceMs = 15_000) {
       const until = Date.now() + graceMs;
       while (outstanding.size > 0 && Date.now() < until) {
         await new Promise((r) => setTimeout(r, 250));
       }
-      await Promise.allSettled(bodyReads);
+      await readsUntil(until);
       return answered;
+    },
+    /**
+     * Every call this SESSION a reachable provider rejected as malformed, as
+     * `method: why` lines, whatever window it fell in. Each is a defect in
+     * what the PAGE sent, so a drive FAILS on any of them; read it after
+     * `settled()` (or once the browser is closed) so in-flight answers land.
+     */
+    sessionFaults() {
+      return [...sessionFaults];
     },
   };
 }
@@ -405,11 +600,38 @@ let WALLETS;
  *   could not cover it. Exiting stays the default, for drivers that
  *   never asked to accumulate.
  */
+/**
+ * Normalise both documented wallet-file shapes to a role map: the map form
+ * as written, the array form (`{ role, address, privateKey }[]`) keyed by
+ * each entry's `role` (or `name`). Indexing the array form as a map yields
+ * `undefined.privateKey`.
+ *
+ * Throws on a shape it cannot read, naming where (#1633). An element that
+ * is `null` or a string used to throw a raw `TypeError` out of the
+ * normalisation, exiting 1: a broken CREDENTIAL FILE reported as a product
+ * FAIL. The caller classifies the throw as the setup failure it is.
+ */
+export function normaliseWallets(raw) {
+  if (Array.isArray(raw)) {
+    const map = {};
+    raw.forEach((w, i) => {
+      const role = w && typeof w === 'object' ? (w.role ?? w.name) : undefined;
+      if (typeof role !== 'string' || role === '') {
+        throw new Error(`entry ${i} of the wallet array is not an object carrying a role or name`);
+      }
+      map[role] = w;
+    });
+    return map;
+  }
+  if (raw && typeof raw === 'object') return raw;
+  throw new Error('the wallet file is neither a role map nor an array of wallets');
+}
+
 function loadWallets(opts = {}) {
   if (WALLETS !== undefined) return WALLETS;
   let raw;
   try {
-    raw = JSON.parse(fs.readFileSync(WALLETS_PATH, 'utf8'));
+    raw = normaliseWallets(JSON.parse(fs.readFileSync(WALLETS_PATH, 'utf8')));
   } catch (err) {
     if (opts.throwOnUnreadable) {
       throw new LiveSetupError(
@@ -433,12 +655,7 @@ function loadWallets(opts = {}) {
         ` (live-position-observe.mjs) which needs no key.`,
     );
   }
-  // Normalize both documented shapes to a role map — the array form
-  // ({ role, address, privateKey }[]) indexed as a map yields
-  // undefined.privateKey otherwise.
-  WALLETS = Array.isArray(raw)
-    ? Object.fromEntries(raw.map((w) => [w.role ?? w.name, w]))
-    : raw;
+  WALLETS = raw;
   return WALLETS;
 }
 
@@ -598,6 +815,79 @@ export function requireSiteUrl() {
     );
   }
   return url;
+}
+
+/**
+ * Parse an operator-supplied ORIGIN (`INDEXER_ORIGIN` and the like) to the
+ * bare `scheme://host[:port]` a drive appends routes to.
+ *
+ * Normalised, not merely validated (#1633). The check two drives carried
+ * accepted any absolute http(s) URL and appended routes to it verbatim, so
+ * `https://indexer.example/` produced `//offers/stats`, which the indexer
+ * does not route: a 404 the drive reported as a product FAIL on a correctly
+ * deployed indexer. A trailing slash is now dropped; a path, query, fragment
+ * or credentials are refused, because appending a route to them would ask
+ * a different question than the one the operator meant.
+ *
+ * @returns {{ origin: string } | { error: string }}
+ */
+export function parseOrigin(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return { error: 'not an absolute URL' };
+  }
+  if (!/^https?:$/.test(url.protocol)) return { error: `scheme ${url.protocol} is not http(s)` };
+  if (url.pathname !== '/' || url.search || url.hash || url.username || url.password) {
+    return { error: 'it carries a path, query, fragment or credentials — give the bare origin' };
+  }
+  return { origin: url.origin };
+}
+
+/**
+ * Parse an operator's comma-separated list of APP routes (`UX_SWEEP_ROUTES`)
+ * into app-relative paths, or say why it cannot be used.
+ *
+ * Each entry must be app-relative: a leading `/`, and not `//` (which a
+ * browser reads as another host). The sweep navigates `${SITE}${route}`, so
+ * `borrow` became `https://app.example.comborrow` — not an app route. The
+ * failure was recorded and the sweep could still exit 0, reporting PASS
+ * having gathered none of the evidence asked for (#1633). An empty list is
+ * refused the same way (Codex #1621 r6).
+ *
+ * @returns {{ routes: string[] } | { error: string }}
+ */
+export function parseAppRouteList(value) {
+  const routes = String(value ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (routes.length === 0) return { error: 'it selects no routes' };
+  const bad = routes.filter((r) => !r.startsWith('/') || r.startsWith('//'));
+  if (bad.length) {
+    return { error: `not app-relative (each must start with a single "/"): ${bad.map((r) => JSON.stringify(r)).join(', ')}` };
+  }
+  return { routes };
+}
+
+/**
+ * The indexer Worker origin a drive probes: `INDEXER_ORIGIN`, or the
+ * production Worker. An unusable override is BLOCKED at once, where exiting
+ * is free — the probes it feeds could never reach a server, so the drive
+ * would otherwise report an unusable CONFIG as a product FAIL (Codex #1621
+ * r10).
+ */
+export function indexerOrigin() {
+  const raw = process.env.INDEXER_ORIGIN ?? 'https://indexer.vaipakam.com';
+  const parsed = parseOrigin(raw);
+  if ('error' in parsed) {
+    blockedSync(
+      `INDEXER_ORIGIN=${JSON.stringify(raw)} is not a usable origin (${parsed.error})` +
+        ' — the indexer probes this drive asserts against could never be reached.',
+    );
+  }
+  return parsed.origin;
 }
 
 // NOT `requireSiteUrl()` at module scope: pure helpers here are imported
@@ -1513,6 +1803,14 @@ export async function launch({
       return path.join(dir, `${name}.png`);
     },
     done: async () => {
+      // Let in-flight page RPC land BEFORE the close (#1633 r5), exactly as
+      // `blocked()` does: closing cuts every body read off, so a malformed
+      // request still being refused would be lost, and a drive that closes
+      // and then exits `blocked()` would exit BLOCKED over a finding. Doing
+      // it here rather than asking every caller to order its exits makes
+      // the close itself safe; the drain is bounded and immediate when
+      // nothing is in flight.
+      await drainWatchers();
       // Only the CLOSE may reject: a caller settles a run on whether the
       // browser closed, and a temp-dir cleanup error is not that (#2505 r51).
       await ctx.close();

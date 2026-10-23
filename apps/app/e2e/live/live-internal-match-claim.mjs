@@ -66,6 +66,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatUnits, parseAbi, parseEventLogs } from 'viem';
 import {
+  exitWithVerdict,
   addressOf,
   blocked,
   blockedSync,
@@ -234,8 +235,11 @@ const MANIFEST = createManifest({
     ...(SUBMIT_CLAIM ? CLAIM_ONLY : []),
     {
       id: 'pageHealth',
-      claim: 'the page threw no uncaught error',
-      checks: { noPageErrors: 'no PAGEERROR in the console capture' },
+      claim: 'the page threw no uncaught error and sent no malformed chain request',
+      checks: {
+        noPageErrors: 'no PAGEERROR in the console capture',
+        noMalformedRpc: 'no chain request the page sent was refused as malformed by a reachable provider (#1633)',
+      },
     },
     {
       id: 'writeDiscipline',
@@ -490,42 +494,11 @@ const rpc = watchPageRpc(page);
 // non-read method sent on it is OBSERVED here, not prevented, and counts
 // as a violation exactly like a refused request.
 const { wsViolations } = attachLedger(page, createReadLedger({}), READ_METHODS);
-// JSON-RPC answers that arrive on the page's WebSockets (wagmi prefers a
-// configured WSS transport), counted in the same window as `rpc`'s HTTP
-// answers so a socket-served page is never read as "answered nothing".
-// Correlated like `watchPageRpc`: an answer counts only when it answers a
-// chain READ (a READ_METHODS method — so WalletConnect's relay protocol
-// never counts) sent on the same socket in the CURRENT window.
-let wsAnswers = 0;
-let wsGeneration = 0;
-page.on('websocket', (ws) => {
-  const sent = new Map(); // JSON-RPC id -> generation it was sent in
-  const each = (payload, fn) => {
-    try {
-      for (const m of [].concat(JSON.parse(String(payload)))) if (m) fn(m);
-    } catch {
-      /* not JSON-RPC */
-    }
-  };
-  ws.on('framesent', (f) =>
-    each(f.payload, (m) => {
-      if (m.id !== undefined && READ_METHODS.has(m.method)) sent.set(m.id, wsGeneration);
-    }),
-  );
-  ws.on('framereceived', (f) =>
-    each(f.payload, (m) => {
-      if (m.id === undefined || !('result' in m || 'error' in m)) return;
-      if (sent.get(m.id) === wsGeneration) wsAnswers++;
-      sent.delete(m.id);
-    }),
-  );
-});
-const resetWindow = () => {
-  rpc.reset();
-  wsAnswers = 0;
-  wsGeneration++;
-};
-const answered = async () => (await rpc.settled()) + wsAnswers;
+// `watchPageRpc` counts the page's chain answers over HTTP AND WebSocket
+// itself, so a socket-served page is never read as "answered nothing"; this
+// drive carried its own socket counter beside it until #1633.
+const resetWindow = () => rpc.reset();
+const answered = () => rpc.settled();
 /** Wait for /claims to leave its loading state. Returns 'available',
  *  'unavailable' (the list's own error state), 'disconnected' (the
  *  connect-wallet state, which carries no rows either and so must never
@@ -555,11 +528,12 @@ const violationsSoFar = () => [
 ];
 /** Pre-claim FAILs — a check that failed, a request the wallet gate or the
  *  egress guard already refused (an early claim attempt, a chain switch, a
- *  page write), or an uncaught page exception (a page that threw is not one
- *  to sign from, however much of its DOM survived). The claim is one-shot,
+ *  page write), an uncaught page exception (a page that threw is not one
+ *  to sign from, however much of its DOM survived), or a chain request a
+ *  reachable provider refused as malformed (#1633). The claim is one-shot,
  *  so it never runs after one. */
 const pageErrors = () => consoleErrors.filter((e) => e.startsWith('PAGEERROR'));
-const preClaimFails = () => failedCount() + violationsSoFar().length + pageErrors().length;
+const preClaimFails = () => failedCount() + violationsSoFar().length + pageErrors().length + rpc.sessionFaults().length;
 /**
  * BLOCKED for a precondition met before any write, unless a failure was
  * already recorded, which stands: the drive then stops there and the verdict
@@ -956,6 +930,7 @@ const settled = await settleRun({
   closeBrowser: done,
   judgeLedgers: () => {
     check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
+    check('pageHealth', 'noMalformedRpc', 'no malformed chain request', rpc.sessionFaults().length === 0, rpc.sessionFaults().join(' | ').slice(0, 300));
     // Every refused request, bar the recognised Cloudflare edge beacon. CLAIM
     // session: the plan's refusals, the chain pin's (recorded at the wallet
     // boundary before the gate is asked), and any page write the egress guard
@@ -1012,4 +987,6 @@ const VERDICT = runVerdict({
   },
 });
 console.log(VERDICT.line);
-process.exit(VERDICT.exit);
+// The shared exit (#1633 r6): the page-health check above already counts
+// every fault recorded by the close; this applies the same rule once more.
+await exitWithVerdict(VERDICT.exit);

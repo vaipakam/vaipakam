@@ -27,7 +27,7 @@ import {
   RewardAggregatorFacetABI,
   InteractionRewardsLensFacetABI,
 } from '@vaipakam/contracts/abis';
-import type { ChainConfig, Env } from './env';
+import type { ChainConfig, Env, PlainVarKey } from './env';
 import type { PassTick } from './passSchedule';
 import { MULTICALL3_ADDRESS } from './multicall3';
 import { getChainConfigs } from './env';
@@ -185,8 +185,8 @@ export function planRemitBatch(
   return { batch, total, deferred };
 }
 
-function readNumber(env: Env, key: string, fallback: number): number {
-  const raw = (env as unknown as Record<string, string | undefined>)[key];
+function readNumber(env: Env, key: PlainVarKey, fallback: number): number {
+  const raw = env[key];
   if (!raw) return fallback;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
@@ -197,8 +197,8 @@ function readNumber(env: Env, key: string, fallback: number): number {
  * `<mantissa>e<exp>` notation used in the README/wrangler docs (e.g. `50000e18`
  * — `BigInt()` alone throws on that). Non-positive / unparseable → fallback.
  */
-function readBigint(env: Env, key: string, fallback: bigint): bigint {
-  const raw = (env as unknown as Record<string, string | undefined>)[key]?.trim();
+function readBigint(env: Env, key: PlainVarKey, fallback: bigint): bigint {
+  const raw = env[key]?.trim();
   if (!raw) return fallback;
   try {
     const m = raw.match(/^(\d+)e(\d+)$/i);

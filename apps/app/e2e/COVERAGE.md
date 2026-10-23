@@ -341,13 +341,48 @@ Which failures are preconditions, driver by driver:
   things that look right and are not — a session-wide counter (the
   page-load reads disarm it, so an endpoint that dies exactly when the
   assertion's reads go out still reports FAIL), and counting only JSON-RPC
-  `result` (a 200 carrying an `error` still proves the endpoint answered,
-  and for a revert-driven assertion that error IS the expected result).
+  `result` (a revert still proves the endpoint answered, and for a
+  revert-driven assertion it IS the expected result).
   A third, subtler one: window membership has to be stamped when the
   REQUEST starts, because clearing the tally on reset does nothing about a
   stale request whose response lands afterwards and increments it again.
-  All three are pinned by `e2e/live/watchPageRpc.test.mjs` — this helper
-  was wrong three times, each time in a way that read as correct, so it is
+  **Reachability is not "HTTP 200" (#1633).** What counts as an answer is
+  the verdict of the repo's ONE JSON-RPC response classifier
+  (`classifyRpcResponse`, `rpc-verdict.mjs`), over HTTP and WebSocket: a
+  provider that answers 400 with a well-formed `-32602` has answered, and
+  the fault is the page's. Counting only status 200 turned that into
+  BLOCKED, the one misclassification that HIDES a product defect.
+  Counting it as an answer is right for the BLOCKED question and wrong as
+  the end of it: a drive whose PASS rests on an ABSENCE read a refused
+  recompute as "answered" and passed. So `sessionFaults()` keeps every such
+  call for the whole session, whatever window it fell in, and EVERY drive
+  that attaches the helper FAILS on any of them: each ends through the
+  shared `exitWithVerdict`, which drains once more and turns a PASS or
+  BLOCKED code into FAIL over any recorded fault, so a refusal landing only
+  at the close is not lost to a drive's earlier snapshot (a structural test
+  holds each drive to that exit and to no other non-FAIL exit). The shared BLOCKED exits (`blocked`,
+  `blockedSync`) honour the same precedence by themselves: once any
+  watcher has recorded such a request they exit FAIL, naming it, so no
+  drive's BLOCKED branch can hide one; `blocked()` first waits (bounded)
+  for the page's in-flight chain answers, and a body still parsing when a
+  window reset is still awaited, so a fault cannot lose the race to the
+  exit. `launch()`'s `done()` waits the same way before ITS close, so a
+  drive that closes and then exits BLOCKED loses nothing either; the
+  ordering of a drive's exits is not load-bearing. A request whose JSON-RPC envelope is itself malformed (a wrong
+  `jsonrpc`, scalar `params`, an id that is not a string, number or null)
+  is a client fault too, judged from the request like a reused id. The RPC audit's call ledger takes the same
+  verdicts, so a page whose requests a reachable provider refuses as
+  malformed FAILS there too, and so does the sanctions-banner drive's
+  read ledger (`pageSanctionsReads.mjs`): a flag read refused as malformed
+  is a FAIL ahead of every banner state, never an RPC outage. On a WebSocket, calls are matched to answers
+  by ONE correlator (`createSocketCalls`) shared by both observers: an id
+  reused while its call is still waiting, in a frame or across frames, is
+  the same duplicate-id fault as in an HTTP batch, never two answers. Each
+  socket message is recorded on its own, so a settlement touches only the
+  message it belongs to, and a recorded fault is never overwritten by a
+  later answer. All
+  of this is pinned by `e2e/live/watchPageRpc.test.mjs` — this helper was
+  wrong seven times, each time in a way that read as correct, so it is
   unit-tested rather than trusted.
 - **Cleanup capacity, for any drive that MUTATES shared chain state** —
   reserved BEFORE the mutation, not discovered after it, and read at the
@@ -371,6 +406,33 @@ Which failures are preconditions, driver by driver:
   never block a run that would otherwise pass.
 - **Config that selects nothing** — a typo'd session or locale selector
   gathers no evidence, so the surfaces it names are still unswept.
+- **Config that selects the WRONG thing** (#1633) — an operator input the
+  drive would act on in a way the operator did not mean. Parse it to what
+  the drive needs and refuse what it cannot mean: `INDEXER_ORIGIN` is
+  reduced to a bare origin (`parseOrigin` — a trailing slash used to
+  produce `//offers/stats`, a 404 read as a product FAIL), every
+  `UX_SWEEP_ROUTES` entry must be app-relative (`parseAppRouteList` —
+  `borrow` was navigated as `${SITE}borrow`), an operator-chosen
+  `DESK_I18N_LOCALES` code must be one the app ships translated
+  (`src/i18n/translatedLocales.json` — `pt` renders English by design), and
+  a malformed wallet-file entry is a credential setup failure
+  (`normaliseWallets`), never a raw `TypeError`.
+- **A fixture the page's own gate reads** (#1633) — the kill-switch
+  regression's review needs the lender to HOLD the amount it posts, and an
+  underfunded lender keeps the submit gate shut while the RPC answers
+  normally, so the RPC gate cannot tell it from the kill switch. Read the
+  fixture from the chain before driving, and report it instead of a FAIL.
+
+**Evidence precedence holds to the END of a drive** (#1633). A drive that
+has judged surfaces must not let a later precondition discard them:
+`live-recover.mjs` re-reads the sanctions oracle without `precondition()`
+(which exits on the spot) and treats the page's own "couldn't check" state
+as unresolved, `live-risk-access.mjs` classifies a transport failure of its
+normalization write as BLOCKED only after its cleanup and only when nothing
+else failed, and `live-ux-sweep.mjs` records a later session's failed entry
+as a finding and still closes that session. A screenshot taken after an
+assertion passed is evidence, not the assertion, so a failed capture is
+logged rather than turned into a FAIL.
 
 Two failure modes to avoid when drawing that line. A precondition placed
 AFTER the drive has mutated state exits past the cleanup boundary and can
@@ -462,7 +524,7 @@ answer from the node, that has to reach the same BLOCKED verdict.
 | Support ticket capture — widget contract (#1040 phase 1) | CI-Anvil | `tests/14-support-ticket.spec.ts` — second dev server with `VITE_AGENT_ORIGIN` pointed at a spec-local stub speaking the Worker's HTTP shape: consented send carries the REDACTED diagnostics block + returns a ticket number + ticket-carrying mailto; no consent → no diagnostics in the POST; 503 → plain-words failure + mailto fallback; control on the standard build shows the honest not-configured state. The Worker handler itself is pinned by apps/agent vitest (`test/supportTicket.test.ts`: validation, durable-row-before-notify, 503 on D1 failure, ops-bot skip). | — |
 | Support ticket capture — deployed Worker + D1 + ops-Telegram (#1040 phase 1) | Live-only | `live/live-support-ticket.mjs` — sends one clearly-marked probe ticket against the real Worker; PASSES on either honest terminal state (ticket number + ticket-carrying mailto when provisioned, plain-words unavailable + mailto before migration 0028 / secrets land) and FAILS on any dishonest state (silent success, failure without the mail escape, disclosure missing page/network). Ops-bot delivery is eyeballed in the operator chat during the post-deploy review (the driver can't read Telegram). | Needs the deployed agent Worker (real D1 migration, real ops-bot secrets) — the stub tier above deliberately fakes exactly these. |
 | ENS lookups — explicit mainnet endpoints, session-static, never the library default | CI-Anvil | `tests/15-rpc-diet.spec.ts` — whole-run assertion that zero requests reach `eth.merkle.io` (viem's implicit chain-1 default; a hit means the ENS transport regressed to `http(undefined)`). Endpoint fallback order and the once-per-session cache are not separately CI-assertable (no mainnet on the fork harness); the always-safe hex fallback is exercised implicitly on every page that renders addresses. | Not separately live-driven — the live RPC audit's budget would catch an ENS lookup storm, and the failure mode is cosmetic (hex fallback). |
-| RPC diet — no streamed chain polling (parked book visitor) | CI-Anvil | `tests/15-rpc-diet.spec.ts` — counts JSON-RPC methods over a 15s steady-state window on `/offers` with no WS configured (the harness's and production's posture): `eth_blockNumber` ≤ 2 and `eth_getLogs` ≤ 2 (a watcher regression logs ~12+), and the book must still render. Idle backoff and the WS-mode push path are not CI-assertable (no interaction simulation over minutes; no WS endpoint on the fork harness). | `live/live-rpc-audit.mjs` — 60s steady-state tally against the deployed site with a hard call budget; run post-deploy and in the release batch. |
+| RPC diet — no streamed chain polling (parked book visitor) | CI-Anvil | `tests/15-rpc-diet.spec.ts` — counts JSON-RPC methods over a 15s steady-state window on `/offers` with no WS configured (the harness's and production's posture): `eth_blockNumber` ≤ 2 and `eth_getLogs` ≤ 2 (a watcher regression logs ~12+), and the book must still render. Idle backoff and the WS-mode push path are not CI-assertable (no interaction simulation over minutes; no WS endpoint on the fork harness). | `live/live-rpc-audit.mjs` — 60s steady-state tally against the deployed site, as a keyless (disconnected) visitor on a throwaway browser profile, with a hard call budget; run post-deploy and in the release batch. The book's catch-up scan issues more `eth_getLogs` the further the indexer lags, by design, so the budget charges each run of windows as the fewest SCANS that produce it (one per 20 windows, the app's skip cap) and holds every window to the app's width rule (`catchUpTally.mjs`, shared with `src/data/bookCatchUpRules.json`): a stalled indexer no longer reads as an RPC regression, and a page that scans too often or in oversized windows still fails. Calls are observed over HTTP and WebSocket alike. Retries are not inferred: every attempt counts, and a budget FAILS only when it is still over once each failed attempt is discounted; over the budget but within that floor is UNRESOLVED (BLOCKED). A run longer than one scan may be is UNRESOLVED (BLOCKED), since block numbers cannot separate it from adjacent scans, and a write the read-only session had to abort, or one sent on a socket, is a FAIL (#2097). |
 | Asset picker — faucet test tokens + SelectMenu dropdown | CI-Anvil | `tests/16-asset-picker.spec.ts` — on the fork (Base Sepolia's testnetMocks): all five faucet ERC-20s listed as rows with the "Faucet test token" badge, selecting one closes the menu and shows the live-resolved symbol on the control, and the paste-an-address escape hatch still opens and accepts input. Specs 02/03/08 keep exercising picker-driven flows end-to-end through the shared `chooseMenuValue` helper. Keyboard/AT semantics are code-reviewed (ARIA combobox pattern), not separately spec-asserted. | — |
 | Rate Desk phase 1 (#1129) — /desk route: advanced-only nav (URL-reachable in Basic), market header (pair dropdown + custom-pair branch + tenor chips + quoted mid/spread), rate ladder (own-order highlight, top-of-book taker links, honest empty state), order ticket (GTC/Partial lend post), open orders (cancel + first amend UI, #193) | CI-Anvil + live | `tests/17-rate-desk.spec.ts` — book/ticket/amend/cancel per the #1129 DoD: nav gating both modes; a fresh (pair, tenor) market (tenor verified live-empty on the fork, so the inherited book can't pad the ladder) renders the honest empty state, then a direct-seeded two-sided book renders exact ask/bid rates + remaining sizes + own-highlight + the bid-side taker link, with the header quoting mid/spread; the ticket posts a GTC/Partial lend order (on-chain terms asserted) that lands on the ladder as own and under Open orders; amend reprices it via ONE `modifyOffer` (same offerId, live-seeded form) reflected in book + panel; cancel (past the 300 s cooldown via time travel) clears it from both while the seeded bid stays as the non-blank control. The stub gained `/offers/markets` + market-scoped `/offers/active` for this; the tape (`/loans/recent`) is deliberately still not stubbed (nothing asserts on it — it renders its honest unavailable state; the phase-2 routes cover the cross-status reads specs DO assert). The pure `buildLadder` math still has no unit test. Live half: `live/live-rate-desk.mjs` — the same journey against the deployed site + the real Base Sepolia Diamond with NO time travel: custom-pair market load at a PREFERRED live-empty tenor (`pickTenor` falls back to the least-populated bucket when every preferred WETH/tLIQ tenor already has live offers; the step record + run log state which mode the run used, and the book assert accepts either the honest empty copy or a populated ladder), post 0.002 WETH GTC/Partial at a distinctive rate, on-chain terms verified via viem, own-ladder + Open-orders rows, cooldown-gated Cancel (the driver attempts to capture the countdown copy — captured only when the post→verify stretch finishes inside the 300 s window; if the window has already elapsed by the UI check the step records OBSERVED instead), amend-in-place (same offer id on-chain), the REAL 300 s cooldown waited out, cancel + escrow refund verified on-chain; the indexer-backed surfaces are ASSERTED healthy — the markets summary must auto-select a real market (the degraded couldn't-load copy fails the drive) and the tape must render fills or the honest “No fills yet for this market.” empty copy (the unavailable copy fails the drive). | Live half exists because the fork can't prove the deployed build, the real RPC, or the real cancel-cooldown clock. First run (2026-07-10, post-#1134 deploy) passed with the indexer's market routes degraded (D1 migrations 0029–0031 not yet applied): the drive recorded the honest markets-summary + tape unavailable copy — the chain-path book was unaffected. Gap closed same day: after the operator applied migrations 0029–0031, the re-drive passed with real indexer data — the markets dropdown listed live markets and the tape rendered the true market-scoped empty state (“No fills yet for this market.”), with the full post→amend→cancel lifecycle green again. The gap is genuinely closed: per Codex #1138 round 2 the driver now ASSERTS both indexer-backed surfaces — a degraded markets summary or tape fails the run — with the 2026-07-10 post-migration runs as the passing baseline, so an indexer regression fails the next drive instead of being observed past. The driver's on-chain asserts were hardened per Codex #1138 round 1 (assets/amounts in the create check, escrow balance round-trip, end-paged offer index, duplicate-create detection, amend-preserves-terms full-struct compare, exactly-one-OfferModified event count). Round 4 made the cleanup sweep deterministic: before the final sweep the driver waits for the lender's pending nonce to settle to latest (the injected wallet is the account's only signer, so equal nonces prove no create is still in flight; instant when nothing is pending, CLEANUP-UNKNOWN red on ~120 s timeout), cross-checks the offer-index delta against an OfferCreated-log count for the creator, and — if one Post click ever produced more than one create — exits red even after successfully cancelling the duplicates, so a duplicate-post regression can't be masked by a clean sweep. |
 | Rate Desk phase 2 (#1130) — executed-rate chart (lazy-loaded lightweight-charts: §5.3 honesty rules — candles only where fills exist, sparse-tape step-line + markers below 10 fills, fill-count+principal tooltip, dashed "quoted mid" overlay, last-fill header line instead of a %-change ticker; mobile Book\|Chart toggle) + History bottom tab (wallet's permanent desk activity via `/loans/by-participant`, all statuses, load-more pagination) | CI-Anvil + unit + live | `tests/18-rate-desk-chart.spec.ts`, on the stub's two new fork-hydrated routes (`/loans/rate-candles` via a cross-status loan walk mirroring the worker's fold; `/loans/by-participant` from the chain's own both-sides all-status loan index — participation = the loan's current parties, a documented fork-scale simplification since the fork has no position-NFT-transfer history). Sparse-tape honesty: a market verified BOTH offer-free and fill-free first renders the honest-empty chart (empty copy, NO series canvas, "no fills yet" header), then three direct-write fills a fork-day apart render sparse mode — the sparse note with the exact fill count, the last-fill header line (`last fill: 9.33% · …`, rate half pinned), the quoted-mid "resting quote" hint against a reseeded two-sided book, and the TradingView attribution link; the stub's fold is wire-shape-probed directly (three one-fill buckets, exact closes + BigInt-string principals). History: both seeded loans list under the History tab with the Lender role badge, "Due in …" status, and `/positions/<id>` deep links; after a direct-write full repay the row PERSISTS with the Repaid badge (the all-status gap the route exists to close) while the other loan stays live as the control. Canvas pixels aren't asserted — the §5.3 decision math stays unit-tested in `src/lib/rateChart.test.ts` (vitest gate), and the spec pins the DOM the honesty rules hang off. The layout assumption is asserted as a guard: the desk's breakpoints are CONTAINER queries (the shell sidebar eats ~350px), so the 1280px fixture viewport renders the ~810px mid-tier layout — chart full-width above book + ticket, mobile Book\|Chart toggle hidden — keeping every panel at full assertable width. | Live half SHIPPED in `live/live-rate-desk.mjs` (phases 1+2): step 2b asserts the chart card healthy (drawn series or either honest empty copy passes, the unavailable copy fails; interval/range chips + TradingView attribution asserted; `/loans/rate-candles` wire-probed with the UI's default 1d×30d params) and step 7b asserts the History tab healthy inside the cooldown window (rows or honest empty pass, unavailable fails; `/loans/by-participant` wire-probed with counts + roles, and UI emptiness must AGREE with wire emptiness). First production run 2026-07-10 post-migration-0032: all steps PASS — chart honest market-empty copy + clean wire probe on the fill-free driven market, History listing 7 backfilled all-status rows with Lender badges (wire agreeing), full offer #37 lifecycle green. Real NFT-transfer participants (which the fork can't produce) remain covered only by the worker's scratch-SQLite tests — extend the drive if a live position sale ever becomes part of a review. |

@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeFunctionData, encodeFunctionResult, multicall3Abi } from 'viem';
 import { attachLedger, createReadLedger, isRefusedSocketMethod, watchedRead } from './pageSanctionsReads.mjs';
+import { createCallLedger } from './catchUpTally.mjs';
 
 const DIAMOND = '0xd89fd7F787e4415460b23891E97570a4881fb995';
 const OTHER = '0x2E4033Ae1200CC14D33E09021C4098d12b54341c';
@@ -84,6 +85,47 @@ describe('page sanctions read ledger', () => {
     expect(l.judge('flag', 0, true)).toEqual({ state: 'unanswered', attempts: 3 });
   });
 
+  it('a body behind a non-2xx status is unanswered: the page never received it as a result (#1633)', () => {
+    const l = ledgerAt([100, 101]);
+    const a = l.onRequest(JSON.stringify(plain(1, DIAMOND, flagRead.calldata)));
+    l.onResponse(a, JSON.stringify({ id: 1, result: bool(true) }), { status: 503 });
+    expect(l.judge('flag', 0, true)).toEqual({ state: 'unanswered', attempts: 1 });
+  });
+
+  it('a read the provider refused as malformed is a fault, ahead of every other state (#1633 r5)', () => {
+    // -32602 at 200 and at 400: the provider reached and refused the request.
+    for (const status of [200, 400]) {
+      const l = ledgerAt([100, 101, 102, 103]);
+      const a = l.onRequest(JSON.stringify(plain(1, DIAMOND, flagRead.calldata)));
+      l.onResponse(a, JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'bad' } }), { status });
+      // a later read that agrees does not make the malformed one right
+      const b = l.onRequest(JSON.stringify(plain(2, DIAMOND, flagRead.calldata)));
+      l.onResponse(b, JSON.stringify({ jsonrpc: '2.0', id: 2, result: bool(true) }));
+      expect(l.judge('flag', 0, true)).toEqual({ state: 'fault', why: 'json-rpc -32602' });
+      expect(l.faults()).toEqual([{ kind: 'flag', why: 'json-rpc -32602' }]);
+    }
+  });
+
+  it('a malformed envelope or a reused batch id is a fault, not an outage (#1633 r5)', () => {
+    const l = ledgerAt([100, 101, 102, 103]);
+    const bad = { ...plain(1, DIAMOND, flagRead.calldata), jsonrpc: '1.0' };
+    const a = l.onRequest(JSON.stringify(bad));
+    l.onResponse(a, JSON.stringify({ jsonrpc: '2.0', id: 1, result: bool(true) }));
+    expect(l.judge('flag', 0, true).state).toBe('fault');
+    const m = ledgerAt([100, 101]);
+    const b = m.onRequest(JSON.stringify([plain(5, DIAMOND, flagRead.calldata), plain(5, OTHER, '0x')]));
+    m.onResponse(b, JSON.stringify([{ jsonrpc: '2.0', id: 5, result: bool(true) }]));
+    expect(m.judge('flag', 0, true)).toEqual({ state: 'fault', why: expect.stringMatching(/duplicate/) });
+  });
+
+  it('a fault answered after `until` is not yet known at `until`', () => {
+    const l = ledgerAt([100, 200]);
+    const a = l.onRequest(JSON.stringify(plain(1, DIAMOND, flagRead.calldata)));
+    l.onResponse(a, JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'bad' } }));
+    expect(l.judge('flag', 0, true, 150)).toEqual({ state: 'unanswered', attempts: 1 });
+    expect(l.judge('flag', 0, true).state).toBe('fault');
+  });
+
   it('matches answers to requests by id within a batch', () => {
     const l = ledgerAt([100]);
     const p = l.onRequest(JSON.stringify([plain(1, OTHER, '0x'), plain(2, DIAMOND, flagRead.calldata)]));
@@ -133,6 +175,114 @@ describe('page sanctions read ledger', () => {
     const body = aggregate(7, [[DIAMOND, flagRead.calldata]], IMPOSTOR);
     expect(l.onRequest(JSON.stringify(body))).toBeNull();
     expect(l.judge('flag', 0, true)).toEqual({ state: 'none' });
+  });
+});
+
+describe('attachLedger hands the ledger the status and the request (#1633)', () => {
+  /** A ledger that records what it was told, and a fake page with one HTTP request. */
+  async function fedOnce({ status, body, request }) {
+    const seen = [];
+    const ledger = {
+      onRequest: () => new Map([[1, []]]),
+      onResponse: (pending, text, meta) => seen.push({ text, meta }),
+    };
+    const handlers = {};
+    attachLedger({ on: (ev, fn) => (handlers[ev] = fn) }, ledger, new Set());
+    const res = status === null ? null : { status: () => status, text: async () => body };
+    handlers.request({ method: () => 'POST', postData: () => request, response: async () => res });
+    await new Promise((r) => setTimeout(r, 0));
+    return seen;
+  }
+
+  it('passes a non-2xx body on, with its status, instead of dropping it', async () => {
+    const request = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [] });
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'invalid params' } });
+    expect(await fedOnce({ status: 400, body, request })).toEqual([{ text: body, meta: { status: 400, requestBody: request } }]);
+  });
+
+  it('reports no response as no body and no status', async () => {
+    expect(await fedOnce({ status: null, body: null, request: '{}' })).toEqual([{ text: null, meta: { status: null } }]);
+  });
+});
+
+describe('attachLedger on a WebSocket (#1633 r1)', () => {
+  /** A fake page that opens one socket; returns its frame handlers. */
+  function socketFor(ledger) {
+    const handlers = {};
+    attachLedger({ on: (ev, fn) => (handlers[ev] = fn) }, ledger, new Set(['eth_call', 'eth_getLogs', 'eth_blockNumber']));
+    const ws = {};
+    handlers.websocket({ url: () => 'wss://rpc.example/ws', on: (ev, fn) => (ws[ev] = fn) });
+    return {
+      send: (m) => ws.framesent({ payload: JSON.stringify(m) }),
+      receive: (m) => ws.framereceived({ payload: JSON.stringify(m) }),
+    };
+  }
+  const c = (id, method) => ({ jsonrpc: '2.0', id, method, params: [] });
+
+  it('hands a reused id to the ledger as the duplicate it is, inside a frame or across frames', () => {
+    const l = createCallLedger();
+    const ws = socketFor(l);
+    ws.send([c(1, 'eth_call'), c(1, 'eth_getLogs')]);
+    ws.send(c(2, 'eth_call'));
+    ws.send(c(2, 'eth_blockNumber'));
+    ws.receive({ jsonrpc: '2.0', id: 1, result: '0x' });
+    ws.receive({ jsonrpc: '2.0', id: 2, result: '0x' });
+    expect(l.calls.map((x) => [x.method, x.outcome])).toEqual([
+      ['eth_call', 'client-fault'],
+      ['eth_getLogs', 'client-fault'],
+      ['eth_call', 'client-fault'],
+      ['eth_blockNumber', 'client-fault'],
+    ]);
+  });
+
+  it('hands a malformed envelope to the ledger as a client fault when it is sent (#1633 r4)', () => {
+    const l = createCallLedger();
+    const ws = socketFor(l);
+    ws.send({ jsonrpc: '1.0', method: 'eth_call', params: [] });
+    ws.send({ jsonrpc: '2.0', id: { n: 2 }, method: 'eth_getLogs', params: [] });
+    expect(l.calls.map((x) => [x.method, x.outcome])).toEqual([
+      ['eth_call', 'client-fault'],
+      ['eth_getLogs', 'client-fault'],
+    ]);
+  });
+
+  it('the read ledger records a socket read sent under a reused id as a fault (#1633 r5)', () => {
+    const l = createReadLedger({ flag: flagRead });
+    const ws = socketFor(l);
+    ws.send(plain(3, DIAMOND, flagRead.calldata));
+    ws.send(plain(3, DIAMOND, flagRead.calldata));
+    ws.receive({ jsonrpc: '2.0', id: 3, result: bool(true) });
+    expect(l.judge('flag', 0, true).state).toBe('fault');
+    expect(l.faults().length).toBe(2);
+  });
+
+  it('a later reply never erases a fault: a malformed and a well-formed message sharing an id (#1633 r7)', () => {
+    const l = createCallLedger();
+    const ws = socketFor(l);
+    ws.send([{ jsonrpc: '1.0', id: 1, method: 'eth_blockNumber', params: [] }, c(1, 'eth_blockNumber')]);
+    ws.receive({ jsonrpc: '2.0', id: 1, result: '0x10' });
+    expect(l.calls.map((x) => [x.method, x.outcome])).toEqual([
+      ['eth_blockNumber', 'client-fault'],
+      ['eth_blockNumber', 'ok'],
+    ]);
+    const r = createReadLedger({ flag: flagRead });
+    const rs = socketFor(r);
+    rs.send([{ ...plain(4, DIAMOND, flagRead.calldata), jsonrpc: '1.0' }, plain(4, DIAMOND, flagRead.calldata)]);
+    rs.receive({ jsonrpc: '2.0', id: 4, result: bool(true) });
+    expect(r.judge('flag', 0, true).state).toBe('fault');
+    expect(r.faults()).toEqual([{ kind: 'flag', why: 'malformed json-rpc envelope' }]);
+  });
+
+  it('settles each distinct call against its own answer', () => {
+    const l = createCallLedger();
+    const ws = socketFor(l);
+    ws.send([c(1, 'eth_call'), c(2, 'eth_blockNumber')]);
+    ws.receive({ jsonrpc: '2.0', id: 2, result: '0x10' });
+    ws.receive({ jsonrpc: '2.0', id: 1, error: { code: -32005, message: 'limit' } });
+    expect(l.calls.map((x) => [x.method, x.outcome])).toEqual([
+      ['eth_call', 'failed'],
+      ['eth_blockNumber', 'ok'],
+    ]);
   });
 });
 

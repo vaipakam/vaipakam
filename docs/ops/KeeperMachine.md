@@ -352,7 +352,11 @@ journalctl -u vaipakam-keeper -f
    `REWARD_DELIVERY_PROOF_ENABLED` (`deliveryProof`),
    `REWARD_SANCTIONS_KEEPER_ENABLED` (`rewardSanctionsHold`, hourly) and
    `REWARD_HORIZON_HEARTBEAT_ENABLED` (`rewardHorizonHeartbeat`, hourly at :44) and
-   `REWARD_DAY_CLOSE_ENABLED` (`rewardDayClose`, every 15 minutes from :10). Arm one at a time and
+   `REWARD_DAY_CLOSE_ENABLED` (`rewardDayClose`, every 15 minutes from :10), and
+   `DISCOUNT_PATH_CHAIN_IDS` (a list of chain ids, not `true`: the flash-loan
+   branch of the liquidator, armed per chain by
+   [`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md) only; the
+   keeper states how it read it in a `discount path:` line at every start). Arm one at a time and
    validate that pass's own cadence: its `<pass> done in …` line on the
    minutes `src/passSchedule.ts` gives it, with no error line. A pass left
    unarmed logs that it skipped, so it is never silently off. Leaving the

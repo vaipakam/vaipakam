@@ -8,13 +8,13 @@
 #   workspaces             (required, ~2-3 min) ┬─ cheap fail-fast
 #   analyze-jstypescript   (informational, ~2 min) ┘  gates
 #     ↓
-#   contracts-fast (required, ~5 min cold)  ← runs FOUNDRY_PROFILE=cifast:
+#   contracts-fast (required, ~43 min cold) ← runs FOUNDRY_PROFILE=cifast:
 #       ↓                                     src + script + test/deploy/**
 #       │                                     + test/scenarios/** + setup +
 #       │                                     mocks. Compile-only sample of
 #       │                                     test/ — not the full regression.
-#       │                                     ~3.2 GB peak RSS, safely under
-#       │                                     the 16 GB ubuntu-latest ceiling.
+#       │                                     Peak ~15.8 GB of the runner's
+#       │                                     16 GB (#2603), during step 2.
 #       │                                     Includes deploy-sanity tests
 #       │                                     + positive-flow scenarios at
 #       │                                     runtime.
@@ -56,7 +56,7 @@
 #                     — forge build under FOUNDRY_PROFILE=cifast + deploy-
 #                     sanity suite (`test/deploy/*`) + positive-flow
 #                     scenarios + ABI-in-sync check + shell-script lint.
-#                     ~5 min cold / ~3.2 GB peak RSS. Catches deploy-
+#                     ~43 min cold, ~15.8 GB peak (#2603). Catches deploy-
 #                     blocker regression classes (#66 size, #71 selector
 #                     coverage, #72 ownership, #75 ABI, #69 facet-count)
 #                     plus the positive-flow happy paths.
@@ -457,8 +457,8 @@ jobs:
   #
   #   detect-changes
   #     ↓
-  #   contracts-fast (FOUNDRY_PROFILE=cifast, ~5 min cold, ~3.2 GB
-  #                    peak RSS, required gate)
+  #   contracts-fast (FOUNDRY_PROFILE=cifast, ~43 min cold, ~15.8 GB
+  #                    peak, required gate; #2603)
   #     ↓ (cache saved at job end → slither restores; the needs: edge
   #     ↓  to build-docs is ordering-only)
   #   ├── build-docs (informational; self-contained under quick — #1493)
@@ -543,11 +543,21 @@ jobs:
     # headroom for continued growth AND is cheaper than the timeout-then-
     # rerun cycle. RSS is unchanged (this is a wall-clock bound, not memory),
     # so still well under the OOM ceiling. Revisit if it approaches 75 (bumped 25 -> 75 for cold-runner + reclaim headroom, 2026-07-15).
+    #
+    # Measured cold on this runner, 2026-10-23, Foundry v1.8.3 (#2603, run
+    # 39985792818): 43 min for the whole job. Step 1 (`forge build --skip
+    # test`, 525 files) took 14m11s; step 2's deploy-sanity compile (33 files,
+    # reusing step 1's artifacts) took 21m47s. Memory peaked at 15.8 GB used
+    # of 16 GB, with solc at 14.7 GB, during step 2. That is the whole
+    # remaining headroom: the 5-minute and 3.2 GB figures above are history,
+    # and the ~17.7 GB "pre-#290" figure is no longer far off. A warm run
+    # still compiles those same 33 files whenever a facet changes, so it
+    # sits at the same peak.
     timeout-minutes: 75
     # #290 — every forge invocation in this job runs under the
     # narrow-scope `cifast` profile defined in `contracts/foundry.toml`.
-    # This is what reduces peak RSS from ~17.7 GB → ~3.2 GB and keeps
-    # the OOM-shutdown failures we hit on PR #288 off the table.
+    # It cut peak RSS from ~17.7 GB to ~3.2 GB when it was written. Growth
+    # has since taken the peak back to ~15.8 GB (#2603).
     env:
       FOUNDRY_PROFILE: cifast
     defaults:
@@ -563,7 +573,23 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
-          version: stable
+          # PINNED, not `stable` (#2603), and in lockstep with the other job
+          # that shares this forge cache (contracts-fast and slither). Foundry
+          # v1.8.4 stopped reusing the `forge build --skip test` artifacts in a
+          # later `forge test`: after a cold step-1 build, the deploy-sanity
+          # compile takes 469 files on v1.8.4-v1.8.6 against 33 on v1.8.3 and
+          # earlier (measured on CI, one probe per version), and the 469-file
+          # unit loses the runner.
+          #
+          # Scope is deliberate. v1.8.3 predates a later Foundry fix for cached
+          # artifacts keeping stale bytecode where a test reads
+          # `type(X).runtimeCode` (#2713 review). Nothing compiled under
+          # `cifast` reads it (its only users are `test/helpers/LibOneTx*Fill`,
+          # run by the full regression), so these two jobs are not exposed.
+          # The full release gate and the e2e jobs stay on `stable` for that
+          # reason; do not extend this pin to them. Move it only to a version
+          # that still compiles 33 files in the deploy-sanity step.
+          version: v1.8.3
 
       # Foundry's `out/` (artifact tree) and `cache/` (incremental compile)
       # together cut a warm `forge build` from ~10 min to ~90 s.
@@ -774,7 +800,23 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
-          version: stable
+          # PINNED, not `stable` (#2603), and in lockstep with the other job
+          # that shares this forge cache (contracts-fast and slither). Foundry
+          # v1.8.4 stopped reusing the `forge build --skip test` artifacts in a
+          # later `forge test`: after a cold step-1 build, the deploy-sanity
+          # compile takes 469 files on v1.8.4-v1.8.6 against 33 on v1.8.3 and
+          # earlier (measured on CI, one probe per version), and the 469-file
+          # unit loses the runner.
+          #
+          # Scope is deliberate. v1.8.3 predates a later Foundry fix for cached
+          # artifacts keeping stale bytecode where a test reads
+          # `type(X).runtimeCode` (#2713 review). Nothing compiled under
+          # `cifast` reads it (its only users are `test/helpers/LibOneTx*Fill`,
+          # run by the full regression), so these two jobs are not exposed.
+          # The full release gate and the e2e jobs stay on `stable` for that
+          # reason; do not extend this pin to them. Move it only to a version
+          # that still compiles 33 files in the deploy-sanity step.
+          version: v1.8.3
 
       - name: Setup Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -892,8 +934,8 @@ jobs:
           # Under `stable` this job went red the day v1.8.0 shipped, on
           # PRs that touched no contracts at all. Migrating the docs
           # pipeline to the vocs output is tracked in #2011; unpin when
-          # that lands. The pin is doc-job-local — contracts-fast and
-          # slither stay on `stable`, which they pass on.
+          # that lands. This pin is the docs job's own: contracts-fast and
+          # slither share a separate one (#2603).
           version: v1.7.1
 
       # The #1221 warm-artifact download + in-job warm compile that used

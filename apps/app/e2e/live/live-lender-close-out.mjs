@@ -52,6 +52,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatUnits, parseEventLogs } from 'viem';
 import {
+  exitWithVerdict,
   addressOf,
   blocked,
   blockedSync,
@@ -178,8 +179,11 @@ const MANIFEST = createManifest({
     ...(SUBMIT ? CLOSE_ONLY : []),
     {
       id: 'pageHealth',
-      claim: 'the page threw no uncaught error',
-      checks: { noPageErrors: 'no PAGEERROR in the console capture' },
+      claim: 'the page threw no uncaught error and sent no malformed chain request',
+      checks: {
+        noPageErrors: 'no PAGEERROR in the console capture',
+        noMalformedRpc: 'no chain request the page sent was refused as malformed by a reachable provider (#1633)',
+      },
     },
     {
       id: 'writeDiscipline',
@@ -769,32 +773,11 @@ const { wsViolations } = attachLedger(page, createReadLedger({}), READ_METHODS);
 // card that never appears while the page heard NOTHING from the chain reads
 // as unobserved (BLOCKED), not as a broken card (#2481 r2).
 const rpc = watchPageRpc(page);
-let wsAnswers = 0;
-let wsGeneration = 0;
-page.on('websocket', (ws) => {
-  const sent = new Map();
-  const each = (payload, fn) => {
-    try {
-      for (const m of [].concat(JSON.parse(String(payload)))) if (m) fn(m);
-    } catch {
-      /* not JSON-RPC */
-    }
-  };
-  ws.on('framesent', (f) => each(f.payload, (m) => {
-    if (m.id !== undefined && READ_METHODS.has(m.method)) sent.set(m.id, wsGeneration);
-  }));
-  ws.on('framereceived', (f) => each(f.payload, (m) => {
-    if (m.id === undefined || !('result' in m || 'error' in m)) return;
-    if (sent.get(m.id) === wsGeneration) wsAnswers++;
-    sent.delete(m.id);
-  }));
-});
-const resetWindow = () => {
-  rpc.reset();
-  wsAnswers = 0;
-  wsGeneration++;
-};
-const answered = async () => (await rpc.settled()) + wsAnswers;
+// `watchPageRpc` counts the page's chain answers over HTTP AND WebSocket
+// itself, so a socket-served page is never read as "answered nothing"; this
+// drive carried its own socket counter beside it until #1633.
+const resetWindow = () => rpc.reset();
+const answered = () => rpc.settled();
 const violationsSoFar = () => [
   ...splitBlocked(blockedRequests ?? [], [new URL(SITE_URL).origin]).violations,
   ...wsViolations,
@@ -806,7 +789,8 @@ const ownHold = (b) => String(b.reason).includes(HELD_REFUSAL);
 // Every count of what stands before a send sets that one marked refusal
 // aside, so a stop after a gate hold is still resolved as the hold rather
 // than counted as a failure of its own (#2505 r32).
-const preSendFails = () => failedCount() + violationsSoFar().filter((b) => !ownHold(b)).length + pageErrors().length;
+const preSendFails = () =>
+  failedCount() + violationsSoFar().filter((b) => !ownHold(b)).length + pageErrors().length + rpc.sessionFaults().length;
 /** Why the gate withheld the planned request, when it did; null otherwise. */
 const gateHeldReason = () => {
   if (!heldMarked || wrote()) return null;
@@ -1131,6 +1115,7 @@ const settled = await settleRun({
   closeBrowser,
   judgeLedgers: () => {
     check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
+    check('pageHealth', 'noMalformedRpc', 'no malformed chain request', rpc.sessionFaults().length === 0, rpc.sessionFaults().join(' | ').slice(0, 300));
     // The gate's marked refusal of the one request it withheld is this
     // drive's own doing, never a finding (`ownHold`); every other refusal is.
     const violations = violationsSoFar().filter((b) => !ownHold(b));
@@ -1197,4 +1182,6 @@ const VERDICT = runVerdict({
   },
 });
 console.log(VERDICT.line);
-process.exit(VERDICT.exit);
+// The shared exit (#1633 r6): the page-health check above already counts
+// every fault recorded by the close; this applies the same rule once more.
+await exitWithVerdict(VERDICT.exit);

@@ -1,0 +1,5 @@
+{
+  "chunkBlocks": 1000,
+  "maxCatchUpBlocks": 20000,
+  "offerTerminalEvents": ["OfferAccepted", "OfferCanceled", "OfferClosed", "OfferConsumedBySale"]
+}

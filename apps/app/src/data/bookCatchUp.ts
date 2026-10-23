@@ -33,18 +33,24 @@ import { decodeEventLog, numberToHex, toEventSelector } from 'viem';
 import type { AbiEvent, Hex, PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import type { IndexedOffer, IndexerFreshness } from './indexer';
+import RULES from './bookCatchUpRules.json';
+
+// The scan's RULES — window size, skip cap, terminal event names — are
+// data in `bookCatchUpRules.json`, not code, so the live RPC audit
+// (`e2e/live/catchUpTally.mjs`, plain Node) reads the same definition
+// without importing TypeScript (#2097).
 
 /** Serialized 1000-block windows — public RPCs cap eth_getLogs
  *  ranges, and serial requests keep a refocused background tab from
  *  tripping per-second rate limits. */
-const CHUNK_BLOCKS = 1000n;
+const CHUNK_BLOCKS = BigInt(RULES.chunkBlocks);
 
 /** If the cache is further behind than this, skip the catch-up scan
  *  entirely (rendering pure cache state) rather than hammering the
  *  RPC with dozens of scans from the browser — MarketFreshnessNote
  *  already tells the user the lists are running behind in that
  *  state. */
-const MAX_CATCHUP_BLOCKS = 20_000n;
+const MAX_CATCHUP_BLOCKS = BigInt(RULES.maxCatchUpBlocks);
 
 /** Upper bound = latest minus a small settling buffer, NOT the
  *  safe/finalized tag. The buffer keeps a terminal event seen in a
@@ -82,18 +88,14 @@ function eventTopic0(name: string): Hex {
   return toEventSelector(findEvent(name));
 }
 
-/** Every event that ends an offer's active life. All carry the offer
- *  id as their first INDEXED argument (topics[1]):
- *  OfferAccepted / OfferCanceled / OfferClosed (emitted on both
- *  cancel and range-match) / OfferConsumedBySale (loan-sale
- *  settlement; uint96 id, same 32-byte topic encoding). */
+/** Every event that ends an offer's active life
+ *  (`offerTerminalEvents` in the rules file). All carry the offer id as
+ *  their first INDEXED argument (topics[1]): OfferAccepted /
+ *  OfferCanceled / OfferClosed (emitted on both cancel and range-match)
+ *  / OfferConsumedBySale (loan-sale settlement; uint96 id, same 32-byte
+ *  topic encoding). */
 export function offerTerminalTopics(): Hex[] {
-  return [
-    eventTopic0('OfferAccepted'),
-    eventTopic0('OfferCanceled'),
-    eventTopic0('OfferClosed'),
-    eventTopic0('OfferConsumedBySale'),
-  ];
+  return RULES.offerTerminalEvents.map(eventTopic0);
 }
 
 interface RawLog {

@@ -87,6 +87,20 @@ export const EXECUTING_METHODS = new Set([
 ]);
 
 /**
+ * Is `method` a CHAIN call — one of the Ethereum JSON-RPC namespaces?
+ *
+ * The page carries a second JSON-RPC protocol beside the chain's:
+ * WalletConnect's relay (`irn_*`), on its own hosts. A drive asking "did the
+ * chain answer the page" must not count the relay's answers, and an RPC
+ * budget is about chain traffic, so both the RPC audit's ledger and
+ * `watchPageRpc` (driver.mjs) take the one definition here (#2710 r5,
+ * #1633).
+ */
+export function isChainRpcMethod(method) {
+  return typeof method === 'string' && /^(eth|net|web3)_/.test(method);
+}
+
+/**
  * JSON-RPC 2.0 codes that mean the server parsed the request and found it
  * malformed. Each is positive evidence that the endpoint answered.
  */
@@ -757,6 +771,39 @@ function callKey(call) {
 }
 
 /**
+ * A request body that names a CHAIN method but is not a well-formed
+ * JSON-RPC request — `jsonrpc` other than "2.0", scalar `params`, an id
+ * that is not a string, number or null — is the PAGE's defect (#1633 r3).
+ *
+ * The classifier used to return nothing for it, because the strict reader
+ * refuses it and nothing else looked. So a provider that answered `-32600`
+ * was neither an answer nor a fault: `watchPageRpc` counted zero and the
+ * drive went BLOCKED, and the RPC audit's ledger read a failed attempt.
+ * Judged from the request alone, before the response, exactly as a reused
+ * batch id is: `client-fault`, unrecoverable, one per chain member, named
+ * by the lax reader so the report says what the page was trying to send.
+ *
+ * Chain methods only (`isChainRpcMethod`). A POST that merely carries a
+ * `method` field of some other protocol is not a JSON-RPC chain request at
+ * all, and stays outside the classifier as it always was.
+ */
+function malformedChainEnvelope(requestBody) {
+  const parsed = parseJson(requestBody);
+  if (parsed === undefined || parsed === null) return [];
+  const members = Array.isArray(parsed) ? parsed : [parsed];
+  return members
+    .filter((m) => m && typeof m === 'object' && !Array.isArray(m) && isChainRpcMethod(m.method))
+    .map((m) => ({
+      key: callKey(m),
+      ...('id' in m ? { id: m.id } : {}),
+      method: m.method,
+      verdict: 'client-fault',
+      why: 'malformed json-rpc envelope',
+      recoverable: false,
+    }));
+}
+
+/**
  * Does this error body still count as the provider ANSWERING, even though
  * the HTTP status says otherwise?
  *
@@ -837,7 +884,7 @@ function answersDespiteStatus(parsed) {
  */
 export function classifyRpcResponse(status, body, requestBody) {
   const calls = rpcCallsFromBody(requestBody);
-  if (!calls) return [];
+  if (!calls) return malformedChainEnvelope(requestBody);
 
   const parsed = parseJson(body);
   const statusOk = status >= 200 && status < 300;
@@ -846,6 +893,11 @@ export function classifyRpcResponse(status, body, requestBody) {
   // later success for the same method and params erase it.
   const out = (c, verdict, why, recoverable = true) => ({
     key: callKey(c),
+    // The call's own JSON-RPC id, absent for a notification, so a caller
+    // holding per-id state (`createCallLedger`, `watchPageRpc`) can settle
+    // each call from this one classification instead of re-deriving which
+    // member answered which call (#1633).
+    ...('id' in c ? { id: c.id } : {}),
     method: String(c.method),
     verdict,
     why,
@@ -1041,6 +1093,96 @@ export function classifyRpcResponse(status, body, requestBody) {
     if (member === undefined) return out(c, 'unreachable', 'omitted from batch response');
     return memberOutcome(c, member);
   });
+}
+
+/**
+ * The JSON-RPC calls outstanding on ONE WebSocket connection, matched to
+ * their answers by id (#1633 r1).
+ *
+ * A socket answers per MESSAGE, so each call is classified against its own
+ * message rather than its frame. But an id is only an attribution key while
+ * it is unique among the calls still waiting on that connection: reuse one,
+ * inside a frame or across frames, and a single answer settles two calls,
+ * the same malformation `classifyRpcResponse` refuses in an HTTP batch.
+ * Reducing the calls to a map by id before classifying hid exactly that —
+ * the earlier call was overwritten and the later answer credited to both.
+ *
+ * So the collision is decided HERE, once, for every socket observer: the
+ * colliding calls leave the open set at once and come back from `send` with
+ * a request body holding all of them, which the shared classifier then
+ * judges as the duplicate id it is. An id reused after its first call was
+ * answered is a fresh call, as the spec allows. A message whose envelope is
+ * malformed comes back from `send` the same way, alone, and is never opened.
+ *
+ * `tagFor(message)` decides which messages the caller tracks (null skips
+ * one) and returns whatever the caller needs back with the answer.
+ */
+export function createSocketCalls() {
+  const open = new Map(); // id -> { message, tag }
+  const messages = (payload) => {
+    try {
+      const parsed = JSON.parse(String(payload));
+      return Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      return [];
+    }
+  };
+  return {
+    /** Record a sent frame. Returns the calls to settle NOW, each
+     *  `{ entries: [{ message, tag }], requestBody }`: a message whose
+     *  envelope is malformed, and the calls an id collision took out. */
+    send(payload, tagFor) {
+      const settleNow = [];
+      const collided = new Map(); // id -> entries
+      for (const m of messages(payload)) {
+        if (!m || typeof m !== 'object' || Array.isArray(m)) continue;
+        // A malformed envelope is judged when it is SENT (#1633 r4), as the
+        // classifier judges one in an HTTP request: its fault is a fact
+        // about what the page asked. Waiting for a reply lost it twice — an
+        // object id never matches the newly parsed one in the reply, and a
+        // message without an id was never tracked at all.
+        const malformed = rpcRequestCalls(m) === undefined;
+        // A well-formed notification expects no answer: nothing to track.
+        if (!malformed && !('id' in m)) continue;
+        const tag = tagFor(m);
+        if (tag == null) continue;
+        if (malformed) {
+          settleNow.push({ entries: [{ message: m, tag }], requestBody: JSON.stringify(m) });
+          continue;
+        }
+        const prior = collided.get(m.id) ?? (open.has(m.id) ? [open.get(m.id)] : null);
+        if (prior !== null) {
+          open.delete(m.id);
+          prior.push({ message: m, tag });
+          collided.set(m.id, prior);
+          continue;
+        }
+        open.set(m.id, { message: m, tag });
+      }
+      for (const entries of collided.values()) {
+        settleNow.push({ entries, requestBody: JSON.stringify(entries.map((e) => e.message)) });
+      }
+      return settleNow;
+    },
+    /** Match a received frame's answers. Returns `[{ message, tag, reply,
+     *  requestBody }]`, one per call it answers. */
+    receive(payload) {
+      const out = [];
+      for (const r of messages(payload)) {
+        if (!r || typeof r !== 'object' || !('id' in r) || !open.has(r.id)) continue;
+        const { message, tag } = open.get(r.id);
+        open.delete(r.id);
+        out.push({ message, tag, reply: JSON.stringify(r), requestBody: JSON.stringify(message) });
+      }
+      return out;
+    },
+    /** The connection closed: every call still open went unanswered. */
+    close() {
+      const left = [...open.values()];
+      open.clear();
+      return left;
+    },
+  };
 }
 
 /**

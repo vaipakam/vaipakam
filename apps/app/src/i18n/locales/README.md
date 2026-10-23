@@ -144,9 +144,10 @@ English, so the sentence just disappears for that language. Japanese
 is the standing legitimate case: the verb goes last, so the consent
 sentence's `prefix` is empty and `suffix` carries the agreement.
 
-Then promote the locale in `src/i18n/localeConfig.ts`
-(`TRANSLATED_LOCALES` + picker visibility) — the lazy loader map
-already covers every code.
+Then promote the locale: add its code to
+`src/i18n/translatedLocales.json` (read as `TRANSLATED_LOCALES`) and make
+it visible in the picker in `src/i18n/localeConfig.ts` — the lazy loader
+map already covers every code.
 
 Note: parametrized strings are being migrated from JS template
 functions to `tmpl(...)` entries (src/i18n/tmpl.ts), which DO appear in
