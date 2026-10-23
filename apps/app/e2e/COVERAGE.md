@@ -341,14 +341,23 @@ Which failures are preconditions, driver by driver:
   things that look right and are not — a session-wide counter (the
   page-load reads disarm it, so an endpoint that dies exactly when the
   assertion's reads go out still reports FAIL), and counting only JSON-RPC
-  `result` (a 200 carrying an `error` still proves the endpoint answered,
-  and for a revert-driven assertion that error IS the expected result).
+  `result` (a revert still proves the endpoint answered, and for a
+  revert-driven assertion it IS the expected result).
   A third, subtler one: window membership has to be stamped when the
   REQUEST starts, because clearing the tally on reset does nothing about a
   stale request whose response lands afterwards and increments it again.
-  All three are pinned by `e2e/live/watchPageRpc.test.mjs` — this helper
-  was wrong three times, each time in a way that read as correct, so it is
-  unit-tested rather than trusted.
+  **Reachability is not "HTTP 200" (#1633).** What counts as an answer is
+  the verdict of the repo's ONE JSON-RPC response classifier
+  (`classifyRpcResponse`, `rpc-verdict.mjs`), over HTTP and WebSocket: a
+  provider that answers 400 with a well-formed `-32602` has answered, and
+  the fault is the page's. Counting only status 200 turned that into
+  BLOCKED, the one misclassification that HIDES a product defect.
+  `faults()` names such calls so the drive can report them, and the RPC
+  audit's call ledger takes the same verdicts, so a page whose requests a
+  reachable provider refuses as malformed FAILS there too. All of this is
+  pinned by `e2e/live/watchPageRpc.test.mjs` — this helper was wrong six
+  times, each time in a way that read as correct, so it is unit-tested
+  rather than trusted.
 - **Cleanup capacity, for any drive that MUTATES shared chain state** —
   reserved BEFORE the mutation, not discovered after it, and read at the
   PENDING block so an aborted earlier run's un-mined spend counts. Asset
@@ -371,6 +380,33 @@ Which failures are preconditions, driver by driver:
   never block a run that would otherwise pass.
 - **Config that selects nothing** — a typo'd session or locale selector
   gathers no evidence, so the surfaces it names are still unswept.
+- **Config that selects the WRONG thing** (#1633) — an operator input the
+  drive would act on in a way the operator did not mean. Parse it to what
+  the drive needs and refuse what it cannot mean: `INDEXER_ORIGIN` is
+  reduced to a bare origin (`parseOrigin` — a trailing slash used to
+  produce `//offers/stats`, a 404 read as a product FAIL), every
+  `UX_SWEEP_ROUTES` entry must be app-relative (`parseAppRouteList` —
+  `borrow` was navigated as `${SITE}borrow`), an operator-chosen
+  `DESK_I18N_LOCALES` code must be one the app ships translated
+  (`src/i18n/translatedLocales.json` — `pt` renders English by design), and
+  a malformed wallet-file entry is a credential setup failure
+  (`normaliseWallets`), never a raw `TypeError`.
+- **A fixture the page's own gate reads** (#1633) — the kill-switch
+  regression's review needs the lender to HOLD the amount it posts, and an
+  underfunded lender keeps the submit gate shut while the RPC answers
+  normally, so the RPC gate cannot tell it from the kill switch. Read the
+  fixture from the chain before driving, and report it instead of a FAIL.
+
+**Evidence precedence holds to the END of a drive** (#1633). A drive that
+has judged surfaces must not let a later precondition discard them:
+`live-recover.mjs` re-reads the sanctions oracle without `precondition()`
+(which exits on the spot) and treats the page's own "couldn't check" state
+as unresolved, `live-risk-access.mjs` classifies a transport failure of its
+normalization write as BLOCKED only after its cleanup and only when nothing
+else failed, and `live-ux-sweep.mjs` records a later session's failed entry
+as a finding and still closes that session. A screenshot taken after an
+assertion passed is evidence, not the assertion, so a failed capture is
+logged rather than turned into a FAIL.
 
 Two failure modes to avoid when drawing that line. A precondition placed
 AFTER the drive has mutated state exits past the cleanup boundary and can

@@ -769,32 +769,11 @@ const { wsViolations } = attachLedger(page, createReadLedger({}), READ_METHODS);
 // card that never appears while the page heard NOTHING from the chain reads
 // as unobserved (BLOCKED), not as a broken card (#2481 r2).
 const rpc = watchPageRpc(page);
-let wsAnswers = 0;
-let wsGeneration = 0;
-page.on('websocket', (ws) => {
-  const sent = new Map();
-  const each = (payload, fn) => {
-    try {
-      for (const m of [].concat(JSON.parse(String(payload)))) if (m) fn(m);
-    } catch {
-      /* not JSON-RPC */
-    }
-  };
-  ws.on('framesent', (f) => each(f.payload, (m) => {
-    if (m.id !== undefined && READ_METHODS.has(m.method)) sent.set(m.id, wsGeneration);
-  }));
-  ws.on('framereceived', (f) => each(f.payload, (m) => {
-    if (m.id === undefined || !('result' in m || 'error' in m)) return;
-    if (sent.get(m.id) === wsGeneration) wsAnswers++;
-    sent.delete(m.id);
-  }));
-});
-const resetWindow = () => {
-  rpc.reset();
-  wsAnswers = 0;
-  wsGeneration++;
-};
-const answered = async () => (await rpc.settled()) + wsAnswers;
+// `watchPageRpc` counts the page's chain answers over HTTP AND WebSocket
+// itself, so a socket-served page is never read as "answered nothing"; this
+// drive carried its own socket counter beside it until #1633.
+const resetWindow = () => rpc.reset();
+const answered = () => rpc.settled();
 const violationsSoFar = () => [
   ...splitBlocked(blockedRequests ?? [], [new URL(SITE_URL).origin]).violations,
   ...wsViolations,

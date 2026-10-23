@@ -20,6 +20,7 @@ import {
   callsTargetContract,
   classifyRpcFailure,
   classifyRpcResponse,
+  isChainRpcMethod,
   isTransportFailure,
   recordRpcResponse,
   rpcMethodNamesIn,
@@ -371,7 +372,7 @@ describe('classifyRpcResponse', () => {
   it('calls a rate-limited read unreachable, naming the method', () => {
     const out = classifyRpcResponse(200, errBody(1, rpcErr(-32005)), rpcReq(call(1, 'eth_getLogs')));
     expect(out).toEqual([
-      { key: 'eth_getLogs|[]', method: 'eth_getLogs', verdict: 'unreachable', why: 'json-rpc -32005' },
+      { key: 'eth_getLogs|[]', id: 1, method: 'eth_getLogs', verdict: 'unreachable', why: 'json-rpc -32005' },
     ]);
   });
 
@@ -390,7 +391,7 @@ describe('classifyRpcResponse', () => {
     // REQUEST is the discriminator.
     const out = classifyRpcResponse(status, 'Too Many Requests', rpcReq(call(1)));
     expect(out).toEqual([
-      { key: 'eth_call|[]', method: 'eth_call', verdict: 'unreachable', why: `HTTP ${status}` },
+      { key: 'eth_call|[]', id: 1, method: 'eth_call', verdict: 'unreachable', why: `HTTP ${status}` },
     ]);
   });
 
@@ -527,6 +528,7 @@ describe('classifyRpcResponse — responses that only look answered', () => {
     expect(out).toEqual([
       {
         key: 'eth_call|[]',
+        id: 1,
         method: 'eth_call',
         verdict: 'unreachable',
         why: 'neither result nor error',
@@ -1888,5 +1890,35 @@ describe('#2100 — a retry is reconciled only inside its own page cohort', () =
       okEntry({ at: 1_100, response: 2, requestedAt: 950, cohort: 1 }),
     ]);
     expect(inFlight.unreachable).toHaveLength(1);
+  });
+});
+
+describe('classifyRpcResponse — each outcome names its call (#1633)', () => {
+  it('carries the call id, so a per-id ledger settles each call from one classification', () => {
+    const out = classifyRpcResponse(
+      200,
+      JSON.stringify([
+        { jsonrpc: '2.0', id: 'b', result: '0x2' },
+        { jsonrpc: '2.0', id: 'a', error: { code: -32602, message: 'invalid params' } },
+      ]),
+      rpcReq(call('a', 'eth_getLogs'), call('b', 'eth_blockNumber')),
+    );
+    expect(out.map((o) => [o.id, o.verdict])).toEqual([
+      ['a', 'client-fault'],
+      ['b', 'ok'],
+    ]);
+  });
+
+  it('carries no id for a notification, which has none', () => {
+    const out = classifyRpcResponse(503, 'down', JSON.stringify({ jsonrpc: '2.0', method: 'eth_call', params: [] }));
+    expect(out).toHaveLength(1);
+    expect(out[0]).not.toHaveProperty('id');
+  });
+});
+
+describe('isChainRpcMethod', () => {
+  it('admits the Ethereum namespaces and nothing else', () => {
+    expect(['eth_call', 'net_version', 'web3_clientVersion'].every(isChainRpcMethod)).toBe(true);
+    expect(['irn_publish', 'wallet_switchEthereumChain', 'anvil_mine', '', undefined].some(isChainRpcMethod)).toBe(false);
   });
 });

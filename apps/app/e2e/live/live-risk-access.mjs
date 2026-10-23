@@ -14,14 +14,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, parseAbi } from 'viem';
 import {
+  blocked,
   blockedSync,
   clientsFor,
   ensureConnected,
   launch,
+  LivePreconditionError,
   precondition,
   requireSiteUrl,
   SITE,
 } from './driver.mjs';
+import { classifyRpcFailure, isTransportFailure } from './rpc-verdict.mjs';
 
 // Entry-point guard: this driver reaches `fetch(SITE)` in a precondition
 // before it ever calls `launch()`, so the guarded functions would not fire
@@ -168,6 +171,7 @@ async function tierZeroAtOrAfter(minBlock) {
 // #1539 r5): a throw during strict normalization, navigation, connect
 // or the read-path assertions must still restore the wallet and close
 // the context — not leave the manual driver stuck.
+let driveError = null;
 try {
 // Reachability FIRST, before anything mutates the wallet (Codex #1621
 // r2). A BLOCKED exit uses `process.exit`, so it skips the cleanup
@@ -206,10 +210,11 @@ await precondition(`opening ${SITE}`, async () => {
 // The strict-mode READ is a PRECONDITION — a dead RPC means this drive
 // never got to assert anything (#1581).
 //
-// The normalization WRITE is deliberately NOT wrapped. A chain that
-// reverts a valid `setRiskStrictMode(false)` is evidence of a defect, and
+// The normalization WRITE is NOT a precondition. A chain that reverts a
+// valid `setRiskStrictMode(false)` is evidence of a defect, and
 // reclassifying that as "verified nothing" would hide it — the reason to
 // separate the two verdicts is to stop mislabelling, in both directions.
+// Only its TRANSPORT failures are BLOCKED, classified where it is sent.
 const strictOn = await precondition('reading strict mode from a prior run', () =>
   pub.readContract({
     address: DIAMOND,
@@ -266,17 +271,39 @@ await precondition('reserving native gas for the tier raise and its restore', as
 if (strictOn) {
   console.log('note: strict mode ON from a prior run — normalizing OFF');
   const w = clientsFor(84532).wallet('borrower');
-  const hash = await w.writeContract({
-    address: DIAMOND,
-    abi: WRITE_ABI,
-    functionName: 'setRiskStrictMode',
-    args: [false],
-  });
+  // The SEND and the receipt WAIT are transport, and a transport failure
+  // here is BLOCKED (#1633): it came before the page under review had even
+  // loaded, so nothing about /risk-access was observed. Unwrapped, it threw
+  // past the verdict and exited 1. Raised as a `LivePreconditionError` so
+  // the cleanup boundary below still runs; a REVERT stays a failure, below.
+  let receipt;
+  try {
+    const hash = await w.writeContract({
+      address: DIAMOND,
+      abi: WRITE_ABI,
+      functionName: 'setRiskStrictMode',
+      args: [false],
+    });
+    receipt = await pub.waitForTransactionReceipt({ hash });
+  } catch (err) {
+    // Only a TRANSPORT failure, classified by the shared rule. A revert
+    // (at estimate or on chain) is the chain answering, and refusing a
+    // valid `setRiskStrictMode(false)` is evidence of a defect, so it
+    // still fails the run.
+    const transport =
+      classifyRpcFailure(err) !== 'answered' &&
+      (isTransportFailure(err) || err?.name === 'WaitForTransactionReceiptTimeoutError');
+    if (!transport) throw err;
+    throw new LivePreconditionError(
+      'the strict-mode normalization write could not be sent or confirmed, so the' +
+        ` page under review was never loaded: ${String(err?.message ?? err).split('\n')[0].slice(0, 200)}`,
+    );
+  }
+  const { transactionHash: hash } = receipt;
   // #2183: a receipt is not a success. A reverted normalization would
   // leave strict mode ON and every OFF-posture assertion below would
   // then be testing the posture this block exists to clear — reported
   // as a product failure rather than as the setup failure it is.
-  const receipt = await pub.waitForTransactionReceipt({ hash });
   if (receipt.status !== 'success') {
     throw new Error(
       `setRiskStrictMode(false) normalization tx ${hash} mined but REVERTED ` +
@@ -396,6 +423,11 @@ check(
   (await pub.readContract({ address: DIAMOND, abi: READ_ABI, functionName: 'getRiskStrictMode', args: [who] })) === false,
 );
 
+} catch (err) {
+  // Decided at the end, after the cleanup boundary has run (#1633): a
+  // precondition that surfaced mid-drive is BLOCKED only when nothing else
+  // failed, and any other throw is a failure as it always was.
+  driveError = err;
 } finally {
   try {
     // The cleanup GATE read gets the same transient-error tolerance
@@ -508,6 +540,13 @@ check(
   } finally {
     await done();
   }
+}
+if (driveError instanceof LivePreconditionError && fails.length === 0) {
+  await blocked(driveError.message);
+}
+if (driveError) {
+  console.log('drive error:', String(driveError?.stack ?? driveError).split('\n').slice(0, 4).join('\n'));
+  fails.push(`drive: ${String(driveError?.message ?? driveError).split('\n')[0]}`);
 }
 if (fails.length) {
   console.log('FAILED checks:', fails.join(' | '));

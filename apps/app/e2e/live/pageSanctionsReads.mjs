@@ -152,10 +152,13 @@ export function createReadLedger(reads, now = () => Date.now()) {
   }
 
   /** Settle the entries of `pending` from a response body (null = no
-   *  usable response: every pending entry is unanswered). */
-  function onResponse(pending, bodyText) {
+   *  usable response: every pending entry is unanswered). A non-2xx status
+   *  is no answer either: the page's transport does not hand that body to
+   *  the app as a result, so the page never learned a value from it. */
+  function onResponse(pending, bodyText, { status = null } = {}) {
     let responses = [];
-    if (bodyText != null) {
+    const pageSawIt = status === null || (status >= 200 && status < 300);
+    if (bodyText != null && pageSawIt) {
       try {
         responses = asList(JSON.parse(bodyText));
       } catch {
@@ -231,6 +234,12 @@ export function isRefusedSocketMethod(socketUrl, method, readMethods) {
 /** Feed `ledger` from everything the page sends: HTTP POSTs and
  *  WebSocket frames.
  *
+ *  The ledger is `{ onRequest(bodyText) → pending | null,
+ *  onResponse(pending, bodyText | null, { status, requestBody }) }`.
+ *  `status` is the HTTP status (null on a socket, or when nothing came
+ *  back) and `requestBody` the request the answer belongs to, so a ledger
+ *  can judge the pair with the shared classifier (#1633).
+ *
  *  The WebSocket is also the one door `launch`'s read-only guard does not
  *  cover (it gates the injected wallet and HTTP routes). Every JSON-RPC
  *  method the page SENDS on a socket is checked against `readMethods`
@@ -246,19 +255,23 @@ export function attachLedger(page, ledger, readMethods) {
     req
       .response()
       .then(async (res) => {
-        if (res === null || res.status() !== 200) return ledger.onResponse(pending, null);
+        if (res === null) return ledger.onResponse(pending, null, { status: null });
         let text = null;
         try {
           text = await res.text();
         } catch {
           /* unreadable: unanswered */
         }
-        ledger.onResponse(pending, text);
+        // Every status, with the request it answers: whether a non-2xx body
+        // still answered is the ledger's question, decided by the shared
+        // classifier, not this observer's (#1633). A provider that parsed a
+        // malformed request and said so at 400 has answered.
+        ledger.onResponse(pending, text, { status: res.status(), requestBody: req.postData() ?? undefined });
       })
-      .catch(() => ledger.onResponse(pending, null));
+      .catch(() => ledger.onResponse(pending, null, { status: null }));
   });
   page.on('websocket', (ws) => {
-    const open = new Map(); // JSON-RPC id -> pending, per connection
+    const open = new Map(); // JSON-RPC id -> { pending, body }, per connection
     ws.on('framesent', (f) => {
       try {
         for (const m of asList(JSON.parse(String(f.payload)))) {
@@ -271,7 +284,15 @@ export function attachLedger(page, ledger, readMethods) {
       }
       const pending = ledger.onRequest(String(f.payload));
       if (pending === null) return;
-      for (const [id] of pending) open.set(id, pending);
+      // Each call's own message, so its answer is classified against the
+      // request it answers (a socket answers per message, not per frame).
+      const sentById = new Map();
+      try {
+        for (const m of asList(JSON.parse(String(f.payload)))) if (m && 'id' in m) sentById.set(m.id, m);
+      } catch {
+        /* onRequest parsed it, so this cannot fail */
+      }
+      for (const [id] of pending) open.set(id, { pending, body: JSON.stringify(sentById.get(id)) });
     });
     ws.on('framereceived', (f) => {
       let msgs;
@@ -281,14 +302,18 @@ export function attachLedger(page, ledger, readMethods) {
         return;
       }
       for (const m of msgs) {
-        const pending = m && open.get(m.id);
-        if (!pending) continue;
+        const sent = m && open.get(m.id);
+        if (!sent) continue;
         open.delete(m.id);
-        ledger.onResponse(new Map([[m.id, pending.get(m.id)]]), JSON.stringify(m));
+        // A socket has no HTTP status: a delivered message is the answer.
+        ledger.onResponse(new Map([[m.id, sent.pending.get(m.id)]]), JSON.stringify(m), {
+          status: null,
+          requestBody: sent.body,
+        });
       }
     });
     ws.on('close', () => {
-      for (const [id, pending] of open) ledger.onResponse(new Map([[id, pending.get(id)]]), null);
+      for (const [id, sent] of open) ledger.onResponse(new Map([[id, sent.pending.get(id)]]), null, { status: null });
       open.clear();
     });
   });

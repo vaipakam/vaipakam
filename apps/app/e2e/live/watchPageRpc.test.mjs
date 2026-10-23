@@ -1,7 +1,7 @@
 // Regression tests for `watchPageRpc` (driver.mjs).
 //
-// Three drives read their BLOCKED-vs-FAIL verdict from this helper, and its
-// behaviour has been wrong FOUR times — each time in a way that reads as
+// Several drives read their BLOCKED-vs-FAIL verdict from this helper, and its
+// behaviour has been wrong SIX times — each time in a way that reads as
 // correct on inspection, which is exactly why it is pinned here:
 //
 //   1. Session-wide counting. The page-load reads satisfy it immediately, so
@@ -20,15 +20,26 @@
 //   5. Generation checked only before the async body read. A response that
 //      passed the gate could finish parsing after a later reset() and
 //      increment the freshly-zeroed counter.
+//   6. Counting only HTTP 200 (#1633). A provider answering 400 with a
+//      well-formed `-32602` read as silence, so a page sending a malformed
+//      request to a healthy endpoint was reported BLOCKED — a hidden defect.
+//      What counts is now the shared classifier's verdict, over HTTP and
+//      WebSocket alike.
 //
 // Each case below pins one of those. Following the precedent redact.test.mjs
 // set: driver logic worth trusting belongs in the suite, not in a scratch
 // script.
 import { describe, expect, it } from 'vitest';
 import { watchPageRpc } from './driver.mjs';
-import { FakePage } from './fakePage.mjs';
+import { FakePage, FakeWebSocket } from './fakePage.mjs';
 
-const request = (method = 'POST') => ({ method: () => method });
+// A page request carrying a JSON-RPC body (one call, id 1, by default) —
+// the classifier reads the request to know which calls a response answers.
+const call = (id = 1, method = 'eth_call') => ({ jsonrpc: '2.0', id, method, params: [] });
+const request = (httpMethod = 'POST', body = call()) => ({
+  method: () => httpMethod,
+  postData: () => JSON.stringify(body),
+});
 const response = (req, status, body) => ({
   request: () => req,
   status: () => status,
@@ -42,7 +53,7 @@ describe('watchPageRpc', () => {
     const stale = request();
     page.emit('request', stale); // in flight before the window opens
     rpc.reset();
-    page.emit('response', response(stale, 200, { jsonrpc: '2.0', result: '0x1' }));
+    page.emit('response', response(stale, 200, { jsonrpc: '2.0', id: 1, result: '0x1' }));
     // Counting this would make a total outage during the assertion look
     // like a live endpoint — FAIL where BLOCKED is right.
     expect(await rpc.settled()).toBe(0);
@@ -56,7 +67,7 @@ describe('watchPageRpc', () => {
     page.emit('request', req);
     page.emit(
       'response',
-      response(req, 200, { jsonrpc: '2.0', error: { code: 3, message: 'execution reverted' } }),
+      response(req, 200, { jsonrpc: '2.0', id: 1, error: { code: 3, message: 'execution reverted' } }),
     );
     // The endpoint answered. For a revert-driven assertion this IS the
     // expected result.
@@ -67,28 +78,69 @@ describe('watchPageRpc', () => {
     const page = new FakePage();
     const rpc = watchPageRpc(page);
     rpc.reset();
-    const req = request();
+    const req = request('POST', [call(1), call(2)]);
     page.emit('request', req);
     page.emit(
       'response',
       response(req, 200, [
-        { jsonrpc: '2.0', result: '0x1' },
-        { jsonrpc: '2.0', result: '0x2' },
+        { jsonrpc: '2.0', id: 1, result: '0x1' },
+        { jsonrpc: '2.0', id: 2, result: '0x2' },
       ]),
     );
     expect(await rpc.settled()).toBe(2);
   });
 
-  it('ignores non-200 responses and non-POST requests', async () => {
+  it('ignores a status the page cannot see past, and non-POST requests', async () => {
     const page = new FakePage();
     const rpc = watchPageRpc(page);
     rpc.reset();
     const failed = request();
     page.emit('request', failed);
-    page.emit('response', response(failed, 503, { jsonrpc: '2.0', result: '0x1' }));
+    page.emit('response', response(failed, 503, { jsonrpc: '2.0', id: 1, result: '0x1' }));
     const get = request('GET');
     page.emit('request', get);
-    page.emit('response', response(get, 200, { jsonrpc: '2.0', result: '0x1' }));
+    page.emit('response', response(get, 200, { jsonrpc: '2.0', id: 1, result: '0x1' }));
+    expect(await rpc.settled()).toBe(0);
+  });
+
+  it('counts a 400 carrying a well-formed malformed-request error, and names it (#1633)', async () => {
+    // The provider parsed the page's request and refused it: reachable, and
+    // the fault is the PAGE's. Reading this as silence reported BLOCKED over
+    // a product defect.
+    const page = new FakePage();
+    const rpc = watchPageRpc(page);
+    rpc.reset();
+    const req = request();
+    page.emit('request', req);
+    page.emit(
+      'response',
+      response(req, 400, { jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'invalid params' } }),
+    );
+    expect(await rpc.settled()).toBe(1);
+    expect(rpc.faults()).toEqual(['eth_call: json-rpc -32602']);
+  });
+
+  it('does not count a rate-limit or unavailable answer as the endpoint working', async () => {
+    const page = new FakePage();
+    const rpc = watchPageRpc(page);
+    rpc.reset();
+    const req = request();
+    page.emit('request', req);
+    page.emit(
+      'response',
+      response(req, 200, { jsonrpc: '2.0', id: 1, error: { code: -32005, message: 'limit exceeded' } }),
+    );
+    expect(await rpc.settled()).toBe(0);
+    expect(rpc.faults()).toEqual([]);
+  });
+
+  it('counts only chain calls, never another JSON-RPC protocol', async () => {
+    const page = new FakePage();
+    const rpc = watchPageRpc(page);
+    rpc.reset();
+    const req = request('POST', call(1, 'irn_subscribe'));
+    page.emit('request', req);
+    page.emit('response', response(req, 200, { jsonrpc: '2.0', id: 1, result: 'sub' }));
     expect(await rpc.settled()).toBe(0);
   });
 
@@ -98,7 +150,7 @@ describe('watchPageRpc', () => {
     rpc.reset();
     const first = request();
     page.emit('request', first);
-    page.emit('response', response(first, 200, { jsonrpc: '2.0', result: '0x1' }));
+    page.emit('response', response(first, 200, { jsonrpc: '2.0', id: 1, result: '0x1' }));
     expect(await rpc.settled()).toBe(1);
 
     rpc.reset(); // second window — the endpoint is dead from here on
@@ -113,7 +165,7 @@ describe('watchPageRpc', () => {
     page.emit('request', slow); // in flight, no response yet
     // Answers only after settled() has already begun draining.
     setTimeout(
-      () => page.emit('response', response(slow, 200, { jsonrpc: '2.0', result: '0x1' })),
+      () => page.emit('response', response(slow, 200, { jsonrpc: '2.0', id: 1, result: '0x1' })),
       400,
     );
     // Without the drain loop this returns 0 immediately — a false BLOCKED.
@@ -157,7 +209,7 @@ describe('watchPageRpc', () => {
       status: () => 200,
       text: async () => {
         await gate;
-        return JSON.stringify({ jsonrpc: '2.0', result: '0x1' });
+        return JSON.stringify({ jsonrpc: '2.0', id: 1, result: '0x1' });
       },
     });
     rpc.reset();  // window closes while that body is still in flight
@@ -174,5 +226,33 @@ describe('watchPageRpc', () => {
     page.emit('request', req);
     page.emit('response', { request: () => req, status: () => 200, text: async () => 'not json' });
     expect(await rpc.settled()).toBe(0);
+  });
+  it('counts a chain answer that arrives on the page\'s WebSocket, in its own window', async () => {
+    const page = new FakePage();
+    const rpc = watchPageRpc(page);
+    const ws = new FakeWebSocket();
+    page.emit('websocket', ws);
+    ws.emit('framesent', { payload: JSON.stringify(call(7, 'eth_blockNumber')) });
+    rpc.reset(); // the call above started before this window
+    ws.emit('framereceived', { payload: JSON.stringify({ jsonrpc: '2.0', id: 7, result: '0x10' }) });
+    ws.emit('framesent', { payload: JSON.stringify(call(8, 'eth_blockNumber')) });
+    ws.emit('framereceived', { payload: JSON.stringify({ jsonrpc: '2.0', id: 8, result: '0x11' }) });
+    // The relay's own protocol on a socket never counts.
+    ws.emit('framesent', { payload: JSON.stringify(call(9, 'irn_publish')) });
+    ws.emit('framereceived', { payload: JSON.stringify({ jsonrpc: '2.0', id: 9, result: true }) });
+    expect(await rpc.settled(600)).toBe(1);
+  });
+
+  it('stops waiting on socket calls when the socket closes', async () => {
+    const page = new FakePage();
+    const rpc = watchPageRpc(page);
+    rpc.reset();
+    const ws = new FakeWebSocket();
+    page.emit('websocket', ws);
+    ws.emit('framesent', { payload: JSON.stringify(call(1, 'eth_call')) });
+    ws.emit('close');
+    const started = Date.now();
+    expect(await rpc.settled(10_000)).toBe(0);
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 });

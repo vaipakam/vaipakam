@@ -28,11 +28,11 @@
  *     chunk can be continued, because the app cuts a window short only at
  *     a scan's end.
  *   - Each call's OUTCOME comes from the wire (`createCallLedger`, fed by
- *     the shared HTTP + WebSocket observer `attachLedger`): `ok` only when
- *     the page received a JSON-RPC result for it. Anything else — a non-200
- *     response, a failed request, a body that is not JSON-RPC, an error
- *     envelope, a socket that closed first, or no answer at all — is
- *     `failed`, which is how the page's own transport treats it (#2710 r4).
+ *     the shared HTTP + WebSocket observer `attachLedger`), judged by the
+ *     repo's one JSON-RPC response classifier: `ok` when the page received
+ *     an answer it can use, `client-fault` when a reachable provider
+ *     refused the page's request as malformed, `failed` otherwise (#2710 r4,
+ *     #1633). Only `ok` counts as a success here.
  *   - RETRIES ARE NOT INFERRED. A retry of a failed request is on the wire
  *     an identical request, and an identical range is also what a fresh
  *     refetch sends when the head has not moved, so no rule over ranges can
@@ -73,6 +73,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { toEventSelector } from 'viem';
+import { classifyRpcResponse, isChainRpcMethod } from './rpc-verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const readJson = (rel) => JSON.parse(fs.readFileSync(path.resolve(HERE, rel), 'utf8'));
@@ -206,9 +207,20 @@ export function tallyCalls(calls) {
  * A ledger of every JSON-RPC call the page sends, in the shape the shared
  * observer `attachLedger` (`pageSanctionsReads.mjs`) feeds over HTTP AND
  * WebSocket, so a deployment whose RPC rides a socket is audited too
- * (#2710 r4). Only chain calls are recorded, and only while
- * `isRecording()` holds; each gets its `outcome` when its answer (or the
- * lack of one) is known.
+ * (#2710 r4). Only chain calls are recorded (`isChainRpcMethod`), and only
+ * while `isRecording()` holds; each gets its `outcome` when its answer (or
+ * the lack of one) is known.
+ *
+ * The outcome is the shared classifier's verdict on the pair
+ * (`classifyRpcResponse`, `rpc-verdict.mjs`), not a rule of this ledger's
+ * own (#1633):
+ *   - `ok` — the page received an answer it can use: a result, or a revert
+ *     from a call that executes code.
+ *   - `client-fault` — a reachable provider parsed the page's request and
+ *     refused it as malformed, whatever the HTTP status. A defect in what
+ *     the page sent, carried with its `why`.
+ *   - `failed` — anything else: no answer, a status the page cannot see
+ *     past, a rate limit, a body that is not JSON-RPC.
  */
 export function createCallLedger(isRecording = () => true) {
   const calls = [];
@@ -218,7 +230,6 @@ export function createCallLedger(isRecording = () => true) {
   // carries — is not chain traffic and is not counted (#2710 r5). Write
   // detection does not depend on this: `attachLedger` judges every socket
   // frame against the read list itself.
-  const isChainCall = (method) => /^(eth|net|web3)_/.test(method);
   const asList = (v) => (Array.isArray(v) ? v : [v]);
   return {
     calls,
@@ -232,7 +243,7 @@ export function createCallLedger(isRecording = () => true) {
       }
       const pending = new Map();
       for (const c of sent) {
-        if (!c || typeof c.method !== 'string' || !isChainCall(c.method)) continue;
+        if (!c || !isChainRpcMethod(c.method)) continue;
         const call = { method: c.method, params: c.params, outcome: undefined };
         calls.push(call);
         if (!pending.has(c.id)) pending.set(c.id, []);
@@ -241,20 +252,17 @@ export function createCallLedger(isRecording = () => true) {
       return pending.size > 0 ? pending : null;
     },
     /** `bodyText` null = no usable response: every pending call failed. */
-    onResponse(pending, bodyText) {
-      let answers = [];
-      if (bodyText != null) {
-        try {
-          answers = asList(JSON.parse(bodyText));
-        } catch {
-          answers = [];
-        }
-      }
-      const byId = new Map(answers.filter((a) => a && typeof a === 'object' && 'id' in a).map((a) => [a.id, a]));
+    onResponse(pending, bodyText, { status = null, requestBody } = {}) {
+      // A socket answer carries no HTTP status; it was delivered.
+      const verdicts =
+        bodyText == null ? [] : classifyRpcResponse(status ?? 200, bodyText, requestBody);
       for (const [id, list] of pending) {
-        const a = byId.get(id);
-        const ok = Boolean(a && a.error === undefined && a.result !== undefined);
-        for (const call of list) call.outcome = ok ? 'ok' : 'failed';
+        const v = verdicts.find((o) => 'id' in o && o.id === id);
+        const outcome = v?.verdict === 'ok' || v?.verdict === 'client-fault' ? v.verdict : 'failed';
+        for (const call of list) {
+          call.outcome = outcome;
+          if (outcome === 'client-fault') call.why = v.why;
+        }
       }
     },
   };

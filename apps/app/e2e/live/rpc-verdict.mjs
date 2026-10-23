@@ -87,6 +87,20 @@ export const EXECUTING_METHODS = new Set([
 ]);
 
 /**
+ * Is `method` a CHAIN call — one of the Ethereum JSON-RPC namespaces?
+ *
+ * The page carries a second JSON-RPC protocol beside the chain's:
+ * WalletConnect's relay (`irn_*`), on its own hosts. A drive asking "did the
+ * chain answer the page" must not count the relay's answers, and an RPC
+ * budget is about chain traffic, so both the RPC audit's ledger and
+ * `watchPageRpc` (driver.mjs) take the one definition here (#2710 r5,
+ * #1633).
+ */
+export function isChainRpcMethod(method) {
+  return typeof method === 'string' && /^(eth|net|web3)_/.test(method);
+}
+
+/**
  * JSON-RPC 2.0 codes that mean the server parsed the request and found it
  * malformed. Each is positive evidence that the endpoint answered.
  */
@@ -846,6 +860,11 @@ export function classifyRpcResponse(status, body, requestBody) {
   // later success for the same method and params erase it.
   const out = (c, verdict, why, recoverable = true) => ({
     key: callKey(c),
+    // The call's own JSON-RPC id, absent for a notification, so a caller
+    // holding per-id state (`createCallLedger`, `watchPageRpc`) can settle
+    // each call from this one classification instead of re-deriving which
+    // member answered which call (#1633).
+    ...('id' in c ? { id: c.id } : {}),
     method: String(c.method),
     verdict,
     why,

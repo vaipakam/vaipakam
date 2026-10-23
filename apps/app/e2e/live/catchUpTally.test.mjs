@@ -165,15 +165,16 @@ describe('createCallLedger (#2710 r4)', () => {
     const l = createCallLedger(() => on);
     expect(l.onRequest(body({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber' }))).toBeNull();
     on = true;
-    const pending = l.onRequest(body([
+    const request = body([
       { jsonrpc: '2.0', id: 1, method: 'eth_blockNumber' },
       { jsonrpc: '2.0', id: 2, method: 'eth_getLogs', params: [] },
       { jsonrpc: '2.0', id: 3, method: 'eth_call', params: [] },
-    ]));
+    ]);
+    const pending = l.onRequest(request);
     l.onResponse(pending, body([
       { jsonrpc: '2.0', id: 2, error: { code: -32000, message: 'range' } },
       { jsonrpc: '2.0', id: 1, result: '0x10' },
-    ]));
+    ]), { status: 200, requestBody: request });
     expect(l.calls.map((c) => [c.method, c.outcome])).toEqual([
       ['eth_blockNumber', 'ok'],
       ['eth_getLogs', 'failed'],
@@ -192,13 +193,36 @@ describe('createCallLedger (#2710 r4)', () => {
 
   it('counts chain calls only, not another JSON-RPC protocol (#2710 r5)', () => {
     const l = createCallLedger();
-    const p = l.onRequest(body([
+    const request = body([
       { jsonrpc: '2.0', id: 1, method: 'irn_subscribe', params: {} },
       { jsonrpc: '2.0', id: 2, method: 'eth_chainId' },
-    ]));
-    l.onResponse(p, body([{ jsonrpc: '2.0', id: 1, result: 'sub' }, { jsonrpc: '2.0', id: 2, result: '0x1' }]));
+    ]);
+    const p = l.onRequest(request);
+    l.onResponse(p, body([{ jsonrpc: '2.0', id: 1, result: 'sub' }, { jsonrpc: '2.0', id: 2, result: '0x1' }]), {
+      status: 200,
+      requestBody: request,
+    });
     expect(l.calls.map((c) => [c.method, c.outcome])).toEqual([['eth_chainId', 'ok']]);
     expect(l.onRequest(body({ jsonrpc: '2.0', id: 3, method: 'irn_publish' }))).toBeNull();
+  });
+
+  it('reads a reachable provider refusing a malformed request as a client fault, whatever the status (#1633)', () => {
+    const l = createCallLedger();
+    const request = body({ jsonrpc: '2.0', id: 4, method: 'eth_getLogs', params: [{}] });
+    const p = l.onRequest(request);
+    l.onResponse(p, body({ jsonrpc: '2.0', id: 4, error: { code: -32602, message: 'invalid params' } }), {
+      status: 400,
+      requestBody: request,
+    });
+    expect(l.calls.map((c) => [c.outcome, c.why])).toEqual([['client-fault', 'json-rpc -32602']]);
+  });
+
+  it('reads a result behind a status the page cannot see past as failed', () => {
+    const l = createCallLedger();
+    const request = body({ jsonrpc: '2.0', id: 5, method: 'eth_blockNumber' });
+    const p = l.onRequest(request);
+    l.onResponse(p, body({ jsonrpc: '2.0', id: 5, result: '0x1' }), { status: 503, requestBody: request });
+    expect(l.calls.map((c) => c.outcome)).toEqual(['failed']);
   });
 
   it('ignores a body that is not JSON-RPC', () => {

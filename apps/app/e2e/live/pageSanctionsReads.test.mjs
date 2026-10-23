@@ -84,6 +84,13 @@ describe('page sanctions read ledger', () => {
     expect(l.judge('flag', 0, true)).toEqual({ state: 'unanswered', attempts: 3 });
   });
 
+  it('a body behind a non-2xx status is unanswered: the page never received it as a result (#1633)', () => {
+    const l = ledgerAt([100, 101]);
+    const a = l.onRequest(JSON.stringify(plain(1, DIAMOND, flagRead.calldata)));
+    l.onResponse(a, JSON.stringify({ id: 1, result: bool(true) }), { status: 503 });
+    expect(l.judge('flag', 0, true)).toEqual({ state: 'unanswered', attempts: 1 });
+  });
+
   it('matches answers to requests by id within a batch', () => {
     const l = ledgerAt([100]);
     const p = l.onRequest(JSON.stringify([plain(1, OTHER, '0x'), plain(2, DIAMOND, flagRead.calldata)]));
@@ -133,6 +140,33 @@ describe('page sanctions read ledger', () => {
     const body = aggregate(7, [[DIAMOND, flagRead.calldata]], IMPOSTOR);
     expect(l.onRequest(JSON.stringify(body))).toBeNull();
     expect(l.judge('flag', 0, true)).toEqual({ state: 'none' });
+  });
+});
+
+describe('attachLedger hands the ledger the status and the request (#1633)', () => {
+  /** A ledger that records what it was told, and a fake page with one HTTP request. */
+  async function fedOnce({ status, body, request }) {
+    const seen = [];
+    const ledger = {
+      onRequest: () => new Map([[1, []]]),
+      onResponse: (pending, text, meta) => seen.push({ text, meta }),
+    };
+    const handlers = {};
+    attachLedger({ on: (ev, fn) => (handlers[ev] = fn) }, ledger, new Set());
+    const res = status === null ? null : { status: () => status, text: async () => body };
+    handlers.request({ method: () => 'POST', postData: () => request, response: async () => res });
+    await new Promise((r) => setTimeout(r, 0));
+    return seen;
+  }
+
+  it('passes a non-2xx body on, with its status, instead of dropping it', async () => {
+    const request = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [] });
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'invalid params' } });
+    expect(await fedOnce({ status: 400, body, request })).toEqual([{ text: body, meta: { status: 400, requestBody: request } }]);
+  });
+
+  it('reports no response as no body and no status', async () => {
+    expect(await fedOnce({ status: null, body: null, request: '{}' })).toEqual([{ text: null, meta: { status: null } }]);
   });
 });
 

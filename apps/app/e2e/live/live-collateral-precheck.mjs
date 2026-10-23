@@ -24,6 +24,8 @@
  * (issue #1118 / #1119); addresses are read from the deployments bundle so this
  * driver survives future mock refreshes.
  */
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   blocked,
   blockedSync,
@@ -41,9 +43,22 @@ import {
 // surfaces as an opaque URL/fetch error and the batch runner can
 // misclassify a configuration mistake as a product FAIL.
 requireSiteUrl();
-import deployments from '@vaipakam/contracts/deployments.json' with { type: 'json' };
 
-const mocks = deployments['84532']?.testnetMocks;
+// Read through `fs`, not a static JSON import (#1633). A static import is
+// resolved before any line of this file runs, so a malformed or missing
+// bundle threw during module resolution and exited 1 — a stale artifact
+// reported as a #1112 regression, with no code able to say otherwise. Every
+// sibling reads the bundle this way for that reason.
+const DEPLOYMENTS = fileURLToPath(
+  new URL('../../../../packages/contracts/src/deployments.json', import.meta.url),
+);
+let deployments;
+try {
+  deployments = JSON.parse(fs.readFileSync(DEPLOYMENTS, 'utf8'));
+} catch (err) {
+  blockedSync(`cannot read the deployments bundle\n  path: ${DEPLOYMENTS}\n  ${err.message}`);
+}
+const mocks = deployments?.['84532']?.testnetMocks;
 // Validated as ADDRESSES, not merely present (Codex #1621 r4). A
 // non-empty but malformed value (`liquidToken: "stale"`) passes a
 // truthiness check and is then pasted into the product UI, where the
@@ -67,6 +82,17 @@ const MUSDC = mocks.liquidToken2; // collateral (Liquid)
 
 const { page, done, shot, account } = await launch({ role: 'borrower' });
 const step = (m) => console.log(`  · ${m}`);
+// A screenshot is EVIDENCE, not the assertion (#1633). The two taken after a
+// passing assertion sat inside the try, so a full disk or an unwritable
+// shots directory turned a verified banner into a product FAIL. A failed
+// capture is logged and the verdict stands on what was asserted.
+const evidenceShot = async (name) => {
+  try {
+    await shot(name);
+  } catch (err) {
+    console.log(`  (screenshot ${name} not saved: ${String(err?.message ?? err).split('\n')[0]})`);
+  }
+};
 
 // Is the endpoint the PAGE uses actually answering? (Codex #1621 r13.)
 //
@@ -141,7 +167,7 @@ try {
     throw new Error(`banner leaked a raw contract error name / selector: "${text}"`);
   }
   console.log(`\nPASS ✓ under-collateral precheck banner shown with friendly copy:\n  "${text}"`);
-  await shot('1112-precheck-warn');
+  await evidenceShot('1112-precheck-warn');
 
   // NEGATIVE: sufficient collateral must CLEAR the banner (no crying wolf).
   // Changing the field immediately resets useTxSimulation to `loading`, which
@@ -180,7 +206,7 @@ try {
     await page.waitForTimeout(1_000);
   }
   console.log('PASS ✓ banner stays cleared after the recomputed simulation settled');
-  await shot('1112-precheck-clear');
+  await evidenceShot('1112-precheck-clear');
 
   console.log('\nLIVE REVIEW PASSED — #1112 verified on', SITE);
   await done();
@@ -202,6 +228,8 @@ try {
     );
   }
   console.error('\nLIVE REVIEW FAILED:', e.message);
+  const faults = rpc.faults();
+  if (faults.length) console.error(`  page requests refused as malformed by a reachable provider: ${faults.join(', ')}`);
   await shot('1112-precheck-fail').catch(() => {});
   await done();
   process.exit(1);

@@ -42,6 +42,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, parseAbi } from 'viem';
 import {
+  blocked,
   blockedSync,
   ensureConnected,
   launch,
@@ -132,6 +133,9 @@ const BEACON_ORIGINS = new Set([
 ]);
 
 const fails = [];
+/** What this run could not judge, and why. Decided at the end: a FAIL
+ *  outranks it, and it outranks a PASS (#1633). */
+const unresolved = [];
 /** Console/page errors from the separately-opened guide page. */
 const guideErrors = [];
 const check = (label, ok) => {
@@ -399,11 +403,27 @@ try {
   // have the page render against current chain state while the assertion
   // picks its expected posture from a minutes-old read — a legitimate
   // configuration change reported as a product FAIL.
-  const oracleNow = await precondition('re-reading the sanctions oracle before the posture check', () =>
-    pub.readContract({ address: DIAMOND, abi: ORACLE_ABI, functionName: 'getSanctionsOracle' }),
-  );
-  const oracleSetNow = oracleNow.toLowerCase() !== ZERO;
-  if (oracleSetNow !== oracleSet) {
+  //
+  // NOT a `precondition()` (#1633). By here Help, the guide and both
+  // Settings modes have been judged, and `precondition` exits BLOCKED on
+  // the spot — so one failed RPC read discarded every defect already found
+  // on those served pages. A failed re-read leaves only the posture
+  // UNJUDGED, which the end of the run reports in its place.
+  let oracleSetNow = null;
+  try {
+    const oracleNow = await pub.readContract({
+      address: DIAMOND,
+      abi: ORACLE_ABI,
+      functionName: 'getSanctionsOracle',
+    });
+    oracleSetNow = oracleNow.toLowerCase() !== ZERO;
+  } catch (err) {
+    unresolved.push(
+      'could not re-read the sanctions oracle before the /recover posture check, so the' +
+        ` posture was not judged against it: ${String(err?.message ?? err).split('\n')[0].slice(0, 200)}`,
+    );
+  }
+  if (oracleSetNow !== null && oracleSetNow !== oracleSet) {
     console.log(
       `note: the sanctions oracle changed mid-run (${oracleSet ? 'configured' : 'UNSET'}` +
         ` → ${oracleSetNow ? 'configured' : 'UNSET'}); judging against the CURRENT setting`,
@@ -433,7 +453,20 @@ try {
   // the moment the oracle was reset under a profile carrying a pending
   // record (Codex #1561 r3). The driver can't clear either condition
   // from a read-only run, so both are skips wherever they appear.
-  if (posture === 'sanctioned' || posture === 'pending') {
+  if (posture === 'unreachable') {
+    // The page's OWN chain probe could not reach the chain — it says so,
+    // which is the honest posture for that, and says nothing about whether
+    // recovery is correctly offered or withheld. Judging it against the
+    // oracle branch recorded an outage as a FAIL (#1633). Unresolved, so a
+    // run whose only problem it is exits BLOCKED; any defect found
+    // elsewhere still fails the run.
+    unresolved.push(
+      '/recover showed its own "couldn\'t check whether recovery is available" state: the' +
+        ' page could not reach the chain, so the configured/unconfigured posture was not observed.',
+    );
+  } else if (oracleSetNow === null) {
+    // Reported above, where the re-read failed.
+  } else if (posture === 'sanctioned' || posture === 'pending') {
     console.log(
       `skip  this wallet is in the "${posture}" posture — the form is correctly ` +
         'withheld regardless of the oracle setting; re-run with a clean, unflagged ' +
@@ -514,6 +547,8 @@ if (pageErrors.length) fails.push(`${pageErrors.length} uncaught page error(s)`)
 
 if (fails.length) {
   console.log('\nFAILED checks:', fails.join(' | '));
+  if (unresolved.length) console.log(`(also unresolved: ${unresolved.join(' | ')})`);
   process.exit(1);
 }
+if (unresolved.length) await blocked(unresolved.join('\n  '));
 console.log('\nlive recover review: ALL CHECKS PASSED');

@@ -46,6 +46,7 @@ import {
 import { privateKeyToAccount } from 'viem/accounts';
 import { baseSepolia, arbitrumSepolia, bscTestnet } from 'viem/chains';
 import { walletGateDecision } from './walletGate.mjs';
+import { classifyRpcResponse, isChainRpcMethod } from './rpc-verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Dev TEST wallets only — throwaway keys holding testnet dust. The
@@ -226,7 +227,7 @@ export async function precondition(what, fn) {
  * THREE_VERDICT_DRIVERS, so the batch TRUSTS that code and calls an
  * outage a product regression.
  *
- * Two traps, both of which a first attempt at this fell into:
+ * Three traps, each of which an earlier version of this helper fell into:
  *
  *  1. SCOPE. A whole-session counter is disarmed by the page-load reads
  *     that have nothing to do with the verdict: the endpoint answers on
@@ -234,10 +235,29 @@ export async function precondition(what, fn) {
  *     reads go out, and the drive falls through to FAIL anyway. So the
  *     window has to be reset immediately before the wait that matters.
  *
- *  2. WHAT COUNTS. A 200 carrying a JSON-RPC *error* still proves the
- *     endpoint answered — and for a revert-driven assertion that error IS
- *     the expected result. Counting only `result` misses precisely the
- *     call the verdict rests on.
+ *  2. WHAT COUNTS. Decided by the ONE classifier the repo has for a page's
+ *     JSON-RPC response, `classifyRpcResponse` (`rpc-verdict.mjs`), not by
+ *     a rule of this helper's own. Two of its outcomes prove the endpoint
+ *     answered: `ok` (a result, or a revert from a call that executes code
+ *     — for a revert-driven assertion that revert IS the expected result)
+ *     and `client-fault` (the provider parsed the page's request and
+ *     rejected it as malformed). `unreachable` does not: a 429, a 5xx, a
+ *     rate-limit or unavailable code, a body that is not JSON-RPC.
+ *
+ *  3. THE HTTP STATUS IS NOT THE ANSWER (#1633). This used to count only
+ *     status 200, so a provider answering 400 with a well-formed `-32602`
+ *     read as silence, and the drive reported BLOCKED over a page that had
+ *     sent a malformed request to a healthy endpoint — the one
+ *     misclassification that HIDES a product defect rather than
+ *     over-reporting one. A client fault now counts as an answer, so the
+ *     drive judges the page, and `faults()` names each one so the drive can
+ *     report it.
+ *
+ * Both transports, HTTP and WebSocket: a deployment whose wagmi transport
+ * rides a socket must not read as "answered nothing" (two drives used to
+ * carry their own socket counter beside this helper for that reason).
+ * Only CHAIN calls count (`isChainRpcMethod`), so WalletConnect's relay
+ * protocol never does.
  *
  * Usage: `const rpc = watchPageRpc(page)` once after launch; `rpc.reset()`
  * just before the critical wait; `await rpc.settled()` in the failure
@@ -250,14 +270,13 @@ export async function precondition(what, fn) {
  */
 export function watchPageRpc(page) {
   let answered = 0;
+  const clientFaults = [];
   const bodyReads = [];
   // Membership is decided when the REQUEST starts, not when its response
   // arrives. A slow hydration request issued before `reset()` can land
   // after it, and counting that as an answer makes a total outage DURING
   // the assertion look like a live endpoint — FAIL where BLOCKED is right,
-  // the exact failure this helper exists to prevent. live-rpc-audit.mjs
-  // already keys on the request object for this reason; the helper was
-  // first written without carrying that over.
+  // the exact failure this helper exists to prevent.
   //
   // Stamped with a GENERATION rather than added to a set. A set plus a
   // cleared tally is not enough and was the second wrong version of this:
@@ -268,14 +287,27 @@ export function watchPageRpc(page) {
   // approach quietly unfixable.)
   let generation = 0;
   const startedIn = new WeakMap();
-  // Recorded requests that have not yet emitted `response`. Without this,
+  // Requests (and socket calls) that have not answered yet. Without this,
   // `settled()` snapshots `bodyReads` while a request is still in flight,
   // `Promise.allSettled([])` returns instantly, and the window reports
   // ZERO answers — a false BLOCKED over whatever the drive was asserting.
-  // live-rpc-audit.mjs solved this with a bounded drain loop; this helper
-  // was written without it, the same way it was written without
-  // request-start attribution.
   const outstanding = new Set();
+  // Credits one classified response to the window its request started in.
+  // Checked at the moment of crediting, because the body read before it is
+  // async: a response that passed the gate in the `response` handler can
+  // finish parsing after a later `reset()` and would otherwise increment the
+  // freshly-zeroed counter — the fifth way this helper got the window wrong.
+  const credit = (gen, outcomes) => {
+    if (gen !== generation) return;
+    for (const o of outcomes) {
+      if (!isChainRpcMethod(o.method)) continue;
+      if (o.verdict === 'ok') answered++;
+      if (o.verdict === 'client-fault') {
+        answered++;
+        clientFaults.push(`${o.method}: ${o.why}`);
+      }
+    }
+  };
   page.on('request', (req) => {
     if (req.method() !== 'POST') return;
     startedIn.set(req, generation);
@@ -285,56 +317,78 @@ export function watchPageRpc(page) {
   // it would otherwise hold the drain loop open for the whole grace period.
   page.on('requestfailed', (req) => outstanding.delete(req));
   page.on('response', (res) => {
-    outstanding.delete(res.request());
-    // Captured here and RE-CHECKED after the body read below. The read is
-    // async, so a response that passed this gate can finish parsing after
-    // a later `reset()` and increment the freshly-zeroed counter — making
-    // a completely unanswered window look RPC-live. Checking the
-    // generation only once, before the await, was the fifth way this
-    // helper got the window wrong.
-    const gen = startedIn.get(res.request());
-    if (gen !== generation || res.status() !== 200) return;
+    const req = res.request();
+    outstanding.delete(req);
+    const gen = startedIn.get(req);
+    if (gen !== generation) return;
+    const requestBody = req.postData?.() ?? undefined;
     // `response` fires on HEADERS and does not await handlers, so the body
     // is still in flight; collect the promises and settle before judging.
     bodyReads.push(
       res
         .text()
-        .then((text) => {
-          // The window may have closed while this body was in flight.
-          if (gen !== generation) return;
-          const parsed = JSON.parse(text);
-          for (const r of Array.isArray(parsed) ? parsed : [parsed]) {
-            if (r && r.jsonrpc && (r.result !== undefined || r.error !== undefined)) {
-              answered++;
-            }
-          }
-        })
+        .then((text) => credit(gen, classifyRpcResponse(res.status(), text, requestBody)))
         .catch(() => {
-          /* not a JSON-RPC body, or it never arrived */
+          /* the body never arrived: no answer */
         }),
     );
+  });
+  page.on('websocket', (ws) => {
+    // JSON-RPC id -> the call sent under it, per connection. A socket has
+    // no HTTP status, so each answer is classified as a delivered message.
+    const sent = new Map();
+    const messages = (payload) => {
+      try {
+        const parsed = JSON.parse(String(payload));
+        return Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        return [];
+      }
+    };
+    ws.on('framesent', (f) => {
+      for (const m of messages(f.payload)) {
+        if (!m || !('id' in m) || !isChainRpcMethod(m.method)) continue;
+        const token = {};
+        outstanding.add(token);
+        sent.set(m.id, { gen: generation, body: JSON.stringify(m), token });
+      }
+    });
+    ws.on('framereceived', (f) => {
+      for (const m of messages(f.payload)) {
+        const call = m && sent.get(m.id);
+        if (!call) continue;
+        sent.delete(m.id);
+        outstanding.delete(call.token);
+        credit(call.gen, classifyRpcResponse(200, JSON.stringify(m), call.body));
+      }
+    });
+    ws.on('close', () => {
+      for (const call of sent.values()) outstanding.delete(call.token);
+      sent.clear();
+    });
   });
   return {
     /**
      * Start a fresh window. Call immediately before the critical wait.
      *
-     * Only responses to POSTs that START after this point can contribute:
-     * the generation bump orphans everything already in flight.
+     * Only calls that START after this point can contribute: the
+     * generation bump orphans everything already in flight.
      */
     reset() {
       generation++;
       answered = 0;
+      clientFaults.length = 0;
       bodyReads.length = 0;
       outstanding.clear();
     },
     /**
      * Report answers seen this window.
      *
-     * Drains outstanding requests first, bounded — a request still
-     * unanswered after the grace period did not contribute an answer
-     * anyway, and must not hang the drive. Then settles the body reads,
-     * because `response` fires on HEADERS and the parse is still in
-     * flight when the handler returns.
+     * Drains outstanding calls first, bounded — a call still unanswered
+     * after the grace period did not contribute an answer anyway, and must
+     * not hang the drive. Then settles the body reads, because `response`
+     * fires on HEADERS and the parse is still in flight when the handler
+     * returns.
      */
     async settled(graceMs = 15_000) {
       const until = Date.now() + graceMs;
@@ -343,6 +397,14 @@ export function watchPageRpc(page) {
       }
       await Promise.allSettled(bodyReads);
       return answered;
+    },
+    /**
+     * The calls in this window a reachable provider rejected as malformed,
+     * as `method: why` lines. Each is a defect in what the PAGE sent;
+     * read it after `settled()`, and report it with the drive's FAIL.
+     */
+    faults() {
+      return [...clientFaults];
     },
   };
 }
@@ -405,11 +467,38 @@ let WALLETS;
  *   could not cover it. Exiting stays the default, for drivers that
  *   never asked to accumulate.
  */
+/**
+ * Normalise both documented wallet-file shapes to a role map: the map form
+ * as written, the array form (`{ role, address, privateKey }[]`) keyed by
+ * each entry's `role` (or `name`). Indexing the array form as a map yields
+ * `undefined.privateKey`.
+ *
+ * Throws on a shape it cannot read, naming where (#1633). An element that
+ * is `null` or a string used to throw a raw `TypeError` out of the
+ * normalisation, exiting 1: a broken CREDENTIAL FILE reported as a product
+ * FAIL. The caller classifies the throw as the setup failure it is.
+ */
+export function normaliseWallets(raw) {
+  if (Array.isArray(raw)) {
+    const map = {};
+    raw.forEach((w, i) => {
+      const role = w && typeof w === 'object' ? (w.role ?? w.name) : undefined;
+      if (typeof role !== 'string' || role === '') {
+        throw new Error(`entry ${i} of the wallet array is not an object carrying a role or name`);
+      }
+      map[role] = w;
+    });
+    return map;
+  }
+  if (raw && typeof raw === 'object') return raw;
+  throw new Error('the wallet file is neither a role map nor an array of wallets');
+}
+
 function loadWallets(opts = {}) {
   if (WALLETS !== undefined) return WALLETS;
   let raw;
   try {
-    raw = JSON.parse(fs.readFileSync(WALLETS_PATH, 'utf8'));
+    raw = normaliseWallets(JSON.parse(fs.readFileSync(WALLETS_PATH, 'utf8')));
   } catch (err) {
     if (opts.throwOnUnreadable) {
       throw new LiveSetupError(
@@ -433,12 +522,7 @@ function loadWallets(opts = {}) {
         ` (live-position-observe.mjs) which needs no key.`,
     );
   }
-  // Normalize both documented shapes to a role map — the array form
-  // ({ role, address, privateKey }[]) indexed as a map yields
-  // undefined.privateKey otherwise.
-  WALLETS = Array.isArray(raw)
-    ? Object.fromEntries(raw.map((w) => [w.role ?? w.name, w]))
-    : raw;
+  WALLETS = raw;
   return WALLETS;
 }
 
@@ -598,6 +682,79 @@ export function requireSiteUrl() {
     );
   }
   return url;
+}
+
+/**
+ * Parse an operator-supplied ORIGIN (`INDEXER_ORIGIN` and the like) to the
+ * bare `scheme://host[:port]` a drive appends routes to.
+ *
+ * Normalised, not merely validated (#1633). The check two drives carried
+ * accepted any absolute http(s) URL and appended routes to it verbatim, so
+ * `https://indexer.example/` produced `//offers/stats`, which the indexer
+ * does not route: a 404 the drive reported as a product FAIL on a correctly
+ * deployed indexer. A trailing slash is now dropped; a path, query, fragment
+ * or credentials are refused, because appending a route to them would ask
+ * a different question than the one the operator meant.
+ *
+ * @returns {{ origin: string } | { error: string }}
+ */
+export function parseOrigin(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return { error: 'not an absolute URL' };
+  }
+  if (!/^https?:$/.test(url.protocol)) return { error: `scheme ${url.protocol} is not http(s)` };
+  if (url.pathname !== '/' || url.search || url.hash || url.username || url.password) {
+    return { error: 'it carries a path, query, fragment or credentials — give the bare origin' };
+  }
+  return { origin: url.origin };
+}
+
+/**
+ * Parse an operator's comma-separated list of APP routes (`UX_SWEEP_ROUTES`)
+ * into app-relative paths, or say why it cannot be used.
+ *
+ * Each entry must be app-relative: a leading `/`, and not `//` (which a
+ * browser reads as another host). The sweep navigates `${SITE}${route}`, so
+ * `borrow` became `https://app.example.comborrow` — not an app route. The
+ * failure was recorded and the sweep could still exit 0, reporting PASS
+ * having gathered none of the evidence asked for (#1633). An empty list is
+ * refused the same way (Codex #1621 r6).
+ *
+ * @returns {{ routes: string[] } | { error: string }}
+ */
+export function parseAppRouteList(value) {
+  const routes = String(value ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (routes.length === 0) return { error: 'it selects no routes' };
+  const bad = routes.filter((r) => !r.startsWith('/') || r.startsWith('//'));
+  if (bad.length) {
+    return { error: `not app-relative (each must start with a single "/"): ${bad.map((r) => JSON.stringify(r)).join(', ')}` };
+  }
+  return { routes };
+}
+
+/**
+ * The indexer Worker origin a drive probes: `INDEXER_ORIGIN`, or the
+ * production Worker. An unusable override is BLOCKED at once, where exiting
+ * is free — the probes it feeds could never reach a server, so the drive
+ * would otherwise report an unusable CONFIG as a product FAIL (Codex #1621
+ * r10).
+ */
+export function indexerOrigin() {
+  const raw = process.env.INDEXER_ORIGIN ?? 'https://indexer.vaipakam.com';
+  const parsed = parseOrigin(raw);
+  if ('error' in parsed) {
+    blockedSync(
+      `INDEXER_ORIGIN=${JSON.stringify(raw)} is not a usable origin (${parsed.error})` +
+        ' — the indexer probes this drive asserts against could never be reached.',
+    );
+  }
+  return parsed.origin;
 }
 
 // NOT `requireSiteUrl()` at module scope: pure helpers here are imported
