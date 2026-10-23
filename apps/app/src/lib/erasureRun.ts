@@ -41,10 +41,25 @@
  * broadcast that arrives while this tab's own run is going is left to that
  * run, which does everything the follow-up would, and a run requested while
  * a follow-up is still closing the wallet waits for it before touching
- * anything. "Closing" lasts until the reload can no longer come (Codex #2670
- * r3): the teardown resolving is not that moment, for the reason above, so a
- * follow-up that closed a reload-prone connection holds the lock for
- * `RELOAD_WINDOW_MS` after it. This is a write made after an erasure,
+ * anything.
+ *
+ * ONE RELOAD BARRIER, WHOEVER ASKED (Codex #2670 r3–r4). The teardown
+ * resolving is not the moment a reload stops being possible, for the reason
+ * above — so after ANY reload-prone close this tab asks for, whether its own
+ * run asked or a follow-up did, the tab owes a possible reload for
+ * `RELOAD_WINDOW_MS`, and no run starts its work until that has passed. The
+ * barrier is a property of the tab, not of a path: the first revision
+ * guarded the follow-up path alone, and a second run started inside its own
+ * predecessor's window was exposed the same way. A run waiting on it shows
+ * as running and has done nothing yet — not even dropped the previous run's
+ * kept report — so a reload in the wait interrupts nothing and shows the
+ * report of the run that caused it.
+ *
+ * A KEPT REPORT IS SHOWN ONLY ON A RELOAD (Codex #2670 r4). `sessionStorage`
+ * is copied into a tab opened from this one, so the key alone cannot say
+ * the load in front of it is the reload the report is waiting for. The
+ * browser's navigation type can: a load that is not a reload discards the
+ * copy unread. This is a write made after an erasure,
  * and it is justified narrowly: it holds counts and outcome flags only —
  * nothing about the wallet, the user or what was erased — it lives only
  * across the window a reload can land in, it is removed on the first read,
@@ -63,7 +78,11 @@ import {
   type FullEraseResult,
 } from './dataRights';
 import { bumpEraseEpoch } from './eraseEpoch';
-import { planWalletTeardown, type WalletPort } from './walletTeardown';
+import {
+  planWalletTeardown,
+  type WalletPort,
+  type WalletTeardownPlan,
+} from './walletTeardown';
 
 export interface ErasureReport extends FullEraseResult {
   /** Erasable items still present when the erasure finished. */
@@ -91,12 +110,12 @@ export const REPORT_KEY = ERASURE_REPORT_KEY;
  *  it. The SDK reloads once a network round trip completes, after the
  *  teardown has resolved. Two things are bounded by it: a kept report lives
  *  this long (a load later than this is the user's own and gets none), and
- *  a follow-up that closed such a connection holds the lock this long, so
- *  the reload cannot land inside a run this tab starts meanwhile. */
+ *  no run starts its work until this long after the tab last asked for such
+ *  a close, so the reload cannot land inside it (see the header). */
 export const RELOAD_WINDOW_MS = 30_000;
 
 const IDLE: ErasureRunState = { phase: 'idle' };
-let state: ErasureRunState = takeKeptReport() ?? IDLE;
+let state: ErasureRunState = takeKeptReport(loadWasReload()) ?? IDLE;
 const listeners = new Set<() => void>();
 
 function setState(next: ErasureRunState): void {
@@ -142,18 +161,6 @@ export interface ErasureDeps<C> {
 export async function runErasure<C>(deps: ErasureDeps<C>): Promise<void> {
   if (state.phase === 'running') return;
   setState({ phase: 'running' });
-  // A previous run's kept copy describes that run, not this one.
-  dropKeptReport();
-  // A follow-up of another tab's erasure may still be closing this tab's
-  // wallet, and a reload-prone one reloads the tab as it closes. Nothing of
-  // this run has happened yet, so a reload landing here interrupts nothing
-  // and claims nothing; started alongside it, the run could be cut off
-  // mid-clear with no report (see the header).
-  if (peerFollowUp) await peerFollowUp;
-  // Language goes back to the default BEFORE the erase, deliberately.
-  // `changeLanguage` persists — to the key and the shared-domain cookie — so
-  // running it afterwards would rewrite what the erase had just removed.
-  deps.resetLanguage();
 
   // The mark every late cleanup compares against, taken at the request so
   // "newer than the request" is measured from when the user asked. Re-taken
@@ -196,8 +203,26 @@ export async function runErasure<C>(deps: ErasureDeps<C>): Promise<void> {
       mark = connectionGeneration.current();
     },
   });
+  // The plan has fixed the request's connections (see `planWalletTeardown`),
+  // so a wallet connected during the waits below is not the request's.
+
+  // A follow-up of another tab's erasure may still be closing this tab's
+  // wallet, and a reload this tab owes may still be on its way (see the
+  // header). Nothing of this run has happened yet, so a reload landing in
+  // either wait interrupts nothing and claims nothing.
+  if (peerFollowUp) await peerFollowUp;
+  await untilReloadQuiet();
+  // A previous run's kept copy describes that run, not this one — dropped
+  // only now, so a reload during the waits still shows it.
+  dropKeptReport();
+  // Language goes back to the default BEFORE the erase, deliberately.
+  // `changeLanguage` persists — to the key and the shared-domain cookie — so
+  // running it afterwards would rewrite what the erase had just removed.
+  deps.resetLanguage();
 
   const closeLast = plan.last;
+  // The report kept just before a reload-prone close, if one was asked for.
+  let kept: ErasureReport | undefined;
   let erased: FullEraseResult;
   try {
     erased = await eraseMyDataFully({
@@ -205,7 +230,11 @@ export async function runErasure<C>(deps: ErasureDeps<C>): Promise<void> {
       disconnect: plan.first,
       disconnectLast: closeLast
         ? (interim) =>
-            closeLast(() => keepReport(measure(interim)))
+            closeLast(() => {
+              kept = measure(interim);
+              keepReport(kept);
+              owePossibleReload();
+            })
         : undefined,
     });
   } catch (error) {
@@ -215,7 +244,13 @@ export async function runErasure<C>(deps: ErasureDeps<C>): Promise<void> {
     throw error;
   } finally {
     // The kept copy, if any, is NOT dropped here: the reload can still be
-    // on its way (see the header). Its window and its timer remove it.
+    // on its way (see the header). It is RENEWED instead, with the barrier:
+    // the reload follows the close, so its window runs from when the close
+    // came back, however long that took — not from when it was asked for.
+    if (kept) {
+      keepReport(kept);
+      owePossibleReload();
+    }
     openGate();
   }
   setState({ phase: 'done', report: measure(erased) });
@@ -260,12 +295,15 @@ export function followPeerErasure<C>(deps: PeerErasureDeps<C>): void {
   // erasing tab does for its own.
   bumpEraseEpoch();
   // This tab's own connections, LAST: a reload-prone one reloads this tab
-  // (#2035), which is harmless once everything above has run. Planned when
-  // its turn comes, so it sees the connections as they are then. Best effort
-  // and unacknowledged: there is nobody to report to, which is why the
-  // originating page says other tabs were ASKED.
+  // (#2035), which is harmless once everything above has run. PLANNED NOW,
+  // so the connections it closes are the ones this tab held when the request
+  // arrived (Codex #2670 r4) — only the closing waits its turn behind an
+  // earlier follow-up, and a wallet connected in that wait is left alone.
+  // Best effort and unacknowledged: there is nobody to report to, which is
+  // why the originating page says other tabs were ASKED.
+  const plan = planWalletTeardown(deps.wallet);
   const next = (peerFollowUp ?? Promise.resolve()).then(() =>
-    closeConnections(deps.wallet),
+    closeConnections(plan),
   );
   peerFollowUp = next;
   void next.finally(() => {
@@ -273,17 +311,15 @@ export function followPeerErasure<C>(deps: PeerErasureDeps<C>): void {
   });
 }
 
-async function closeConnections<C>(wallet: WalletPort<C>): Promise<void> {
-  // The plan waits out a restoring session rather than closing its
-  // placeholder (#2039).
-  const plan = planWalletTeardown(wallet);
-  let closedReloadProne = false;
+async function closeConnections(plan: WalletTeardownPlan): Promise<void> {
+  let askedReloadProne = false;
   const teardowns = [
     plan.first,
     plan.last &&
       (() =>
         plan.last!(() => {
-          closedReloadProne = true;
+          askedReloadProne = true;
+          owePossibleReload();
         })),
   ];
   for (const teardown of teardowns) {
@@ -294,12 +330,30 @@ async function closeConnections<C>(wallet: WalletPort<C>): Promise<void> {
       // other teardown being tried.
     }
   }
-  // Held until the reload can no longer come (see the header) — set once
-  // the close was ASKED for, whatever it answered, since the reload is
-  // scheduled by the asking.
-  if (closedReloadProne) {
-    await new Promise((resolve) => setTimeout(resolve, RELOAD_WINDOW_MS));
-  }
+  // Renewed once the close has come back, as in `runErasure`.
+  if (askedReloadProne) owePossibleReload();
+}
+
+/** Resolves once no reload this tab owes can still come (see the header). */
+let reloadQuiet: Promise<void> = Promise.resolve();
+
+/**
+ * Record that this tab owes a possible reload — called as a reload-prone
+ * close is ASKED for, whatever it answers, because the asking is what
+ * schedules the reload, and again once that close has come back, because
+ * the reload follows it. Each call restarts the window.
+ */
+function owePossibleReload(): void {
+  reloadQuiet = new Promise((resolve) => setTimeout(resolve, RELOAD_WINDOW_MS));
+}
+
+async function untilReloadQuiet(): Promise<void> {
+  // Re-checked after each wait: a close asked for meanwhile extends it.
+  let current: Promise<void>;
+  do {
+    current = reloadQuiet;
+    await current;
+  } while (current !== reloadQuiet);
 }
 
 /**
@@ -351,8 +405,31 @@ function dropKeptReport(): void {
   }
 }
 
-/** Take a report kept across a reload, removing it as it is read. */
-function takeKeptReport(): ErasureRunState | null {
+/**
+ * Whether the load in front of us is a RELOAD of this page — the only load
+ * a kept report may be shown on (see the header). Unknown reads as no: a
+ * report withheld is a lost report, a report shown in a tab that never ran
+ * the erasure is a false one.
+ */
+function loadWasReload(): boolean {
+  try {
+    const [entry] = performance.getEntriesByType(
+      'navigation',
+    ) as PerformanceNavigationTiming[];
+    if (entry) return entry.type === 'reload';
+    // The older interface, where the newer is missing: type 1 is a reload.
+    return (
+      (performance as { navigation?: { type?: number } }).navigation?.type === 1
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Take a report kept across a reload, removing it as it is read — on any
+ *  load, so a copy inherited by a tab that did not reload is not left
+ *  behind either. */
+function takeKeptReport(reloaded: boolean): ErasureRunState | null {
   const store = session();
   let raw: string | null = null;
   try {
@@ -361,7 +438,7 @@ function takeKeptReport(): ErasureRunState | null {
   } catch {
     return null;
   }
-  if (raw === null) return null;
+  if (raw === null || !reloaded) return null;
   const report = parseKeptReport(raw);
   return report ? { phase: 'done', report } : null;
 }
@@ -446,11 +523,16 @@ export function parseKeptReport(raw: string, now: number = Date.now()): ErasureR
 export function resetErasureRunForTests(): void {
   dropKeptReport();
   peerFollowUp = undefined;
-  state = takeKeptReport() ?? IDLE;
+  reloadQuiet = Promise.resolve();
+  state = IDLE;
   listeners.clear();
 }
 
-/** Test seam: re-read a kept report, as a fresh module load would. */
-export function reloadErasureRunForTests(): void {
-  state = takeKeptReport() ?? IDLE;
+/** Test seam: re-read a kept report, as a fresh module load would — by
+ *  default a reload; `'navigate'` stands for any other load, such as a tab
+ *  opened from this one that inherited its `sessionStorage`. */
+export function reloadErasureRunForTests(
+  load: 'reload' | 'navigate' = 'reload',
+): void {
+  state = takeKeptReport(load === 'reload') ?? IDLE;
 }

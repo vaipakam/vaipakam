@@ -100,7 +100,10 @@ export interface WalletTeardownPlan {
  * The targets are the map as it stands once any restore has settled — after
  * the settle, so a connection the render did not have yet is still closed,
  * and one that a failed reconnect dropped is no longer asked to close — and
- * NOTHING connected after that (rule 3 in the header). Each teardown closes
+ * NOTHING connected after that (rule 3 in the header). The settle starts
+ * HERE, when the plan is made, not when a teardown first runs (Codex #2670
+ * r4): a caller may hold a plan while it waits its turn, and the request is
+ * what the map held when it was made, not when the turn came. Each teardown closes
  * those of its targets still in the map when it runs, and resolves `false`
  * when there are none: the session that was being restored at the request
  * is gone either way, and the erasure removed what would have restored it,
@@ -111,26 +114,26 @@ export function planWalletTeardown<C>(
   options: WalletTeardownOptions = {},
 ): WalletTeardownPlan {
   if (port.connectors().length === 0) return {};
-  let settled: Promise<readonly C[]> | undefined;
-  const settle = () => {
-    settled ??= port
-      .whenSettled(options.settleTimeoutMs ?? RECONNECT_SETTLE_TIMEOUT_MS)
-      .then(() => {
-        // The status is re-read rather than trusting the boolean, and the
-        // map is checked as well: a placeholder still in it means the
-        // reconnect has not replaced it, whatever the status says.
-        const request = port.connectors();
-        if (
-          port.status() === 'reconnecting' ||
-          request.some((connector) => !port.isLive(connector))
-        ) {
-          throw new ReconnectPendingError();
-        }
-        options.onSettled?.();
-        return request;
-      });
-    return settled;
-  };
+  const request = port
+    .whenSettled(options.settleTimeoutMs ?? RECONNECT_SETTLE_TIMEOUT_MS)
+    .then(() => {
+      // The status is re-read rather than trusting the boolean, and the map
+      // is checked as well: a placeholder still in it means the reconnect has
+      // not replaced it, whatever the status says.
+      const connected = port.connectors();
+      if (
+        port.status() === 'reconnecting' ||
+        connected.some((connector) => !port.isLive(connector))
+      ) {
+        throw new ReconnectPendingError();
+      }
+      options.onSettled?.();
+      return connected;
+    });
+  // Each teardown awaits it and meets the error there; this only keeps a
+  // plan nobody runs from surfacing an unhandled rejection.
+  request.catch(() => {});
+  const settle = () => request;
   const close = (targets: readonly C[]) =>
     disconnectEvery(targets, ({ connector }) => port.disconnect(connector), {
       onStragglerSettled: options.onStragglerSettled,

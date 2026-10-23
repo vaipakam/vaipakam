@@ -264,7 +264,7 @@
       "eraseSessionHeld": "La session stockée du portefeuille n’a pas pu être effacée : elle peut donc rester sur cet appareil. Effacer les données du site depuis les réglages de votre navigateur la supprimera.",
       "eraseWalletHeld": "Le portefeuille ne s’est pas déconnecté : ce site y est donc toujours connecté. Déconnectez-vous directement depuis votre portefeuille, puis effacez à nouveau.",
       "eraseWalletReconnecting": "Votre portefeuille était encore en train de se reconnecter à ce site ; il n’a donc pas encore pu être déconnecté, et il pourrait vous reconnecter une fois terminé. Ensuite, effacez à nouveau — ou déconnectez-vous directement depuis votre portefeuille.",
-      "eraseWalletReloaded": "Une connexion de portefeuille recharge la page en se fermant ; elle a donc été fermée en dernier, une fois tout le reste effacé — et la page s’est rechargée pendant cette étape ou peu après. Si votre portefeuille indique encore ce site comme connecté, déconnectez-le depuis le portefeuille.",
+      "eraseWalletReloaded": "Une connexion de portefeuille recharge la page en se fermant ; sa fermeture a donc été demandée en dernier, une fois tout le reste effacé — et la page s’est rechargée pendant cette étape ou peu après, avant que l’application ne puisse confirmer si elle était fermée. Si votre portefeuille indique encore ce site comme connecté, déconnectez-le depuis le portefeuille.",
       "eraseStoresUnreadable": "Ce navigateur n’a pas laissé l’application ouvrir le stockage de session du portefeuille : ce qui y est conservé peut donc rester sur cet appareil. Effacer les données du site depuis les réglages de votre navigateur les supprimera."
     },
     "killSwitch": {

@@ -1727,12 +1727,14 @@ interface TeardownOutcome {
 
 /**
  * Run one bounded teardown, with the late cleanup a given-up-on teardown is
- * owed. `afterCountedClear` gates that cleanup: a cleanup that empties the
- * stores must never run ahead of the call that COUNTS them (round 12 P2).
+ * owed. `afterErasure` gates that cleanup: a cleanup that empties the
+ * stores must never run ahead of the call that COUNTS them (round 12 P2),
+ * nor while a teardown of the request's is still closing (Codex #2670 r4 —
+ * see `eraseMyDataFully`).
  */
 async function runTeardown(
   teardown: Promise<boolean>,
-  afterCountedClear: Promise<void>,
+  afterErasure: Promise<void>,
   hasLiveSession: (() => boolean) | undefined,
 ): Promise<TeardownOutcome> {
   // Set only when the teardown was given up on, so a teardown that finishes
@@ -1781,7 +1783,7 @@ async function runTeardown(
       // store and the erasure reporting zero database records over records
       // it removed. Queuing behind the gate makes the ordering a property of
       // the code rather than of the timing.
-      void afterCountedClear.then(() => {
+      void afterErasure.then(() => {
         // CONNECTOR KEYS ONLY, for the reason round 7 gave about the peer
         // listener's equivalent: this fires seconds after the result was
         // reported, the page stays usable in between, and a blanket sweep
@@ -1914,12 +1916,16 @@ export async function eraseMyDataFully(
   options: FullEraseOptions = {},
 ): Promise<FullEraseResult> {
   const { disconnect, disconnectLast, hasLiveSession } = options;
-  // Opened once the COUNTED clear below has finished. Every late cleanup —
-  // this function's own, and the caller's per-straggler one, which is handed
-  // the same gate — waits on it, so a teardown settling early cannot empty
-  // the stores ahead of the call that counts them (round 12 P2).
+  // Opened once the COUNTED clear below AND the last teardown have finished.
+  // Every late cleanup of this function's waits on it, so a teardown settling
+  // early cannot empty the stores ahead of the call that counts them (round
+  // 12 P2) — and cannot run while a connection of the REQUEST's is still
+  // open either (Codex #2670 r4): its fence, `hasLiveSession`, cannot tell
+  // that connection from one made since, so a cleanup reaching it while the
+  // reload-prone teardown was still closing declined, and the records a
+  // straggler had just written back stayed for good.
   let openGate: () => void = () => {};
-  const countedClearDone = new Promise<void>((resolve) => {
+  const erasureSettled = new Promise<void>((resolve) => {
     openGate = resolve;
   });
   const outcomes: TeardownOutcome[] = [];
@@ -1928,13 +1934,11 @@ export async function eraseMyDataFully(
     // must not abort the erasure of everything else.
     const teardown = Promise.resolve().then(() => disconnect());
     outcomes.push(
-      await runTeardown(teardown, countedClearDone, hasLiveSession),
+      await runTeardown(teardown, erasureSettled, hasLiveSession),
     );
   }
   const base = eraseMyData();
   const indexedDb = await eraseIndexedDbData();
-  // The counted clear is done; anything queued behind the gate may run now.
-  openGate();
   const interimConnector = foldConnector(outcomes);
   const interim: FullEraseResult = {
     ...base,
@@ -1942,14 +1946,21 @@ export async function eraseMyDataFully(
     connector: interimConnector,
     complete: isComplete(indexedDb, interimConnector),
   };
-  if (!disconnectLast) return interim;
+  if (!disconnectLast) {
+    // The counted clear is done and no teardown is left: anything queued
+    // behind the gate may run now.
+    openGate();
+    return interim;
+  }
 
   // STEP 4 — the connections that reload the page as they close (#2035).
   // Everything the erasure counts has already happened, so a reload from
   // here on can interrupt nothing; it can only discard the report, which is
   // why the caller is handed `interim` to keep.
   const lastTeardown = Promise.resolve().then(() => disconnectLast(interim));
-  const last = await runTeardown(lastTeardown, countedClearDone, hasLiveSession);
+  const last = await runTeardown(lastTeardown, erasureSettled, hasLiveSession);
+  // Every teardown of the request's has now come back or been given up on.
+  openGate();
   // What the teardown wrote on its way out lands AFTER the sweep: wagmi
   // rewrites `wagmi.store` through `config.setState` once the connector has
   // closed, on both outcomes for the reason `runTeardown` gives. Connector

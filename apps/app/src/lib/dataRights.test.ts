@@ -822,6 +822,77 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
     expect(result.complete).toBe(true);
   });
 
+  it('runs a late teardown\'s database cleanup only once the last teardown is done (Codex #2670 r4)', async () => {
+    // A straggler (WalletConnect) lands after the counted clear while the
+    // reload-prone teardown (Coinbase) is still closing. The cleanup's fence
+    // cannot tell that request connection from a newer one, so run then it
+    // declined and the records the straggler wrote back stayed for good.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      fakeWindow(new Map());
+      let clears = 0;
+      (globalThis as Record<string, unknown>).indexedDB = {
+        deleteDatabase: () => ({}),
+        open() {
+          const req: Record<string, unknown> = {};
+          queueMicrotask(() => {
+            req.result = {
+              objectStoreNames: { contains: () => true },
+              close: () => {},
+              transaction: () => {
+                const tx: Record<string, unknown> = {
+                  objectStore: () => ({
+                    count: () => ({ result: 1 }),
+                    clear: () => {
+                      clears += 1;
+                    },
+                  }),
+                };
+                queueMicrotask(() => (tx.oncomplete as () => void)?.());
+                return tx;
+              },
+            };
+            (req.onsuccess as (() => void) | undefined)?.();
+          });
+          return req;
+        },
+      };
+      let land: (() => void) | undefined;
+      let lastOpen = false;
+      let closeLast: (() => void) | undefined;
+      const pending = eraseMyDataFully({
+        hasLiveSession: () => lastOpen,
+        disconnect: () =>
+          new Promise<boolean>((resolve) => {
+            land = () => resolve(true);
+          }),
+        disconnectLast: () =>
+          new Promise<boolean>((resolve) => {
+            lastOpen = true;
+            closeLast = () => {
+              lastOpen = false;
+              resolve(true);
+            };
+          }),
+      });
+      // The first teardown is given up on; the counted clear runs.
+      await vi.advanceTimersByTimeAsync(DISCONNECT_TIMEOUT_MS + 1);
+      const counted = clears;
+      expect(counted).toBeGreaterThan(0);
+      // The straggler lands while the last teardown is still closing.
+      land?.();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(clears).toBe(counted);
+      // Once it is done, nothing of the request's is open: the cleanup runs.
+      closeLast?.();
+      await pending;
+      await vi.advanceTimersByTimeAsync(1);
+      expect(clears).toBeGreaterThan(counted);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('is INCOMPLETE when a database refuses, however much storage it cleared', async () => {
     // The failure this exists to prevent: Web Storage gives up several keys,
     // the page adds them up and reports success, and the live WalletConnect
