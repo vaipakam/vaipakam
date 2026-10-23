@@ -50,6 +50,12 @@ describe('totalFills / isSparseTape', () => {
 });
 
 describe('newestPrint', () => {
+  const fill = (loanId: number, startAt: number, rateBps: number | null): TapeFillLike => ({
+    loanId,
+    startAt,
+    rateBps,
+    principal: null,
+  });
   const buckets = [
     bucket({ t: 1_000, close: 510 }),
     bucket({ t: 2_000, close: 525 }),
@@ -61,44 +67,52 @@ describe('newestPrint', () => {
 
   it('uses the newest bucket close when the tape is empty', () => {
     expect(newestPrint(buckets, null)).toEqual({
+      source: 'bucket',
       rateBps: 525,
       at: 2_000,
-      source: 'bucket',
     });
   });
 
   it('prefers a tape fill at least as fresh as the newest bucket', () => {
     // A fill inside (or after) the newest bucket carries the exact
     // time — the 60 s-cached candle response may not include it yet.
-    expect(newestPrint(buckets, { rateBps: 530, at: 2_500 })).toEqual({
+    expect(newestPrint(buckets, fill(7, 2_500, 530))).toEqual({
+      source: 'tape',
       rateBps: 530,
       at: 2_500,
-      source: 'tape',
+      loanId: 7,
     });
   });
 
   it('keeps the bucket close when the tape fill is older', () => {
-    expect(newestPrint(buckets, { rateBps: 400, at: 1_500 })).toEqual({
+    expect(newestPrint(buckets, fill(7, 1_500, 400))).toEqual({
+      source: 'bucket',
       rateBps: 525,
       at: 2_000,
-      source: 'bucket',
     });
   });
 
   it('falls back to the tape when candles are unavailable/empty', () => {
-    expect(newestPrint([], { rateBps: 505, at: 900 })).toEqual({
+    expect(newestPrint([], fill(7, 900, 505))).toEqual({
+      source: 'tape',
       rateBps: 505,
       at: 900,
-      source: 'tape',
+      loanId: 7,
     });
   });
 
   it('reports a newer fill with no recorded rate as such, not an older close (#1142)', () => {
-    expect(newestPrint([], { rateBps: null, at: 900 })).toEqual({
-      rateBps: null,
-      at: 900,
+    expect(newestPrint(buckets, fill(42, 2_500, null))).toEqual({
       source: 'tape',
+      rateBps: null,
+      at: 2_500,
+      loanId: 42,
     });
+  });
+
+  it('keeps the loan id of an unrecorded print so the header can name it (#1142)', () => {
+    const print = newestPrint([], fill(42, 900, null));
+    expect(print?.source === 'tape' ? print.loanId : null).toBe(42);
   });
 });
 

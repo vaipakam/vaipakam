@@ -34,16 +34,27 @@ export function isSparseTape(buckets: readonly RateCandleBucket[]): boolean {
   return totalFills(buckets) < SPARSE_FILLS_THRESHOLD;
 }
 
-export interface LastPrint {
-  /** `null` only for a tape print whose executed rate the indexer cannot
-   *  back (#1142): the fill is known to have happened, its rate is not. */
-  rateBps: number | null;
-  /** Unix seconds. Bucket-derived prints carry the bucket START time
-   *  (the finest truth the aggregate offers); tape-derived prints
-   *  carry the fill's exact timestamp. */
-  at: number;
-  source: 'bucket' | 'tape';
-}
+/** The header's newest executed print. A tape print keeps the loan it
+ *  came from, so a print whose rate cannot be backed can still name that
+ *  loan (#1142): "not recorded" without saying which fill would leave the
+ *  reader nothing to check. */
+export type LastPrint =
+  | {
+      source: 'bucket';
+      rateBps: number;
+      /** Unix seconds: the bucket START time (the finest truth the
+       *  aggregate offers). */
+      at: number;
+    }
+  | {
+      source: 'tape';
+      /** `null` when the indexer cannot back the executed rate: the fill
+       *  is known to have happened, its rate is not. */
+      rateBps: number | null;
+      /** Unix seconds: the fill's exact time. */
+      at: number;
+      loanId: number;
+    };
 
 /**
  * The newest executed print for the header's "last fill: X.XX% · age"
@@ -55,14 +66,19 @@ export interface LastPrint {
  */
 export function newestPrint(
   buckets: readonly RateCandleBucket[],
-  tapeNewest: { rateBps: number | null; at: number } | null,
+  tapeNewest: TapeFillLike | null,
 ): LastPrint | null {
   const last = buckets.length > 0 ? buckets[buckets.length - 1] : null;
-  if (tapeNewest && (last === null || tapeNewest.at >= last.t)) {
-    return { rateBps: tapeNewest.rateBps, at: tapeNewest.at, source: 'tape' };
+  if (tapeNewest && (last === null || tapeNewest.startAt >= last.t)) {
+    return {
+      source: 'tape',
+      rateBps: tapeNewest.rateBps,
+      at: tapeNewest.startAt,
+      loanId: tapeNewest.loanId,
+    };
   }
   if (last === null) return null;
-  return { rateBps: last.close, at: last.t, source: 'bucket' };
+  return { source: 'bucket', rateBps: last.close, at: last.t };
 }
 
 /**

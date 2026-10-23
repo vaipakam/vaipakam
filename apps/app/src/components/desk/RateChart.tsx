@@ -155,13 +155,10 @@ export default function RateChart({
     () => (Array.isArray(buckets) ? isSparseTape(buckets) : false),
     [buckets],
   );
-  const tapeNewest = useMemo(
-    () =>
-      Array.isArray(tape) && tape.length > 0
-        ? { rateBps: tape[0].rateBps, at: tape[0].startAt }
-        : null,
-    [tape],
-  );
+  // The fill itself, not a projection of it: the header needs its loan
+  // id when the rate is not recorded (#1142), and a narrower copy is how
+  // that id was lost once.
+  const tapeNewest = Array.isArray(tape) && tape.length > 0 ? tape[0] : null;
   const lastPrint = useMemo(
     () => newestPrint(Array.isArray(buckets) ? buckets : [], tapeNewest),
     [buckets, tapeNewest],
@@ -399,7 +396,14 @@ export default function RateChart({
             {text.title}
           </h2>
           {/* §5.3 rule 5 — last executed print, never a %-change ticker. */}
-          <p className="muted desk-chart-lastfill">
+          <p
+            className="muted desk-chart-lastfill"
+            title={
+              lastPrint?.source === 'tape' && lastPrint.rateBps === null
+                ? copy.desk.fillTermsNotRecordedTitle(lastPrint.loanId)
+                : undefined
+            }
+          >
             {lastPrint
               ? text.lastFill(
                   lastPrint.rateBps === null
