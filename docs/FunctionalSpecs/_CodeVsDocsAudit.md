@@ -1225,3 +1225,24 @@ an in-place upgrade.
 **Status:** resolved by the spec change and the code change together. Do not
 reintroduce a flat-list route to "restore coverage": there is no population for
 it to cover.
+
+## Accepting an offset offer: the connected-app spec excluded it, the owner reversed that (#2523, 2026-10-23)
+
+The connected-app spec said an offset vehicle "remains not acceptable in this
+app version" and listed accepting one among the kinds kept out of the
+surface "by intent, not by omission". The same app, meanwhile, lets a
+borrower POST an offset and tells them their loan closes when a borrower
+accepts it. The result was a one-sided feature: an offset posted here had no
+taker here, and the poster was not told so.
+
+**Resolved by spec change on a recorded owner decision.** #2523 asked for an
+offset-accept review, and the owner approved it as part of the issue plan
+(Wave 5, approved 2026-10-20). The spec now describes that review: the
+taker's loan is ordinary and on the offer's own terms; the review and the
+receipt state that the same transaction closes the earlier loan from the
+poster's wallet; and signing waits until every condition that close-out
+needs is positively clear. The exclusion stays only for a linked offer whose
+kind cannot be identified.
+
+This is not code being transcribed into the spec. The intent changed first,
+in the issue, and both the spec and the code follow it.

@@ -123,7 +123,7 @@ export async function postLenderOffer(page: Page): Promise<void> {
 
 /** Shared review-step tail of both accept paths: consent (re-ticked
  *  through late-disclosure resets), sign, wait for the done card. */
-async function signAcceptReview(page: Page): Promise<void> {
+export async function signAcceptReview(page: Page): Promise<void> {
   const accept = page.getByRole('button', { name: /borrow this now/i });
   await expect(accept).toBeVisible({ timeout: 30_000 });
   await consentAndWaitEnabled(page, accept);

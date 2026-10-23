@@ -4227,10 +4227,30 @@ Its intended behaviour, as the test oracle for this surface:
   signs is bound to the same live loan numbers the review showed,
   including the current principal and collateral floor, so any
   movement between review and signing aborts before the wallet
-  prompt. An offset vehicle (or a linked offer whose kind cannot be
-  positively identified) remains not acceptable in this app version:
-  the review flags the link, names the loan, and blocks signing
-  entirely. Signing always waits until the link and kind checks
+  prompt. An OFFSET vehicle — a lending offer a borrower posted to
+  close their earlier loan early — is acceptable here (#2523; this
+  reverses the earlier exclusion by owner decision, the approved
+  issue plan of 2026-10-20). The taker's loan is an ordinary new loan
+  on the offer's own terms, and the review describes it as such; it
+  must also state, before signing and in the receipt consent is given
+  against, that the same transaction pays off and closes the earlier
+  loan from the poster's own wallet, that the taker owes nothing
+  toward that loan, and that if the close-out cannot complete the
+  whole acceptance is refused with nothing moved (the network fee is
+  still spent). The acceptance is signable only when every condition
+  the close-out needs is positively clear, each read live: the earlier
+  loan is still active; a loan started now on the offer's terms would
+  still end by the earlier loan's due date; no swap-to-repay order is
+  waiting on the earlier loan; and the poster's standing approval and
+  wallet balance both cover the most the close-out can pull — the
+  same bound the poster's own offset card watches, so the two parties
+  are told the same thing. Each failed condition is named in plain
+  words, an unanswered check blocks and offers a retry, and submission
+  re-reads every condition and aborts before any signature or approval
+  if one has failed or changed since the review. A linked offer whose
+  kind cannot be positively identified remains not acceptable: the
+  review flags the link, names the loan, and blocks signing entirely.
+  Signing always waits until the link and kind checks
   resolve, and a failed check shows a visible retry rather than
   silently passing. This is a deliberate supersession, on this
   surface, of one specific model: the primary app's borrower-side
@@ -4238,7 +4258,7 @@ Its intended behaviour, as the test oracle for this surface:
   in the offer-creation requirements earlier in this document (the
   eligibility flag plus the separate marketplace-listing publication
   of NFT collateral). That opt-in, its listing publication, and
-  accepting offset or other unidentified linked-offer kinds stay out
+  accepting unidentified linked-offer kinds stay out
   of this surface's scope by intent, not by omission. The
   LENDER-POSITION sale path is emphatically in scope and specified
   above: a lender lists their own position for sale and a buyer
