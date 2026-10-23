@@ -415,6 +415,17 @@ export function marketTenorOf(
   return typeof loan.marketDurationDays === 'number' ? loan.marketDurationDays : null;
 }
 
+/** #1142 — whether every row of a tape page says which market it is a
+ *  fill of (`marketDurationDays` present, a number or `null`). A page with a
+ *  keyless row cannot be scoped, so the tape treats it as unavailable. */
+export function pageCarriesPlacement(
+  loans: readonly Pick<IndexedLoan, 'marketDurationDays'>[],
+): boolean {
+  return loans.every(
+    (l) => l.marketDurationDays === null || typeof l.marketDurationDays === 'number',
+  );
+}
+
 /** Executed fills for the (pair, tenor) market, newest first. */
 export function useDeskTape(pair: DeskPair | null, durationDays: number) {
   const { readChain } = useActiveChain();
@@ -471,6 +482,11 @@ export function useDeskTape(pair: DeskPair | null, durationDays: number) {
           excludeSaleVehicles: true,
         });
         if (page === null) return null;
+        // #1142 — a row without the placement key comes from a worker that
+        // cannot say which market the loan is a fill of (it scoped on the
+        // live tenor, which an extension rewrites). Its tape is unavailable,
+        // not a list to filter.
+        if (!pageCarriesPlacement(page.loans)) return null;
         const matched = page.loans.filter(matchesMarket);
         if (matched.length !== page.loans.length) untrusted = true;
         fills.push(...matched);

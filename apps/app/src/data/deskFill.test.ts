@@ -4,7 +4,7 @@
  * and never the live ones an extension, repayment or match rewrites.
  */
 import { describe, expect, it } from 'vitest';
-import { deskFillOf, marketTenorOf } from './desk';
+import { deskFillOf, marketTenorOf, pageCarriesPlacement } from './desk';
 import type { IndexedLoan } from './indexer';
 
 function loan(over: Partial<IndexedLoan>): IndexedLoan {
@@ -58,5 +58,16 @@ describe('marketTenorOf (#1142)', () => {
 
   it('keeps a loan the indexer placed in no market out of every tenor', () => {
     expect(marketTenorOf(loan({ marketDurationDays: null }))).toBeNull();
+  });
+});
+
+describe('pageCarriesPlacement (#1142)', () => {
+  it('accepts a page whose every row states its market, null included', () => {
+    expect(pageCarriesPlacement([])).toBe(true);
+    expect(pageCarriesPlacement([loan({ marketDurationDays: 30 }), loan({ marketDurationDays: null })])).toBe(true);
+  });
+
+  it('rejects a page with a keyless row, so the tape is unavailable rather than scoped on the live tenor', () => {
+    expect(pageCarriesPlacement([loan({ marketDurationDays: 30 }), loan({})])).toBe(false);
   });
 });
