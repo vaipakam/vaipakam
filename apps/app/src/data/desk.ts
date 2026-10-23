@@ -44,6 +44,7 @@ import {
   type CandleInterval,
   type CandleRange,
   type IndexedLoan,
+  type IndexedLoanStatus,
   type IndexedOffer,
   type IndexedParticipantLoan,
   type IndexedSignedOffer,
@@ -55,6 +56,8 @@ import {
   type DeskBookRow,
 } from '../lib/signedOffer';
 import { readOfferRowsBatchLive } from './chainPositions';
+import { initiatedPrincipal, initiatedTerms } from '../lib/positionAmounts';
+import type { TapeFillLike } from '../lib/rateChart';
 import { isMissingSelectorError } from '../contracts/preflights';
 
 const REFRESH_MS = 30_000;
@@ -374,6 +377,35 @@ export function useDeskSignedBook(
   return { ...q, data: freshData(q) };
 }
 
+/** One executed fill as the desk presents it (#1142): only what the loan
+ *  executed at, never the live terms. `LoanExtended` rewrites the live rate
+ *  and tenor and repayment or matching reduces the live principal, so a
+ *  tape row, the last-fill header or a chart marker reading them would
+ *  misreport a past print. A term the indexer cannot back is `null`, and
+ *  the surfaces say it is not recorded. */
+export interface DeskFill extends TapeFillLike {
+  status: IndexedLoanStatus;
+}
+
+/** The ONE place a loan row becomes a desk fill. */
+export function deskFillOf(loan: IndexedLoan): DeskFill {
+  const terms = initiatedTerms(loan);
+  const principal = initiatedPrincipal(loan);
+  return {
+    loanId: loan.loanId,
+    startAt: loan.startAt,
+    status: loan.status,
+    rateBps: terms?.rateBps ?? null,
+    principal: principal === null ? null : principal.toString(),
+  };
+}
+
+/** The tenor market a loan is filed under: the indexer's own key when it
+ *  sends one, else (an older worker, which scoped on it) the live tenor. */
+export function marketTenorOf(loan: Pick<IndexedLoan, 'marketDurationDays' | 'durationDays'>): number {
+  return typeof loan.marketDurationDays === 'number' ? loan.marketDurationDays : loan.durationDays;
+}
+
 /** Executed fills for the (pair, tenor) market, newest first. */
 export function useDeskTape(pair: DeskPair | null, durationDays: number) {
   const { readChain } = useActiveChain();
@@ -386,7 +418,7 @@ export function useDeskTape(pair: DeskPair | null, durationDays: number) {
     ],
     enabled: pair !== null,
     refetchInterval: signalAware(REFRESH_MS),
-    queryFn: async (): Promise<IndexedLoan[] | null> => {
+    queryFn: async (): Promise<DeskFill[] | null> => {
       if (!indexerConfigured()) return null;
       // Belt-and-suspenders client-side verification, mirroring the
       // book fallback (Codex #1134 round-5 P2): an older worker
@@ -403,7 +435,10 @@ export function useDeskTape(pair: DeskPair | null, durationDays: number) {
         l.isSaleVehicle !== true &&
         l.lendingAsset.toLowerCase() === wantLending &&
         l.collateralAsset.toLowerCase() === wantCollateral &&
-        l.durationDays === durationDays;
+        // #1142 — the key the server scoped on, so an extended loan the
+        // worker rightly kept in its executed tenor is not read as a sign
+        // that the worker ignored the filter.
+        marketTenorOf(l) === durationDays;
       // Bounded `nextBefore` walk, same shape as the book fallback
       // (Codex #1134 round-6 P2): against an older worker the first
       // page is the newest 50 GLOBAL loans, so a market whose fills
@@ -434,7 +469,7 @@ export function useDeskTape(pair: DeskPair | null, durationDays: number) {
         // first page keeps the pre-walk semantics: whether the worker
         // filtered or the global page happened to be all-this-market,
         // those ARE the newest fills of this market.
-        if (page.nextBefore === null || !untrusted) return fills;
+        if (page.nextBefore === null || !untrusted) return fills.map(deskFillOf);
         before = page.nextBefore;
       }
       return null; // cap hit on an untrusted feed — truncated ≠ complete

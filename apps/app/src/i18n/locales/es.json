@@ -1953,7 +1953,9 @@
         "daysLeft": "{{days}} d restantes",
         "daysOverdue": "{{days}} d de retraso",
         "partialRepayOk": " · reembolso parcial permitido"
-      }
+      },
+      "fillTermsNotRecorded": "no registrado",
+      "fillTermsNotRecordedTitle": "Préstamo #{{loanId}}: no se pudieron confirmar los términos acordados de este préstamo a partir de su registro de apertura, así que no se muestran."
     },
     "tariff": {
       "optInTitle": "Tarifa VPFI completa (opcional)",

@@ -1953,7 +1953,9 @@
         "daysLeft": "{{days}} j restants",
         "daysOverdue": "{{days}} j de retard",
         "partialRepayOk": " · remboursement partiel possible"
-      }
+      },
+      "fillTermsNotRecorded": "non enregistré",
+      "fillTermsNotRecordedTitle": "Prêt n° {{loanId}} : les conditions convenues de ce prêt n’ont pas pu être confirmées à partir de son enregistrement d’ouverture, elles ne sont donc pas affichées."
     },
     "tariff": {
       "optInTitle": "Tarif VPFI complet (facultatif)",

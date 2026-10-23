@@ -1,6 +1,7 @@
 /**
  * Tape — recent executed fills for the (pair, tenor) market (#1129
- * §3). Server-scoped via `/loans/recent` with sale vehicles excluded
+ * §3). Each row shows the terms the loan was agreed at, never its live
+ * terms; a term the indexer cannot confirm reads "not recorded" (#1142). Server-scoped via `/loans/recent` with sale vehicles excluded
  * (a secondary position sale is not a fresh rate print). Sparse-
  * honest: an empty market says "no fills yet", never a fake ticker;
  * a failed load says "couldn't load", never "empty".
@@ -13,7 +14,7 @@ import {
   formatTimeAgo,
   formatTokenAmount,
 } from '../../lib/format';
-import type { IndexedLoan } from '../../data/indexer';
+import type { DeskFill } from '../../data/desk';
 
 const MAX_ROWS = 20;
 
@@ -23,8 +24,8 @@ export function TapePanel({
   decimals,
   symbol,
 }: {
-  /** null = unavailable; [] = truly no fills. */
-  fills: IndexedLoan[] | null | undefined;
+  /** null = unavailable; [] = truly no fills. Executed terms only (#1142). */
+  fills: DeskFill[] | null | undefined;
   loading: boolean;
   decimals: number | undefined;
   symbol: string | undefined;
@@ -47,18 +48,21 @@ export function TapePanel({
             <div
               key={f.loanId}
               className="desk-tape-row"
-              title={copy.desk.tapeRowTitle(
-                f.interestRateBps,
-                f.loanId,
-                copy.desk.loanStatus[f.status],
-              )}
+              title={
+                f.rateBps === null
+                  ? copy.desk.fillTermsNotRecordedTitle(f.loanId)
+                  : copy.desk.tapeRowTitle(f.rateBps, f.loanId, copy.desk.loanStatus[f.status])
+              }
             >
-              <span>{formatBpsAsPercent(f.interestRateBps)}</span>
               <span>
-                {decimals !== undefined
-                  ? formatTokenAmount(f.principal, decimals)
-                  : '…'}
-                {symbol ? ` ${symbol}` : ''}
+                {f.rateBps === null ? copy.desk.fillTermsNotRecorded : formatBpsAsPercent(f.rateBps)}
+              </span>
+              <span>
+                {f.principal === null
+                  ? copy.desk.fillTermsNotRecorded
+                  : decimals !== undefined
+                    ? `${formatTokenAmount(f.principal, decimals)}${symbol ? ` ${symbol}` : ''}`
+                    : `…${symbol ? ` ${symbol}` : ''}`}
               </span>
               <span className="muted">{formatTimeAgo(f.startAt)}</span>
             </div>

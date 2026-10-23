@@ -1953,7 +1953,9 @@
         "daysLeft": "残り {{days}}日",
         "daysOverdue": "{{days}}日 超過",
         "partialRepayOk": " · 一部返済可"
-      }
+      },
+      "fillTermsNotRecorded": "記録なし",
+      "fillTermsNotRecordedTitle": "ローン #{{loanId}}：このローンの合意条件を開始時の記録から確認できなかったため、表示していません。"
     },
     "tariff": {
       "optInTitle": "VPFI フル料金（任意）",

@@ -1953,7 +1953,9 @@
         "daysLeft": "{{days}} يوم متبقٍ",
         "daysOverdue": "{{days}} يوم تأخير",
         "partialRepayOk": " · السداد الجزئي متاح"
-      }
+      },
+      "fillTermsNotRecorded": "غير مسجّل",
+      "fillTermsNotRecordedTitle": "القرض رقم {{loanId}}: تعذّر تأكيد الشروط المتفق عليها لهذا القرض من سجل فتحه، لذلك لا تُعرض."
     },
     "tariff": {
       "optInTitle": "رسوم VPFI الكاملة (اختياري)",

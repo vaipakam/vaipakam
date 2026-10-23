@@ -35,7 +35,9 @@ export function isSparseTape(buckets: readonly RateCandleBucket[]): boolean {
 }
 
 export interface LastPrint {
-  rateBps: number;
+  /** `null` only for a tape print whose executed rate the indexer cannot
+   *  back (#1142): the fill is known to have happened, its rate is not. */
+  rateBps: number | null;
   /** Unix seconds. Bucket-derived prints carry the bucket START time
    *  (the finest truth the aggregate offers); tape-derived prints
    *  carry the fill's exact timestamp. */
@@ -53,7 +55,7 @@ export interface LastPrint {
  */
 export function newestPrint(
   buckets: readonly RateCandleBucket[],
-  tapeNewest: { rateBps: number; at: number } | null,
+  tapeNewest: { rateBps: number | null; at: number } | null,
 ): LastPrint | null {
   const last = buckets.length > 0 ? buckets[buckets.length - 1] : null;
   if (tapeNewest && (last === null || tapeNewest.at >= last.t)) {
@@ -154,8 +156,13 @@ export function whitespaceBucketTimes(
 export interface TapeFillLike {
   loanId: number;
   startAt: number; // unix seconds — exact fill time
-  interestRateBps: number;
-  principal: string; // decimal string, lending-asset base units
+  /** The rate the loan EXECUTED at, or `null` when the indexer cannot back
+   *  it (#1142). Never the live rate, which an extension rewrites. */
+  rateBps: number | null;
+  /** The principal the loan was initiated with (decimal string, lending-
+   *  asset base units), or `null` when not recorded. Never the live
+   *  outstanding principal, which repayment and matching reduce. */
+  principal: string | null;
 }
 
 /** One plotted point in sparse mode: an individual fill at its EXACT
@@ -218,6 +225,11 @@ export function fillPointsFromTape(
     .sort((x, y) => x.startAt - y.startAt || x.loanId - y.loanId);
   const points: FillPoint[] = [];
   for (const row of inRange) {
+    // #1142 — a fill whose executed terms are not recorded cannot be drawn
+    // as its own marker (the live terms are a different figure). The
+    // bucket markers, which fold the indexer's best figure, stand in.
+    if (row.rateBps === null || row.principal === null) return null;
+    const rateBps = row.rateBps;
     let principal: bigint;
     try {
       principal = BigInt(row.principal || '0');
@@ -228,7 +240,7 @@ export function fillPointsFromTape(
     }
     const last = points[points.length - 1];
     if (last !== undefined && last.t === row.startAt) {
-      last.rateBps = row.interestRateBps; // chronological — last wins
+      last.rateBps = rateBps; // chronological — last wins
       last.fills += 1;
       last.principalTotal = (
         BigInt(last.principalTotal) + principal
@@ -236,7 +248,7 @@ export function fillPointsFromTape(
     } else {
       points.push({
         t: row.startAt,
-        rateBps: row.interestRateBps,
+        rateBps,
         fills: 1,
         principalTotal: principal.toString(),
       });

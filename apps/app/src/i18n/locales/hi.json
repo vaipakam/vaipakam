@@ -1953,7 +1953,9 @@
         "daysLeft": "{{days}}d शेष",
         "daysOverdue": "{{days}}d अतिदेय",
         "partialRepayOk": " · partial repay OK"
-      }
+      },
+      "fillTermsNotRecorded": "दर्ज नहीं",
+      "fillTermsNotRecordedTitle": "ऋण #{{loanId}}: इस ऋण की तय शर्तें उसके शुरुआती रिकॉर्ड से पुष्ट नहीं हो सकीं, इसलिए वे नहीं दिखाई गई हैं।"
     },
     "tariff": {
       "optInTitle": "पूरा VPFI tariff (वैकल्पिक)",

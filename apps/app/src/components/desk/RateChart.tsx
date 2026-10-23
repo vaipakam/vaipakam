@@ -41,12 +41,8 @@ import { LoaderCircle } from 'lucide-react';
 import { copy } from '../../content/copy';
 import { useTheme, type ResolvedTheme } from '../../app/ThemeContext';
 import { UnavailableState } from '../EmptyState';
-import { useDeskCandles, type DeskPair } from '../../data/desk';
-import type {
-  CandleInterval,
-  CandleRange,
-  IndexedLoan,
-} from '../../data/indexer';
+import { useDeskCandles, type DeskFill, type DeskPair } from '../../data/desk';
+import type { CandleInterval, CandleRange } from '../../data/indexer';
 import {
   INTERVAL_SECONDS,
   chartEmptyKind,
@@ -142,7 +138,7 @@ export default function RateChart({
    *  app contract. Feeds three things: the "last fill" freshness
    *  backstop (the candle response is 60 s-cached), sparse mode's
    *  per-fill markers, and the never-filled vs empty-range copy split. */
-  tape: IndexedLoan[] | null | undefined;
+  tape: DeskFill[] | null | undefined;
 }) {
   const [interval, setInterval] = useState<CandleInterval>(DEFAULT_INTERVAL);
   const [range, setRange] = useState<CandleRange>(DEFAULT_RANGE);
@@ -162,7 +158,7 @@ export default function RateChart({
   const tapeNewest = useMemo(
     () =>
       Array.isArray(tape) && tape.length > 0
-        ? { rateBps: tape[0].interestRateBps, at: tape[0].startAt }
+        ? { rateBps: tape[0].rateBps, at: tape[0].startAt }
         : null,
     [tape],
   );
@@ -406,7 +402,9 @@ export default function RateChart({
           <p className="muted desk-chart-lastfill">
             {lastPrint
               ? text.lastFill(
-                  formatBpsAsPercent(lastPrint.rateBps),
+                  lastPrint.rateBps === null
+                    ? copy.desk.fillTermsNotRecorded
+                    : formatBpsAsPercent(lastPrint.rateBps),
                   formatTimeAgo(lastPrint.at),
                 )
               : text.lastFillNone}

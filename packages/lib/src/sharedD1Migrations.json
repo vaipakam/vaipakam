@@ -67,5 +67,6 @@
   "0067_protocol_config_label_binding.sql",
   "0068_offer_refinance_target.sql",
   "0069_push_rail_status.sql",
-  "0070_protocol_config_knobs.sql"
+  "0070_protocol_config_knobs.sql",
+  "0071_loans_market_tape_index.sql"
 ]

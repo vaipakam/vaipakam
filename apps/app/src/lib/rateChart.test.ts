@@ -92,6 +92,14 @@ describe('newestPrint', () => {
       source: 'tape',
     });
   });
+
+  it('reports a newer fill with no recorded rate as such, not an older close (#1142)', () => {
+    expect(newestPrint([], { rateBps: null, at: 900 })).toEqual({
+      rateBps: null,
+      at: 900,
+      source: 'tape',
+    });
+  });
 });
 
 describe('chartEmptyKind (#1139 — never-filled vs empty-in-range copy)', () => {
@@ -127,10 +135,10 @@ describe('sparse-mode per-fill markers from the tape (#1139)', () => {
   function tapeFill(
     loanId: number,
     startAt: number,
-    rateBps = 500,
-    principal = '1000',
+    rateBps: number | null = 500,
+    principal: string | null = '1000',
   ): TapeFillLike {
-    return { loanId, startAt, interestRateBps: rateBps, principal };
+    return { loanId, startAt, rateBps, principal };
   }
 
   it('mirrors the worker interval enum', () => {
@@ -203,6 +211,12 @@ describe('sparse-mode per-fill markers from the tape (#1139)', () => {
       expect(fillPointsFromTape([], [tapeFill(1, 100)], H)).toBeNull();
       const bad = [tapeFill(1, 100), tapeFill(2, 200, 500, 'not-a-number')];
       expect(fillPointsFromTape(buckets, bad, H)).toBeNull();
+    });
+
+    it('returns null (bucket fallback) when a covered fill has no recorded terms (#1142)', () => {
+      const buckets = [bucket({ t: 0, fills: 2 })];
+      expect(fillPointsFromTape(buckets, [tapeFill(1, 100), tapeFill(2, 200, null)], H)).toBeNull();
+      expect(fillPointsFromTape(buckets, [tapeFill(1, 100), tapeFill(2, 200, 500, null)], H)).toBeNull();
     });
 
     it('folds principals as BigInt past 2^53', () => {

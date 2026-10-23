@@ -1953,7 +1953,9 @@
         "daysLeft": "{{days}}일 남음",
         "daysOverdue": "{{days}}일 연체",
         "partialRepayOk": " · 부분 상환 가능"
-      }
+      },
+      "fillTermsNotRecorded": "기록 없음",
+      "fillTermsNotRecordedTitle": "대출 #{{loanId}}: 개시 기록에서 이 대출의 합의 조건을 확인할 수 없어 표시하지 않습니다."
     },
     "tariff": {
       "optInTitle": "VPFI 전액 수수료 (선택)",

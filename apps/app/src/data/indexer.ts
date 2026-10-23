@@ -294,6 +294,12 @@ export interface IndexedLoan {
    *  through `initiatedTerms`. */
   initRateBps?: number | null;
   initDurationDays?: number | null;
+  /** #1142 — the tenor market the indexer files this loan under (its
+   *  initiation snapshot's duration, else the live one): the key the
+   *  candles and the market-scoped tape select on. A market key only, not
+   *  a statement of the executed terms; optional because older workers
+   *  omit it. */
+  marketDurationDays?: number;
   collateralAmount: string;
   assetType: number;
   collateralAssetType: number;

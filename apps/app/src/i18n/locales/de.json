@@ -1953,7 +1953,9 @@
         "daysLeft": "{{days}} Tg. übrig",
         "daysOverdue": "{{days}} Tg. überfällig",
         "partialRepayOk": " · Teilrückzahlung möglich"
-      }
+      },
+      "fillTermsNotRecorded": "nicht erfasst",
+      "fillTermsNotRecordedTitle": "Darlehen #{{loanId}}: Die vereinbarten Bedingungen dieses Darlehens ließen sich nicht anhand seines Eröffnungseintrags bestätigen und werden daher nicht angezeigt."
     },
     "tariff": {
       "optInTitle": "Volle VPFI-Gebühr (optional)",

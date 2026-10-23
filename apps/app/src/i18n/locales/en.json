@@ -1850,6 +1850,8 @@
       "takeBid": "Lend to this",
       "rowPrefills": "Tap a rate to pre-fill the ticket. Taking the top of the book goes through the same guided review as Borrow/Lend.",
       "tapeTitle": "Recent loans",
+      "fillTermsNotRecorded": "not recorded",
+      "fillTermsNotRecordedTitle": "Loan #{{loanId}}: the agreed terms of this loan could not be confirmed from its opening record, so they are not shown.",
       "tapeEmpty": "No loans agreed yet for this pair.",
       "tapeUnavailable": "We couldn’t load recent loans right now.",
       "match": {

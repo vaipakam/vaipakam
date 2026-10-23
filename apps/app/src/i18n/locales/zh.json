@@ -1953,7 +1953,9 @@
         "daysLeft": "剩 {{days}} 天",
         "daysOverdue": "逾期 {{days}} 天",
         "partialRepayOk": " · 支持部分还款"
-      }
+      },
+      "fillTermsNotRecorded": "未记录",
+      "fillTermsNotRecordedTitle": "贷款 #{{loanId}}：无法根据其开立记录确认这笔贷款的约定条款，因此不予显示。"
     },
     "tariff": {
       "optInTitle": "VPFI 全额费率（可选）",

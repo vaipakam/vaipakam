@@ -4513,7 +4513,14 @@ Its intended behaviour, as the test oracle for this surface:
   when it is neither, alongside how much size remains. Recent fills for
   the market are listed honestly: a market with
   no fills says so, and internal bookkeeping from a loan-sale never
-  appears as a fill. Positions show under the book with their health
+  appears as a fill. A fill is a fact about the moment the loan was
+  agreed: the tape, the header's last executed rate and the chart's
+  per-fill markers show the rate and amount the loan was agreed at,
+  and it stays in the tenor market it was agreed in. An extension,
+  a partial repayment or a match changing the loan later moves none of
+  that. Where the agreed terms cannot be confirmed from the loan's
+  opening record, the fill still appears but its terms read as not
+  recorded; the loan's current terms are never shown in their place. Positions show under the book with their health
   status and lead to the existing manage flows. A rate-history chart
   shows the market's **executed** rates over a chosen interval and
   range, under strict thin-market honesty rules: points exist only

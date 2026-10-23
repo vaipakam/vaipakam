@@ -136,6 +136,14 @@ function loanToJson(row: LoanRow): Record<string, unknown> {
     // Backed only on the explicit 0, for the reason above.
     initRateBps: row.init_terms_unbacked === 0 ? (row.init_rate_bps ?? null) : null,
     initDurationDays: row.init_terms_unbacked === 0 ? (row.init_duration_days ?? null) : null,
+    // #1142 — the tenor MARKET this indexer files the loan under: the
+    // initiation snapshot's duration, else the live one. The same expression
+    // the candles and the market-scoped `/loans/recent` select on, so a
+    // client re-checking a scoped page compares the key the server used.
+    // A market key, NOT a statement of the executed terms: an unbacked
+    // snapshot still files the loan somewhere, but only `initDurationDays`
+    // says what the loan executed at.
+    marketDurationDays: row.init_duration_days ?? row.duration_days,
     collateralAmount: row.collateral_amount,
     assetType: row.asset_type,
     collateralAssetType: row.collateral_asset_type,
@@ -1260,7 +1268,11 @@ export async function handleLoansRecent(req: Request, env: Env): Promise<Respons
       binds.push(market.collateralAsset);
     }
     if (market.durationDays !== null) {
-      conds.push('duration_days = ?');
+      // #1142 — scope on the tenor the loan EXECUTED in, exactly as the
+      // candles do: `LoanExtended` rewrites the live `duration_days`, which
+      // moved an extended 30d fill out of the 30d tape and into the 60d one.
+      // Spelled like the 0032 / 0071 index expression so it rides them.
+      conds.push('COALESCE(init_duration_days, duration_days) = ?');
       binds.push(market.durationDays);
     }
     if (excludeSaleVehicles) {

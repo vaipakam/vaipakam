@@ -4201,6 +4201,14 @@ const copySource = {
     rowPrefills:
       'Tap a rate to pre-fill the ticket. Taking the top of the book goes through the same guided review as Borrow/Lend.',
     tapeTitle: 'Recent loans',
+    // #1142 — a fill whose agreed terms the indexer cannot confirm. The
+    // live terms are a different figure (an extension or repayment changes
+    // them), so they are never shown in their place.
+    fillTermsNotRecorded: 'not recorded',
+    fillTermsNotRecordedTitle: tmpl(
+      'Loan #{{loanId}}: the agreed terms of this loan could not be confirmed from its opening record, so they are not shown.',
+      ['loanId'],
+    ),
     tapeEmpty: 'No loans agreed yet for this pair.',
     tapeUnavailable: 'We couldn’t load recent loans right now.',
     // #1131 slice B — the crossable-band previewMatch strip. Shown ONLY
