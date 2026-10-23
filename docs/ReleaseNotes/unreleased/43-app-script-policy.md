@@ -1,4 +1,4 @@
-## Thread — The connected app refuses inline and evaluated script (PR #<n>)
+## Thread — The connected app refuses inline and evaluated script (PR #2694)
 
 The connected app's content security policy used to allow any inline script and the evaluation of text as code. Both settings were copied from the retired app on a note about wallet software needing them, and nobody had checked that note. Together they meant that a script injected into the page would have run with the app's full authority, which includes building the transactions a wallet is asked to sign.
 
