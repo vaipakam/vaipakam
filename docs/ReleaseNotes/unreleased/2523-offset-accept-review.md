@@ -1,4 +1,4 @@
-## Thread — a borrower's offset offer can be taken in the app (PR #<n>)
+## Thread — a borrower's offset offer can be taken in the app (PR #2675)
 
 A borrower who closes a loan early by posting an offset offer (preclose option 3) was told the loan closes once a borrower takes the offer. The app itself, though, refused to let anyone take it: every offer tied to a running loan, other than a position sale, was blocked at review. The connected app now gives an offset offer its own review. The taker's loan is an ordinary new loan on the offer's own terms, and the usual receipt describes it. The review and the receipt also state what else the same transaction does: it pays off and closes the poster's earlier loan from the poster's own wallet, the taker owes nothing toward that loan, and if the close-out cannot complete the whole acceptance is refused and nothing moves.
 
