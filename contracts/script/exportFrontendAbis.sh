@@ -330,6 +330,8 @@ FACETS=(
   "SwapAttemptFacet"
   # #2440 -- the treasury fee host every fee-charging facet self-calls.
   "TreasuryFeeFacet"
+  # #2419 -- the 1e18 valuation host RiskFacet and the offer facets self-call.
+  "NumeraireValueFacet"
   "RiskSplitLiquidationFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"

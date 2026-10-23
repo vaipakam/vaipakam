@@ -2060,6 +2060,17 @@
   },
   {
     "type": "error",
+    "name": "NumeraireScaleUnsupported",
+    "inputs": [
+      {
+        "name": "decimalsSum",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NumeraireSwapDisabled",
     "inputs": []
   },
@@ -2334,6 +2345,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PriceZero",
+    "inputs": []
   },
   {
     "type": "error",
@@ -4528,6 +4544,17 @@
         "name": "status",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TokenDecimalsUnreadable",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

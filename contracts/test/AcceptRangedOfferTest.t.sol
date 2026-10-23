@@ -78,6 +78,12 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 contract AcceptRangedOfferTest is SetupTest {
     function setUp() public {
         setupHelper();
+        // #2419 — the fixtures lend up to 10,000 wei against 500 wei of
+        // collateral. On whole-unit values both legs read 0 and no offer-time
+        // bound applied; at 1e18 precision they are valued, so collateral is
+        // priced at $50 to keep every fixture inside the offer-time HF / LTV
+        // bounds. No expected figure depends on the price.
+        mockOraclePrice(mockCollateralERC20, 50e8, 8);
 
         // Range / range-rate / range-collateral on; partial-fill OFF.
         // The direct-accept path doesn't consult the partial-fill flag

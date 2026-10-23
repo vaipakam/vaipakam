@@ -18,6 +18,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -67,6 +68,9 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #902 - the target Diamond predates the per-rental renter rows;
     ///         see {_requirePerRentalRenterRows}.
     error PredatesPerRentalRenterRows(address diamond);
+    /// @notice #2419 - the target Diamond predates the 1e18 numeraire value
+    ///         rule; see {_requireNumeraireValueRule}.
+    error PredatesNumeraireValueRule(address diamond);
 
     function run() external override {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -98,6 +102,9 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #902 - refuse a Diamond from before the per-rental renter rows; see
         // {_requirePerRentalRenterRows}.
         _requirePerRentalRenterRows(diamond);
+        // #2419 - and one from before the 1e18 numeraire value rule; see
+        // {_requireNumeraireValueRule}.
+        _requireNumeraireValueRule(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -137,6 +144,13 @@ contract ReplaceStaleFacets is DeployDiamond {
         // without it would revert every fee-bearing accept
         // `FunctionDoesNotExist`. Deployed alongside; partitioned below.
         TreasuryFeeFacet treasuryFeeFacet = new TreasuryFeeFacet();
+        // #2419 — the valuation host. The refreshed offer facets and
+        // RiskPreviewFacet value through it by self-call (LibRiskMath), and
+        // OfferAcceptFacet values its KYC comparison through it. The target
+        // already routes it ({_requireNumeraireValueRule}); deployed
+        // alongside so the host matches the refreshed callers, and
+        // partitioned below.
+        NumeraireValueFacet numeraireValueFacet = new NumeraireValueFacet();
 
         console.log("OfferFacet:          ", address(offerCreateFacet));
         console.log("OfferAcceptFacet:    ", address(offerAcceptFacet));
@@ -149,6 +163,7 @@ contract ReplaceStaleFacets is DeployDiamond {
         console.log("RiskPreviewFacet:    ", address(riskPreviewFacet));
         console.log("OfferPreviewFacet:   ", address(offerPreviewFacet));
         console.log("TreasuryFeeFacet:    ", address(treasuryFeeFacet));
+        console.log("NumeraireValueFacet: ", address(numeraireValueFacet));
 
         // T-068: RewardReporterFacet is intentionally NOT refreshed here.
         // The LayerZero→CCIP migration changed its selector SET (removed
@@ -178,13 +193,13 @@ contract ReplaceStaleFacets is DeployDiamond {
         // the inherited `DeployDiamond` getter that defines what the Diamond
         // routes, so the surface cannot be partial (#778/#779).
         //
-        // Eleven facets, so at most two cuts each, plus TWO retired-selector
-        // Removes (#2459 r4's previewIntent; #2489's tariff setter) — 24 at most
+        // Twelve facets, so at most two cuts each, plus TWO retired-selector
+        // Removes (#2459 r4's previewIntent; #2489's tariff setter) — 26 at most
         // (Codex #2489 r12: a short array would panic on a fully mixed stale
         // Diamond before diamondCut ran); empty partitions are skipped and the
         // staging array is trimmed to what was actually used (a zero-selector
         // cut reverts).
-        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](24);
+        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](26);
         uint256 n;
         n = _appendPartitioned(
             staging, n, diamond, address(offerCreateFacet), _getOfferCreateSelectors()
@@ -232,6 +247,11 @@ contract ReplaceStaleFacets is DeployDiamond {
         // cut so no block sees the new charge without it.
         n = _appendPartitioned(
             staging, n, diamond, address(treasuryFeeFacet), _getTreasuryFeeSelectors()
+        );
+        // #2419 — the valuation host the refreshed offer, accept and preview
+        // facets self-call, in the same cut so no block sees them without it.
+        n = _appendPartitioned(
+            staging, n, diamond, address(numeraireValueFacet), _getNumeraireValueSelectors()
         );
         // #394 (Codex #647 round-3) — the carved-out numeraire/PAD/periodic
         // selectors go to the NumeraireConfigFacet address, NOT ConfigFacet's:
@@ -387,6 +407,24 @@ contract ReplaceStaleFacets is DeployDiamond {
             IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.vaultSetRentalUser.selector)
                 == address(0)
         ) revert PredatesPerRentalRenterRows(diamond);
+    }
+
+    /// @dev #2419 - refuse a Diamond from before the 1e18 numeraire value
+    ///      rule. This set carries the offer facets (the create-time bounds,
+    ///      now on the 1e18 rule) and OfferAcceptFacet's KYC comparison, but
+    ///      not RiskFacet (the binding LTV / health-factor values), the
+    ///      default path or AdminFacet (the dust floor, now 1e18-scaled), so
+    ///      run across the boundary the offer bounds would be computed on a
+    ///      different scale from the gate that enforces them. Crossing the
+    ///      boundary is a fresh deploy or `RefreshAllFacetsInPlace`, never
+    ///      this refresh. The marker is the routing of
+    ///      `getLiquidNumeraireValue`, which #2419 introduced. Called before
+    ///      the broadcast starts, so a refused run sends nothing.
+    function _requireNumeraireValueRule(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(NumeraireValueFacet.getLiquidNumeraireValue.selector)
+                == address(0)
+        ) revert PredatesNumeraireValueRule(diamond);
     }
 
     /// @dev RL-1 (Codex #1302 P2) — split `selectors` into the subset the

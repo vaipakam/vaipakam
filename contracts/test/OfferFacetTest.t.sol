@@ -10,6 +10,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {LibUserVault} from "../src/libraries/LibUserVault.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -134,7 +135,7 @@ contract OfferFacetTest is Test {
         HelperTest helperTest = new HelperTest();
 
         // Prepare cuts for required facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](14);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(new OfferCreateFacet()),
             action: IDiamondCut.FacetCutAction.Add,
@@ -160,6 +161,14 @@ contract OfferFacetTest is Test {
             facetAddress: address(new TreasuryFeeFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
+        });
+        // #2419 - RiskFacet (LTV / HF) and the offer facets value every amount
+        // through NumeraireValueFacet by self-call, so a hand-built Diamond
+        // that cuts any of them must cut this host too.
+        cuts[14] = IDiamondCut.FacetCut({
+            facetAddress: address(new NumeraireValueFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getNumeraireValueFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(new ProfileFacet()),
@@ -279,7 +288,11 @@ contract OfferFacetTest is Test {
         mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockOracleLiquidity(mockNft721, LibVaipakam.LiquidityStatus.Illiquid);
         mockOraclePrice(mockERC20, 1e8, 8); // $1 price, 8 decimals
-        mockOraclePrice(mockCollateralERC20, 1e8, 8); // $1 price, 8 decimals
+        // $5 collateral, 8 decimals: the wei-scale fixtures in this file
+        // (1,500 collateral wei against 1,000 lent, down to 200 against 500)
+        // must clear the offer-time HF floor under the 1e18 numeraire
+        // valuation (#2419). No assertion here depends on the price.
+        mockOraclePrice(mockCollateralERC20, 5e8, 8);
         // #998 S15: a liquid collateral asset needs a non-zero per-asset
         // init-LTV cap, else `LibOfferBounds` rejects any offer against it at
         // create (a 0 cap is no-borrow at loan-init). This bespoke diamond does
@@ -3651,7 +3664,7 @@ contract OfferFacetTest is Test {
                 amount: 1000,
                 interestRateBps: 500,
                 collateralAsset: mockCollateralERC20,
-                collateralAmount: 0, // zero collateral amount (sale vehicle pattern)
+                collateralAmount: 2000, // zeroed below (sale vehicle pattern)
                 durationDays: 30,
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
@@ -3666,7 +3679,7 @@ contract OfferFacetTest is Test {
                 allowsParallelSale: false,
                 amountMax: 1000,
                 interestRateBpsMax: 500,
-                collateralAmountMax: 0,
+                collateralAmountMax: 2000,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
@@ -3674,6 +3687,16 @@ contract OfferFacetTest is Test {
                 useFullTermInterest: false
             })
         );
+
+        // The sale-vehicle shape carries no collateral of its own, which no
+        // createOffer accepts (the lender-side HF floor), so it is written
+        // after create.
+        {
+            LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
+            o.collateralAmount = 0;
+            o.collateralAmountMax = 0;
+            TestMutatorFacet(address(diamond)).setOffer(offerId, o);
+        }
 
         // Set saleOfferToLoanId[offerId] = 77 and create a loan with collateral at that ID
         TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(offerId, 77);

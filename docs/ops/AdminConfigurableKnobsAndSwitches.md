@@ -171,11 +171,17 @@ value is range-checked, so the reads are trusted unconditionally.
   partial from leaving a *fresh* dust position out of a non-dust loan (both
   residual debt AND collateral below the floor) — that reverts
   `PartialLeavesDust` and the keeper must use full liquidation. **Units:
-  whole-numeraire**, the same
-  scale `RiskFacet._computeNumeraireValues` returns (whole-USD with standard
-  8-decimal feeds — `$1k == 1_000`, NOT `1e18`-scaled). Capped at `100_000`
-  ($100k) so a misconfigured floor can't turn every routine partial into a
-  full close. **Setting a nonzero floor both widens (the pre-existing-dust
+  a `1e18`-scaled numeraire value** (#2419), the scale
+  `RiskFacet._computeNumeraireValues` returns — `$1k == 1_000e18`. It was
+  whole units (`$1k == 1_000`) before #2419; a floor stored on that scale is
+  below the minimum below, so it reads as `0`, no floor (dust handling off),
+  in both the sizing reader and `getPartialLiquidationSizing`, until it is
+  set again on the new scale. A nonzero floor is bounded to `[1e18, 100_000e18]` (1 to
+  100,000 numeraire units): the cap so a misconfigured floor can't turn every
+  routine partial into a full close, the minimum so an old-scale value is
+  refused (`InvalidPartialLiqSizing`) instead of silently accepted. A
+  numeraire rotation (`setNumeraire`) resets the floor to `0` and emits
+  `PartialLiquidationSizingSet` saying so. **Setting a nonzero floor both widens (the pre-existing-dust
   waiver) AND narrows (the leave-fresh-dust prevention) what a keeper may do —
   it is not a harmless one-way knob — and `0` is the explicit disable path.**
   Plan for keeper partials to start reverting `PartialLeavesDust` (and require

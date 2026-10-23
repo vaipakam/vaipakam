@@ -38,6 +38,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
@@ -153,7 +154,7 @@ contract RepayFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](20);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -274,6 +275,14 @@ contract RepayFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
         });
+        // #2419 - RiskFacet (LTV / HF) and the offer facets value every amount
+        // through NumeraireValueFacet by self-call, so a hand-built Diamond
+        // that cuts any of them must cut this host too.
+        cuts[20] = IDiamondCut.FacetCut({
+            facetAddress: address(new NumeraireValueFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getNumeraireValueFacetSelectors()
+        });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -327,7 +336,10 @@ contract RepayFacetTest is Test {
         mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockOracleLiquidity(mockNft721, LibVaipakam.LiquidityStatus.Illiquid);
         mockOraclePrice(mockERC20, 1e8, 8); // $1 price, 8 decimals
-        mockOraclePrice(mockCollateralERC20, 1e8, 8);
+        // $5 collateral: the wei-scale fixtures (1,500 collateral wei
+        // against 1,000 lent) must clear the offer-time HF floor under the
+        // 1e18 numeraire valuation (#2419). HF / LTV are mocked below.
+        mockOraclePrice(mockCollateralERC20, 5e8, 8);
 
         // Mock RiskFacet for HF and LTV
         // For successful: HF 2e18 (2.0), LTV 6666 (66.66% for 1000/1500)

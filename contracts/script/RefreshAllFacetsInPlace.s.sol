@@ -101,6 +101,7 @@ import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -259,7 +260,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // 95 -> 96: TreasuryFeeFacet (#2440) - every fee drawn from a payer's
     // wallet or a user's vault into the treasury, self-called by the
     // fee-charging facets.
-    uint256 public constant EXPECTED_FACETS = 96;
+    // 96 -> 97: NumeraireValueFacet (#2419) - the one 1e18 valuation rule,
+    // self-called by RiskFacet, every facet that inlines LibRiskMath and
+    // every KYC comparison.
+    uint256 public constant EXPECTED_FACETS = 97;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1537,6 +1541,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[94] = Item("swapAttemptFacet", address(new SwapAttemptFacet()), _getSwapAttemptSelectors());
         // #2440 - the treasury fee host every fee-charging facet self-calls.
         items[95] = Item("treasuryFeeFacet", address(new TreasuryFeeFacet()), _getTreasuryFeeSelectors());
+        // #2419 - the valuation host RiskFacet and the LibRiskMath inliners self-call.
+        items[96] = Item("numeraireValueFacet", address(new NumeraireValueFacet()), _getNumeraireValueSelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

@@ -83,7 +83,10 @@ abstract contract DiamondFacetNames {
     ///      95 → 96 with `TreasuryFeeFacet` (#2440 — every fee drawn from a
     ///      payer's wallet or a user's vault into the treasury, measured and
     ///      accrued once).
-    function cutFacetNames() internal pure returns (string[96] memory) {
+    ///      96 → 97 with `NumeraireValueFacet` (#2419 — the one 1e18
+    ///      valuation rule, self-called by RiskFacet and the LibRiskMath
+    ///      inliners).
+    function cutFacetNames() internal pure returns (string[97] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -202,6 +205,8 @@ abstract contract DiamondFacetNames {
             "SwapAttemptFacet",
             // #2440 - the treasury fee host every fee-charging facet self-calls.
             "TreasuryFeeFacet",
+            // #2419 - the 1e18 valuation host RiskFacet and the offer facets self-call.
+            "NumeraireValueFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",
