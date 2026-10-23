@@ -10,9 +10,13 @@ implementation upgrade) first checks the new code against the chain's record,
 refuses before sending anything if a recorded fact would be lost, and rewrites
 the record once its change is in. A chain with no record is refused, because
 the layout it runs is unknown. Each record is also bound to the live
-deployment it describes, so an upgrade is refused when the chain's code has
-changed since its record was written, for example by an upgrade from another
-checkout whose record was never committed. Two upgrades of one chain still must
+deployment it describes, all of it: the Diamond's facets, the vault and
+adapter templates, and every upgradeable proxy the chain reaches, such as the
+cross-chain messengers and receivers. An upgrade is refused when any of that
+code has changed since the record was written, for example by an upgrade from
+another checkout whose record was never committed, or by a refresh that
+stopped part-way after upgrading one proxy. The token and cross-chain deploy
+scripts check the record too and rewrite it with the proxies they add. Two upgrades of one chain still must
 not run at the same time. Declared renames count; acknowledged breaks
 never do, since an acknowledged break means that chain needs a fresh deploy.
 

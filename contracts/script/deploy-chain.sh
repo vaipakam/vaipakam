@@ -863,7 +863,7 @@ if [ "$SKIP_VPFI" = "0" ] && [ "$IS_CANONICAL" = "1" ]; then
     # unconditionally (unlike testnet/mainnet, whose archive gates on .diamond),
     # so this is defensive here — kept for parity with the other wrappers (#857).
     VPFI_TOKEN_FRESH="$FRESH" \
-      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
+      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --ffi --broadcast --slow
     snapshot_addresses "post-vpfitoken"
     mark_done "vpfitoken"
   fi
@@ -890,7 +890,7 @@ if [ "$SKIP_VPFI" = "0" ] && step_done "crosschain"; then
 elif [ "$SKIP_VPFI" = "0" ]; then
   echo
   echo "[4] DeployCrosschain.s.sol  (CCIP cross-chain stack)"
-  forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --ffi --broadcast --slow
   snapshot_addresses "post-crosschain"
   mark_done "crosschain"
 else

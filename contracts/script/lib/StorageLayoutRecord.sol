@@ -6,12 +6,6 @@ import {console} from "forge-std/console.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {Deployments} from "./Deployments.sol";
 
-/// @dev The one VaultFactoryFacet read the anchor needs, declared here so this
-///      library does not pull a facet into every script that links it.
-interface IVaultTemplateRead {
-    function getVaipakamVaultImplementationAddress() external view returns (address);
-}
-
 /**
  * @title  StorageLayoutRecord
  * @notice The per-chain storage-layout record, and the refusal every in-place
@@ -31,9 +25,9 @@ interface IVaultTemplateRead {
  *         another: a refresh whose new record was never committed, or two
  *         branches that each start from the same record. So beside the record
  *         sits its anchor, `deployments/<slug>/storage-layout.anchor.json`,
- *         naming the Diamond, a fingerprint of the code it runs (the loupe's
- *         facet address list and the vault template) and the record's own
- *         hash, all as they stood when the record was written. A change is
+ *         naming the Diamond, a fingerprint of every code location the record
+ *         governs ({CodeMap}: the facets, the vault and adapter templates and
+ *         every UUPS proxy the chain reaches) and the record's own hash, all as they stood when the record was written. A change is
  *         refused unless the live chain still matches the anchor and the
  *         record is the one the anchor names; a chain changed from elsewhere
  *         then fails here instead of being checked against a record that no
@@ -106,16 +100,175 @@ library StorageLayoutRecord {
         return !CHEATS.isContext(VmSafe.ForgeContext.TestGroup) && !Deployments.artifactIsRedirected();
     }
 
-    /// Fingerprint of the code `diamond` runs now: its facet address list, in
-    /// the loupe's order, and the vault template every user vault upgrades to.
-    /// Any facet cut or template retarget changes it.
+    /// The EIP-1967 implementation slot, `bytes32(uint256(keccak256(
+    /// "eip1967.proxy.implementation")) - 1)`: where every UUPS proxy keeps
+    /// the address of the code it runs.
+    bytes32 private constant EIP1967_IMPLEMENTATION_SLOT =
+        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+    /// Most addresses the candidate walk ({_liveProxies}) holds at once.
+    uint256 private constant MAX_CANDIDATES = 512;
+
+    /// Every code location whose storage layout the record governs, as it
+    /// stands now on the active chain (Codex #2684 r2 P1). The record covers
+    /// the Diamond's namespaces AND every UUPS root in `roots.json`, so the
+    /// anchor has to bind all of them: a fingerprint over the facets alone
+    /// let a receiver upgraded by an interrupted refresh pass as unchanged.
+    ///
+    /// @dev Three parts, each found without a per-contract list, so a new
+    ///      proxy cannot be left out by forgetting to name it here:
+    ///      - `facets`: the loupe's facet address list (the Diamond's code);
+    ///      - `vaultTemplate` / `adapterTemplate`: the templates the Diamond
+    ///        upgrades every user vault and aggregator adapter to, which are
+    ///        the code those per-user proxies run or are pushed onto;
+    ///      - `proxies` / `implementations`: every EIP-1967 proxy the chain
+    ///        reaches, sorted by address, with the implementation it points
+    ///        at now. Candidates are every address in the chain's
+    ///        `addresses.json` (outside `.facets`, which the loupe covers),
+    ///        every satellite the Diamond itself names (backstop vault,
+    ///        listing executor, reward messenger, remittance and buyback
+    ///        receivers, return sender and receiver, cross-chain messenger),
+    ///        and the `messenger()` each of those proxies trusts. A candidate
+    ///        counts as a proxy when its implementation slot is non-zero.
+    ///
+    ///      A Diamond getter that does not exist (an older facet set) reads
+    ///      as no candidate, never as a revert.
+    struct CodeMap {
+        address[] facets;
+        address vaultTemplate;
+        address adapterTemplate;
+        address[] proxies;
+        address[] implementations;
+    }
+
+    /// The {CodeMap} of `diamond`'s chain now.
+    function liveCodeMap(address diamond) internal view returns (CodeMap memory m) {
+        m.facets = IDiamondLoupe(diamond).facetAddresses();
+        m.vaultTemplate = _readWord(diamond, "getVaipakamVaultImplementationAddress()", 0);
+        m.adapterTemplate = _readWord(diamond, "aggregatorAdapterTemplate()", 0);
+        (m.proxies, m.implementations) = _liveProxies(diamond);
+    }
+
+    /// Fingerprint of {liveCodeMap}: any facet cut, template retarget or
+    /// proxy upgrade, and any proxy added to or dropped from what the chain
+    /// reaches, changes it.
     function liveCodeFingerprint(address diamond) internal view returns (bytes32) {
-        return keccak256(
-            abi.encode(
-                IDiamondLoupe(diamond).facetAddresses(),
-                IVaultTemplateRead(diamond).getVaipakamVaultImplementationAddress()
-            )
-        );
+        return codeFingerprint(liveCodeMap(diamond));
+    }
+
+    function codeFingerprint(CodeMap memory m) internal pure returns (bytes32) {
+        return keccak256(abi.encode(m.facets, m.vaultTemplate, m.adapterTemplate, m.proxies, m.implementations));
+    }
+
+    function _liveProxies(address diamond)
+        private
+        view
+        returns (address[] memory proxies, address[] memory impls)
+    {
+        address[] memory cand = new address[](MAX_CANDIDATES);
+        uint256 n;
+        // The satellites the Diamond names. Word indexes follow each getter's
+        // return tuple (`getRepatriationPosition` returns the sender and the
+        // receiver second and third).
+        n = _push(cand, n, _readWord(diamond, "getBackstopVault()", 0));
+        n = _push(cand, n, _readWord(diamond, "getCollateralListingExecutor()", 0));
+        n = _push(cand, n, _readWord(diamond, "getRewardReporterConfig()", 0));
+        n = _push(cand, n, _readWord(diamond, "getRewardRemittanceReceiver()", 0));
+        n = _push(cand, n, _readWord(diamond, "getBuybackRemittanceReceiver()", 0));
+        n = _push(cand, n, _readWord(diamond, "getCrossChainMessenger()", 0));
+        n = _push(cand, n, _readWord(diamond, "getRepatriationPosition()", 1));
+        n = _push(cand, n, _readWord(diamond, "getRepatriationPosition()", 2));
+        // Every address the chain's artifact names.
+        try CHEATS.readFile(Deployments.path()) returns (string memory json) {
+            n = _collectArtifactAddresses(json, "$", cand, n);
+        } catch {}
+        // The adapter each proxy trusts (one hop: the adapter is itself a
+        // proxy, and every satellite names the one it calls through).
+        uint256 direct = n;
+        for (uint256 i = 0; i < direct; ++i) {
+            if (_implementationOf(cand[i]) != address(0)) {
+                n = _push(cand, n, _readWord(cand[i], "messenger()", 0));
+            }
+        }
+        // Keep the proxies, sorted and without repeats.
+        address[] memory sorted = new address[](n);
+        uint256 k;
+        for (uint256 i = 0; i < n; ++i) {
+            address a = cand[i];
+            if (_implementationOf(a) == address(0)) continue;
+            uint256 j = k;
+            bool dup;
+            while (j > 0 && uint160(sorted[j - 1]) >= uint160(a)) {
+                if (sorted[j - 1] == a) {
+                    dup = true;
+                    break;
+                }
+                --j;
+            }
+            if (dup) continue;
+            for (uint256 t = k; t > j; --t) sorted[t] = sorted[t - 1];
+            sorted[j] = a;
+            ++k;
+        }
+        proxies = new address[](k);
+        impls = new address[](k);
+        for (uint256 i = 0; i < k; ++i) {
+            proxies[i] = sorted[i];
+            impls[i] = _implementationOf(sorted[i]);
+        }
+    }
+
+    /// Walk `json` from `prefix`, pushing every string value that parses as
+    /// an address. `.facets` is skipped: the loupe is the authority on facets.
+    function _collectArtifactAddresses(string memory json, string memory prefix, address[] memory cand, uint256 n)
+        private
+        view
+        returns (uint256)
+    {
+        string[] memory keys;
+        try CHEATS.parseJsonKeys(json, prefix) returns (string[] memory k) {
+            keys = k;
+        } catch {
+            return n;
+        }
+        for (uint256 i = 0; i < keys.length; ++i) {
+            string memory key = keccak256(bytes(prefix)) == keccak256("$")
+                ? string.concat(".", keys[i])
+                : string.concat(prefix, ".", keys[i]);
+            if (keccak256(bytes(key)) == keccak256(".facets")) continue;
+            try CHEATS.parseJsonAddress(json, key) returns (address a) {
+                n = _push(cand, n, a);
+            } catch {
+                n = _collectArtifactAddresses(json, key, cand, n);
+            }
+        }
+        return n;
+    }
+
+    function _push(address[] memory cand, uint256 n, address a) private pure returns (uint256) {
+        if (a == address(0)) return n;
+        require(n < MAX_CANDIDATES, "StorageLayoutRecord: more code locations than the walk holds; raise MAX_CANDIDATES");
+        cand[n] = a;
+        return n + 1;
+    }
+
+    function _implementationOf(address a) private view returns (address) {
+        if (a.code.length == 0) return address(0);
+        return address(uint160(uint256(CHEATS.load(a, EIP1967_IMPLEMENTATION_SLOT))));
+    }
+
+    /// Word `index` of `target.signature()`'s return data, as an address;
+    /// zero when the call reverts, returns too little, or the word is not an
+    /// address.
+    function _readWord(address target, string memory signature, uint256 index) private view returns (address) {
+        if (target.code.length == 0) return address(0);
+        (bool ok, bytes memory ret) = target.staticcall(abi.encodeWithSignature(signature));
+        if (!ok || ret.length < 32 * (index + 1)) return address(0);
+        bytes memory w = new bytes(32);
+        for (uint256 i = 0; i < 32; ++i) w[i] = ret[32 * index + i];
+        uint256 word = abi.decode(w, (uint256));
+        if (word >> 160 != 0) return address(0);
+        return address(uint160(word));
     }
 
     /// Refuse unless this checkout's golden layout describes its code, and
@@ -226,10 +379,18 @@ library StorageLayoutRecord {
         CHEATS.serializeString(
             key,
             "_readme",
-            "Binds storage-layout.json beside it to the chain it describes (#2092). Written with the record; an in-place change is refused unless the Diamond, its code fingerprint and the record hash still match. Do not edit by hand."
+            "Binds storage-layout.json beside it to the chain it describes (#2092). Written with the record; an in-place change is refused unless the Diamond, the fingerprint of every code location the record governs (facets, vault and adapter templates, every UUPS proxy the chain reaches) and the record hash still match. The parts beside codeFingerprint are there to say which code moved. Do not edit by hand."
         );
         CHEATS.serializeAddress(key, "diamond", diamond);
-        CHEATS.serializeBytes32(key, "codeFingerprint", liveCodeFingerprint(diamond));
+        CodeMap memory m = liveCodeMap(diamond);
+        // The parts are written beside the fingerprint so a refusal can say
+        // WHICH code moved; only the fingerprint is compared.
+        CHEATS.serializeAddress(key, "vaultTemplate", m.vaultTemplate);
+        CHEATS.serializeAddress(key, "adapterTemplate", m.adapterTemplate);
+        CHEATS.serializeAddress(key, "proxies", m.proxies);
+        CHEATS.serializeAddress(key, "implementations", m.implementations);
+        CHEATS.serializeBytes32(key, "facetsFingerprint", keccak256(abi.encode(m.facets)));
+        CHEATS.serializeBytes32(key, "codeFingerprint", codeFingerprint(m));
         string memory json = CHEATS.serializeBytes32(key, "recordHash", keccak256(bytes(CHEATS.readFile(rec))));
         CHEATS.writeJson(json, anchorPath());
     }
@@ -256,15 +417,79 @@ library StorageLayoutRecord {
             CHEATS.parseJsonBytes32(json, ".recordHash") == keccak256(bytes(CHEATS.readFile(rec))),
             string.concat(who, ": ", rec, " is not the record its anchor names. The two are written together; restore the pair that matches, never one file alone.")
         );
-        require(
-            CHEATS.parseJsonBytes32(json, ".codeFingerprint") == liveCodeFingerprint(diamond),
-            string.concat(
-                who,
-                ": this chain's code changed since its storage-layout record was written (its facets or vault template differ from ",
-                anchor,
-                "). Another checkout or a run outside these scripts changed it, so this record no longer describes the chain. Pull the record and anchor that change wrote; if none exists, establish what the chain runs and re-anchor with AnchorStorageLayoutRecord.s.sol."
-            )
-        );
+        CodeMap memory live = liveCodeMap(diamond);
+        if (CHEATS.parseJsonBytes32(json, ".codeFingerprint") != codeFingerprint(live)) {
+            _logCodeDrift(json, live);
+            revert(
+                string.concat(
+                    who,
+                    ": this chain's code changed since its storage-layout record was written (what moved is logged above, against ",
+                    anchor,
+                    "). Another checkout or a run outside these scripts changed it, so this record no longer describes the chain. Pull the record and anchor that change wrote; if none exists, establish what the chain runs and re-anchor with AnchorStorageLayoutRecord.s.sol."
+                )
+            );
+        }
+    }
+
+    /// Log each part of the live {CodeMap} that differs from the anchor, so a
+    /// refusal names the facet set, template or proxy that moved. An anchor
+    /// written before the parts were recorded logs every part as differing.
+    function _logCodeDrift(string memory json, CodeMap memory live) private view {
+        console.log("storage-layout anchor: the live code differs from the anchor in:");
+        if (_anchorBytes32(json, ".facetsFingerprint") != keccak256(abi.encode(live.facets))) {
+            console.log("  the Diamond's facet set");
+        }
+        if (_anchorAddress(json, ".vaultTemplate") != live.vaultTemplate) {
+            console.log("  the vault template, now", live.vaultTemplate);
+        }
+        if (_anchorAddress(json, ".adapterTemplate") != live.adapterTemplate) {
+            console.log("  the aggregator adapter template, now", live.adapterTemplate);
+        }
+        address[] memory ap = _anchorAddresses(json, ".proxies");
+        address[] memory ai = _anchorAddresses(json, ".implementations");
+        for (uint256 i = 0; i < live.proxies.length; ++i) {
+            bool known;
+            for (uint256 j = 0; j < ap.length && j < ai.length; ++j) {
+                if (ap[j] != live.proxies[i]) continue;
+                known = true;
+                if (ai[j] != live.implementations[i]) {
+                    console.log("  proxy", live.proxies[i]);
+                    console.log("    implementation now", live.implementations[i]);
+                }
+            }
+            if (!known) console.log("  a proxy the anchor does not list:", live.proxies[i]);
+        }
+        for (uint256 j = 0; j < ap.length; ++j) {
+            bool present;
+            for (uint256 i = 0; i < live.proxies.length; ++i) {
+                if (live.proxies[i] == ap[j]) present = true;
+            }
+            if (!present) console.log("  a listed proxy the chain no longer reaches:", ap[j]);
+        }
+    }
+
+    function _anchorBytes32(string memory json, string memory key) private pure returns (bytes32) {
+        try CHEATS.parseJsonBytes32(json, key) returns (bytes32 v) {
+            return v;
+        } catch {
+            return bytes32(0);
+        }
+    }
+
+    function _anchorAddress(string memory json, string memory key) private pure returns (address) {
+        try CHEATS.parseJsonAddress(json, key) returns (address v) {
+            return v;
+        } catch {
+            return address(type(uint160).max);
+        }
+    }
+
+    function _anchorAddresses(string memory json, string memory key) private pure returns (address[] memory) {
+        try CHEATS.parseJsonAddressArray(json, key) returns (address[] memory v) {
+            return v;
+        } catch {
+            return new address[](0);
+        }
     }
 
     /// Run one guard command and revert with `failure` when it exits non-zero.

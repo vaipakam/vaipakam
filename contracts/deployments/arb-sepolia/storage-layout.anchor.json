@@ -1,6 +1,27 @@
 {
-  "_readme": "Binds storage-layout.json beside it to the chain it describes (#2092). Written with the record; an in-place change is refused unless the Diamond, its code fingerprint and the record hash still match. Do not edit by hand.",
-  "codeFingerprint": "0x779a28fd71b4473b79ae113e99c0016fe79b31b9bb8ca883c0fd22632decae30",
+  "_readme": "Binds storage-layout.json beside it to the chain it describes (#2092). Written with the record; an in-place change is refused unless the Diamond, the fingerprint of every code location the record governs (facets, vault and adapter templates, every UUPS proxy the chain reaches) and the record hash still match. The parts beside codeFingerprint are there to say which code moved. Do not edit by hand.",
+  "adapterTemplate": "0x0000000000000000000000000000000000000000",
+  "codeFingerprint": "0x0246d3df1f2c9822d1e8ffd5d3cded9cba54d8c5ef3ec7f555e472a82ccb2ccd",
   "diamond": "0x50199e30838f368fa18ba87764F9F078c5d5c209",
-  "recordHash": "0x2c9a4817cb36a8afc6fc94ff2c4052e2298571b67b813b217e7e821ad046faaf"
+  "facetsFingerprint": "0x08ea015238cc222919ba9f368bd18adf608f5882502e7690975b0595c316bb06",
+  "implementations": [
+    "0x4fD72cE8CE6c7A2a5AFEf14aBaE4aF4A538C04c7",
+    "0xFD29caa23c1aC83b67c4d9759f23D2C1dAec36Cd",
+    "0xE4199aEc1E97f402f0De542CB42fC2FE4d68C426",
+    "0xB88de9571F55840937c87400C11F442CFc4ea2E0",
+    "0xe88E98D5b34a1325311FD37c16A3E4ed6F452477",
+    "0x3031a6D5D9648BA5f50f656Cd4a1672E1167a34A",
+    "0x29d771Ca6d749E6eBd0A76a61De4B88832e30107"
+  ],
+  "proxies": [
+    "0x04E2fEFF625BbFd7B510B9c0629ffCde3568EEF8",
+    "0x09322C3D4E5a19d8b5a8366999b904031D322812",
+    "0x29be05E9016DecC4A783BdbB70C8f5129d2bAE41",
+    "0x37e97878b91dC6636b0bA670aa58f38DFf9534f2",
+    "0x4958e015481c32E2fEf07604928C6e6Bc154540e",
+    "0x980B62Da83eFf3D4576C647993b0c1D7faf17c73",
+    "0x9a7DeA118EB90F39eb28E2A7C9Fecd5fCC7f663c"
+  ],
+  "recordHash": "0x2c9a4817cb36a8afc6fc94ff2c4052e2298571b67b813b217e7e821ad046faaf",
+  "vaultTemplate": "0xFD1231095B22cc4F1fe1E0AfA47CF08277FB5164"
 }

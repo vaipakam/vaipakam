@@ -261,10 +261,19 @@ was never committed, or two branches that each start from the same record and
 add different fields at the same free slot. Checked only against its own
 checkout's file, the second of those refreshes would pass and reinterpret the
 first one's storage. So beside the record sits its anchor,
-`storage-layout.anchor.json`, written with it: the Diamond, a fingerprint of the
-code it runs (the loupe's facet address list and the vault template) and the
-record's own hash. A change is refused unless the live Diamond still matches
-the anchor and the record is the one the anchor names, so a chain changed from
+`storage-layout.anchor.json`, written with it: the Diamond, a fingerprint of
+every code location the record governs, and the record's own hash. The record
+covers the Diamond's namespaces and every UUPS root, so the fingerprint covers
+the facets (the loupe's address list), the vault and aggregator-adapter
+templates, and every EIP-1967 proxy the chain reaches with the implementation
+it points at: every address in `addresses.json` (outside `.facets`), every
+satellite the Diamond names, and the `messenger()` each of those trusts. The
+proxies are found rather than listed, so a new one cannot be left out by
+forgetting to name it. A fingerprint over the facets alone let a receiver
+upgraded by an interrupted refresh pass as unchanged (Codex #2684 r2). The
+parts are written beside the fingerprint so a refusal can say which code
+moved. A change is refused unless the live chain still matches the anchor and
+the record is the one the anchor names, so a chain changed from
 elsewhere fails here instead of being checked against a record that no longer
 describes it. Two runs racing from different checkouts can both pass before
 either broadcasts, and nothing off-chain can close that, so these scripts are
@@ -279,7 +288,12 @@ record describes what the chain runs.
 and refuses on a non-zero exit: `RefreshAllFacetsInPlace`,
 `RefreshChangedFacetsInPlace`, `RedeployFacets`, `ReplaceStaleFacets`,
 `UpgradeOracleFacet`, `MigrateRiskTermsCommitReveal` and
-`UpgradeVaultImplementation`. It is the same command CI runs, so declared
+`UpgradeVaultImplementation`. `DeployVPFIToken` and `DeployCrosschain` run it
+too, and rewrite the pair after: the proxies they add are code the record
+governs, so the record must already hold the layout they are deployed with,
+and the anchor must list them, or the first refresh after a fresh deploy would
+refuse. They check only on a run that writes its artifact, since a dry run
+sends nothing and a fresh chain's dry run has no record yet. It is the same command CI runs, so declared
 renames apply and acknowledgements never do: an acknowledged break means no
 chain may be upgraded in place across it. A chain with no record is refused,
 because the layout it runs is unknown. `DeployDiamond` runs the plain `check`
