@@ -3,5 +3,6 @@
   "0002_keeper_deployment.sql",
   "0003_keeper_work.sql",
   "0004_keeper_sanctions.sql",
-  "0005_keeper_horizon.sql"
+  "0005_keeper_horizon.sql",
+  "0006_hf_band_orphan_seq.sql"
 ]

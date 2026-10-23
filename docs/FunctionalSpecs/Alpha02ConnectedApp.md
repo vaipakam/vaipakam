@@ -1037,7 +1037,11 @@ The app uses chain reads and indexed reads for different jobs.
   the record, or the set of entries about it, changes while the withdrawal is
   under way, nothing is withdrawn and nothing attached to it is touched. The
   platform's memory of which alerts it already sent about the position goes
-  with it, so a real loan later given the same number is warned from scratch. The record is kept whole, out of
+  with it, so a real loan later given the same number is warned from scratch.
+  That includes the health-factor warnings, whose memory the alerting service
+  keeps apart from the index: it drops what it remembered for the number on
+  its next health check, and keeps only what it learned after the withdrawal,
+  which is about the real loan. The record is kept whole, out of
   publication, with the settled point the proof was read at, so a person can
   put it back if the existence test itself was at fault. That kept record is
   backed up with the platform's other records that the chain cannot

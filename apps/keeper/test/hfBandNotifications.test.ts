@@ -30,6 +30,8 @@ const BORROWER = '0x00000000000000000000000000000000000000bb';
 const NEW_BORROWER = '0x00000000000000000000000000000000000000cc';
 const NOW = 1_800_000_000;
 const HEAD = 4_242;
+/** The Diamond the indexer settled on for CHAIN (see `harness`). */
+const DIAMOND = '0x' + 'd'.repeat(40);
 
 const E15 = 10n ** 15n;
 /** milli-HF → the 1e18-scaled bigint the contract returns. */
@@ -60,7 +62,7 @@ function harness(watermarkAt: number | null = NOW): Harness {
   }
   // The indexer has settled on this chain's Diamond, and the fence holds for
   // it: what a tick establishes before the pass writes (#2569 r5).
-  settleIndexer(shared, CHAIN, '0x' + 'd'.repeat(40));
+  settleIndexer(shared, CHAIN, DIAMOND);
   return { shared, keeper, dbs: bindings(shared, keeper) };
 }
 
@@ -121,7 +123,7 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
   it('mints a borrower row on first observation inside a band, stamped at the cursor head', async () => {
     const h = harness();
     seedLoan(h, 1);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 1n, hf: hf(1_400) }], NOW);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 1n, hf: hf(1_400) }], NOW);
     const rows = notifRows(h);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
@@ -138,7 +140,7 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
   it('healthy loans mint nothing and carry no state row', async () => {
     const h = harness();
     seedLoan(h, 2);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 2n, hf: hf(2_000) }], NOW);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 2n, hf: hf(2_000) }], NOW);
     expect(notifRows(h)).toHaveLength(0);
     expect(stateRows(h)).toHaveLength(0);
   });
@@ -147,15 +149,15 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
     const h = harness();
     seedLoan(h, 3);
     // warn
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 3n, hf: hf(1_400) }], NOW);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 3n, hf: hf(1_400) }], NOW);
     // same band next tick — nothing new
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 3n, hf: hf(1_350) }], NOW + 60);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 3n, hf: hf(1_350) }], NOW + 60);
     expect(notifRows(h)).toHaveLength(1);
     // deeper — alert row
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 3n, hf: hf(1_100) }], NOW + 120);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 3n, hf: hf(1_100) }], NOW + 120);
     expect(notifRows(h).map((r) => r.kind)).toEqual(['hf_warn', 'hf_alert']);
     // recovery — state gone, no "got safer" row
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 3n, hf: hf(1_800) }], NOW + 180);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 3n, hf: hf(1_800) }], NOW + 180);
     expect(notifRows(h)).toHaveLength(2);
     expect(stateRows(h)).toHaveLength(0);
   });
@@ -163,9 +165,9 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
   it('a same-day flap re-crossing the same band is bounded by the day-bucket dedup; a new UTC day re-alerts', async () => {
     const h = harness();
     seedLoan(h, 4);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 4n, hf: hf(1_400) }], NOW);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 4n, hf: hf(1_600) }], NOW + 60);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 4n, hf: hf(1_400) }], NOW + 120);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 4n, hf: hf(1_400) }], NOW);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 4n, hf: hf(1_600) }], NOW + 60);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 4n, hf: hf(1_400) }], NOW + 120);
     expect(notifRows(h)).toHaveLength(1); // same day bucket → INSERT OR IGNORE
     // next UTC day: recover + re-drop mints a fresh row (freshen the
     // watermark as the live indexer would keep doing — a day-old stamp
@@ -174,19 +176,19 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
     h.shared.db
       .prepare(`UPDATE indexer_cursor SET updated_at = ? WHERE kind = 'notified'`)
       .run(nextDay);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 4n, hf: hf(1_600) }], nextDay);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 4n, hf: hf(1_400) }], nextDay + 60);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 4n, hf: hf(1_600) }], nextDay);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 4n, hf: hf(1_400) }], nextDay + 60);
     expect(notifRows(h)).toHaveLength(2);
   });
 
   it('defers a crossing whose loan row has not been indexed yet (retries next tick)', async () => {
     const h = harness();
     // no loans row for id 5
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 5n, hf: hf(1_100) }], NOW);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 5n, hf: hf(1_100) }], NOW);
     expect(notifRows(h)).toHaveLength(0);
     expect(stateRows(h)).toHaveLength(0); // state NOT committed — retry
     seedLoan(h, 5);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 5n, hf: hf(1_100) }], NOW + 60);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 5n, hf: hf(1_100) }], NOW + 60);
     expect(notifRows(h).map((r) => r.kind)).toEqual(['hf_alert']);
   });
 
@@ -197,6 +199,7 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
     await recordHfBandNotifications(
       h.dbs,
       CHAIN,
+      DIAMOND,
       [
         { id: 6n, hf: hf(1_000) },
         { id: 7n, hf: hf(1_000) },
@@ -210,12 +213,12 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
   it('prunes band state for loans that left the active set', async () => {
     const h = harness();
     seedLoan(h, 8);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 8n, hf: hf(1_400) }], NOW);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 8n, hf: hf(1_400) }], NOW);
     expect(stateRows(h)).toHaveLength(1);
     h.shared.db.prepare(`UPDATE loans SET status = 'repaid' WHERE loan_id = 8`).run();
     // Any subsequent pass (here: an unrelated healthy reading) prunes it.
     seedLoan(h, 9);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 9n, hf: hf(2_000) }], NOW + 60);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 9n, hf: hf(2_000) }], NOW + 60);
     expect(stateRows(h)).toHaveLength(0);
   });
 
@@ -229,7 +232,7 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
         `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at) VALUES (?, 'diamond', ?, ?)`,
       )
       .run(CHAIN, HEAD, NOW);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 1n, hf: hf(1_000) }], NOW);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 1n, hf: hf(1_000) }], NOW);
     expect(notifRows(h)).toHaveLength(0);
   });
 
@@ -241,14 +244,14 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
       )
       .run(CHAIN, HEAD + 10, NOW); // event rows for HEAD+1..HEAD+10 may be pending
     seedLoan(h, 12);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 12n, hf: hf(1_000) }], NOW);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 12n, hf: hf(1_000) }], NOW);
     expect(notifRows(h)).toHaveLength(0);
     expect(stateRows(h)).toHaveLength(0);
     // Watermark catches the tip → the crossing re-detects.
     h.shared.db
       .prepare(`UPDATE indexer_cursor SET last_block = ? WHERE kind = 'notified'`)
       .run(HEAD + 10);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 12n, hf: hf(1_000) }], NOW + 60);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 12n, hf: hf(1_000) }], NOW + 60);
     expect(notifRows(h).map((r) => [r.kind, r.block_number])).toEqual([
       ['hf_critical', HEAD + 10],
     ]);
@@ -257,29 +260,29 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
   it('re-alerts the NEW borrower-position holder on a same-band transfer (Codex #1300 r2)', async () => {
     const h = harness();
     seedLoan(h, 13);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 13n, hf: hf(1_400) }], NOW);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 13n, hf: hf(1_400) }], NOW);
     expect(notifRows(h)).toHaveLength(1);
     // Same band next tick — silent.
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 13n, hf: hf(1_390) }], NOW + 60);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 13n, hf: hf(1_390) }], NOW + 60);
     expect(notifRows(h)).toHaveLength(1);
     // The borrower position migrates while STILL in warn — the new
     // holder must learn the loan they now hold is inside a band.
     h.shared.db
       .prepare(`UPDATE loans SET borrower_current_owner = ? WHERE loan_id = 13`)
       .run(NEW_BORROWER);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 13n, hf: hf(1_390) }], NOW + 120);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 13n, hf: hf(1_390) }], NOW + 120);
     const rows = notifRows(h);
     expect(rows).toHaveLength(2);
     expect(rows[1]).toMatchObject({ recipient: NEW_BORROWER, kind: 'hf_warn', loan_id: 13 });
     // And the new holder is now the stored edge — no re-alert next tick.
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 13n, hf: hf(1_390) }], NOW + 180);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 13n, hf: hf(1_390) }], NOW + 180);
     expect(notifRows(h)).toHaveLength(2);
   });
 
   it('defers minting on a stale watermark (indexer behind — D1 ownership may lag live HF)', async () => {
     const h = harness(NOW - 3_600); // watermark an hour old
     seedLoan(h, 10);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 10n, hf: hf(1_000) }], NOW);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 10n, hf: hf(1_000) }], NOW);
     expect(notifRows(h)).toHaveLength(0);
     expect(stateRows(h)).toHaveLength(0); // crossing NOT committed — retries when fresh
   });
@@ -287,12 +290,12 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
   it('prunes terminal state even on a zero-readings pass (Codex #1300 r1)', async () => {
     const h = harness();
     seedLoan(h, 11);
-    await recordHfBandNotifications(h.dbs, CHAIN, [{ id: 11n, hf: hf(1_400) }], NOW);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 11n, hf: hf(1_400) }], NOW);
     expect(stateRows(h)).toHaveLength(1);
     // The loan closes and the active set goes empty — the liquidator
     // still calls the pass with [] and the state row must not linger.
     h.shared.db.prepare(`UPDATE loans SET status = 'repaid' WHERE loan_id = 11`).run();
-    await recordHfBandNotifications(h.dbs, CHAIN, [], NOW + 60);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [], NOW + 60);
     expect(stateRows(h)).toHaveLength(0);
   });
   // #2450 — the prune used to be ONE statement joining `hf_band_state` to
@@ -316,7 +319,7 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
          VALUES (?, 21, 'warn', 1400, ?, ?)`,
       )
       .run(CHAIN, BORROWER, NOW);
-    await recordHfBandNotifications(h.dbs, CHAIN, [], NOW + 60);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [], NOW + 60);
     expect(stateRows(h).map((r) => r.loan_id)).toEqual([20]);
   });
 
@@ -334,7 +337,7 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
     }
     // Another chain's row for a terminal loan id is not this pass's to prune.
     insert.run(CHAIN + 1, 1, BORROWER, NOW);
-    await recordHfBandNotifications(h.dbs, CHAIN, [], NOW + 60);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [], NOW + 60);
     const left = h.keeper.db
       .prepare('SELECT chain_id, loan_id FROM hf_band_state ORDER BY chain_id, loan_id')
       .all() as Array<{ chain_id: number; loan_id: number }>;
@@ -342,5 +345,262 @@ describe('recordHfBandNotifications (over the migrated shared + keeper schemas)'
       Array.from({ length: 30 }, (_, i) => 121 + i),
     );
     expect(left.filter((r) => r.chain_id === CHAIN + 1)).toHaveLength(1);
+  });
+
+  // #2638 — the indexer withdraws a loan the chain has no loan for (#2197):
+  // its `loans` row moves to `loan_orphans`, with its inbox rows. The keeper's
+  // band marker for the id is the half the indexer cannot clear.
+  /** What the indexer's move leaves behind: no `loans` row, no inbox rows,
+   *  and an archive entry naming the Diamond and when it acted. */
+  function withdraw(h: Harness, loanId: number, withdrawnAt: number, diamond = DIAMOND) {
+    h.shared.db.prepare(`DELETE FROM loans WHERE chain_id = ? AND loan_id = ?`).run(CHAIN, loanId);
+    h.shared.db.prepare(`DELETE FROM notifications WHERE loan_id = ?`).run(loanId);
+    h.shared.db
+      .prepare(
+        `INSERT INTO loan_orphans (move_id, chain_id, diamond, loan_id, from_status,
+           observed_block, withdrawn_at, row_json, related_json)
+         VALUES (?, ?, ?, ?, 'active', ?, ?, '{}', '{}')`,
+      )
+      .run(`move-${loanId}-${withdrawnAt}-${diamond}`, CHAIN, diamond, loanId, HEAD, withdrawnAt);
+  }
+
+  it('drops the marker of a withdrawn loan, so the id reissued to the same holder in the same band alerts again (#2638)', async () => {
+    const h = harness();
+    seedLoan(h, 30);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 30n, hf: hf(1_400) }], NOW);
+    expect(notifRows(h).map((r) => r.kind)).toEqual(['hf_warn']);
+
+    withdraw(h, 30, NOW + 30);
+    // The next pass (no reading: the chain has no loan at the id) drops it.
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [], NOW + 60);
+    expect(stateRows(h)).toEqual([]);
+
+    // The chain issues the id to a real loan, same holder, same band: a first
+    // crossing, not an unchanged observation.
+    seedLoan(h, 30);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 30n, hf: hf(1_400) }], NOW + 120);
+    expect(notifRows(h).map((r) => [r.loan_id, r.kind])).toEqual([[30, 'hf_warn']]);
+    expect(stateRows(h).map((r) => r.loan_id)).toEqual([30]);
+  });
+
+  it("keeps a marker written after the id's withdrawal was recorded: it is about the loan the chain reissued (#2638)", async () => {
+    const h = harness();
+    withdraw(h, 31, NOW - 60);
+    seedLoan(h, 31); // the reissued loan
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 31n, hf: hf(1_400) }], NOW);
+    // Unchanged on the next pass: kept, and no second alert.
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 31n, hf: hf(1_400) }], NOW + 60);
+    expect(stateRows(h).map((r) => r.loan_id)).toEqual([31]);
+    expect(notifRows(h)).toHaveLength(1);
+  });
+
+  it("orders by the withdrawal record, not by either machine's clock (#2638, Codex #2655 r1)", async () => {
+    const h = harness();
+    seedLoan(h, 34);
+    // The keeper's clock runs a day ahead of the indexer's: the marker's
+    // wall-clock stamp is LATER than the withdrawal's, though it came first.
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 34n, hf: hf(1_400) }], NOW + 86_400);
+    withdraw(h, 34, NOW);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [], NOW + 86_460);
+    expect(stateRows(h)).toEqual([]);
+  });
+
+  it('stamps each marker with the newest withdrawal its pass had read (#2638)', async () => {
+    const h = harness();
+    withdraw(h, 90, NOW - 600);
+    withdraw(h, 91, NOW - 300);
+    seedLoan(h, 35);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 35n, hf: hf(1_400) }], NOW);
+    const seqs = h.keeper.db.prepare('SELECT loan_id, orphan_seq FROM hf_band_state').all();
+    const newest = (h.shared.db.prepare('SELECT MAX(id) AS id FROM loan_orphans').get() as { id: number }).id;
+    expect(seqs).toEqual([{ loan_id: 35, orphan_seq: newest }]);
+  });
+
+  /** A marker as a build before `orphan_seq` (keeper migration 0006) left it. */
+  function legacyMarker(h: Harness, loanId: number) {
+    h.keeper.db
+      .prepare(
+        `INSERT INTO hf_band_state (chain_id, loan_id, last_band, last_hf_milli, last_recipient, updated_at)
+         VALUES (?, ?, 'warn', 1400, ?, ?)`,
+      )
+      .run(CHAIN, loanId, BORROWER, NOW);
+  }
+  const seqOf = (h: Harness, loanId: number) =>
+    (h.keeper.db.prepare('SELECT orphan_seq FROM hf_band_state WHERE loan_id = ?').get(loanId) as
+      | { orphan_seq: number | null }
+      | undefined)?.orphan_seq;
+
+  it('keeps a pre-upgrade marker on an id withdrawn and since reissued, and stamps it (Codex #2655 r2)', async () => {
+    const h = harness();
+    withdraw(h, 40, NOW - 600);
+    seedLoan(h, 40); // reissued, and its marker predates the column
+    legacyMarker(h, 40);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 40n, hf: hf(1_400) }], NOW);
+    // Kept: an unchanged observation, so no duplicate warning.
+    expect(stateRows(h).map((r) => r.loan_id)).toEqual([40]);
+    expect(notifRows(h)).toHaveLength(0);
+    const newest = (h.shared.db.prepare('SELECT MAX(id) AS id FROM loan_orphans').get() as { id: number }).id;
+    expect(seqOf(h, 40)).toBe(newest);
+    // And from then on judged by the record's order: a later withdrawal drops it.
+    withdraw(h, 40, NOW + 30);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [], NOW + 60);
+    expect(stateRows(h)).toEqual([]);
+  });
+
+  it('drops a pre-upgrade marker whose loan row was withdrawn (#2638)', async () => {
+    const h = harness();
+    seedLoan(h, 41);
+    legacyMarker(h, 41);
+    withdraw(h, 41, NOW + 30);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [], NOW + 60);
+    expect(stateRows(h)).toEqual([]);
+  });
+
+  it('stamps a pre-upgrade marker with no withdrawal for its id, and keeps it (#2638)', async () => {
+    const h = harness();
+    withdraw(h, 99, NOW - 600); // some other id
+    seedLoan(h, 42);
+    legacyMarker(h, 42);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [], NOW);
+    expect(stateRows(h).map((r) => r.loan_id)).toEqual([42]);
+    expect(seqOf(h, 42)).toBeGreaterThan(0);
+  });
+
+  it("ignores another Diamond's withdrawal of the same id (#2638)", async () => {
+    const h = harness();
+    seedLoan(h, 32);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 32n, hf: hf(1_400) }], NOW);
+    // An entry from a Diamond this chain used to run: entries outlive a fresh
+    // Diamond, and say nothing about the new one's ids.
+    withdraw(h, 32, NOW + 30, '0x' + 'e'.repeat(40));
+    seedLoan(h, 32);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 32n, hf: hf(1_400) }], NOW + 60);
+    // The marker survived, so the unchanged observation mints nothing (the
+    // helper's move removed the first alert's row).
+    expect(stateRows(h).map((r) => r.loan_id)).toEqual([32]);
+    expect(notifRows(h)).toHaveLength(0);
+  });
+
+  /** The pass's bindings, with `fn` run once right after its holder read
+   *  returns: a withdrawal landing between that read and the pass's writes. */
+  function afterHolderRead(h: Harness, fn: () => void): Pick<Env, 'DB' | 'KEEPER_DB'> {
+    const shared = h.shared.d1 as {
+      prepare(sql: string): { bind(...a: unknown[]): object };
+      batch(s: unknown[]): Promise<unknown>;
+    };
+    const holderReads = new WeakSet<object>();
+    let fired = false;
+    const DB = {
+      prepare(sql: string) {
+        const stmt = shared.prepare(sql);
+        if (!/JOIN loans/.test(sql) || !/orphan_seq/.test(sql)) return stmt;
+        return {
+          ...stmt,
+          bind: (...a: unknown[]) => {
+            const bound = stmt.bind(...a);
+            holderReads.add(bound);
+            return bound;
+          },
+        };
+      },
+      batch: async (stmts: object[]) => {
+        const out = await shared.batch(stmts);
+        if (!fired && stmts.some((x) => holderReads.has(x))) {
+          fired = true;
+          fn();
+        }
+        return out;
+      },
+    };
+    return { ...h.dbs, DB } as unknown as Pick<Env, 'DB' | 'KEEPER_DB'>;
+  }
+
+  it('refuses the inbox row of a loan withdrawn after its holder was read, and the reissued loan alerts that day (Codex #2655 r4)', async () => {
+    const h = harness();
+    seedLoan(h, 50);
+    const dbs = afterHolderRead(h, () => withdraw(h, 50, NOW + 1));
+    await recordHfBandNotifications(dbs, CHAIN, DIAMOND, [{ id: 50n, hf: hf(1_400) }], NOW);
+    // The withdrawn loan's alert does not come back after the move took it.
+    expect(notifRows(h)).toEqual([]);
+
+    // The chain issues the id to a real loan the same day, same holder and
+    // band: the stale marker goes by the same token, and the new loan's own
+    // alert lands under the day's dedup key, which the refused row never took.
+    seedLoan(h, 50);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 50n, hf: hf(1_400) }], NOW + 60);
+    expect(notifRows(h).map((r) => [r.loan_id, r.kind, r.dedup_key])).toEqual([
+      [50, 'hf_warn', `${CHAIN}:${BORROWER}:hf_warn:50:${Math.floor((NOW + 60) / 86_400)}`],
+    ]);
+    const newest = (h.shared.db.prepare('SELECT MAX(id) AS id FROM loan_orphans').get() as { id: number }).id;
+    expect(seqOf(h, 50)).toBe(newest);
+  });
+
+  it("does not refuse an inbox row over another Diamond's or an older withdrawal of the id (Codex #2655 r4)", async () => {
+    const h = harness();
+    withdraw(h, 51, NOW - 600); // before the holder read: the id was reissued
+    seedLoan(h, 51);
+    const dbs = afterHolderRead(h, () => withdraw(h, 51, NOW + 1, '0x' + 'e'.repeat(40)));
+    // Neither withdrawal is one of this Diamond's loan after the holder read:
+    // the older one came before it, the newer one names another Diamond.
+    await recordHfBandNotifications(dbs, CHAIN, DIAMOND, [{ id: 51n, hf: hf(1_400) }], NOW);
+    expect(notifRows(h).map((r) => [r.loan_id, r.kind])).toEqual([[51, 'hf_warn']]);
+  });
+
+  /** Both bindings, recording the most binds any one statement was given. */
+  function countingBinds(h: Harness): { dbs: Pick<Env, 'DB' | 'KEEPER_DB'>; max: () => number } {
+    let max = 0;
+    const wrap = (d1: unknown) => {
+      const inner = d1 as { prepare(sql: string): { bind(...a: unknown[]): unknown }; batch(s: unknown[]): unknown };
+      return {
+        prepare(sql: string) {
+          const stmt = inner.prepare(sql);
+          return {
+            ...stmt,
+            bind: (...a: unknown[]) => {
+              max = Math.max(max, a.length);
+              return stmt.bind(...a);
+            },
+          };
+        },
+        batch: (st: unknown[]) => inner.batch(st),
+      };
+    };
+    return {
+      dbs: { DB: wrap(h.shared.d1), KEEPER_DB: wrap(h.keeper.d1) } as unknown as Pick<Env, 'DB' | 'KEEPER_DB'>,
+      max: () => max,
+    };
+  }
+
+  it("binds a fixed number of parameters per statement however wide the pass is (Codex #2655 r5)", async () => {
+    const h = harness();
+    // Wider than one JSON chunk, past where the per-row binds of the old
+    // inserts (about 358 rows) and the prune's two IN-list families (about
+    // 2,463 markers) would have overflowed D1's invocation budget.
+    const N = 2_600;
+    const readings = [];
+    for (let id = 1; id <= N; id++) {
+      seedLoan(h, id);
+      readings.push({ id: BigInt(id), hf: hf(1_400) });
+    }
+    withdraw(h, 7, NOW - 600);
+    seedLoan(h, 7);
+    const c = countingBinds(h);
+    await recordHfBandNotifications(c.dbs, CHAIN, DIAMOND, readings, NOW);
+    expect(notifRows(h)).toHaveLength(N);
+    expect(stateRows(h)).toHaveLength(N);
+    // The next pass prunes all of them back: every loan has ended.
+    h.shared.db.prepare(`UPDATE loans SET status = 'repaid' WHERE chain_id = ?`).run(CHAIN);
+    await recordHfBandNotifications(c.dbs, CHAIN, DIAMOND, [], NOW + 60);
+    expect(stateRows(h)).toEqual([]);
+    expect(c.max()).toBeLessThanOrEqual(10);
+  });
+
+  it('matches the Diamond whatever case the caller spells it in (#2638)', async () => {
+    const h = harness();
+    seedLoan(h, 33);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND, [{ id: 33n, hf: hf(1_400) }], NOW);
+    withdraw(h, 33, NOW + 30);
+    await recordHfBandNotifications(h.dbs, CHAIN, DIAMOND.toUpperCase().replace('0X', '0x'), [], NOW + 60);
+    expect(stateRows(h)).toEqual([]);
   });
 });

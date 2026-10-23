@@ -494,6 +494,7 @@ async function hfBandPass(
     await recordHfBandNotifications(
       env,
       chain.id,
+      chain.diamond,
       readings,
       Math.floor(Date.now() / 1000),
     );
