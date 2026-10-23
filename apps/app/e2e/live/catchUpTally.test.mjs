@@ -8,7 +8,7 @@ const chunk = (from, to, topics = offerTerminalTopics(), outcome = 'ok') => ({
   params: [{ address: '0xd1a0', fromBlock: hex(from), toBlock: hex(to), topics: [topics] }],
   outcome,
 });
-const head = { method: 'eth_blockNumber', params: [] };
+const head = { method: 'eth_blockNumber', params: [], outcome: 'ok' };
 
 /** One scan of `blocks` blocks from `from`, chunked the way the app chunks. */
 function scan(from, blocks) {
@@ -72,12 +72,16 @@ describe('tallyCalls (#2097)', () => {
     expect(t.catchUp.runs.every((s) => s.chunks === 2)).toBe(true);
   });
 
-  it('keeps a retry of a FAILED chunk with its scan', () => {
+  it('counts every attempt, and floors the budget by the failed ones (#2710 r6)', () => {
+    // Two failed attempts and a success over one window: retries or three
+    // scans? The wire cannot say, so all three count, and the floor
+    // discounts the two that failed — the most the transport could have added.
     const [c1, c2] = scan(100, 2_000);
-    const t = tallyCalls([{ ...c1, outcome: 'failed' }, { ...c1, outcome: 'failed' }, { ...c1, outcome: 'ok' }, c2]);
-    expect(t.catchUp.runs).toHaveLength(1);
-    expect(t.catchUp.retries).toBe(2);
-    expect(t.budgeted).toBe(1);
+    const t = tallyCalls([{ ...c1, outcome: 'failed' }, { ...c1, outcome: 'failed' }, c1, c2]);
+    expect(t.catchUp.runs).toHaveLength(3);
+    expect(t.budgeted).toBe(3);
+    expect(t.budgetedFloor).toBe(1);
+    expect(t.failedCounts).toEqual({ eth_getLogs: 2 });
   });
 
   it('counts every re-scan of an unchanged range that succeeded (#2710 r1)', () => {
@@ -86,16 +90,25 @@ describe('tallyCalls (#2097)', () => {
     const calls = [];
     for (let i = 0; i < 8; i++) calls.push(head, chunk(500, 619));
     const t = tallyCalls(calls);
-    expect(t.catchUp.retries).toBe(0);
     expect(t.catchUp.runs).toHaveLength(8);
     expect(t.budgeted).toBe(16);
+    expect(t.budgetedFloor).toBe(16);
+  });
+
+  it('keeps failing re-scans over the budget floor too (#2710 r6)', () => {
+    // A page re-scanning a failing range after its own head reads: every
+    // scan counts, and the floor gives back only one unit per failure.
+    const calls = [];
+    for (let i = 0; i < 8; i++) calls.push(head, chunk(500, 619, undefined, 'failed'));
+    const t = tallyCalls(calls);
+    expect(t.budgeted).toBe(16);
+    expect(t.budgetedFloor).toBe(8);
   });
 
   it('reads a call with no observed result as a failed attempt (#2710 r4)', () => {
-    const c = chunk(500, 619);
-    const t = tallyCalls([{ ...c, outcome: undefined }, c]);
-    expect(t.catchUp.retries).toBe(1);
-    expect(t.catchUp.runs).toHaveLength(1);
+    const t = tallyCalls([{ ...chunk(500, 619), outcome: undefined }]);
+    expect(t.failedCounts).toEqual({ eth_getLogs: 1 });
+    expect(t.budgetedFloor).toBe(0);
   });
 
   it('does not continue a run past a window that failed (#2710 r4)', () => {
@@ -107,12 +120,12 @@ describe('tallyCalls (#2097)', () => {
     expect(t.budgeted).toBe(3);
   });
 
-  it('continues a run once a retried window succeeds', () => {
+  it('continues a run from a repeated window that succeeded', () => {
     const w = Number(CHUNK_BLOCKS);
     const t = tallyCalls([{ ...chunk(1, w), outcome: 'failed' }, chunk(1, w), chunk(w + 1, w + 40)]);
-    expect(t.catchUp.retries).toBe(1);
-    expect(t.catchUp.runs).toHaveLength(1);
-    expect(t.catchUp.runs[0].chunks).toBe(2);
+    expect(t.catchUp.runs.map((r) => r.chunks)).toEqual([1, 2]);
+    expect(t.budgeted).toBe(2);
+    expect(t.budgetedFloor).toBe(1);
   });
 
   it('keeps two scans issued at once over the identical range apart', () => {

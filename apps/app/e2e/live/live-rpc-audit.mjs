@@ -29,7 +29,15 @@ import { CHUNK_BLOCKS, MAX_CHUNKS_PER_SCAN, createCallLedger, tallyCalls } from 
 const BUDGET_TOTAL = 12; // all JSON-RPC calls in the 60s window
 const BUDGET_BLOCKNUMBER = 5;
 
-const { page, done, blockedRequests } = await launch({ role: 'public', keyless: true, readOnly: true });
+// A THROWAWAY profile: a persisted wagmi / WalletConnect session in a reused
+// profile would reconnect the page and audit a different query set than the
+// disconnected visitor the budget describes (#2710 r6).
+const { page, done, blockedRequests } = await launch({
+  role: 'public',
+  keyless: true,
+  readOnly: true,
+  freshProfile: true,
+});
 let fails = 0;
 const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`);
@@ -75,11 +83,10 @@ for (const c of calls) c.outcome ??= 'failed';
 // "within budget".
 const rpcOk = calls.filter((c) => c.outcome === 'ok').length;
 const tally = tallyCalls(calls);
-const { counts, total, budgeted, catchUp } = tally;
-console.log('tally:', JSON.stringify(counts), `| successful rpc responses: ${rpcOk}`);
+const { counts, failedCounts, total, budgeted, budgetedFloor, catchUp } = tally;
+console.log('tally:', JSON.stringify(counts), `| successful rpc responses: ${rpcOk} | failed attempts: ${JSON.stringify(failedCounts)}`);
 console.log(
   `catch-up: ${catchUp.chunks} eth_getLogs, charged as ${catchUp.scansCharged} scan(s)` +
-    (catchUp.retries ? `, ${catchUp.retries} of them retries` : '') +
     (catchUp.runs.length
       ? ` — ${catchUp.runs.map((x) => `${x.from}–${x.to}: ${x.chunks} window(s) = ${x.scans} scan(s)`).join(', ')}`
       : ''),
@@ -102,13 +109,34 @@ if (rpcOk === 0) {
       ' otherwise pass them.',
   );
 } else {
-  check(
-    `JSON-RPC calls within budget, each catch-up run charged as the fewest scans that produce it (${budgeted} <= ${BUDGET_TOTAL}; ${total} raw)`,
-    budgeted <= BUDGET_TOTAL,
+  // A budget FAILS only when even its certain floor is over: the page's
+  // transport retries a failed attempt at most once, so attempts that failed
+  // may account for that many extra calls the page did not choose. Over the
+  // budget but within it once those are discounted is UNRESOLVED (#2710 r6).
+  const budget = (name, value, floor, limit) => {
+    if (value <= limit) return check(`${name} (${value} <= ${limit})`, true);
+    if (floor <= limit) {
+      console.log(`UNRESOLVED ${name} (${value} > ${limit}, but ${floor} <= ${limit} once failed attempts are discounted)`);
+      unresolved.push(
+        `${name}: ${value} is over ${limit}, but attempts failed in the window and the transport retries` +
+          ` them, so the page's own calls may be as few as ${floor}. Re-run against a healthy endpoint.`,
+      );
+      return;
+    }
+    check(`${name} (${floor} > ${limit} even with every failed attempt discounted)`, false);
+  };
+  budget(
+    `JSON-RPC calls within budget, each catch-up run charged as the fewest scans that produce it (${total} raw)`,
+    budgeted,
+    budgetedFloor,
+    BUDGET_TOTAL,
   );
-  check(
-    `eth_blockNumber within budget (${counts['eth_blockNumber'] ?? 0} <= ${BUDGET_BLOCKNUMBER})`,
-    (counts['eth_blockNumber'] ?? 0) <= BUDGET_BLOCKNUMBER,
+  const blockNumbers = counts['eth_blockNumber'] ?? 0;
+  budget(
+    'eth_blockNumber within budget',
+    blockNumbers,
+    Math.max(0, blockNumbers - (failedCounts['eth_blockNumber'] ?? 0)),
+    BUDGET_BLOCKNUMBER,
   );
   // The diet must not blank the surface it protects.
   const body = await page.locator('body').innerText();

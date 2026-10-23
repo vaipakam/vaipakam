@@ -33,11 +33,16 @@
  *     response, a failed request, a body that is not JSON-RPC, an error
  *     envelope, a socket that closed first, or no answer at all — is
  *     `failed`, which is how the page's own transport treats it (#2710 r4).
- *   - A RETRY repeats the range of a run's latest attempt AFTER that attempt
- *     failed; it belongs to that run and does not advance it. A repeat of a
- *     range that succeeded starts a new run, so a page re-scanning an
- *     unchanged range over and over — the polling regression this audit
- *     exists for — counts every scan (#2710 r1).
+ *   - RETRIES ARE NOT INFERRED. A retry of a failed request is on the wire
+ *     an identical request, and an identical range is also what a fresh
+ *     refetch sends when the head has not moved, so no rule over ranges can
+ *     tell them apart (three review rounds of #2710 found three edges of the
+ *     attempt). Every attempt is counted. What IS certain is a bound: each
+ *     retry the transport sends follows a failed attempt of its own, so the
+ *     calls the page itself chose to make number at least the total minus
+ *     the failed attempts. The audit FAILS a budget only when even that
+ *     lower bound is over it; over the budget but within it once failed
+ *     attempts are discounted is UNRESOLVED (#2710 r6).
  *   - Only a window that SUCCEEDED can be continued: the app stops a scan
  *     at a window that fails (`chunkedGetLogs` returns), so a later request
  *     starting one block after a failed window is a new scan (#2710 r4).
@@ -129,7 +134,8 @@ export function tallyCalls(calls) {
   /** next expected `from` → open runs waiting on it */
   const open = new Map();
   let chunks = 0;
-  let retries = 0;
+  /** method → attempts that failed (each may have been retried once). */
+  const failedCounts = {};
   const oversized = [];
   const continuable = (run, r) => {
     if (r.to - r.from + 1n !== CHUNK_BLOCKS) return;
@@ -140,22 +146,12 @@ export function tallyCalls(calls) {
   for (const call of calls) {
     if (!call?.method) continue;
     counts[call.method] = (counts[call.method] ?? 0) + 1;
+    if (call.outcome !== 'ok') failedCounts[call.method] = (failedCounts[call.method] ?? 0) + 1;
     const r = catchUpRange(call);
     if (!r) continue;
     chunks += 1;
     if (r.to - r.from + 1n > CHUNK_BLOCKS) oversized.push(`${r.from}–${r.to}`);
     const failed = call.outcome !== 'ok';
-    // A RETRY repeats the range of a run's latest attempt, and that attempt
-    // was observed to fail (the transport retries a failed request with the
-    // same body). It belongs to that run and does not advance it. A repeat
-    // of a range that SUCCEEDED starts a new run.
-    const retried = runs.find((s) => s.lastFailed && s.lastFrom === r.from && s.to === r.to);
-    if (retried) {
-      retries += 1;
-      retried.lastFailed = failed;
-      if (!failed) continuable(retried, r);
-      continue;
-    }
     const key = String(r.from);
     const waiting = open.get(key);
     let run;
@@ -163,13 +159,11 @@ export function tallyCalls(calls) {
       run = waiting.shift();
       if (waiting.length === 0) open.delete(key);
     } else {
-      run = { from: r.from, to: r.to, lastFrom: r.from, lastFailed: false, chunks: 0 };
+      run = { from: r.from, to: r.to, chunks: 0 };
       runs.push(run);
     }
     run.chunks += 1;
-    run.lastFrom = r.from;
     run.to = r.to;
-    run.lastFailed = failed;
     // Only a FULL-WIDTH window that SUCCEEDED can be followed by another of
     // the same scan: the app's loop cuts a window short only at the scan's
     // end, and stops at a window that fails (`chunkedGetLogs`). So a short or
@@ -181,15 +175,21 @@ export function tallyCalls(calls) {
   // The fewest scans a correct page could have issued to produce each run.
   const charge = (run) => Math.ceil(run.chunks / MAX_CHUNKS_PER_SCAN);
   const scansCharged = runs.reduce((a, run) => a + charge(run), 0);
+  const failed = Object.values(failedCounts).reduce((a, n) => a + n, 0);
+  const budgetedCalls = total - chunks + scansCharged;
   return {
     counts,
+    failedCounts,
     total,
     /** The budgeted figure: every call, with each run of catch-up chunks
      *  charged as the fewest scans that produce it. */
-    budgeted: total - chunks + scansCharged,
+    budgeted: budgetedCalls,
+    /** The certain floor under `budgeted`: the transport retries a failed
+     *  attempt at most once, so at most `failed` of the budgeted units can
+     *  be retries rather than the page's own choice. */
+    budgetedFloor: Math.max(0, budgetedCalls - failed),
     catchUp: {
       chunks,
-      retries,
       scansCharged,
       runs: runs.map((run) => ({ from: run.from, to: run.to, chunks: run.chunks, scans: charge(run) })),
       oversized,
