@@ -357,7 +357,10 @@ Which failures are preconditions, driver by driver:
   recompute as "answered" and passed. So `sessionFaults()` keeps every such
   call for the whole session, whatever window it fell in, and EVERY drive
   that attaches the helper FAILS on any of them (a structural test holds
-  each one to reading it). The RPC audit's call ledger takes the same
+  each one to reading it). The shared BLOCKED exits (`blocked`,
+  `blockedSync`) honour the same precedence by themselves: once any
+  watcher has recorded such a request they exit FAIL, naming it, so no
+  drive's BLOCKED branch can hide one. The RPC audit's call ledger takes the same
   verdicts, so a page whose requests a reachable provider refuses as
   malformed FAILS there too. On a WebSocket, calls are matched to answers
   by ONE correlator (`createSocketCalls`) shared by both observers: an id

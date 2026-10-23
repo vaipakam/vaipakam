@@ -144,6 +144,12 @@ async function assertSelectionMatchesChain(context) {
 // confirmed tier then still reads 0 and a naive cleanup would certify
 // clean right before the raise mines (Codex #1539 r7).
 let raiseClicked = false;
+// Set before this run's FIRST tier write (the UI normalization or the
+// raise). Until then the tier is as the run found it, so the cleanup owes
+// nothing to this run's verdict: an unconfirmed restore of a state the run
+// never touched says nothing about the page, and must not turn a BLOCKED
+// precondition into a FAIL (#1633 r2).
+let tierWriteBegan = false;
 let lowerConfirmed = false;
 let raiseSeenBlock = 0n;
 // Any cleanup-confirming Blue-chip read must come from a block at or
@@ -172,6 +178,9 @@ async function tierZeroAtOrAfter(minBlock) {
 // or the read-path assertions must still restore the wallet and close
 // the context — not leave the manual driver stuck.
 let driveError = null;
+/** An unconfirmed cleanup of a tier this run never wrote: stated beside the
+ *  verdict, never counted as a finding (`tierWriteBegan`). */
+let cleanupNote = null;
 try {
 // Reachability FIRST, before anything mutates the wallet (Codex #1621
 // r2). A BLOCKED exit uses `process.exit`, so it skips the cleanup
@@ -341,6 +350,7 @@ await assertSelectionMatchesChain('pre-write');
 // also guarantees the next step is genuinely a raise).
 if (Number(await rawTierOf()) !== 0) {
   console.log('note: wallet not at Blue-chip — normalizing via UI first');
+  tierWriteBegan = true;
   await page.getByRole('radio', { name: /Blue-chip only/i }).click();
   check(
     'normalization landed (effective Blue-chip)',
@@ -364,6 +374,7 @@ if (Number(await rawTierOf()) !== 0) {
 // 3. Raise to Broad through the real flow — the tier radios SUBMIT on
 // click (live-revalidated write; the driver wallet auto-approves).
 raiseClicked = true;
+tierWriteBegan = true;
 await page.getByRole('radio', { name: /Broad liquid/i }).click();
 check(
   'raise landed on-chain (effective Broad)',
@@ -429,6 +440,9 @@ check(
   // failed, and any other throw is a failure as it always was.
   driveError = err;
 } finally {
+  // The cleanup's own verdict, kept apart until the end: it is this run's
+  // finding only once this run wrote a tier (`tierWriteBegan`).
+  const cleanupFails = [];
   try {
     // The cleanup GATE read gets the same transient-error tolerance
     // pollUntil gives everything else (Codex #1539 r6): one flaky RPC
@@ -526,23 +540,36 @@ check(
     // non-zero, whatever path got it there. Block-floored like every
     // other confirmation (r9) — a stale final read must not report a
     // false success.
-    check(
-      'cleanup: wallet left at Blue-chip on-chain',
-      await pollUntil(
-        'final Blue-chip confirmation',
-        () => tierZeroAtOrAfter(confirmFloor),
-        { timeoutMs: 45000 },
-      ),
+    const leftClean = await pollUntil(
+      'final Blue-chip confirmation',
+      () => tierZeroAtOrAfter(confirmFloor),
+      { timeoutMs: 45000 },
     );
+    console.log(`${leftClean ? 'ok ' : 'FAIL'} cleanup: wallet left at Blue-chip on-chain`);
+    if (!leftClean) cleanupFails.push('cleanup: wallet left at Blue-chip on-chain');
   } catch (e) {
     console.log('cleanup failed:', String(e).slice(0, 200));
-    fails.push('cleanup: wallet restored to Blue-chip');
+    cleanupFails.push('cleanup: wallet restored to Blue-chip');
   } finally {
     await done();
   }
+  if (tierWriteBegan) {
+    fails.push(...cleanupFails);
+  } else if (cleanupFails.length) {
+    // The run wrote no tier, so this is the state it FOUND (an earlier
+    // run's leftover, or a chain it could not read), not a finding about
+    // /risk-access. Stated, never dropped.
+    cleanupNote =
+      `${cleanupFails.join(' | ')} could not be confirmed — this run wrote no tier, so the` +
+      ' tier is as it was found; check the borrower wallet by hand';
+    console.log(`note: ${cleanupNote}`);
+  }
 }
 if (driveError instanceof LivePreconditionError && fails.length === 0) {
-  await blocked(driveError.message);
+  await blocked(
+    driveError.message +
+      (cleanupNote ? `; also, ${cleanupNote}` : ''),
+  );
 }
 if (driveError) {
   console.log('drive error:', String(driveError?.stack ?? driveError).split('\n').slice(0, 4).join('\n'));

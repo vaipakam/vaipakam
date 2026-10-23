@@ -81,9 +81,34 @@ export function trackBrowser(browser) {
  * (`loadWallets`, `walletFor`, bundle-shape and config validation) that
  * run before any browser exists and cannot await.
  */
+/**
+ * Every chain request a reachable provider refused as malformed, across
+ * every `watchPageRpc` this process attached (#1633 r2). Module-level so the
+ * BLOCKED exits below can honour evidence precedence by themselves.
+ */
+const OBSERVED_RPC_FAULTS = [];
+
+/**
+ * FAIL outranks BLOCKED, and a malformed request the page already sent is a
+ * finding, so a BLOCKED exit after one exits FAIL instead, naming both
+ * (#1633 r2). Decided HERE, once, rather than at each drive's BLOCKED
+ * branches: a guard per branch was missed on the first branch reviewed (a
+ * fixture check in the kill-switch drive), and every drive has several.
+ */
+function exitBlockedOrFail(why) {
+  if (OBSERVED_RPC_FAULTS.length === 0) {
+    console.error(`\nBLOCKED: ${why}`);
+    process.exit(2);
+  }
+  console.error(
+    `\nFAIL: the page sent chain requests a reachable provider refused as malformed:` +
+      ` ${OBSERVED_RPC_FAULTS.join(', ')}\n  (the drive then stopped BLOCKED: ${why})`,
+  );
+  process.exit(1);
+}
+
 export function blockedSync(why) {
-  console.error(`\nBLOCKED: ${why}`);
-  process.exit(2);
+  exitBlockedOrFail(why);
 }
 
 /**
@@ -104,10 +129,12 @@ export function blockedSync(why) {
  * a Chromium behind. Callers do not wire that themselves — it was the
  * per-driver duplication `live-position-observe.mjs`'s `discovery()`
  * wrapper existed to avoid.
+ *
+ * Exits FAIL instead when a `watchPageRpc` has already recorded a malformed
+ * page request (`exitBlockedOrFail`): that is a finding, and it outranks.
  */
 export async function blocked(why, err, cleanup) {
   const detail = err ? `\n  ${String(err.message ?? err).split('\n')[0].slice(0, 300)}` : '';
-  console.error(`\nBLOCKED: ${why}${detail}`);
   try {
     await LIVE_BROWSER?.close();
   } catch {
@@ -125,7 +152,7 @@ export async function blocked(why, err, cleanup) {
   } catch {
     /* same */
   }
-  process.exit(2);
+  exitBlockedOrFail(`${why}${detail}`);
 }
 
 /**
@@ -311,7 +338,10 @@ export function watchPageRpc(page) {
   const credit = (gen, outcomes) => {
     for (const o of outcomes) {
       if (!isChainRpcMethod(o.method)) continue;
-      if (o.verdict === 'client-fault') sessionFaults.push(`${o.method}: ${o.why}`);
+      if (o.verdict === 'client-fault') {
+        sessionFaults.push(`${o.method}: ${o.why}`);
+        OBSERVED_RPC_FAULTS.push(`${o.method}: ${o.why}`);
+      }
       if (gen !== generation) continue;
       if (o.verdict === 'ok' || o.verdict === 'client-fault') answered++;
     }

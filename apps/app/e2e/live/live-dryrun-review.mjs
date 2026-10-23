@@ -112,7 +112,7 @@ const any = verdicts.passed || verdicts.approval;
 // about the dry run either way. BLOCKED, scoped to exactly that case — a
 // would-fail verdict is a finding whatever the network did, and a silent
 // footer beside an endpoint that DID answer is the app's to explain.
-if (!any && !verdicts.wouldFail && (await rpc.settled()) === 0 && rpc.sessionFaults().length === 0) {
+if (!any && !verdicts.wouldFail && (await rpc.settled()) === 0) {
   await done();
   await blocked(
     'the review never showed a dry-run verdict and the page received no answer' +

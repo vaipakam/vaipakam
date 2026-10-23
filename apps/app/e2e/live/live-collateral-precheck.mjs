@@ -203,8 +203,6 @@ try {
   await page.waitForTimeout(9_000); // debounce + createOffer eth_call round-trip
   awaitingSimulation = false;
   if ((await rpc.settled()) === 0) {
-    // A fault from an earlier window outranks the silence (FAIL > BLOCKED).
-    assertNoRpcFaults('before the collateral was raised');
     await done();
     await blocked(
       'the collateral was raised but the page received no answer from its' +
@@ -234,8 +232,7 @@ try {
   // revert IS the expected result, so requiring `result` would have missed
   // the one call the verdict rests on and mislabelled every run.
   const answered = awaitingSimulation ? await rpc.settled() : 1;
-  // FAIL outranks BLOCKED: a malformed request from any window is a finding.
-  if (answered === 0 && rpc.sessionFaults().length === 0) {
+  if (answered === 0) {
     await shot('1112-precheck-blocked').catch(() => {});
     // `done()` FIRST, then the shared blocked exit: `blocked()` ends the
     // process, so anything after it never runs.

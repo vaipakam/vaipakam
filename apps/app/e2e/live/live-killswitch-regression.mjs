@@ -192,7 +192,7 @@ if (fixtureProblem !== null) {
         // exiting 2 here would discard it and report "verified nothing"
         // about a run that verified something real. Same evidence-precedence
         // rule live-ux-sweep and live-recover-locales apply.
-        if (failures === 0 && (await rpc.settled()) === 0 && rpc.sessionFaults().length === 0) {
+        if (failures === 0 && (await rpc.settled()) === 0) {
           await done();
           await blocked(
             'the submit gate never resolved and the page received no answer from' +
