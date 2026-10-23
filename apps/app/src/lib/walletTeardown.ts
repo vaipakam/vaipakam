@@ -19,12 +19,14 @@
  *    reloads the page is closed by a separate teardown, which the erasure
  *    runs only after everything it counts has been cleared.
  * 3. CLOSE ONLY THE REQUEST'S CONNECTIONS, AND SAY WHETHER ANY WERE CLOSED
- *    (Codex #2670 r3). Both teardowns close the connections the map held once
- *    the restore settled — one snapshot, taken then — and nothing connected
- *    afterwards: the erasure runs for seconds with the Connect control live,
- *    and a session the user creates in that time is theirs, not the
- *    request's. And each teardown resolves whether it closed anything, so a
- *    teardown that found nothing left is never reported as a sign-out.
+ *    (Codex #2670 r3, r6). The targets are the connections the map held AT
+ *    THE REQUEST — with a placeholder that was restoring then standing for
+ *    the live connection its restore installed — and nothing connected
+ *    afterwards, during the restore wait included: the erasure runs for
+ *    seconds with the Connect control live, and a session the user creates in
+ *    that time is theirs, not the request's. And each teardown resolves
+ *    whether it closed anything, so a teardown that found nothing left is
+ *    never reported as a sign-out.
  */
 import { ReconnectPendingError, disconnectEvery } from './dataRights';
 
@@ -44,6 +46,12 @@ export interface WalletPort<C> {
   readonly status: () => string;
   /** The connectors in the connection map now — live or placeholder. */
   readonly connectors: () => readonly C[];
+  /**
+   * Which wallet a connector is, the same for a restoring placeholder and the
+   * live connection its restore installs (wagmi's connector `id`). A
+   * connection map holds at most one connection per identity.
+   */
+  readonly identify: (connector: C) => string;
   /** False for a persisted record that `reconnect()` has not replaced yet. */
   readonly isLive: (connector: C) => boolean;
   /** True for a connection whose disconnect reloads the page. */
@@ -97,13 +105,16 @@ export interface WalletTeardownPlan {
  * stopped; completing it is a sign-in after the request, which the erasure's
  * late cleanups already decline to undo.
  *
- * The targets are the map as it stands once any restore has settled — after
- * the settle, so a connection the render did not have yet is still closed,
- * and one that a failed reconnect dropped is no longer asked to close — and
- * NOTHING connected after that (rule 3 in the header). The settle starts
- * HERE, when the plan is made, not when a teardown first runs (Codex #2670
- * r4): a caller may hold a plan while it waits its turn, and the request is
- * what the map held when it was made, not when the turn came. Each teardown closes
+ * The targets are FROZEN HERE, to the wallets the map held when the plan was
+ * made (rule 3 in the header; Codex #2670 r6). A placeholder restoring then
+ * stands for the live connection its restore installs, matched by identity,
+ * because that live connection is the very session being erased; a wallet of
+ * any OTHER identity that appears while the restore settles was connected
+ * after the request and is left alone. One that a failed reconnect dropped is
+ * no longer asked to close. The settle starts HERE too, not when a teardown
+ * first runs (Codex #2670 r4): a caller may hold a plan while it waits its
+ * turn, and the request is what the map held when it was made, not when the
+ * turn came. Each teardown closes
  * those of its targets still in the map when it runs, and resolves `false`
  * when there are none: the session that was being restored at the request
  * is gone either way, and the erasure removed what would have restored it,
@@ -113,7 +124,9 @@ export function planWalletTeardown<C>(
   port: WalletPort<C>,
   options: WalletTeardownOptions = {},
 ): WalletTeardownPlan {
-  if (port.connectors().length === 0) return {};
+  const atRequest = port.connectors();
+  if (atRequest.length === 0) return {};
+  const requested = new Set(atRequest.map((connector) => port.identify(connector)));
   const request = port
     .whenSettled(options.settleTimeoutMs ?? RECONNECT_SETTLE_TIMEOUT_MS)
     .then(() => {
@@ -128,7 +141,9 @@ export function planWalletTeardown<C>(
         throw new ReconnectPendingError();
       }
       options.onSettled?.();
-      return connected;
+      return connected.filter((connector) =>
+        requested.has(port.identify(connector)),
+      );
     });
   // Each teardown awaits it and meets the error there; this only keeps a
   // plan nobody runs from surfacing an unhandled rejection.

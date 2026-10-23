@@ -25,6 +25,7 @@ function fakePort(init: {
   const port: WalletPort<FakeConnector> = {
     status: () => status,
     connectors: () => connectors,
+    identify: (c) => c.id,
     isLive: (c) => c.live,
     reloadsOnDisconnect: (c) => c.id === 'coinbaseWalletSDK',
     disconnect: async (c) => {
@@ -153,6 +154,23 @@ describe('planWalletTeardown', () => {
     ).resolves.toBe(false);
     expect(before).toBe(false);
     expect(closed).toEqual(['metaMask']);
+  });
+
+  it('never closes a wallet connected while the restore was settling (Codex #2670 r6)', async () => {
+    const restored = { id: 'walletConnect', live: true };
+    const meanwhile = { id: 'metaMask', live: true };
+    const { port, closed } = fakePort({
+      status: 'reconnecting',
+      connectors: [{ id: 'walletConnect', live: false }],
+      // The restore installs the session being erased, and the user connects
+      // a second wallet before it settles.
+      settle: { status: 'connected', connectors: [restored, meanwhile] },
+    });
+    const plan = planWalletTeardown(port);
+    await expect(plan.first!()).resolves.toBe(true);
+    await expect(plan.last!()).resolves.toBe(false);
+    expect(closed).toEqual(['walletConnect']);
+    expect(port.connectors()).toEqual([meanwhile]);
   });
 
   it('closes reload-prone connections only in the LAST teardown (#2035)', async () => {

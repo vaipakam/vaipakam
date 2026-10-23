@@ -50,10 +50,12 @@
  * resolving is not the moment a reload stops being possible, for the reason
  * above — so after ANY reload-prone close this tab asks for, whether its own
  * run asked or a follow-up did, the tab owes a possible reload for
- * `RELOAD_WINDOW_MS`, and no run starts its work until that has passed. The
+ * `RELOAD_WINDOW_MS`, and no queued operation — a run, or a follow-up
+ * waiting its turn — starts its work until that has passed (`awaitTurn`). The
  * barrier is a property of the tab, not of a path: the first revision
- * guarded the follow-up path alone, and a second run started inside its own
- * predecessor's window was exposed the same way. A run waiting on it shows
+ * guarded the follow-up path alone, a second run started inside its own
+ * predecessor's window was exposed the same way, and then a follow-up queued
+ * behind another follow-up (Codex #2670 r6). A run waiting on it shows
  * as running and has done nothing yet — not even dropped the previous run's
  * kept report — so a reload in the wait interrupts nothing and shows the
  * report of the run that caused it.
@@ -228,8 +230,7 @@ async function performErasure<C>(deps: ErasureDeps<C>): Promise<void> {
   // wallet, and a reload this tab owes may still be on its way (see the
   // header). Nothing of this run has happened yet, so a reload landing in
   // either wait interrupts nothing and claims nothing.
-  if (peerFollowUp) await peerFollowUp;
-  await untilReloadQuiet();
+  await awaitTurn([peerFollowUp]);
   // A previous run's kept copy describes that run, not this one — dropped
   // only now, so a reload during the waits still shows it.
   dropKeptReport();
@@ -327,7 +328,7 @@ export function followPeerErasure<C>(deps: PeerErasureDeps<C>): void {
   // is harmless once everything above has run. Best effort and
   // unacknowledged: there is nobody to report to, which is why the
   // originating page says other tabs were ASKED.
-  const next = Promise.all([run, peerFollowUp]).then(() => {
+  const next = awaitTurn([run, peerFollowUp]).then(() => {
     if (run) followUp();
     return closeConnections(plan);
   });
@@ -371,6 +372,20 @@ let reloadQuiet: Promise<void> = Promise.resolve();
  */
 function owePossibleReload(): void {
   reloadQuiet = new Promise((resolve) => setTimeout(resolve, RELOAD_WINDOW_MS));
+}
+
+/**
+ * Where every queued operation of this tab's erasure queue starts — its own
+ * run and each follow-up of another tab's: once the operations ahead of it
+ * have finished, AND once no reload this tab owes can still come (Codex #2670
+ * r6). One rule for both, so no operation is begun under a reload a previous
+ * one scheduled, whichever kind either is.
+ */
+async function awaitTurn(
+  ahead: readonly (Promise<void> | undefined)[],
+): Promise<void> {
+  await Promise.all(ahead);
+  await untilReloadQuiet();
 }
 
 async function untilReloadQuiet(): Promise<void> {

@@ -154,6 +154,7 @@ function connectedPort(
     closed,
     status: () => status,
     connectors: () => (status === 'connected' ? [connector] : []),
+    identify: (c) => c.id,
     isLive: () => true,
     reloadsOnDisconnect: (c) => c.id === 'coinbaseWalletSDK',
     disconnect: async (c) => {
@@ -484,6 +485,33 @@ describe("one queue for this tab's run and its follow-ups of other tabs (Codex #
     }
   });
 
+  it('starts a follow-up queued behind another only once that one\'s reload can no longer come (Codex #2670 r6)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      // The first follow-up closes a reload-prone wallet.
+      followPeerErasure({
+        wallet: connectedPort('coinbaseWalletSDK'),
+        followPreferences: () => {},
+        followLanguage: () => {},
+      });
+      // A second broadcast is heard while it closes.
+      const second = connectedPort('metaMask');
+      followPeerErasure({
+        wallet: second,
+        followPreferences: () => {},
+        followLanguage: () => {},
+      });
+      // The first close has returned, but its reload may still be coming:
+      // the second must not begin closing under it.
+      await vi.advanceTimersByTimeAsync(RELOAD_WINDOW_MS - 1);
+      expect(second.closed).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(second.closed).toEqual(['metaMask']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not hold the lock after a follow-up that closed no reload-prone wallet', async () => {
     const port = connectedPort('metaMask');
     followPeerErasure({
@@ -528,6 +556,7 @@ describe("one queue for this tab's run and its follow-ups of other tabs (Codex #
       wallet: {
         status: () => status,
         connectors: () => held,
+        identify: (c) => c.id,
         isLive: () => true,
         reloadsOnDisconnect: (c) => c.id === 'coinbaseWalletSDK',
         disconnect: async (c) => {

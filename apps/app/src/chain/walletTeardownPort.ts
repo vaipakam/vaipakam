@@ -35,6 +35,9 @@ export function wagmiWalletPort(config: Config): WalletPort<Connector> {
       [...config.state.connections.values()].map(
         (connection) => connection.connector,
       ),
+    // A hydrated placeholder carries the id of the connector `reconnect()`
+    // replaces it with; the uid is not stable across that replacement.
+    identify: (connector) => connector.id,
     // A persisted record restored by `hydrate` is the serialized connector —
     // id, name, type, uid — with no methods. A live one has `disconnect`.
     isLive: (connector) =>

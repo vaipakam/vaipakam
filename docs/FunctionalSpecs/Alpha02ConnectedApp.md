@@ -2993,7 +2993,9 @@ is the borrower's own money.
   the user connects in that time is a sign-in after the request, not part of
   it; ending it would destroy a session the user just created. The same holds
   for a connection that was still being made at the request and completes
-  afterwards. A follow-up of another tab's erasure fixes this tab's
+  afterwards, and for a further wallet connected while a session that was
+  restoring at the request finishes restoring: only the restored session is
+  the request's. A follow-up of another tab's erasure fixes this tab's
   connections when the request arrives, even if it must wait for an earlier
   follow-up before closing them.
 - **A late cleanup waits until the request's last connection has closed.**
@@ -3045,7 +3047,10 @@ is the borrower's own money.
   kept report uses, an erasure requested in that time shows as running and
   does nothing (not even discard the previous report) until the window ends.
   A reload in that time therefore interrupts nothing and shows the report of
-  the erasure that caused it.
+  the erasure that caused it. The same window holds back a further
+  follow-up of another tab's erasure waiting its turn: it begins closing
+  nothing until a reload the previous one may have caused can no longer
+  come.
 - **A peer tab does not clear the stores it shares with the erasing tab.**
   The shared stores are cleared by the tab where the user asked, which is
   also the only one that reports on them. A peer tab clearing them as well
