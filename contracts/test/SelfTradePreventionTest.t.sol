@@ -44,6 +44,12 @@ import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 contract SelfTradePreventionTest is SetupTest {
     function setUp() public {
         setupHelper();
+        // #2419 — the fixtures lend thousands of wei against hundreds of wei
+        // of collateral. On whole-unit values both legs read 0 and no
+        // offer-time bound applied; at 1e18 precision they are valued, so
+        // collateral is priced at $50 to keep every fixture inside the
+        // offer-time HF / LTV bounds. No expected figure depends on the price.
+        mockOraclePrice(mockCollateralERC20, 50e8, 8);
 
         // matchOffers is gated behind the `partialFillEnabled` kill
         // switch — flip it on so the matchOffers + previewMatch tests

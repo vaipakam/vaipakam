@@ -495,17 +495,18 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      *
      *         Reverts {ZeroCollateral} on a zero collateral amount, as the
      *         loan-level path does; returning 0 read as "no risk". Reverts
-     *         {ZeroPrice} (from {getAssetPrice}, #2418 r4 / #2419) when
+     *         {ZeroPrice} (#2418 r4; {getAssetPrice} refuses it too, #2419) when
      *         either asset's price resolves to zero: a composed price can
      *         floor to zero from positive feeds, and a zero borrowed price
      *         would otherwise return a confident 0 for a nonzero debt.
      *         Reverts on a missing or stale feed via {getAssetPrice}, and
      *         {LibNumeraireValue.TokenDecimalsUnreadable} when a token's
-     *         `decimals()` cannot be read. Two stated limits, both far outside
+     *         `decimals()` cannot be read or exceeds 36. Two stated limits, both far outside
      *         any real asset: {DecimalScaleUnsupported} when the legs'
-     *         decimal scales differ by more than 73 / 77 (#2418 r3 — see the
-     *         error), and an overflow revert when an amount × price product
-     *         exceeds 256 bits. Meaningful only for liquid (priced) assets.
+     *         scales (feed plus token decimals) differ by more than 73 / 77
+     *         (#2418 r3 — see the error; with token decimals capped at 36,
+     *         only an unusually wide feed scale reaches it), and an overflow
+     *         revert when an amount × price product exceeds 256 bits. Meaningful only for liquid (priced) assets.
      */
     // forge-lint: disable-next-line(mixed-case-function)
     function calculateLTV(
@@ -520,9 +521,12 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         (uint256 collateralPrice, uint8 collateralFeedDec) = this.getAssetPrice(collateralAsset);
 
         // The two legs' decimal scales, as powers of ten.
-        // A zero price never reaches here: {getAssetPrice} refuses it.
         uint256 borrowedScale = uint256(borrowedFeedDec) + LibNumeraireValue.tokenDecimals(borrowedAsset);
         uint256 collateralScale = uint256(collateralFeedDec) + LibNumeraireValue.tokenDecimals(collateralAsset);
+        // {getAssetPrice} refuses a zero price itself; refused here too, by
+        // leg, so this ratio never reads a zero price whatever the read path.
+        if (borrowedPrice == 0) revert ZeroPrice(borrowedAsset);
+        if (collateralPrice == 0) revert ZeroPrice(collateralAsset);
         uint256 borrowedRaw = borrowedAmount * borrowedPrice;
         uint256 collateralRaw = collateralAmount * collateralPrice;
 
