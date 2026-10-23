@@ -1060,6 +1060,13 @@ EOF
   echo "[3] DeployTimelock.s.sol"
   forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
 
+  # [3a] The LaunchGate (#945): the stateless contract a Timelock launch batch
+  # calls to re-check readiness inside its execution. Deterministic address,
+  # no owner, no-op when already there.
+  echo
+  echo "[3a] DeployLaunchGate.s.sol"
+  forge script script/DeployLaunchGate.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+
   # [3b] Canonical VPFI token — MUST land BEFORE DeployCrosschain. On the
   # canonical chain (Base / Base Sepolia) DeployCrosschain's canonical branch
   # reads `.vpfiToken` to wrap the existing token in the CCIP LockRelease pool;
@@ -1732,11 +1739,14 @@ phase_handover_gate() {
 
 # ── Phase: launch ─────────────────────────────────────────────────────
 # The first unpause (#945). DeployDiamond leaves the Diamond paused; this
-# phase reads every LaunchReadiness requirement off the chain (treasury,
+# phase reads every LibLaunchReadiness requirement off the chain (treasury,
 # sanctions oracle, price feed, an enabled swap route, CCIP lanes) and
 # refuses while any is NOT MET. One the chain cannot answer is printed as
 # NOT CHECKED. The admin key then unpauses; after a rehearsal handover the
-# Timelock holds UNPAUSER_ROLE and the phase prints its proposal instead.
+# Timelock holds UNPAUSER_ROLE and the phase prints its gated batch instead
+# (LaunchGate.assertReady then unpause()), which needs every check met. An
+# already-unpaused Diamond is recorded only while no answered check is NOT
+# MET; Launch.s.sol refuses otherwise.
 phase_launch() {
   _assert_rpc_chain
   echo "═══════════════════════════════════════════════════════════════"

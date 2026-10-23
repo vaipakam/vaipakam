@@ -834,6 +834,13 @@ else
   mark_done "timelock"
 fi
 
+# ── 3a. LaunchGate (#945) ─────────────────────────────────────────────
+# The stateless contract a Timelock launch batch calls to re-check readiness
+# inside its execution. Deterministic address, no owner; a re-run is a no-op.
+echo
+echo "[3a] DeployLaunchGate.s.sol"
+forge script script/DeployLaunchGate.s.sol --rpc-url "$RPC" --broadcast --slow
+
 # ── 3b. Canonical VPFI token ──────────────────────────────────────────
 # MUST land BEFORE DeployCrosschain, whose canonical branch (Base) reads
 # `.vpfiToken` to wrap the existing token in the CCIP LockRelease pool; nothing

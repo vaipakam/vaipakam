@@ -579,19 +579,32 @@ first unpause is a Timelock operation like any later one (owner decision
 2026-10-23): the hot admin key never runs a live production Diamond, not
 even for the gap between the deploy and the handover.
 
-1. Finish the deploy phases, then `handover` and `handover-gate`.
+1. Finish the deploy phases, then `handover` and `handover-gate`. The
+   `contracts` phase has already deployed the LaunchGate, a stateless
+   contract at a deterministic address that the launch operation calls.
 2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the five launch
    requirements off the chain (treasury, sanctions oracle, ETH/numeraire
-   feed, an enabled swap adapter, a CCIP lane on the VPFI pool) and refuses
-   unless every one is met, the Timelock holds `UNPAUSER_ROLE`, and the
-   admin key holds neither that role nor the role root. It broadcasts
-   nothing.
-3. It prints the Timelock `schedule(...)` call. The governance Safe
-   proposes it. The salt is fixed per chain and Diamond, so a re-run finds
-   the same operation and prints its state (not scheduled, pending, ready,
-   done).
-4. After the delay, anyone sends the printed `execute(...)` call. Re-run
-   the launch phase to confirm the Diamond is live and record the phase.
+   feed, an enabled swap adapter that answers `adapterName()`, a CCIP lane
+   on the VPFI pool) and refuses unless every one is met, the Timelock
+   holds `UNPAUSER_ROLE`, and the admin key holds neither that role nor the
+   role root. It broadcasts nothing.
+3. It prints the Timelock `scheduleBatch(...)` call. The batch has two
+   calls: `LaunchGate.assertReady(diamond, vpfiTokenPool)`, then
+   `diamond.unpause()`. The governance Safe proposes it. Before signing,
+   check that the gate address printed is the one the launch phase
+   reports, and that the pool is the chain's VPFI pool. The salt is fixed
+   per chain and Diamond, so a re-run finds the same operation and prints
+   its state (not scheduled, pending, ready, done).
+4. After the delay, anyone sends the printed `executeBatch(...)` call. The
+   gate reads all five requirements again inside that transaction. If one
+   stopped holding during the delay (an adapter was removed, the oracle was
+   cleared), the execution reverts with `LaunchNotReady(label, state,
+   detail)` and the Diamond stays paused; fix the requirement and execute
+   the same operation again.
+5. Re-run the launch phase. It records the launch only when the Timelock
+   reports the operation done. If the Diamond is unpaused and the operation
+   is not done, something unpaused it outside this step: the phase
+   refuses, and that is an incident to investigate, not a launch.
 
 The Pauser Safe can cancel the queued launch like any other operation.
 

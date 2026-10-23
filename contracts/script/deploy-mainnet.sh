@@ -1027,6 +1027,14 @@ EOF
   echo "[3] DeployTimelock.s.sol"
   forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow
 
+  # [3a] The LaunchGate (#945): the stateless contract the launch batch calls
+  # to re-check readiness inside the Timelock's execution. Deterministic
+  # address, no owner, no-op when already there. Deployed here so the launch
+  # phase, which broadcasts nothing, finds it.
+  echo
+  echo "[3a] DeployLaunchGate.s.sol"
+  forge script script/DeployLaunchGate.s.sol --rpc-url "$RPC" --broadcast --slow
+
   # [3b] Canonical VPFI token — MUST land BEFORE DeployCrosschain, whose
   # canonical branch (Base) reads `.vpfiToken` to wrap the existing token in the
   # CCIP LockRelease pool; nothing upstream mints it, so a fresh Base mainnet run
@@ -1692,11 +1700,15 @@ phase_handover_gate() {
 # The first unpause of a production Diamond (#945; owner decision
 # 2026-10-23: the Timelock unpauses after handover). DeployDiamond leaves
 # the Diamond paused, so it is never live under the hot admin key. This
-# phase BROADCASTS NOTHING: Launch.s.sol requires every LaunchReadiness
+# phase BROADCASTS NOTHING: Launch.s.sol requires every LibLaunchReadiness
 # check to be met (NOT MET and NOT CHECKED both refuse), the Timelock to
 # hold UNPAUSER_ROLE and the admin key to hold neither it nor the role
-# root, then prints the Timelock `schedule` call for the Governance Safe,
-# the `execute` call for after the delay, and the operation's state.
+# root, then prints the Timelock `scheduleBatch` call for the Governance
+# Safe, the `executeBatch` call for after the delay, and the operation's
+# state. The batch is LaunchGate.assertReady then unpause(), so the checks
+# are read again on-chain when it executes. An unpaused Diamond is
+# recorded only when the Timelock reports that operation done; any other
+# unpause makes Launch.s.sol refuse, so nothing below marks it.
 phase_launch() {
   _assert_rpc_chain
   if ! phase_already_done "handover-gate"; then

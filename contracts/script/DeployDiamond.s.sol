@@ -950,7 +950,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         //     still owns the Diamond until the handover. Unpausing here made
         //     `createOffer` / `acceptOffer` public before any of that existed.
         //     The first unpause is now `Launch.s.sol`, which reads every
-        //     `LaunchReadiness` requirement off the chain first, and on a
+        //     `LibLaunchReadiness` requirement off the chain first, and on a
         //     production chain only prints the Timelock proposal (owner
         //     decision 2026-10-23: the Timelock unpauses after handover).
         console.log("Protocol left PAUSED - run Launch.s.sol once the chain is configured.");

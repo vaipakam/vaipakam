@@ -11,6 +11,10 @@ import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
 import {MockSanctionsList} from "../mocks/MockSanctionsList.sol";
+import {DeployLaunchGate} from "../../script/DeployLaunchGate.s.sol";
+import {LaunchGateDeployment} from "../../script/lib/LaunchGateDeployment.sol";
+import {LaunchGate} from "../../src/governance/LaunchGate.sol";
+import {VaipakamTimelock} from "../../src/governance/VaipakamTimelock.sol";
 
 /// @dev A CCIP pool stand-in: only `getSupportedChains()` is read.
 contract LaunchMockPool {
@@ -31,12 +35,14 @@ contract LaunchMockTimelock {
         return 2 days;
     }
 
-    function hashOperation(address target, uint256 value, bytes calldata data, bytes32 predecessor, bytes32 salt)
-        external
-        pure
-        returns (bytes32)
-    {
-        return keccak256(abi.encode(target, value, data, predecessor, salt));
+    function hashOperationBatch(
+        address[] calldata targets,
+        uint256[] calldata values,
+        bytes[] calldata payloads,
+        bytes32 predecessor,
+        bytes32 salt
+    ) external pure returns (bytes32) {
+        return keccak256(abi.encode(targets, values, payloads, predecessor, salt));
     }
 
     function isOperationPending(bytes32) external pure returns (bool) {
@@ -52,22 +58,41 @@ contract LaunchMockTimelock {
     }
 }
 
-/// @dev Has code; stands in for the price feed and the swap adapter, whose
-///      readiness checks only ask that a contract is registered.
+/// @dev Has code; stands in for the price feed, whose readiness check only
+///      asks that a contract is registered. As a swap adapter it does NOT
+///      count: it answers no `adapterName()`.
 contract LaunchCodeStub {}
+
+/// @dev A swap adapter stand-in: answers `adapterName()` as a real one does.
+contract LaunchAdapterStub {
+    function adapterName() external pure returns (string memory) {
+        return "stub";
+    }
+}
+
+/// @dev Answers `adapterName()` with an empty string.
+contract LaunchNamelessAdapter {
+    function adapterName() external pure returns (string memory) {
+        return "";
+    }
+}
 
 /**
  * @title LaunchTest
  * @notice #945 / #946: the deploy leaves the Diamond paused, and the first
  *         unpause goes through `Launch.s.sol`, which reads every
- *         `LaunchReadiness` requirement off the chain and follows the
+ *         `LibLaunchReadiness` requirement off the chain and follows the
  *         chain's rule — local warns and unpauses, a testnet refuses a NOT
  *         MET check, a production chain refuses anything short of fully
- *         met and never broadcasts (the Timelock unpauses).
+ *         met and never broadcasts (the Timelock unpauses). The Timelock's
+ *         launch batch re-checks every requirement through `LaunchGate`
+ *         when it executes, and an unpause that did not come through that
+ *         operation is never recorded as a launch.
  */
 contract LaunchTest is Test {
     uint256 internal constant DEPLOYER_KEY = 1;
     uint256 internal constant ADMIN_KEY = 2;
+    address internal constant PROPOSER = address(0x5AFE);
     address internal constant TREASURY = address(0xBEEF);
 
     address internal diamond;
@@ -82,6 +107,7 @@ contract LaunchTest is Test {
         script.runWith(admin, TREASURY, DEPLOYER_KEY);
         diamond = script.diamond();
         launcher = new Launch();
+        new DeployLaunchGate().deploy(DEPLOYER_KEY);
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────
@@ -91,7 +117,7 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCodeStub()));
-        AdminFacet(diamond).addSwapAdapter(address(new LaunchCodeStub()));
+        AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
     }
 
@@ -144,7 +170,7 @@ contract LaunchTest is Test {
         vm.chainId(84532);
         vm.startPrank(admin);
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCodeStub()));
-        AdminFacet(diamond).addSwapAdapter(address(new LaunchCodeStub()));
+        AdminFacet(diamond).addSwapAdapter(address(new LaunchAdapterStub()));
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
         launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
@@ -156,7 +182,7 @@ contract LaunchTest is Test {
         vm.startPrank(admin);
         ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
         OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCodeStub()));
-        address adapter = address(new LaunchCodeStub());
+        address adapter = address(new LaunchAdapterStub());
         AdminFacet(diamond).addSwapAdapter(adapter);
         AdminFacet(diamond).setSwapAdapterDisabled(adapter, true);
         vm.stopPrank();
@@ -187,7 +213,7 @@ contract LaunchTest is Test {
         _configure();
         address timelock = address(new LaunchMockTimelock());
         _handOverUnpause(timelock);
-        Launch.Outcome o = launcher.launch(diamond, address(0), timelock, admin, ADMIN_KEY);
+        Launch.Outcome o = launcher.launch(diamond, _poolWithLane(), timelock, admin, ADMIN_KEY);
         assertEq(uint8(o), uint8(Launch.Outcome.TimelockProposalPrinted));
         assertTrue(AdminFacet(diamond).paused(), "printing a proposal unpauses nothing");
     }
@@ -253,5 +279,179 @@ contract LaunchTest is Test {
         address pool = _poolWithLane();
         vm.expectRevert(bytes("Launch: set ADMIN_ADDRESS so the run can prove the admin key holds no role"));
         launcher.launch(diamond, pool, timelock, address(0), 0);
+    }
+
+    // ─── The swap route is a real adapter (Codex #2686 r1) ───────────
+
+    function _configureWithAdapter(address adapter) internal {
+        vm.startPrank(admin);
+        ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
+        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCodeStub()));
+        AdminFacet(diamond).addSwapAdapter(adapter);
+        vm.stopPrank();
+    }
+
+    function test_Testnet_RefusesAnEoaSwapAdapter() public {
+        vm.chainId(84532);
+        _configureWithAdapter(address(0xEEEE));
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+    }
+
+    function test_Testnet_RefusesAContractThatIsNoAdapter() public {
+        vm.chainId(84532);
+        _configureWithAdapter(address(new LaunchCodeStub()));
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+    }
+
+    function test_Testnet_RefusesANamelessAdapter() public {
+        vm.chainId(84532);
+        _configureWithAdapter(address(new LaunchNamelessAdapter()));
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+    }
+
+    // ─── An unpause is recorded only on evidence (Codex #2686 r1) ────
+
+    /// @dev Unpaused straight from the admin key on a production chain: the
+    ///      Timelock never ran the launch operation, so the run refuses
+    ///      rather than letting the wrapper record a launch.
+    function test_Production_RefusesAnUnpauseOutsideTheLaunchStep() public {
+        vm.chainId(8453);
+        _configure();
+        vm.prank(admin);
+        AdminFacet(diamond).unpause();
+        address timelock = address(new LaunchMockTimelock());
+        address pool = _poolWithLane();
+        vm.expectRevert(
+            bytes(
+                "Launch: the Diamond is unpaused but the Timelock has not executed this checkout's launch operation - it went live outside the launch step, or the launch used a different LaunchGate build; investigate before anything records a launch"
+            )
+        );
+        launcher.launch(diamond, pool, timelock, admin, 0);
+    }
+
+    function test_Testnet_RefusesAnUnreadyDiamondAlreadyUnpaused() public {
+        vm.chainId(84532);
+        vm.prank(admin);
+        AdminFacet(diamond).unpause();
+        vm.expectRevert(
+            bytes(
+                "Launch: the Diamond is unpaused but a readiness check is NOT MET - it went live before it was ready; complete the phase named above, then re-run"
+            )
+        );
+        launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+    }
+
+    function test_Testnet_TimelockPathRefusesANotCheckedPool() public {
+        vm.chainId(84532);
+        _configure();
+        address timelock = address(new LaunchMockTimelock());
+        _handOverUnpause(timelock);
+        vm.expectRevert(
+            bytes(
+                "Launch: a Timelock launch needs every readiness check met - the LaunchGate inside the batch refuses NOT CHECKED too"
+            )
+        );
+        launcher.launch(diamond, address(0), timelock, admin, ADMIN_KEY);
+    }
+
+    function test_Production_RefusesWithoutTheGate() public {
+        vm.chainId(8453);
+        _configure();
+        address timelock = address(new LaunchMockTimelock());
+        _handOverUnpause(timelock);
+        address pool = _poolWithLane();
+        vm.etch(LaunchGateDeployment.predicted(), "");
+        vm.expectRevert(
+            bytes(
+                "Launch: the LaunchGate is not deployed at its address - run script/DeployLaunchGate.s.sol (the contracts phase does)"
+            )
+        );
+        launcher.launch(diamond, pool, timelock, admin, 0);
+    }
+
+    // ─── The Timelock re-checks readiness when it executes (Codex #2686 r1)
+
+    function _realTimelock() internal returns (VaipakamTimelock tl) {
+        address[] memory proposers = new address[](1);
+        proposers[0] = PROPOSER;
+        address[] memory executors = new address[](1);
+        executors[0] = address(0);
+        tl = new VaipakamTimelock(2 days, proposers, executors, new address[](0));
+    }
+
+    function _schedule(VaipakamTimelock tl, address pool) internal {
+        (address[] memory targets, uint256[] memory values, bytes[] memory payloads) = launcher.launchBatch(diamond, pool);
+        bytes32 salt = launcher.launchSalt(diamond);
+        vm.prank(PROPOSER);
+        tl.scheduleBatch(targets, values, payloads, bytes32(0), salt, 2 days);
+    }
+
+    function _execute(VaipakamTimelock tl, address pool) internal {
+        (address[] memory targets, uint256[] memory values, bytes[] memory payloads) = launcher.launchBatch(diamond, pool);
+        tl.executeBatch(targets, values, payloads, bytes32(0), launcher.launchSalt(diamond));
+    }
+
+    /// @dev The last swap adapter is disabled during the delay: the batch
+    ///      reverts inside the gate and the Diamond stays paused. Once the
+    ///      route is restored the same operation executes, and a re-run of
+    ///      the launch step then records the launch from the Timelock's own
+    ///      DONE state.
+    function test_Production_TimelockExecutionRechecksReadiness() public {
+        vm.chainId(8453);
+        vm.startPrank(admin);
+        ProfileFacet(diamond).setSanctionsOracle(address(new MockSanctionsList()));
+        OracleAdminFacet(diamond).setEthUsdFeed(address(new LaunchCodeStub()));
+        address adapter = address(new LaunchAdapterStub());
+        AdminFacet(diamond).addSwapAdapter(adapter);
+        vm.stopPrank();
+        address pool = _poolWithLane();
+        VaipakamTimelock tl = _realTimelock();
+        _handOverUnpause(address(tl));
+
+        Launch.Outcome printed = launcher.launch(diamond, pool, address(tl), admin, 0);
+        assertEq(uint8(printed), uint8(Launch.Outcome.TimelockProposalPrinted));
+        _schedule(tl, pool);
+        vm.warp(block.timestamp + 2 days);
+
+        vm.prank(admin);
+        AdminFacet(diamond).setSwapAdapterDisabled(adapter, true);
+        (address[] memory targets, uint256[] memory values, bytes[] memory payloads) = launcher.launchBatch(diamond, pool);
+        bytes32 salt = launcher.launchSalt(diamond);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchGate.LaunchNotReady.selector,
+                "swap route registered",
+                "NOT MET",
+                "no enabled swap adapter that is a contract answering adapterName(): run the swap-adapters phase"
+            )
+        );
+        tl.executeBatch(targets, values, payloads, bytes32(0), salt);
+        assertTrue(AdminFacet(diamond).paused(), "a failed re-check leaves the Diamond paused");
+
+        vm.prank(admin);
+        AdminFacet(diamond).setSwapAdapterDisabled(adapter, false);
+        _execute(tl, pool);
+        assertFalse(AdminFacet(diamond).paused());
+
+        Launch.Outcome o = launcher.launch(diamond, pool, address(tl), admin, 0);
+        assertEq(uint8(o), uint8(Launch.Outcome.AlreadyLive));
+    }
+
+    function test_Gate_ReportsTheSameChecksAsTheScript() public {
+        _configure();
+        LaunchGate gate = LaunchGate(LaunchGateDeployment.predicted());
+        gate.assertReady(diamond, _poolWithLane());
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchGate.LaunchNotReady.selector,
+                "CCIP lanes wired",
+                "NOT CHECKED",
+                "no vpfiTokenPool recorded"
+            )
+        );
+        gate.assertReady(diamond, address(0));
     }
 }
