@@ -106,6 +106,11 @@ export const THREE_VERDICT_DRIVERS = new Set([
   // is declared in FOUR_VERDICT_DRIVERS below — #2434 r2.)
   // (live-internal-match-claim.mjs is NOT here either: with CLAIM=1 it can
   // exit 3 after its claim lands, so it is in FOUR_VERDICT_DRIVERS below.)
+  // Read-only: exits 2 only when REFI_REQUEST_ID does not name a standing
+  // refinance request of an Active loan, the build differs, or the read-only
+  // session cannot be set up — preconditions; every review check is PASS or
+  // FAIL. Also MANUAL-ONLY — see MANUAL_ONLY_DRIVERS below.
+  'live-refinance-lender-review.mjs',
   'live-rpc-audit.mjs',
   // Exits 2 when the chain is not in the state its EXPECT mode needs (the
   // operator's flag/clear write on the test list not done, or the Diamond
@@ -257,6 +262,11 @@ export const MANUAL_ONLY_DRIVERS = new Map([
     'writes to the testnet to originate ONE loan — the fixture live-refinance.mjs ' +
       'consumes — so an unattended batch would open a loan on every run; run it ' +
       'by hand right before the refinance review',
+  ],
+  [
+    'live-refinance-lender-review.mjs',
+    'needs REFI_REQUEST_ID naming a STANDING refinance request (one a run of ' +
+      'live-refinance.mjs or the app posted), which no batch can supply — run it by hand (#2421)',
   ],
   [
     'live-sanctions-banner.mjs',
