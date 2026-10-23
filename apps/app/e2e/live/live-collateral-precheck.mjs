@@ -24,7 +24,10 @@
  * (issue #1118 / #1119); addresses are read from the deployments bundle so this
  * driver survives future mock refreshes.
  */
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
+  exitWithVerdict,
   blocked,
   blockedSync,
   launch,
@@ -41,9 +44,22 @@ import {
 // surfaces as an opaque URL/fetch error and the batch runner can
 // misclassify a configuration mistake as a product FAIL.
 requireSiteUrl();
-import deployments from '@vaipakam/contracts/deployments.json' with { type: 'json' };
 
-const mocks = deployments['84532']?.testnetMocks;
+// Read through `fs`, not a static JSON import (#1633). A static import is
+// resolved before any line of this file runs, so a malformed or missing
+// bundle threw during module resolution and exited 1 — a stale artifact
+// reported as a #1112 regression, with no code able to say otherwise. Every
+// sibling reads the bundle this way for that reason.
+const DEPLOYMENTS = fileURLToPath(
+  new URL('../../../../packages/contracts/src/deployments.json', import.meta.url),
+);
+let deployments;
+try {
+  deployments = JSON.parse(fs.readFileSync(DEPLOYMENTS, 'utf8'));
+} catch (err) {
+  blockedSync(`cannot read the deployments bundle\n  path: ${DEPLOYMENTS}\n  ${err.message}`);
+}
+const mocks = deployments?.['84532']?.testnetMocks;
 // Validated as ADDRESSES, not merely present (Codex #1621 r4). A
 // non-empty but malformed value (`liquidToken: "stale"`) passes a
 // truthiness check and is then pasted into the product UI, where the
@@ -67,6 +83,17 @@ const MUSDC = mocks.liquidToken2; // collateral (Liquid)
 
 const { page, done, shot, account } = await launch({ role: 'borrower' });
 const step = (m) => console.log(`  · ${m}`);
+// A screenshot is EVIDENCE, not the assertion (#1633). The two taken after a
+// passing assertion sat inside the try, so a full disk or an unwritable
+// shots directory turned a verified banner into a product FAIL. A failed
+// capture is logged and the verdict stands on what was asserted.
+const evidenceShot = async (name) => {
+  try {
+    await shot(name);
+  } catch (err) {
+    console.log(`  (screenshot ${name} not saved: ${String(err?.message ?? err).split('\n')[0]})`);
+  }
+};
 
 // Is the endpoint the PAGE uses actually answering? (Codex #1621 r13.)
 //
@@ -92,6 +119,17 @@ const rpc = watchPageRpc(page);
 // an infrastructure excuse — the inverse of the mislabelling this
 // contract exists to prevent (Codex #1621 r16).
 let awaitingSimulation = false;
+// A request the page sent that a reachable provider refused as malformed is
+// a FAIL wherever it happened (#1633 r1). It also counts as an answer, so on
+// the NEGATIVE case it is the one thing that can make an absent banner look
+// verified: the clearing simulation was refused, nothing recomputed, and the
+// window still reads as answered. Checked after each simulation settles.
+const assertNoRpcFaults = (when) => {
+  const faults = rpc.sessionFaults();
+  if (faults.length) {
+    throw new Error(`${when}, the page had sent chain requests a reachable provider refused as malformed: ${faults.join(', ')}`);
+  }
+};
 try {
   console.log('wallet:', account.address, '| site:', SITE);
   step(`goto ${SITE}/borrow`);
@@ -140,8 +178,9 @@ try {
   if (/MaxLendingAboveCeiling|MinCollateralBelowFloor|0x[0-9a-fA-F]{8}/.test(text)) {
     throw new Error(`banner leaked a raw contract error name / selector: "${text}"`);
   }
+  assertNoRpcFaults('when the banner showed');
   console.log(`\nPASS ✓ under-collateral precheck banner shown with friendly copy:\n  "${text}"`);
-  await shot('1112-precheck-warn');
+  await evidenceShot('1112-precheck-warn');
 
   // NEGATIVE: sufficient collateral must CLEAR the banner (no crying wolf).
   // Changing the field immediately resets useTxSimulation to `loading`, which
@@ -165,7 +204,6 @@ try {
   await page.waitForTimeout(9_000); // debounce + createOffer eth_call round-trip
   awaitingSimulation = false;
   if ((await rpc.settled()) === 0) {
-    await done();
     await blocked(
       'the collateral was raised but the page received no answer from its' +
         ' JSON-RPC endpoint afterwards, so the clearing simulation never ran.' +
@@ -173,14 +211,19 @@ try {
         ' negative case being verified.',
     );
   }
+  assertNoRpcFaults('after the collateral was raised');
   for (let i = 0; i < 4; i++) {
     if (await banner.isVisible().catch(() => false)) {
       throw new Error('under-collateral banner re-appeared after the recomputed simulation settled — negative case failed');
     }
     await page.waitForTimeout(1_000);
   }
+  // Again, after the stability window: a refused recompute that landed
+  // during it is the same false negative.
+  await rpc.settled();
+  assertNoRpcFaults('while the banner stayed cleared');
   console.log('PASS ✓ banner stays cleared after the recomputed simulation settled');
-  await shot('1112-precheck-clear');
+  await evidenceShot('1112-precheck-clear');
 
   console.log('\nLIVE REVIEW PASSED — #1112 verified on', SITE);
   await done();
@@ -191,9 +234,8 @@ try {
   const answered = awaitingSimulation ? await rpc.settled() : 1;
   if (answered === 0) {
     await shot('1112-precheck-blocked').catch(() => {});
-    // `done()` FIRST, then the shared blocked exit: `blocked()` ends the
-    // process, so anything after it never runs.
-    await done();
+    // The shared blocked exit alone: it drains the page's in-flight RPC,
+    // then closes the browser itself (#1633 r5).
     await blocked(
       'the page received no successful JSON-RPC response, so the createOffer' +
         ' simulation this drive reads its verdict from never ran. Nothing was' +
@@ -202,7 +244,14 @@ try {
     );
   }
   console.error('\nLIVE REVIEW FAILED:', e.message);
+  const faults = rpc.sessionFaults();
+  if (faults.length && !e.message.includes('refused as malformed')) {
+    console.error(`  page requests refused as malformed by a reachable provider: ${faults.join(', ')}`);
+  }
   await shot('1112-precheck-fail').catch(() => {});
   await done();
   process.exit(1);
 }
+// The shared exit, after `done()`'s drain (#1633 r6): a refusal that landed
+// only at the close still FAILS the run the checks above passed.
+await exitWithVerdict(0);

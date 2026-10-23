@@ -2,7 +2,7 @@
 // production app: drive the lend post-offer flow to review, tick
 // consent, confirm the footer renders a real verdict.
 import fs from 'node:fs';
-import { blockedSync, ensureConnected, launch, visit, pasteAssetLive } from './driver.mjs';
+import { blocked, blockedSync, ensureConnected, exitWithVerdict, launch, visit, pasteAssetLive, watchPageRpc } from './driver.mjs';
 
 // Faucet mock addresses (Base Sepolia). Override with FAUCET_JSON to
 // point at a deployments artifact — both the flat shape and the
@@ -41,6 +41,11 @@ for (const [label, value] of [['illiquidToken', TILQ], ['illiquidToken2', TILQ2]
 }
 
 const { page, done } = await launch({ role: 'lender' });
+// Is the endpoint the PAGE uses answering? The dry run IS a simulation over
+// that RPC, so with the endpoint silent the footer stays `running` or shows
+// the app's own "dry run isn't available" state — both used to be a FAIL
+// against #1059, an outage reported as a product regression (#1633).
+const rpc = watchPageRpc(page);
 await visit(page, '/lend');
 await page.waitForTimeout(2500);
 await ensureConnected(page);
@@ -57,6 +62,10 @@ await pasteAssetLive(page, 'collateral-asset', TILQ2);
 await page.waitForTimeout(1500);
 await page.locator('input[placeholder="0.0"]:visible').last().fill('100');
 await page.waitForTimeout(800);
+// The window opens BEFORE the click that starts the review's simulation:
+// `reset()` orphans everything already in flight, so opening it after would
+// drop the very round-trip it means to observe.
+rpc.reset();
 await page.getByRole('button', { name: /continue to review/i }).click();
 await page.waitForTimeout(3000);
 
@@ -98,11 +107,19 @@ console.log('verdict flags:', JSON.stringify(verdicts));
 // regression this driver exists to catch, and unavailable/running
 // mean no verdict was actually delivered.
 const any = verdicts.passed || verdicts.approval;
-console.log(
-  any
-    ? 'PASS — truthful dry-run verdict rendered'
-    : `FAIL — verdicts: ${JSON.stringify(verdicts)}`,
-);
+// No verdict, and the page heard nothing from its chain endpoint since the
+// review opened: the simulation could not have run, so nothing was observed
+// about the dry run either way. BLOCKED, scoped to exactly that case — a
+// would-fail verdict is a finding whatever the network did, and a silent
+// footer beside an endpoint that DID answer is the app's to explain.
+if (!any && !verdicts.wouldFail && (await rpc.settled()) === 0) {
+  await blocked(
+    'the review never showed a dry-run verdict and the page received no answer' +
+      ' from its JSON-RPC endpoint after the review opened, so the simulation' +
+      ` never ran. Footer state: ${JSON.stringify(verdicts)}.`,
+  );
+}
+console.log(any ? 'PASS — truthful dry-run verdict rendered' : `FAIL — verdicts: ${JSON.stringify(verdicts)}`);
 {
   // The concrete revert reason renders right after the would-fail
   // headline (…"no gas was spent." <strong>reason</strong>…); anchor
@@ -111,4 +128,9 @@ console.log(
   if (i !== -1) console.log('REVERT TEXT:', body.slice(i, i + 400));
 }
 await done();
-process.exit(any ? 0 : 1);
+// A request the page sent that a reachable provider refused as malformed is
+// a defect in the page, so it FAILS the run beside a truthful verdict too
+// (#1633 r1): the verdict says the dry run rendered, not that the page's
+// requests were sound. Judged by the shared exit, AFTER `done()`'s drain,
+// so a refusal still landing at the close is counted (#1633 r6).
+await exitWithVerdict(any ? 0 : 1);

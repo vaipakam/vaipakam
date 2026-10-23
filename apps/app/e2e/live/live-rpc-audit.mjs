@@ -82,6 +82,11 @@ for (const c of calls) c.outcome ??= 'failed';
 // ceilings, and with the chain unreachable the tally is 0, comfortably
 // "within budget".
 const rpcOk = calls.filter((c) => c.outcome === 'ok').length;
+// Requests a REACHABLE provider parsed and refused as malformed, whatever
+// the HTTP status: a defect in what the page sent, not an outage (#1633).
+// Counting them as "no answer" let a page sending only malformed requests
+// exit UNRESOLVED instead of failing.
+const clientFaults = calls.filter((c) => c.outcome === 'client-fault');
 const tally = tallyCalls(calls);
 const { counts, failedCounts, total, budgeted, budgetedFloor, catchUp } = tally;
 console.log('tally:', JSON.stringify(counts), `| successful rpc responses: ${rpcOk} | failed attempts: ${JSON.stringify(failedCounts)}`);
@@ -96,6 +101,12 @@ console.log(
 // already observed — a write the read-only session aborted fails the run even
 // when no RPC succeeded (#2710 r3).
 const unresolved = [];
+
+check(
+  'no page request was refused as malformed by a reachable provider',
+  clientFaults.length === 0,
+  [...new Set(clientFaults.map((c) => `${c.method}: ${c.why}`))].join(', '),
+);
 
 // No SUCCESSFUL RPC in the window means there was no RPC behaviour to
 // audit — UNRESOLVED, not a budget PASS (Codex #1621 r7). The budgets are

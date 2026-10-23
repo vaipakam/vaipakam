@@ -341,13 +341,48 @@ Which failures are preconditions, driver by driver:
   things that look right and are not — a session-wide counter (the
   page-load reads disarm it, so an endpoint that dies exactly when the
   assertion's reads go out still reports FAIL), and counting only JSON-RPC
-  `result` (a 200 carrying an `error` still proves the endpoint answered,
-  and for a revert-driven assertion that error IS the expected result).
+  `result` (a revert still proves the endpoint answered, and for a
+  revert-driven assertion it IS the expected result).
   A third, subtler one: window membership has to be stamped when the
   REQUEST starts, because clearing the tally on reset does nothing about a
   stale request whose response lands afterwards and increments it again.
-  All three are pinned by `e2e/live/watchPageRpc.test.mjs` — this helper
-  was wrong three times, each time in a way that read as correct, so it is
+  **Reachability is not "HTTP 200" (#1633).** What counts as an answer is
+  the verdict of the repo's ONE JSON-RPC response classifier
+  (`classifyRpcResponse`, `rpc-verdict.mjs`), over HTTP and WebSocket: a
+  provider that answers 400 with a well-formed `-32602` has answered, and
+  the fault is the page's. Counting only status 200 turned that into
+  BLOCKED, the one misclassification that HIDES a product defect.
+  Counting it as an answer is right for the BLOCKED question and wrong as
+  the end of it: a drive whose PASS rests on an ABSENCE read a refused
+  recompute as "answered" and passed. So `sessionFaults()` keeps every such
+  call for the whole session, whatever window it fell in, and EVERY drive
+  that attaches the helper FAILS on any of them: each ends through the
+  shared `exitWithVerdict`, which drains once more and turns a PASS or
+  BLOCKED code into FAIL over any recorded fault, so a refusal landing only
+  at the close is not lost to a drive's earlier snapshot (a structural test
+  holds each drive to that exit and to no other non-FAIL exit). The shared BLOCKED exits (`blocked`,
+  `blockedSync`) honour the same precedence by themselves: once any
+  watcher has recorded such a request they exit FAIL, naming it, so no
+  drive's BLOCKED branch can hide one; `blocked()` first waits (bounded)
+  for the page's in-flight chain answers, and a body still parsing when a
+  window reset is still awaited, so a fault cannot lose the race to the
+  exit. `launch()`'s `done()` waits the same way before ITS close, so a
+  drive that closes and then exits BLOCKED loses nothing either; the
+  ordering of a drive's exits is not load-bearing. A request whose JSON-RPC envelope is itself malformed (a wrong
+  `jsonrpc`, scalar `params`, an id that is not a string, number or null)
+  is a client fault too, judged from the request like a reused id. The RPC audit's call ledger takes the same
+  verdicts, so a page whose requests a reachable provider refuses as
+  malformed FAILS there too, and so does the sanctions-banner drive's
+  read ledger (`pageSanctionsReads.mjs`): a flag read refused as malformed
+  is a FAIL ahead of every banner state, never an RPC outage. On a WebSocket, calls are matched to answers
+  by ONE correlator (`createSocketCalls`) shared by both observers: an id
+  reused while its call is still waiting, in a frame or across frames, is
+  the same duplicate-id fault as in an HTTP batch, never two answers. Each
+  socket message is recorded on its own, so a settlement touches only the
+  message it belongs to, and a recorded fault is never overwritten by a
+  later answer. All
+  of this is pinned by `e2e/live/watchPageRpc.test.mjs` — this helper was
+  wrong seven times, each time in a way that read as correct, so it is
   unit-tested rather than trusted.
 - **Cleanup capacity, for any drive that MUTATES shared chain state** —
   reserved BEFORE the mutation, not discovered after it, and read at the
@@ -371,6 +406,33 @@ Which failures are preconditions, driver by driver:
   never block a run that would otherwise pass.
 - **Config that selects nothing** — a typo'd session or locale selector
   gathers no evidence, so the surfaces it names are still unswept.
+- **Config that selects the WRONG thing** (#1633) — an operator input the
+  drive would act on in a way the operator did not mean. Parse it to what
+  the drive needs and refuse what it cannot mean: `INDEXER_ORIGIN` is
+  reduced to a bare origin (`parseOrigin` — a trailing slash used to
+  produce `//offers/stats`, a 404 read as a product FAIL), every
+  `UX_SWEEP_ROUTES` entry must be app-relative (`parseAppRouteList` —
+  `borrow` was navigated as `${SITE}borrow`), an operator-chosen
+  `DESK_I18N_LOCALES` code must be one the app ships translated
+  (`src/i18n/translatedLocales.json` — `pt` renders English by design), and
+  a malformed wallet-file entry is a credential setup failure
+  (`normaliseWallets`), never a raw `TypeError`.
+- **A fixture the page's own gate reads** (#1633) — the kill-switch
+  regression's review needs the lender to HOLD the amount it posts, and an
+  underfunded lender keeps the submit gate shut while the RPC answers
+  normally, so the RPC gate cannot tell it from the kill switch. Read the
+  fixture from the chain before driving, and report it instead of a FAIL.
+
+**Evidence precedence holds to the END of a drive** (#1633). A drive that
+has judged surfaces must not let a later precondition discard them:
+`live-recover.mjs` re-reads the sanctions oracle without `precondition()`
+(which exits on the spot) and treats the page's own "couldn't check" state
+as unresolved, `live-risk-access.mjs` classifies a transport failure of its
+normalization write as BLOCKED only after its cleanup and only when nothing
+else failed, and `live-ux-sweep.mjs` records a later session's failed entry
+as a finding and still closes that session. A screenshot taken after an
+assertion passed is evidence, not the assertion, so a failed capture is
+logged rather than turned into a FAIL.
 
 Two failure modes to avoid when drawing that line. A precondition placed
 AFTER the drive has mutated state exits past the cleanup boundary and can
