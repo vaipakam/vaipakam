@@ -1,4 +1,4 @@
-## Thread — One address per app page: trailing slashes redirect (PR #<n>)
+## Thread — One address per app page: trailing slashes redirect (PR #2692)
 
 Asking the connected app for a page with a trailing slash, such as `/vpfi/` instead of `/vpfi`, used to serve the page itself. The response carried a "do not index" header, but the page declared itself indexable. A browser ignored that disagreement. A search crawler that does not run the app saw only the header, so it treated a valid spelling of a public page as withheld.
 
