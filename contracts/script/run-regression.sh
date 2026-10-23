@@ -29,6 +29,9 @@
 
 set -uo pipefail
 cd "$(dirname "$0")/.."   # -> contracts/
+# The chunk rule both this script and predeploy-check.sh step 2 use (#2712).
+# shellcheck source=lib/forge-chunks.sh
+source script/lib/forge-chunks.sh
 
 export FOUNDRY_PROFILE=default
 # IO-priority boost only — `nice -n -10` (raised CPU priority) needs privileges
@@ -68,7 +71,7 @@ SUBDIRS=(scenarios deploy fork seaport token)
 # it to mean "top-level only". Instead enumerate the top-level files explicitly
 # (find -maxdepth 1) and pass each chunk as a brace glob of exact file stems —
 # no slashes inside the brace, so no recursion ambiguity.
-mapfile -t TOP < <(find test -maxdepth 1 -name '*.t.sol' -printf '%f\n' | sed 's/\.t\.sol$//' | sort)
+mapfile -t TOP < <(forge_test_stems test)
 
 FAILED=0
 run() {  # run(label, glob)
@@ -94,19 +97,21 @@ run() {  # run(label, glob)
     || { echo "CHUNK FAILED: $label" >&2; FAILED=1; }
 }
 
-n=0; chunk=()
-flush() {
-  (( ${#chunk[@]} == 0 )) && return
-  local joined; joined=$(IFS=,; echo "${chunk[*]}")
-  run "top-level chunk #$1" "test/{$joined}.t.sol"
-  chunk=()
+# run_chunks(label, dir, size, stem...) — one `run` per chunk the shared
+# helper (script/lib/forge-chunks.sh) cuts. A bad size aborts the run rather
+# than quietly running nothing.
+run_chunks() {
+  local label="$1" dir="$2" size="$3"; shift 3
+  local out; out=$(forge_chunk_globs "$dir" "$size" "$@") || exit 1
+  [ -z "$out" ] && return
+  local globs=() i=0 g
+  mapfile -t globs <<<"$out"
+  for g in "${globs[@]}"; do
+    i=$((i+1)); run "$label #$i" "$g"
+  done
 }
-ci=0
-for stem in "${TOP[@]}"; do
-  chunk+=("$stem"); n=$((n+1))
-  if (( n % CHUNK_SIZE == 0 )); then ci=$((ci+1)); flush "$ci"; fi
-done
-ci=$((ci+1)); flush "$ci"
+
+run_chunks "top-level chunk" test "$CHUNK_SIZE" "${TOP[@]}"
 
 # ── Subdirectory suites — chunked PER subdir (like the top-level suites) ──────
 # One glob per subdir (`test/$sub/*.t.sol`) was ceiling-safe on 2026-07-01, but
@@ -123,7 +128,7 @@ ci=$((ci+1)); flush "$ci"
 # COMPILES the fork suite passes trivially — the ceiling was the only blocker.)
 SUBDIR_CHUNK_SIZE="${SUBDIR_CHUNK_SIZE:-3}"
 for sub in "${SUBDIRS[@]}"; do
-  mapfile -t SUBFILES < <(find "test/$sub" -maxdepth 1 -name '*.t.sol' -printf '%f\n' | sed 's/\.t\.sol$//' | sort)
+  mapfile -t SUBFILES < <(forge_test_stems "test/$sub")
   (( ${#SUBFILES[@]} == 0 )) && continue
 
   # `fork` subdir: each file needs a SPECIFIC fork RPC and self-skips without it
@@ -173,18 +178,7 @@ for sub in "${SUBDIRS[@]}"; do
     fi
     SUBFILES=("${kept[@]}")
   fi
-  sn=0; schunk=(); sci=0
-  sflush() {
-    (( ${#schunk[@]} == 0 )) && return
-    local joined; joined=$(IFS=,; echo "${schunk[*]}")
-    run "subdir ($sub #$1)" "test/$sub/{$joined}.t.sol"
-    schunk=()
-  }
-  for stem in "${SUBFILES[@]}"; do
-    schunk+=("$stem"); sn=$((sn+1))
-    if (( sn % SUBDIR_CHUNK_SIZE == 0 )); then sci=$((sci+1)); sflush "$sci"; fi
-  done
-  sci=$((sci+1)); sflush "$sci"
+  run_chunks "subdir ($sub)" "test/$sub" "$SUBDIR_CHUNK_SIZE" "${SUBFILES[@]}"
 done
 
 # ── Optional invariants pass ─────────────────────────────────────────────────
