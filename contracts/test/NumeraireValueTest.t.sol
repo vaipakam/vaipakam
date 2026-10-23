@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibNumeraireValue} from "../src/libraries/LibNumeraireValue.sol";
+import {LibRiskMath} from "../src/libraries/LibRiskMath.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -277,6 +278,25 @@ contract NumeraireValueRiskTest is SetupTest {
         assertEq(v.getLiquidNumeraireValue(mockCollateralERC20, 1 ether), 3e10);
         mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
         assertEq(v.getLiquidNumeraireValue(mockCollateralERC20, 1 ether), 0, "illiquid is 0");
+    }
+
+    /// @dev The one health-factor rule: both divisions floored, each step at
+    ///      full precision, so a value whose plain product with HF_SCALE would
+    ///      overflow still yields its HF; no debt and an unrepresentable HF
+    ///      both read as the maximum.
+    function test_healthFactorRule() public pure {
+        // floor(floor(3e18 * 8000 / 1e4) * 1e18 / 2e18) = 1.2e18
+        assertEq(LibRiskMath.healthFactor(3e18, 8000, 2e18), 1.2e18, "small exact");
+        // floor(floor(10 * 8333 / 1e4) * 1e18 / 7): 8 * 1e18 / 7, floored
+        assertEq(LibRiskMath.healthFactor(10, 8333, 7), uint256(8e18) / 7, "both floors");
+        // 1e60 x 8500 / 1e4 = 8.5e59; 8.5e59 x 1e18 alone would overflow.
+        assertEq(LibRiskMath.healthFactor(1e60, 8500, 1e60), 0.85e18, "large legs");
+        assertEq(LibRiskMath.healthFactor(1e60, 8500, 0), type(uint256).max, "no debt");
+        assertEq(
+            LibRiskMath.healthFactor(type(uint256).max / 2, 10_000, 1),
+            type(uint256).max,
+            "saturates"
+        );
     }
 
     /// @dev A token whose `decimals()` cannot be read is refused by name.

@@ -42,6 +42,37 @@ import {NumeraireValueFacet} from "../facets/NumeraireValueFacet.sol";
  *         HF on illiquid pairs.
  */
 library LibRiskMath {
+    /// @notice The runtime health-factor rule, from a loan's two 1e18
+    ///         numeraire leg values: `⌊⌊C·liq/BPS⌋·HF_SCALE / D⌋`, both
+    ///         divisions rounded down (lender first). The single home of the
+    ///         formula `RiskFacet` and `PartialWithdrawalFacet` gate on, and
+    ///         the one the bound helpers below invert (#2419).
+    /// @dev    Each step is a full-precision `mulDiv`, so an intermediate
+    ///         product never overflows where the result fits. No debt reads as
+    ///         an infinite HF; an HF of about 1.15e59 or more, whose scaled
+    ///         figure would not fit in `uint256`, saturates to
+    ///         `type(uint256).max`, which every gate reads the same way:
+    ///         healthy.
+    /// @param collateralValue Collateral value, rounded down (1e18 numeraire).
+    /// @param liqThresholdBps The loan's liquidation threshold, in BPS.
+    /// @param debtValue       Debt value, rounded up (1e18 numeraire).
+    /// @return hf             Health factor, scaled to `HF_SCALE`.
+    function healthFactor(
+        uint256 collateralValue,
+        uint256 liqThresholdBps,
+        uint256 debtValue
+    ) internal pure returns (uint256 hf) {
+        if (debtValue == 0) return type(uint256).max;
+        uint256 riskAdjusted =
+            Math.mulDiv(collateralValue, liqThresholdBps, LibVaipakam.BASIS_POINTS);
+        // ⌊R/D⌋ below ⌊max/HF_SCALE⌋ means (⌊R/D⌋ + 1)·HF_SCALE still fits,
+        // so the mulDiv result does; otherwise saturate.
+        if (riskAdjusted / debtValue >= type(uint256).max / LibVaipakam.HF_SCALE) {
+            return type(uint256).max;
+        }
+        hf = Math.mulDiv(riskAdjusted, LibVaipakam.HF_SCALE, debtValue);
+    }
+
     /// @notice Smallest collateral amount (in collateral-asset native
     ///         units, NOT USD) that satisfies HF >= 1.5 against the
     ///         given lending amount. Lender-side gate at offer create.

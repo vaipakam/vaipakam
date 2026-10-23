@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
+import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -457,7 +458,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // down, so the legs themselves already err toward the lender. Do
         // NOT change this division to ceilDiv without retuning the
         // `maxLTVBps` thresholds.
-        ltv = (borrowedValueNumeraire * LibVaipakam.BASIS_POINTS) / collateralValueNumeraire;
+        ltv = Math.mulDiv(borrowedValueNumeraire, LibVaipakam.BASIS_POINTS, collateralValueNumeraire);
     }
 
     /**
@@ -485,7 +486,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
         (uint256 borrowValueNumeraire, uint256 collateralValueNumeraire) = _computeNumeraireValues(loan);
 
-        if (borrowValueNumeraire == 0) return type(uint256).max; // Infinite HF if no borrow
 
         // PR2 of internal-match work: per-asset `liqThresholdBps` was
         // retired. HF now reads the snapshotted per-tier liquidation
@@ -496,13 +496,12 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // means liquidation may trigger marginally earlier than theoretical.
         // Lender-favourable (the safe direction), as are the legs: debt
         // rounded up, collateral down, both at 1e18 precision (#2419). The
-        // error is a few units of the last digit of HF_SCALE.
-        uint256 riskAdjustedCollateral = (collateralValueNumeraire *
-            liqThresholdBps) / LibVaipakam.BASIS_POINTS;
-
-        healthFactor =
-            (riskAdjustedCollateral * LibVaipakam.HF_SCALE) /
-            borrowValueNumeraire;
+        // error is a few units of the last digit of HF_SCALE. No borrow
+        // reads as an infinite HF. One rule, full precision:
+        // {LibRiskMath.healthFactor}.
+        healthFactor = LibRiskMath.healthFactor(
+            collateralValueNumeraire, liqThresholdBps, borrowValueNumeraire
+        );
     }
 
     /**
@@ -526,20 +525,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         (uint256 borrowValueNumeraire, uint256 collateralValueNumeraire) = _computeNumeraireValues(loan);
         if (collateralValueNumeraire == 0) revert ZeroCollateral();
 
-        uint256 ltv = (borrowValueNumeraire * LibVaipakam.BASIS_POINTS) / collateralValueNumeraire;
+        uint256 ltv = Math.mulDiv(borrowValueNumeraire, LibVaipakam.BASIS_POINTS, collateralValueNumeraire);
 
-        uint256 hf;
-        if (borrowValueNumeraire == 0) {
-            hf = type(uint256).max;
-        } else {
-            // PR2 of internal-match work: read snapshotted per-tier
-            // liquidation threshold from the loan instead of the
-            // retired per-asset `liqThresholdBps`.
-            uint256 liqThresholdBps = uint256(loan.liquidationLtvBpsAtInit);
-            uint256 riskAdjustedCollateral = (collateralValueNumeraire * liqThresholdBps)
-                / LibVaipakam.BASIS_POINTS;
-            hf = (riskAdjustedCollateral * LibVaipakam.HF_SCALE) / borrowValueNumeraire;
-        }
+        // PR2 of internal-match work: read snapshotted per-tier
+        // liquidation threshold from the loan instead of the retired
+        // per-asset `liqThresholdBps`. Same rule as {calculateHealthFactor}.
+        uint256 hf = LibRiskMath.healthFactor(
+            collateralValueNumeraire,
+            uint256(loan.liquidationLtvBpsAtInit),
+            borrowValueNumeraire
+        );
 
         return ltv > LibVaipakam.cfgVolatilityLtvThresholdBps() || hf < LibVaipakam.HF_SCALE;
     }

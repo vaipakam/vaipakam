@@ -10,6 +10,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibNumeraireValue} from "../libraries/LibNumeraireValue.sol";
+import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -345,10 +346,9 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         ValuationContext memory ctx,
         uint256 collateralValueUsd
     ) internal pure returns (uint256) {
-        if (ctx.borrowValueUsd == 0) return type(uint256).max;
-        uint256 riskAdjustedCollateral =
-            (collateralValueUsd * ctx.liqThresholdBps) / LibVaipakam.BASIS_POINTS;
-        return (riskAdjustedCollateral * LibVaipakam.HF_SCALE) / ctx.borrowValueUsd;
+        // The runtime rule itself, so the simulation can never disagree with
+        // `RiskFacet.calculateHealthFactor` (#2419).
+        return LibRiskMath.healthFactor(collateralValueUsd, ctx.liqThresholdBps, ctx.borrowValueUsd);
     }
 
     function _ltvFromContext(

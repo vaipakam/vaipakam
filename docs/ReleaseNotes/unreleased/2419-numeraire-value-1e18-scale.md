@@ -42,8 +42,16 @@ curable until claimed. A missing collateral price no longer leaves such a loan
 to the illiquid route, where a loan without both parties' illiquid consent
 could not default at all. A loan that began illiquid on either leg keeps its
 consented in-kind transfer, even when its collateral has since become liquid,
-instead of failing in the risk calculation. A price the oracle's sources
-disagree on still refuses the default until they agree.
+instead of failing in the risk calculation. A token whose decimal count can no
+longer be read counts as having no usable price there, so such a loan takes
+the same unpriced fallback rather than being left with no route. A price the
+oracle's sources disagree on still refuses the default until they agree,
+except where the other leg has no price at all, where the missing-price rule
+wins as before.
+
+Health factor and loan-to-value readings are computed at full precision, from
+one shared health-factor rule, so a very large loan never fails on an
+intermediate figure when the reading itself can be stated.
 
 An asset whose decimal count cannot be read is now classified illiquid before
 any other check, including the wrapped-ether shortcut, so no part of the

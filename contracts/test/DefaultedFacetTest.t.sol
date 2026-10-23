@@ -1962,6 +1962,40 @@ contract DefaultedFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @dev #2419 — a loan that began liquid whose collateral token no longer
+    ///      answers `decimals()` cannot be valued: the live probe calls it
+    ///      Illiquid and the pair reads as UNPRICED (never a revert), so the
+    ///      default enters the fallback without a swap and without consent.
+    function testTriggerDefaultUnreadableCollateralDecimalsEntersFallback() public {
+        uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0
+        );
+        {
+            LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+            assertEq(uint8(l.collateralLiquidity), uint8(LibVaipakam.LiquidityStatus.Liquid));
+            l.riskAndTermsConsentFromBoth = false;
+            TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        }
+        vm.warp(block.timestamp + 33 days + 3);
+
+        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
+        vm.mockCallRevert(mockCollateralERC20, abi.encodeWithSignature("decimals()"), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
+
+        vm.expectCall(
+            address(ZeroExProxyMock(mockZeroExProxy)),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            0
+        );
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
+        _assertVaultHeldFallbackEntry(loanId, diamondCol0);
+        vm.clearMockedCalls();
+    }
+
     /// @dev #2419 — a loan that began illiquid on a leg (here the principal)
     ///      was consented as illiquid and defaults IN KIND, whatever the live
     ///      probe says about the collateral now: no swap, no risk math (which
