@@ -1,26 +1,39 @@
 // RPC diet live audit — parks an ANONYMOUS visitor on the deployed
 // Offer Book for 60s and tallies every JSON-RPC request the page
-// issues. Read-only; sends nothing.
+// issues. Read-only; sends nothing. Keyless: no wallet is injected, so
+// the page is the disconnected visitor the budget was written for (it
+// launched the `lender` role, pre-authorized, until #2097 — a connected
+// session the header never described, and a key this read never needed).
 //
 // Budget (steady state after the diet): up to two 30s interval ticks
 // in the window, each costing one eth_blockNumber (catch-up head
-// read) + one eth_getLogs (terminal-event scan), plus initial-load
-// stragglers. The pre-diet defect measured ~85 eth_blockNumber +
-// ~19 eth_getLogs in 100s — an order of magnitude over budget, so
-// the thresholds cleanly separate regression from timing noise.
+// read) + one catch-up SCAN (terminal-event eth_getLogs), plus
+// initial-load stragglers. The pre-diet defect measured ~85
+// eth_blockNumber + ~19 eth_getLogs in 100s — an order of magnitude
+// over budget, so the thresholds cleanly separate regression from
+// timing noise.
+//
+// A scan's eth_getLogs count grows with the indexer's lag by design
+// (serialized 1000-block windows over the un-ingested tail), so the
+// budget counts each SCAN once and holds the scan's shape to the app's
+// own rules separately — see `catchUpTally.mjs` (#2097). The figure is
+// the page's own traffic, never a lag read at another moment.
 import { blocked, launch, visit } from './driver.mjs';
+import { CHUNK_BLOCKS, MAX_CHUNKS_PER_SCAN, tallyCalls } from './catchUpTally.mjs';
 
 const BUDGET_TOTAL = 12; // all JSON-RPC calls in the 60s window
 const BUDGET_BLOCKNUMBER = 5;
 
-const { page, done } = await launch({ role: 'lender' });
+const { page, done } = await launch({ role: 'public', keyless: true, readOnly: true });
 let fails = 0;
 const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`);
   if (!ok) fails++;
 };
 
-const counts = {};
+// Every JSON-RPC call recorded in the window, in the order the requests
+// started — the tally groups catch-up chunks by that order.
+const calls = [];
 let recording = false;
 // Successful JSON-RPC responses the PAGE actually received, counted from
 // its own traffic (Codex #1621 r7).
@@ -92,7 +105,7 @@ page.on('request', (req) => {
   try {
     const parsed = JSON.parse(body);
     for (const call of Array.isArray(parsed) ? parsed : [parsed]) {
-      if (call?.method) counts[call.method] = (counts[call.method] ?? 0) + 1;
+      if (call?.method) calls.push({ method: call.method, params: call.params });
     }
   } catch {
     /* not JSON-RPC */
@@ -116,8 +129,16 @@ while (awaitingResponse.size > 0 && Date.now() < settleBy) {
 }
 await Promise.allSettled(bodyReads);
 
-const total = Object.values(counts).reduce((a, n) => a + n, 0);
+const tally = tallyCalls(calls);
+const { counts, total, budgeted, catchUp } = tally;
 console.log('tally:', JSON.stringify(counts), `| successful rpc responses: ${rpcOk}`);
+console.log(
+  `catch-up: ${catchUp.chunks} eth_getLogs in ${catchUp.scans.length} scan(s)` +
+    (catchUp.retries ? `, ${catchUp.retries} of them retries` : '') +
+    (catchUp.scans.length
+      ? ` — ${catchUp.scans.map((x) => `${x.from}–${x.to} in ${x.chunks}`).join(', ')}`
+      : ''),
+);
 // No SUCCESSFUL RPC in the window means there was no RPC behaviour to
 // audit — BLOCKED, not a budget PASS (Codex #1621 r7).
 if (rpcOk === 0) {
@@ -128,10 +149,24 @@ if (rpcOk === 0) {
       ' otherwise pass them.',
   );
 }
-check(`total JSON-RPC calls within budget (${total} <= ${BUDGET_TOTAL})`, total <= BUDGET_TOTAL);
+check(
+  `JSON-RPC calls within budget, each catch-up scan counted once (${budgeted} <= ${BUDGET_TOTAL}; ${total} raw)`,
+  budgeted <= BUDGET_TOTAL,
+);
 check(
   `eth_blockNumber within budget (${counts['eth_blockNumber'] ?? 0} <= ${BUDGET_BLOCKNUMBER})`,
   (counts['eth_blockNumber'] ?? 0) <= BUDGET_BLOCKNUMBER,
+);
+// The scan's shape, held to the app's own rules (`bookCatchUp.ts`).
+check(
+  `every catch-up window is at most ${CHUNK_BLOCKS} blocks`,
+  catchUp.oversized.length === 0,
+  catchUp.oversized.join(', '),
+);
+check(
+  `no catch-up scan runs past the skip cap (${MAX_CHUNKS_PER_SCAN} windows)`,
+  catchUp.overlong.length === 0,
+  catchUp.overlong.join(', '),
 );
 // The diet must not blank the surface it protects.
 const body = await page.locator('body').innerText();
