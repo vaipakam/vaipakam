@@ -618,15 +618,26 @@ even for the gap between the deploy and the handover.
    operation can never execute; once the incident is closed, re-run the
    launch phase for a fresh proposal at the new epoch.
 6. Re-run the launch phase. It records the launch only when the Timelock
-   reports a launch operation done (it searches every earlier epoch, so a
+   reports a launch operation done (it searches the last 256 epochs, so a
    later incident pause does not hide it). If the Diamond is unpaused and
    no launch operation is done, something unpaused it outside this step:
    the phase refuses, and that is an incident to investigate, not a
-   launch.
+   launch. Write down the epoch the executed proposal named.
+
+   The search is bounded because every `pause()` counts as a transition,
+   even on a Diamond that is already paused, so a Pauser (or a compromised
+   Pauser Safe) could otherwise push the epoch so far that every launch run
+   and report runs out of gas. Past the window, if nothing is found, the
+   step says whether it launched is UNKNOWN and refuses rather than guess.
+   Then re-run with `LAUNCH_OPERATION_EPOCH` set to the epoch the executed
+   proposal named, or, if the Diamond never launched, with
+   `LAUNCH_ACK_PAUSE_EPOCH` set to the epoch the refusal printed.
 7. The launch step looks for that evidence before anything else, paused or
    not. Once the launch operation is done, a re-run during a later incident
-   pause reports "launched, and paused since" and prints no proposal: the
-   launch step never offers a second unpause. Lift an incident pause
+   pause reports "launched, and PAUSED now" and prints no proposal: the
+   launch step never offers a second unpause. The deploy scripts repeat
+   that line, so a launched Diamond under an incident pause is never
+   reported as live. Lift an incident pause
    through "Incident response — unpause" below.
 
 The Pauser Safe can cancel the queued launch like any other operation.

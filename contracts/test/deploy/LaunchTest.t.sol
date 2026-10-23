@@ -635,10 +635,17 @@ contract LaunchTest is Test {
         _execute(tl, registry, epoch);
         vm.prank(_guardian(tl));
         AdminFacet(diamond).pause();
-        launcher.checkLaunched(diamond, registry, address(tl), admin);
+        assertEq(
+            launcher.checkLaunched(diamond, registry, address(tl), admin),
+            "launched by the Timelock's launch operation, and PAUSED now: lifting that pause is incident response (GovernanceRunbook), not a launch",
+            "an incident-paused Diamond is reported launched, never live"
+        );
         vm.prank(address(tl));
         AdminFacet(diamond).unpause();
-        launcher.checkLaunched(diamond, registry, address(tl), admin);
+        assertEq(
+            launcher.checkLaunched(diamond, registry, address(tl), admin),
+            "launched by the Timelock's launch operation, and unpaused now"
+        );
     }
 
     function test_Production_CheckLaunchedRefusesBeforeExecution() public {
@@ -861,5 +868,88 @@ contract LaunchTest is Test {
         vm.stopPrank();
         vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
         launcher.launch(diamond, address(0), address(0), admin, ADMIN_KEY);
+    }
+
+    // ─── Round 5 (Codex #2686 r5): a bounded launch-evidence search ─────
+
+    string private constant LAUNCH_UNKNOWN =
+        "Launch: the pause epoch is past the launch-evidence search window and no launch operation was found in it, so whether this Diamond launched is UNKNOWN. Set LAUNCH_OPERATION_EPOCH to the epoch an executed launch proposal names; if it never launched, set LAUNCH_ACK_PAUSE_EPOCH to the epoch printed above";
+
+    /// @dev Every `pause()` is a transition, even on a paused Diamond, so a
+    ///      Pauser can push the epoch past any search window.
+    function _inflateEpoch(address pauser) internal {
+        uint256 n = uint256(launcher.EVIDENCE_SCAN_EPOCHS()) + 8;
+        vm.startPrank(pauser);
+        for (uint256 i; i < n; ++i) {
+            AdminFacet(diamond).pause();
+        }
+        vm.stopPrank();
+    }
+
+    /// @dev A launch older than the window, buried under an inflated epoch:
+    ///      the run cannot read it, so it neither proposes a second unpause
+    ///      nor calls the Diamond unlaunched. Naming the launch's epoch finds
+    ///      it again.
+    function test_Production_InflatedEpochDoesNotHideALaunch() public {
+        (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
+        _execute(tl, registry, epoch);
+        _inflateEpoch(_guardian(tl));
+
+        Launch.Decision memory d = launcher.decide(diamond, registry, address(tl), admin, false);
+        assertEq(uint8(d.path), uint8(Launch.Path.Refuse));
+        assertTrue(d.launchUnknown);
+        vm.expectRevert(bytes(LAUNCH_UNKNOWN));
+        launcher.checkLaunched(diamond, registry, address(tl), admin);
+        vm.expectRevert(bytes(LAUNCH_UNKNOWN));
+        launcher.launch(diamond, registry, address(tl), admin, 0);
+
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("LAUNCH_OPERATION_EPOCH", vm.toString(uint256(epoch)));
+        string memory evidence = launcher.checkLaunched(diamond, registry, address(tl), admin);
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("LAUNCH_OPERATION_EPOCH", vm.toString(type(uint256).max));
+        assertEq(
+            evidence,
+            "launched by the Timelock's launch operation, and PAUSED now: lifting that pause is incident response (GovernanceRunbook), not a launch"
+        );
+        assertTrue(AdminFacet(diamond).paused(), "the incident pause stands");
+    }
+
+    /// @dev Inflated before it ever launched: the operator's statement that
+    ///      it never went live (the epoch, acknowledged) lets the run print
+    ///      the proposal; without it the run refuses.
+    function test_Production_InflatedEpochBeforeLaunchNeedsTheAck() public {
+        vm.chainId(8453);
+        _configure();
+        address registry = _registryWithLane();
+        VaipakamTimelock tl = _realTimelock();
+        _handOverUnpause(address(tl));
+        _inflateEpoch(_guardian(tl));
+
+        vm.expectRevert(bytes(LAUNCH_UNKNOWN));
+        launcher.launch(diamond, registry, address(tl), admin, 0);
+
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("LAUNCH_ACK_PAUSE_EPOCH", vm.toString(uint256(_epoch())));
+        Launch.Outcome o = launcher.launch(diamond, registry, address(tl), admin, 0);
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("LAUNCH_ACK_PAUSE_EPOCH", "0");
+        assertEq(uint8(o), uint8(Launch.Outcome.TimelockProposalPrinted));
+        assertTrue(AdminFacet(diamond).paused());
+    }
+
+    /// @dev Inside the window nothing changes: a launch a few epochs back is
+    ///      found by the search alone.
+    function test_Production_LaunchInsideTheWindowNeedsNoHint() public {
+        (VaipakamTimelock tl, address registry, uint64 epoch) = _scheduledLaunch();
+        _execute(tl, registry, epoch);
+        address guardian = _guardian(tl);
+        vm.startPrank(guardian);
+        for (uint256 i; i < 10; ++i) {
+            AdminFacet(diamond).pause();
+        }
+        vm.stopPrank();
+        Launch.Decision memory d = launcher.decide(diamond, registry, address(tl), admin, false);
+        assertEq(uint8(d.path), uint8(Launch.Path.Launched));
     }
 }

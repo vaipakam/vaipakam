@@ -1733,11 +1733,14 @@ EOF
   # Recorded only on the Timelock's own evidence (Launch.requireLaunched:
   # this checkout's launch operation DONE), never from the pause bit — an
   # unpause by anyone else must not be written down as the launch.
-  if CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --sig "requireLaunched()" \
-       --rpc-url "$RPC" >/dev/null 2>&1; then
+  # The message is the decision's own `launched:` line, which says whether
+  # the Diamond is paused NOW: a launch followed by an incident pause is
+  # recorded as launched, and must not be reported as live.
+  if LAUNCH_EVIDENCE=$(CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --sig "requireLaunched()" \
+       --rpc-url "$RPC" 2>/dev/null); then
     mark_phase_done "launch"
     echo
-    echo "✓ launch: the Timelock has executed the unpause; the Diamond is live."
+    echo "✓ launch recorded: $(printf '%s\n' "$LAUNCH_EVIDENCE" | sed -n 's/^ *launched: //p' | head -n 1)"
   else
     echo
     echo "launch: readiness passed and the Timelock proposal is printed above."
@@ -2213,9 +2216,20 @@ phase_verify() {
   # sanctions oracle above all, #946) is printed, not hidden; the launch
   # phase is where it refuses.
   CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --sig "report()" --rpc-url "$RPC"
+  # The launch verdict is stated, not implied by "verify OK": verify checks
+  # the deployment and runs before the handover, when a launch still
+  # refuses by design, so a refusal here does not fail the phase.
+  if CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --sig "requireLaunchable()" \
+       --rpc-url "$RPC" >/dev/null 2>&1; then
+    VERIFY_LAUNCH="a launch run would proceed, or has launched (see the report above)"
+  else
+    VERIFY_LAUNCH="NOT launchable yet - --phase launch refuses for the reason the report above prints"
+  fi
 
   echo
-  echo "verify OK. Continue with the role-rotation ceremony (DeploymentRunbook §6)."
+  echo "verify OK: the deployment checks above passed."
+  echo "Launch: $VERIFY_LAUNCH."
+  echo "Continue with the role-rotation ceremony (DeploymentRunbook §6)."
   mark_phase_done "verify"
 }
 

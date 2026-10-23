@@ -58,7 +58,20 @@ launch would, handover included. On
 a testnet no answered requirement may be unmet and the admin unpauses
 directly. A local development chain only warns. The deploy scripts' verify
 phases print the same report, and fail if a Diamond was unpaused outside
-the launch step.
+the launch step. They also end with the launch verdict in words, so a
+"verify OK" never reads as "ready to launch": verify runs before the
+handover, when a production launch still refuses by design, so that verdict
+is stated rather than turned into a failure. After a launch, the scripts say
+whether the Diamond is paused now: one launched and then paused for an
+incident is reported as launched and paused, never as live.
+
+The search for launch evidence looks back a fixed 256 pause transitions.
+Every pause counts as one, even on a Diamond already paused, so an unbounded
+search could be made to run out of gas by anyone holding the pause role,
+and revoking that role would not undo it. Past the window, when nothing is
+found, the launch step says it cannot tell whether the Diamond launched and
+refuses, until the operator names the epoch of the executed launch proposal
+or states that it never launched.
 
 Because the Diamond now stays paused until launch, the two risk settings
 (per-asset risk parameters and the loan-admission health-factor floor) no
