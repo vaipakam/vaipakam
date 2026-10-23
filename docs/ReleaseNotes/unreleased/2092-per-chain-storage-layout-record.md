@@ -1,4 +1,4 @@
-## Thread — Each chain's storage layout is recorded, and in-place upgrades check it (PR #TBD)
+## Thread — Each chain's storage layout is recorded, and in-place upgrades check it (PR #2684)
 
 The storage-layout guard added on 2026-10-20 stops a layout break from merging,
 but a chain does not run the newest code: it runs whatever last reached it. So
