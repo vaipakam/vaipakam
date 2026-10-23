@@ -231,6 +231,11 @@
   },
   {
     "type": "error",
+    "name": "AlreadyLaunched",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ArmedFreshPaidAlreadyRebased",
     "inputs": []
   },
@@ -1857,6 +1862,11 @@
         "internalType": "uint64"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "LaunchGateCallInvalid",
+    "inputs": []
   },
   {
     "type": "error",
