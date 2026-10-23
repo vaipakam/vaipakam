@@ -1654,9 +1654,17 @@ Three profiles live in `contracts/foundry.toml`:
   Same `viaIR + optimizer=200` settings as default. Used by
   `ci.yml`'s contracts-fast + slither jobs (build-docs runs its
   `forge doc --build` under `quick` instead — #1493).
-  Cold compile: ~5 min, ~3.2 GB peak RSS. Skips the 94 non-positive
-  top-level test files + invariants + fork tests — those run locally
-  at end-of-step under the default profile.
+  Skips the 94 non-positive top-level test files + invariants + fork
+  tests — those run locally at end-of-step under the default profile.
+  **Measured cold on CI (2026-10-23, #2603): about 43 min for the
+  contracts-fast job, peaking at 15.8 GB of the runner's 16 GB.** The
+  peak comes in the deploy-sanity compile (33 files, solc at 14.7 GB).
+  So there is almost no memory headroom left: the old "~5 min, ~3.2 GB"
+  figure is history. That 33-file compile also depends on the CI Foundry
+  pin. From v1.8.4, `forge test` stops reusing the `forge build --skip
+  test` artifacts and recompiles 469 files, and the runner dies. CI is
+  pinned to v1.8.3 for that reason; move the pin only to a version that
+  still compiles 33 files in that step.
 - **`quick`** — fast inner-loop iteration. Compiles `src/` + `lib/`
   only (skips project `test/` and `script/`); viaIR + optimizer still
   ON (some src/ facets, e.g. `VaultFactoryFacet.sol:631`,
