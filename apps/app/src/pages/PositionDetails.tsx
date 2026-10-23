@@ -617,13 +617,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // made on another device still shows and interlocks here.
   const sale = useLoanSalePending(
     loanId,
-    loan.data?.lenderTokenId,
-    loanIsRental || !loan.data
-      ? undefined
-      : (loan.data.lendingAsset as `0x${string}`),
+    // A rental is never listed for sale, so it gets no token id and the
+    // read never runs, even on a device marker.
+    loanIsRental ? undefined : loan.data?.lenderTokenId,
     // Lender-side viewers only (the hook also self-enables on a
     // device marker) — borrowers/spectators must not pay the polling
-    // cost for a watch their wallet can't answer.
+    // cost for a card that is not theirs.
     // `isLenderHolder`, not `role` — a dual-position holder must get
     // this read or the sale-lock verdict never resolves (Codex r18 P2).
     !loanIsRental && Boolean(loan.data) && isLenderHolder,
@@ -5095,9 +5094,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       {sale.state?.listed &&
       !isRental &&
       address &&
-      // Bound to the wallet the settlement pull binds to — a
-      // non-holder on the listing device must not see funding
-      // verdicts (or grant approvals) for someone else's sale.
+      // Bound to the lender-position holder — a non-holder on the
+      // listing device must not be offered someone else's cancel.
       // `isLenderHolder` joins the test (Codex r20 P2). The chooser
       // tells a lender their position is already listed and points at
       // THIS card — so if it does not mount, the row names a control
@@ -5107,12 +5105,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // page's own owner read had already confirmed lender ownership.
       (isLenderHolder || role === 'lender' || sale.state.isHolder) ? (
         <LoanSalePendingCard
-          loanId={row.loanId}
-          lenderTokenId={row.lenderTokenId}
           state={sale.state}
           stale={sale.isError}
-          principalAsset={row.lendingAsset as `0x${string}`}
-          principalMeta={principal ?? undefined}
           busy={busy}
           setBusy={setBusy}
           onCleared={sale.clear}

@@ -4,38 +4,28 @@
  * pure chain read — `positionLock(lenderTokenId) ==
  * EarlyWithdrawalSale` is authoritative — so a listing made on
  * another device still shows here. The device-local marker remembers
- * the offer id (needed for cancel and for the shortfall leg of the
- * funding watch; there is no on-chain loanId→saleOfferId view),
- * verified live via getOfferLinkedLoanId before it is trusted; when
- * it is missing the hook attempts RECOVERY by probing the connected
- * wallet's own open offers for one linked to this loan, and if that
- * fails the funding verdict is reported as UNKNOWN — never a false
- * green computed from the wrong rate.
+ * the offer id (needed for cancel and for the listing's own record;
+ * there is no on-chain loanId→saleOfferId view), verified live via
+ * getOfferLinkedLoanId before it is trusted; when it is missing the
+ * hook attempts RECOVERY by probing the connected wallet's own open
+ * offers for one linked to this loan.
  *
- * Funding watch: the buyer's accept pulls max(accrued-at-acceptance,
- * rate shortfall) from the SELLER's wallet via the standing
- * approval. `accrued` uses RAW elapsed seconds (the facet never
- * clamps it), so a listing that outlives the interest window keeps
- * needing more — the standing approval is sized generously
- * (full-window interest + a re-accrual pad) and the watch + restore
- * action cover the long tail. All money math is
- * `sellerEconomics` — the single facet-exact mirror.
+ * There is no funding watch (#2674). A buyer's acceptance escrows the
+ * buyer's payment and the completion deducts the seller's settlement
+ * from it (net settlement, #1659), so a listing needs no token approval
+ * and nothing about the seller's wallet can make it fail.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
-import { erc20Abi } from 'viem';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import {
-  BASIS_POINTS,
   CANCEL_COOLDOWN_SECONDS,
   LOAN_STATUS_ACTIVE,
-  SECONDS_PER_YEAR,
-  interestRemainingDaysOf,
   readLoanLive,
   sellerEconomics,
   type LoanLive,
-  SellerQuoteUnavailableError,} from '../contracts/loanLive';
+} from '../contracts/loanLive';
 import { fetchOffersByCreator } from './indexer';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -44,52 +34,8 @@ import { tipAware } from '../chain/railHealth';
 /** LibERC721.LockReason.EarlyWithdrawalSale. */
 export const LOCK_EARLY_WITHDRAWAL_SALE = 2;
 
-/** Extra accrual headroom the standing approval carries past the
- *  interest window's total. Listings now expire on-chain (seller-chosen
- *  window, capped at MAX_SALE_LISTING_SECONDS = 30 days and clamped at
- *  loan maturity), so 30 days of pad covers the worst-case accrual any
- *  live listing can still see before an accept lands. Beyond this pad
- *  the funding watch + the restore action are the safety net. */
-const REACCRUAL_PAD_DAYS = 30n;
-
-/** The standing-approval target: covers the whole interest window's
- *  accrual PLUS the re-accrual pad, or the current shortfall if
- *  larger. NOT a forever bound — see REACCRUAL_PAD_DAYS. */
-export function saleSettlementBound(
-  live: LoanLive,
-  saleRateBps: bigint,
-): bigint {
-  const econ = sellerEconomics(live, saleRateBps);
-  const denom = SECONDS_PER_YEAR * BASIS_POINTS;
-  const paddedWindowSecs =
-    (interestRemainingDaysOf(live) + REACCRUAL_PAD_DAYS) * 86_400n;
-  const paddedAccrual =
-    (live.principal * live.interestRateBps * paddedWindowSecs) / denom;
-  // ...and never below what an acceptance would pull RIGHT NOW (Codex #1801 r9
-  // P2). The padded figure is built from the remaining TERM, but when the mark
-  // precedes the accrual origin — a supported state, since the preclose path
-  // re-origins the clock without clearing an older mark — the accrued cost can
-  // exceed it. Bounding only by `shortfall` then granted an allowance already
-  // below the contract's settlement pull, so the listing was created and the
-  // buyer's acceptance reverted. `econ.cost` is max(accrued, shortfall), so
-  // taking it here covers both.
-  const floor = paddedAccrual > econ.shortfall ? paddedAccrual : econ.shortfall;
-  // ...and when the current cost is what binds, it needs the SAME growth
-  // headroom the term-based figure already has (Codex #1801 r11 P2). Round 9
-  // added `econ.cost` as a floor and stopped there, so in exactly the case that
-  // made it necessary — a mark far enough before the accrual origin that the
-  // accrued cost outruns remaining-term-plus-pad — the allowance was the pull at
-  // the instant of approval and nothing more. Interest keeps accruing after the
-  // snapshot, so a buyer arriving later reverts unless the seller happens to
-  // notice the funding watch and restores. Adding the pad's worth of accrual is
-  // the same margin, applied to the branch that was missing it.
-  const padAccrual =
-    (live.principal * live.interestRateBps * REACCRUAL_PAD_DAYS * 86_400n) / denom;
-  const costWithHeadroom = econ.cost + padAccrual;
-  return floor > costWithHeadroom ? floor : costWithHeadroom;
-}
-
-/** What a buyer's acceptance would pull RIGHT NOW. */
+/** The settlement a buyer's acceptance would deduct from their payment to
+ *  the seller RIGHT NOW: max(accrued interest forfeited, rate top-up). */
 export function saleSettlementNow(
   live: LoanLive,
   saleRateBps: bigint,
@@ -105,12 +51,11 @@ export interface LoanSalePendingState {
   /** The loan is still Active — a settled loan's listing can never
    *  complete (accepts revert); cancel-to-unlock is the only move. */
   loanActive: boolean;
-  /** Connected wallet currently HOLDS the lender NFT — the only
-   *  wallet the settlement pull binds to. Funding legs and the
-   *  cancel/restore actions are meaningless for anyone else. */
+  /** Connected wallet currently HOLDS the lender NFT — the only wallet
+   *  that may cancel the listing, and the one its payout goes to. */
   isHolder: boolean;
   /** Live-verified listing offer id (marker or recovered); null when
-   *  unknown — cancel is unavailable and funding is UNKNOWN then. */
+   *  unknown — cancel is unavailable then. */
   offerId: string | null;
   /** `offerId` is null because the link read FAILED, not because it
    *  proved absent (Codex r18 P2).
@@ -126,8 +71,6 @@ export interface LoanSalePendingState {
    *  Callers must not read a null `offerId` as "listed elsewhere" while
    *  this is true; it means "we could not tell". */
   offerIdVerifyFailed: boolean;
-  /** The listing's sale rate (bps); null when the id is unknown. */
-  saleRateBps: bigint | null;
   /** The listing's expiry (seconds), from its own offer record; null when
    *  that record was not read (#1848). */
   expiresAt: bigint | null;
@@ -148,46 +91,36 @@ export interface LoanSalePendingState {
   completable: SaleListingVerdict;
   /** Chain time says the cancel cooldown has elapsed. */
   cancelUnlocked: boolean;
-  /** What acceptance would pull right now / the approval target.
-   *  Zero + fundingKnown=false when the sale rate is unknown. */
-  requiredNow: bigint;
-  requiredBound: bigint;
-  /** False when the listing's rate couldn't be determined — the
-   *  watch must show "can't verify", never a false green. */
-  fundingKnown: boolean;
-  /** The standing approval / wallet balance is below `requiredNow`, as
-   *  read — whether or not the sale can still complete. Display goes
-   *  through `saleFundingWatch`. */
-  allowanceShort: boolean;
-  balanceShort: boolean;
 }
 
 export type SaleListingVerdict = 'yes' | 'no' | 'unknown';
 
-/** What the listing card's funding watch shows (#1848, Codex #2673 r1).
+/** Which text the listing card's status line shows (#1848, Codex #2673 r3).
  *
- *  The watch only matters while the sale can still complete: a settled
- *  loan's listing, or one that expired unsold, is cancel-only, so a `'no'`
- *  completable verdict silences every funding line — the shortfalls AND the
- *  "can't verify the funding" warning. But only an ANSWERED verdict may do
- *  that. TanStack keeps the last success through a failed poll, and the
- *  verdict can move back (a loan in fallback cured back to Active), so when
- *  `stale` the watch falls back to what it would show without the verdict.
- *  A stale listing may still SHOW something, never SUPPRESS something —
- *  the same rule as `listingMayStand`. */
-export function saleFundingWatch(
+ *  Everything past "a listing exists" comes from the listing's record and
+ *  the loan's status, and both can move: TanStack keeps the last success
+ *  through a failed poll, and a loan in fallback can be cured back to
+ *  Active. So when `stale` the card makes no claim drawn from them — not
+ *  settled, not accepted, not expired, no end time — and says the current
+ *  state could not be read. Only the lock itself, which is what mounted the
+ *  card, is still stated. */
+export type SaleListingCardView =
+  | 'stale'
+  | 'settled'
+  | 'accepted'
+  | 'expired'
+  | 'open'
+  | 'unread';
+
+export function saleListingCardView(
   state: LoanSalePendingState,
   stale: boolean,
-): { unknown: boolean; allowanceShort: boolean; balanceShort: boolean } {
-  const silenced = !stale && state.completable === 'no';
-  if (silenced || !state.listed || !state.isHolder) {
-    return { unknown: false, allowanceShort: false, balanceShort: false };
-  }
-  return {
-    unknown: state.loanActive && !state.fundingKnown,
-    allowanceShort: state.allowanceShort,
-    balanceShort: state.balanceShort,
-  };
+): SaleListingCardView {
+  if (stale) return 'stale';
+  if (!state.loanActive) return 'settled';
+  if (state.accepted === true) return 'accepted';
+  if (state.fillable === 'no' && state.expiresAt !== null) return 'expired';
+  return state.fillable === 'yes' ? 'open' : 'unread';
 }
 
 /** #1848 — what a listing's own record says about it, from its offer fields
@@ -212,7 +145,6 @@ export function saleListingVerdicts(args: {
 export function useLoanSalePending(
   loanId: number,
   lenderTokenId: string | undefined,
-  principalAsset: `0x${string}` | undefined,
   enabled: boolean,
 ) {
   const { readChain, address } = useActiveChain();
@@ -266,61 +198,40 @@ export function useLoanSalePending(
       markerId,
       address?.toLowerCase(),
     ],
-    // Runs for the LENDER-side viewer (the only audience of the
-    // card/watch) or whenever this device holds a marker — never for
-    // borrowers/spectators, whose wallets the funding legs would
-    // misread anyway.
+    // Runs for the LENDER-side viewer (the only audience of the card) or
+    // whenever this device holds a marker — never for borrowers or
+    // spectators.
     enabled:
       (enabled || markerId !== null) &&
       Boolean(readClient) &&
       Boolean(lenderTokenId) &&
-      Boolean(principalAsset) &&
       /^[1-9]\d*$/.test(lenderTokenId ?? ''),
     // RPC read-diet PR A — pending-card accept gate: tip-nudged per
     // block on WS deploys (§4.1.2), so the interval is only the net.
     refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
     queryFn: async (): Promise<LoanSalePendingState> => {
       const diamond = readChain.diamondAddress;
-      const [lock, live, latestBlock, allowance, balance, holder] =
-        await Promise.all([
-          readClient!.readContract({
+      const [lock, live, latestBlock, holder] = await Promise.all([
+        readClient!.readContract({
+          address: diamond,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'positionLock',
+          args: [BigInt(lenderTokenId!)],
+        }) as Promise<number | bigint>,
+        readLoanLive(readClient!, diamond, loanId),
+        readClient!.getBlock({ blockTag: 'latest' }),
+        readClient!
+          .readContract({
             address: diamond,
             abi: DIAMOND_ABI_VIEM,
-            functionName: 'positionLock',
+            functionName: 'ownerOf',
             args: [BigInt(lenderTokenId!)],
-          }) as Promise<number | bigint>,
-          readLoanLive(readClient!, diamond, loanId),
-          readClient!.getBlock({ blockTag: 'latest' }),
-          address
-            ? (readClient!.readContract({
-                address: principalAsset!,
-                abi: erc20Abi,
-                functionName: 'allowance',
-                args: [address, diamond],
-              }) as Promise<bigint>)
-            : Promise.resolve(0n),
-          address
-            ? (readClient!.readContract({
-                address: principalAsset!,
-                abi: erc20Abi,
-                functionName: 'balanceOf',
-                args: [address],
-              }) as Promise<bigint>)
-            : Promise.resolve(0n),
-          readClient!
-            .readContract({
-              address: diamond,
-              abi: DIAMOND_ABI_VIEM,
-              functionName: 'ownerOf',
-              args: [BigInt(lenderTokenId!)],
-            })
-            .catch(() => null) as Promise<string | null>,
-        ]);
+          })
+          .catch(() => null) as Promise<string | null>,
+      ]);
       const listed = Number(lock) === LOCK_EARLY_WITHDRAWAL_SALE;
-      // The settlement pull binds to the CURRENT lender-NFT holder —
-      // funding math and card actions for any other connected wallet
-      // would be wrong (and Restore would grant a dangling approval
-      // from a wallet the facet never pulls from).
+      // Only the CURRENT lender-NFT holder may cancel the listing, and the
+      // recovery probe looks for the listing among that wallet's offers.
       const isHolder =
         Boolean(address) &&
         holder !== null &&
@@ -371,7 +282,6 @@ export function useLoanSalePending(
           verifyFailed = true;
         }
       }
-      let saleRateBps: bigint | null = null;
       let createdAt = 0n;
       // #1848 — the same response carries the listing's expiry and whether a
       // buyer has accepted it; kept rather than narrowed away, so the cards can
@@ -385,16 +295,13 @@ export function useLoanSalePending(
             functionName: 'getOfferDetails',
             args: [BigInt(resolvedId)],
           })) as {
-            interestRateBps: number | bigint;
             createdAt: bigint;
             expiresAt: number | bigint;
             accepted: boolean;
           };
-          saleRateBps = BigInt(offer.interestRateBps);
           createdAt = offer.createdAt;
           record = { expiresAt: BigInt(offer.expiresAt), accepted: offer.accepted };
         } catch {
-          saleRateBps = null;
           record = null;
         }
       }
@@ -403,51 +310,20 @@ export function useLoanSalePending(
         ? saleListingVerdicts({ loanActive, record, chainNow: latestBlock.timestamp })
         : { fillable: 'no' as const, completable: 'no' as const };
 
-      // An unavailable QUOTE is not an unavailable LISTING (Codex #1801 r9 P2).
-      // `sellerEconomics` throws when the forfeiture window could not be read,
-      // and letting that escape this hook left the query with no state at all —
-      // so `PositionDetails` saw `salePending: false`, dropped the
-      // chain-authoritative pending card and its cancel affordance, and could
-      // offer the new-listing flow for a position that is demonstrably locked.
-      // The lock read succeeded; only the funding figure is unknown, which is
-      // exactly what `fundingKnown: false` already means.
-      let fundingKnown = isHolder && listed && saleRateBps !== null;
-      let requiredNow = 0n;
-      let requiredBound = 0n;
-      if (fundingKnown) {
-        try {
-          requiredNow = saleSettlementNow(live, saleRateBps!);
-          requiredBound = saleSettlementBound(live, saleRateBps!);
-        } catch (e) {
-          if (!(e instanceof SellerQuoteUnavailableError)) throw e;
-          fundingKnown = false;
-          requiredNow = 0n;
-          requiredBound = 0n;
-        }
-      }
       return {
         listed,
         loanActive,
         isHolder,
         offerId: resolvedId,
         offerIdVerifyFailed: verifyFailed,
-        saleRateBps,
         expiresAt: record?.expiresAt ?? null,
         accepted: record?.accepted ?? null,
         fillable,
         completable,
         cancelUnlocked:
           resolvedId !== null &&
-          saleRateBps !== null &&
+          record !== null &&
           latestBlock.timestamp >= createdAt + CANCEL_COOLDOWN_SECONDS,
-        requiredNow,
-        requiredBound,
-        fundingKnown,
-        // Raw shortfalls. Whether they are SHOWN depends on whether the sale
-        // can still complete and on whether this answer is current — see
-        // `saleFundingWatch`, which is the only place that decides it.
-        allowanceShort: fundingKnown && allowance < requiredNow,
-        balanceShort: fundingKnown && balance < requiredNow,
       };
     },
   });

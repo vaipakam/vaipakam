@@ -2374,7 +2374,9 @@ is the borrower's own money.
 - A stale linked offer, an unsupported linked-offer kind, a terminal loan, or a
   self-purchase by the current borrower is blocked before signing.
 - Seller settlement readiness is checked before asking the buyer to sign when
-  failure would otherwise produce an opaque on-chain error.
+  failure would otherwise produce an opaque on-chain error. The settlement is
+  deducted from the buyer's payment, so the check is that it fits inside that
+  payment; the seller's own wallet plays no part in it and is not read.
 
 ## VPFI Vault and Discounts
 
@@ -4080,40 +4082,36 @@ Its intended behaviour, as the test oracle for this surface:
   disclosure must say so rather than imply the lock vanishes at the
   expiry moment; the settlement (the larger
   of interest accrued by acceptance or the rate difference for the
-  remaining term — never both) is pulled from the seller's wallet
-  inside the buyer's transaction, so listing sets a standing
-  approval sized to cover settlement through the loan's term plus a
-  stated headroom, with only the actual amount ever pulled — a
-  listing that somehow outlives the headroom is flagged by the
-  funding watch with a top-up action; and a rate above the loan's
-  own attracts buyers at the seller's cost. An explicit
+  remaining term — never both) is deducted from the buyer's payment
+  inside the buyer's transaction before the rest reaches the seller,
+  so nothing is drawn from the seller's wallet and listing asks for no
+  token approval; and a rate above the loan's own attracts buyers at
+  the seller's cost. An explicit
   risk-and-terms acknowledgement is required before listing and is
   voided by any term change.
   The listing's standing surface is chain-authoritative (the lock on
   the position NFT), so a listing made on another device still
-  shows, still warns when the standing approval or balance no
-  longer covers settlement (with a verified restore action that
-  always clears the CURRENT live requirement plus fresh headroom,
-  not just the original bound), and still interlocks the
-  sell-into-offer exit; where the listing's identifier can't be
-  recovered (the recovery search covers the wallet's recent offers
-  and retries a bounded number of times), the funding state is
-  reported as unverifiable — never a false all-clear. The funding
-  verdicts and the cancel/restore actions bind to the wallet that
-  currently HOLDS the lender position — any other wallet on the
-  same device sees the listing's existence but no funding verdicts
-  and no actions. A momentary data failure never hides the listing
-  surface while the lock stands, and a listing whose loan has since
-  settled says so plainly and steers to cancel-to-unlock instead of
-  nagging about funding. The two lender exits share one write lock
-  so their transactions can never race each other, and an exit
-  listing whose posting fails after the approval was granted unwinds
-  that approval best-effort. Cancellation (which
-  unlocks the NFT, becomes available after the protocol's cancel
-  cooldown judged by chain time, and also removes the standing
-  approval — with a note that other standing uses of the same token
-  then need their approvals restored) is offered where the listing's
-  identifier is known; its outcome is reported on the page even
+  shows and still interlocks the sell-into-offer exit; the recovery
+  search for its identifier covers the wallet's recent offers and
+  retries a bounded number of times. There is nothing about the
+  seller's wallet for the surface to watch: the sale cannot fail for
+  want of the seller's funds. The cancel action binds to the wallet
+  that currently HOLDS the lender position — any other wallet on the
+  same device sees the listing's existence but no actions. A
+  momentary data failure never hides the listing surface while the
+  lock stands, but while the latest read has failed the surface
+  states nothing drawn from the listing's record or the loan's status
+  (taken, expired, settled, or an end time) and says instead that the
+  current state could not be read; a listing whose loan has since
+  settled says so plainly and steers to cancel-to-unlock. The two
+  lender exits share one write lock so their transactions can never
+  race each other. Cancellation (which
+  unlocks the NFT and becomes available after the protocol's cancel
+  cooldown judged by chain time) is offered where the listing's
+  identifier is known; it removes no approval, since the listing set
+  none, and its message points a seller whose listing was made by an
+  earlier app version (which did set one) at their wallet's
+  approvals view. Its outcome is reported on the page even
   though the listing card closes. When a listing ends off-page (a
   buyer accepted, or it was cancelled elsewhere), the page states
   that outcome once instead of letting the card silently vanish.
@@ -4131,10 +4129,9 @@ Its intended behaviour, as the test oracle for this surface:
   than implying it checked. Listings made before these figures existed
   recorded none and are not presented as broken. The exit chooser's
   pending-cost disclosure follows the same record: a listing that can
-  no longer complete stops carrying its costs as pending, and its
-  funding warnings stop too — but only on a current read: a refresh
-  that fails never silences a warning, since a loan can return to a
-  state where the sale can complete. An accepted listing is described
+  no longer complete stops carrying its costs as pending — but only on
+  a current read: a refresh that fails never drops them, since a loan
+  can return to a state where the sale can complete. An accepted listing is described
   as accepted, not as live; and the surface names the cancel action
   only where it offers one.
   The borrower's repayment surfaces are NOT held off — full and

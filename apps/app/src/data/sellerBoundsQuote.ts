@@ -39,8 +39,7 @@ import type { PublicClient } from "viem";
 import { DIAMOND_ABI_VIEM } from "../contracts/diamond";
 
 /** How long after the quote the listing transaction may be mined and still
- *  meet the reviewed floor: the review itself, the settlement approval and the
- *  listing transaction. Past it the listing is refused and the seller reviews
+ *  meet the reviewed floor: the review itself and the listing transaction. Past it the listing is refused and the seller reviews
  *  again — nothing is listed on worse terms than they saw. */
 export const QUOTE_CONFIRM_ALLOWANCE_SECONDS = 1_800n;
 

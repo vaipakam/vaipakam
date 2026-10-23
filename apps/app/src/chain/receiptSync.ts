@@ -107,9 +107,10 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
   // MatchBand is local to the acting tab; an own fill must refresh the
   // action gate in a second tab together with the book.
   'deskPreviewMatch',
-  // Codex #1228 r3 — the pending-card funding watches read the live
-  // allowance/balance; a re-approve/revoke in one tab must refresh the
-  // green/red funding verdict a second tab is showing.
+  // Codex #1228 r3 — the pending cards read live chain state: the
+  // refinance card's funding watch reads the allowance/balance, and a
+  // sale listing cancelled in one tab must refresh the card a second
+  // tab is showing.
   'loanSalePending',
   'refinancePending',
 ];

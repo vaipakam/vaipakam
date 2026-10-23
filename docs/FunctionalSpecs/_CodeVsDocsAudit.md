@@ -732,6 +732,38 @@ NEW authoritative read, and this one needs none for the ordinary case.
 Recorded so a later reader finds a known, bounded, safe-direction gap rather
 than concluding the card's rule is simply the lock.
 
+## The app asked a seller to fund a settlement the protocol takes from the buyer's payment (#2674)
+
+**Resolved in the #1810 / #1848 app change (2026-10-23), toward the spec.** No
+intent decision was needed. `ProjectDetailsREADME.md` ("Smart Contract
+Actions") says the sale flow should prefer net settlement, deducting
+forfeitures and shortfalls from the incoming proceeds rather than requiring the
+seller to source separate wallet liquidity. The protocol has done exactly that
+for listed sales since #1659: a buyer's acceptance escrows the payment, and the
+completion in the same transaction deducts the settlement before paying the
+rest to the seller, refusing the whole acceptance when the settlement is larger
+than the payment.
+
+The connected app had kept the model that preceded it. It set a standing token
+approval when a lender listed, watched the seller's allowance and balance with
+a restore action, revoked the approval on cancel, told the seller the
+settlement would be pulled from their wallet, and had the BUYER's review read
+the seller's allowance and balance before allowing a purchase. None of that
+reflected what the protocol does, and the last part was coupled to the first:
+removing the approval alone would have made every buyer's review refuse.
+Review of the bound-listing change found three defects in this machinery in
+three rounds, which is what showed the model itself was the fault.
+
+All of it was removed together. The listing sets no approval, the card watches
+nothing in the seller's wallet, every payout line reads "the buyer's payment,
+less the settlement", and the buyer's review checks that the settlement fits
+inside the payment. Two residues are stated rather than implied: approvals
+granted by earlier app versions stay in place until the seller revokes them
+(the cancel message says where), and the protocol still carries a wallet-pull
+branch for a completion with no escrowed payment, which only a seller-driven
+manual completion of a pre-escrow acceptance can reach and which the app does
+not drive.
+
 ## VPFI fee discounts: the spec was right and everything downstream of it was wrong (#1981)
 
 **Resolved 2026-08-31 by owner intent-decision: the code's behaviour is the

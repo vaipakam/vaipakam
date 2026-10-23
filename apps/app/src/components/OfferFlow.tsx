@@ -576,11 +576,11 @@ export function OfferFlow({ side }: { side: Side }) {
   // LOAN live and describes the position actually being bought. A
   // sale link is discriminated from a preclose-offset link by the
   // creator (sale vehicles are created by the loan's lender); offsets
-  // and unknown shapes keep the #951 block. Also preflights the
-  // SELLER's settlement funding: `completeLoanSale` pulls the seller's
-  // accrued-interest forfeit from the seller's WALLET, and a revoked
-  // standing approval fails as an opaque `OfferAcceptFailed` — a
-  // doomed buy must be blocked here with a plain reason instead.
+  // and unknown shapes keep the #951 block. Also checks that the
+  // seller's settlement fits inside the buyer's payment: the completion
+  // deducts it from that payment (net settlement, #1659) and refuses the
+  // whole acceptance when it is larger — a doomed buy must be blocked
+  // here with a plain reason instead.
   const saleReview = useQuery({
     queryKey: [
       'offerSaleReview',
@@ -607,13 +607,13 @@ export function OfferFlow({ side }: { side: Side }) {
     saleData?.kind === 'sale' ? saleData.live : null;
   // The sale review is signable only when every gate is POSITIVELY
   // clear: it is a sale link, the loan is Active and unmatured, and
-  // the seller's settlement funding covers completion right now.
+  // the seller's settlement fits inside the buyer's payment right now.
   const saleReviewReady =
     saleData?.kind === 'sale' &&
     saleLoanLive !== null &&
     saleLoanLive.status === 0 &&
     !saleData.matured &&
-    saleData.sellerCovered &&
+    saleData.settlementFits &&
     !saleData.selfBuyBlocked;
   // Re-consent when the review-material sale numbers MOVE (first
   // arrival included): a borrower partial-repay or collateral change
@@ -631,7 +631,7 @@ export function OfferFlow({ side }: { side: Side }) {
           saleData.dueAtSec,
           saleData.live.status,
           saleData.matured,
-          saleData.sellerCovered,
+          saleData.settlementFits,
           saleData.selfBuyBlocked,
         ].join(':')
       : null;
@@ -1917,12 +1917,12 @@ export function OfferFlow({ side }: { side: Side }) {
         throw new Error(copy.match.termsChanged);
       }
       if (saleReviewed) {
-        // The review's seller-funding/maturity/status gates ran on a
-        // CACHED read — the seller can revoke or spend their standing
-        // approval (or the loan can move) inside the refetch window,
-        // and `completeLoanSale` pulls from the seller's wallet DURING
-        // this accept. Re-run the same reader fresh so a doomed buy
-        // fails here, before any signature or buyer approval can mine.
+        // The review's settlement/maturity/status gates ran on a CACHED
+        // read — the loan can move inside the refetch window, and the
+        // completion that runs DURING this accept refuses a settlement
+        // larger than the buyer's payment. Re-run the same reader fresh so
+        // a doomed buy fails here, before any signature or buyer approval
+        // can mine.
         const fresh = await readSaleReviewLive(
           publicClient,
           walletChain.diamondAddress,
@@ -1939,8 +1939,8 @@ export function OfferFlow({ side }: { side: Side }) {
         if (fresh.selfBuyBlocked) {
           throw new Error(copy.match.saleSelfBuy);
         }
-        if (!fresh.sellerCovered) {
-          throw new Error(copy.match.saleSellerNotCovered);
+        if (!fresh.settlementFits) {
+          throw new Error(copy.match.saleSettlementExceedsPayment);
         }
       }
       // #1036 — re-verify both legs at SUBMIT time (fail closed): the
@@ -2712,7 +2712,7 @@ export function OfferFlow({ side }: { side: Side }) {
               </div>
             ) : (
               <div className="banner banner-warn" role="alert">
-                <span className="banner-body">{copy.match.saleSellerNotCovered}</span>
+                <span className="banner-body">{copy.match.saleSettlementExceedsPayment}</span>
               </div>
             )
           ) : null}
@@ -3090,11 +3090,12 @@ export function OfferFlow({ side }: { side: Side }) {
 // on — the review query AND the submit-time recheck call this, so the
 // blocked-state reasons and the pre-signature guard can never drift.
 // Reads the linked loan live, discriminates sale-vs-offset by creator
-// (sale vehicles are created by the loan's lender), and preflights the
-// SELLER's settlement funding: `completeLoanSale` pulls the seller's
-// accrued-interest forfeit from the seller's WALLET during the buyer's
-// transaction, and a revoked/spent standing approval fails on-chain as
-// an opaque `OfferAcceptFailed`.
+// (sale vehicles are created by the loan's lender), and checks the
+// seller's settlement against the buyer's payment: the completion in the
+// buyer's transaction deducts it from that payment (net settlement, #1659)
+// and refuses with `RateShortfallTooHigh` — surfaced as an opaque
+// `OfferAcceptFailed` — when it is larger. Nothing is drawn from the
+// seller's wallet, so the seller's allowance and balance are not read.
 type SaleReview =
   | { kind: 'other' }
   | {
@@ -3103,7 +3104,9 @@ type SaleReview =
       live: LoanLive;
       dueAtSec: number;
       matured: boolean;
-      sellerCovered: boolean;
+      /** The settlement a completion would deduct right now is no larger
+       *  than the buyer's payment (the loan's live principal). */
+      settlementFits: boolean;
       /** The connected wallet is the loan's CURRENT borrower —
        *  `LoanFacet.initiateLoan` rejects a self-buy (`acceptor ==
        *  ownerOf(borrowerTokenId)`), so signing must be blocked with a
@@ -3111,23 +3114,6 @@ type SaleReview =
       selfBuyBlocked: boolean;
       buyerInterest: bigint;
     };
-
-const ERC20_ALLOWANCE_ABI = [
-  {
-    name: 'allowance',
-    type: 'function',
-    stateMutability: 'view',
-    inputs: [{ type: 'address' }, { type: 'address' }],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    name: 'balanceOf',
-    type: 'function',
-    stateMutability: 'view',
-    inputs: [{ type: 'address' }],
-    outputs: [{ type: 'uint256' }],
-  },
-] as const;
 
 async function readSaleReviewLive(
   client: NonNullable<ReturnType<typeof usePublicClient>>,
@@ -3146,51 +3132,32 @@ async function readSaleReviewLive(
   const saleRateBps = BigInt(offerRateBps(offer));
   const dueAtSec = Number(live.startTime + live.durationDays * 86_400n);
   const matured = block.timestamp >= BigInt(dueAtSec);
-  // Same definition the listing flow approved against
-  // (`saleSettlementNow`), read from the wallet the pull binds to
-  // (the stored lender — consolidated to the NFT holder at listing).
-  const requiredNow = saleSettlementNow(live, saleRateBps);
-  const [allowance, balance, currentBorrower] = await Promise.all([
-    client.readContract({
-      address: live.principalAsset,
-      abi: ERC20_ALLOWANCE_ABI,
-      functionName: 'allowance',
-      args: [live.lender, diamondAddress],
-    }) as Promise<bigint>,
-    client.readContract({
-      address: live.principalAsset,
-      abi: ERC20_ALLOWANCE_ABI,
-      functionName: 'balanceOf',
-      args: [live.lender],
-    }) as Promise<bigint>,
-    // The CURRENT borrower — the self-buy guard on-chain keys on the
-    // borrower-NFT holder, not the stored origination borrower. FAIL
-    // CLOSED on a read failure: a stored-borrower fallback would
-    // under-block a transferred position's current borrower, letting
-    // a doomed self-buy reach signing. A throw here surfaces as the
-    // review's named check-failed state with a retry (query path) or
-    // aborts before any signature/approval (submit path).
-    client.readContract({
-      address: diamondAddress,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'ownerOf',
-      args: [live.borrowerTokenId],
-    }) as Promise<`0x${string}`>,
-  ]);
+  // The same figure the seller's listing review shows
+  // (`saleSettlementNow`): the larger of the interest the seller gives up
+  // and the rate top-up owed to the buyer.
+  const settlementNow = saleSettlementNow(live, saleRateBps);
+  // The CURRENT borrower — the self-buy guard on-chain keys on the
+  // borrower-NFT holder, not the stored origination borrower. FAIL
+  // CLOSED on a read failure: a stored-borrower fallback would
+  // under-block a transferred position's current borrower, letting
+  // a doomed self-buy reach signing. A throw here surfaces as the
+  // review's named check-failed state with a retry (query path) or
+  // aborts before any signature/approval (submit path).
+  const currentBorrower = (await client.readContract({
+    address: diamondAddress,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'ownerOf',
+    args: [live.borrowerTokenId],
+  })) as `0x${string}`;
   return {
     kind: 'sale',
     loanId,
     live,
     dueAtSec,
     matured,
-    // `_acceptOffer` pays the buyer's principal to the seller's WALLET
-    // BEFORE `completeLoanSaleInternal` runs, so the settlement pull
-    // can spend those just-received proceeds — the seller's PRE-sale
-    // balance only needs to cover what the principal doesn't. The
-    // allowance can't be topped up mid-transaction, so it must cover
-    // the full pull on its own.
-    sellerCovered:
-      allowance >= requiredNow && balance + live.principal >= requiredNow,
+    // The buyer pays the live principal into escrow and the completion
+    // takes the settlement out of it, so the escrow must cover it.
+    settlementFits: settlementNow <= live.principal,
     selfBuyBlocked:
       buyer !== undefined &&
       currentBorrower.toLowerCase() === buyer.toLowerCase(),

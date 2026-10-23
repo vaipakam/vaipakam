@@ -9,11 +9,15 @@
  *  listing ended without a buyer, from the listing's own record rather
  *  than from the lock (which still stands).
  *
+ *  The listing asks the seller for no token approval (#2674): a buyer's
+ *  payment is escrowed and the settlement is deducted from it (net
+ *  settlement, #1659), so the seller's allowance is checked unchanged.
+ *
  *  Both new selectors are ASSERTED routed, as spec 26 does for its own:
  *  the e2e chain carries this tree's contracts (#2334), so a missing route
  *  is a regression here, not something to skip around.
  */
-import { toFunctionSelector } from "viem";
+import { erc20Abi, toFunctionSelector } from "viem";
 import { test, expect } from "../lib/wallet-fixture";
 import {
   postLenderOffer,
@@ -74,6 +78,21 @@ test("listing form states the minimum, lists bound to it, and the card reports e
     timeout: 60_000,
   });
 
+  const loan = (await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: "getLoanDetails",
+    args: [loanId],
+  })) as { lenderTokenId: bigint; principalAsset: `0x${string}` };
+  const allowanceNow = () =>
+    pub.readContract({
+      address: loan.principalAsset,
+      abi: erc20Abi,
+      functionName: "allowance",
+      args: [lender.account.address, DIAMOND],
+    });
+  const allowanceBefore = await allowanceNow();
+
   const review = saleCard.getByRole("button", { name: /review listing/i });
   await expect(review).toBeEnabled({ timeout: 30_000 });
   await review.click();
@@ -81,6 +100,8 @@ test("listing form states the minimum, lists bound to it, and the card reports e
   await expect(
     saleCard.getByText(/the listing records this minimum/i),
   ).toBeVisible();
+  // ...and says the settlement comes out of the buyer's payment.
+  await expect(saleCard.getByText(/nothing from your wallet/i)).toBeVisible();
   const confirm = saleCard.getByRole("button", {
     name: /confirm — list my position/i,
   });
@@ -91,13 +112,7 @@ test("listing form states the minimum, lists bound to it, and the card reports e
   });
 
   // CONFIRM THE SETUP FROM CHAIN STATE (#2183): the lender position is
-  // locked for EarlyWithdrawalSale (LockReason 2).
-  const loan = (await pub.readContract({
-    address: DIAMOND,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: "getLoanDetails",
-    args: [loanId],
-  })) as { lenderTokenId: bigint };
+  // locked for EarlyWithdrawalSale (LockReason 2), and no approval was set.
   const lock = await pub.readContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
@@ -105,6 +120,10 @@ test("listing form states the minimum, lists bound to it, and the card reports e
     args: [loan.lenderTokenId],
   });
   expect(Number(lock), "the listing should lock the lender position").toBe(2);
+  expect(
+    await allowanceNow(),
+    "listing must not change the seller's token approval",
+  ).toBe(allowanceBefore);
 
   // Standing card: open to buyers, plus the note on what can make a live
   // listing unbuyable and what the app cannot check.

@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  saleFundingWatch,
+  saleListingCardView,
   saleListingVerdicts,
   type LoanSalePendingState,
 } from "./loanSalePending";
@@ -71,66 +71,62 @@ describe("saleListingVerdicts", () => {
   });
 });
 
-const watched = (over: Partial<LoanSalePendingState>): LoanSalePendingState => ({
+const card = (over: Partial<LoanSalePendingState>): LoanSalePendingState => ({
   listed: true,
   loanActive: true,
   isHolder: true,
   offerId: "5",
   offerIdVerifyFailed: false,
-  saleRateBps: 500n,
   expiresAt: 2_000n,
   accepted: false,
   fillable: "yes",
   completable: "yes",
   cancelUnlocked: true,
-  requiredNow: 10n,
-  requiredBound: 20n,
-  fundingKnown: true,
-  allowanceShort: true,
-  balanceShort: true,
   ...over,
 });
 
-describe("saleFundingWatch", () => {
-  it("shows the shortfalls while the sale can still complete", () => {
-    expect(saleFundingWatch(watched({}), false)).toEqual({
-      unknown: false,
-      allowanceShort: true,
-      balanceShort: true,
-    });
-  });
-
-  it("silences every funding line, the unknown warning included, once an answered verdict says no", () => {
+describe("saleListingCardView", () => {
+  it("states each answered record", () => {
+    expect(saleListingCardView(card({}), false)).toBe("open");
     expect(
-      saleFundingWatch(
-        watched({ fillable: "no", completable: "no", fundingKnown: false }),
+      saleListingCardView(
+        card({ accepted: true, fillable: "no", completable: "yes" }),
         false,
       ),
-    ).toEqual({ unknown: false, allowanceShort: false, balanceShort: false });
+    ).toBe("accepted");
+    expect(
+      saleListingCardView(card({ fillable: "no", completable: "no" }), false),
+    ).toBe("expired");
+    expect(
+      saleListingCardView(
+        card({ loanActive: false, fillable: "no", completable: "no" }),
+        false,
+      ),
+    ).toBe("settled");
   });
 
-  it("never lets a stale 'no' silence a warning", () => {
+  it("says nothing it did not read when the record was not read", () => {
     expect(
-      saleFundingWatch(watched({ fillable: "no", completable: "no" }), true),
-    ).toEqual({ unknown: false, allowanceShort: true, balanceShort: true });
-    expect(
-      saleFundingWatch(
-        watched({
-          completable: "no",
-          fundingKnown: false,
-          allowanceShort: false,
-          balanceShort: false,
+      saleListingCardView(
+        card({
+          expiresAt: null,
+          accepted: null,
+          fillable: "unknown",
+          completable: "unknown",
         }),
-        true,
-      ).unknown,
-    ).toBe(true);
+        false,
+      ),
+    ).toBe("unread");
   });
 
-  it("shows nothing to a wallet that does not hold the position", () => {
-    expect(saleFundingWatch(watched({ isHolder: false }), false)).toEqual({
-      unknown: false,
-      allowanceShort: false,
-      balanceShort: false,
-    });
+  it("makes no record claim from a stale answer, whatever it said", () => {
+    for (const over of [
+      {},
+      { accepted: true, fillable: "no" as const },
+      { fillable: "no" as const, completable: "no" as const },
+      { loanActive: false, fillable: "no" as const, completable: "no" as const },
+    ]) {
+      expect(saleListingCardView(card(over), true)).toBe("stale");
+    }
   });
 });
