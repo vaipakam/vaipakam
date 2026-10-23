@@ -79,6 +79,15 @@
  *   node contracts/script/storage-layout-guard.mjs check                 golden is fresh + tree complete
  *   node contracts/script/storage-layout-guard.mjs check --base <file>   ... and append-only vs <file>
  *   ... check --base <file> --honour-acks                                ... with breaks.ack.json (CI only)
+ *   node contracts/script/storage-layout-guard.mjs record --to <file>    golden is fresh, then copy it to <file>
+ *
+ * `record` writes a chain's storage-layout record (#2092 item 1): the forge
+ * scripts that deploy or change code in place call it through ffi, passing
+ * `contracts/deployments/<slug>/storage-layout.json`, and an in-place change
+ * later runs `check --base` against that file. It copies the committed golden
+ * file only after proving it describes the code being built, so a record can
+ * never claim a layout the checkout does not compile. It never compares
+ * against anything: the comparison is `check`'s job.
  *
  * `--out <dir>` reads an existing artifact directory instead of building one
  * (tests and diagnosis). The artifacts must carry both outputs, and are still
@@ -1020,7 +1029,7 @@ export function readAcks(text) {
 
 // ─── CLI ─────────────────────────────────────────────────────────────────
 
-const USAGE = 'usage: storage-layout-guard.mjs write [--out <dir>] | check [--out <dir>] [--base <golden> [--honour-acks]]';
+const USAGE = 'usage: storage-layout-guard.mjs write [--out <dir>] | check [--out <dir>] [--base <golden> [--honour-acks]] | record --to <file> [--out <dir>]';
 
 /**
  * Parse the command line strictly: one mode, known flags only, each at most
@@ -1029,9 +1038,9 @@ const USAGE = 'usage: storage-layout-guard.mjs write [--out <dir>] | check [--ou
  */
 export function parseArgs(argv) {
   const [mode, ...rest] = argv;
-  if (mode !== 'write' && mode !== 'check') throw new Error(USAGE);
+  if (mode !== 'write' && mode !== 'check' && mode !== 'record') throw new Error(USAGE);
   const opts = { mode };
-  const valued = { '--out': 'out', '--base': 'base' };
+  const valued = { '--out': 'out', '--base': 'base', '--to': 'to' };
   for (let i = 0; i < rest.length; i++) {
     const flag = rest[i];
     const key = valued[flag] ?? (flag === '--honour-acks' ? 'honourAcks' : undefined);
@@ -1046,6 +1055,9 @@ export function parseArgs(argv) {
     opts[key] = value;
   }
   if (mode === 'write' && (opts.base || opts.honourAcks)) throw new Error(`write takes no --base or --honour-acks\n${USAGE}`);
+  if (mode === 'record' && (opts.base || opts.honourAcks)) throw new Error(`record takes no --base or --honour-acks: it records, check compares\n${USAGE}`);
+  if (mode === 'record' && !opts.to) throw new Error(`record needs --to <file>\n${USAGE}`);
+  if (mode !== 'record' && opts.to) throw new Error(`--to applies only to record\n${USAGE}`);
   if (opts.honourAcks && !opts.base) throw new Error('--honour-acks applies only to a --base comparison');
   return opts;
 }
@@ -1089,7 +1101,8 @@ export function main(argv = process.argv.slice(2)) {
   let rc = 0;
 
   // 1. The committed golden describes the code being built. Without this, the
-  //    append-only comparison below would be checking a file, not the code.
+  //    append-only comparison below would be checking a file, not the code,
+  //    and a record would describe a layout the checkout does not compile.
   const stale = [...missingLines(committed.layout ?? [], golden.layout), ...missingLines(golden.layout, committed.layout ?? [])];
   if (committed.format !== GOLDEN_FORMAT || stale.length || JSON.stringify(committed.roots) !== JSON.stringify(golden.roots)) {
     console.error(`storage-layout-guard: the committed golden file does not match the compiled layout (${stale.length} line(s) differ). Regenerate it in this change:\n  node contracts/script/storage-layout-guard.mjs write`);
@@ -1097,6 +1110,13 @@ export function main(argv = process.argv.slice(2)) {
     rc = 1;
   } else {
     console.log(`storage-layout-guard: golden file is current (${golden.layout.length} lines, ${golden.roots.length} roots)`);
+  }
+
+  if (opts.mode === 'record') {
+    if (rc) return fail('no record written: the golden file must describe the code being built');
+    writeFileSync(opts.to, committedText);
+    console.log(`storage-layout-guard: recorded the layout to ${opts.to}`);
+    return 0;
   }
 
   // 2. Append-only against a base golden (CI passes the PR base's file).

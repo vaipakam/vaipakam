@@ -33,12 +33,20 @@
  *      "none" (see `readId`).
  *
  * WHERE THE POLICY LIVES. `activityRefsPolicy.json`, a plain data file, so
- * this module and the guardrail script (`scripts/lib/activity-refs-surface.mjs`)
- * read the same patterns, choices and exemptions instead of two copies that
- * could drift. The guardrail validates the policy against the compiled ABI
- * (dead entries, stale aliases, malformed shapes), and
- * `test/activityRefsCoverage.test.ts` executes this module for every
- * compiled event.
+ * this module and the guardrail script
+ * (`apps/indexer/scripts/lib/activity-refs-surface.mjs`) read the same
+ * patterns, choices and exemptions instead of two copies that could drift.
+ * The guardrail validates the policy against the compiled ABI (dead entries,
+ * stale aliases, malformed shapes), and
+ * `apps/indexer/test/activityRefsCoverage.test.ts` executes this module for
+ * every compiled event.
+ *
+ * WHY IT LIVES IN THE SHARED LIBRARY (#2658). The indexer files every row by
+ * this rule, and the app's Activity page receives a wallet's rows through it,
+ * so the app's label catalog must name every kind it files. The app's test
+ * reads `refScopedKinds()` here rather than re-deriving the rule from the
+ * policy file, which is how a second copy would drift (it did: a test-side
+ * copy ignored `extraAliases`).
  *
  * Shapes this module will not read, and so leaves NULL, each reported by the
  * guardrail as an ABI problem rather than tolerated: an event name with two
@@ -169,4 +177,11 @@ export function activityRefs(
     loanId: resolved?.loanId !== undefined ? readId(args, resolved.loanId) : null,
     offerId: resolved?.offerId !== undefined ? readId(args, resolved.offerId) : null,
   };
+}
+
+/** Every event kind filed under a loan or an offer: each kind the rule
+ *  resolves at least one reference column for. Read by the app's test that
+ *  its Activity label catalog names every kind the indexer files (#2658). */
+export function refScopedKinds(): ReadonlySet<string> {
+  return new Set(RESOLVED.keys());
 }

@@ -147,7 +147,7 @@ export function Desk() {
   }, [book.data, signedBook.data, days, address, readChain.chainId, nowSec]);
   const signedDepth = signedDepthOf(signedBook, indexerConfigured());
 
-  const lastFill = tape.data === undefined ? undefined : (tape.data?.[0] ?? null);
+  const lastFill = tape.data === undefined ? undefined : (tape.data?.fills[0] ?? null);
 
   return (
     // The desk-container class establishes a size container so the
@@ -229,7 +229,7 @@ export function Desk() {
           </Suspense>
           {pair !== null ? (
             <TapePanel
-              fills={tape.data}
+              tape={tape.data}
               loading={tape.isLoading}
               decimals={lendingMeta.data?.decimals}
               symbol={lendingMeta.data?.symbol}

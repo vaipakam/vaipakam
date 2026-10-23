@@ -138,7 +138,7 @@ describe('activity-refs coverage — executed against the real mapper', () => {
               gaps.push(
                 `${allowKey} — mapped from one of ${aliasPaths.join(', ')}, but no intended ` +
                   'alias is recorded; add an `intendedAlias` entry, with its reason, to ' +
-                  'src/activityRefsPolicy.json',
+                  'packages/lib/src/activityRefsPolicy.json',
               );
             } else {
               const intended = INTENDED_REFERENCE_ALIAS[allowKey];
@@ -162,7 +162,7 @@ describe('activity-refs coverage — executed against the real mapper', () => {
                 `Allowlist '${allowKey}' with a reason saying which, or reshape the event.`
             : `${allowKey} — stores NULL, so /activity?${field}=N cannot find the row. With ` +
                 'several candidate inputs, record the choice under `intendedAlias` in ' +
-                'src/activityRefsPolicy.json; a companion payload goes under `notScoped`, with a reason.',
+                'packages/lib/src/activityRefsPolicy.json; a companion payload goes under `notScoped`, with a reason.',
         );
       }
     }

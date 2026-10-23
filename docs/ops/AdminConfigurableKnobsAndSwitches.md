@@ -506,6 +506,9 @@ Registry doesn't have an entry. Address-only.
 Address of the chain's L2 sequencer
 uptime feed (Arbitrum, Optimism). Zero means "no sequencer-down
 guard" — appropriate on L1s but a misconfig on L2s. Address-only.
+While set, price reads are held back while the sequencer is down and
+for a fixed one-hour grace period after it comes back up
+(`SEQUENCER_GRACE_PERIOD`, a compile-time constant).
 
 ### Chainlink Feed Registry / USD denominator / ETH denominator / WETH contract / ETH-USD feed / Uniswap V3 factory
 
@@ -1007,6 +1010,22 @@ All three default `false` post-deploy. Governance flips each on once
 the corresponding mechanic is ready to ship. No range bound (bool).
 Each flip emits a config event so off-chain monitoring can correlate
 behavior changes to the governance action.
+
+### Standing-intent fill switch (`lenderIntentEnabled`)
+
+Master kill-switch for the standing lending-intent fill path
+(`matchIntent`). Defaults `false` post-deploy: lenders can register
+intents, but no intent fill executes until governance turns it on. Same
+ship-off / governance-on / break-glass-off pattern as the range-order
+flags above. No range bound (bool).
+
+- **Getter:** `LenderIntentFacet.isLenderIntentEnabled() -> bool`
+- **Setter:** `LenderIntentFacet.setLenderIntentEnabled(bool)`
+  (`ADMIN_ROLE`; timelocked post-handover) → emits
+  `LenderIntentEnabledSet`.
+- **Independent of `cfgAutoLendEnabled`.** That flag only refuses new
+  auto-lend opt-ins; it stops no fill. To stop intent fills in an
+  incident, flip THIS switch off.
 
 ## Liquidator-buys-at-discount path (FlashLoanLiquidationPath.md)
 

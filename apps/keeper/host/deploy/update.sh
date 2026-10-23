@@ -6,9 +6,14 @@
 #
 #   1. fetches the deploy branch into root's own checkout, so no other
 #      account can redirect where the code comes from;
-#   2. stops if `current` is already that commit's release;
-#   3. exports exactly that commit with `git archive` and builds it with
-#      that commit's own build.sh in a throwaway sandbox: a fresh dynamic
+#   2. stops if `current` is already that commit's release, or if the
+#      source a build of that commit would be given is byte-identical to the
+#      running release's (build-source.sh digest, #2651): it would build the
+#      same bundle;
+#   3. exports exactly that commit's build source (the paths its
+#      build-paths lists) with `git archive` and builds it with
+#      that commit's own build.sh, at the lowest CPU priority so the keeper
+#      always comes first, in a throwaway sandbox: a fresh dynamic
 #      user that cannot read
 #      the env file or write the releases, keeps nothing once it ends (so no
 #      build can leave tooling behind for the next), and runs the new bundle
@@ -37,7 +42,10 @@
 # and the keeper unit refuses to start unless it matches current/SOURCE_COMMIT.
 # So however a deploy is interrupted, the keeper never starts one commit's
 # bundle under another commit's units; every run first puts back the kit of
-# whatever `current` is, which also makes the keeper startable again.
+# whatever `current` is, which also makes the keeper startable again. It does
+# the same when the installed kit differs from that release's in any file, so
+# a kit file an older updater did not know to install (vaipakam.slice, say)
+# goes in at the next run rather than at the next build.
 #
 # `update.sh --kit-only [<commit>]` does only that last step, under the same
 # lock, for the installer: it installs the kit of the running release, or of
@@ -100,13 +108,31 @@ extract_kit() {
   fi
   echo "$dir"
 }
+# The kit's systemd units. A kit from before vaipakam.slice existed has none,
+# and installing that kit (a rollback) removes it; every other unit must be
+# in every kit.
+KIT_UNITS="vaipakam.slice vaipakam-keeper.service vaipakam-keeper-update.service vaipakam-keeper-update.timer"
+OPTIONAL_UNITS="vaipakam.slice"
+# The units the keeper itself runs under: a change to either restarts it.
+KEEPER_UNITS="vaipakam.slice vaipakam-keeper.service"
+has_word() { [[ " $1 " == *" $2 "* ]]; }
+
 # Install the units and update.sh of an extracted kit, then reload systemd.
-# Sets keeper_unit_changed=yes when the keeper's own unit changed.
+# Sets keeper_unit_changed=yes when a unit the keeper runs under changed.
 keeper_unit_changed=no
 install_kit() {
-  local dir="$1" unit
-  for unit in vaipakam-keeper.service vaipakam-keeper-update.service vaipakam-keeper-update.timer; do
-    if place "$dir/$unit" "/etc/systemd/system/$unit" 644 && [ "$unit" = vaipakam-keeper.service ]; then
+  local dir="$1" unit changed
+  for unit in $KIT_UNITS; do
+    changed=no
+    if [ ! -f "$dir/$unit" ] && has_word "$OPTIONAL_UNITS" "$unit"; then
+      if [ -e "/etc/systemd/system/$unit" ]; then
+        rm -f "/etc/systemd/system/$unit"
+        changed=yes
+      fi
+    elif place "$dir/$unit" "/etc/systemd/system/$unit" 644; then
+      changed=yes
+    fi
+    if [ "$changed" = yes ] && has_word "$KEEPER_UNITS" "$unit"; then
       keeper_unit_changed=yes
     fi
   done
@@ -115,6 +141,31 @@ install_kit() {
   # recorded as installed only after this.
   systemctl daemon-reload
   place "$dir/update.sh" "$ROOT/update.sh" 755 || true
+  # The digest the next run compares before it builds. A kit from before it
+  # existed takes the copy away, so that run builds, as it always did.
+  if [ -f "$dir/build-source.sh" ]; then
+    place "$dir/build-source.sh" "$ROOT/build-source.sh" 755 || true
+  else
+    rm -f "$ROOT/build-source.sh"
+  fi
+}
+# Whether every file of an extracted kit is the installed one, and nothing a
+# kit may lack is installed without it.
+kit_installed() {
+  local dir="$1" unit
+  for unit in $KIT_UNITS; do
+    if [ -f "$dir/$unit" ]; then
+      cmp -s "$dir/$unit" "/etc/systemd/system/$unit" || return 1
+    elif [ -e "/etc/systemd/system/$unit" ]; then
+      return 1
+    fi
+  done
+  cmp -s "$dir/update.sh" "$ROOT/update.sh" || return 1
+  if [ -f "$dir/build-source.sh" ]; then
+    cmp -s "$dir/build-source.sh" "$ROOT/build-source.sh" || return 1
+  elif [ -e "$ROOT/build-source.sh" ]; then
+    return 1
+  fi
 }
 # Record that <commit>'s kit is installed and loaded.
 record_kit() {
@@ -152,11 +203,26 @@ if [ "${1:-}" = --kit-only ]; then
 fi
 
 # Put back the kit of the release in use, if an interrupted run left another
-# one (or none) recorded. Until this runs, the keeper refuses to start.
+# one (or none) recorded, or if what is installed differs from that kit: an
+# older updater installed this release without a file it did not know of.
+# Until a recorded kit is put back, the keeper refuses to start.
+# The comparison is best-effort: if the release's kit cannot be extracted
+# (its commit no longer in the checkout, say), the run goes on as it would
+# have without it. A recorded kit that is not the release's still has to be
+# put back, and a failure to extract it then stops the run as always.
 running="$(running_commit)"
-if [ -n "$running" ] && [ "$(cat "$KIT_COMMIT" 2>/dev/null || true)" != "$running" ]; then
+reinstall=no
+kit_dir=""
+if [ -n "$running" ]; then
+  if [ "$(cat "$KIT_COMMIT" 2>/dev/null || true)" != "$running" ]; then
+    reinstall=yes
+  elif kit_dir="$(extract_kit "$running")" && ! kit_installed "$kit_dir"; then
+    reinstall=yes
+  fi
+fi
+if [ "$reinstall" = yes ]; then
   log "installing the units of $running, which is the release in use"
-  kit_dir="$(extract_kit "$running")"
+  if [ -z "$kit_dir" ]; then kit_dir="$(extract_kit "$running")"; fi
   rm -f "$KIT_COMMIT"
   install_kit "$kit_dir"
   record_kit "$running"
@@ -178,15 +244,51 @@ if [ "$(readlink -f "$ROOT/current" 2>/dev/null || true)" = "$release" ]; then
   exit 0
 fi
 
+# A commit whose build source is byte-identical to the running release's
+# would build that release's bundle again. Most merges to the branch are such
+# a commit, and a build is the heaviest thing this machine does (#2651), so
+# it is skipped. `checked` remembers the last pair found identical, so a
+# branch that moves only elsewhere is compared, and logged, once per commit
+# rather than every run. A digest that cannot be taken (a commit from before
+# build-paths, say) means a build.
+if [ -n "$running" ] && [ -x "$ROOT/build-source.sh" ]; then
+  pair="$running $target"
+  if [ "$(cat "$ROOT/checked" 2>/dev/null || true)" = "$pair" ]; then
+    exit 0
+  fi
+  running_digest="$("$ROOT/build-source.sh" digest "$REPO" "$running" "$WORK/digest-running" 2>/dev/null || true)"
+  target_digest="$("$ROOT/build-source.sh" digest "$REPO" "$target" "$WORK/digest-target" 2>/dev/null || true)"
+  if [ -n "$running_digest" ] && [ "$running_digest" = "$target_digest" ]; then
+    log "$target gives the build the same source as $running; staying on $running"
+    echo "$pair" > "$ROOT/checked.new"
+    mv -Tf "$ROOT/checked.new" "$ROOT/checked"
+    exit 0
+  fi
+fi
+
 log "building $BRANCH at $target"
 tmp="$WORK/build"
 mkdir -m 700 "$tmp"
-git -C "$REPO" archive --format=tar -o "$tmp/src.tar" "$target"
-chmod 644 "$tmp/src.tar"
 # This commit's own kit: its build.sh builds it, and its units and updater go
 # in with it below. Checked before the build, so a commit whose updater does
 # not parse costs no build and changes nothing.
 kit_dir="$(extract_kit "$target")"
+# The build is given only the paths this commit's build-paths lists, the same
+# export the digest above compares (#2651). A commit from before build-paths
+# gets the whole tree, as before; a build-paths that cannot be read fails the
+# deploy rather than falling back.
+source_status=3
+if [ -f "$kit_dir/build-source.sh" ]; then
+  source_status=0
+  bash "$kit_dir/build-source.sh" export "$REPO" "$target" "$tmp/src.tar" || source_status=$?
+fi
+if [ "$source_status" -eq 3 ]; then
+  git -C "$REPO" archive --format=tar -o "$tmp/src.tar" "$target"
+elif [ "$source_status" -ne 0 ]; then
+  echo "[keeper-update] could not export $target's build source" >&2
+  exit 1
+fi
+chmod 644 "$tmp/src.tar"
 build_script="$kit_dir/build.sh"
 # The one directory the sandbox may write. `$tmp` itself stays 0700, so no
 # other account on the machine can reach it; the sandbox sees only the
@@ -209,7 +311,8 @@ systemd-run --quiet --wait --pipe --collect \
   -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p PrivateDevices=yes \
   -p NoNewPrivileges=yes -p ProtectKernelTunables=yes -p ProtectKernelModules=yes \
   -p ProtectControlGroups=yes -p RestrictNamespaces=yes -p LockPersonality=yes \
-  -p Nice=10 \
+  -p OOMScoreAdjust=500 \
+  -p Nice=19 -p CPUWeight=1 -p IOWeight=1 -p IOSchedulingClass=idle \
   /usr/bin/env -i \
   HOME=/tmp/home \
   COREPACK_HOME=/tmp/corepack \

@@ -4,6 +4,8 @@
  * changes in `migrations/*.sql` touch only this file.
  */
 
+import type { PublishedRailRow } from '@vaipakam/push';
+
 export type Band = 'healthy' | 'warn' | 'alert' | 'critical';
 
 export interface UserThresholds {
@@ -355,6 +357,19 @@ export async function consumeTelegramLinkCode(
  *  notify_maturity_approaching column. */
 function isMissingTestAlertColumn(err: unknown): boolean {
   return /no such column|has no column named/i.test(String(err));
+}
+
+/** #2667 — the row another sender published about its Push rail (the
+ *  keeper's), or null when there is none. Decoded by the caller through the
+ *  shared rail's `readPublishedRail`, never trusted raw. */
+export async function readPublishedPushRail(
+  db: D1Database,
+  sender: 'keeper',
+): Promise<PublishedRailRow | null> {
+  return db
+    .prepare(`SELECT usable, reason, channel, observed_at FROM push_rail_status WHERE sender = ?`)
+    .bind(sender)
+    .first<PublishedRailRow>();
 }
 
 /** #2251 — whether this wallet/chain already has a Push opt-in stored, so a

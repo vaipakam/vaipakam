@@ -6,11 +6,47 @@ import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {LibTreasuryYield} from "../src/libraries/LibTreasuryYield.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
+
+/// @dev Mock Aave V3 `PoolAddressesProvider` — names one pool back.
+contract MockPoolAddressesProvider {
+    address public pool;
+
+    constructor(address pool_) {
+        pool = pool_;
+    }
+
+    function getPool() external view returns (address) {
+        return pool;
+    }
+}
 
 /// @dev Mock Aave V3 Pool — accepts supply, records balance,
-///      returns same amount on withdraw.
+///      returns same amount on withdraw. Registered by its own
+///      provider, so it passes the canonical-pool check (#965).
+///      `pullShortBy` / `reportOverride` let a test make the pool
+///      take less than supplied or report a different withdrawal.
 contract MockAavePool {
     mapping(address => uint256) public supplied;
+    address public ADDRESSES_PROVIDER;
+    uint256 public pullShortBy;
+    uint256 public reportOverride;
+
+    constructor() {
+        ADDRESSES_PROVIDER = address(new MockPoolAddressesProvider(address(this)));
+    }
+
+    function setProvider(address p) external {
+        ADDRESSES_PROVIDER = p;
+    }
+
+    function setPullShortBy(uint256 v) external {
+        pullShortBy = v;
+    }
+
+    function setReportOverride(uint256 v) external {
+        reportOverride = v;
+    }
 
     function supply(
         address asset,
@@ -18,7 +54,7 @@ contract MockAavePool {
         address /* onBehalfOf */,
         uint16 /* referralCode */
     ) external {
-        ERC20Mock(asset).transferFrom(msg.sender, address(this), amount);
+        ERC20Mock(asset).transferFrom(msg.sender, address(this), amount - pullShortBy);
         supplied[asset] += amount;
     }
 
@@ -30,7 +66,7 @@ contract MockAavePool {
         require(supplied[asset] >= amount, "insufficient");
         supplied[asset] -= amount;
         ERC20Mock(asset).transfer(to, amount);
-        return amount;
+        return reportOverride == 0 ? amount : reportOverride;
     }
 }
 
@@ -109,6 +145,22 @@ contract TreasuryYieldTest is SetupTest {
             vm.store(address(diamond), valueSlot, prior);
         }
         revert("could not locate treasuryBalances slot");
+    }
+
+    /// @dev Force `cfgTreasuryYieldVenue[token]` to a value the setter
+    ///      refuses, to stand in for a venue constant added to the
+    ///      setter without a routing branch (#964). Same probe as
+    ///      `_seedTreasuryBalance`, read back through the venue getter.
+    function _forceVenue(address token, uint8 venue) internal {
+        bytes32 baseSlot = 0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e00;
+        for (uint256 i = 0; i < 5000; ++i) {
+            bytes32 valueSlot = keccak256(abi.encode(token, bytes32(uint256(baseSlot) + i)));
+            bytes32 prior = vm.load(address(diamond), valueSlot);
+            vm.store(address(diamond), valueSlot, bytes32(uint256(venue)));
+            if (_t().getTreasuryYieldVenue(token) == venue) return;
+            vm.store(address(diamond), valueSlot, prior);
+        }
+        revert("could not locate cfgTreasuryYieldVenue slot");
     }
 
     function _t() internal view returns (TreasuryFacet) {
@@ -293,5 +345,115 @@ contract TreasuryYieldTest is SetupTest {
         // 200 WBTC additional is OK (500 + 200 = 700, exactly the cap).
         _t().deployTreasuryYield(address(wbtc), 200e8);
         assertEq(_t().getTreasuryDeployedExternal(address(wbtc)), 700e8);
+    }
+
+    // ─── #965 — canonical pool + measured supply / withdraw ──────
+
+    function test_SetAaveV3Pool_RevertWhen_NoAddressesProvider() public {
+        // Has code, but is not an Aave Pool at all.
+        vm.expectRevert(
+            abi.encodeWithSelector(TreasuryFacet.TreasuryYieldAavePoolNotCanonical.selector, address(lido))
+        );
+        _t().setAaveV3Pool(address(lido));
+    }
+
+    function test_SetAaveV3Pool_RevertWhen_ProviderNamesAnotherPool() public {
+        MockAavePool other = new MockAavePool();
+        aave.setProvider(other.ADDRESSES_PROVIDER());
+        vm.expectRevert(
+            abi.encodeWithSelector(TreasuryFacet.TreasuryYieldAavePoolNotCanonical.selector, address(aave))
+        );
+        _t().setAaveV3Pool(address(aave));
+    }
+
+    function test_SetAaveV3Pool_RevertWhen_ProviderHasNoCode() public {
+        aave.setProvider(makeAddr("eoaProvider"));
+        vm.expectRevert(
+            abi.encodeWithSelector(TreasuryFacet.TreasuryYieldAavePoolNotCanonical.selector, address(aave))
+        );
+        _t().setAaveV3Pool(address(aave));
+    }
+
+    function test_AaveDeploy_RevertWhen_PoolTakesLessThanSupplied() public {
+        _t().setTreasuryYieldVenue(address(wbtc), LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3);
+        _t().setAaveV3Pool(address(aave));
+        aave.setPullShortBy(1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibTreasuryYield.VenueSupplyMismatch.selector, address(wbtc), uint256(100e8), uint256(100e8 - 1)
+            )
+        );
+        _t().deployTreasuryYield(address(wbtc), 100e8);
+    }
+
+    function test_AaveWithdraw_RevertWhen_PoolReportsDifferentAmount() public {
+        _t().setTreasuryYieldVenue(address(wbtc), LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3);
+        _t().setAaveV3Pool(address(aave));
+        _t().deployTreasuryYield(address(wbtc), 100e8);
+        aave.setReportOverride(99e8);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibTreasuryYield.VenueWithdrawMismatch.selector, address(wbtc), uint256(100e8), uint256(99e8)
+            )
+        );
+        _t().withdrawTreasuryYield(address(wbtc), 100e8);
+    }
+
+    function test_AaveWithdraw_CreditsWhatArrived_FeeOnTransfer() public {
+        FeeOnTransferERC20Mock fot = new FeeOnTransferERC20Mock("FOT", "FOT", 18);
+        fot.mint(address(diamond), 1_000e18);
+        _seedTreasuryBalance(address(fot), 1_000e18);
+        _t().setTreasuryYieldVenue(address(fot), LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3);
+        _t().setAaveV3Pool(address(aave));
+        _t().deployTreasuryYield(address(fot), 100e18);
+
+        // Only the pool's transfers are charged: 1% short on the way back.
+        fot.setFeeBps(100);
+        fot.setChargedSender(address(aave));
+
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit LibTreasuryYield.TreasuryYieldWithdrawn(
+            address(fot), LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3, 100e18, 99e18
+        );
+        _t().withdrawTreasuryYield(address(fot), 100e18);
+
+        assertEq(_t().getTreasuryDeployedExternal(address(fot)), 0, "position fully closed");
+        assertEq(_t().getTreasuryBalance(address(fot)), 900e18 + 99e18, "credited what arrived, not the request");
+        assertEq(fot.balanceOf(address(diamond)), 900e18 + 99e18, "balance backs the credit");
+    }
+
+    function test_AaveWithdraw_EmitsWithdrawn() public {
+        _t().setTreasuryYieldVenue(address(wbtc), LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3);
+        _t().setAaveV3Pool(address(aave));
+        _t().deployTreasuryYield(address(wbtc), 100e8);
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit LibTreasuryYield.TreasuryYieldWithdrawn(
+            address(wbtc), LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3, 40e8, 40e8
+        );
+        _t().withdrawTreasuryYield(address(wbtc), 40e8);
+    }
+
+    // ─── #964 — routing is exhaustive ────────────────────────────
+
+    function test_Deploy_RevertWhen_VenueHasNoRoute() public {
+        _t().setAaveV3Pool(address(aave));
+        _forceVenue(address(wbtc), 3);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibTreasuryYield.UnsupportedVenue.selector, address(wbtc), uint8(3))
+        );
+        _t().deployTreasuryYield(address(wbtc), 100e8);
+        assertEq(_t().getTreasuryBalance(address(wbtc)), SEED, "accounting unwound");
+        assertEq(_t().getTreasuryDeployedExternal(address(wbtc)), 0, "nothing booked as deployed");
+    }
+
+    function test_Withdraw_RevertWhen_VenueHasNoRoute() public {
+        _t().setTreasuryYieldVenue(address(wbtc), LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3);
+        _t().setAaveV3Pool(address(aave));
+        _t().deployTreasuryYield(address(wbtc), 100e8);
+        _forceVenue(address(wbtc), 3);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibTreasuryYield.UnsupportedVenue.selector, address(wbtc), uint8(3))
+        );
+        _t().withdrawTreasuryYield(address(wbtc), 100e8);
     }
 }

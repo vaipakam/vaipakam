@@ -1,0 +1,255 @@
+/**
+ * #2074 — which source the Protocol Console shows, and why.
+ */
+import { describe, expect, it, vi } from 'vitest';
+import type { PublicClient } from 'viem';
+import { getDeployment } from '@vaipakam/contracts/deployments';
+import { PROTOCOL_KNOB_GETTERS, abiOutputNames } from '@vaipakam/lib/protocolKnobs';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import {
+  CONSOLE_SNAPSHOT_MAX_AGE_SEC,
+  chainReadFloor,
+  loadProtocolConsole,
+  readProtocolConsoleLive,
+  snapshotGap,
+  type ChainConsoleRead,
+} from './protocolConsoleRead';
+import type { ProtocolKnobSnapshot, ProtocolKnobValues } from './indexer';
+import { CONSOLE_SECTIONS, RENDERED_KEYS } from './protocolConsoleRows';
+
+const NOW = 1_800_000_000;
+
+/** Every value the page renders, plus every knob, so a snapshot built from
+ *  it is complete. */
+function allKnobs(): Record<string, unknown> {
+  return {
+    ...Object.fromEntries([...RENDERED_KEYS].map((k) => [k, '1'])),
+    tierThresholds: ['1', '2', '3', '4'],
+    tierDiscountBps: ['10', '20', '30', '40'],
+    ...Object.fromEntries(PROTOCOL_KNOB_GETTERS.map((k) => [k.key, '1'])),
+  };
+}
+
+function snapshot(over: Partial<ProtocolKnobSnapshot> = {}): ProtocolKnobSnapshot {
+  return {
+    values: { treasuryFeeBps: '200', ...allKnobs() } as ProtocolKnobValues,
+    unreported: [],
+    flags: {},
+    sourceBlock: 100,
+    updatedAt: NOW - 60,
+    ...over,
+  };
+}
+
+const CHAIN: ChainConsoleRead = {
+  values: { treasuryFeeBps: '250' } as ProtocolKnobValues,
+  unreported: [],
+  blockNumber: 123n,
+};
+
+describe('rendered values', () => {
+  it('are each backed by a bundle output or a setting the reader asks for', () => {
+    // Otherwise no snapshot could ever be complete, and the page would read
+    // the chain on every visit while calling the snapshot incomplete.
+    const bundle = new Set(abiOutputNames(DIAMOND_ABI_VIEM, 'getProtocolConfigBundle') ?? []);
+    const knobs = new Set<string>(PROTOCOL_KNOB_GETTERS.map((k) => k.key));
+    expect([...RENDERED_KEYS].filter((k) => !bundle.has(k) && !knobs.has(k))).toEqual([]);
+  });
+
+  it('name the documented default wherever an unset value falls back to one (Codex #2683 r3)', () => {
+    const rows = CONSOLE_SECTIONS.flatMap((s) => s.rows).filter((r) => r.format === 'secondsOrDefault');
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) expect(r.documentedDefaultSeconds, r.key).toBeGreaterThan(0);
+  });
+});
+
+describe('snapshotGap', () => {
+  it('accepts a dated, labelled, complete snapshot inside the refresh window', () => {
+    expect(snapshotGap(snapshot(), NOW)).toBeNull();
+  });
+
+  it('names each way a snapshot falls short', () => {
+    expect(snapshotGap(null, NOW)).toBe('missing');
+    expect(snapshotGap(snapshot({ stale: true, updatedAt: 0 }), NOW)).toBe('known-stale');
+    expect(snapshotGap(snapshot({ updatedAt: undefined }), NOW)).toBe('undated');
+    expect(snapshotGap(snapshot({ updatedAt: 0 }), NOW)).toBe('undated');
+    expect(snapshotGap(snapshot({ updatedAt: NOW + 3600 }), NOW)).toBe('undated');
+    expect(snapshotGap(snapshot({ updatedAt: NOW - CONSOLE_SNAPSHOT_MAX_AGE_SEC }), NOW)).toBe('old');
+    expect(snapshotGap(snapshot({ labelsUnavailable: true }), NOW)).toBe('unlabelled');
+  });
+
+  it('calls a snapshot incomplete when a setting is neither reported nor named unreported', () => {
+    const values = { ...allKnobs() } as Record<string, unknown>;
+    delete values.minHealthFactor;
+    // An older indexer: no settings list at all.
+    expect(snapshotGap(snapshot({ values: values as ProtocolKnobValues, unreported: undefined }), NOW)).toBe(
+      'incomplete',
+    );
+    // A bundle field the page renders cannot be excused by `unreported`:
+    // a snapshot from a build whose bundle predates it is incomplete.
+    const noFee = { ...allKnobs() } as Record<string, unknown>;
+    delete noFee.treasuryFeeBps;
+    expect(
+      snapshotGap(snapshot({ values: noFee as ProtocolKnobValues, unreported: ['treasuryFeeBps'] }), NOW),
+    ).toBe('incomplete');
+    // Named as unreported by the chain: accounted for, so complete.
+    expect(
+      snapshotGap(snapshot({ values: values as ProtocolKnobValues, unreported: ['minHealthFactor'] }), NOW),
+    ).toBeNull();
+  });
+});
+
+describe('loadProtocolConsole', () => {
+  it('shows a current snapshot without touching the chain', async () => {
+    const readChain = vi.fn();
+    const r = await loadProtocolConsole({
+      fetchSnapshot: async () => snapshot(),
+      readChain,
+      nowSec: () => NOW,
+    });
+    expect(r.source).toBe('snapshot');
+    expect(r.source === 'snapshot' && r.chainReadFailed).toBeUndefined();
+    expect(readChain).not.toHaveBeenCalled();
+  });
+
+  it('reads the chain when the snapshot is old, and says why', async () => {
+    const r = await loadProtocolConsole({
+      fetchSnapshot: async () => snapshot({ updatedAt: NOW - 8 * 3600 }),
+      readChain: async () => CHAIN,
+      nowSec: () => NOW,
+    });
+    expect(r).toMatchObject({ source: 'chain', why: 'old', readAtSec: NOW, blockNumber: 123n });
+    expect(r.source === 'chain' && r.values.treasuryFeeBps).toBe('250');
+  });
+
+  it('reads the chain when the indexer cannot be reached', async () => {
+    const r = await loadProtocolConsole({
+      fetchSnapshot: async () => {
+        throw new Error('down');
+      },
+      readChain: async () => CHAIN,
+      nowSec: () => NOW,
+    });
+    expect(r).toMatchObject({ source: 'chain', why: 'missing' });
+  });
+
+  it('falls back to a snapshot that is not current only when the chain read fails, and marks it', async () => {
+    const r = await loadProtocolConsole({
+      fetchSnapshot: async () => snapshot({ stale: true, updatedAt: 0 }),
+      readChain: async () => {
+        throw new Error('rpc down');
+      },
+      nowSec: () => NOW,
+    });
+    expect(r).toMatchObject({ source: 'snapshot', chainReadFailed: 'known-stale' });
+  });
+
+  it('keeps a newer snapshot when the chain read answers from an older block (Codex #2683 r4)', async () => {
+    const r = await loadProtocolConsole({
+      fetchSnapshot: async () => snapshot({ sourceBlock: 200, updatedAt: NOW - 8 * 3600 }),
+      readChain: async () => CHAIN, // block 123
+      nowSec: () => NOW,
+    });
+    expect(r).toMatchObject({ source: 'snapshot', chainReadFailed: 'old' });
+    // At or past the snapshot's block, the chain read wins as usual.
+    const ok = await loadProtocolConsole({
+      fetchSnapshot: async () => snapshot({ sourceBlock: 123, updatedAt: NOW - 8 * 3600 }),
+      readChain: async () => CHAIN,
+      nowSec: () => NOW,
+    });
+    expect(ok).toMatchObject({ source: 'chain', why: 'old' });
+  });
+
+  it('needs a block strictly past a known-stale snapshot (Codex #2683 r5)', async () => {
+    const at = await loadProtocolConsole({
+      fetchSnapshot: async () => snapshot({ stale: true, sourceBlock: 123 }),
+      readChain: async () => CHAIN, // block 123
+      nowSec: () => NOW,
+    });
+    expect(at).toMatchObject({ source: 'snapshot', chainReadFailed: 'known-stale' });
+    const past = await loadProtocolConsole({
+      fetchSnapshot: async () => snapshot({ stale: true, sourceBlock: 122 }),
+      readChain: async () => CHAIN,
+      nowSec: () => NOW,
+    });
+    expect(past).toMatchObject({ source: 'chain', why: 'known-stale' });
+  });
+
+  it('needs a read at or past the event that staled the snapshot (Codex #2683 r7)', async () => {
+    // Snapshot at 100, staled by an event at 150: a read from 123 is past
+    // the snapshot but cannot have seen the change, so the snapshot stays.
+    const before = await loadProtocolConsole({
+      fetchSnapshot: async () => snapshot({ stale: true, sourceBlock: 100, staleAtBlock: 150 }),
+      readChain: async () => CHAIN, // block 123
+      nowSec: () => NOW,
+    });
+    expect(before).toMatchObject({ source: 'snapshot', chainReadFailed: 'known-stale' });
+    const atEvent = await loadProtocolConsole({
+      fetchSnapshot: async () => snapshot({ stale: true, sourceBlock: 100, staleAtBlock: 123 }),
+      readChain: async () => CHAIN,
+      nowSec: () => NOW,
+    });
+    expect(atEvent).toMatchObject({ source: 'chain', why: 'known-stale' });
+  });
+
+  it('chainReadFloor states one floor per case', () => {
+    expect(chainReadFloor(null, 'missing')).toBeNull();
+    expect(chainReadFloor(snapshot({ sourceBlock: undefined }), 'undated')).toBeNull();
+    expect(chainReadFloor(snapshot({ sourceBlock: 100 }), 'old')).toBe(100n);
+    expect(chainReadFloor(snapshot({ stale: true, sourceBlock: 100 }), 'known-stale')).toBe(101n);
+    expect(
+      chainReadFloor(snapshot({ stale: true, sourceBlock: 100, staleAtBlock: 150 }), 'known-stale'),
+    ).toBe(150n);
+    // An inconsistent boundary (not past the snapshot) never lowers the floor.
+    expect(
+      chainReadFloor(snapshot({ stale: true, sourceBlock: 100, staleAtBlock: 90 }), 'known-stale'),
+    ).toBe(101n);
+  });
+
+  it('throws when there is neither a snapshot nor a chain read', async () => {
+    await expect(
+      loadProtocolConsole({
+        fetchSnapshot: async () => null,
+        readChain: async () => {
+          throw new Error('rpc down');
+        },
+        nowSec: () => NOW,
+      }),
+    ).rejects.toThrow('rpc down');
+  });
+});
+
+describe('readProtocolConsoleLive — labels only what this build can tie to the deployed code (Codex #2683 r1)', () => {
+  const CHAIN = 84532;
+  const DIAMOND = '0x00000000000000000000000000000000000000d1' as const;
+  const host = getDeployment(CHAIN)?.facets?.configFacet;
+  const names = abiOutputNames(DIAMOND_ABI_VIEM, 'getProtocolConfigBundle') ?? [];
+
+  function client(loupeHost: string | undefined) {
+    return {
+      getBlockNumber: async () => 99n,
+      readContract: async (args: { functionName: string; blockNumber?: bigint }) => {
+        expect(args.blockNumber).toBe(99n);
+        if (args.functionName === 'facetAddress') return loupeHost;
+        return names.map(() => 1n);
+      },
+      multicall: async (args: { contracts: unknown[]; blockNumber?: bigint }) => {
+        expect(args.blockNumber).toBe(99n);
+        return args.contracts.map(() => ({ status: 'success', result: 1n }));
+      },
+    } as unknown as PublicClient;
+  }
+
+  it('labels the bundle when the loupe host at the read block is the artifact host', async () => {
+    expect(host).toBeTruthy();
+    const r = await readProtocolConsoleLive(client(host), CHAIN, DIAMOND);
+    expect(r.blockNumber).toBe(99n);
+    expect(r.values.treasuryFeeBps).toBe('1');
+  });
+
+  it('refuses to label by position when the deployed host is not the one this build describes', async () => {
+    await expect(
+      readProtocolConsoleLive(client('0x00000000000000000000000000000000000000bb'), CHAIN, DIAMOND),
+    ).rejects.toThrow(/cannot show/);
+  });
+});

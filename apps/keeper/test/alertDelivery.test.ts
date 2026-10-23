@@ -5,10 +5,14 @@
  * once per subscriber.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AlertDelivery, pushRailConfigOf } from '../src/alertDelivery';
+import { generatePrivateKey } from 'viem/accounts';
+import { readPublishedRail, type PublishedRailRow } from '@vaipakam/push';
+import { AlertDelivery, publishRailStatus, pushRailConfigOf } from '../src/alertDelivery';
 import type { ChainConfig, Env } from '../src/env';
 import { disarmEpochFence } from '../src/epochFence';
 import { armHeldFence } from './helpers/epochFence';
+import { createSharedD1 } from './helpers/schemas';
+import { createSqliteD1 } from './helpers/sqliteD1';
 
 const CHAIN = { id: 84532, diamond: '0x' + 'd'.repeat(40) } as unknown as ChainConfig;
 const alert = (subscriber: string | null) => ({
@@ -64,5 +68,31 @@ describe('AlertDelivery — Push through the shared rail', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     new AlertDelivery({} as unknown as Env).disclose('watcher');
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('the keeper publishes its Push rail status for the agent (#2667)', () => {
+  const CHANNEL = '0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b';
+  const rowOf = (h: ReturnType<typeof createSharedD1>) =>
+    h.db.prepare(`SELECT sender, usable, reason, channel, observed_at FROM push_rail_status`).all();
+
+  it('writes one row, replaced on each run, in the encoding the agent reads back', async () => {
+    const shared = createSharedD1();
+    const DB = shared.d1 as Env['DB'];
+    await publishRailStatus({ DB, PUSH_CHANNEL_PK: undefined, PUSH_CHANNEL_ADDRESS: undefined }, 100);
+    expect(rowOf(shared)).toEqual([{ sender: 'keeper', usable: 0, reason: 'signer-unset', channel: null, observed_at: 100 }]);
+    const key = generatePrivateKey();
+    await publishRailStatus({ DB, PUSH_CHANNEL_PK: key, PUSH_CHANNEL_ADDRESS: CHANNEL }, 160);
+    const rows = rowOf(shared) as unknown as PublishedRailRow[];
+    expect(rows).toEqual([{ sender: 'keeper', usable: 1, reason: null, channel: CHANNEL, observed_at: 160 }]);
+    expect(readPublishedRail(rows[0])).toEqual({ status: { usable: true, channel: CHANNEL }, observedAt: 160 });
+    expect(JSON.stringify(rows)).not.toContain(key.slice(2, 18));
+  });
+
+  it('logs and carries on when the write fails, as on a database the migration has not reached', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const bare = createSqliteD1([]);
+    await expect(publishRailStatus({ DB: bare.d1 as Env['DB'] }, 1)).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Push rail status not published this run'));
   });
 });

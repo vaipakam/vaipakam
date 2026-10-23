@@ -17,16 +17,20 @@ before it does anything. Read §2 before starting anything.
 | Unit | Runs as | Does |
 | --- | --- | --- |
 | `vaipakam-keeper.service` | a dynamic user, with the env file as a private credential | the keeper itself: one tick every UTC minute |
+| `vaipakam.slice` | (a slice, not a process) | the keeper's own top-level slice, so the keeper's memory protection takes effect |
 | `vaipakam-keeper-update.timer` → `.service` | root, building in a throwaway sandbox | every 5 minutes: deploy the branch's latest commit if it is not running (`update.sh`) |
 
 A merge to `main` is the deploy. Each run of `update.sh` does the following:
 
 1. It fetches `main` into root's own checkout.
-2. If `current` is already that commit's release, it stops there.
-3. Otherwise it exports exactly that commit and builds it in a sandbox, as a
-   fresh dynamic user that systemd deletes afterwards, with that commit's own
-   `build.sh`. The build runs the new bundle with `--check`, to prove it
-   loads.
+2. If `current` is already that commit's release, it stops there. It also
+   stops if a build of that commit would be given exactly the source the
+   running release was built from (see "Which commits are built" below), and
+   logs once that it is staying on the running release.
+3. Otherwise it exports exactly that commit's build source and builds it in
+   a sandbox, as a fresh dynamic user that systemd deletes afterwards, with
+   that commit's own `build.sh`. The build runs the new bundle with
+   `--check`, to prove it loads.
 4. It installs that same commit's systemd units and `update.sh`, each only if
    it changed. So the keeper never runs under the units of another commit: a
    change that needs a new setting in its unit arrives with the code that
@@ -37,6 +41,61 @@ A merge to `main` is the deploy. Each run of `update.sh` does the following:
 
 Any failure leaves the running keeper untouched, and the next run retries.
 
+**Which commits are built (#2651).** This machine is small (about 1 GB of
+memory), and a build is the heaviest thing it does. Before #2651 it built
+every merge to `main`, about 32 a day. While one ran, the keeper's tick
+started several seconds late and the late remittance check often missed its
+read deadline: 37% of ticks during a build, against 0.2% outside one. Two
+rules now keep builds out of the keeper's way:
+
+- **Only a commit that gives the build different source is built.** A
+  build is given only the paths listed in
+  `apps/keeper/host/deploy/build-paths`:
+  - the root manifests and the lockfile;
+  - the keeper;
+  - the workspace packages its install reaches;
+  - the indexer modules it imports.
+  
+  `build-source.sh` exports those paths with `git archive` for the build,
+  and the same script takes a digest of that export: every path, mode and
+  byte, after git's own conversions. The updater compares the running
+  release's digest with the branch tip's. If they are equal, a build would be
+  given the same files and would make the same bundle, so the machine stays
+  on the release it has. Nothing is predicted: what is compared is what the
+  build reads. A path the build needs but the list leaves out makes the build
+  fail; it can never pass on stale input, and a test checks the list against
+  the bundle's real inputs. A commit from before `build-paths` gets the whole
+  tree and is always built, as before.
+
+  As a result, the release the keeper reports can be older than the tip of
+  `main`. That is expected: it is the newest commit whose build source
+  differs.
+- **A build never competes with the keeper.**
+  - **CPU.** The updater and its build run at the lowest CPU priority
+    (`Nice=19`, `CPUWeight=1`), so the keeper's ticks come first.
+  - **Memory.** The keeper runs in a top-level slice of its own,
+    `vaipakam.slice`, with `MemoryLow=320M` on both the slice and the keeper.
+    The kernel reclaims the keeper's memory, up to that figure, only once
+    nothing unprotected is left to reclaim. So a build, an updater run or
+    anything else on the machine is swapped out before the keeper is. Before
+    this, the keeper itself was being pushed into swap: 112 MiB of it at one
+    reading, which every tick then had to read back. The protection reserves
+    nothing, so memory the keeper is not using stays free for the rest. The
+    slice is needed because, under cgroup v2, a unit's protection holds only
+    as far as its parent grants it, and `system.slice` grants none. The
+    figure is the keeper's measured footprint (about 140 MiB resident plus
+    110 MiB swapped, 2026-10-23) with room to grow. If memory runs out anyway,
+    the OOM killer picks the build (`OOMScoreAdjust=500`) before the keeper
+    (`-500`), and the next deploy run retries the build.
+  - **The build is not memory-capped.** A cap has to be sized from the
+    build's peak, and systemd's logged peak for the build unit is not a usable
+    figure: it reads 256K to 1.8M for builds that use nearly two CPU-minutes.
+    Protecting the keeper does not depend on the build's size.
+  - **Disk.** The units also ask for the lowest disk priority (`IOWeight=1`,
+    `IOSchedulingClass=idle`). That has no effect on this machine, because
+    its disk scheduler is `none`, which ignores both. The settings are kept
+    so that they take effect on a host whose scheduler honours them.
+
 The units and the release are bound by one file, `kit-commit`, naming the
 commit whose units are installed and loaded. A deploy removes it before it
 touches the units and writes it again only once `current` is that commit's
@@ -45,7 +104,10 @@ So however a deploy is interrupted, the keeper never starts one commit's code
 under another commit's units: a start in between fails (`cmp` reports the two
 files differ, in `journalctl -u vaipakam-keeper`) and retries every 30
 seconds. Every deploy run first puts back the units of whatever `current` is,
-which makes the keeper startable again; with deploys paused, `sudo
+which makes the keeper startable again. It does the same when any installed
+kit file differs from that release's kit, so a file an older updater did not
+know to install (such as `vaipakam.slice`) goes in at the next run. With
+deploys paused, `sudo
 /opt/vaipakam-keeper/update.sh --kit-only` does that one step by hand. A
 reinstall and a deploy share one lock, so they never interleave.
 
@@ -82,6 +144,8 @@ Files on the machine, all root's:
 | `/etc/vaipakam/keeper.env` | settings and secrets, `0600`. Never overwritten by the kit |
 | `/opt/vaipakam-keeper/current` | the running release (a symlink into `releases/<commit>`) |
 | `/opt/vaipakam-keeper/releases/` | the last five deployed builds, for rollback |
+| `/opt/vaipakam-keeper/build-source.sh` | the running kit's export and digest of a commit's build source, which decides whether a newer commit is built |
+| `/opt/vaipakam-keeper/checked` | the last running/newer commit pair found to give the build the same source, so it is not compared or logged again |
 | `/opt/vaipakam-keeper/deploy-branch` | the branch followed (default `main`) |
 | `/opt/vaipakam-keeper/repo` | the checkout the code comes from |
 
@@ -352,7 +416,9 @@ empty.
   keeper refuses to start, §1), and run `sudo systemctl restart
   vaipakam-keeper`. **To return to the deploy branch**, resume deploys: the
   next run sees that `current` is not the branch tip's release and deploys
-  it. The branch is the one in `/opt/vaipakam-keeper/deploy-branch` (`main`
+  it. The one exception is a branch tip whose build source is identical to
+  the rolled-back release's. That tip's bundle is the same one, so the
+  keeper stays on it. The branch is the one in `/opt/vaipakam-keeper/deploy-branch` (`main`
   unless `KEEPER_DEPLOY_BRANCH` set another at install); check it, and to
   follow `main` again re-run the install script with
   `KEEPER_DEPLOY_BRANCH=main`.

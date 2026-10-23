@@ -16,8 +16,10 @@
  * feed's honesty rules — truncation, participant filter — stay in the
  * page).
  */
+import { activityParticipants } from '@vaipakam/lib/activityParticipants';
 import type { IndexedActivityEvent } from '../data/indexer';
 import { formatTokenAmount, shortAddress } from './format';
+import { LoanStatus } from './types';
 
 export type ActivityCategory =
   | 'offer'
@@ -145,10 +147,142 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // #1566 — a forfeited reward entry settled (shown on its owner's feed and
   // its loan's timeline).
   RewardEntryForfeitSettled: { label: 'Rewards forfeited', category: 'other', priority: 50 },
+  // #2658 — every other event the indexer files under a loan or offer
+  // (#1794 files them from the ABI by one rule, so they reach the wallet's
+  // feed through its loan ids). None is hidden: each is something that
+  // happened on the chain to the wallet's loan or offer, and the page
+  // shows what it knows. Book-keeping and companion events carry a LOW
+  // priority (below the unmapped default of 20) so they ride inside the
+  // row of the action that emitted them as "+N more" and never represent
+  // it; an outcome (a liquidation, a failed sale, a claim) outranks the
+  // status edge and the swap attempts its transaction also emits.
+  // `LoanStatusChanged` keeps the default priority it had while unmapped.
+  // The guard in activityView.test.ts derives the set from the ABI.
+  AutoDailyDeducted: { label: 'Daily rental fee paid', category: 'loan-repay', priority: 50 },
+  AutoExtendBorrowerCapsChanged: { label: 'Automatic extension limits updated', category: 'loan-modify', priority: 40 },
+  AutoExtendLenderCapsChanged: { label: 'Automatic extension limits updated', category: 'loan-modify', priority: 40 },
+  // Emitted even when the opt-out was already clear (a documented no-op
+  // confirmation), so the label states the resulting setting, not a change.
+  AutoListOptOutCleared: { label: 'Automatic grace-period listing on', category: 'loan-modify', priority: 40 },
+  AutoRefinanceCapsChanged: { label: 'Automatic refinance limits updated', category: 'loan-modify', priority: 40 },
+  BackstopFilled: { label: 'Funded by the backstop', category: 'loan-open', priority: 60 },
+  BackstopLoanClaimed: { label: 'Backstop recovery claimed', category: 'loan-close', priority: 80 },
+  // Paid inside the borrower's claim, before its own event: below the claim
+  // (92) so the claim represents the row; its value is still a leg of it.
+  BorrowerSurplusClaimed: { label: 'Surplus claimed', category: 'loan-close', priority: 60 },
+  ClaimRetryExecuted: { label: 'Collateral sale retried', category: 'loan-close', priority: 70 },
+  CollateralConsolidated: { label: 'Collateral consolidated', category: 'collateral', priority: 30 },
+  FeeEntitlementRepriced: { label: 'Fee terms updated', category: 'loan-modify', priority: 8 },
+  FeeEntitlementStamped: { label: 'Fee terms recorded', category: 'loan-open', priority: 8 },
+  HFLiquidationTriggered: { label: 'Liquidation triggered', category: 'loan-default', priority: 86 },
+  IntentMatched: { label: 'Order matched', category: 'loan-open', priority: 78 },
+  IntentPriorityFill: { label: 'Priority credit used for a fill', category: 'loan-open', priority: 30 },
+  LenderBackstopOptInSet: { label: 'Backstop exit choice updated', category: 'loan-modify', priority: 45 },
+  LiquidationDiscounted: { label: 'Liquidated at a discount', category: 'loan-default', priority: 89 },
+  LiquidationFallback: { label: 'Collateral sale failed', category: 'loan-default', priority: 84 },
+  // Emitted beside LiquidationFallback when the split had no price: one
+  // above it, so the more specific outcome names the row.
+  LiquidationFallbackOracleUnavailable: { label: 'Collateral sale failed: no price available', category: 'loan-default', priority: 85 },
+  LiquidationFallbackSplit: { label: 'Collateral split recorded', category: 'loan-default', priority: 12 },
+  LoanCuredFromFallback: { label: 'Loan restored by adding collateral', category: 'collateral', priority: 85 },
+  LoanFallbackPending: { label: 'Settlement pending after a failed sale', category: 'loan-default', priority: 87 },
+  LoanKeeperEnabled: { label: 'Keeper permission updated', category: 'loan-modify', priority: 40 },
+  LoanPartiallyLiquidated: { label: 'Loan partly liquidated', category: 'loan-default', priority: 88 },
+  LoanSaleListingTornDown: { label: 'Loan sale listing removed', category: 'loan-modify', priority: 45 },
+  LoanStatusChanged: { label: 'Loan status updated', category: 'other', priority: 20 },
+  NotificationFeeBilled: { label: 'Notification fee charged', category: 'other', priority: 30 },
+  OfferBackstopEligibilitySet: { label: 'Backstop eligibility set', category: 'offer', priority: 40 },
+  OfferCreatorFullTariffSet: { label: 'Fee choice recorded for the offer', category: 'offer', priority: 12 },
+  OfferKeeperEnabled: { label: 'Keeper permission updated', category: 'offer', priority: 40 },
+  OfferSaleProceedsCredited: { label: 'Sale proceeds credited to the vault', category: 'offer', priority: 60 },
+  OfferSaleProceedsSplit: { label: 'Sale proceeds split', category: 'loan-close', priority: 75 },
+  ParallelSaleLockReleased: { label: 'Collateral sale listing released', category: 'offer', priority: 45 },
+  PartialCollateralWithdrawn: { label: 'Collateral partly withdrawn', category: 'collateral', priority: 75 },
+  PostParallelSaleListing: { label: 'Collateral sale listing posted', category: 'offer', priority: 55 },
+  PrepaySaleListingSynced: { label: 'Collateral sale listing rechecked', category: 'loan-modify', priority: 15 },
+  PrepaySaleOfferSynced: { label: 'Sale offer rechecked', category: 'offer', priority: 15 },
+  SanctionedProceedsLocked: { label: 'Share held in the vault while this wallet is flagged', category: 'loan-close', priority: 30 },
+  SwapAdapterAttempted: { label: 'Swap route tried', category: 'other', priority: 6 },
+  SwapAdapterSucceeded: { label: 'Swap route used', category: 'other', priority: 6 },
+  SwapAllAdaptersFailed: { label: 'Every swap route failed', category: 'loan-default', priority: 14 },
+  // Records BOTH directions: a closed loan's owed VPFI entering a vault
+  // owner's fee-tier exclusion, and leaving it (cleared, with no owner and a
+  // zero amount, when the position NFT returns to the stored party). One
+  // static label serves both, so it names the update, not a direction.
+  TierExclusionUpdated: { label: 'VPFI discount-tier exclusion updated', category: 'other', priority: 12 },
+  VPFIDiscountApplied: { label: 'Fee discount applied (paid in VPFI)', category: 'loan-open', priority: 12 },
+  VPFIYieldFeeDiscountApplied: { label: 'Yield fee discount applied (paid in VPFI)', category: 'loan-close', priority: 12 },
+  VaultRentalUpdated: { label: 'Rental access updated', category: 'loan-modify', priority: 12 },
+  // #2703 — kinds the participants rule (@vaipakam/lib/activityParticipants)
+  // admits to a wallet's page because the wallet is a party: its own
+  // settings, intents, vault, perks and reward entries. Companions and
+  // NFT book-keeping stay low so the action beside them represents the row.
+  // The flagged-wallet rows use the in-app wording only (no list or
+  // provider named), the same as SanctionedProceedsLocked.
+  ApprovalForAll: { label: 'Approval for all position NFTs', category: 'other', priority: 5 },
+  NFTMinted: { label: 'Position NFT minted', category: 'other', priority: 5 },
+  OfferCreatedDetails: { label: 'Offer created', category: 'offer', priority: 10 },
+  OfferCanceledDetails: { label: 'Offer cancelled', category: 'offer', priority: 10 },
+  // Created lazily inside a wallet's first offer, accept or deposit, before
+  // that action's own event: low, so the action represents the row (#2708 r1).
+  UserVaultCreated: { label: 'Vault created', category: 'other', priority: 8 },
+  TermsAccepted: { label: 'Terms of use accepted', category: 'other', priority: 40 },
+  TokenDisowned: { label: 'Unsolicited tokens disowned', category: 'other', priority: 40 },
+  StuckERC20Recovered: { label: 'Stuck tokens recovered', category: 'other', priority: 60 },
+  AutoLendConsentChanged: { label: 'Auto-lend setting updated', category: 'other', priority: 40 },
+  AutoOptInOnNewLoanChanged: { label: 'Automatic refinance setting for new loans updated', category: 'other', priority: 40 },
+  DefaultAutoRefinanceCapsChanged: { label: 'Default automatic refinance limits updated', category: 'other', priority: 40 },
+  KeeperAccessUpdated: { label: 'Keeper access setting updated', category: 'other', priority: 40 },
+  KeeperActionsUpdated: { label: 'Keeper permissions updated', category: 'other', priority: 40 },
+  KeeperRevoked: { label: 'Keeper removed', category: 'other', priority: 40 },
+  VPFIDiscountConsentChanged: { label: 'VPFI fee discount setting updated', category: 'other', priority: 40 },
+  LenderIntentSet: { label: 'Standing lending intent set', category: 'offer', priority: 50 },
+  LenderIntentFunded: { label: 'Standing lending intent funded', category: 'offer', priority: 50 },
+  LenderIntentCapitalWithdrawn: { label: 'Capital withdrawn from a standing lending intent', category: 'offer', priority: 50 },
+  LenderIntentCancelled: { label: 'Standing lending intent cancelled', category: 'offer', priority: 50 },
+  LenderIntentPrioritySet: { label: 'Priority routing setting updated', category: 'offer', priority: 30 },
+  PerkPurchased: { label: 'Perk bought with VPFI', category: 'other', priority: 60 },
+  PerkCreditConsumed: { label: 'Perk credit used', category: 'other', priority: 12 },
+  RewardEntryHorizonStamped: { label: 'Reward claim window started', category: 'other', priority: 30 },
+  RewardEntryExpiryArmed: { label: 'Reward entered its final notice period', category: 'other', priority: 40 },
+  RewardEntryExpiryBegun: { label: 'Unclaimed reward returning to the rewards programme', category: 'other', priority: 44 },
+  RewardEntryExpired: { label: 'Unclaimed reward returned to the rewards programme', category: 'other', priority: 46 },
+  // Also emitted for a share set apart for a flagged wallet (its venue is the
+  // held balance), beside RewardSanctionsHeldApart: below it, so the row says
+  // the reward was set aside, never that it was delivered (#2708 r1).
+  StagingDelivered: { label: 'Rewards settled for a day', category: 'other', priority: 45 },
+  RewardSanctionsHeldApart: { label: 'Rewards set aside while this wallet is flagged', category: 'other', priority: 50 },
+  RewardSanctionsHeldReleased: { label: 'Set-aside rewards ready to claim', category: 'other', priority: 55 },
+  StagingClaimantForfeited: { label: 'Rewards forfeited while this wallet is flagged', category: 'other', priority: 50 },
+  // Emitted inside the transfer or close that caused it: low, so that action
+  // represents the row (#2708 r2).
+  RewardEntryRepointRefused: { label: 'Reward entry kept with its earner after a position transfer', category: 'other', priority: 12 },
+  RewardEntrySplitAtTransfer: { label: 'Reward entry split at a position transfer', category: 'other', priority: 12 },
   // Low-priority book-keeping — never represents a transaction alone.
   Transfer: { label: 'Transfer', category: 'other', priority: 5 },
   Approval: { label: 'Approval', category: 'other', priority: 5 },
 };
+
+/**
+ * #2703 — whether one feed event belongs on a wallet's Activity page: it
+ * concerns one of the wallet's loans, or the wallet is one of its
+ * participants by the shared rule (`@vaipakam/lib/activityParticipants`:
+ * its actor, the one the indexer files the row under, and the further
+ * parties the rule lists). Never because the address appears somewhere in
+ * the args: that admitted role grants, treasury settings and approved
+ * operators, under names nobody had written. `me` is lower-case.
+ */
+export function isWalletActivity(
+  ev: IndexedActivityEvent,
+  me: string,
+  myLoanIds: ReadonlySet<number>,
+): boolean {
+  if (ev.loanId !== null && myLoanIds.has(ev.loanId)) return true;
+  // The indexer sends args it could not parse as the raw string; such a row
+  // names no participant the rule can read.
+  const args = typeof ev.args === 'object' && ev.args !== null ? ev.args : {};
+  return activityParticipants(ev.kind, args).includes(me);
+}
 
 /**
  * Fallback humanizer for a kind absent from ACTIVITY_LABELS — splits
@@ -173,6 +307,55 @@ export function labelForKind(kind: string): string {
   return ACTIVITY_LABELS[kind]?.label ?? humanizeKind(kind);
 }
 
+/**
+ * #2658 (#2702 r2) — a status edge INTO an end state is itself the loan's
+ * lifecycle outcome. `LoanStatusChanged` is generic as a kind ("Loan status
+ * updated"), but its `to` says what happened, and some transactions carry no
+ * other event that does: the last daily rental deduction moves the loan to
+ * Repaid and emits only the deduction beside the edge. So the edge is named by
+ * its destination, at a priority above the routine steps that can cause it
+ * (a deduction, an interest settlement, a retry) and below every event that
+ * names an outcome itself (a repayment, a default, a claim, a failed sale),
+ * which keep their rows. An edge back to Active (a cure) has its own event
+ * and keeps the generic name. Keyed by the LibVaipakam.LoanStatus member name.
+ */
+export const STATUS_EDGE_LABELS: Record<string, ActivityLabel> = {
+  Repaid: { label: 'Loan repaid', category: 'loan-repay', priority: 72 },
+  Defaulted: { label: 'Loan defaulted', category: 'loan-default', priority: 72 },
+  Settled: { label: 'Loan settled', category: 'loan-close', priority: 72 },
+  FallbackPending: { label: 'Settlement pending after a failed sale', category: 'loan-default', priority: 72 },
+  InternalMatched: { label: 'Loan closed by internal matching', category: 'loan-close', priority: 72 },
+};
+
+/** Where a row's display label is translated: the per-kind catalog, or the
+ *  per-destination catalog for a status edge into an end state. */
+export interface LabelSource {
+  catalog: 'labels' | 'statusEdgeLabels';
+  key: string;
+}
+
+/** The end state a `LoanStatusChanged` moved the loan into, by member name,
+ *  when it is one {@link STATUS_EDGE_LABELS} names; otherwise null. */
+function statusEdgeOf(ev: IndexedActivityEvent): string | null {
+  if (ev.kind !== 'LoanStatusChanged') return null;
+  const raw = (ev.args as Record<string, unknown> | null | undefined)?.to;
+  const code = typeof raw === 'number' ? raw : typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : NaN;
+  const name = Object.keys(LoanStatus).find((k) => LoanStatus[k as keyof typeof LoanStatus] === code);
+  return name !== undefined && Object.hasOwn(STATUS_EDGE_LABELS, name) ? name : null;
+}
+
+/** The label entry and catalog key one event is named by. */
+function labelOf(ev: IndexedActivityEvent): { meta: ActivityLabel | undefined; source: LabelSource } {
+  const edge = statusEdgeOf(ev);
+  if (edge !== null) {
+    return { meta: STATUS_EDGE_LABELS[edge], source: { catalog: 'statusEdgeLabels', key: edge } };
+  }
+  return {
+    meta: Object.hasOwn(ACTIVITY_LABELS, ev.kind) ? ACTIVITY_LABELS[ev.kind] : undefined,
+    source: { catalog: 'labels', key: ev.kind },
+  };
+}
+
 /** One coalesced feed row — a single transaction's representative
  *  event plus how many sub-events it stood in for. */
 export interface ActivityRowView {
@@ -180,6 +363,8 @@ export interface ActivityRowView {
   key: string;
   event: IndexedActivityEvent;
   label: string;
+  /** Where {@link label}'s translation lives. */
+  labelSource: LabelSource;
   category: ActivityCategory;
   /** Extra events in the same transaction that this row subsumes. */
   hiddenCount: number;
@@ -191,8 +376,8 @@ export interface ActivityRowView {
 
 const DEFAULT_PRIORITY = 20;
 
-function priorityOf(kind: string): number {
-  return ACTIVITY_LABELS[kind]?.priority ?? DEFAULT_PRIORITY;
+function priorityOf(ev: IndexedActivityEvent): number {
+  return labelOf(ev).meta?.priority ?? DEFAULT_PRIORITY;
 }
 
 /**
@@ -218,15 +403,17 @@ export function coalesceByTx(events: IndexedActivityEvent[]): ActivityRowView[] 
     let rep = bucket[0];
     for (const ev of bucket) {
       const better =
-        priorityOf(ev.kind) > priorityOf(rep.kind) ||
-        (priorityOf(ev.kind) === priorityOf(rep.kind) && ev.logIndex < rep.logIndex);
+        priorityOf(ev) > priorityOf(rep) ||
+        (priorityOf(ev) === priorityOf(rep) && ev.logIndex < rep.logIndex);
       if (better) rep = ev;
     }
+    const { meta, source } = labelOf(rep);
     rows.push({
       key: `${rep.txHash || rep.blockNumber}-${rep.logIndex}`,
       event: rep,
-      label: labelForKind(rep.kind),
-      category: ACTIVITY_LABELS[rep.kind]?.category ?? 'other',
+      label: meta?.label ?? humanizeKind(rep.kind),
+      labelSource: source,
+      category: meta?.category ?? 'other',
       hiddenCount: bucket.length - 1,
       related: bucket.filter(
         (ev) =>

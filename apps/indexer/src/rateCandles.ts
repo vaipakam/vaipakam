@@ -51,12 +51,18 @@ export const CANDLE_RANGES: Readonly<Record<string, number | null>> =
     }),
   );
 
-/** The columns the candle SQL selects per fill. */
+/** The columns the candle SQL selects per fill: the INITIATION snapshot,
+ *  never the live columns, which extensions and repayments rewrite (#1142).
+ *  Every row is a placed fill (marketPlacement.ts), so its agreed rate is
+ *  confirmed and present; its principal has its own flag (0056). */
 export interface CandleFillRow {
   loan_id: number;
   start_at: number; // unix seconds — the loan's start timestamp
-  interest_rate_bps: number;
-  principal: string; // decimal string, raw base units of the lending asset
+  init_rate_bps: number;
+  init_principal: string | null; // decimal string, raw base units
+  /** 0 = the principal is backed by the initiation event. Anything else,
+   *  including an absent column, is "not known to be backed". */
+  init_principal_unbacked: number | null;
 }
 
 export interface RateCandleBucket {
@@ -66,7 +72,23 @@ export interface RateCandleBucket {
   low: number;
   close: number; // last fill's rate (bps) in the bucket, chronological
   fills: number;
-  principalTotal: string; // BigInt-folded decimal string (never a JSON number)
+  /** BigInt-folded decimal string (never a JSON number) over the fills
+   *  whose principal is recorded. */
+  principalTotal: string;
+  /** Fills whose principal is NOT recorded, so `principalTotal` leaves them
+   *  out. The total is a floor whenever this is above zero. */
+  unrecordedPrincipalFills: number;
+}
+
+/** The initiated principal, or null when it is not backed or not a number. */
+function recordedPrincipal(row: CandleFillRow): bigint | null {
+  // An empty string is no figure at all, even under a backed flag.
+  if (row.init_principal_unbacked !== 0 || !row.init_principal) return null;
+  try {
+    return BigInt(row.init_principal);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -79,8 +101,10 @@ export interface RateCandleBucket {
  *   on the caller.
  * - Only buckets with >= 1 fill are emitted — NO empty/interpolated buckets
  *   (§5.3 rule 1: gaps render as gaps). Output sorted ascending by `t`.
- * - Rows with a malformed `principal` are skipped entirely (fill + rate too)
- *   so a bucket's `fills` count always matches what `principalTotal` folded.
+ * - PROVENANCE (#1142): the rows are placed fills, so every rate is a
+ *   confirmed agreed rate (the caller's SQL applies marketPlacement.ts). A
+ *   fill whose principal is not recorded adds to `unrecordedPrincipalFills`
+ *   and nothing to `principalTotal`, never a live or unverified amount.
  */
 export function foldRateCandles(
   rows: CandleFillRow[],
@@ -96,17 +120,13 @@ export function foldRateCandles(
     close: number;
     fills: number;
     principalTotal: bigint;
+    unrecordedPrincipalFills: number;
   }
   const buckets = new Map<number, Acc>();
   for (const row of sorted) {
-    let principal: bigint;
-    try {
-      principal = BigInt(row.principal || '0');
-    } catch {
-      continue; // malformed row — skip whole fill, keep count/total consistent
-    }
-    const rate = row.interest_rate_bps;
     const t = Math.floor(row.start_at / intervalSec) * intervalSec;
+    const rate = row.init_rate_bps;
+    const principal = recordedPrincipal(row);
     const acc = buckets.get(t);
     if (!acc) {
       buckets.set(t, {
@@ -115,14 +135,16 @@ export function foldRateCandles(
         low: rate,
         close: rate,
         fills: 1,
-        principalTotal: principal,
+        principalTotal: principal ?? 0n,
+        unrecordedPrincipalFills: principal === null ? 1 : 0,
       });
     } else {
       acc.high = Math.max(acc.high, rate);
       acc.low = Math.min(acc.low, rate);
       acc.close = rate; // rows are chronological — last write wins
       acc.fills += 1;
-      acc.principalTotal += principal;
+      if (principal === null) acc.unrecordedPrincipalFills += 1;
+      else acc.principalTotal += principal;
     }
   }
   return Array.from(buckets.entries())
@@ -135,5 +157,6 @@ export function foldRateCandles(
       close: acc.close,
       fills: acc.fills,
       principalTotal: acc.principalTotal.toString(),
+      unrecordedPrincipalFills: acc.unrecordedPrincipalFills,
     }));
 }

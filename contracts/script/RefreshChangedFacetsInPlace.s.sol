@@ -5,6 +5,7 @@ import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {RefreshAllFacetsInPlace, IOwnable} from "./RefreshAllFacetsInPlace.s.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
@@ -91,7 +92,7 @@ import {LibPausable} from "../src/libraries/LibPausable.sol";
  *
  *         Env: ADMIN_PRIVATE_KEY (the Diamond's ERC-173 owner), EXPECT_CHANGED
  *         (required on a live broadcast). Usage, from contracts/ on main:
- *           forge script script/RefreshChangedFacetsInPlace.s.sol --sig "refreshChanged()" \
+ *           forge script script/RefreshChangedFacetsInPlace.s.sol --sig "refreshChanged()" --ffi \
  *             --rpc-url $BASE_SEPOLIA_RPC_URL                      # dry run: prints the set
  *           EXPECT_CHANGED=<the printed list> forge script ... --broadcast --slow
  */
@@ -125,6 +126,11 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
         );
         _requireSlice3Diamond(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
+        // #2092 item 1 — refuse code that drops a storage-layout fact this
+        // chain records, before anything is broadcast (needs `--ffi`). Here in
+        // the shared body, so neither entry skips it; `forge test` skips it by
+        // the library's own rule ({StorageLayoutRecord.active}).
+        StorageLayoutRecord.requireAppendOnly("RefreshChangedFacetsInPlace", diamond);
         IDiamondLoupe loupe = IDiamondLoupe(diamond);
         bool writesArtifact = Deployments.artifactWritesEnabled();
 
@@ -245,7 +251,9 @@ contract RefreshChangedFacetsInPlace is RefreshAllFacetsInPlace {
             if (changed[i]) Deployments.writeFacet(target[i].key, target[i].impl);
         }
         Deployments.writeUint(".facetCount", loupe.facetAddresses().length);
-        console.log("addresses.json updated for the changed facets. Next:");
+        // #2092 item 1 — the chain now runs this checkout's layout and code.
+        StorageLayoutRecord.record(diamond);
+        console.log("addresses.json and the storage-layout record updated for the changed facets. Next:");
         console.log("  bash script/exportFrontendDeployments.sh");
     }
 

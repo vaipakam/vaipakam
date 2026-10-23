@@ -370,8 +370,17 @@ contract FlashLoanLiquidator is
     /// @dev Decode `params`, approve the DIAMOND, trigger the
     ///      discounted liquidation, then run the off-chain-supplied
     ///      swap to convert the seized collateral back to the
-    ///      principal asset. Reverts if the post-swap balance is
-    ///      insufficient to repay the flash-loan + fee.
+    ///      principal asset.
+    ///
+    ///      Every figure is measured against THIS run's entry snapshot,
+    ///      never against the contract's absolute balance (#961). The
+    ///      contract keeps earned profit between liquidations until the
+    ///      owner sweeps it, so an absolute check would let a
+    ///      loss-making swap pass by spending that standing balance and
+    ///      still report a positive `netProfit`. The run must return at
+    ///      least its own flash-loan fee on top of what it started with,
+    ///      or it reverts. Likewise only collateral that arrived from
+    ///      the Diamond in this run is offered to the swap.
     function _runLiquidation(
         address principalAsset,
         uint256 totalDebt,
@@ -386,6 +395,13 @@ contract FlashLoanLiquidator is
             bytes memory swapCalldata
         ) = abi.decode(params, (uint256, address, address, address, bytes));
 
+        // 0. Entry snapshots. `principalAtEntry` already includes the
+        // flash-loaned `totalDebt`; repaying `totalDebt + fee` leaves
+        // the standing balance intact only if the run ends at or above
+        // `principalAtEntry + fee`.
+        uint256 principalAtEntry = IERC20(principalAsset).balanceOf(address(this));
+        uint256 collateralAtEntry = IERC20(collateralAsset).balanceOf(address(this));
+
         // 1. Approve DIAMOND for the exact debt amount. The
         // DIAMOND's `safeTransferFrom` consumes the entire
         // allowance — no leftover risk.
@@ -399,16 +415,17 @@ contract FlashLoanLiquidator is
             "" /* extraData reserved for v2 */
         );
 
-        // 3. Snapshot the seized collateral balance. The exact
-        // size depends on the DIAMOND's per-tier discount math
-        // applied to the loan's oracle-priced collateral value;
+        // 3. Measure the seized collateral: what arrived in this run.
+        // The exact size depends on the DIAMOND's per-tier discount
+        // math applied to the loan's oracle-priced collateral value;
         // we don't try to second-guess it on-chain.
-        uint256 collateralSeized = IERC20(collateralAsset).balanceOf(address(this));
+        uint256 collateralNow = IERC20(collateralAsset).balanceOf(address(this));
+        uint256 collateralSeized = collateralNow > collateralAtEntry ? collateralNow - collateralAtEntry : 0;
 
         // 4. Swap collateral → principal using off-chain calldata.
         // The keeper bot computed the route + min-output; if the
         // realised proceeds are insufficient to repay the loan +
-        // fee, the swap-balance check below reverts the whole tx.
+        // fee, the balance check below reverts the whole tx.
         uint256 swapProceeds = 0;
         if (collateralSeized > 0) {
             IERC20(collateralAsset).forceApprove(swapAllowanceTarget, collateralSeized);
@@ -416,14 +433,15 @@ contract FlashLoanLiquidator is
             (bool ok, ) = swapTarget.call(swapCalldata);
             if (!ok) revert SwapFailed();
             uint256 principalAfter = IERC20(principalAsset).balanceOf(address(this));
-            swapProceeds = principalAfter - principalBefore;
+            swapProceeds = principalAfter > principalBefore ? principalAfter - principalBefore : 0;
             // Clean up the allowance — defence-in-depth against an
             // aggregator that pulled less than approved.
             IERC20(collateralAsset).forceApprove(swapAllowanceTarget, 0);
         }
 
-        // 5. Validate post-swap balance covers debt + fee.
-        uint256 needed = totalDebt + fee;
+        // 5. This run must cover its own flash-loan fee without
+        // touching the standing balance it started with.
+        uint256 needed = principalAtEntry + fee;
         uint256 finalBalance = IERC20(principalAsset).balanceOf(address(this));
         if (finalBalance < needed) {
             revert InsufficientPostSwapBalance(needed, finalBalance);
@@ -437,7 +455,7 @@ contract FlashLoanLiquidator is
             fee,
             collateralSeized,
             swapProceeds,
-            finalBalance - needed /* net profit */
+            finalBalance - needed /* this run's net profit */
         );
     }
 

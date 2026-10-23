@@ -547,7 +547,40 @@ export async function runRewardSanctionsHold(env: Env, tick: PassTick): Promise<
   );
 }
 
+/** What one chain's run reads and signs with, injected so a whole run is
+ *  testable against a fake chain (#2515): the same seam `dayCloseOnce` has. */
+export interface SanctionsHoldDeps {
+  /** Plain client: the batched reads, which carry the deadline themselves,
+   *  and the alert-window reads past the send deadline. */
+  readClient: PublicClient;
+  /** Deadline-bound client: single reads and simulations. */
+  client: PublicClient;
+  /** The signing context; null when there is no keeper key. */
+  context: () => KeeperContext | null;
+}
+
 async function observeChain(env: Env, chain: ChainConfig, deadline: number = Date.now() + 50 * 60_000): Promise<void> {
+  // Every single read and simulation is refused past the run's deadline
+  // (`deadlineClient`); the batched status reads carry it themselves. The
+  // alert-phase re-read uses the plain client, bounded by the alert window.
+  const readClient = createPublicClient({ transport: http(chain.rpc) });
+  const client = deadlineClient(readClient, deadline);
+  // The run's deadline is honoured at each send's turn in the queue too
+  // (`SendPastDeadline`), not only before the send joins it.
+  await sanctionsHoldOnce(env, chain, deadline, {
+    readClient: readClient as never,
+    client: client as never,
+    context: () => buildKeeperContext(env, chain, client as never, { notAfterMs: deadline }),
+  });
+}
+
+/** One run of the pass on one chain, against injected clients. */
+export async function sanctionsHoldOnce(
+  env: Env,
+  chain: Pick<ChainConfig, 'id' | 'diamond'>,
+  deadline: number,
+  deps: SanctionsHoldDeps,
+): Promise<void> {
   const nowSec = Math.floor(Date.now() / 1000);
   // Owners of open staging work join the open chains: a claimant held with NO
   // chain (the oracle was unavailable when its page ran, a flag marker set)
@@ -573,11 +606,8 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
   const stagingOwners = stagingRead ?? [];
   const chainsRead = (await source('open evidence chains', () => listOpenSanctionsChains(env.DB, chain.id, deploymentFloor(chain.id)))) ?? [];
   const known = candidateOwners([...chainsRead, ...watched], stagingOwners);
-  // Every single read and simulation is refused past the run's deadline
-  // (`deadlineClient`); the batched status reads carry it themselves. The
-  // alert-phase re-read uses the plain client, bounded by the alert window.
-  const plainClient = createPublicClient({ transport: http(chain.rpc) });
-  const client = deadlineClient(plainClient, deadline);
+  const plainClient = deps.readClient;
+  const client = deps.client;
   const diamond = chain.diamond as Address;
   /** Candidates whose classification could not be read this run (#2497
    *  re-cut 3/3 pre-review): MEASURED, so a run that read nothing never
@@ -636,9 +666,7 @@ async function observeChain(env: Env, chain: ChainConfig, deadline: number = Dat
     // Bookkeeping only: the owner stays watched and is read again next run.
     console.error(`[keeper] rewardSanctionsHold chain=${chain.id}: watch-list cleanup failed this run: ${shortErr(err)}`);
   }
-  // The run's deadline is honoured at each send's turn in the queue too
-  // (`SendPastDeadline`), not only before the send joins it.
-  const ctx = buildKeeperContext(env, chain, client as never, { notAfterMs: deadline });
+  const ctx = deps.context();
   const budget = { writes: plan.writes, touched: new Set<string>(), deadline, sent: [] as SentTx[] };
   /** MEASURED, not predicted (#2497 r16): the due observations and clean
    *  commits this tick never reached, because the write budget or the time

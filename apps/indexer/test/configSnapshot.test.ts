@@ -32,6 +32,10 @@ const MIGRATION_0067 = readFileSync(
   new URL('../migrations/0067_protocol_config_label_binding.sql', import.meta.url),
   'utf8',
 );
+const MIGRATION_0070 = readFileSync(
+  new URL('../migrations/0070_protocol_config_knobs.sql', import.meta.url),
+  'utf8',
+);
 
 /** Env + client stubs for the refresh path: real SQLite behind the D1
  *  shape (the upsert/stale-mark guards ARE SQL), canned reads. */
@@ -44,8 +48,11 @@ function refreshHarness(opts?: {
   graceRead?: () => Promise<unknown>;
   /** What the loupe reports as the getters' host; defaults to this build's. */
   loupeHost?: () => Promise<string>;
+  /** #2071 — the batched settings read; absent = the client has none, so
+   *  that read fails and the row stores no settings. */
+  multicall?: (args: { contracts: readonly { functionName: string }[]; blockNumber?: bigint }) => Promise<unknown>;
 }) {
-  const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067]);
+  const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067, MIGRATION_0070]);
   const reads: string[] = [];
   const client = {
     readContract: async (args: { functionName: string }) => {
@@ -61,6 +68,7 @@ function refreshHarness(opts?: {
       }
       return [100n, [1n, 2n, 3n, 4n]] as const;
     },
+    ...(opts?.multicall ? { multicall: opts.multicall } : {}),
   } as unknown as PublicClient;
   const env = { DB: d1 } as unknown as Env;
   const row = () =>
@@ -89,6 +97,8 @@ describe('configSnapshot', () => {
       'GraceBucketsUpdated',
       'AssetMinPartialBpsUpdated',
       'TierTableVersionBumped',
+      // Codex #2683 r5 — a cut can change any getter's code.
+      'DiamondCut',
     ]) {
       expect(isConfigEventName(name), name).toBe(true);
     }
@@ -173,6 +183,79 @@ describe('configSnapshot', () => {
     });
     expect(h.reads).toEqual([]);
     expect(h.row()?.ua).toBe(0); // …but the old row no longer looks fresh
+  });
+
+  it('records the staling block and keeps the row stale until a refresh reaches it (Codex #2683 r7)', async () => {
+    const h = refreshHarness();
+    h.db
+      .prepare(
+        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
+         VALUES (84532, '[]', '[]', 50, ?)`,
+      )
+      .run(Math.floor(Date.now() / 1000));
+    const staleAt = () =>
+      (h.db.prepare(`SELECT stale_at_block AS s FROM protocol_config WHERE chain_id = 84532`).get() as {
+        s: number | null;
+      }).s;
+    // A catch-up scan to block 100 saw a governance event.
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: ['FeesConfigSet'],
+      blockNumber: 100n,
+      headBlock: 1_000n,
+    });
+    expect(h.row()?.ua).toBe(0);
+    expect(staleAt()).toBe(100);
+    // A second, lower catch-up mark never lowers the recorded boundary.
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: ['FeesConfigSet'],
+      blockNumber: 80n,
+      headBlock: 1_000n,
+    });
+    expect(staleAt()).toBe(100);
+    // The route serves the boundary with the stale flag.
+    const served = (await (
+      await handleConfigSnapshot(84532, { DB: h.env.DB, RPC_BASE_SEPOLIA: SERVED_RPC } as unknown as Env)
+    ).json()) as { stale?: boolean; staleAtBlock?: number };
+    expect(served).toMatchObject({ stale: true, staleAtBlock: 100 });
+    // A refresh read from below the boundary stores its values but cannot
+    // include the event: the row stays stale.
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: [],
+      blockNumber: 90n,
+      headBlock: 90n,
+    });
+    expect(h.row()).toMatchObject({ sb: 90, ua: 0 });
+    expect(staleAt()).toBe(100);
+    // One that reaches it clears the mark.
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: [],
+      blockNumber: 100n,
+      headBlock: 100n,
+    });
+    expect(h.row()?.sb).toBe(100);
+    expect(h.row()?.ua).toBeGreaterThan(0);
+    expect(staleAt()).toBeNull();
+    const cleared = (await (
+      await handleConfigSnapshot(84532, { DB: h.env.DB, RPC_BASE_SEPOLIA: SERVED_RPC } as unknown as Env)
+    ).json()) as Record<string, unknown>;
+    expect(cleared).not.toHaveProperty('stale');
+    expect(cleared).not.toHaveProperty('staleAtBlock');
   });
 
   it('lets a late older scan neither overwrite nor stale-mark a newer row', async () => {
@@ -581,6 +664,124 @@ describe('configSnapshot', () => {
       const body = (await res.json()) as Record<string, unknown>;
       expect(body.available).toBe(true);
       expect(body).not.toHaveProperty('values');
+    });
+  });
+
+  /**
+   * #2071 — the single-output settings the bundle does not carry: read at
+   * the capture block, stored named, and served inside `values` with the
+   * ones the chain did not answer listed in `unreported`.
+   */
+  describe('settings beside the bundle (#2071)', () => {
+    const multicallAnswering = (answers: Record<string, unknown>) =>
+      async (args: { contracts: readonly { functionName: string }[]; blockNumber?: bigint }) => {
+        expect(args.blockNumber).toBe(100n);
+        return args.contracts.map((c) =>
+          c.functionName in answers
+            ? { status: 'success', result: answers[c.functionName] }
+            : { status: 'failure', error: new Error('FunctionDoesNotExist') },
+        );
+      };
+    const refresh = (h: ReturnType<typeof refreshHarness>) =>
+      maybeRefreshProtocolConfig({
+        env: h.env,
+        chainId: 84532,
+        client: h.client,
+        diamond: DIAMOND,
+        scannedEventNames: [],
+        blockNumber: 100n,
+        headBlock: 110n,
+      });
+    const knobColumn = (h: ReturnType<typeof refreshHarness>) =>
+      (h.db.prepare('SELECT knob_values_json AS k FROM protocol_config WHERE chain_id = 84532').get() as {
+        k: string | null;
+      }).k;
+
+    it('refreshes on a setter event of a published setting', () => {
+      for (const name of ['MinHealthFactorSet', 'PythOracleSet', 'PreNotifyDaysSet', 'RewardReporterConfigUpdated']) {
+        expect(isConfigEventName(name), name).toBe(true);
+      }
+    });
+
+    it('stores the settings the chain answered, and names the rest', async () => {
+      const h = refreshHarness({
+        multicall: multicallAnswering({ getMinHealthFactor: 15n * 10n ** 17n, getAutoLendEnabled: true }),
+      });
+      await refresh(h);
+      const stored = JSON.parse(knobColumn(h)!) as { values: Record<string, unknown>; unreported: string[] };
+      expect(stored.values).toEqual({ minHealthFactor: '1500000000000000000', autoLendEnabled: true });
+      expect(stored.unreported).toContain('treasury');
+      expect(stored.unreported).not.toContain('minHealthFactor');
+    });
+
+    it('stores nothing, not a guess, when the batched read fails', async () => {
+      const h = refreshHarness({
+        multicall: async () => {
+          throw new Error('rpc down');
+        },
+      });
+      await refresh(h);
+      // The bundle refresh is unaffected.
+      expect(JSON.parse(h.row()!.bj)).toEqual(['100', ['1', '2', '3', '4']]);
+      expect(knobColumn(h)).toBeNull();
+    });
+
+    const BUNDLE_NAMES = abiOutputNames('getProtocolConfigBundle')!;
+    const FULL_BUNDLE = [
+      '200', '20', '200', '600', '300', '11000', '500',
+      ['100', '200', '300', '400'], ['1000', '1500', '2000', '2400'],
+      true, true, true, '100', '1800', '365',
+    ];
+    async function serve(knobs: string | null, bundleNames: readonly string[] | null = BUNDLE_NAMES) {
+      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067, MIGRATION_0070]);
+      db.prepare(
+        `INSERT INTO protocol_config
+           (chain_id, bundle_json, master_flags_json, source_block, updated_at,
+            bundle_names_json, knob_values_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        84532,
+        serializeTuple(FULL_BUNDLE),
+        JSON.stringify([true, true, false]),
+        1,
+        2,
+        bundleNames === null ? null : JSON.stringify(bundleNames),
+        knobs,
+      );
+      return (await (
+        await handleConfigSnapshot(84532, { DB: d1, RPC_BASE_SEPOLIA: SERVED_RPC } as unknown as Env)
+      ).json()) as { values?: Record<string, unknown>; unreported?: string[] };
+    }
+
+    it('serves the settings inside the named values, with what went unreported', async () => {
+      const body = await serve(
+        JSON.stringify({ values: { minHealthFactor: '1500000000000000000' }, unreported: ['treasury'] }),
+      );
+      expect(body.values?.treasuryFeeBps).toBe('200');
+      expect(body.values?.minHealthFactor).toBe('1500000000000000000');
+      expect(body.unreported).toEqual(['treasury']);
+    });
+
+    it('serves no settings and no unreported list for a row that has none', async () => {
+      const body = await serve(null);
+      expect(body.values?.treasuryFeeBps).toBe('200');
+      expect(body.values).not.toHaveProperty('minHealthFactor');
+      expect(body).not.toHaveProperty('unreported');
+    });
+
+    it('withholds the settings with the values when the bundle cannot be labelled', async () => {
+      const body = await serve(
+        JSON.stringify({ values: { minHealthFactor: '1500000000000000000' }, unreported: [] }),
+        null,
+      );
+      expect(body).not.toHaveProperty('values');
+      expect(body).not.toHaveProperty('unreported');
+    });
+
+    it('ignores a stored column of the wrong shape', async () => {
+      const body = await serve(JSON.stringify({ values: { minHealthFactor: 15 }, unreported: [] }));
+      expect(body.values).not.toHaveProperty('minHealthFactor');
+      expect(body).not.toHaveProperty('unreported');
     });
   });
 });

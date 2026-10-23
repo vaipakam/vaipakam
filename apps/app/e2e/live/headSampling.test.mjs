@@ -678,7 +678,15 @@ describe('the synthetic chain probe validates as a quantity (round 100)', () => 
     expect(src, 'the probe no longer reads a bare result').not.toContain(
       "const hex = (await r.json())?.result;",
     );
-    expect(src).toContain('hexQuantity(believableResult(await r.json()))');
+    expect(src).toContain('hexQuantity(believableResult(body))');
+  });
+
+  it('parses outside the catch, so a parser defect is not read as no answer (#2135)', () => {
+    // The catch covers the request and the body read only. A defect in the
+    // parse after it must throw rather than become "no evidence of the
+    // chain", which the gate would turn into a silent refusal on every run.
+    const probe = between(src, 'body = await r.json();', 'const id = hexQuantity(believableResult(body));');
+    expect(probe).toContain('} catch {');
   });
 
   it('applies the same safe-integer check the captured reader applies', () => {
@@ -688,8 +696,8 @@ describe('the synthetic chain probe validates as a quantity (round 100)', () => 
     // how a rule ends up asserted over a region the code does not have.
     const body = between(
       src,
-      'const id = hexQuantity(believableResult(await r.json()));',
-      '} catch {',
+      'const id = hexQuantity(believableResult(body));',
+      '})(),',
     );
     expect(body).toContain('Number.isSafeInteger(n)');
   });

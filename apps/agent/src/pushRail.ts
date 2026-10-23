@@ -2,43 +2,123 @@
  * This Worker's Push rail configuration, read from its env in ONE place so the
  * sender (`periodicPreNotify`) and the status the app reads (`GET
  * /push/status`, `PUT /thresholds`) can never consult different settings
- * (#2251). The rail itself is the shared `@vaipakam/push` (#2248).
+ * (#2251). The rail itself is the shared `@vaipakam/push` (#2248). Since
+ * #2667 the status also covers the keeper's rail, as the keeper publishes it.
  */
-import { pushRailStatus, type PushRailConfig } from '@vaipakam/push';
+import {
+  pushRailStatus,
+  readPublishedRail,
+  type PublishedRailStatus,
+  type PushRailConfig,
+  type PushRailUnavailableReason,
+} from '@vaipakam/push';
+import { readPublishedPushRail } from './db';
 import type { Env } from './env';
 
 export function pushRailConfigOf(env: Pick<Env, 'PUSH_CHANNEL_PK' | 'PUSH_CHANNEL_ADDRESS'>): PushRailConfig {
   return { channelPk: env.PUSH_CHANNEL_PK, channelAddress: env.PUSH_CHANNEL_ADDRESS };
 }
 
+/** How long the keeper's published row is trusted (#2667). Its watcher
+ *  publishes every tick (one minute); this leaves room for a restart or a
+ *  release, and no more — a row this old says the sender has stopped. */
+export const KEEPER_RAIL_FRESH_SEC = 15 * 60;
+
+/** A row stamped this far ahead of the agent's clock is not trusted either:
+ *  it would otherwise stay "fresh" for as long as the skew lasts. */
+const KEEPER_RAIL_MAX_SKEW_SEC = 60;
+
 /**
- * `GET /push/status` — whether this deployment can send Push, for the app to
- * read BEFORE it offers the opt-in (#2251).
+ * What `GET /push/status` answers, and what a new opt-in is judged against.
+ *
+ * `scope: 'service'` covers BOTH senders: the agent's rail (payment
+ * reminders) and the keeper's (risky-loan warnings), the latter as the
+ * keeper last published it (#2667). It is `available` only when both can
+ * issue a request on the SAME channel, since a subscriber opts in to one
+ * channel. When the keeper's row is missing, unreadable, stale or malformed,
+ * nothing is known about that rail, and the answer falls back to `scope:
+ * 'agent'` — this Worker's own rail, which the app already presents with a
+ * caveat that it does not cover the warnings. It never borrows the agent's
+ * answer for the keeper.
+ *
+ * `rail` names which sender is down when one is (`agent` or `keeper`); a
+ * channel disagreement is `reason: 'channel-mismatch'` and names neither.
+ */
+export type ServicePushStatus =
+  | { usable: true; channel: string; scope: 'agent' | 'service' }
+  | {
+      usable: false;
+      reason: PushRailUnavailableReason | 'channel-mismatch';
+      rail?: 'agent' | 'keeper';
+      scope: 'agent' | 'service';
+    };
+
+export async function servicePushStatus(
+  env: Pick<Env, 'DB' | 'PUSH_CHANNEL_PK' | 'PUSH_CHANNEL_ADDRESS'>,
+  nowSec: number = Math.floor(Date.now() / 1000),
+): Promise<ServicePushStatus> {
+  const agent = pushRailStatus(pushRailConfigOf(env));
+  const keeper = await keeperRail(env.DB, nowSec);
+  if (keeper === undefined) {
+    return agent.usable
+      ? { usable: true, channel: agent.channel, scope: 'agent' }
+      : { usable: false, reason: agent.reason, rail: 'agent', scope: 'agent' };
+  }
+  if (!agent.usable) return { usable: false, reason: agent.reason, rail: 'agent', scope: 'service' };
+  if (!keeper.usable) return { usable: false, reason: keeper.reason, rail: 'keeper', scope: 'service' };
+  if (keeper.channel.toLowerCase() !== agent.channel.toLowerCase()) {
+    return { usable: false, reason: 'channel-mismatch', scope: 'service' };
+  }
+  return { usable: true, channel: agent.channel, scope: 'service' };
+}
+
+/** The keeper's published rail, or `undefined` when nothing trustworthy is
+ *  known about it. A read failure (the table not migrated yet, a D1 outage)
+ *  is unknown too: this answer must tolerate the previous schema. */
+async function keeperRail(db: D1Database, nowSec: number): Promise<PublishedRailStatus | undefined> {
+  let row;
+  try {
+    row = await readPublishedPushRail(db, 'keeper');
+  } catch {
+    return undefined;
+  }
+  const published = readPublishedRail(row);
+  if (published === undefined) return undefined;
+  const age = nowSec - published.observedAt;
+  if (age > KEEPER_RAIL_FRESH_SEC || age < -KEEPER_RAIL_MAX_SKEW_SEC) return undefined;
+  return published.status;
+}
+
+/**
+ * `GET /push/status` — whether Push can be sent, for the app to read BEFORE
+ * it offers the opt-in (#2251, #2667).
  *
  * The app used to offer the Push rail on its own build-time channel address
  * alone, so a deployment whose signer was unset or malformed said "Push
- * delivery is on" and sent nothing. The answer here comes from the same rail
- * the sender uses, without the key leaving the Worker: `available` and the
- * channel the rail posts as, or `available: false` and the reason code.
- *
- * Its SCOPE is this Worker's rail. The keeper sends the HF-band alerts from its
- * own copy of the key on its own machine, and this Worker cannot see that
- * configuration; the response says so in `scope` rather than letting the app
- * read one rail's status as the whole Push service's.
+ * delivery is on" and sent nothing. The answer here comes from the rails
+ * themselves, without any key leaving its Worker: `available` and the channel
+ * posted as, or `available: false` and the reason code. Its `scope` says
+ * whose rails it covers; see `servicePushStatus`.
  *
  * `available` is "can issue a request", not "Push will accept it": a channel
  * Push does not recognise, or a signer that is not the channel's delegate, is
  * refused per send. Nothing local can answer that, and the copy does not
  * claim it.
  */
-export function handlePushStatus(
-  env: Pick<Env, 'PUSH_CHANNEL_PK' | 'PUSH_CHANNEL_ADDRESS'>,
+export async function handlePushStatus(
+  env: Pick<Env, 'DB' | 'PUSH_CHANNEL_PK' | 'PUSH_CHANNEL_ADDRESS'>,
   corsOrigin: string,
-): Response {
-  const status = pushRailStatus(pushRailConfigOf(env));
+  nowSec?: number,
+): Promise<Response> {
+  const status = await servicePushStatus(env, nowSec);
   const body = status.usable
-    ? { available: true, channel: status.channel, scope: 'agent' }
-    : { available: false, reason: status.reason, scope: 'agent' };
+    ? { available: true, channel: status.channel, scope: status.scope }
+    : {
+        available: false,
+        reason: status.reason,
+        ...(status.rail ? { rail: status.rail } : {}),
+        scope: status.scope,
+      };
   return new Response(JSON.stringify(body), {
     status: 200,
     headers: {

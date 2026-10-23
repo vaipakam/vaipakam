@@ -350,7 +350,15 @@ async function chainPosture(atBlock = null) {
       read('getMasterFlags'),
     ]);
     return { paused, autoRefinance, partialFill: flags[2], blockNumber };
-  } catch {
+  } catch (err) {
+    // #2135 — ONLY THE CHAIN DECLINING IS "NOT ESTABLISHED". `null` makes the
+    // posture verdict block, which is the honest answer for a dead endpoint
+    // and the wrong one for a defect in this read: a drive that cannot read
+    // its own posture would block on every run and look like a flaky chain.
+    // The same rule `probeCloseOut` follows: rethrow what is not positively
+    // a transport fault (an undecodable revert counts as transport, see
+    // `isTransportFailure`), so a broken drive is reported as broken.
+    if (!isTransportFailure(err)) throw err;
     return null;
   }
 }
@@ -1959,6 +1967,14 @@ function notePageRpcEndpoint(url, calls, rawBody) {
   pageRpcChain.set(
     url,
     (async () => {
+      // #2135 — THE CATCH COVERS THE NETWORK AND NOTHING ELSE. `null` means
+      // "no evidence of the chain", which the gate turns into a refusal to
+      // certify; that is right for an endpoint that did not answer and wrong
+      // for a defect in the parsing below, which would leave the gate
+      // refusing on every run for a reason no one could see. So the request
+      // and the body read sit inside the catch, and the pure parse after it
+      // (`believableResult`, `hexQuantity`, both total) sits outside.
+      let body;
       try {
         const r = await ufetch(url, {
           method: 'POST',
@@ -1967,32 +1983,33 @@ function notePageRpcEndpoint(url, calls, rawBody) {
           signal: AbortSignal.timeout(CHAIN_PROBE_TIMEOUT_MS),
         });
         if (!r.ok) return null;
-        // ROUND 99 P2 — THROUGH THE SHARED PARSER, and the third site to
-        // need it. A member may carry a `result` beside a non-null `error`;
-        // viem takes the error, so the page never consumed that chain id.
-        // Believing it here lets this probe AGREE with the captured traffic
-        // on a value the page rejected — and the chain gate, whose whole job
-        // since round 95 is to refuse a clean verdict when the deployment's
-        // chain is unknown, then certifies instead of blocking.
-        // ROUND 100 P2 — AND A CHAIN ID IS A QUANTITY, validated the way the
-        // captured-response reader validates it.
-        //
-        // `BigInt('84532')` happily parses a DECIMAL string, so an endpoint
-        // answering `"84532"` — which is not a valid JSON-RPC quantity — was
-        // read here as the requested chain while `chainIdFromRpcPair`
-        // correctly rejected the same value. With no separate chain reply in
-        // the page's traffic, this probe is then the sole source, and the
-        // gate certifies a deployment it never identified. `hexQuantity` plus
-        // the safe-integer check is exactly what the other reader applies.
-        const id = hexQuantity(believableResult(await r.json()));
-        if (id === null) return null;
-        const n = Number(id);
-        return Number.isSafeInteger(n) ? n : null;
+        body = await r.json();
       } catch {
         // Unreachable, non-JSON, or timed out — none of them evidence of a
         // wrong chain.
         return null;
       }
+      // ROUND 99 P2 — THROUGH THE SHARED PARSER, and the third site to
+      // need it. A member may carry a `result` beside a non-null `error`;
+      // viem takes the error, so the page never consumed that chain id.
+      // Believing it here lets this probe AGREE with the captured traffic
+      // on a value the page rejected — and the chain gate, whose whole job
+      // since round 95 is to refuse a clean verdict when the deployment's
+      // chain is unknown, then certifies instead of blocking.
+      // ROUND 100 P2 — AND A CHAIN ID IS A QUANTITY, validated the way the
+      // captured-response reader validates it.
+      //
+      // `BigInt('84532')` happily parses a DECIMAL string, so an endpoint
+      // answering `"84532"` — which is not a valid JSON-RPC quantity — was
+      // read here as the requested chain while `chainIdFromRpcPair`
+      // correctly rejected the same value. With no separate chain reply in
+      // the page's traffic, this probe is then the sole source, and the
+      // gate certifies a deployment it never identified. `hexQuantity` plus
+      // the safe-integer check is exactly what the other reader applies.
+      const id = hexQuantity(believableResult(body));
+      if (id === null) return null;
+      const n = Number(id);
+      return Number.isSafeInteger(n) ? n : null;
     })(),
   );
 }

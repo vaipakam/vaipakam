@@ -65,5 +65,8 @@
   "0065_loan_orphans.sql",
   "0066_loan_repair_observation.sql",
   "0067_protocol_config_label_binding.sql",
-  "0068_offer_refinance_target.sql"
+  "0068_offer_refinance_target.sql",
+  "0069_push_rail_status.sql",
+  "0070_protocol_config_knobs.sql",
+  "0071_loans_placed_tenor_indexes.sql"
 ]

@@ -34,14 +34,27 @@ export function isSparseTape(buckets: readonly RateCandleBucket[]): boolean {
   return totalFills(buckets) < SPARSE_FILLS_THRESHOLD;
 }
 
-export interface LastPrint {
-  rateBps: number;
-  /** Unix seconds. Bucket-derived prints carry the bucket START time
-   *  (the finest truth the aggregate offers); tape-derived prints
-   *  carry the fill's exact timestamp. */
-  at: number;
-  source: 'bucket' | 'tape';
-}
+/** The header's newest executed print. A tape print keeps the loan it
+ *  came from, so a print whose rate cannot be backed can still name that
+ *  loan (#1142): "not recorded" without saying which fill would leave the
+ *  reader nothing to check. */
+export type LastPrint =
+  | {
+      source: 'bucket';
+      rateBps: number;
+      /** Unix seconds: the bucket START time (the finest truth the
+       *  aggregate offers). */
+      at: number;
+    }
+  | {
+      source: 'tape';
+      /** `null` when the indexer cannot back the executed rate: the fill
+       *  is known to have happened, its rate is not. */
+      rateBps: number | null;
+      /** Unix seconds: the fill's exact time. */
+      at: number;
+      loanId: number;
+    };
 
 /**
  * The newest executed print for the header's "last fill: X.XX% · age"
@@ -53,46 +66,101 @@ export interface LastPrint {
  */
 export function newestPrint(
   buckets: readonly RateCandleBucket[],
-  tapeNewest: { rateBps: number; at: number } | null,
+  tapeNewest: TapeFillLike | null,
 ): LastPrint | null {
   const last = buckets.length > 0 ? buckets[buckets.length - 1] : null;
-  if (tapeNewest && (last === null || tapeNewest.at >= last.t)) {
-    return { rateBps: tapeNewest.rateBps, at: tapeNewest.at, source: 'tape' };
+  if (tapeNewest && (last === null || tapeNewest.startAt >= last.t)) {
+    return {
+      source: 'tape',
+      rateBps: tapeNewest.rateBps,
+      at: tapeNewest.startAt,
+      loanId: tapeNewest.loanId,
+    };
   }
   if (last === null) return null;
-  return { rateBps: last.close, at: last.t, source: 'bucket' };
+  return { source: 'bucket', rateBps: last.close, at: last.t };
 }
 
+const isCount = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+/** #1142 — the candle response's disclosure of loans on the pair that no
+ *  tenor market holds (agreed terms unconfirmed). Anything but a well-formed
+ *  `{ count, capped }`, ABSENT included, returns `null`, which the hook
+ *  turns into "unavailable": a chart without the disclosure would present
+ *  the placed fills as everything that happened. */
+export function readUnplacedCount(
+  raw: unknown,
+): { count: number; capped: boolean } | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const { count, capped } = raw as { count?: unknown; capped?: unknown };
+  return isCount(count) && typeof capped === 'boolean' ? { count, capped } : null;
+}
+
+/** #1142 — every bucket states how many of its fills have no recorded
+ *  principal (`0 ≤ unrecordedPrincipalFills ≤ fills`). A bucket that does not
+ *  cannot say whether its total is complete or a floor, so the hook treats
+ *  the whole response as unavailable rather than reading the gap as zero. */
+export function bucketsStateProvenance(buckets: readonly unknown[]): boolean {
+  return buckets.every((b) => {
+    if (typeof b !== 'object' || b === null) return false;
+    const { fills, unrecordedPrincipalFills: u } = b as {
+      fills?: unknown;
+      unrecordedPrincipalFills?: unknown;
+    };
+    return isCount(fills) && isCount(u) && u <= fills;
+  });
+}
+
+/** Days each candle range covers (`all` = the whole history), the same
+ *  table the worker scopes on. */
+export const RANGE_DAYS: Readonly<Record<CandleRange, number | null>> = {
+  '7d': 7,
+  '30d': 30,
+  '90d': 90,
+  all: null,
+};
+
 /**
- * Which empty-state copy an empty bucket array earns (Codex #1139
- * round-1 P3, tightened in round 4): "this market never filled" is
- * only claimable when the evidence actually covers the market's whole
- * history AND nothing on hand disproves it —
+ * Which empty-state copy an empty bucket array earns. Each kind claims only
+ * what the candle response AND the tape (the market's newest placed fills,
+ * all-time, refreshed on its own clock) jointly support:
  *
- *  - the tape (the market's newest fills, all-time) holds ≥1 fill →
- *    NEVER market copy, even at `range === 'all'`. In the 60 s
- *    candle-cache skew window after a market's first fill, the candle
- *    response can still be empty while the tape already proves the
- *    fill (and the last-fill header shows it) — claiming "no fills
- *    yet" would contradict the header. The range-scoped copy is
- *    factually safe there.
- *  - `range === 'all'` (tape empty or unavailable): the empty series
- *    IS the whole history → market copy.
- *  - narrower range + a CONFIRMED-empty tape → no fill exists anywhere
- *    → market copy.
- *  - otherwise (tape unavailable/loading on a narrower range) →
- *    range-scoped copy. Saying "no fills yet" here would misstate
- *    history.
+ *  - `catchingUp`: the tape holds a fill inside the range, so the empty
+ *    series is stale (the 60 s candle cache, Codex #1139 r4) — no claim
+ *    about the period is honest, so the copy says the chart is catching up.
+ *    Checked first: a tape-proven fill outranks every other empty claim
+ *    (Codex #2689 r5).
+ *  - `unplaced` (#1142): the pair has loans in range that no tenor market
+ *    holds (agreed terms unconfirmed). One may belong to this tenor, so only
+ *    "none with confirmed terms at this duration" is claimable.
+ *  - `range`: some fill exists (the tape's, older than the range) or the
+ *    tape is unknown on a narrower range — "none in this period" only.
+ *  - `market`: the evidence covers the whole history (range = all, or a
+ *    confirmed-empty tape) and nothing disproves it, unplaced loans on the
+ *    pair included (the tape's all-time count) — "never filled".
  */
 export function chartEmptyKind(
   range: CandleRange,
-  tape: readonly unknown[] | null | undefined,
-): 'market' | 'range' {
-  // A non-empty tape PROVES a fill exists — the market copy is never
-  // honest, regardless of range (candle-cache skew, see above).
-  if (Array.isArray(tape) && tape.length > 0) return 'range';
+  tape: { fills: readonly { startAt: number }[]; unplaced: { count: number } } | null | undefined,
+  unplaced: number,
+  nowSec: number,
+): 'catchingUp' | 'unplaced' | 'market' | 'range' {
+  const fills = tape == null ? null : tape.fills;
+  const tapeHasFill = fills !== null && fills.length > 0;
+  if (tapeHasFill) {
+    const days = RANGE_DAYS[range];
+    const rangeStart = days === null ? null : nowSec - days * 86_400;
+    const newest = Math.max(...fills.map((f) => f.startAt));
+    if (rangeStart === null || newest >= rangeStart) return 'catchingUp';
+  }
+  if (unplaced > 0) return 'unplaced';
+  if (tapeHasFill) return 'range';
+  // range = all: the candle response's count IS all time, and it is zero.
   if (range === 'all') return 'market';
-  if (Array.isArray(tape) && tape.length === 0) return 'market';
+  // A confirmed-empty tape covers the market's whole history; its own
+  // all-time count says whether the pair has loans no tenor holds.
+  if (tape != null) return tape.unplaced.count > 0 ? 'unplaced' : 'market';
   return 'range';
 }
 
@@ -154,8 +222,13 @@ export function whitespaceBucketTimes(
 export interface TapeFillLike {
   loanId: number;
   startAt: number; // unix seconds — exact fill time
-  interestRateBps: number;
-  principal: string; // decimal string, lending-asset base units
+  /** The rate the loan EXECUTED at, or `null` when the indexer cannot back
+   *  it (#1142). Never the live rate, which an extension rewrites. */
+  rateBps: number | null;
+  /** The principal the loan was initiated with (decimal string, lending-
+   *  asset base units), or `null` when not recorded. Never the live
+   *  outstanding principal, which repayment and matching reduce. */
+  principal: string | null;
 }
 
 /** One plotted point in sparse mode: an individual fill at its EXACT
@@ -166,7 +239,12 @@ export interface FillPoint {
   t: number; // exact fill time, unix seconds
   rateBps: number; // last same-second fill's rate (loan-id order)
   fills: number;
-  principalTotal: string; // BigInt-folded decimal string
+  /** BigInt-folded decimal string over the fills whose principal is
+   *  recorded — the same rule as a candle bucket's total. */
+  principalTotal: string;
+  /** #1142 — fills at this point whose agreed principal is not recorded,
+   *  left out of `principalTotal` (the bucket field of the same name). */
+  unrecordedPrincipalFills: number;
 }
 
 /**
@@ -218,27 +296,39 @@ export function fillPointsFromTape(
     .sort((x, y) => x.startAt - y.startAt || x.loanId - y.loanId);
   const points: FillPoint[] = [];
   for (const row of inRange) {
-    let principal: bigint;
-    try {
-      principal = BigInt(row.principal || '0');
-    } catch {
-      // The coverage count said this row was folded, but its principal
-      // doesn't parse — the two sources disagree; fail closed.
-      return null;
+    // #1142 — a placed fill always has a confirmed rate; a row without one
+    // means the two sources disagree, so the bucket markers stand in.
+    if (row.rateBps === null) return null;
+    const rateBps = row.rateBps;
+    // An unrecorded AMOUNT does not hide the fill: it keeps its own marker
+    // at its own rate, and its amount is counted as not recorded, exactly
+    // as the bucket total treats it.
+    let principal: bigint | null = null;
+    if (row.principal !== null) {
+      try {
+        principal = BigInt(row.principal || '0');
+      } catch {
+        // The coverage count said this row was folded, but its principal
+        // doesn't parse — the two sources disagree; fail closed.
+        return null;
+      }
     }
+    const unrecorded = principal === null ? 1 : 0;
     const last = points[points.length - 1];
     if (last !== undefined && last.t === row.startAt) {
-      last.rateBps = row.interestRateBps; // chronological — last wins
+      last.rateBps = rateBps; // chronological — last wins
       last.fills += 1;
-      last.principalTotal = (
-        BigInt(last.principalTotal) + principal
-      ).toString();
+      last.unrecordedPrincipalFills += unrecorded;
+      if (principal !== null) {
+        last.principalTotal = (BigInt(last.principalTotal) + principal).toString();
+      }
     } else {
       points.push({
         t: row.startAt,
-        rateBps: row.interestRateBps,
+        rateBps,
         fills: 1,
-        principalTotal: principal.toString(),
+        principalTotal: (principal ?? 0n).toString(),
+        unrecordedPrincipalFills: unrecorded,
       });
     }
   }

@@ -90,6 +90,10 @@
   //                          — a position in the candidate list could not
   //                          survive the list being rebuilt each tick, #2219.
   //                          Created by migration 0050.)
+  //   - `push_rail_status`  (READ ONLY, #2667 — the keeper's published Push
+  //                          rail readiness; `GET /push/status` and the
+  //                          `PUT /thresholds` opt-in check combine it with
+  //                          this Worker's own rail. The keeper writes it.)
   //   - `loans`             (cross-Worker READ AND WRITE of the indexer's
   //                          loan rows: the periodic-pre-notify scan reads
   //                          them, then stamps `period_pre_notified_at` back

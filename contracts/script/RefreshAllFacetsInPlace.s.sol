@@ -8,6 +8,7 @@ import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {DeployDiamond} from "./DeployDiamond.s.sol";
 import {DiamondLoupeFacet} from "../src/facets/DiamondLoupeFacet.sol";
 import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
@@ -212,7 +213,7 @@ interface IOwnable {
  *         Usage (from contracts/, on main) — run once per chain. Use `--slow`:
  *         the admin owner is EIP-7702-delegated on at least Base Sepolia, and a
  *         delegated account may have only one in-flight tx (no gapped nonces).
- *           forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" \
+ *           forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" --ffi \
  *             --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
  *           # then the same with $ARB_SEPOLIA_RPC_URL, $BNB_TESTNET_RPC_URL
  */
@@ -404,6 +405,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         _requireSlice3Diamond(diamond);
         _requireNoOpenErc1155RentalAcross902(diamond);
         _requireD1RootTopology(diamond, currentOwner);
+        // #2092 item 1 — the code this run cuts must keep every storage-layout
+        // fact recorded for this chain. Before the first transaction, so a
+        // refused run sends nothing; needs `--ffi`.
+        StorageLayoutRecord.requireAppendOnly("RefreshAllFacetsInPlace", diamond);
 
         console.log("=== Full-facet in-place refresh ===");
         console.log("Chain id:", cid);
@@ -1383,8 +1388,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // live count rather than `items.length` (which excludes the
         // construction-time `diamondCutFacet` and any non-routed map entry).
         Deployments.writeUint(".facetCount", loupe.facetAddresses().length);
+        // #2092 item 1 — the chain now runs this checkout's layout.
+        StorageLayoutRecord.record(diamond);
         console.log("");
-        console.log("addresses.json updated. Next:");
+        console.log("addresses.json and storage-layout.json updated. Next:");
         console.log("  bash script/exportFrontendDeployments.sh");
         console.log("  forge build --skip test && bash script/exportFrontendAbis.sh");
     }

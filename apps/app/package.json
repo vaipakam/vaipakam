@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "The Vaipakam connected app \u2014 app.vaipakam.com. Naive-user-first: intent-first guided flows, Basic/Advanced mode, light/dark theme, mobile-first. Replaced the retired apps/defi surface.",
+  "description": "The Vaipakam connected app — app.vaipakam.com. Naive-user-first: intent-first guided flows, Basic/Advanced mode, light/dark theme, mobile-first. Replaced the retired apps/defi surface.",
   "engines": {
     "node": ">=22.0.0"
   },
@@ -30,11 +30,11 @@
     "connectkit": "^1.9.2",
     "i18next": "^26.0.8",
     "i18next-browser-languagedetector": "^8.2.1",
-    "react-i18next": "^17.0.4",
     "lightweight-charts": "^5",
     "lucide-react": "^1.8.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-i18next": "^17.0.4",
     "react-router-dom": "^7.14.0",
     "viem": "^2.48.4",
     "wagmi": "^2.19.5"
@@ -54,6 +54,7 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "eslint-scope": "^8.4.0",
     "globals": "^17.4.0",
+    "parse5": "8.0.1",
     "tsx": "^4.19.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.0",

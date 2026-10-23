@@ -19,8 +19,15 @@
  *     a future setter missing from the allowlist) still converges.
  */
 
-import { type Address, type PublicClient, getAbiItem, toFunctionSelector } from 'viem';
+import { type Address, type PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import {
+  LABELLED_GETTER_HOST,
+  abiDescribesGetterAt,
+  abiOutputNames as abiOutputNamesOf,
+  readProtocolKnobGetters,
+  type ProtocolKnobRead,
+} from '@vaipakam/lib/protocolKnobs';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import type { Env } from './env';
 import { jsonResponse } from './offerRoutes';
@@ -89,6 +96,7 @@ const CONFIG_EVENT_NAMES: ReadonlySet<string> = new Set([
   'KYCEnforcementSet',
   'KYCThresholdsUpdated',
   'KeepersPausedSet',
+  'LenderIntentEnabledSet',
   'AggregatorAdaptersPausedSet',
   'PeerLtvReadsPausedSet',
   'RateModelSet',
@@ -107,6 +115,27 @@ const CONFIG_EVENT_NAMES: ReadonlySet<string> = new Set([
   'ZeroExProxySet',
   'AllowanceTargetSet',
   'SanctionsOracleSet',
+  // #2071 — setters of the single-output settings published beside the
+  // bundle (`PROTOCOL_KNOB_GETTERS`). `setSequencerUptimeFeed` emits
+  // nothing, so that one value reaches the snapshot on the backstop.
+  'MinHealthFactorSet',
+  'SecondaryOracleMaxDeviationBpsSet',
+  'SecondaryOracleMaxStalenessSet',
+  'PythOracleSet',
+  'PythNumeraireFeedIdSet',
+  'PythMaxStalenessSecondsSet',
+  'PythNumeraireMaxDeviationBpsSet',
+  'PythConfidenceMaxBpsSet',
+  'RewardReporterConfigUpdated',
+  'PeriodicInterestEnabledSet',
+  'NumeraireSwapEnabledSet',
+  'NumeraireUpdated',
+  'MinPrincipalForFinerCadenceSet',
+  'PreNotifyDaysSet',
+  // Codex #2683 r5 — a cut can replace the code behind any getter the
+  // snapshot shows without any setter event, so it refreshes like one; the
+  // re-read then re-runs the host binding and withholds labels if it fails.
+  'DiamondCut',
 ]);
 
 /** Backstop refresh age: config flips are event-driven within one scan
@@ -157,11 +186,15 @@ async function markStaleBelow(
     clearGrace?: boolean;
   },
 ): Promise<void> {
+  // Codex #2683 r7 — also record the block of the scan that saw the event
+  // (the highest, if marked more than once), so a reader can require a
+  // replacement read to reach it.
   await env.DB.prepare(
-    `UPDATE protocol_config SET updated_at = 0${
-      opts?.clearGrace ? ', grace_buckets_json = NULL' : ''
-    }
-     WHERE chain_id = ? AND source_block < ?`,
+    `UPDATE protocol_config SET updated_at = 0,
+       stale_at_block = MAX(COALESCE(stale_at_block, 0), ?2)${
+         opts?.clearGrace ? ', grace_buckets_json = NULL' : ''
+       }
+     WHERE chain_id = ?1 AND source_block < ?2`,
   )
     .bind(chainId, Number(belowBlock))
     .run();
@@ -187,28 +220,13 @@ export function serializeTuple(values: readonly unknown[]): string {
  * labels have to come from the same artefact the read came from.
  *
  * Returns null if the getter or any output name is missing, which
- * suppresses the labelled view rather than guessing at it.
+ * suppresses the labelled view rather than guessing at it. The rule lives
+ * in `@vaipakam/lib/protocolKnobs`, shared with the connected app's
+ * chain read of the same bundle (#2074).
  */
 export function abiOutputNames(functionName: string): readonly string[] | null {
-  const entry = (DIAMOND_ABI_VIEM as readonly unknown[]).find(
-    (e): e is { type: string; name: string; outputs?: readonly { name?: string }[] } =>
-      typeof e === 'object' &&
-      e !== null &&
-      (e as { type?: string }).type === 'function' &&
-      (e as { name?: string }).name === functionName,
-  );
-  const outputs = entry?.outputs;
-  if (!outputs || outputs.length === 0) return null;
-  const names = outputs.map((o) => o.name ?? '');
-  return names.every((n) => n.length > 0) ? names : null;
+  return abiOutputNamesOf(DIAMOND_ABI_VIEM, functionName);
 }
-
-/** The facet this build's deployment artifact records as the host of each
- *  labelled getter. Both live on ConfigFacet. */
-const LABELLED_GETTER_HOST = {
-  getProtocolConfigBundle: 'configFacet',
-  getMasterFlags: 'configFacet',
-} as const;
 
 /**
  * #2073 (Codex #2653 r1) — whether this build's ABI describes the code that
@@ -218,12 +236,9 @@ const LABELLED_GETTER_HOST = {
  * build was compiled against. During an in-place facet refresh the old
  * Worker keeps running while the Diamond already routes the getter to new
  * code, so a reorder at the same arity would be stored under the old names.
- * The evidence used: the Diamond loupe's `facetAddress(selector)` AT THE
- * CAPTURE BLOCK equals the host address in this build's deployment artifact.
- * The artifact and the ABI ship together in `@vaipakam/contracts`, and a
- * facet address cannot change code, so a match ties the decode to the code
- * that ran. Anything else (no artifact entry, a different host, a failed
- * loupe read) is "cannot establish", and the caller withholds the names.
+ * The rule (loupe host at the capture block equals this build's artifact
+ * host) lives in `@vaipakam/lib/protocolKnobs`, shared with the connected
+ * app's own read of the bundle (#2074).
  */
 export async function abiDescribesChainGetter(opts: {
   client: PublicClient;
@@ -232,22 +247,14 @@ export async function abiDescribesChainGetter(opts: {
   functionName: keyof typeof LABELLED_GETTER_HOST;
   blockNumber: bigint;
 }): Promise<boolean> {
-  const expected = getDeployment(opts.chainId)?.facets?.[LABELLED_GETTER_HOST[opts.functionName]];
-  if (!expected) return false;
-  try {
-    const item = getAbiItem({ abi: DIAMOND_ABI_VIEM, name: opts.functionName });
-    if (!item || item.type !== 'function') return false;
-    const host = (await opts.client.readContract({
-      address: opts.diamond,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'facetAddress',
-      args: [toFunctionSelector(item)],
-      blockNumber: opts.blockNumber,
-    })) as string;
-    return host.toLowerCase() === expected.toLowerCase();
-  } catch {
-    return false;
-  }
+  return abiDescribesGetterAt({
+    client: opts.client,
+    diamond: opts.diamond,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: opts.functionName,
+    expectedHost: getDeployment(opts.chainId)?.facets?.[LABELLED_GETTER_HOST[opts.functionName]],
+    blockNumber: opts.blockNumber,
+  });
 }
 
 /** The output names captured beside a tuple (#2073), or null when none were
@@ -259,6 +266,30 @@ function storedNames(json: string | null | undefined): readonly string[] | null 
     return Array.isArray(names) && names.length > 0 && names.every((n) => typeof n === 'string' && n.length > 0)
       ? (names as string[])
       : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The settings stored beside the tuples (#2071), or null when the column
+ *  is empty or does not hold the shape the refresh writes. */
+function storedKnobs(json: string | null | undefined): ProtocolKnobRead | null {
+  if (!json) return null;
+  try {
+    const k = JSON.parse(json) as { values?: unknown; unreported?: unknown };
+    const values = k.values;
+    const unreported = k.unreported;
+    if (
+      typeof values !== 'object' ||
+      values === null ||
+      Array.isArray(values) ||
+      !Object.values(values).every((v) => typeof v === 'string' || typeof v === 'boolean') ||
+      !Array.isArray(unreported) ||
+      !unreported.every((u) => typeof u === 'string')
+    ) {
+      return null;
+    }
+    return { values: values as ProtocolKnobRead['values'], unreported: unreported as string[] };
   } catch {
     return null;
   }
@@ -359,7 +390,7 @@ export async function maybeRefreshProtocolConfig(opts: {
       chainId: opts.chainId,
       blockNumber: opts.blockNumber,
     };
-    const [bundle, flags, graceBuckets, bundleAbiBound, flagsAbiBound] = await Promise.all([
+    const [bundle, flags, graceBuckets, bundleAbiBound, flagsAbiBound, knobs] = await Promise.all([
       opts.client.readContract({
         address: opts.diamond,
         abi: DIAMOND_ABI_VIEM,
@@ -425,6 +456,24 @@ export async function maybeRefreshProtocolConfig(opts: {
       // at this block? Never throws; false withholds the names below.
       abiDescribesChainGetter({ ...readAt, functionName: 'getProtocolConfigBundle' }),
       abiDescribesChainGetter({ ...readAt, functionName: 'getMasterFlags' }),
+      // #2071 — the single-output settings the bundle does not carry, in one
+      // batched call at the same block. Isolated like the grace read: a
+      // failure stores NULL (the route then serves none of them, and the
+      // connected app reads them from the chain), never a previous row's
+      // values under this row's block.
+      readProtocolKnobGetters({
+        client: opts.client,
+        diamond: opts.diamond,
+        abi: DIAMOND_ABI_VIEM,
+        blockNumber: opts.blockNumber,
+      }).catch((err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[configSnapshot] knob read failed for chain ${opts.chainId} (stored as unknown)`,
+          err,
+        );
+        return null;
+      }),
     ]);
 
     // A transient grace-read failure normally PRESERVES the existing
@@ -446,17 +495,24 @@ export async function maybeRefreshProtocolConfig(opts: {
     await opts.env.DB.prepare(
       `INSERT INTO protocol_config
          (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at,
-          bundle_names_json, master_flags_names_json)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8, ?9)
+          bundle_names_json, master_flags_names_json, knob_values_json)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8, ?9, ?10)
        ON CONFLICT (chain_id) DO UPDATE SET
          bundle_json = excluded.bundle_json,
          master_flags_json = excluded.master_flags_json,
          bundle_names_json = excluded.bundle_names_json,
          master_flags_names_json = excluded.master_flags_names_json,
+         knob_values_json = excluded.knob_values_json,
          grace_buckets_json = CASE WHEN ?7 = 1 THEN NULL
            ELSE COALESCE(excluded.grace_buckets_json, protocol_config.grace_buckets_json) END,
          source_block = excluded.source_block,
-         updated_at = excluded.updated_at
+         -- Codex #2683 r7 — a refresh read below the block of a governance
+         -- event the row was marked stale for does not include that event:
+         -- the row stays stale. One that reaches it clears the mark.
+         updated_at = CASE WHEN protocol_config.stale_at_block > excluded.source_block
+           THEN 0 ELSE excluded.updated_at END,
+         stale_at_block = CASE WHEN protocol_config.stale_at_block > excluded.source_block
+           THEN protocol_config.stale_at_block ELSE NULL END
        WHERE excluded.source_block >= protocol_config.source_block`,
     )
       .bind(
@@ -469,6 +525,7 @@ export async function maybeRefreshProtocolConfig(opts: {
         invalidateGrace ? 1 : 0,
         bundleNames === null ? null : JSON.stringify(bundleNames),
         flagNames === null ? null : JSON.stringify(flagNames),
+        knobs === null ? null : JSON.stringify(knobs),
       )
       .run();
   } catch (err) {
@@ -522,27 +579,49 @@ export async function handleConfigSnapshot(
       updated_at: number;
       bundle_names_json?: string | null;
       master_flags_names_json?: string | null;
+      knob_values_json?: string | null;
+      stale_at_block?: number | null;
     };
-    let row: Row | null;
-    try {
-      row = await env.DB.prepare(
-        `SELECT bundle_json, master_flags_json, source_block, updated_at,
-                bundle_names_json, master_flags_names_json
-         FROM protocol_config WHERE chain_id = ?`,
-      )
-        .bind(chainId)
-        .first<Row>();
-    } catch (err) {
-      // A database migration 0067 has not reached yet (the route must
-      // tolerate the previous schema): serve the row with no captured
-      // names, which withholds the labelled view below.
-      if (!/no such column/i.test(String(err))) throw err;
-      row = await env.DB.prepare(
-        `SELECT bundle_json, master_flags_json, source_block, updated_at
-         FROM protocol_config WHERE chain_id = ?`,
-      )
-        .bind(chainId)
-        .first<Row>();
+    // The route must tolerate the previous schema while a migration has not
+    // reached the database yet: each step drops the columns the newest
+    // migration added (0070, then 0067), so a missing later column never
+    // costs what an earlier one already provides. Three STATIC statements,
+    // so the SQL-vs-schema guard prepares every one of them against the
+    // migrated schema rather than skipping a built string.
+    const reads: (() => Promise<Row | null>)[] = [
+      () =>
+        env.DB.prepare(
+          `SELECT bundle_json, master_flags_json, source_block, updated_at,
+                  bundle_names_json, master_flags_names_json, knob_values_json,
+                  stale_at_block
+           FROM protocol_config WHERE chain_id = ?`,
+        )
+          .bind(chainId)
+          .first<Row>(),
+      () =>
+        env.DB.prepare(
+          `SELECT bundle_json, master_flags_json, source_block, updated_at,
+                  bundle_names_json, master_flags_names_json
+           FROM protocol_config WHERE chain_id = ?`,
+        )
+          .bind(chainId)
+          .first<Row>(),
+      () =>
+        env.DB.prepare(
+          `SELECT bundle_json, master_flags_json, source_block, updated_at
+           FROM protocol_config WHERE chain_id = ?`,
+        )
+          .bind(chainId)
+          .first<Row>(),
+    ];
+    let row: Row | null = null;
+    for (let i = 0; i < reads.length; i++) {
+      try {
+        row = await reads[i]();
+        break;
+      } catch (err) {
+        if (i === reads.length - 1 || !/no such column/i.test(String(err))) throw err;
+      }
     }
     if (!row) return jsonResponse({ chainId, available: false });
     const bundle = JSON.parse(row.bundle_json) as unknown[];
@@ -553,8 +632,16 @@ export async function handleConfigSnapshot(
     // this build's names would attach real values to the wrong fields. A
     // row captured before the names were recorded serves no labelled view
     // until the next capture writes them.
-    const values = labelTuple(bundle, storedNames(row.bundle_names_json));
+    const bundleValues = labelTuple(bundle, storedNames(row.bundle_names_json));
     const flags = labelTuple(masterFlags, storedNames(row.master_flags_names_json));
+    // #2071 — the settings read beside the bundle at the same block join the
+    // named `values` object, and the ones the chain did not answer are named
+    // in `unreported`, so "not reported" is stated rather than inferred from
+    // a missing key. Served only beside a labelled bundle: `values` is absent
+    // when the bundle's labels cannot be trusted, and a partial `values`
+    // would read as a labelled snapshot that happens to lack fields.
+    const knobs = bundleValues ? storedKnobs(row.knob_values_json) : null;
+    const values = bundleValues ? { ...bundleValues, ...(knobs?.values ?? {}) } : null;
     return jsonResponse({
       chainId,
       available: true,
@@ -564,6 +651,7 @@ export async function handleConfigSnapshot(
       // absent key reads as "not available here"; `{}` would read as
       // "this snapshot has no fields", which is false.
       ...(values ? { values } : {}),
+      ...(knobs ? { unreported: knobs.unreported } : {}),
       ...(flags ? { flags } : {}),
       sourceBlock: row.source_block,
       updatedAt: row.updated_at,
@@ -576,6 +664,11 @@ export async function handleConfigSnapshot(
       // signal has to be explicit rather than inferred from a magic
       // timestamp (Codex #1821 r1 P2).
       ...(row.updated_at === 0 ? { stale: true } : {}),
+      // Codex #2683 r7 — and the block a replacement read must reach to
+      // include the event it is stale for, when that is recorded.
+      ...(row.updated_at === 0 && typeof row.stale_at_block === 'number'
+        ? { staleAtBlock: row.stale_at_block }
+        : {}),
     });
   } catch (err) {
     // eslint-disable-next-line no-console

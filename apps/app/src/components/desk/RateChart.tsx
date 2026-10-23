@@ -41,12 +41,8 @@ import { LoaderCircle } from 'lucide-react';
 import { copy } from '../../content/copy';
 import { useTheme, type ResolvedTheme } from '../../app/ThemeContext';
 import { UnavailableState } from '../EmptyState';
-import { useDeskCandles, type DeskPair } from '../../data/desk';
-import type {
-  CandleInterval,
-  CandleRange,
-  IndexedLoan,
-} from '../../data/indexer';
+import { useDeskCandles, type DeskPair, type DeskTape } from '../../data/desk';
+import type { CandleInterval, CandleRange } from '../../data/indexer';
 import {
   INTERVAL_SECONDS,
   chartEmptyKind,
@@ -141,8 +137,9 @@ export default function RateChart({
    *  passed down, never re-fetched), newest first, tri-state per the
    *  app contract. Feeds three things: the "last fill" freshness
    *  backstop (the candle response is 60 s-cached), sparse mode's
-   *  per-fill markers, and the never-filled vs empty-range copy split. */
-  tape: IndexedLoan[] | null | undefined;
+   *  per-fill markers, and the never-filled vs empty-range copy split
+   *  (with the pair's all-time unplaced count it carries, #1142). */
+  tape: DeskTape | null | undefined;
 }) {
   const [interval, setInterval] = useState<CandleInterval>(DEFAULT_INTERVAL);
   const [range, setRange] = useState<CandleRange>(DEFAULT_RANGE);
@@ -155,17 +152,39 @@ export default function RateChart({
   // unavailable, [] empty).
   const buckets = candles.data == null ? candles.data : candles.data.buckets;
   const candlesTruncated = candles.data?.truncated === true;
+  // #1142 — loans on this pair in range that no tenor market holds (their
+  // agreed terms are unconfirmed). Stated with the chart so the drawn series
+  // never reads as everything the pair did.
+  const unplaced = candles.data?.unplaced ?? null;
+  // What the response says about its own scope, shown in EVERY data state:
+  // an empty series can be clipped or leave loans out just as a drawn one
+  // can (Codex #2689 r3).
+  const scopeNotes = (
+    <>
+      {candlesTruncated ? (
+        // #1247 PAG-009 (Codex #1269 r1) — the server scanned only the
+        // newest fills; never let a clipped range read as the market's
+        // complete history.
+        <p className="muted desk-chart-sparse-note">{text.truncatedNote}</p>
+      ) : null}
+      {unplaced !== null && unplaced.count > 0 ? (
+        <p className="muted desk-chart-sparse-note" data-testid="desk-chart-unplaced">
+          {unplaced.capped
+            ? text.unplacedNoteCapped(unplaced.count)
+            : text.unplacedNote(unplaced.count)}
+        </p>
+      ) : null}
+    </>
+  );
   const sparse = useMemo(
     () => (Array.isArray(buckets) ? isSparseTape(buckets) : false),
     [buckets],
   );
-  const tapeNewest = useMemo(
-    () =>
-      Array.isArray(tape) && tape.length > 0
-        ? { rateBps: tape[0].interestRateBps, at: tape[0].startAt }
-        : null,
-    [tape],
-  );
+  // The fill itself, not a projection of it: the header needs its loan
+  // id when the rate is not recorded (#1142), and a narrower copy is how
+  // that id was lost once.
+  const tapeFills = tape == null ? null : tape.fills;
+  const tapeNewest = tapeFills !== null && tapeFills.length > 0 ? tapeFills[0] : null;
   const lastPrint = useMemo(
     () => newestPrint(Array.isArray(buckets) ? buckets : [], tapeNewest),
     [buckets, tapeNewest],
@@ -179,10 +198,10 @@ export default function RateChart({
    *  fills → the effect falls back to bucket markers. */
   const fillPoints = useMemo(
     () =>
-      sparse && Array.isArray(buckets) && Array.isArray(tape)
-        ? fillPointsFromTape(buckets, tape, INTERVAL_SECONDS[interval])
+      sparse && Array.isArray(buckets) && tapeFills !== null
+        ? fillPointsFromTape(buckets, tapeFills, INTERVAL_SECONDS[interval])
         : null,
-    [sparse, buckets, tape, interval],
+    [sparse, buckets, tapeFills, interval],
   );
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -338,6 +357,7 @@ export default function RateChart({
             rateLine: formatBpsAsPercent(p.rateBps),
             fills: p.fills,
             principalTotal: p.principalTotal,
+            unrecordedPrincipalFills: p.unrecordedPrincipalFills,
           }))
         : buckets.map((b) => ({
             t: b.t,
@@ -346,6 +366,7 @@ export default function RateChart({
               : `O ${formatBpsAsPercent(b.open)} · H ${formatBpsAsPercent(b.high)} · L ${formatBpsAsPercent(b.low)} · C ${formatBpsAsPercent(b.close)}`,
             fills: b.fills,
             principalTotal: b.principalTotal,
+            unrecordedPrincipalFills: b.unrecordedPrincipalFills,
           }));
     const byTime = new Map(tipRows.map((r) => [r.t, r]));
     const onCrosshair = (param: MouseEventParams) => {
@@ -357,10 +378,19 @@ export default function RateChart({
         tip.style.display = 'none';
         return;
       }
-      const principal =
+      // #1142 — a bucket total that leaves out fills whose principal is not
+      // recorded is a floor, and says so; one with none recorded names no
+      // amount at all.
+      const amount =
         decimals !== undefined
           ? `${formatTokenAmount(b.principalTotal, decimals)}${symbol ? ` ${symbol}` : ''}`
           : '…';
+      const principal =
+        b.unrecordedPrincipalFills >= b.fills
+          ? text.tooltipPrincipalUnrecorded
+          : b.unrecordedPrincipalFills > 0
+            ? text.tooltipPrincipalFloor(amount, b.unrecordedPrincipalFills)
+            : amount;
       tip.textContent = [
         b.rateLine,
         `${text.tooltipFills(b.fills)} · ${principal}`,
@@ -403,10 +433,19 @@ export default function RateChart({
             {text.title}
           </h2>
           {/* §5.3 rule 5 — last executed print, never a %-change ticker. */}
-          <p className="muted desk-chart-lastfill">
+          <p
+            className="muted desk-chart-lastfill"
+            title={
+              lastPrint?.source === 'tape' && lastPrint.rateBps === null
+                ? copy.desk.fillTermsNotRecordedTitle(lastPrint.loanId)
+                : undefined
+            }
+          >
             {lastPrint
               ? text.lastFill(
-                  formatBpsAsPercent(lastPrint.rateBps),
+                  lastPrint.rateBps === null
+                    ? copy.desk.fillTermsNotRecorded
+                    : formatBpsAsPercent(lastPrint.rateBps),
                   formatTimeAgo(lastPrint.at),
                 )
               : text.lastFillNone}
@@ -468,11 +507,24 @@ export default function RateChart({
         // P3, tightened round 4): the market copy is only claimable
         // when the evidence covers the whole history AND the tape holds
         // no fill (candle-cache skew) — see chartEmptyKind.
-        <p className="muted">
-          {chartEmptyKind(range, tape) === 'market'
-            ? text.empty
-            : text.emptyRange}
-        </p>
+        <>
+          <p className="muted">
+            {(() => {
+              const kind = chartEmptyKind(
+                range,
+                tape,
+                unplaced?.count ?? 0,
+                // The range is judged at the time the candle response was
+                // fetched, the moment its own range was cut.
+                Math.floor(candles.dataUpdatedAt / 1000),
+              );
+              if (kind === 'catchingUp') return text.emptyCatchingUp;
+              if (kind === 'unplaced') return text.emptyUnplaced;
+              return kind === 'market' ? text.empty : text.emptyRange;
+            })()}
+          </p>
+          {scopeNotes}
+        </>
       ) : (
         <>
           {sparse ? (
@@ -480,14 +532,7 @@ export default function RateChart({
               {text.sparseNote(totalFills(buckets))}
             </p>
           ) : null}
-          {candlesTruncated ? (
-            // #1247 PAG-009 (Codex #1269 r1) — the server scanned only
-            // the newest fills; never let a clipped range read as the
-            // market's complete history.
-            <p className="muted desk-chart-sparse-note">
-              {text.truncatedNote}
-            </p>
-          ) : null}
+          {scopeNotes}
           <div className="desk-chart-plot">
             <div ref={containerRef} className="desk-chart-canvas" />
             <div ref={tooltipRef} className="desk-chart-tooltip" />

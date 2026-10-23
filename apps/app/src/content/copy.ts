@@ -117,9 +117,9 @@ const copySource = {
         'Optional: hold VPFI in your vault to reduce protocol fees. Never required to lend, borrow, or rent.',
     },
     nftVerifier: {
-      title: 'NFT rental verifier — Vaipakam',
+      title: 'Position NFT verifier — Vaipakam',
       description:
-        'Check whether an NFT rental listed on Vaipakam is genuine, and see the token’s current rental status straight from the chain.',
+        'Check any Vaipakam position NFT straight from the chain: whether it exists on this network, who holds it, which loan it controls, and whether it can be transferred. Read-only: it never asks for your wallet.',
     },
     help: {
       title: 'Help — Vaipakam',
@@ -138,7 +138,7 @@ const copySource = {
     protocolConsole: {
       title: 'Protocol console — Vaipakam',
       description:
-        'Current values for the protocol parameters the public indexer publishes — fees, thresholds, durations, and feature flags — read-only and open to anyone.',
+        'Current values for the protocol-wide settings governance can change — fees, risk and price-oracle limits, durations, switches and the treasury — read-only and open to anyone.',
     },
     // Wallet-gated, per-user surfaces — carried for the browser tab
     // title only; SeoMeta marks all of these noindex.
@@ -1067,9 +1067,20 @@ const copySource = {
       },
       nftVerifier: {
         q: 'How do I check a position NFT before buying it off-platform?',
-        a: 'The NFT verifier (in the navigation) reads any Vaipakam position NFT straight from the chain and shows its real loan terms and status — so you can confirm what a listing actually represents before you trust a secondary-market sale.',
+        a: 'The NFT verifier (in the navigation) reads any Vaipakam position NFT straight from the chain: whether it exists on this network, who holds it, which loan it controls, and whether it can be transferred. Check before you trust a secondary-market sale.',
+      },
+      // #745 — the clone-verifier / wallet-drainer surface. What a user can
+      // check for themselves, since a copied page can claim anything.
+      fakeVerifier: {
+        q: 'How do I spot a fake verifier or a fake position NFT?',
+        a: 'Vaipakam’s verifier only reads the blockchain. It never asks you to connect a wallet, sign a message, or approve a transfer, so a page that does is not ours, however it looks. Anyone can copy a token’s name and picture. What makes a token a Vaipakam position is the contract address it lives at, and those addresses are listed below for every network. Open Vaipakam by typing its address or from your own bookmark, not from a link inside an NFT, a message, or an email.',
       },
     },
+    // #745 — the canonical contract per network, so "is this the real
+    // contract?" has an answer a copied page cannot change for the reader.
+    contractsTitle: 'Vaipakam contracts',
+    contractsLede:
+      'Every Vaipakam position NFT lives at one of these addresses, one per network. A token at any other address is not a Vaipakam position, whatever it is called.',
     disclaimer:
       'Vaipakam is a decentralized, non-custodial protocol. No KYC is required. Users are responsible for their own regulatory compliance.',
     risksTitle: 'Risk disclosures',
@@ -1938,6 +1949,17 @@ const copySource = {
       'If the borrower of the linked loan defaults, this claim pays out the loan’s raw collateral in kind — the protocol does not price or sell it for you. Value what you would actually receive before buying this position.',
     liveNote:
       'Live means exactly this: the token exists here and its holder controls the linked position. It does not vouch for the loan’s health or the other side’s behaviour.',
+    // #745 — a copied verifier can render any verdict and add a "connect
+    // to confirm" step that drains the wallet. The real one never asks.
+    readOnlyTitle: 'This check never needs your wallet',
+    readOnlyBody:
+      'It only reads the blockchain. Nothing on this page asks you to connect a wallet, sign a message, or approve a transfer. If a page calling itself a Vaipakam verifier asks for any of those, it is not ours: close it.',
+    contractLabel: tmpl(`Vaipakam contract on {{chain}}`, ['chain']),
+    contractWhy:
+      'That address is what makes a token a Vaipakam position. A token’s name and picture can be copied by anyone; its contract address cannot.',
+    explorerLink: tmpl(`See token #{{id}} on {{explorer}}`, ['id', 'explorer']),
+    explorerNote:
+      'An independent view of the same contract, run by the block explorer rather than by Vaipakam. It can lag a few blocks behind this page.',
     goneTitle: tmpl(`Token #{{id}} does not currently exist on this network`, ['id']),
     goneBody:
       'Either its claim was completed and the token was retired, or it was never minted here at all — the network doesn’t record which. Treat any offer to sell or transfer this token id as worthless on this network.',
@@ -4201,7 +4223,28 @@ const copySource = {
     rowPrefills:
       'Tap a rate to pre-fill the ticket. Taking the top of the book goes through the same guided review as Borrow/Lend.',
     tapeTitle: 'Recent loans',
-    tapeEmpty: 'No loans agreed yet for this pair.',
+    // #1142 — a fill whose agreed terms the indexer cannot confirm. The
+    // live terms are a different figure (an extension or repayment changes
+    // them), so they are never shown in their place.
+    fillTermsNotRecorded: 'not recorded',
+    fillTermsNotRecordedTitle: tmpl(
+      'Loan #{{loanId}}: the agreed terms of this loan could not be confirmed from its opening record, so they are not shown.',
+      ['loanId'],
+    ),
+    // #1142 — the tape is one (pair, tenor) market, so "none" is claimed at
+    // this duration only; with loans on the pair whose tenor is unknown, only
+    // "none confirmed" is.
+    tapeEmpty: 'No loans agreed yet at this duration.',
+    tapeEmptyUnplaced: 'No loans with confirmed terms at this duration yet.',
+    tapeUnplacedNote: tmpl(
+      '{{count}} loans on this pair are not shown under any duration, because their agreed terms are not confirmed from their opening record.',
+      ['count'],
+      { one: '{{count}} loan on this pair is not shown under any duration, because its agreed terms are not confirmed from its opening record.' },
+    ),
+    tapeUnplacedNoteCapped: tmpl(
+      'More than {{floor, number}} loans on this pair are not shown under any duration, because their agreed terms are not confirmed from their opening record.',
+      ['floor'],
+    ),
     tapeUnavailable: 'We couldn’t load recent loans right now.',
     // #1131 slice B — the crossable-band previewMatch strip. Shown ONLY
     // when the contract's own previewMatch says Ok (§5.2 honesty rule:
@@ -4303,8 +4346,28 @@ const copySource = {
       // range-scoped line, even at range = all (the 60 s candle-cache
       // skew window after a first fill). See chartEmptyKind.
       empty:
-        'No loans agreed yet for this pair — the chart only shows rates people actually agreed.',
+        'No loans agreed yet at this duration — the chart only shows rates people actually agreed.',
       emptyRange: 'No loans agreed in this period — try a longer one.',
+      // #1142 — the pair has loans in range whose agreed terms are not
+      // confirmed, so no duration holds them and one may belong here. The
+      // empty line claims only what is known; `unplacedNote` gives the count.
+      emptyUnplaced: 'No loans with confirmed terms at this duration in this period.',
+      // The tape already shows a loan in this period that the chart's last
+      // refresh did not include; no claim about the period holds until the
+      // chart catches up (Codex #2689 r5).
+      emptyCatchingUp:
+        'The chart has not caught up with the newest loans yet. It refreshes every minute.',
+      unplacedNote: tmpl(
+        '{{count}} loans on this pair in this period are not shown under any duration, because their agreed terms are not confirmed from their opening record.',
+        ['count'],
+        { one: '{{count}} loan on this pair in this period is not shown under any duration, because its agreed terms are not confirmed from its opening record.' },
+      ),
+      // The server stops counting at a cap; past it the line says "more
+      // than" rather than presenting the cap as the count.
+      unplacedNoteCapped: tmpl(
+        'More than {{floor, number}} loans on this pair in this period are not shown under any duration, because their agreed terms are not confirmed from their opening record.',
+        ['floor'],
+      ),
       unavailable: 'We couldn’t load the rate history right now.',
       retry: 'Retry',
       quotedMid: 'middle rate',
@@ -4328,6 +4391,12 @@ const copySource = {
       rangeLabel: 'Period shown',
       attribution: 'Charts by TradingView',
       tooltipFills: tmpl('{{count}} loans', ['count'], { one: '{{count}} loan' }),
+      // #1142 — the bucket total leaves out loans whose amount is not recorded.
+      tooltipPrincipalFloor: tmpl(
+        'at least {{amount}} (amount not recorded for {{count}})',
+        ['amount', 'count'],
+      ),
+      tooltipPrincipalUnrecorded: 'amount not recorded',
       mobileBook: 'Book',
       mobileChart: 'Chart',
       mobileViewLabel: 'Desk view',
@@ -5241,6 +5310,37 @@ const copySource = {
     heldForLenderNote:
       'A lender claim also pays out any funds held for the lender from earlier top-ups — those are not included in the amount shown.',
     viewTx: 'View transaction',
+    // #2643 — a loan whose ending event was never recorded, closed by the
+    // indexer reading its status from the chain. An OBSERVATION, not an
+    // event: it says the loan had ended by a block, never when or how, and
+    // carries no transaction and no actor.
+    repairTitle: tmpl(`Loan #{{loanId}} has ended`, ['loanId']),
+    repairBody: tmpl(
+      `A check of the chain found this loan {{status}} by block {{block}}. When and how it ended was not recorded, so there is no transaction to show.`,
+      ['status', 'block'],
+    ),
+    // The chain time of the block the check read, not of the ending.
+    repairCheckedAgo: tmpl(`checked {{ago}}`, ['ago']),
+    // #2658 (#2702 r2) — a status edge into an end state, named by its
+    // destination (lib/activityView STATUS_EDGE_LABELS; parity-tested).
+    statusEdgeLabels: {
+      Repaid: 'Loan repaid',
+      Defaulted: 'Loan defaulted',
+      Settled: 'Loan settled',
+      FallbackPending: 'Settlement pending after a failed sale',
+      InternalMatched: 'Loan closed by internal matching',
+    } as Record<string, string>,
+    repairStatus: {
+      repaid: 'repaid',
+      defaulted: 'defaulted',
+      settled: 'settled',
+      internal_matched: 'closed by internal matching',
+    } as Record<string, string>,
+    // A status this app has no name for: say it ended, not which way.
+    repairStatusOther: 'closed',
+    // The indexer could not say which loans it closed this way.
+    repairUnknownNote:
+      'This list may be missing the ending of a loan whose closing event was never recorded: that part of the history could not be read just now.',
     loadMore: 'Load older activity',
     loadingMore: 'Loading…',
     // UX-008 — readable, translatable labels for each feed row, keyed by
@@ -5313,6 +5413,83 @@ const copySource = {
       VPFIWithdrawnFromVault: 'VPFI withdrawn from vault',
       VaultVpfiDebited: 'VPFI spent from vault',
       RewardEntryForfeitSettled: 'Rewards forfeited',
+      AutoDailyDeducted: 'Daily rental fee paid',
+      AutoExtendBorrowerCapsChanged: 'Automatic extension limits updated',
+      AutoExtendLenderCapsChanged: 'Automatic extension limits updated',
+      AutoListOptOutCleared: 'Automatic grace-period listing on',
+      AutoRefinanceCapsChanged: 'Automatic refinance limits updated',
+      BackstopFilled: 'Funded by the backstop',
+      BackstopLoanClaimed: 'Backstop recovery claimed',
+      BorrowerSurplusClaimed: 'Surplus claimed',
+      ClaimRetryExecuted: 'Collateral sale retried',
+      CollateralConsolidated: 'Collateral consolidated',
+      FeeEntitlementRepriced: 'Fee terms updated',
+      FeeEntitlementStamped: 'Fee terms recorded',
+      HFLiquidationTriggered: 'Liquidation triggered',
+      IntentMatched: 'Order matched',
+      IntentPriorityFill: 'Priority credit used for a fill',
+      LenderBackstopOptInSet: 'Backstop exit choice updated',
+      LiquidationDiscounted: 'Liquidated at a discount',
+      LiquidationFallback: 'Collateral sale failed',
+      LiquidationFallbackOracleUnavailable: 'Collateral sale failed: no price available',
+      LiquidationFallbackSplit: 'Collateral split recorded',
+      LoanCuredFromFallback: 'Loan restored by adding collateral',
+      LoanFallbackPending: 'Settlement pending after a failed sale',
+      LoanKeeperEnabled: 'Keeper permission updated',
+      LoanPartiallyLiquidated: 'Loan partly liquidated',
+      LoanSaleListingTornDown: 'Loan sale listing removed',
+      LoanStatusChanged: 'Loan status updated',
+      NotificationFeeBilled: 'Notification fee charged',
+      OfferBackstopEligibilitySet: 'Backstop eligibility set',
+      OfferCreatorFullTariffSet: 'Fee choice recorded for the offer',
+      OfferKeeperEnabled: 'Keeper permission updated',
+      OfferSaleProceedsCredited: 'Sale proceeds credited to the vault',
+      OfferSaleProceedsSplit: 'Sale proceeds split',
+      ParallelSaleLockReleased: 'Collateral sale listing released',
+      PartialCollateralWithdrawn: 'Collateral partly withdrawn',
+      PostParallelSaleListing: 'Collateral sale listing posted',
+      PrepaySaleListingSynced: 'Collateral sale listing rechecked',
+      PrepaySaleOfferSynced: 'Sale offer rechecked',
+      SanctionedProceedsLocked: 'Share held in the vault while this wallet is flagged',
+      SwapAdapterAttempted: 'Swap route tried',
+      SwapAdapterSucceeded: 'Swap route used',
+      SwapAllAdaptersFailed: 'Every swap route failed',
+      TierExclusionUpdated: 'VPFI discount-tier exclusion updated',
+      VPFIDiscountApplied: 'Fee discount applied (paid in VPFI)',
+      VPFIYieldFeeDiscountApplied: 'Yield fee discount applied (paid in VPFI)',
+      VaultRentalUpdated: 'Rental access updated',
+      ApprovalForAll: 'Approval for all position NFTs',
+      NFTMinted: 'Position NFT minted',
+      OfferCreatedDetails: 'Offer created',
+      OfferCanceledDetails: 'Offer cancelled',
+      UserVaultCreated: 'Vault created',
+      TermsAccepted: 'Terms of use accepted',
+      TokenDisowned: 'Unsolicited tokens disowned',
+      StuckERC20Recovered: 'Stuck tokens recovered',
+      AutoLendConsentChanged: 'Auto-lend setting updated',
+      AutoOptInOnNewLoanChanged: 'Automatic refinance setting for new loans updated',
+      DefaultAutoRefinanceCapsChanged: 'Default automatic refinance limits updated',
+      KeeperAccessUpdated: 'Keeper access setting updated',
+      KeeperActionsUpdated: 'Keeper permissions updated',
+      KeeperRevoked: 'Keeper removed',
+      VPFIDiscountConsentChanged: 'VPFI fee discount setting updated',
+      LenderIntentSet: 'Standing lending intent set',
+      LenderIntentFunded: 'Standing lending intent funded',
+      LenderIntentCapitalWithdrawn: 'Capital withdrawn from a standing lending intent',
+      LenderIntentCancelled: 'Standing lending intent cancelled',
+      LenderIntentPrioritySet: 'Priority routing setting updated',
+      PerkPurchased: 'Perk bought with VPFI',
+      PerkCreditConsumed: 'Perk credit used',
+      RewardEntryHorizonStamped: 'Reward claim window started',
+      RewardEntryExpiryArmed: 'Reward entered its final notice period',
+      RewardEntryExpiryBegun: 'Unclaimed reward returning to the rewards programme',
+      RewardEntryExpired: 'Unclaimed reward returned to the rewards programme',
+      StagingDelivered: 'Rewards settled for a day',
+      RewardSanctionsHeldApart: 'Rewards set aside while this wallet is flagged',
+      RewardSanctionsHeldReleased: 'Set-aside rewards ready to claim',
+      StagingClaimantForfeited: 'Rewards forfeited while this wallet is flagged',
+      RewardEntryRepointRefused: 'Reward entry kept with its earner after a position transfer',
+      RewardEntrySplitAtTransfer: 'Reward entry split at a position transfer',
       Transfer: 'Transfer',
       Approval: 'Approval',
     } as Record<string, string>,
@@ -6064,7 +6241,7 @@ const copySource = {
   protocolConsole: {
     title: 'Protocol console',
     lede: tmpl(
-      'Current values for the protocol parameters the public indexer publishes for chain {{chain}} — fees, thresholds, durations and feature flags. Not every governance-tunable setting is published here yet, so read this as a subset rather than the full picture; the parameter reference lists them all. Public and read-only — no wallet needed, and no controls here change anything. Governance changes go through the timelock, not this page.',
+      'Current values for the protocol-wide settings governance can change on chain {{chain}}: fees, risk and price-oracle limits, durations, switches and the treasury. They come from the public indexer’s snapshot while it is current, and straight from the contracts when it is not; the line at the bottom of the page says which. Settings that differ per asset or per chain, and the reward and recycling settings other than the day-close grace window, are not shown here, and a few protocol-wide ones are not yet; the parameter reference lists them all. Public and read-only — no wallet needed, and no controls here change anything. Governance changes go through the timelock, not this page.',
       ['chain'],
     ),
     refresh: 'Refresh',
@@ -6077,7 +6254,14 @@ const copySource = {
     hiddenBody:
       'Parameter visibility is turned off on this deployment, so the live values are not shown here. This is a display setting only — the parameters themselves are on-chain and readable by anyone directly from the contracts.',
     unavailable:
-      'No configuration snapshot is available for this chain. Nothing is inferred from that — it means the value is unknown here, not that it is unset on-chain.',
+      'Neither the public indexer’s snapshot nor the contracts on this chain could be read just now. Nothing is inferred from that — the values are unknown here, not unset on-chain.',
+    /* #2074 — the snapshot was not current, so the page tried the contracts
+       directly, and that failed too. What follows is the snapshot, with
+       whatever warnings it carries. */
+    chainReadFailed:
+      'The indexer’s snapshot below is not current, and reading the contracts directly failed, so it is the latest account this page can give. Treat its values as possibly out of date.',
+    oldSnapshot:
+      'This snapshot is older than the indexer’s regular refresh, so it may be missing a recent governance change.',
     /* Round 65 P2 — the state between "here are the values" and "there is
        no snapshot", which used to be reported as the latter.
 
@@ -6127,6 +6311,34 @@ const copySource = {
     volatilityLtv: 'Volatility LTV threshold',
     volatilityLtvHint: 'LTV at which the volatility collapse rule applies.',
     rentalBuffer: 'NFT rental buffer',
+    minHealthFactor: 'Loan-admission health-factor floor',
+    minHealthFactorHint:
+      'The health factor a new loan must clear when it opens. Open loans keep the floor they opened under.',
+    swapToRepaySlippage: 'Swap-to-repay max slippage',
+    rateModel: 'Quote-time rate model',
+    /* Codex #2683 r1 — the quote is a DORMANT opt-in: no offer path calls
+       it today, so a registered model changes no rate. Said, so a set
+       address does not read as live rate guidance. */
+    rateModelHint:
+      'A contract registered to suggest rates when offers are quoted. Nothing calls it yet, so even when one is set it changes no rate today. Not set means none is registered.',
+    rateModelMaxDeviation: 'Rate-model max deviation',
+    oraclesHeading: 'Price oracles',
+    secondaryOracleMaxDeviation: 'Secondary-oracle max deviation',
+    secondaryOracleMaxStaleness: 'Secondary-oracle max staleness',
+    pythOracle: 'Pyth oracle',
+    /* Codex #2683 r3 — the cross-check needs BOTH the oracle and the feed
+       id; the contracts skip it when either is unset. */
+    pythOracleHint:
+      'Cross-checks the main price reading. It runs only while both this oracle and the feed id below are set; if either is not set, the cross-check is off.',
+    pythFeedId: 'Pyth cross-check feed id',
+    pythFeedIdHint:
+      'The Pyth price feed the cross-check reads. Not set turns the cross-check off, even when an oracle is set.',
+    pythMaxStaleness: 'Pyth max staleness',
+    pythMaxDeviation: 'Pyth cross-check max deviation',
+    pythConfidenceMax: 'Pyth confidence ceiling',
+    sequencerUptimeFeed: 'Sequencer uptime feed',
+    sequencerUptimeFeedHint:
+      'On a layer-2 chain, holds prices back while the sequencer is down and for one hour after it comes back. Not set means there is no such guard.',
     limitsHeading: 'Limits and timing',
     autoPause: 'Auto-pause duration',
     maxOfferDuration: 'Max offer duration',
@@ -6134,6 +6346,58 @@ const copySource = {
     rangeAmount: 'Range amount offers',
     rangeRate: 'Range rate offers',
     partialFill: 'Partial fill',
+    periodicHeading: 'Periodic interest',
+    periodicInterest: 'Periodic interest payments',
+    finerCadenceMinPrincipal: 'Minimum principal for shorter payment periods',
+    finerCadenceMinPrincipalHint:
+      'At or above this principal a lender may choose interest periods shorter than the mandatory one.',
+    preNotifyDays: 'Advance reminder',
+    preNotifyDaysHint: 'How many days before an interest checkpoint or a maturity date reminders go out.',
+    numeraire: 'Reference currency',
+    numeraireFeed: 'Reference-currency ETH price feed',
+    numeraireFeedHint:
+      'The Chainlink feed that prices ETH in the reference currency. It changes together with the reference currency.',
+    numeraireRotation: 'Reference-currency change',
+    numeraireRotationHint: 'Whether governance may switch the reference currency.',
+    automationHeading: 'Automation',
+    autoLend: 'Auto-lend',
+    autoLendHint:
+      'Whether lenders may newly opt in to auto-lend. Off refuses new opt-ins only: existing consent stays, and standing offers already posted stay on the book until cancelled or matched.',
+    lenderIntentFills: 'Standing-intent fills',
+    lenderIntentFillsHint:
+      'Whether registered lending intents can be filled. Off stops intent fills; lenders can still register intents.',
+    autoRefinance: 'Auto-refinance',
+    autoRefinanceHint:
+      'Off stops keepers and the order matcher from completing refinances. A borrower refinancing their own loan, or a lender accepting a refinance request directly, still goes through.',
+    autoExtend: 'Auto-extend',
+    autoExtendHint: 'Off blocks every in-place loan extension, including one the borrower asks for directly.',
+    keepers: 'Keepers',
+    /* Codex #2683 r3 — the pause's scope, as the parameter reference
+       records it, so "paused" is not read as "every keeper key is inert". */
+    keepersHint:
+      'Paused stops keepers from acting on other people’s positions. Owners can still act on their own, and liquidation stays open to anyone. It does not stop a keeper key from submitting reward commitments, so a compromised key must also lose its keeper role.',
+    paused: 'paused',
+    running: 'running',
+    crossChainHeading: 'Cross-chain reporting',
+    rewardGrace: 'Day-close grace window',
+    rewardGraceHint:
+      'How long a day’s cross-chain accounting may wait for a chain’s report before it is closed without it.',
+    treasuryHeading: 'Treasury',
+    treasuryAddress: 'Treasury address',
+    notSet: 'not set',
+    // #2681 — the getter returns zero when governance never set the
+    // window, and the protocol then applies its documented default. The
+    // page names that default (Codex #2683 r3) and marks it as the default,
+    // never as a configured value.
+    unsetDefault: tmpl('{{value}} (not set, so the protocol’s documented default applies)', ['value']),
+    /* Codex #2683 r3 — a setting whose change emits no event (#2685). */
+    eventlessSnapshotNote:
+      'Changing this setting announces nothing on chain, so this snapshot picks up a change only at its next scheduled refresh and can show the previous value until then.',
+    numeraireUnits: tmpl('{{amount}} (reference-currency units)', ['amount']),
+    /* Codex #2683 r1 — the contracts read an empty numeraire symbol as
+       their USD default, so the page names it and says it is the default
+       rather than calling the reference currency "not set". */
+    numeraireDefault: tmpl('{{symbol}} (never changed, so the protocol’s default)', ['symbol']),
     tiersHeading: 'VPFI discount tiers',
     tiers: 'Tiers',
     tierThreshold: tmpl('Tier {{n}} threshold', ['n']),
@@ -6165,6 +6429,24 @@ const copySource = {
       ', with no usable timestamp on it — so how current these values are is unknown',
     provenanceTail:
       '. The same endpoint is keyless and open-CORS, so you can verify any figure here independently rather than taking this page’s word for it.',
+    /* #2074 — the figures came from the contracts, not the snapshot. Says
+       when and at which block, then why the snapshot was not used. */
+    chainProvenance: tmpl(
+      'Read directly from the contracts on this chain at block {{block}}, {{age}}. Any figure here can be checked by calling the same contract on a public block explorer.',
+      ['block', 'age'],
+    ),
+    chainWhyMissing:
+      'The public indexer had no configuration snapshot for this chain, or could not be reached, so this page read the contracts instead.',
+    chainWhyKnownStale:
+      'The indexer’s snapshot was known to be out of date, so this page read the contracts instead.',
+    chainWhyUndated:
+      'The indexer’s snapshot carried no usable timestamp, so this page read the contracts instead.',
+    chainWhyOld:
+      'The indexer’s snapshot was older than its regular refresh, so this page read the contracts instead.',
+    chainWhyUnlabelled:
+      'The indexer’s snapshot arrived without the names this page needs, so this page read the contracts instead.',
+    chainWhyIncomplete:
+      'The indexer’s snapshot did not cover every setting shown here, so this page read the contracts instead.',
     bpsValue: tmpl('{{pct}}% ({{bps}} bps)', ['pct', 'bps']),
     hoursValue: tmpl('{{h}} h ({{s}}s)', ['h', 's']),
     minutesValue: tmpl('{{m}} min ({{s}}s)', ['m', 's']),

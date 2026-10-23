@@ -30,6 +30,7 @@ import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
 
@@ -63,7 +64,7 @@ import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
  * Env vars: DEPLOYER_PRIVATE_KEY, DIAMOND_ADDRESS
  *
  * Usage:
- *   forge script script/RedeployFacets.s.sol \
+ *   forge script script/RedeployFacets.s.sol --ffi \
  *     --rpc-url $SEPOLIA_RPC_URL --broadcast -vvv
  */
 contract RedeployFacets is Script {
@@ -106,6 +107,12 @@ contract RedeployFacets is Script {
      */
     function runWith(address diamond, uint256 deployerKey) public {
         console.log("Diamond:", diamond);
+        // #2092 item 1 — refuse code that drops a storage-layout fact this
+        // chain records, before anything is broadcast (needs `--ffi`); the
+        // record is rewritten once the cut is in. In this body rather than in
+        // {run}, so `--sig runWith(...)` cannot skip it; the in-process tests
+        // skip it by the library's own rule ({StorageLayoutRecord.active}).
+        StorageLayoutRecord.requireAppendOnly("RedeployFacets", diamond);
         // #2407 — the refinance-request record spans facets this curated set
         // does not carry; refuse a Diamond that has not had it rolled out.
         RefinanceRecordRollout.assertInstalled(diamond);
@@ -602,6 +609,7 @@ contract RedeployFacets is Script {
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
         vm.stopBroadcast();
+        StorageLayoutRecord.record(diamond);
 
         console.log("DiamondCut applied: 9 facets replaced + partitioned Claim/HF/Cons.");
         console.log("  HF selectors added:   ", hfToAdd.length);

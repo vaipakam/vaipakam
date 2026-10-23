@@ -18,7 +18,8 @@
  * gave. The keeper's own copy logged a "skipping" line per subscriber
  * instead, and logged nothing when a send failed except the error itself.
  */
-import { pushRailStatus, sendPush, type PushRailConfig } from '@vaipakam/push';
+import { publishedRailRow, pushRailStatus, sendPush, type PushRailConfig } from '@vaipakam/push';
+import { publishPushRailStatus } from './db';
 import type { Env } from './env';
 import { assertEpochsHold } from './epochFence';
 import { sendMessage as sendTelegramMessage } from './telegram';
@@ -35,9 +36,27 @@ export interface Alert {
 
 type AlertEnv = Pick<Env, 'TG_BOT_TOKEN' | 'PUSH_CHANNEL_PK' | 'PUSH_CHANNEL_ADDRESS'>;
 
+
 /** This keeper's Push rail configuration, read from its env in ONE place. */
 export function pushRailConfigOf(env: Pick<Env, 'PUSH_CHANNEL_PK' | 'PUSH_CHANNEL_ADDRESS'>): PushRailConfig {
   return { channelPk: env.PUSH_CHANNEL_PK, channelAddress: env.PUSH_CHANNEL_ADDRESS };
+}
+
+/**
+ * Publish this keeper's rail status for the agent (#2667), read from the same
+ * configuration the sends use. Contained: a failed write (the table not yet
+ * migrated, a D1 outage) is logged and the pass carries on; the agent then
+ * finds the row stale and says it does not know, rather than trusting it.
+ */
+export async function publishRailStatus(
+  env: Pick<Env, 'DB' | 'PUSH_CHANNEL_PK' | 'PUSH_CHANNEL_ADDRESS'>,
+  nowSec: number = Math.floor(Date.now() / 1000),
+): Promise<void> {
+  try {
+    await publishPushRailStatus(env.DB, publishedRailRow(pushRailStatus(pushRailConfigOf(env)), nowSec));
+  } catch (err) {
+    console.warn(`[keeper] Push rail status not published this run: ${String(err).slice(0, 200)}`);
+  }
 }
 
 /** One pass's alerts: deliver each, then `disclose` once. */

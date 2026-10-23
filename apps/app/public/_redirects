@@ -1,0 +1,48 @@
+# Cloudflare Workers static-assets redirects for apps/app.
+# https://developers.cloudflare.com/workers/static-assets/redirects/
+#
+# Copied verbatim from `public/` to `dist/` by Vite at build time, like
+# `_headers`. Cloudflare evaluates these before asset matching and before
+# the SPA fallback, so a crawler that does not run JavaScript gets a real
+# 301 rather than the 200 shell.
+#
+# ONE FORM PER URL (#2079). A single-segment route's trailing-slash form
+# (`/vpfi/`) is redirected to the slashless one (`/vpfi`). Without this,
+# the trailing-slash form was served as a 200 whose `X-Robots-Tag:
+# noindex` came from `_headers` (`/:locale/*` and the `/<route>/*`
+# siblings match an EMPTY remainder, measured on the deployed app
+# 2026-09-09), while the page it rendered declared `index: true` with a
+# canonical at the slashless URL. The response and the page disagreed
+# about the same URL; now the trailing-slash form is never served.
+#
+# Why a redirect and not `html_handling: "drop-trailing-slash"`: that
+# setting acts on HTML ASSETS it finds on disk, and this SPA has one
+# (`index.html`). The routes are not files, so it would not fire for
+# them; and where it does fire it answers 307, where canonicalisation
+# wants a permanent 301.
+#
+# What the rule does, measured with `wrangler dev` 4.90 (the same
+# asset-serving code the deployed Worker runs), SPA fallback on:
+#
+#     /                  200   (a placeholder never matches an empty segment)
+#     /vpfi/             301 → /vpfi
+#     /vpfi/?pair=1&x=2  301 → /vpfi?pair=1&x=2   (query string carried over)
+#     /vpfi              200   (no loop)
+#     /positions/        301 → /positions          (wallet-gated routes too)
+#     /nft/12/           200   (deeper paths untouched; see below)
+#
+# Deliberately single-segment. Every URL the sitemap submits is one
+# segment (`src/lib/localeHeaders.test.ts` pins that), so this covers
+# every indexable trailing-slash form. A deeper trailing-slash path is
+# noindexed by `_headers` and so is its slashless form, so the two
+# agree and there is nothing to reconcile. A redirect for it would be
+# tidiness rather than a fix.
+#
+# The redirect response still carries the headers `_headers` matches for
+# the requested path. That is harmless: a crawler follows a 301 and
+# indexes the destination, never the redirect itself.
+#
+# Fragments are never sent to the server; the browser keeps them across
+# the 301.
+
+/:slug/ /:slug 301

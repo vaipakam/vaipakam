@@ -1,5 +1,5 @@
 {
-  "$comment": "#1794 — the ONE policy for which ABI input fills activity_events.loan_id / offer_id. Read at runtime by src/activityRefs.ts and by the guardrail (scripts/lib/activity-refs-surface.mjs). Rationale for each section is in src/activityRefs.ts.",
+  "$comment": "#1794 — the ONE policy for which ABI input fills activity_events.loan_id / offer_id. Read at runtime by packages/lib/src/activityRefs.ts (the indexer files rows by it; the app labels what it files) and by the guardrail (apps/indexer/scripts/lib/activity-refs-surface.mjs). Rationale for each section is in packages/lib/src/activityRefs.ts.",
   "refShape": {
     "loanId": "^[A-Za-z0-9_]*[Ll]oanId(?:[0-9]+)?(?:[A-Z][A-Za-z0-9_]*)?$",
     "offerId": "^[A-Za-z0-9_]*[Oo]fferId(?:[0-9]+)?(?:[A-Z][A-Za-z0-9_]*)?$"
