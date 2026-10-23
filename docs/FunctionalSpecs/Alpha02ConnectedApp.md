@@ -2919,6 +2919,45 @@ is the borrower's own money.
   straight back — so closing the connection first is what ends it; and a
   teardown writes on its way out, so a sweep placed first would leave those
   writes behind. The intent is the ordering, not merely the three steps.
+- **A connection that reloads the page as it closes is closed LAST.** Some
+  wallet connections end by reloading the page, and nothing in the app can
+  stop that. Closed with the others, the reload could land in the middle of
+  the erasure and leave the rest undone with no word on it; closed after
+  everything the erasure counts, the reload can interrupt nothing. That
+  connection's own library clears its session on the way out, which is why
+  it can safely wait. **The report must survive that reload.** A page that
+  reloads straight after an erasure returns the user to a blank screen, and
+  on this page the report is the point — so the report as it stands just
+  before that last step is kept for this tab alone, holding only counts and
+  outcomes, and is shown again after the reload and then discarded. The
+  connection reporting itself closed is NOT proof that no reload is coming
+  (the reload can follow a moment later), so the kept copy lives for a short
+  bounded window rather than ending with the step, and is removed when the
+  window ends, when the report is dismissed, by the next erasure, or when
+  it is read; a copy found after the window is discarded unread, and so is
+  one found on any load that is not a reload — a tab opened from this one
+  inherits its per-tab storage, and must not show a report for an erasure it
+  never ran. The kept
+  copy is the erasure's own record, not the user's data: it is never
+  counted as something the erasure left behind, and no sweep but its
+  owner's removes it. It must claim nothing about
+  the step that was interrupted: the page says the connection was ASKED to
+  close last and the page reloaded during that step or shortly after it,
+  before its outcome was known — never that it closed — and tells the user
+  how to check their wallet.
+- **A wallet that is still reconnecting is waited for, not reported as
+  refusing.** While the app restores a wallet connection from a previous
+  visit, there is no connection yet that can be closed, and the restore
+  cannot be cancelled — it may finish after the erasure and put a session
+  back. So the erasure waits, for a bounded time, for the restore to finish
+  and then closes whatever is live; if the wait runs out it says the wallet
+  could not be disconnected YET, that it may sign the user back in, and that
+  erasing again once it has will finish the job. That is a different remedy
+  from a wallet that declined, and the page keeps the two apart. Each wallet
+  is judged on its own: wallets are restored one after another, so when one
+  is back and another is still restoring, the one that is back is closed and
+  only the other is reported as not closed yet. A restore that is stuck must
+  never keep a live wallet attached.
 - **A refusal must be reported as a refusal, and the kinds are
   distinguishable.** The session records can fail to clear, the browser can
   refuse to expose that storage at all, and a wallet can decline to
@@ -2963,7 +3002,26 @@ is the borrower's own money.
   connection, not the one in use**: where more than one wallet is connected,
   every one of them must be ended before a sign-out is claimed, since a wallet
   left connected is a live client able to write its session back into storage
-  the erasure has already cleared.
+  the erasure has already cleared. A teardown that finds nothing left to end
+  by the time it runs is the same no-op and claims nothing either. What
+  counts as "connected" is the set of live connections, not a summary status:
+  while the user is part-way through connecting a further wallet, the ones
+  already connected are still connected and are ended.
+- **The erasure ends the connections the request found, and none made
+  since.** It runs for some seconds with the app still usable, and a wallet
+  the user connects in that time is a sign-in after the request, not part of
+  it; ending it would destroy a session the user just created. The same holds
+  for a connection that was still being made at the request and completes
+  afterwards, and for a further wallet connected while a session that was
+  restoring at the request finishes restoring: only the restored session is
+  the request's. A follow-up of another tab's erasure fixes this tab's
+  connections when the request arrives, even if it must wait for an earlier
+  follow-up before closing them.
+- **A late cleanup waits until the request's last connection has closed.**
+  Cleaning up after a wallet that answered late must not run while another
+  connection of the same request is still closing: at that moment it cannot
+  tell that connection from one the user has made since, so it would
+  decline, and what the late wallet wrote back would stay.
 - **A sign-out must outlast a reload.** Ending a connection only for the app to
   reconnect on the next visit is not an ending, so the erasure must leave in
   place whatever record tells the app not to reconnect on its own, and the
@@ -2987,12 +3045,49 @@ is the borrower's own money.
   originating tab's sweep, so any write lands in storage that was just
   cleared and stays there — a peer tab restoring the keys the erasure
   removed. Where the natural way to reset something persists, the peer tab
-  removes what it wrote.
+  removes exactly what it wrote and nothing more; and where the user has set
+  that preference again since the erasure, the peer tab adopts it rather
+  than overwriting it. This holds for every preference the tab shows —
+  theme and mode as well as language.
+- **One tab never runs its own erasure and a follow-up of another tab's at
+  the same time.** Both close this tab's wallet, and a wallet that reloads
+  the page as it closes would cut the tab's own erasure off mid-clear,
+  before it had kept a report. A request from another tab that arrives while
+  this tab's own erasure is running is carried out after it — never dropped,
+  since a wallet connected or data written after this tab's own request is
+  the later request's to remove, against what this tab held when that
+  request arrived. An erasure requested while a follow-up is
+  still closing the wallet waits for it before doing anything, so a reload
+  in that time interrupts nothing and the page simply offers the erasure
+  again. **A reload the tab may still owe blocks the next erasure, whoever
+  caused it.** After any close of a connection that reloads the page —
+  this tab's own erasure or a follow-up of another tab's — the reload can
+  follow the close by a moment, so for the same short bounded window the
+  kept report uses, an erasure requested in that time shows as running and
+  does nothing (not even discard the previous report) until the window ends.
+  A reload in that time therefore interrupts nothing and shows the report of
+  the erasure that caused it. The same window holds back a further
+  follow-up of another tab's erasure waiting its turn: it begins closing
+  nothing until a reload the previous one may have caused can no longer
+  come.
+- **A peer tab does not clear the stores it shares with the erasing tab.**
+  The shared stores are cleared by the tab where the user asked, which is
+  also the only one that reports on them. A peer tab clearing them as well
+  is a second, uncoordinated clearer: arriving late — a background tab can
+  receive the request long after it was sent — it deletes what the user has
+  stored since, sessions included, and arriving early it empties the stores
+  before the erasing tab has counted them, so the report understates what
+  was removed. The stores record nothing about who wrote what, so "clear
+  only what this tab's teardown wrote" cannot be expressed. The accepted
+  cost is that a wallet closing in another tab may write a small connection
+  record back after the erasing tab has finished, and **the page says so**,
+  with the remedy: erasing again from any tab removes it.
 - **A request abandoned for taking too long must not be left free to act
   later.** Giving up on a wallet teardown bounds the wait, not the work: the
   wallet may still complete afterwards and write its state back into storage
   the erasure had already cleared, leaving the device holding what the user
-  was told was removed. What arrives late must be cleared up after. The
+  was told was removed. What arrives late must be cleared up after, by the
+  tab that made the request (a peer tab clears no shared store; see above). The
   REPORT is not revised — it is fixed at the moment it was made, and it
   already says the wallet held out — so this is about the device, not the
   claim.
@@ -3107,6 +3202,13 @@ is the borrower's own money.
   running — and anything the app remembers only for as long as that surface
   exists stops being remembered exactly when it is needed. A protection with a
   shorter life than the thing it protects is not a protection.
+- **The erasure itself, and its report, outlive that screen too.** For the
+  same reason, the request has to be one operation for the tab rather than
+  something the page holds: the rebuilt page must show that an erasure is
+  running, must not let a second one start over it, and must show the
+  report when the first finishes. A report written to a screen that no
+  longer exists is a report nobody sees, on the one page whose purpose is
+  the report.
 - **A report of how much was erased must not attribute it to a source it
   cannot vouch for.** Where the browser refuses a check, the page may still
   know how many items it removed; that figure spans ordinary storage,

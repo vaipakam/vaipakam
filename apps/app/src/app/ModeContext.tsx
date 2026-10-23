@@ -28,10 +28,12 @@ interface ModeContextValue {
   mode: AppMode;
   isAdvanced: boolean;
   setMode: (m: AppMode) => void;
-  /** Return to the default WITHOUT writing storage (#1960 review round
-   *  1 P2) — see `ThemeContext` for why a plain setter cannot be used
-   *  by the data-rights erasure. */
-  resetToDefault: () => void;
+  /** Follow what storage holds now WITHOUT writing it — the default when
+   *  nothing is stored, a stored choice when there is one. See
+   *  `ThemeContext` for why a plain setter cannot be used by the
+   *  data-rights erasure, and why a late peer tab must adopt a newer
+   *  choice rather than reset over it. */
+  followStorage: () => void;
 }
 
 const ModeContext = createContext<ModeContextValue | null>(null);
@@ -58,12 +60,12 @@ export function ModeProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // State only — deliberately no write. See `resetToDefault` above.
-  const resetToDefault = useCallback(() => setModeState('basic'), []);
+  // State only — deliberately no write. See `followStorage` above.
+  const followStorage = useCallback(() => setModeState(loadMode()), []);
 
   const value = useMemo(
-    () => ({ mode, isAdvanced: mode === 'advanced', setMode, resetToDefault }),
-    [mode, setMode, resetToDefault],
+    () => ({ mode, isAdvanced: mode === 'advanced', setMode, followStorage }),
+    [mode, setMode, followStorage],
   );
 
   return <ModeContext.Provider value={value}>{children}</ModeContext.Provider>;

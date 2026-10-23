@@ -18,6 +18,7 @@ import {
   eraseMyData,
   inspectErasableData,
   isErasableStorageKey,
+  ERASURE_REPORT_KEY,
   liveLastErrorEntry,
   STORAGE_PREFIXES,
   PREFERENCE_COOKIES,
@@ -31,7 +32,8 @@ import {
   erasedItemCount,
   isDisconnectSentinelKey,
   inspectIndexedDbData,
-  eraseWebStorageQuietly,
+  undoLanguageWrite,
+  readStoredLanguage,
   eraseConnectorStorageQuietly,
   disconnectEvery,
   createConnectionGeneration,
@@ -61,6 +63,9 @@ const KNOWN_KEYS: readonly string[] = [
   // sessionStorage
   'vaipakam.app.lastError',
   'app.chunkReloaded',
+  // #2035 — a finished erasure's report, kept only while a wallet that
+  // reloads the page is closing, and removed as it is read back.
+  'app.dataRights.erasureReport',
 ];
 
 /**
@@ -106,8 +111,18 @@ describe('erasure reaches connector storage (#1862)', () => {
 
   it('still erases everything the app itself writes', () => {
     for (const key of KNOWN_KEYS) {
+      // The one exception, asserted on its own below: the erasure's kept
+      // report belongs to the erasure, which removes it itself.
+      if (key === ERASURE_REPORT_KEY) continue;
       expect(isErasableStorageKey(key), key).toBe(true);
     }
+  });
+
+  it("leaves the erasure's own kept report to its owner (#2035)", () => {
+    // Under `app.`, so the export shows it; outside the erasure set, so a
+    // clean erasure never reports it as an item left behind.
+    expect(isAppStorageKey(ERASURE_REPORT_KEY)).toBe(true);
+    expect(isErasableStorageKey(ERASURE_REPORT_KEY)).toBe(false);
   });
 
   it('leaves an unrelated key alone', () => {
@@ -299,6 +314,9 @@ describe('storage-prefix coverage', () => {
       'app.recoverPending.',
     ],
     'src/main.tsx': ['app.chunkReloaded'],
+    // #2035 — through a guarded accessor the scan's pattern does not see,
+    // registered anyway so the record is complete.
+    'src/lib/erasureRun.ts': ['app.dataRights.erasureReport'],
     // The data-rights page itself reads and clears; it writes nothing.
     'src/lib/dataRights.ts': [],
     // Signal only — no storage of its own.
@@ -804,6 +822,77 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
     expect(result.complete).toBe(true);
   });
 
+  it('runs a late teardown\'s database cleanup only once the last teardown is done (Codex #2670 r4)', async () => {
+    // A straggler (WalletConnect) lands after the counted clear while the
+    // reload-prone teardown (Coinbase) is still closing. The cleanup's fence
+    // cannot tell that request connection from a newer one, so run then it
+    // declined and the records the straggler wrote back stayed for good.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      fakeWindow(new Map());
+      let clears = 0;
+      (globalThis as Record<string, unknown>).indexedDB = {
+        deleteDatabase: () => ({}),
+        open() {
+          const req: Record<string, unknown> = {};
+          queueMicrotask(() => {
+            req.result = {
+              objectStoreNames: { contains: () => true },
+              close: () => {},
+              transaction: () => {
+                const tx: Record<string, unknown> = {
+                  objectStore: () => ({
+                    count: () => ({ result: 1 }),
+                    clear: () => {
+                      clears += 1;
+                    },
+                  }),
+                };
+                queueMicrotask(() => (tx.oncomplete as () => void)?.());
+                return tx;
+              },
+            };
+            (req.onsuccess as (() => void) | undefined)?.();
+          });
+          return req;
+        },
+      };
+      let land: (() => void) | undefined;
+      let lastOpen = false;
+      let closeLast: (() => void) | undefined;
+      const pending = eraseMyDataFully({
+        hasLiveSession: () => lastOpen,
+        disconnect: () =>
+          new Promise<boolean>((resolve) => {
+            land = () => resolve(true);
+          }),
+        disconnectLast: () =>
+          new Promise<boolean>((resolve) => {
+            lastOpen = true;
+            closeLast = () => {
+              lastOpen = false;
+              resolve(true);
+            };
+          }),
+      });
+      // The first teardown is given up on; the counted clear runs.
+      await vi.advanceTimersByTimeAsync(DISCONNECT_TIMEOUT_MS + 1);
+      const counted = clears;
+      expect(counted).toBeGreaterThan(0);
+      // The straggler lands while the last teardown is still closing.
+      land?.();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(clears).toBe(counted);
+      // Once it is done, nothing of the request's is open: the cleanup runs.
+      closeLast?.();
+      await pending;
+      await vi.advanceTimersByTimeAsync(1);
+      expect(clears).toBeGreaterThan(counted);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('is INCOMPLETE when a database refuses, however much storage it cleared', async () => {
     // The failure this exists to prevent: Web Storage gives up several keys,
     // the page adds them up and reports success, and the live WalletConnect
@@ -828,11 +917,16 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
         order.push('disconnect');
         // What a connector writing on its way out looks like.
         store.set('wagmi.recentConnectorId', '"injected"');
+        return true;
       },
     });
     expect(order).toEqual(['disconnect']);
     expect(store.has('wagmi.recentConnectorId')).toBe(false);
-    expect(result.connector).toEqual({ attempted: true, disconnected: true });
+    expect(result.connector).toEqual({
+      attempted: true,
+      disconnected: true,
+      reconnectPending: false,
+    });
     expect(result.complete).toBe(true);
   });
 
@@ -847,7 +941,11 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
         throw new Error('user rejected');
       },
     });
-    expect(result.connector).toEqual({ attempted: true, disconnected: false });
+    expect(result.connector).toEqual({
+      attempted: true,
+      disconnected: false,
+      reconnectPending: false,
+    });
     expect(result.localStorage).toBeGreaterThan(0);
     expect(result.indexedDb.cleared).toBe(2);
     expect(result.complete).toBe(false);
@@ -857,7 +955,11 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
     fakeWindow(new Map());
     stubIdb('success');
     const result = await eraseMyDataFully();
-    expect(result.connector).toEqual({ attempted: false, disconnected: false });
+    expect(result.connector).toEqual({
+      attempted: false,
+      disconnected: false,
+      reconnectPending: false,
+    });
     expect(result.complete).toBe(true);
   });
 
@@ -883,13 +985,14 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
       fakeWindow(new Map([['wagmi.store', '{}']]));
       stubIdb('success');
       const pending = eraseMyDataFully({
-        disconnect: () => new Promise<void>(() => {}),
+        disconnect: () => new Promise<boolean>(() => {}),
       });
       await vi.advanceTimersByTimeAsync(DISCONNECT_TIMEOUT_MS + 1);
       const result = await pending;
       expect(result.connector).toEqual({
         attempted: true,
         disconnected: false,
+        reconnectPending: false,
       });
       // The point of the bound: the rest of the erasure still ran.
       expect(result.localStorage).toBeGreaterThan(0);
@@ -1011,6 +1114,7 @@ describe('round 3 — the reported count, the sentinel, the wedged transaction',
         // alongside the store rewrite.
         store.set('wagmi.store', '{}');
         store.set('wagmi.metaMask.disconnected', 'true');
+        return true;
       },
     });
     expect(store.has('wagmi.metaMask.disconnected')).toBe(true);
@@ -1331,11 +1435,11 @@ describe('round 4 — the pre-confirm figure and the late teardown', () => {
       let finishTeardown: (() => void) | undefined;
       const pending = eraseMyDataFully({
         disconnect: () =>
-          new Promise<void>((resolve) => {
+          new Promise<boolean>((resolve) => {
             finishTeardown = () => {
               // The late write, exactly as wagmi makes it.
               store.set('wagmi.store', '{}');
-              resolve();
+              resolve(true);
             };
           }),
       });
@@ -1344,6 +1448,7 @@ describe('round 4 — the pre-confirm figure and the late teardown', () => {
       expect(result.connector).toEqual({
         attempted: true,
         disconnected: false,
+        reconnectPending: false,
       });
       expect(result.complete).toBe(false);
       // Now the teardown finally lands, after the result was frozen.
@@ -1372,10 +1477,32 @@ describe('round 4 — the pre-confirm figure and the late teardown', () => {
     const result = await eraseMyDataFully({
       disconnect: async () => {
         store.set('wagmi.store', '{}');
+        return true;
       },
     });
-    expect(result.connector).toEqual({ attempted: true, disconnected: true });
+    expect(result.connector).toEqual({
+      attempted: true,
+      disconnected: true,
+      reconnectPending: false,
+    });
     expect(store.has('wagmi.store')).toBe(false);
+    expect(result.complete).toBe(true);
+  });
+
+  it('a teardown that found nothing to close is not reported as a sign-out (Codex #2670 r3)', async () => {
+    const store = new Map<string, string>([['app.mode', 'lend']]);
+    fakeWindow(store);
+    stubIdb(() => ({ stores: ['keyvaluestorage', 'keys'] }));
+    const result = await eraseMyDataFully({
+      disconnect: async () => false,
+      disconnectLast: async () => false,
+    });
+    // Folded out exactly as if no teardown had been supplied.
+    expect(result.connector).toEqual({
+      attempted: false,
+      disconnected: false,
+      reconnectPending: false,
+    });
     expect(result.complete).toBe(true);
   });
 });
@@ -1485,7 +1612,7 @@ describe('round 6 — what a late, partial, or unresponsive teardown leaves behi
       let land: (() => void) | undefined;
       const pending = eraseMyDataFully({
         disconnect: () =>
-          new Promise<void>((_resolve, reject) => {
+          new Promise<boolean>((_resolve, reject) => {
             land = () => {
               // One connector let go and wrote; a later one refused.
               store.set('wagmi.store', '{}');
@@ -1498,6 +1625,7 @@ describe('round 6 — what a late, partial, or unresponsive teardown leaves behi
       expect(result.connector).toEqual({
         attempted: true,
         disconnected: false,
+        reconnectPending: false,
       });
       // Written BEFORE the straggler lands, i.e. by a user still using the
       // page while the teardown drags on. Ordering matters: setting it after
@@ -1516,14 +1644,17 @@ describe('round 6 — what a late, partial, or unresponsive teardown leaves behi
     }
   });
 
-  it('the quiet re-sweep covers cookies, not only Web Storage', async () => {
-    // Round 6 P2. A peer tab's language reset writes the `vaipakam_lang`
-    // COOKIE as well as the storage key, so a cleanup that swept only Web
-    // Storage restored an erased preference by half.
-    const store = new Map<string, string>();
+  it('a peer undoes only its own language write, in both stores (#2037)', () => {
+    // Round 6 P2 found the cookie half of the write; #2037 narrowed the undo
+    // from a blanket sweep of every store to the write itself, so a record
+    // the user stored after the erasure survives a late broadcast.
+    const store = new Map<string, string>([
+      ['vaipakam:language', 'en'],
+      ['app.mode', 'lend'],
+    ]);
     fakeWindow(store);
     const cleared: string[] = [];
-    let jar = 'vaipakam_lang=ta';
+    let jar = 'vaipakam_lang=en; vaipakam_theme=dark';
     Object.defineProperty(globalThis, 'document', {
       configurable: true,
       value: {
@@ -1532,13 +1663,42 @@ describe('round 6 — what a late, partial, or unresponsive teardown leaves behi
         },
         set cookie(v: string) {
           cleared.push(v);
-          if (v.startsWith('vaipakam_lang=;')) jar = '';
+          if (v.startsWith('vaipakam_lang=;')) jar = 'vaipakam_theme=dark';
         },
       },
     });
     try {
-      eraseWebStorageQuietly();
+      undoLanguageWrite('en');
+      expect(store.has('vaipakam:language')).toBe(false);
       expect(cleared.some((c) => c.startsWith('vaipakam_lang=;'))).toBe(true);
+      // Nothing else is touched.
+      expect(store.get('app.mode')).toBe('lend');
+      expect(cleared.some((c) => c.startsWith('vaipakam_theme='))).toBe(false);
+    } finally {
+      delete (globalThis as Record<string, unknown>).document;
+    }
+  });
+
+  it('a peer leaves a language the user chose since in place (#2037)', () => {
+    const store = new Map<string, string>([['vaipakam:language', 'ta']]);
+    fakeWindow(store);
+    const cleared: string[] = [];
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: {
+        get cookie() {
+          return 'vaipakam_lang=ta';
+        },
+        set cookie(v: string) {
+          cleared.push(v);
+        },
+      },
+    });
+    try {
+      expect(readStoredLanguage()).toBe('ta');
+      undoLanguageWrite('en');
+      expect(store.get('vaipakam:language')).toBe('ta');
+      expect(cleared).toEqual([]);
     } finally {
       delete (globalThis as Record<string, unknown>).document;
     }
@@ -1819,8 +1979,8 @@ describe('round 11 — a refusal is not a timeout, and a guard that throws', () 
       const teardown = disconnectEvery(
         ['slow'],
         () =>
-          new Promise<void>((resolve) => {
-            land = resolve;
+          new Promise<boolean>((resolve) => {
+            land = () => resolve(true);
           }),
         {
           perConnectorTimeoutMs: 50,
@@ -2057,8 +2217,8 @@ describe('round 12 — a late cleanup must never outrun the counted clear', () =
       let land: (() => void) | undefined;
       const pending = eraseMyDataFully({
         disconnect: () =>
-          new Promise<void>((resolve) => {
-            land = resolve;
+          new Promise<boolean>((resolve) => {
+            land = () => resolve(true);
           }),
       });
       // The straggler lands around the counted clear.
@@ -2168,8 +2328,8 @@ describe('round 15 — the fence cannot ask the witness that was tampered with',
     const pending = eraseMyDataFully({
       hasLiveSession,
       disconnect: () =>
-        new Promise<void>((resolve) => {
-          land = resolve;
+        new Promise<boolean>((resolve) => {
+          land = () => resolve(true);
         }),
     });
     // The aggregate bound expires: the erasure gives up and reports.

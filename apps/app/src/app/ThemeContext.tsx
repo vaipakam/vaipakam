@@ -26,12 +26,16 @@ interface ThemeContextValue {
   preference: ThemePreference;
   resolved: ResolvedTheme;
   setPreference: (p: ThemePreference) => void;
-  /** Return to the default WITHOUT writing storage (#1960 review round
-   *  1 P2). The data-rights erasure needs the live UI to follow the
+  /** Follow what storage holds now WITHOUT writing it (#1960 review round
+   *  1 P2): the default when nothing is stored, a stored choice when there
+   *  is one. The data-rights erasure needs the live UI to follow the
    *  storage it just cleared; calling `setPreference` would do that and
    *  immediately re-persist the key, undoing the erasure it was called
-   *  to complete. */
-  resetToDefault: () => void;
+   *  to complete. And a tab hearing of another tab's erasure late must
+   *  ADOPT a choice made since (Codex #2670 r2 P2), not paint over it with
+   *  the default — the provider never re-reads storage on its own, so it
+   *  would show the wrong theme indefinitely. */
+  followStorage: () => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -80,12 +84,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // State only — deliberately no write. See `resetToDefault` above.
-  const resetToDefault = useCallback(() => setPreferenceState('system'), []);
+  // State only — deliberately no write. See `followStorage` above.
+  const followStorage = useCallback(() => setPreferenceState(loadPreference()), []);
 
   const value = useMemo(
-    () => ({ preference, resolved, setPreference, resetToDefault }),
-    [preference, resolved, setPreference, resetToDefault],
+    () => ({ preference, resolved, setPreference, followStorage }),
+    [preference, resolved, setPreference, followStorage],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
