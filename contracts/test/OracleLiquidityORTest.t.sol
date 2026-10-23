@@ -72,7 +72,10 @@ contract OracleLiquidityORTest is Test {
         mockAsset       = address(new ERC20Mock("Asset", "AST", 18));
         mockRegistry    = makeAddr("registry");
         mockFeed        = makeAddr("feed");
-        mockWeth        = makeAddr("weth");
+        // #2419 — a real token, not a bare address: the classifier and the
+        // route search read each asset's (and each quote's) `decimals()`,
+        // and a codeless WETH reads as unreadable, so as Illiquid.
+        mockWeth        = address(new ERC20Mock("Wrapped Ether", "WETH", 18));
         mockEthUsdFeed  = makeAddr("ethNumeraireFeed");
         mockDenom       = makeAddr("denom");
 
