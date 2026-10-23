@@ -378,9 +378,12 @@ describe('watchPageRpc', () => {
 });
 
 // Structural: a fault the helper records only matters if the drive FAILS on
-// it, and the gap Codex found in #1633 r1 was a drive that never asked. So
-// every drive attaching the helper must read `sessionFaults()`. A mention is
-// the floor, not proof the verdict uses it; the per-drive wiring is reviewed.
+// it. The gap Codex found in #1633 r1 was a drive that never asked; the one
+// in r6 was drives that asked too EARLY, before the close's last drain. So
+// every drive attaching the helper ends through the shared
+// `exitWithVerdict` — which decides after that drain — and has no other
+// exit that could report PASS or BLOCKED (`process.exit(1)` is a FAIL and
+// may stand; BLOCKED goes through `blocked()`, which honours faults too).
 describe('drives that attach watchPageRpc', () => {
   const dir = fileURLToPath(new URL('.', import.meta.url));
   const drives = fs
@@ -392,8 +395,11 @@ describe('drives that attach watchPageRpc', () => {
     expect(drives.length).toBeGreaterThan(0);
   });
 
-  it.each(drives)('%s folds the session\'s client faults into its verdict', (f) => {
-    expect(fs.readFileSync(`${dir}${f}`, 'utf8')).toMatch(/\brpc\.sessionFaults\(\)/);
+  it.each(drives)('%s ends through the shared exit that folds in every recorded fault', (f) => {
+    const src = fs.readFileSync(`${dir}${f}`, 'utf8');
+    expect(src).toMatch(/\bawait exitWithVerdict\(/);
+    const exits = [...src.matchAll(/\bprocess\.exit\(([^)]*)\)/g)].map((m) => m[1].trim());
+    expect(exits.filter((a) => a !== '1')).toEqual([]);
   });
 });
 

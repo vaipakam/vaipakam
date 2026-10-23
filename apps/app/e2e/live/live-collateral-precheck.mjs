@@ -27,6 +27,7 @@
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
+  exitWithVerdict,
   blocked,
   blockedSync,
   launch,
@@ -251,3 +252,6 @@ try {
   await done();
   process.exit(1);
 }
+// The shared exit, after `done()`'s drain (#1633 r6): a refusal that landed
+// only at the close still FAILS the run the checks above passed.
+await exitWithVerdict(0);

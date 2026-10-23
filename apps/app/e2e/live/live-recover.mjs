@@ -42,6 +42,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, parseAbi } from 'viem';
 import {
+  exitWithVerdict,
   blocked,
   blockedSync,
   ensureConnected,
@@ -619,3 +620,4 @@ if (fails.length) {
 }
 if (unresolved.length) await blocked(unresolved.join('\n  '));
 console.log('\nlive recover review: ALL CHECKS PASSED');
+await exitWithVerdict(0);

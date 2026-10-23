@@ -356,8 +356,11 @@ Which failures are preconditions, driver by driver:
   the end of it: a drive whose PASS rests on an ABSENCE read a refused
   recompute as "answered" and passed. So `sessionFaults()` keeps every such
   call for the whole session, whatever window it fell in, and EVERY drive
-  that attaches the helper FAILS on any of them (a structural test holds
-  each one to reading it). The shared BLOCKED exits (`blocked`,
+  that attaches the helper FAILS on any of them: each ends through the
+  shared `exitWithVerdict`, which drains once more and turns a PASS or
+  BLOCKED code into FAIL over any recorded fault, so a refusal landing only
+  at the close is not lost to a drive's earlier snapshot (a structural test
+  holds each drive to that exit and to no other non-FAIL exit). The shared BLOCKED exits (`blocked`,
   `blockedSync`) honour the same precedence by themselves: once any
   watcher has recorded such a request they exit FAIL, naming it, so no
   drive's BLOCKED branch can hide one; `blocked()` first waits (bounded)

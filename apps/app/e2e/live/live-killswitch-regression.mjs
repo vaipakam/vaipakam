@@ -5,6 +5,7 @@
 // action we don't do for a review — exception stated in the PR body.)
 import { formatUnits, parseAbi, parseUnits } from 'viem';
 import {
+  exitWithVerdict,
   blocked,
   clientsFor,
   ensureConnected,
@@ -213,14 +214,10 @@ if (fixtureProblem !== null) {
   }
 
 }
+await done();
 // A request the page sent that a reachable provider refused as malformed is
 // a defect in the page wherever the sweep met it, so it FAILS the run
-// (#1633 r1) — including beside a review that otherwise passed.
-await rpc.settled();
-const rpcFaults = rpc.sessionFaults();
-if (rpcFaults.length) {
-  console.log(`FAIL page requests refused as malformed by a reachable provider: ${rpcFaults.join(', ')}`);
-  failures++;
-}
-await done();
-process.exit(failures === 0 ? 0 : 1);
+// (#1633 r1) — including beside a review that otherwise passed. Judged by
+// the shared exit, AFTER `done()`'s drain, so a refusal still landing at
+// the close is counted (#1633 r6).
+await exitWithVerdict(failures === 0 ? 0 : 1);

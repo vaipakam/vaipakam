@@ -2,7 +2,7 @@
 // production app: drive the lend post-offer flow to review, tick
 // consent, confirm the footer renders a real verdict.
 import fs from 'node:fs';
-import { blocked, blockedSync, ensureConnected, launch, visit, pasteAssetLive, watchPageRpc } from './driver.mjs';
+import { blocked, blockedSync, ensureConnected, exitWithVerdict, launch, visit, pasteAssetLive, watchPageRpc } from './driver.mjs';
 
 // Faucet mock addresses (Base Sepolia). Override with FAUCET_JSON to
 // point at a deployments artifact — both the flat shape and the
@@ -119,19 +119,7 @@ if (!any && !verdicts.wouldFail && (await rpc.settled()) === 0) {
       ` never ran. Footer state: ${JSON.stringify(verdicts)}.`,
   );
 }
-// A request the page sent that a reachable provider refused as malformed is
-// a defect in the page, so it FAILS the run beside a truthful verdict too
-// (#1633 r1): the verdict says the dry run rendered, not that the page's
-// requests were sound.
-await rpc.settled();
-const faults = rpc.sessionFaults();
-if (faults.length) console.log(`FAIL — page requests refused as malformed by a reachable provider: ${faults.join(', ')}`);
-const passed = any && faults.length === 0;
-console.log(
-  any
-    ? `${passed ? 'PASS' : 'FAIL'} — truthful dry-run verdict rendered`
-    : `FAIL — verdicts: ${JSON.stringify(verdicts)}`,
-);
+console.log(any ? 'PASS — truthful dry-run verdict rendered' : `FAIL — verdicts: ${JSON.stringify(verdicts)}`);
 {
   // The concrete revert reason renders right after the would-fail
   // headline (…"no gas was spent." <strong>reason</strong>…); anchor
@@ -140,4 +128,9 @@ console.log(
   if (i !== -1) console.log('REVERT TEXT:', body.slice(i, i + 400));
 }
 await done();
-process.exit(passed ? 0 : 1);
+// A request the page sent that a reachable provider refused as malformed is
+// a defect in the page, so it FAILS the run beside a truthful verdict too
+// (#1633 r1): the verdict says the dry run rendered, not that the page's
+// requests were sound. Judged by the shared exit, AFTER `done()`'s drain,
+// so a refusal still landing at the close is counted (#1633 r6).
+await exitWithVerdict(any ? 0 : 1);

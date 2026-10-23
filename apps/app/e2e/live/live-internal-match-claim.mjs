@@ -66,6 +66,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatUnits, parseAbi, parseEventLogs } from 'viem';
 import {
+  exitWithVerdict,
   addressOf,
   blocked,
   blockedSync,
@@ -986,4 +987,6 @@ const VERDICT = runVerdict({
   },
 });
 console.log(VERDICT.line);
-process.exit(VERDICT.exit);
+// The shared exit (#1633 r6): the page-health check above already counts
+// every fault recorded by the close; this applies the same rule once more.
+await exitWithVerdict(VERDICT.exit);

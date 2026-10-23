@@ -113,11 +113,37 @@ function exitBlockedOrFail(why) {
     console.error(`\nBLOCKED: ${why}`);
     process.exit(2);
   }
+  failOnRecordedFaults(`the drive then stopped BLOCKED: ${why}`);
+}
+
+function failOnRecordedFaults(context) {
   console.error(
     `\nFAIL: the page sent chain requests a reachable provider refused as malformed:` +
-      ` ${OBSERVED_RPC_FAULTS.join(', ')}\n  (the drive then stopped BLOCKED: ${why})`,
+      ` ${OBSERVED_RPC_FAULTS.join(', ')}\n  (${context})`,
   );
   process.exit(1);
+}
+
+/**
+ * The final exit of a drive that attaches `watchPageRpc` (#1633 r6): every
+ * such drive ends here, never on a bare `process.exit` (a structural test
+ * holds each one to it).
+ *
+ * A drive's own snapshot of `sessionFaults()` is only as late as the moment
+ * it took it, and the last bounded drain is the one `done()` runs before its
+ * close — a body still parsing past the drive's `settled()` wait can land
+ * there, after the drive decided PASS. So the precedence rule is applied
+ * HERE, after one more drain, over every fault any watcher recorded: a
+ * PASS or BLOCKED code becomes FAIL, naming them, exactly as `blocked()`
+ * does. A FAIL code stands as it is. Call it after `done()`; without one it
+ * still drains first, and the process exit then takes the browser down.
+ */
+export async function exitWithVerdict(code) {
+  await drainWatchers();
+  if (code !== 1 && OBSERVED_RPC_FAULTS.length > 0) {
+    failOnRecordedFaults(code === 0 ? "the drive's own checks passed" : 'the drive otherwise stopped BLOCKED');
+  }
+  process.exit(code);
 }
 
 /** The synchronous BLOCKED exit, for a configuration refused before any
