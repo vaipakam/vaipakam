@@ -119,6 +119,9 @@ library StorageLayoutRecord {
     bytes32 private constant EIP1967_IMPLEMENTATION_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
+    /// `IDiamondCut.diamondCut`'s selector, which routes to the cut facet.
+    bytes4 private constant DIAMOND_CUT_SELECTOR = 0x1f931c1c;
+
     /// Most addresses the candidate walk ({_liveProxies}) holds at once.
     uint256 private constant MAX_CANDIDATES = 512;
 
@@ -128,9 +131,14 @@ library StorageLayoutRecord {
     /// anchor has to bind all of them: a fingerprint over the facets alone
     /// let a receiver upgraded by an interrupted refresh pass as unchanged.
     ///
-    /// @dev Three parts, each found without a per-contract list, so a new
+    /// @dev Its parts, each found without a per-contract list, so a new
     ///      proxy cannot be left out by forgetting to name it here:
-    ///      - `facets`: the loupe's facet address list (the Diamond's code);
+    ///      - `diamond` / `cutFacet`: the Diamond itself and the facet its
+    ///        `diamondCut` routes to. The constructor installs that facet
+    ///        outside the loupe's registry, so `facetAddresses()` omits it
+    ///        and it is read by selector instead (Codex #2684 r5 P1);
+    ///      - `facets`: the loupe's facet address list (the rest of the
+    ///        Diamond's code);
     ///      - `vaultTemplate` / `adapterTemplate`: the templates the Diamond
     ///        upgrades every user vault and aggregator adapter to, which are
     ///        the code those per-user proxies run or are pushed onto;
@@ -152,9 +160,12 @@ library StorageLayoutRecord {
     ///      code: a broadcast whose simulation wrote the record and anchor but
     ///      never sent leaves the anchor naming addresses another checkout can
     ///      then fill with different bytecode from the same deployer nonce.
-    ///      It hashes the runtime `codehash` of every facet, both templates,
-    ///      every proxy and every implementation, in that order.
+    ///      It hashes the runtime `codehash` of every address the map holds:
+    ///      the Diamond, the cut facet, every facet, both templates, every
+    ///      proxy and every implementation, in that order.
     struct CodeMap {
+        address diamond;
+        address cutFacet;
         address[] facets;
         address vaultTemplate;
         address adapterTemplate;
@@ -165,6 +176,8 @@ library StorageLayoutRecord {
 
     /// The {CodeMap} of `diamond`'s chain now.
     function liveCodeMap(address diamond) internal view returns (CodeMap memory m) {
+        m.diamond = diamond;
+        m.cutFacet = IDiamondLoupe(diamond).facetAddress(DIAMOND_CUT_SELECTOR);
         m.facets = IDiamondLoupe(diamond).facetAddresses();
         m.vaultTemplate = _readWord(diamond, "getVaipakamVaultImplementationAddress()", 0);
         m.adapterTemplate = _readWord(diamond, "aggregatorAdapterTemplate()", 0);
@@ -174,9 +187,11 @@ library StorageLayoutRecord {
 
     /// Digest of the runtime code at every location in `m` (see {CodeMap}).
     function _codeHashes(CodeMap memory m) private view returns (bytes32) {
-        uint256 n = m.facets.length + 2 + m.proxies.length + m.implementations.length;
+        uint256 n = 4 + m.facets.length + m.proxies.length + m.implementations.length;
         bytes32[] memory h = new bytes32[](n);
         uint256 k;
+        h[k++] = m.diamond.codehash;
+        h[k++] = m.cutFacet.codehash;
         for (uint256 i = 0; i < m.facets.length; ++i) h[k++] = m.facets[i].codehash;
         h[k++] = m.vaultTemplate.codehash;
         h[k++] = m.adapterTemplate.codehash;
@@ -194,7 +209,7 @@ library StorageLayoutRecord {
     }
 
     function codeFingerprint(CodeMap memory m) internal pure returns (bytes32) {
-        return keccak256(abi.encode(m.facets, m.vaultTemplate, m.adapterTemplate, m.proxies, m.implementations, m.codeHashes));
+        return keccak256(abi.encode(m.diamond, m.cutFacet, m.facets, m.vaultTemplate, m.adapterTemplate, m.proxies, m.implementations, m.codeHashes));
     }
 
     function _liveProxies(address diamond)
@@ -416,12 +431,13 @@ library StorageLayoutRecord {
         CHEATS.serializeString(
             key,
             "_readme",
-            "Binds storage-layout.json beside it to the chain it describes (#2092). Written with the record; an in-place change is refused unless the Diamond, the fingerprint of every code location the record governs (facets, vault and adapter templates, every UUPS proxy the chain reaches, and the runtime code at each) and the record hash still match. The parts beside codeFingerprint are there to say which code moved. Do not edit by hand."
+            "Binds storage-layout.json beside it to the chain it describes (#2092). Written with the record; an in-place change is refused unless the Diamond, the fingerprint of every code location the record governs (the Diamond and its diamondCut facet, facets, vault and adapter templates, every UUPS proxy the chain reaches, and the runtime code at each) and the record hash still match. The parts beside codeFingerprint are there to say which code moved. Do not edit by hand."
         );
         CHEATS.serializeAddress(key, "diamond", diamond);
         CodeMap memory m = liveCodeMap(diamond);
         // The parts are written beside the fingerprint so a refusal can say
         // WHICH code moved; only the fingerprint is compared.
+        CHEATS.serializeAddress(key, "cutFacet", m.cutFacet);
         CHEATS.serializeAddress(key, "vaultTemplate", m.vaultTemplate);
         CHEATS.serializeAddress(key, "adapterTemplate", m.adapterTemplate);
         CHEATS.serializeAddress(key, "proxies", m.proxies);
@@ -474,11 +490,14 @@ library StorageLayoutRecord {
     /// written before the parts were recorded logs every part as differing.
     function _logCodeDrift(string memory json, CodeMap memory live) private view {
         console.log("storage-layout anchor: the live code differs from the anchor in:");
+        if (_anchorAddress(json, ".cutFacet") != live.cutFacet) {
+            console.log("  the diamondCut facet, now", live.cutFacet);
+        }
         if (_anchorBytes32(json, ".facetsFingerprint") != keccak256(abi.encode(live.facets))) {
             console.log("  the Diamond's facet set");
         }
         if (_anchorBytes32(json, ".codeHashes") != live.codeHashes) {
-            console.log("  the bytecode at one or more of the addresses below (or the same addresses, now running other code)");
+            console.log("  the runtime code at one or more anchored addresses (the Diamond, its facets, templates, proxies or implementations)");
         }
         if (_anchorAddress(json, ".vaultTemplate") != live.vaultTemplate) {
             console.log("  the vault template, now", live.vaultTemplate);

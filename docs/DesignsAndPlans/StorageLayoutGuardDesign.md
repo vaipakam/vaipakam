@@ -264,7 +264,9 @@ first one's storage. So beside the record sits its anchor,
 `storage-layout.anchor.json`, written with it: the Diamond, a fingerprint of
 every code location the record governs, and the record's own hash. The record
 covers the Diamond's namespaces and every UUPS root, so the fingerprint covers
-the facets (the loupe's address list), the vault and aggregator-adapter
+the Diamond itself, the facet its `diamondCut` routes to (installed by the
+constructor outside the loupe's registry, so read by selector), the other
+facets (the loupe's address list), the vault and aggregator-adapter
 templates, and every EIP-1967 proxy the chain reaches with the implementation
 it points at: every address in `addresses.json` (outside `.facets`), every
 satellite the Diamond names, and the `messenger()` each of those trusts. The

@@ -643,7 +643,8 @@ node contracts/script/storage-layout-guard.mjs write   # builds src/, then write
 **Each chain carries its own record** (#2092 item 1):
 `contracts/deployments/<slug>/storage-layout.json`, the golden ledger as it
 stood when code last reached that chain, plus `storage-layout.anchor.json`,
-which binds it to every code location the record governs: the facet list, the
+which binds it to every code location the record governs: the Diamond, its
+diamondCut facet and the rest of the facet list, the
 vault and adapter templates, and every UUPS proxy the chain reaches (found from
 `addresses.json` and the Diamond's satellites, never listed by hand), and the
 runtime code hash at each of them, since an address alone does not identify
