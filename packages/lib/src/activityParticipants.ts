@@ -143,6 +143,12 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['StagingClaimantForfeited', ['user']],
   ['RewardSanctionsHeldApart', ['user']],
   ['RewardSanctionsHeldReleased', ['user']],
+  // A position transfer that did not move a reward entry intact: the entry
+  // stayed with its earner, or was split between earner and holder. Both
+  // wallets' reward rights changed, so both are parties (#2708 r2). Labels
+  // name the outcome only, never why.
+  ['RewardEntryRepointRefused', ['earner', 'holder']],
+  ['RewardEntrySplitAtTransfer', ['earner', 'holder']],
 ]);
 
 /**
@@ -350,8 +356,6 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
     [
       'KYCStatusUpdated',
       'KYCTierUpdated',
-      'RewardEntryRepointRefused',
-      'RewardEntrySplitAtTransfer',
       'RewardSanctionsEvidenceCleared',
       'RewardSanctionsEvidenceRecorded',
       'RewardSanctionsWindowRecorded',
@@ -377,11 +381,16 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
   ).map((k) => [k, 'rewardInternal'] as const),
 ]);
 
+/** A lower-cased 20-byte hex address other than zero. */
+function isWalletAddress(a: string): boolean {
+  return /^0x[0-9a-f]{40}$/.test(a) && a !== ZERO_ADDRESS;
+}
+
 function readAddress(args: Record<string, unknown>, name: string): string | null {
   const v = args[name];
   if (typeof v !== 'string') return null;
   const a = v.toLowerCase();
-  return /^0x[0-9a-f]{40}$/.test(a) && a !== ZERO_ADDRESS ? a : null;
+  return isWalletAddress(a) ? a : null;
 }
 
 /**
@@ -391,7 +400,7 @@ function readAddress(args: Record<string, unknown>, name: string): string | null
 export function activityParticipants(eventName: string, args: Record<string, unknown>): string[] {
   const out = new Set<string>();
   const actor = activityActor(eventName, args);
-  if (actor && actor !== ZERO_ADDRESS) out.add(actor);
+  if (actor !== null && isWalletAddress(actor)) out.add(actor);
   for (const name of PARTIES.get(eventName) ?? []) {
     const a = readAddress(args, name);
     if (a) out.add(a);

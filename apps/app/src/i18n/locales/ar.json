@@ -2490,6 +2490,8 @@
         "RewardSanctionsHeldApart": "خُصصت المكافآت جانبًا ما دامت هذه المحفظة مُعلَّمة",
         "RewardSanctionsHeldReleased": "المكافآت المخصصة جاهزة للمطالبة",
         "StagingClaimantForfeited": "أُسقطت المكافآت بينما هذه المحفظة مُعلَّمة",
+        "RewardEntryRepointRefused": "بقي قيد المكافأة لدى من كسبه بعد نقل المركز",
+        "RewardEntrySplitAtTransfer": "قُسِّم قيد المكافأة عند نقل المركز",
         "Transfer": "تحويل",
         "Approval": "موافقة"
       },

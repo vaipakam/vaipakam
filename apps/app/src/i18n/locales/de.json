@@ -2490,6 +2490,8 @@
         "RewardSanctionsHeldApart": "Belohnungen zurückgelegt, solange diese Wallet markiert ist",
         "RewardSanctionsHeldReleased": "Zurückgelegte Belohnungen können beansprucht werden",
         "StagingClaimantForfeited": "Belohnungen verfallen, während diese Wallet markiert ist",
+        "RewardEntryRepointRefused": "Belohnungseintrag bleibt nach einer Positionsübertragung beim Verdiener",
+        "RewardEntrySplitAtTransfer": "Belohnungseintrag bei einer Positionsübertragung aufgeteilt",
         "Transfer": "Übertragung",
         "Approval": "Genehmigung"
       },

@@ -151,6 +151,8 @@ describe('activity feed labels are translatable (extraction guard)', () => {
       'RewardSanctionsHeldApart',
       'RewardSanctionsHeldReleased',
       'StagingClaimantForfeited',
+      'RewardEntryRepointRefused',
+      'RewardEntrySplitAtTransfer',
     ]) {
       expect(ACTIVITY_LABELS[kind]?.label, kind).not.toMatch(/sanction|OFAC|Chainalysis|RedStone|oracle/i);
       expect(copySource.activity.labels[kind], kind).not.toMatch(/sanction|OFAC|Chainalysis|RedStone|oracle/i);
@@ -178,6 +180,12 @@ describe('#2703 — a wallet’s rows, by loan or by the participants rule', () 
     expect(isWalletActivity(ev({ kind: 'Approval', args: { owner: OTHER, approved: ME } }), ME, loans)).toBe(false);
     // The address inside an unrelated string, which the old text match kept.
     expect(isWalletActivity(ev({ kind: 'OfferCreated', args: { creator: OTHER, note: ME } }), ME, loans)).toBe(false);
+  });
+
+  it('skips a malformed field instead of failing the page', () => {
+    // A stored row whose actor field is not a string reads as naming no one.
+    expect(isWalletActivity(ev({ kind: 'UserVaultCreated', args: { user: 1 } }), ME, loans)).toBe(false);
+    expect(isWalletActivity(ev({ kind: 'LoanRepaid', args: { repayer: { x: ME } } }), ME, loans)).toBe(false);
   });
 
   it('reads no participant from args the indexer could not parse', () => {

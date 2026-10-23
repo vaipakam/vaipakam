@@ -33,6 +33,12 @@ describe('activityActor', () => {
     expect(activityActor('PrepayCollateralSaleSettled', { executor: A })).toBeNull();
   });
 
+  it('reads a non-string field as no actor, never throws', () => {
+    expect(activityActor('LoanRepaid', { repayer: 1 })).toBeNull();
+    expect(activityActor('TierExclusionUpdated', { vaultOwner: { a: 1 } })).toBeNull();
+    expect(activityActor('OfferConsumedBySale', { creator: 7 })).toBeNull();
+  });
+
   it('lists every attributed kind', () => {
     const kinds = actorAttributedKinds();
     expect(kinds.has('OfferCreated')).toBe(true);

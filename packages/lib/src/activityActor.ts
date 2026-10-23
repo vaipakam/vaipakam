@@ -21,11 +21,19 @@
 /** Reads the actor from a decoded event's args. */
 type ActorRead = (args: Record<string, unknown>) => string | null;
 
+/** The lower-cased string in `name`, or null when it holds anything else.
+ *  Args reach this from a stored row as well as from a fresh decode, so a
+ *  malformed field must read as no actor, never throw (#2708 r2). */
+function str(args: Record<string, unknown>, name: string): string | null {
+  const v = args[name];
+  return typeof v === 'string' ? v.toLowerCase() : null;
+}
+
 /** The actor is the lower-cased address in `name`. */
 const arg =
   (name: string): ActorRead =>
   (args) =>
-    (args[name] as string)?.toLowerCase() ?? null;
+    str(args, name);
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -47,7 +55,7 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
   // the same batch), the row is filed with no actor rather than under
   // the executor contract (#2708 r1): its offer reference still files
   // it on the offer's timeline.
-  ['OfferConsumedBySale', (args) => (args.creator as string | undefined)?.toLowerCase() ?? null],
+  ['OfferConsumedBySale', arg('creator')],
   // #193 / Codex round-2 P2 — denormalize the actor (= creator;
   // OfferMutateFacet's access gate guarantees msg.sender ==
   // offer.creator) + offerId so per-offer and per-wallet
@@ -160,7 +168,7 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
   [
     'TierExclusionUpdated',
     (args) => {
-      const owner = (args.vaultOwner as string | undefined)?.toLowerCase();
+      const owner = str(args, 'vaultOwner');
       return owner && owner !== ZERO_ADDRESS ? owner : null;
     },
   ],

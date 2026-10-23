@@ -254,6 +254,10 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   RewardSanctionsHeldApart: { label: 'Rewards set aside while this wallet is flagged', category: 'other', priority: 50 },
   RewardSanctionsHeldReleased: { label: 'Set-aside rewards ready to claim', category: 'other', priority: 55 },
   StagingClaimantForfeited: { label: 'Rewards forfeited while this wallet is flagged', category: 'other', priority: 50 },
+  // Emitted inside the transfer or close that caused it: low, so that action
+  // represents the row (#2708 r2).
+  RewardEntryRepointRefused: { label: 'Reward entry kept with its earner after a position transfer', category: 'other', priority: 12 },
+  RewardEntrySplitAtTransfer: { label: 'Reward entry split at a position transfer', category: 'other', priority: 12 },
   // Low-priority book-keeping — never represents a transaction alone.
   Transfer: { label: 'Transfer', category: 'other', priority: 5 },
   Approval: { label: 'Approval', category: 'other', priority: 5 },

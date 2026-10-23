@@ -5488,6 +5488,8 @@ const copySource = {
       RewardSanctionsHeldApart: 'Rewards set aside while this wallet is flagged',
       RewardSanctionsHeldReleased: 'Set-aside rewards ready to claim',
       StagingClaimantForfeited: 'Rewards forfeited while this wallet is flagged',
+      RewardEntryRepointRefused: 'Reward entry kept with its earner after a position transfer',
+      RewardEntrySplitAtTransfer: 'Reward entry split at a position transfer',
       Transfer: 'Transfer',
       Approval: 'Approval',
     } as Record<string, string>,

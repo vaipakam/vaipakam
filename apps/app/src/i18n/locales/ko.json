@@ -2490,6 +2490,8 @@
         "RewardSanctionsHeldApart": "이 지갑이 플래그된 동안 리워드가 따로 보관됨",
         "RewardSanctionsHeldReleased": "따로 보관된 리워드 청구 가능",
         "StagingClaimantForfeited": "이 지갑이 플래그된 동안 리워드 몰수됨",
+        "RewardEntryRepointRefused": "포지션 이전 후 리워드 항목이 획득자에게 유지됨",
+        "RewardEntrySplitAtTransfer": "포지션 이전 시 리워드 항목이 분할됨",
         "Transfer": "전송",
         "Approval": "승인"
       },

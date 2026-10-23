@@ -2490,6 +2490,8 @@
         "RewardSanctionsHeldApart": "इस वॉलेट के फ़्लैग रहने तक रिवॉर्ड अलग रखे गए",
         "RewardSanctionsHeldReleased": "अलग रखे रिवॉर्ड अब क्लेम किए जा सकते हैं",
         "StagingClaimantForfeited": "इस वॉलेट के फ़्लैग रहते रिवॉर्ड ज़ब्त हुए",
+        "RewardEntryRepointRefused": "पोज़िशन ट्रांसफ़र के बाद रिवॉर्ड प्रविष्टि अर्जित करने वाले के पास रही",
+        "RewardEntrySplitAtTransfer": "पोज़िशन ट्रांसफ़र पर रिवॉर्ड प्रविष्टि विभाजित हुई",
         "Transfer": "Transfer",
         "Approval": "Approval"
       },

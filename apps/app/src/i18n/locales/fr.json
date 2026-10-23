@@ -2490,6 +2490,8 @@
         "RewardSanctionsHeldApart": "Récompenses mises de côté tant que ce portefeuille est signalé",
         "RewardSanctionsHeldReleased": "Récompenses mises de côté prêtes à être réclamées",
         "StagingClaimantForfeited": "Récompenses perdues pendant que ce portefeuille est signalé",
+        "RewardEntryRepointRefused": "Entrée de récompense conservée par son bénéficiaire initial après un transfert de position",
+        "RewardEntrySplitAtTransfer": "Entrée de récompense scindée lors d’un transfert de position",
         "Transfer": "Transfert",
         "Approval": "Approbation"
       },

@@ -2490,6 +2490,8 @@
         "RewardSanctionsHeldApart": "此钱包被标记期间，奖励已单独留存",
         "RewardSanctionsHeldReleased": "单独留存的奖励可以领取了",
         "StagingClaimantForfeited": "此钱包被标记期间，奖励已失效",
+        "RewardEntryRepointRefused": "仓位转让后奖励条目保留给原获得者",
+        "RewardEntrySplitAtTransfer": "仓位转让时奖励条目已拆分",
         "Transfer": "转账",
         "Approval": "授权"
       },

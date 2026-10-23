@@ -2490,6 +2490,8 @@
         "RewardSanctionsHeldApart": "Recompensas apartadas mientras esta billetera esté marcada",
         "RewardSanctionsHeldReleased": "Recompensas apartadas listas para reclamar",
         "StagingClaimantForfeited": "Recompensas perdidas mientras esta billetera está marcada",
+        "RewardEntryRepointRefused": "Entrada de recompensa conservada por quien la generó tras transferir la posición",
+        "RewardEntrySplitAtTransfer": "Entrada de recompensa dividida al transferir la posición",
         "Transfer": "Transferencia",
         "Approval": "Aprobación"
       },
