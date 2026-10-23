@@ -192,14 +192,35 @@ runs half of it on old code:
   OracleFacet carries, to tell a missing price (the lender takes all the
   collateral) from a distrusted one (the close-out refuses). It is inlined into
   FallbackCustodyFacet (the fallback entry), RiskFacet (the discounted
-  liquidation) and ClaimFacet (the backstop par check); find the set again with
+  liquidation), ClaimFacet (the backstop par check) and DefaultedFacet (the
+  liquid time-based default's priced-pair route, #2419); find the set again with
   a grep for `tryOracleRate`, `collateralEquivalent`, `principalEquivalent` and
   `computeFallbackEntitlements`, not from this list. Any of them refreshed onto
   a Diamond whose OracleFacet predates #666 reverts `FunctionDoesNotExist` on
   that path (a hard revert, never a misread price). `RefreshAllFacetsInPlace`
-  carries all four and `UpgradeOracleFacet` adds the selector; `RedeployFacets`
-  carries the three consumers but not OracleFacet, so it refuses such a Diamond
+  carries all five and `UpgradeOracleFacet` adds the selector; `RedeployFacets`
+  carries the four consumers but not OracleFacet, so it refuses such a Diamond
   (`PredatesOraclePriceStatus`) and the oracle is refreshed first.
+
+- **NumeraireValueFacet + every facet that values an amount in the numeraire
+  (#2419).** `RiskFacet` (LTV, health factor, the collapse test, the
+  partial-liquidation snapshots and the liquidator KYC value) and the facets
+  whose code reaches `LibRiskMath` (today `OfferCreateFacet`,
+  `OfferMatchFacet`, `OfferMatchIntentFacet`, `OfferMutateFacet` and
+  `RiskPreviewFacet`) value through a self-call to `getNumeraireValue` /
+  `getAmountForNumeraireValue`, the one 1e18 rule in `LibNumeraireValue`.
+  Find the set again from the compiled runtime bytecode (a `PUSH4` of either
+  selector, `c85e9b37` / `563622af`), not from this list or from imports:
+  importing a library that reaches the rule does not put it in a facet.
+  `PartialWithdrawalFacet` inlines the same library and needs no host. A
+  consumer refreshed without the host reverts `FunctionDoesNotExist` on every
+  health-factor read — every liquidation and every borrow (a hard revert,
+  never a misread value). All three refresh scripts carry the host. Values
+  were whole numeraire units before #2419, and the partial-liquidation dust
+  floor is now 1e18-scaled too: a floor stored on the old scale is below the
+  one-unit minimum, so it reads as no floor (dust handling off, and the
+  sizing getter says so) until it is set again, and the setter refuses an
+  old-scale value by name.
 
 - **VaultFactoryFacet + the vault implementation + every facet that sets a
   renter (#902).** Every rental step writes the renter through one route,
@@ -643,7 +664,9 @@ node contracts/script/storage-layout-guard.mjs write   # builds src/, then write
 ## Conventions
 
 - Interest rates and fees use **basis points** (BPS, 1/10000)
-- Health factor and USD values are scaled to **1e18**
+- Health factor and numeraire (USD) values are scaled to **1e18**, through
+  the one rule in `LibNumeraireValue` (#2419): debt legs round up,
+  collateral legs and threshold comparisons round down
 - Facets use `ReentrancyGuard` and `Pausable` from OpenZeppelin
 - Token operations use `SafeERC20`
 - Custom errors (not require strings) for gas efficiency

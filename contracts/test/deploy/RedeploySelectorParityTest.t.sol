@@ -113,6 +113,14 @@ contract RedeploySelectorParityTest is Test {
         _assertParity("TreasuryFeeFacet", FacetSelectors.treasuryFee());
     }
 
+    /// @dev #2419 - RiskFacet and the LibRiskMath inliners value every
+    ///      amount through this host, so both curated scripts refresh it with
+    ///      them. Pinned like the treasury fee host: an unrouted selector here
+    ///      fails every health-factor read, not a compile.
+    function test_NumeraireValueSelectors_MatchCompiledAbi() public view {
+        _assertParity("NumeraireValueFacet", FacetSelectors.numeraireValue());
+    }
+
     /// @dev #1503 item 28 — the RETIRED 3-argument resident-payout selector must
     ///      be GONE from the facet's compiled surface, so the curated refresh's
     ///      Remove leg targets a genuinely-retired entry point and no dual entry

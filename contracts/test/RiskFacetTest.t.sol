@@ -88,7 +88,9 @@ import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
+import {LibNumeraireValue} from "../src/libraries/LibNumeraireValue.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -264,7 +266,7 @@ contract RiskFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -452,6 +454,14 @@ contract RiskFacetTest is Test {
             facetAddress: address(new TreasuryFeeFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
+        });
+        // #2419 - RiskFacet (LTV / HF) and the offer facets value every amount
+        // through NumeraireValueFacet by self-call, so a hand-built Diamond
+        // that cuts any of them must cut this host too.
+        cuts[25] = IDiamondCut.FacetCut({
+            facetAddress: address(new NumeraireValueFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getNumeraireValueFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -931,7 +941,9 @@ contract RiskFacetTest is Test {
     function testCalculateLTVZeroCollateralValue() public {
         uint256 loanId = createAndAcceptOffer();
 
-        // Mock collateral price $0 — real calculateLTV reverts ZeroCollateral()
+        // Mock collateral price $0. Since #2419 the valuation rule refuses a
+        // zero price by name instead of valuing the collateral at nothing
+        // (`OracleFacet.getAssetPrice` refuses it too; the mock bypasses it).
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
@@ -941,7 +953,7 @@ contract RiskFacetTest is Test {
             abi.encode(0, 8)
         );
 
-        vm.expectRevert(RiskFacet.ZeroCollateral.selector);
+        vm.expectRevert(LibNumeraireValue.PriceZero.selector);
         RiskFacet(address(diamond)).calculateLTV(loanId);
     }
 
@@ -2774,10 +2786,11 @@ contract RiskFacetTest is Test {
             address(diamond), borrower, borrowerPk, offerId
         );
 
-        // Now mock collateral price to 0
+        // Now mock collateral price to 0. The shared valuation rule refuses
+        // a zero price itself (#2419), before any ratio is taken.
         mockOraclePrice(collateralToken, 0, 8);
 
-        vm.expectRevert(RiskFacet.ZeroCollateral.selector);
+        vm.expectRevert(LibNumeraireValue.PriceZero.selector);
         RiskFacet(address(diamond)).calculateLTV(loanId);
         vm.clearMockedCalls();
     }
@@ -3573,7 +3586,7 @@ contract RiskFacetTest is Test {
     function testCalculateHealthFactorBorrowValueZero() public {
         uint256 loanId = createAndAcceptOffer();
 
-        // Mock collateral price to 0 → collateralValueUsd = 0 → ZeroCollateral revert
+        // Mock collateral price to 0 → refused by the valuation rule (#2419)
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
@@ -3583,7 +3596,7 @@ contract RiskFacetTest is Test {
             abi.encode(uint256(0), uint8(8))
         );
 
-        vm.expectRevert(RiskFacet.ZeroCollateral.selector);
+        vm.expectRevert(LibNumeraireValue.PriceZero.selector);
         RiskFacet(address(diamond)).calculateLTV(loanId);
         vm.clearMockedCalls();
     }
@@ -3913,7 +3926,7 @@ contract RiskFacetTest is Test {
         // far past the 1.20 ceiling; opt into the pre-existing-dust waiver
         // (floor $2k > the position's entry size) so this pre-#395 happy-path
         // assertion still exercises.
-        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000e18);
         // Execute the 50% partial liquidation.
         RiskFacet(address(diamond)).triggerPartialLiquidation(
             loanId,
@@ -3988,7 +4001,7 @@ contract RiskFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         deal(mockERC20, address(diamond), 5_000 ether);
-        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000e18);
 
         // Learn the lender payout from an uncharged run, then rewind.
         uint256 snap = vm.snapshotState();
@@ -4041,7 +4054,7 @@ contract RiskFacetTest is Test {
 
         // #395 — tiny $1k fixture over-restores under the generous test swap;
         // opt into the pre-existing-dust waiver so the end-time assertion runs.
-        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000e18);
         RiskFacet(address(diamond)).triggerPartialLiquidation(
             loanId,
             5_000,
@@ -4110,7 +4123,7 @@ contract RiskFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         deal(mockERC20, address(diamond), 5_000 ether);
-        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000e18);
         RiskFacet(address(diamond)).triggerPartialLiquidation(
             loanId,
             5_000,
@@ -4235,7 +4248,7 @@ contract RiskFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         deal(mockCollateralERC20, address(diamond), 1800 ether);
         deal(mockERC20, address(diamond), 5_000 ether);
-        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000e18);
         RiskFacet(address(diamond)).triggerPartialLiquidation(
             loanId,
             5_000,
@@ -4293,7 +4306,7 @@ contract RiskFacetTest is Test {
         // #395 — tiny $1k fixture over-restores under the generous test swap;
         // opt into the pre-existing-dust waiver BEFORE the expectEmit so the
         // sizing-setter event doesn't get matched in place of the loan event.
-        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000e18);
 
         // Watch for the event topic + fractionBps + swappedCollateral —
         // payload-level assertion is brittle to fee-formula changes so
@@ -5314,7 +5327,7 @@ contract RiskFacetTest is Test {
     function testPartialSizing_PreExistingDust_AllowsOverCeiling() public {
         uint256 loanId = _setupPartialSizing(0.65e8);
         // Floor above the $1k position so its ENTRY size is sub-floor.
-        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000e18);
 
         RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, defaultAdapterCalls());
 
@@ -5334,7 +5347,7 @@ contract RiskFacetTest is Test {
     function testPartialSizing_KeeperCreatedDust_DoesNotWaive() public {
         uint256 loanId = _setupPartialSizing(0.65e8);
         // $1k floor: residual ($316) is sub-dust but the $1k entry isn't.
-        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 1_000);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 1_000e18);
 
         vm.expectPartialRevert(RiskFacet.PartialOverLiquidates.selector);
         RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, defaultAdapterCalls());
@@ -5351,7 +5364,7 @@ contract RiskFacetTest is Test {
     function testPartialSizing_DeepUnderwaterLeavesDust_Reverts() public {
         uint256 loanId = _setupPartialSizing(0.60e8);
         ZeroExProxyMock(address(mockZeroExProxy)).setRate(70, 100);
-        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 500);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 500e18);
 
         vm.expectPartialRevert(RiskFacet.PartialLeavesDust.selector);
         RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 7_000, defaultAdapterCalls());
@@ -5370,7 +5383,7 @@ contract RiskFacetTest is Test {
         // rate 0.63 — modest realized slippage; the larger slice still lifts HF
         // into the band while shrinking both residuals below the floor.
         ZeroExProxyMock(address(mockZeroExProxy)).setRate(63, 100);
-        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 500);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 500e18);
 
         vm.expectPartialRevert(RiskFacet.PartialLeavesDust.selector);
         RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 6_500, defaultAdapterCalls());
@@ -5385,11 +5398,21 @@ contract RiskFacetTest is Test {
         // deep-underwater above the HF 0.99 maximum
         vm.expectRevert(AdminFacet.InvalidPartialLiqSizing.selector);
         AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 10_000, 0);
-        // dust floor above the $100k maximum
+        // dust floor above the $100k maximum (1e18-scaled, #2419)
         vm.expectRevert(AdminFacet.InvalidPartialLiqSizing.selector);
-        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 100_001);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 100_000e18 + 1);
+        // #2419 — a value on the retired whole-unit scale ($2k written as
+        // 2_000) is below the one-unit minimum and refused by name, rather
+        // than read as a floor of a fraction of a cent.
+        vm.expectRevert(AdminFacet.InvalidPartialLiqSizing.selector);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000);
+        vm.expectRevert(AdminFacet.InvalidPartialLiqSizing.selector);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 1e18 - 1);
+        // both bounds are inclusive
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 1e18);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 100_000e18);
         // valid set — no revert
-        AdminFacet(address(diamond)).setPartialLiquidationSizing(11_000, 9_000, 5_000);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(11_000, 9_000, 5_000e18);
         // non-admin rejected
         vm.prank(borrower);
         vm.expectRevert();

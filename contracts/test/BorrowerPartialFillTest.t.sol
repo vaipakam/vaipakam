@@ -51,10 +51,14 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
  *           - **MatchError paths** — AmountNoOverlap and RateNoOverlap
  *             reverts.
  *
- *         All numbers use the SetupTest oracle convention: $1 per
- *         token, both the lending leg (`mockERC20`) and the collateral
- *         leg (`mockCollateralERC20`) carry 18 decimals and an 8-dec
- *         price of 1e8 (= $1).
+ *         Both legs carry 18 decimals and an 8-decimal price. The
+ *         lending leg (`mockERC20`) is the SetupTest $1; the collateral
+ *         leg (`mockCollateralERC20`) is priced at $100 in `setUp`, so
+ *         the wei-scale fixtures below (as little as 500 collateral wei
+ *         against 5,000 lent) are properly collateralised under the
+ *         1e18 numeraire valuation (#2419). The partial-fill arithmetic
+ *         under test is in amounts, not prices, so the price changes no
+ *         expected figure.
  */
 contract BorrowerPartialFillTest is SetupTest {
     event CapacitySpent(uint8 indexed role, address indexed actor, uint256 cost, uint256 balanceAfter);
@@ -82,6 +86,9 @@ contract BorrowerPartialFillTest is SetupTest {
 
     function setUp() public {
         setupHelper();
+        // See the contract header: $100 collateral keeps every fixture
+        // inside the offer-time HF / LTV bounds.
+        mockOraclePrice(mockCollateralERC20, 100e8, 8);
 
         // ── Phase 1 + #102 master kill-switches: every flag flipped
         //    on so the partial-fill code paths the card targets are

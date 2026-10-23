@@ -57,6 +57,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {defaultAdapterCalls, emptyAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
@@ -222,7 +223,7 @@ contract DefaultedFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -375,6 +376,14 @@ contract DefaultedFacetTest is Test {
             facetAddress: address(new TreasuryFeeFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
+        });
+        // #2419 - RiskFacet (LTV / HF) and the offer facets value every amount
+        // through NumeraireValueFacet by self-call, so a hand-built Diamond
+        // that cuts any of them must cut this host too.
+        cuts[24] = IDiamondCut.FacetCut({
+            facetAddress: address(new NumeraireValueFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getNumeraireValueFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -1837,6 +1846,53 @@ contract DefaultedFacetTest is Test {
         // LoanFallbackPending fires in the same tx (EventSourcingAudit §1.4 + §1.5).
         vm.expectEmit(true, false, false, true);
         emit DefaultedFacet.LiquidationFallback(loanId);
+        vm.expectEmit(true, true, false, true);
+        emit DefaultedFacet.LoanFallbackPending(
+            loanId,
+            lender,
+            true,
+            LibVaipakam.LoanStatus.FallbackPending
+        );
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
+        _assertVaultHeldFallbackEntry(loanId, diamondCol0);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #2419 — liquid collateral against a principal with no usable
+    ///      price: the default still completes. It attempts no swap (a sale
+    ///      with no oracle floor) and enters the fallback directly, the same
+    ///      entry a failed swap takes, rather than reverting on the price.
+    function testTriggerDefaultLiquidUnpricedPairEntersFallbackWithoutSwap() public {
+        uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0
+        );
+        vm.warp(block.timestamp + 33 days + 3);
+
+        // The principal's price reads zero: the strict read refuses it, the
+        // status read reports it unavailable, and the liquidity probe (which
+        // needs a price) classifies it Illiquid, as the live probe does.
+        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockERC20),
+            abi.encodeWithSelector(OracleFacet.ZeroPrice.selector, mockERC20)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPriceStatus.selector, mockERC20),
+            abi.encode(OracleFacet.PriceStatus.Unavailable, uint256(0), uint8(8))
+        );
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
+
+        vm.expectCall(
+            address(ZeroExProxyMock(mockZeroExProxy)),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            0
+        );
         vm.expectEmit(true, true, false, true);
         emit DefaultedFacet.LoanFallbackPending(
             loanId,

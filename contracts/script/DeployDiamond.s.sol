@@ -98,6 +98,7 @@ import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -381,6 +382,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // payer's wallet or a user's vault moves it, and records the accrual,
         // through this facet's Diamond-internal entries (self-calls).
         TreasuryFeeFacet treasuryFeeFacet = new TreasuryFeeFacet();
+        // #2419 - the one 1e18 valuation rule. RiskFacet and every facet that
+        // inlines LibRiskMath value an amount through its views (self-calls).
+        NumeraireValueFacet numeraireValueFacet = new NumeraireValueFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             new RewardCompensationDispatchFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -415,7 +419,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](96);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](97);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -506,6 +510,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[93] = _buildCut(address(fallbackCustodyFacet), _getFallbackCustodySelectors());
         cuts[94] = _buildCut(address(swapAttemptFacet), _getSwapAttemptSelectors());
         cuts[95] = _buildCut(address(treasuryFeeFacet), _getTreasuryFeeSelectors());
+        cuts[96] = _buildCut(address(numeraireValueFacet), _getNumeraireValueSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1192,6 +1197,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("fallbackCustodyFacet", address(fallbackCustodyFacet));
         Deployments.writeFacet("swapAttemptFacet", address(swapAttemptFacet));
         Deployments.writeFacet("treasuryFeeFacet", address(treasuryFeeFacet));
+        Deployments.writeFacet("numeraireValueFacet", address(numeraireValueFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -3352,6 +3358,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      curated `RedeployFacets` cuts it from that library.
     function _getTreasuryFeeSelectors() internal pure returns (bytes4[] memory s) {
         s = FacetSelectors.treasuryFee();
+    }
+
+    /// @dev #2419 - the valuation host. Returns the ONE list in
+    ///      `FacetSelectors.numeraireValue()`, as for the treasury fee host:
+    ///      both curated refresh scripts cut it from that library.
+    function _getNumeraireValueSelectors() internal pure returns (bytes4[] memory s) {
+        s = FacetSelectors.numeraireValue();
     }
 
     /// @dev 3b-ii-B (#1566) — the per-day closure proof.

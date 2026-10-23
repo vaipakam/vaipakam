@@ -344,10 +344,28 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // (oracle-dead) or the collateral is insufficient. Only query for
             // liquid collateral — illiquid loans have no oracle and
             // `calculateLTV` reverts IlliquidLoanNoRiskMath.
+            //
+            // #2419 — the liquid route also needs the PAIR priced: the LTV
+            // read and the sale floor value both legs, and the shared
+            // valuation rule refuses a missing or zero price. An unpriced
+            // pair (`tryOracleRate`: a missing or zero price on either leg)
+            // skips the LTV read and the swap and enters the fallback
+            // directly, exactly as a failed swap would — a sale with no
+            // oracle floor is not attempted, the default still completes
+            // (lender first), and the fallback's unpriced split gives the
+            // lender the collateral while the loan stays curable. A
+            // DISTRUSTED price reverts the whole default instead (#666:
+            // refuse and retry once the feeds agree).
             bool isLtvCollapsed;
+            bool pairPriced;
             if (liquidity == LibVaipakam.LiquidityStatus.Liquid) {
-                isLtvCollapsed = RiskFacet(address(this)).calculateLTV(loanId)
-                    > LibVaipakam.cfgVolatilityLtvThresholdBps();
+                (pairPriced, ) = LibFallback.tryOracleRate(
+                    address(this), loan.collateralAsset, loan.principalAsset
+                );
+                if (pairPriced) {
+                    isLtvCollapsed = RiskFacet(address(this)).calculateLTV(loanId)
+                        > LibVaipakam.cfgVolatilityLtvThresholdBps();
+                }
             }
 
             if (
@@ -362,7 +380,8 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // eligible loan into the full-collateral fallback with zero DEX
                 // attempts. (Illiquid / genuinely LTV-collapsed defaults
                 // legitimately need no swap list and fall through to the in-kind
-                // branch below.)
+                // branch below. An unpriced pair needs none either: it enters
+                // the fallback without a swap, #2419, see the route note above.)
 
                 // Time-based default with liquid collateral: swap directly without HF check.
                 // RiskFacet.triggerLiquidation requires HF < 1 (for HF-based liquidation),
@@ -383,6 +402,18 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     loan.collateralAsset,
                     loan.collateralAmount
                 );
+
+                if (!pairPriced) {
+                    // #2419 — see the route note above: no price, no sale.
+                    _enterFallback(loanId);
+                    emit LoanFallbackPending(
+                        loanId,
+                        loan.lender,
+                        loan.riskAndTermsConsentFromBoth,
+                        loan.status
+                    );
+                    return;
+                }
 
                 // README §3 lines 140–141 + §7 line 263: compute the oracle-
                 // derived expected output and the 6% slippage floor. Adapters

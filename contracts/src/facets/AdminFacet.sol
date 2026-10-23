@@ -365,14 +365,16 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     ///             (HF 1.05–1.50) — the routine over-liquidation ceiling.
     ///           - `deepUnderwaterHfBps` ∈ [MIN, MAX]_PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS
     ///             (HF 0.80–0.99) — must stay below the HF=1.0 restore floor.
-    ///           - `dustFloorNumeraire`  ≤ MAX_LIQUIDATION_DUST_FLOOR_NUMERAIRE
-    ///             ($100k) — caps a misconfig that would turn every routine
-    ///             partial into a full close.
+    ///           - `dustFloorNumeraire`  ∈ [MIN, MAX]_LIQUIDATION_DUST_FLOOR_NUMERAIRE
+    ///             (1–100,000 numeraire units, 1e18-scaled) — the cap stops a
+    ///             misconfig that would turn every routine partial into a
+    ///             full close; the minimum refuses a value written on the
+    ///             pre-#2419 whole-unit scale.
     /// @param  targetHfCeilingBps   Routine over-liquidation HF ceiling (BPS of HF_SCALE), or 0.
     /// @param  deepUnderwaterHfBps  Deep-underwater escalation HF (BPS of HF_SCALE), or 0.
-    /// @param  dustFloorNumeraire   Dust floor in the whole-numeraire scale
-    ///         `_computeNumeraireValues` returns (whole-USD with 8-decimal
-    ///         feeds; $1k == 1_000), or 0 to reset to the default.
+    /// @param  dustFloorNumeraire   Dust floor as a 1e18-scaled numeraire
+    ///         value, the scale `_computeNumeraireValues` returns ($1k ==
+    ///         1_000e18; #2419), or 0 to disable dust handling.
     function setPartialLiquidationSizing(
         uint16 targetHfCeilingBps,
         uint16 deepUnderwaterHfBps,
@@ -388,9 +390,11 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
             (deepUnderwaterHfBps < LibVaipakam.MIN_PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS ||
                 deepUnderwaterHfBps > LibVaipakam.MAX_PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS)
         ) revert InvalidPartialLiqSizing();
-        if (dustFloorNumeraire > LibVaipakam.MAX_LIQUIDATION_DUST_FLOOR_NUMERAIRE) {
-            revert InvalidPartialLiqSizing();
-        }
+        if (
+            dustFloorNumeraire != 0 &&
+            (dustFloorNumeraire < LibVaipakam.MIN_LIQUIDATION_DUST_FLOOR_NUMERAIRE ||
+                dustFloorNumeraire > LibVaipakam.MAX_LIQUIDATION_DUST_FLOOR_NUMERAIRE)
+        ) revert InvalidPartialLiqSizing();
         // #395 sizing knobs live at the `Storage` tail (layout-safe), NOT in
         // `ProtocolConfig` — see the LibVaipakam declarations.
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -411,7 +415,7 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     ///         rather than guessing defaults or decoding raw storage.
     /// @return targetHfCeilingBps   Effective routine over-liquidation HF ceiling (BPS of HF_SCALE).
     /// @return deepUnderwaterHfBps  Effective deep-underwater escalation HF (BPS of HF_SCALE).
-    /// @return dustFloorNumeraire   Effective dust floor (whole-numeraire; $1k == 1_000).
+    /// @return dustFloorNumeraire   Effective dust floor (1e18-scaled numeraire; $1k == 1_000e18; 0 = disabled).
     function getPartialLiquidationSizing()
         external
         view

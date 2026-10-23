@@ -2743,6 +2743,12 @@ contract HelperTest {
         selectors = FacetSelectors.treasuryFee();
     }
 
+    /// #2419 - the valuation host. Returns the ONE list in
+    /// `FacetSelectors.numeraireValue()` (the same one `DeployDiamond` cuts).
+    function getNumeraireValueFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = FacetSelectors.numeraireValue();
+    }
+
     /// 3b-ii-B (#1566) — the per-day closure proof. Mirrors `DeployDiamond._getRewardClosureSelectors`.
     function getRewardClosureFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](6);
