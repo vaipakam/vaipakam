@@ -75,7 +75,14 @@ import {
   saleBuyerRemainingInterest,
   type LoanLive,
 } from '../contracts/loanLive';
+import { linkedOfferKind } from '../contracts/linkedOfferKind';
 import { saleSettlementNow } from '../data/loanSalePending';
+import {
+  offsetReviewBlock,
+  offsetReviewFingerprint,
+  readOffsetReviewLive,
+  type OffsetReviewBlock,
+} from '../data/offsetAcceptReview';
 import {
   lenderCollateralLine,
   readRefinanceRequestLive,
@@ -323,6 +330,15 @@ export function OfferFlow({ side }: { side: Side }) {
   const recheckCeiling = useAcceptorCeilingRecheck();
   const fees = useProtocolFees();
   const queryClient = useQueryClient();
+  // Codex #2675 r1 — the submit-time recheck of a live review (refinance,
+  // sale, offset) IS a refetch of that review's own query. A fresh answer
+  // replaces the cached one, so the review re-renders it and the consent
+  // fingerprint voids an earlier tick; a failed read puts the review into
+  // its unread state (check-failed banner, retry, not signable) instead of
+  // leaving the earlier clear answer on screen after the app has just
+  // failed to substantiate it.
+  const recheckReview = <T,>(queryKey: readonly unknown[], read: () => Promise<T>) =>
+    queryClient.fetchQuery({ queryKey, queryFn: read, staleTime: 0 });
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [step, setStep] = useState<FlowStep>('details');
@@ -519,8 +535,18 @@ export function OfferFlow({ side }: { side: Side }) {
     },
   });
   const linkedLoanKnown = mode !== 'accept' || linkedLoan.data !== undefined;
-  const acceptIsLoanSale =
+  const acceptIsLinked =
     mode === 'accept' && linkedLoan.data !== undefined && linkedLoan.data !== '0';
+  // Which kind of link, from the offer's own side of the book (#2523) — the
+  // one rule the terms signer reads too (`linkedOfferKind`). A sale vehicle
+  // is a BORROWER-type offer (the taker buys the lender side); an offset
+  // vehicle is a LENDER-type offer (the taker borrows, and the same
+  // transaction closes the poster's earlier loan). Each review then
+  // confirms its own shape from the chain and blocks anything else.
+  const linkedKind =
+    acceptIsLinked && selected ? linkedOfferKind(selected.offerType) : null;
+  const acceptIsLoanSale = linkedKind === 'sale';
+  const acceptIsOffset = linkedKind === 'offset';
 
   // #2421 — a borrow request tagged with a running loan is a REFINANCE:
   // the accept also pays off and closes that loan, and its collateral is
@@ -573,22 +599,23 @@ export function OfferFlow({ side }: { side: Side }) {
   // #986 P3 — the honest buy-a-running-loan review. A sale-vehicle
   // offer's stored fields misdescribe the deal (zero collateral, a
   // term that already partly elapsed), so the review reads the LINKED
-  // LOAN live and describes the position actually being bought. A
-  // sale link is discriminated from a preclose-offset link by the
-  // creator (sale vehicles are created by the loan's lender); offsets
-  // and unknown shapes keep the #951 block. Also checks that the
+  // LOAN live and describes the position actually being bought. It
+  // runs only for a sale link (`linkedOfferKind`) and confirms the
+  // listing's shape (created by the loan's lender); anything else keeps
+  // the #951 block. Also checks that the
   // seller's settlement fits inside the buyer's payment: the completion
   // deducts it from that payment (net settlement, #1659) and refuses the
   // whole acceptance when it is larger — a doomed buy must be blocked
   // here with a plain reason instead.
+  const saleReviewKey = [
+    'offerSaleReview',
+    readChain.chainId,
+    selected?.offerId,
+    linkedLoan.data,
+    address?.toLowerCase(),
+  ];
   const saleReview = useQuery({
-    queryKey: [
-      'offerSaleReview',
-      readChain.chainId,
-      selected?.offerId,
-      linkedLoan.data,
-      address?.toLowerCase(),
-    ],
+    queryKey: saleReviewKey,
     enabled:
       acceptIsLoanSale && Boolean(readClient) && Boolean(selected),
     staleTime: 30_000,
@@ -602,7 +629,10 @@ export function OfferFlow({ side }: { side: Side }) {
         address,
       ),
   });
-  const saleData = saleReview.data;
+  // A failed refresh keeps the previous answer in `data`; it no longer
+  // describes the chain, so it counts as unread (the same rule as the offset
+  // and refinance reviews — Codex #2675 r1).
+  const saleData = saleReview.isError ? undefined : saleReview.data;
   const saleLoanLive: LoanLive | null =
     saleData?.kind === 'sale' ? saleData.live : null;
   // The sale review is signable only when every gate is POSITIVELY
@@ -635,6 +665,37 @@ export function OfferFlow({ side }: { side: Side }) {
           saleData.selfBuyBlocked,
         ].join(':')
       : null;
+
+  // #2523 — the offset review. The taker's loan is an ordinary one on the
+  // offer's own terms (the receipt describes it as such); what the review
+  // adds is that the same transaction closes the poster's earlier loan, and
+  // every condition that close-out needs, read live. Signable only when all
+  // of them are positively clear (`offsetReviewBlock`).
+  const offsetReviewKey = [
+    'offerOffsetReview',
+    readChain.chainId,
+    selected?.offerId,
+    linkedLoan.data,
+  ];
+  const offsetReview = useQuery({
+    queryKey: offsetReviewKey,
+    enabled: acceptIsOffset && Boolean(readClient) && Boolean(selected),
+    staleTime: 30_000,
+    refetchInterval: idleAware(60_000),
+    queryFn: () =>
+      readOffsetReviewLive(
+        readClient!,
+        readChain.diamondAddress,
+        selected!.offerId,
+        linkedLoan.data!,
+      ),
+  });
+  // A failed refresh keeps the previous answer in `data`; it no longer
+  // describes the chain, so it counts as unread.
+  const offsetData = offsetReview.isError ? undefined : offsetReview.data;
+  const offsetBlock: OffsetReviewBlock | null | undefined =
+    offsetData === undefined ? undefined : offsetReviewBlock(offsetData);
+  const offsetReviewReady = acceptIsOffset && offsetBlock === null;
 
   const lockedAmount = useMemo(() => {
     if (mode === 'accept' && selected) {
@@ -1146,13 +1207,22 @@ export function OfferFlow({ side }: { side: Side }) {
         const acceptModeNote = interestModeNote(selected.useFullTermInterest, side);
 
         if (side === 'borrower') {
+          // #2523 — an offset offer's terms ARE the taker's loan, so the
+          // ordinary receipt describes it; it is withheld until the offset
+          // review is clear, and then also states the close-out it carries,
+          // so consent covers it.
+          if (acceptIsOffset && !offsetReviewReady) return null;
+          const offsetNote =
+            acceptIsOffset && linkedLoan.data
+              ? ` ${copy.match.offsetReceiptNote(linkedLoan.data)}`
+              : '';
           return {
             youReceive: copy.offerFlow.receipts.borrowerYouReceiveNow(principalStr, lifPct),
             youLock: copy.offerFlow.receipts.borrowerYouLockNow(collateralStr),
             youMayOwe: `${copy.offerFlow.receipts.borrowerYouMayOwe(principalStr, interestStr)} ${acceptModeNote}`,
             youCanLose: `${copy.offerFlow.receipts.borrowerYouCanLose(collateralStr)} ${copy.borrow.collateralWarning}${illiquidSuffix}`,
             fees: copy.fees.borrowerLIF(lifPct),
-            whenThisEnds: copy.offerFlow.receipts.borrowerWhenEndsAccept(durationStr, graceStr),
+            whenThisEnds: `${copy.offerFlow.receipts.borrowerWhenEndsAccept(durationStr, graceStr)}${offsetNote}`,
           };
         }
         // #2421 — no lender receipt until it is known whether this is a
@@ -1230,6 +1300,9 @@ export function OfferFlow({ side }: { side: Side }) {
     acceptIsLoanSale,
     saleData,
     saleReviewReady,
+    acceptIsOffset,
+    offsetReviewReady,
+    linkedLoan.data,
     refinanceKnown,
     refinanceBlocked,
     refinanceInfo,
@@ -1367,6 +1440,8 @@ export function OfferFlow({ side }: { side: Side }) {
     `unsupported:${securityUnsupported.map((l) => l.key).join(',')}`,
     `illiquid:${reviewIsIlliquid ? '1' : '0'}`,
     `loanSale:${acceptIsLoanSale ? '1' : '0'}`,
+    // #2523 — the offset disclosure and every input to its verdict.
+    `offset:${acceptIsOffset ? offsetReviewFingerprint(offsetData) : '0'}`,
     // #2421 — the refinance disclosure and its collateral wording.
     `refi:${
       refinanceInfo
@@ -1485,10 +1560,15 @@ export function OfferFlow({ side }: { side: Side }) {
     // receipt does not describe those terms — signing waits until the
     // answer is known. A SALE link may sign once its own review is
     // fully clear (#986 P3: loan-derived receipt, loan Active +
-    // unmatured, seller settlement funding covered); offset/unknown
-    // links never sign here.
+    // unmatured, seller settlement funding covered); an OFFSET link once
+    // its own review is (#2523, below); any other link never signs here.
     linkedLoanKnown &&
     (!acceptIsLoanSale || saleReviewReady) &&
+    // #2523 — an OFFSET link signs once its own review is positively clear
+    // (earlier loan active, term fits, no swap order, poster funded). A
+    // linked offer of neither recognised shape never signs here.
+    (!acceptIsOffset || offsetReviewReady) &&
+    (!acceptIsLinked || acceptIsLoanSale || acceptIsOffset) &&
     // #2421 — a refinance request changes what accepting does; the review
     // must know before it can be signed, and one the acceptance check
     // refuses is never signable (Codex #2668 r1).
@@ -1884,13 +1964,14 @@ export function OfferFlow({ side }: { side: Side }) {
     // refuse to sign against a review that no longer matches, putting the
     // fresh answer in place so the review shows why.
     if (refinanceRead) {
-      const liveRefinance = await readRefinanceRequestLive(
-        publicClient,
-        walletChain.diamondAddress,
-        BigInt(selected.offerId),
+      const liveRefinance = await recheckReview(refinanceKey, () =>
+        readRefinanceRequestLive(
+          publicClient,
+          walletChain.diamondAddress,
+          BigInt(selected.offerId),
+        ),
       );
       if (!sameRefinanceReview(refinanceRead, liveRefinance)) {
-        queryClient.setQueryData(refinanceKey, liveRefinance);
         throw new Error(
           liveRefinance.kind === 'gone' ? copy.match.offerGone : copy.match.termsChanged,
         );
@@ -1923,12 +2004,14 @@ export function OfferFlow({ side }: { side: Side }) {
         // larger than the buyer's payment. Re-run the same reader fresh so
         // a doomed buy fails here, before any signature or buyer approval
         // can mine.
-        const fresh = await readSaleReviewLive(
-          publicClient,
-          walletChain.diamondAddress,
-          selected,
-          linkedLoan.data!,
-          address,
+        const fresh = await recheckReview(saleReviewKey, () =>
+          readSaleReviewLive(
+            publicClient,
+            walletChain.diamondAddress,
+            selected,
+            linkedLoan.data!,
+            address,
+          ),
         );
         if (fresh.kind !== 'sale' || fresh.live.status !== 0) {
           throw new Error(copy.match.saleLoanNotActive);
@@ -1941,6 +2024,33 @@ export function OfferFlow({ side }: { side: Side }) {
         }
         if (!fresh.settlementFits) {
           throw new Error(copy.match.saleSettlementExceedsPayment);
+        }
+      }
+      // #2523 — the offset review's gates also ran on a cached read, and the
+      // close-out pulls from the POSTER's wallet during this accept. Re-read
+      // them fresh so a doomed acceptance stops here, before any signature or
+      // collateral approval. The reviewed verdict must still be clear, and
+      // still the one consented to.
+      if (acceptIsOffset) {
+        if (!offsetReviewReady || offsetData === undefined) {
+          throw new Error(copy.match.termsChanged);
+        }
+        const fresh = await recheckReview(offsetReviewKey, () =>
+          readOffsetReviewLive(
+            publicClient,
+            walletChain.diamondAddress,
+            selected.offerId,
+            linkedLoan.data!,
+          ),
+        );
+        const block = offsetReviewBlock(fresh);
+        if (
+          block !== null ||
+          offsetReviewFingerprint(fresh) !== offsetReviewFingerprint(offsetData)
+        ) {
+          throw new Error(
+            block !== null ? offsetBlockMessage(block, linkedLoan.data!) : copy.match.termsChanged,
+          );
         }
       }
       // #1036 — re-verify both legs at SUBMIT time (fail closed): the
@@ -2716,6 +2826,38 @@ export function OfferFlow({ side }: { side: Side }) {
               </div>
             )
           ) : null}
+          {acceptIsOffset ? (
+            // #2523 — the offset review: what accepting also does, or the
+            // one reason it cannot be signed. Never a silent dead button.
+            offsetReview.isError ? (
+              <div className="banner banner-warn" role="alert">
+                <span className="banner-body">{copy.match.offsetLoanCheckFailed}</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => void offsetReview.refetch()}
+                >
+                  {copy.offerFlow.retry}
+                </button>
+              </div>
+            ) : offsetBlock === undefined ? (
+              <div className="banner banner-info">
+                <span className="banner-body">{copy.match.offsetLoanChecking}</span>
+              </div>
+            ) : offsetBlock === null ? (
+              <div className="banner banner-info" data-testid="offset-offer-banner">
+                <span className="banner-body">
+                  {copy.match.offsetVehicleBanner(linkedLoan.data ?? '')}
+                </span>
+              </div>
+            ) : (
+              <div className="banner banner-warn" role="alert" data-testid="offset-offer-blocked">
+                <span className="banner-body">
+                  {offsetBlockMessage(offsetBlock, linkedLoan.data ?? '')}
+                </span>
+              </div>
+            )
+          ) : null}
           {offerGoneLive ? (
             <div className="banner banner-warn" role="alert" data-testid="offer-gone">
               <span className="banner-body">{copy.match.offerGone}</span>
@@ -3089,8 +3231,9 @@ export function OfferFlow({ side }: { side: Side }) {
 // ONE definition for everything the buy-a-running-loan review depends
 // on — the review query AND the submit-time recheck call this, so the
 // blocked-state reasons and the pre-signature guard can never drift.
-// Reads the linked loan live, discriminates sale-vs-offset by creator
-// (sale vehicles are created by the loan's lender), and checks the
+// Reads the linked loan live, confirms the sale shape (the listing is
+// created by the loan's lender; which vehicle it is was already decided by
+// `linkedOfferKind`), and checks the
 // seller's settlement against the buyer's payment: the completion in the
 // buyer's transaction deducts it from that payment (net settlement, #1659)
 // and refuses with `RateShortfallTooHigh` — surfaced as an opaque
@@ -3114,6 +3257,24 @@ type SaleReview =
       selfBuyBlocked: boolean;
       buyerInterest: bigint;
     };
+
+/** The plain reason an offset acceptance cannot be signed (#2523). */
+function offsetBlockMessage(block: OffsetReviewBlock, loanId: string): string {
+  switch (block) {
+    case 'not-offset':
+      return copy.match.linkedLoanAcceptBlocked(loanId);
+    case 'loan-not-active':
+      return copy.match.offsetLoanNotActive(loanId);
+    case 'term-passed':
+      return copy.match.offsetTermPassed(loanId);
+    case 'swap-order':
+      return copy.match.offsetSwapOrder(loanId);
+    case 'swap-order-unknown':
+      return copy.match.offsetSwapOrderUnknown(loanId);
+    case 'poster-not-covered':
+      return copy.match.offsetPosterNotCovered(loanId);
+  }
+}
 
 async function readSaleReviewLive(
   client: NonNullable<ReturnType<typeof usePublicClient>>,

@@ -1160,7 +1160,8 @@ const copySource = {
       ),
     // #986 P3 — the honest buy-a-running-loan review. Sale vehicles get
     // a REAL review (loan-derived numbers) instead of the block above;
-    // preclose-offset links keep the block.
+    // preclose-offset links get their own review (#2523, below). The block
+    // stays for a link of neither shape.
     saleVehicleBanner: tmpl(
       `This is a position sale: you'd be buying the lender side of already-running loan #{{loanId}}, not starting a new loan. The borrower and their repayment obligations don't change — only the lender does. The numbers below come from that loan, live.`,
       ['loanId'],
@@ -1182,6 +1183,41 @@ const copySource = {
     ),
     saleSelfBuy:
       'You are the borrower of this loan, so you can\u2019t also buy its lender side \u2014 the protocol rejects that. Repaying or closing early from My positions are your moves instead. Nothing was sent or approved.',
+    // #2523 — a preclose OFFSET offer: the taker's loan is ordinary and on
+    // the offer's own terms; the same transaction closes the poster's earlier
+    // loan, paid from the poster's wallet. Each refusal names its reason.
+    offsetVehicleBanner: tmpl(
+      `This offer was posted by a borrower closing loan #{{loanId}} early. Taking it opens an ordinary new loan for you on the terms below, and the same transaction pays off and closes loan #{{loanId}} from the poster’s own wallet. You owe nothing toward that loan: what you owe is set by your new loan’s terms. If that close-out can’t complete when your transaction runs, the whole acceptance is refused and nothing moves, though the network fee is still spent.`,
+      ['loanId'],
+    ),
+    offsetReceiptNote: tmpl(
+      `The same transaction closes loan #{{loanId}}, paid from the poster’s wallet; if that can’t complete, your acceptance is refused and nothing moves.`,
+      ['loanId'],
+    ),
+    offsetLoanChecking:
+      'Checking the earlier loan this offer closes — the review must confirm that close-out can go through before you can sign.',
+    offsetLoanCheckFailed:
+      'We couldn’t read the earlier loan this offer closes, and accepting fails if that loan can’t be closed — signing stays paused until the check succeeds.',
+    offsetLoanNotActive: tmpl(
+      `Loan #{{loanId}}, which this offer was posted to close, is no longer active, so accepting it would fail. Nothing was sent or approved.`,
+      ['loanId'],
+    ),
+    offsetTermPassed: tmpl(
+      `This offer can’t be taken any more: a loan started now on its terms would end after loan #{{loanId}}’s due date, which the protocol refuses. Nothing was sent or approved.`,
+      ['loanId'],
+    ),
+    offsetSwapOrder: tmpl(
+      `Loan #{{loanId}}, which this offer closes, has a swap-to-repay order waiting, and the protocol won’t close the loan until that order is filled or cancelled. Accepting now would fail. Nothing was sent or approved.`,
+      ['loanId'],
+    ),
+    offsetSwapOrderUnknown: tmpl(
+      `We couldn’t check whether loan #{{loanId}}, which this offer closes, has a swap-to-repay order waiting — one would make accepting fail. Signing stays paused until the check succeeds.`,
+      ['loanId'],
+    ),
+    offsetPosterNotCovered: tmpl(
+      `The poster’s standing approval or wallet balance no longer covers the most that closing loan #{{loanId}} can take, so accepting could fail. Nothing was sent or approved — the poster needs to restore their approval or balance.`,
+      ['loanId'],
+    ),
     liquidityChecking:
       'Checking how these assets are priced by the protocol…',
     liquidityCheckFailed:
