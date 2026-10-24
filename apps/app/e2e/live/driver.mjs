@@ -627,16 +627,49 @@ export function normaliseWallets(raw) {
   throw new Error('the wallet file is neither a role map nor an array of wallets');
 }
 
+/**
+ * Read and parse the dev wallet file WITHOUT ever echoing its contents
+ * (#2715). Node's `JSON.parse` quotes the text it failed on — a bare
+ * private key, or an `.env`-style `KEY=0x…` file pointed at by
+ * TESTNET_WALLETS_FILE, would be printed into the console and every batch
+ * log. So no parser or reader message is passed on: each failure is
+ * described by its KIND only (the read error's code; "not valid JSON"),
+ * and `normaliseWallets`' own messages, which name entry indexes and never
+ * a value, are the only text forwarded. The raw error is not returned
+ * either, so it cannot ride along as a `cause`.
+ *
+ * `read` is injectable so the test can feed it hostile contents.
+ *
+ * @returns {{ ok: true, wallets: object } | { ok: false, why: string }}
+ */
+export function parseWalletFile(path, read = (p) => fs.readFileSync(p, 'utf8')) {
+  let text;
+  try {
+    text = read(path);
+  } catch (err) {
+    return { ok: false, why: `it could not be read (${typeof err?.code === 'string' ? err.code : 'read error'})` };
+  }
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return { ok: false, why: 'it is not valid JSON (its contents are not shown: the file holds keys)' };
+  }
+  try {
+    return { ok: true, wallets: normaliseWallets(json) };
+  } catch (err) {
+    return { ok: false, why: String(err?.message ?? 'its shape is not a wallet file') };
+  }
+}
+
 function loadWallets(opts = {}) {
   if (WALLETS !== undefined) return WALLETS;
-  let raw;
-  try {
-    raw = normaliseWallets(JSON.parse(fs.readFileSync(WALLETS_PATH, 'utf8')));
-  } catch (err) {
+  const parsed = parseWalletFile(WALLETS_PATH);
+  if (!parsed.ok) {
     if (opts.throwOnUnreadable) {
       throw new LiveSetupError(
-        `cannot read the dev wallet file.\n  path: ${WALLETS_PATH}\n  ${err.message}`,
-        err,
+        `cannot read the dev wallet file.\n  path: ${WALLETS_PATH}\n  ${parsed.why}`,
+        undefined,
         'credential',
       );
     }
@@ -650,12 +683,12 @@ function loadWallets(opts = {}) {
     // this message and `walletFor`'s were separate copies of it.
     blockedSync(
       `cannot read the dev wallet file — this driver signs, so it cannot run` +
-        ` without one.\n  path: ${WALLETS_PATH}\n  ${err.message}` +
+        ` without one.\n  path: ${WALLETS_PATH}\n  ${parsed.why}` +
         `\n  → set TESTNET_WALLETS_FILE, or run a watch-only drive` +
         ` (live-position-observe.mjs) which needs no key.`,
     );
   }
-  WALLETS = raw;
+  WALLETS = parsed.wallets;
   return WALLETS;
 }
 
