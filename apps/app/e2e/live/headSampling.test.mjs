@@ -768,7 +768,7 @@ describe('the forced-close report emits distinct keys (round 106)', () => {
     // one direction and reaching into the neighbours in the other.
     const last = src.indexOf('confirmedAt=${v.forcedCloseConfirmedAt', i);
     expect(last, 'the last key of the report line was not found').toBeGreaterThan(i);
-    const line = src.slice(i, src.indexOf('\n', last));
+    const line = between(src, '` spanStable=', ': `      chooser=${v.chooser}');
     // ROUND 107 P2 — EVERY token, not the first of each template literal.
     //
     // The first version anchored on a backtick, so it saw only the key that
