@@ -11,7 +11,9 @@
 #     Prints one SHA-256 over exactly what `export` gives the build: every
 #     path, its type and mode, and its bytes after git's own conversions
 #     (line endings, export-subst, ident). The archive's timestamps and the
-#     commit id it carries are left out; the build reads neither. Two commits
+#     commit id it carries are left out; the build reads neither. So are
+#     the owner and the permission bits beyond git's own executable bit,
+#     so the digest is the same whichever account takes it. Two commits
 #     with the same digest hand the build the same files, so their bundles
 #     are the same, byte for byte.
 #
@@ -63,9 +65,15 @@ source_digest() {
   mkdir -p "$tree"
   export_source "$repo" "$commit" "$scratch/source.tar"
   tar -xf "$scratch/source.tar" -C "$tree" --no-same-owner
-  # Re-packed in a fixed order with fixed timestamps and owners: what is
-  # left is paths, types, modes and contents.
+  # Re-packed in a fixed order with fixed timestamps, owners and modes: what
+  # is left is paths, types, the executable bit and contents, which is all git
+  # records. The mode is set, not taken from the extracted tree, because
+  # extraction does not give every account the same one: root keeps the
+  # archive's 0664, anyone else gets it under their umask. CI digests as a
+  # runner user and the keeper machine as root, and both must name the same
+  # bundle (#2651).
   tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --format=gnu \
+    --mode='u=rwX,go=rX' \
     -cf - -C "$tree" . | sha256sum | cut -d' ' -f1
   rm -rf "$scratch"
 }

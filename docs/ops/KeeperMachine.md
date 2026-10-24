@@ -100,7 +100,7 @@ gh attestation verify keeper-host-<digest>.mjs \
 - the indexer modules it imports.
 
 `build-source.sh` exports those paths with `git archive` for the build, and
-the same script takes a digest of that export: every path, mode and byte,
+the same script takes a digest of that export: every path, executable bit and byte,
 after git's own conversions. CI names each bundle by that digest. The updater
 compares the running release's digest with the branch tip's. If they are
 equal, a build would be given the same files and would make the same bundle,
