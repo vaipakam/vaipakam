@@ -572,6 +572,179 @@ No schedule / delay — the call lands inside one block. Pause event
 emitted on-chain; off-chain alerting should trigger a broader
 incident-response runbook.
 
+### Launch — the first unpause (#945)
+
+A production Diamond is born paused and the deploy leaves it paused. Its
+first unpause is a Timelock operation like any later one (owner decision
+2026-10-23): the hot admin key never runs a live production Diamond, not
+even for the gap between the deploy and the handover.
+
+1. Finish the deploy phases, then `handover` and `handover-gate`. The
+   `contracts` phase has already deployed the LaunchGate, a stateless
+   contract at a deterministic address that the launch operation calls.
+   `handover-gate` also prints the Diamond's **role epoch**, a count of
+   every change to its role table, and the Timelock's **executed-call
+   count**, both read in the state where it proved every role's holders;
+   the wrapper records the two together (`handover-gate.proof`) for the
+   launch phase and the verify report.
+2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the six launch
+   requirements off the chain and refuses unless every one is met, the
+   Timelock holds `UNPAUSER_ROLE` and owns the Diamond, the admin key holds
+   no Diamond role at all, and the role epoch and the Timelock's call count
+   are still the ones `handover-gate` proved (if any role changed hands, or
+   the Timelock executed any call, since, re-run `handover-gate`). It
+   broadcasts nothing. The requirements:
+   - a treasury;
+   - a sanctions oracle that answers `isSanctioned`;
+   - the declared WETH, an 18-decimal token contract, which the Diamond's
+     own oracle prices from the ETH reference feed right now;
+   - an enabled swap adapter that answers `adapterName()`;
+   - VPFI routed through the declared pool, governed by the Diamond's
+     owner: the chain's CCIP `TokenAdminRegistry`
+     (`CCIP_TOKEN_ADMIN_REGISTRY`) must map the VPFI token the Diamond
+     records to the artifact's `vpfiTokenPool`; the registry's VPFI
+     administrator (with no transfer pending), the pool's owner and the
+     rate governor's owner (with no transfer pending) must all be the
+     Diamond's owner, the Timelock; and the pool's rate-limit admin must be
+     the artifact's `vpfiPoolRateGovernor`, which administers that pool.
+     The gate re-reads all of this at execution, so an operation queued in
+     the same delay cannot re-point the route's authority and still launch.
+     A CCIP pool keeps its pending owner private, so a pool transfer started
+     and not yet accepted is not visible to the gate; the handover gate
+     reads it from the pool's events;
+   - exactly the declared CCIP lanes on that pool (`CCIP_LANE_CHAIN_IDS`,
+     resolved per chain as the ccip-wire phase does): none missing and
+     none extra, each with inbound and outbound rate limits enabled and
+     inside the `VpfiPoolRateGovernor` bounds, and each reaching exactly
+     its declared peer: the remote chain's VPFI token (`vpfiToken` on Base,
+     `vpfiMirror` on a mirror) and that chain's `vpfiTokenPool` as the one
+     and only remote pool. A supported selector says nothing about where its
+     messages go: a lane whose remote pool was removed fails every inbound
+     transfer, and one pointing at the wrong token sends the wrong asset.
+     The peers come from each remote chain's artifact, through the same
+     helper the ccip-wire phase wires them with. On a mirror chain the VPFI
+     token's own mint and burn authority (`tokenPool()`) must be that same
+     routed pool, and the token must be owned by the Diamond's owner with no
+     transfer pending: whoever that slot names can mint mirror VPFI.
+
+   The launch checks the chain against these DECLARED values rather than
+   against itself: a check that only read the configuration back would
+   pass a lane set missing a destination, a stale pool, or any address
+   stored as WETH. A deployment with no VPFI token and no declared pool or
+   lane (`--skip-vpfi`, testnets) has both CCIP checks met as not
+   applicable, and the step says so.
+
+   **Not among the checks: per-asset risk parameters.** No deploy phase sets
+   them and there is no declared asset list for a check to read, so a
+   Diamond can pass every check with each ERC-20 collateral at a zero LTV
+   cap, refusing every liquid loan (illiquid/NFT loans still work). The step
+   prints this as `[NOT A CHECK]`. Until #2696 adds asset onboarding,
+   governance sets them through Timelock proposals (`updateRiskParams`
+   works while the Diamond is paused) before scheduling the launch.
+3. It prints the Timelock `scheduleBatch(...)` call. The operation is ONE
+   call, `diamond.launch(epoch, gate, gateCall)`, where `gateCall` is
+   `LaunchGate.assertReady(diamond, declared, handover)`. The governance
+   Safe proposes it. `declared` carries the registry, the VPFI pool, its
+   rate governor, each lane with its remote pool and token, and the WETH;
+   `handover` carries the admin key, the Diamond owner (the Timelock), the
+   proven role epoch and the number of calls the Timelock had executed
+   when `handover-gate` proved the topology (the proposal refuses to be
+   printed once that number has moved).
+   The step prints each one. Before signing, check that the gate address
+   printed is the one the launch phase reports, that the registry is the
+   chain's CCIP `TokenAdminRegistry`, that the lanes are the full
+   production topology for this chain, that the WETH is the chain's
+   bridged WETH9 according to its official bridge registry (never the
+   wrapped native token; nothing on-chain records which token that is, so
+   this review is where it is established), that the admin key is the
+   deploy-time admin address, and that the role epoch is the one
+   `handover-gate` printed. The gate refuses any value other than the ones
+   signed. The salt is fixed per chain and Diamond, so a re-run finds the
+   same operation and prints its state (not scheduled, pending, ready,
+   done).
+4. After the delay, anyone sends the printed `executeBatch(...)` call. The
+   Diamond itself calls the gate, which reads all six requirements again
+   inside that transaction, then checks that the Diamond's owner is still
+   the one signed, that the admin key still holds no Diamond role, that
+   the role epoch has not moved, and that the Timelock has executed no other
+   call since `handover-gate` proved the topology. The Diamond unpauses only when the gate
+   returns, and refuses a gate call that is not `assertReady` for itself.
+   If a requirement stopped holding during the delay (an adapter was
+   removed, the oracle was cleared), the execution reverts with
+   `LaunchNotReady(label, state, detail)`; if ownership moved, with
+   `OwnerMoved(expected, live)`; if the admin key was given a role back,
+   with `DeployKeyHoldsRole(key, role)`; if any role was granted, revoked
+   or renounced (for example an operation queued in the same delay that
+   gives an administrator role to a new account), with
+   `RoleEpochMoved(expected, live)`; if the Timelock executed any other call
+   in between, with `TimelockActedDuringDelay(expected, live)`. Every case
+   leaves the Diamond paused.
+   Fix a readiness or ownership failure and execute the same operation
+   again. A moved role epoch cannot come back: re-run `handover-gate` to
+   prove the new holders, then the launch phase for a fresh proposal.
+   **The launch must be the Timelock's next call.** Everything the launch
+   depends on is governed by the Timelock: the Diamond's configuration,
+   roles and facets, and (the checks require it) the VPFI pool, its rate
+   governor, the registry's VPFI administration and a mirror's token. Not
+   every effect of a governance call can be read back at execution (a CCIP
+   pool's pending owner is private, an upgraded rate governor keeps its old
+   getters' answers), so instead of re-reading each one, the launch refuses
+   if the Timelock completed any other call after `handover-gate` proved
+   the topology, even a harmless one. The count is the one the gate
+   proved, not one read when the proposal is printed: a call executed in
+   between (a pool `transferOwnership` queued before the gate ran, say) is
+   one the gate's event scan never saw, so the proposal refuses until the
+   gate runs again. Execute every other queued operation first, or cancel
+   it, then run `handover-gate` and the launch phase; if one executes
+   during the delay, do both again for a fresh proposal. The count only
+   moves when a call completes, so the Timelock also refuses to start a
+   call while another of its calls is still executing (`NestedExecution`):
+   an operation whose effect runs the ready launch from inside itself (a
+   rate-governor upgrade whose initializer calls `executeBatch`, say) is
+   refused whole, rather than launching before its own call is counted. What changes
+   without the Timelock is bound separately: the pause by the epoch below,
+   and the role table (a holder renouncing, the emergency revoker) by the
+   role epoch.
+   The role epoch covers the Diamond's roles. The Timelock's own role set
+   is not in it, because no change to that set removes the delay: the
+   delay can only be changed by a Timelock operation, and never below its
+   floor.
+5. The epoch in the call is the pause library's transition count
+   when the proposal was printed. Every pause, auto-pause and unpause moves
+   it. If the Guardian pauses or the watcher auto-pauses during the delay,
+   the execution reverts with `PauseEpochMoved(expected, live)`, so a launch
+   decided before an incident never clears the incident's pause. That
+   operation can never execute; once the incident is closed, re-run the
+   launch phase for a fresh proposal at the new epoch.
+6. Re-run the launch phase. It reads the launch from the Diamond itself:
+   the pause library records who first lifted the birth pause, and when,
+   once and never again, and which launch gate the first unpause went
+   through (none for a plain `unpause`). On production that must be the
+   Timelock, through a launch gate; if anyone else first unpaused it, or the
+   Timelock ran an operation that only unpauses, no readiness check vouched
+   for the Diamond going live, so the phase refuses, and that is an incident
+   to investigate, not a launch. The recorded gate must also be this
+   checkout's LaunchGate (its deterministic address): any contract can answer
+   `assertReady` (a permissive fallback does), so a gate this run did not
+   build vouches for nothing it can verify, and production refuses it, naming
+   the recorded address. Verify that gate's code, or re-run from the checkout
+   that built it. A testnet names a foreign gate instead of refusing. After
+   the launch the phase still reads every readiness check: one that is
+   `NOT MET` now is reported beside the launch record (restore it through
+   governance) rather than hidden, and a testnet Diamond first unpaused
+   outside a launch gate counts as launched only while every answered check
+   is met, paused now or not. Later pauses never move the record, so they
+   cannot make a launched Diamond look unlaunched.
+7. The launch step reads that record before anything else, paused or not.
+   Once it exists, a re-run during a later incident pause reports "first
+   unpaused by <Timelock>, and PAUSED now" and prints no proposal: the
+   launch step never offers a second unpause. The deploy scripts repeat
+   that line, so a launched Diamond under an incident pause is never
+   reported as live. Lift an incident pause through "Incident response —
+   unpause" below.
+
+The Pauser Safe can cancel the queued launch like any other operation.
+
 ### Incident response — unpause
 
 Unpause goes through the full Timelock path (48h). Recovery cannot
@@ -1286,12 +1459,20 @@ read back on every chain:
   checks none of it — so an emergency pause left on after a partial recovery
   passes every wiring readback and then stops the propagation the arm depends on.
   The remit itself lives on the Diamond: Base's `remitRewardBudget` is
-  `whenNotPaused`, and a mirror rejects the receiver's `onRewardBudgetReceived`
-  call at the SAME guard — so a Base Diamond or any mirror Diamond left paused
-  after an incident breaks the path even when every cross-chain contract is
-  unpaused and every wiring readback is clean. Require `AdminFacet.paused() ==
-  false` on Base AND every participating mirror, not just on the transport
-  contracts.
+  `whenNotPaused`, so a Base Diamond left paused after an incident stops every
+  remit even when every cross-chain contract is unpaused and every wiring
+  readback is clean. A paused MIRROR Diamond fails differently, and the
+  difference is easy to miss. Its budget ingress, `onRewardBudgetReceivedD6`, is
+  deliberately NOT `whenNotPaused` (migration mode, design §5c), so a delivery
+  still lands on a paused mirror. Only the transport stops it, at the edge: the
+  destination `CcipMessenger` and the `RewardRemittanceReceiver` each carry their
+  own guardian pause, set independently, and either one paused refuses the
+  delivery. When a budget is stuck, read both. What the mirror's pause does stop is the
+  mirror's own side of the loop: `closeDay`, which sends the report Base's
+  coverage waits on, and every claim. So a paused mirror looks healthy on the
+  funding path while Base either waits for its report or grace-finalizes the day
+  without it. Require `AdminFacet.paused() == false` on Base AND every
+  participating mirror, not just on the transport contracts.
 
 **If ANY of this was rotated, matching readbacks are not enough — the lane has
 to be DRAINED first.** `CcipMessenger` resolves the destination handler at
@@ -2243,7 +2424,7 @@ DEAD-END LIST so the next person does not re-derive them under time pressure:
 | Remit + receipts BEFORE arming | `broadcastGlobal`'s only day-state gate is `dailyGlobalFinalized`; arming is irrelevant to it. A pre-arm application used to spend that day for propagation; since #1944 it does not — `_applyBroadcastV2Core`'s replay installs `armedFromDay` on a mirror that has none — so this row's remaining force is the first sentence, not the day cost. |
 | Pause, fund the candidate, unpause, broadcast | `broadcastGlobal` accepts ANY finalized day, so unpausing re-opens every other unfunded finalized day at once. |
 | Reconcile every broadcastable day first | An applied-but-unfunded day is ALREADY open and pausing Base cannot close it; and `finalizeDay` is permissionless, so new broadcastable days can appear after the inventory. |
-| Contain the destination's claim path meanwhile | `AdminFacet.pause()` is the Diamond's single global flag: `claimInteractionRewards` and `onRewardBudgetReceived` are BOTH `whenNotPaused`, so pausing claims also blocks the remittance receipt. "Wait until every pending day is funded" is unreachable — funding cannot land while claims are stopped, and unpausing to admit it re-opens the race. |
+| Contain the destination's claim path meanwhile | `AdminFacet.pause()` on the mirror stops `claimInteractionRewards` and does NOT stop funding: `onRewardBudgetReceivedD6` is deliberately not `whenNotPaused` (migration mode, design §5c), and neither is the broadcast apply, so the days already in flight can be funded while claims are stopped. The procedure fails at the unpause instead. Unpausing is never atomic with the check that every applied day is funded: `finalizeDay` is permissionless, so a day finalized and broadcast after that check is applied but unfunded when claims reopen. That is row 3's inventory gap, moved to the mirror, and holding broadcasts back with a messenger pause only moves it to that unpause (row 2). The pause is also the Diamond's single global flag, so for as long as it is held it halts every other `whenNotPaused` path on that chain, lending and the mirror's own `closeDay` reports included. |
 | Safe-only executor + fresh reconciliation before execution | Restricting the executor controls only WHO unpauses. It does not make reconciliation and unpause atomic, and `finalizeDay` — permissionless and not routed through the paused messenger — lets a new unfunded day be created after the inventory, including by front-running the Safe's own unpause. |
 
 *(Scope, #1944 consequence 1: every row above, and the one safe branch below,

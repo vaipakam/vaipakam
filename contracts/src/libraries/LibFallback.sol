@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {LibNumeraireValue} from "./LibNumeraireValue.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
@@ -43,14 +43,26 @@ library LibFallback {
             .getAssetPrice(collateralAsset);
         (uint256 prinPrice, uint8 prinFeedDec) = OracleFacet(diamond)
             .getAssetPrice(principalAsset);
-        return _rate(collateralAsset, principalAsset, colPrice, colFeedDec, prinPrice, prinFeedDec);
+        return _rate(
+            colPrice,
+            colFeedDec,
+            LibNumeraireValue.tokenDecimals(collateralAsset),
+            prinPrice,
+            prinFeedDec,
+            LibNumeraireValue.tokenDecimals(principalAsset)
+        );
     }
 
     /// @dev The rate at the current oracle, telling a MISSING price from a
     ///      DISTRUSTED one (`OracleFacet.getAssetPriceStatus`, #666):
-    ///      - `priced` is false when either leg has no price at all, or
-    ///        reads zero. The pair cannot be priced whatever the other leg
-    ///        says, so a caller may take its unpriced branch.
+    ///      - `priced` is false when either leg has no price at all, reads
+    ///        zero, or is a token whose `decimals()` cannot be read (#2419).
+    ///        The pair cannot be priced whatever the other leg says, so a
+    ///        caller may take its unpriced branch. That includes a pair whose
+    ///        other leg is distrusted: the missing-price rule wins there
+    ///        (owner decision 2026-10-22, #666), because a price that is not
+    ///        there cannot be waited out, and the unpriced split reads no
+    ///        price at all, so the distrusted one cannot shape it.
     ///      - Otherwise, when either leg's price is distrusted (the sources
     ///        that read checks against disagree: the secondary quorum, or
     ///        the Pyth cross-check of the ETH reference), this REVERTS with
@@ -74,9 +86,20 @@ library LibFallback {
             OracleFacet(diamond).getAssetPriceStatus(collateralAsset);
         (OracleFacet.PriceStatus prinStatus, uint256 prinPrice, uint8 prinFeedDec) =
             OracleFacet(diamond).getAssetPriceStatus(principalAsset);
+        // A token whose `decimals()` cannot be read (or is above the cap)
+        // cannot be valued, so its leg has no usable price either: the same
+        // unpriced answer as a missing feed, with the same precedence over a
+        // distrusted other leg, never a revert that would leave the
+        // close-out with no route at all (#2419). Read with the guarded
+        // reader the liquidity probe uses, so the two never disagree about
+        // a token.
+        (bool colDecOk, uint8 colTokenDec) = LibNumeraireValue.tryTokenDecimals(collateralAsset);
+        (bool prinDecOk, uint8 prinTokenDec) = LibNumeraireValue.tryTokenDecimals(principalAsset);
         if (
             colStatus == OracleFacet.PriceStatus.Unavailable ||
-            prinStatus == OracleFacet.PriceStatus.Unavailable
+            prinStatus == OracleFacet.PriceStatus.Unavailable ||
+            !colDecOk ||
+            !prinDecOk
         ) return (false, r);
         if (
             colStatus == OracleFacet.PriceStatus.Divergent ||
@@ -91,7 +114,7 @@ library LibFallback {
             revert OracleFacet.OraclePriceDivergence();
         }
         if (colPrice == 0 || prinPrice == 0) return (false, r);
-        return (true, _rate(collateralAsset, principalAsset, colPrice, colFeedDec, prinPrice, prinFeedDec));
+        return (true, _rate(colPrice, colFeedDec, colTokenDec, prinPrice, prinFeedDec, prinTokenDec));
     }
 
     /// @dev Collateral units for `principalAmount` at `r`. Pass `Ceil` for the
@@ -167,15 +190,13 @@ library LibFallback {
 
     /// @dev The fraction from two positive prices and both tokens' decimals.
     function _rate(
-        address collateralAsset,
-        address principalAsset,
         uint256 colPrice,
         uint8 colFeedDec,
+        uint8 colTokenDec,
         uint256 prinPrice,
-        uint8 prinFeedDec
-    ) private view returns (Rate memory r) {
-        uint8 colTokenDec = IERC20Metadata(collateralAsset).decimals();
-        uint8 prinTokenDec = IERC20Metadata(principalAsset).decimals();
+        uint8 prinFeedDec,
+        uint8 prinTokenDec
+    ) private pure returns (Rate memory r) {
         r.num = prinPrice * (10 ** colTokenDec) * (10 ** colFeedDec);
         r.den = colPrice * (10 ** prinTokenDec) * (10 ** prinFeedDec);
     }

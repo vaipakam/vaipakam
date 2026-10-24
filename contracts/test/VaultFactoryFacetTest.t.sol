@@ -8,6 +8,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
@@ -17,6 +18,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -75,7 +77,7 @@ contract VaultFactoryFacetTest is Test {
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(vaultFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -111,6 +113,14 @@ contract VaultFactoryFacetTest is Test {
             facetAddress: address(new TreasuryFeeFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
+        });
+        // #2419 - RiskFacet (LTV / HF) and the offer facets value every amount
+        // through NumeraireValueFacet by self-call, so a hand-built Diamond
+        // that cuts any of them must cut this host too.
+        cuts[9] = IDiamondCut.FacetCut({
+            facetAddress: address(new NumeraireValueFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getNumeraireValueFacetSelectors()
         });
         cuts[3] = IDiamondCut.FacetCut({
             facetAddress: address(accessControlFacet),
@@ -882,9 +892,11 @@ contract VaultFactoryFacetTest is Test {
         VaipakamVaultImplementation newImpl = new VaipakamVaultImplementation();
         VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(newImpl));
 
-        // Step 3: Set mandatory upgrade to the new version (version 2, since init is 1 and we bumped once)
-        // currentVaultVersion is now 2; user1's vault is still at version 1
-        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(2);
+        // Step 3: Set mandatory upgrade to the new version. currentVaultVersion
+        // starts at 0 and is now 1; user1's vault is still at version 0. A
+        // floor above the current version is refused (#2363), so the floor
+        // is the current version.
+        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(1);
 
         // Step 4: Calling getOrCreateUserVault for user1 again should revert
         vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
@@ -941,6 +953,58 @@ contract VaultFactoryFacetTest is Test {
         // Step 5: Calling getOrCreateUserVault should NOT revert
         address result = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
         assertEq(result, vault, "Should return existing vault without reverting");
+    }
+
+    /// @dev #2363 — a floor above `currentVaultVersion` is refused: the
+    ///      permissionless repair stamps users at the current version and no
+    ///      higher, so such a floor would halt every existing-vault user.
+    function testSetMandatoryVaultUpgradeRefusesAboveCurrentVersion() public {
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        (, uint256 current,,) = VaultFactoryFacet(address(diamond)).getVaultVersionInfo(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.MandatoryVaultVersionUnreachable.selector, current + 1, current
+            )
+        );
+        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(current + 1);
+
+        // Once a new implementation makes that version current, the same
+        // floor is accepted, and the user's own repair clears it.
+        VaultFactoryFacet(address(diamond)).upgradeVaultImplementation(address(new VaipakamVaultImplementation()));
+        vm.expectEmit(address(diamond));
+        emit VaultFactoryFacet.MandatoryVaultVersionSet(0, current + 1);
+        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(current + 1);
+        vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        VaultFactoryFacet(address(diamond)).upgradeUserVault(user1);
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+
+        // Zero clears the requirement and says so.
+        vm.expectEmit(address(diamond));
+        emit VaultFactoryFacet.MandatoryVaultVersionSet(current + 1, 0);
+        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(0);
+    }
+
+    /// @dev #905 — the implementation contract locks its own initializer at
+    ///      construction, so nobody can become its owner by initializing it,
+    ///      whatever path deployed it.
+    function testVaultImplementationCannotBeInitializedDirectly() public {
+        VaipakamVaultImplementation impl = new VaipakamVaultImplementation();
+        vm.prank(user2);
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        impl.initialize(user2, address(impl));
+        assertEq(impl.owner(), address(0), "the implementation has no owner");
+    }
+
+    /// @dev #905 — the template the factory deploys is locked too, and the
+    ///      per-user proxies built from it still initialize normally.
+    function testFactoryTemplateIsLockedAndProxiesStillInitialize() public {
+        address template = VaultFactoryFacet(address(diamond)).getVaipakamVaultImplementationAddress();
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        VaipakamVaultImplementation(template).initialize(user2, template);
+
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        assertEq(VaipakamVaultImplementation(vault).owner(), address(diamond), "the proxy is owned by the Diamond");
     }
 
     /// @dev Covers setMandatoryVaultUpgrade revert for non-owner.

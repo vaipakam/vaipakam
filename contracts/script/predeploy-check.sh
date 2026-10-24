@@ -28,7 +28,9 @@
 #       compiler's AST, not the source text.
 #
 #   2. Forge test suite:
-#        • default            — the deploy-sanity suite (test/deploy/*):
+#        • default            — the deploy-sanity suite (test/deploy/*),
+#            in chunks of DEPLOY_CHUNK_SIZE suites (default 16, #2712) so
+#            its compile fits a 16 GB CI runner:
 #            FacetSizeLimitTest    (every facet within EIP-170; #66),
 #            SelectorCoverageTest  (every facet selector cut into the
 #                                   Diamond + no 4-byte selector
@@ -184,8 +186,9 @@ if [ "$MODE_FULL" -eq 1 ]; then
   # and it sets the same FAIL=1 as a red test — so it would read as
   # "regression failed, do not deploy" while having tested nothing.
   #
-  # One chunking implementation, one exhaustiveness guard, one place to fix
-  # when the ceiling moves again. Invariants stay excluded (they are slow —
+  # One chunking implementation (script/lib/forge-chunks.sh, shared with the
+  # non-full branch below since #2712), one exhaustiveness guard, one place
+  # to fix when the ceiling moves again. Invariants stay excluded (they are slow —
   # 100 runs — and run as their own pass); plain `run-regression.sh` without
   # `--invariants` is exactly that scope, so the gate's semantics are
   # unchanged. It forces FOUNDRY_PROFILE=default itself.
@@ -197,12 +200,54 @@ if [ "$MODE_FULL" -eq 1 ]; then
   fi
 else
   echo "[predeploy 2/4] deploy-sanity forge suite (test/deploy/*)"
+  # In CHUNKS of DEPLOY_CHUNK_SIZE suites (default 16), cut by the same helper
+  # run-regression.sh uses (#2712). The whole suite as one `forge test` built
+  # one compile unit that peaked at 14.7 GB of solc on CI's 16 GB runner,
+  # which a few more deploy tests would have pushed out of memory; two chunks
+  # peaked under 10 GB, measured cold. Sizing by files rather than a fixed
+  # chunk COUNT means the suite gains chunks as it grows instead of its
+  # chunks growing back toward the old peak. Lower it if a chunk ever runs
+  # out of memory; every chunk runs even after one fails, so one red run
+  # reports every failing suite.
+  #
   # `-vv` so PASSING tests print their logs. `FacetSizeLimitTest`'s headroom
   # report (#1780) always passes by design — it reports facets running out of
   # EIP-170 room rather than failing them — and Foundry hides logs from passing
   # tests below `-vv`. Without this the report is invisible in exactly the
   # green run it exists to inform, which is the whole point of it.
-  if forge test --match-path "test/deploy/*" -vv; then
+  # shellcheck source=lib/forge-chunks.sh
+  source "$SCRIPT_DIR/lib/forge-chunks.sh"
+  DEPLOY_OK=1
+  mapfile -t DEPLOY_STEMS < <(forge_test_stems test/deploy)
+  # The chunks name files directly in test/deploy. The old single glob also
+  # reached below it, so a nested suite would now be skipped without a word:
+  # refuse one instead.
+  mapfile -t DEPLOY_NESTED < <(find test/deploy -mindepth 2 -name '*.t.sol' | LC_ALL=C sort)
+  if (( ${#DEPLOY_NESTED[@]} > 0 )); then
+    echo "  ✗ deploy-sanity suites below test/deploy/ are not run by any chunk;" >&2
+    echo "    move them up into test/deploy/:" >&2
+    printf '      %s\n' "${DEPLOY_NESTED[@]}" >&2
+    DEPLOY_OK=0
+  fi
+  if (( ${#DEPLOY_STEMS[@]} == 0 )); then
+    echo "  ✗ no deploy-sanity suites found in test/deploy/ — refusing to pass having run nothing" >&2
+    DEPLOY_OK=0
+  elif ! DEPLOY_GLOBS_OUT=$(forge_chunk_globs test/deploy "${DEPLOY_CHUNK_SIZE:-16}" "${DEPLOY_STEMS[@]}"); then
+    DEPLOY_OK=0
+  else
+    mapfile -t DEPLOY_GLOBS <<<"$DEPLOY_GLOBS_OUT"
+    echo "  ${#DEPLOY_STEMS[@]} suites in ${#DEPLOY_GLOBS[@]} chunk(s)"
+    i=0
+    for glob in "${DEPLOY_GLOBS[@]}"; do
+      i=$((i+1))
+      echo "  ── chunk $i/${#DEPLOY_GLOBS[@]}: $glob"
+      if ! forge test --match-path "$glob" -vv; then
+        echo "  ✗ deploy-sanity chunk $i failed: $glob" >&2
+        DEPLOY_OK=0
+      fi
+    done
+  fi
+  if (( DEPLOY_OK )); then
     echo "  ✓ FacetSizeLimitTest + SelectorCoverageTest pass"
   else
     echo "  ✗ deploy-sanity suite failed — a facet is over EIP-170, a" >&2

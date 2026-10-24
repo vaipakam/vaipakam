@@ -14,7 +14,7 @@ import {
   msUntilNextMinute,
   MINUTE_MS,
 } from '../host/scheduler';
-import { resolveEnv, SECRET_BINDING_KEYS, type WorkerEnv } from '../src/env';
+import { PLAIN_VAR_KEYS, resolveEnv, SECRET_BINDING_KEYS, type WorkerEnv } from '../src/env';
 
 const ACCOUNT = 'a'.repeat(32);
 const DATABASE = 'e5e927cf-56c3-42c7-9820-179a235cc84f';
@@ -156,6 +156,14 @@ describe('host env', () => {
       if (key === 'DB' || key === 'KEEPER_DB') continue;
       expect(value, key).toBe(`v:${key}`);
     }
+    // And every plain knob is carried through: a name on PLAIN_VAR_KEYS that
+    // resolveEnv drops reads undefined downstream forever (#2633).
+    for (const key of PLAIN_VAR_KEYS) expect(resolved[key], key).toBe(`v:${key}`);
+  });
+
+  it('carries the discount-path setting from the env file to the keeper (#2633)', async () => {
+    const resolved = await resolveEnv(buildHostEnv({ ...full, DISCOUNT_PATH_CHAIN_IDS: '8453' }).env);
+    expect(resolved.DISCOUNT_PATH_CHAIN_IDS).toBe('8453');
   });
 });
 

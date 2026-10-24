@@ -22,12 +22,13 @@ import {
   formatTimeAgo,
   shortAddress,
 } from '../../lib/format';
-import type { MarketSummary, IndexedLoan, IndexedOffer } from '../../data/indexer';
+import type { MarketSummary, IndexedOffer } from '../../data/indexer';
 import { useNowSec } from '../../hooks/useNowSec';
 import {
   isLiveMarketRow,
   pairKey,
   useSymbolMap,
+  type DeskFill,
   type DeskLadder,
   type DeskPair,
 } from '../../data/desk';
@@ -63,7 +64,7 @@ export function DeskHeader({
   ladder: DeskLadder | null;
   /** Newest tape row for the (pair, tenor) market — tenor-scoped by
    *  construction (a 7d fill must never seed the 30d header). */
-  lastFill: IndexedLoan | null | undefined;
+  lastFill: DeskFill | null | undefined;
 }) {
   const [customOpen, setCustomOpen] = useState(false);
   const [customLend, setCustomLend] = useState('');
@@ -277,10 +278,16 @@ export function DeskHeader({
           {lastFill ? (
             <span
               className="desk-stat-value"
-              title={copy.desk.lastFillTitle(lastFill.interestRateBps, lastFill.loanId)}
+              title={
+                lastFill.rateBps === null
+                  ? copy.desk.fillTermsNotRecordedTitle(lastFill.loanId)
+                  : copy.desk.lastFillTitle(lastFill.rateBps, lastFill.loanId)
+              }
             >
-              {formatBpsAsPercent(lastFill.interestRateBps)} ·{' '}
-              {formatTimeAgo(lastFill.startAt)}
+              {lastFill.rateBps === null
+                ? copy.desk.fillTermsNotRecorded
+                : formatBpsAsPercent(lastFill.rateBps)}{' '}
+              · {formatTimeAgo(lastFill.startAt)}
             </span>
           ) : (
             <span className="desk-stat-value">{copy.desk.statUnknown}</span>

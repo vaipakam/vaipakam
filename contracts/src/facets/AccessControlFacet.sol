@@ -91,6 +91,20 @@ contract AccessControlFacet is DiamondAccessControl {
         return LibAccessControl.getRoleAdmin(role);
     }
 
+    /// @notice The role epoch: how many times the role table has changed —
+    ///         every grant or revoke that changed a holder, every renounce
+    ///         that did, every role-admin assignment (#945).
+    /// @dev Holder sets are not enumerable on-chain, so "nothing changed
+    ///      since the handover gate proved them" is read as "this count is
+    ///      still the one the proof recorded". The Timelock's launch call
+    ///      ({AdminFacet.launch}, through `LaunchGate.assertReady`) refuses
+    ///      unless it is.
+    /// @return The count, starting from zero before access control is
+    ///         initialised.
+    function roleEpoch() external view returns (uint64) {
+        return LibAccessControl.roleTransitions();
+    }
+
     // ─── Emergency Revocation ───────────────────────────────────────────
 
     /// @notice Emitted by {emergencyRevokeRole} to make incident-response

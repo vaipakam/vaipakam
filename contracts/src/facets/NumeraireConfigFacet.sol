@@ -65,6 +65,19 @@ contract NumeraireConfigFacet is DiamondAccessControl {
     /// @custom:event-category informational/config
     event NumeraireSwapEnabledSet(bool enabled);
 
+    /// @notice The #395 partial-liquidation sizing knobs changed. Declared
+    ///         byte-identical to `AdminFacet.PartialLiquidationSizingSet`
+    ///         (same topic hash), because {setNumeraire} resets the dust
+    ///         floor and must say so in the event indexers already follow.
+    ///         The two HF values are the raw stored overrides (0 = the
+    ///         library default), exactly as the AdminFacet setter emits them.
+    /// @custom:event-category informational/config
+    event PartialLiquidationSizingSet(
+        uint16 targetHfCeilingBps,
+        uint16 deepUnderwaterHfBps,
+        uint256 dustFloorNumeraire
+    );
+
     /// @notice T-034 Numeraire generalization (b1) — atomic numeraire rotation.
     ///         The struct carries ALL state that defines the protocol's
     ///         reference currency at once. By construction, governance
@@ -95,7 +108,15 @@ contract NumeraireConfigFacet is DiamondAccessControl {
     ///        `newKycTier1InNewNumeraire` when both non-zero.
     /// @param newKycTier1InNewNumeraire KYC Tier-1 threshold in
     ///        numeraire-units (1e18-scaled). 0 ⇒ default.
-    /// @dev Recycling M1 (#1346): the notification tariff is NO LONGER a
+    /// @dev The partial-liquidation dust floor is a numeraire value too, but
+    ///      it is configured on its own (`AdminFacet.setPartialLiquidationSizing`)
+    ///      and has no default, so a rotation RESETS it to 0 — dust handling
+    ///      off — rather than carrying a figure across currencies (#2419).
+    ///      The reset is emitted as {PartialLiquidationSizingSet} with the
+    ///      HF knobs unchanged; governance sets a floor in the new numeraire
+    ///      to switch dust handling back on.
+    ///
+    ///      Recycling M1 (#1346): the notification tariff is NO LONGER a
     ///      numeraire-denominated knob — it is a flat native-VPFI quantity
     ///      (`LibNotificationFee`), so it is deliberately absent from this
     ///      rotation. Rotating it here would clobber a VPFI amount with a
@@ -205,6 +226,15 @@ contract NumeraireConfigFacet is DiamondAccessControl {
         s.kycTier0ThresholdNumeraire = newKycTier0InNewNumeraire;
         s.kycTier1ThresholdNumeraire = newKycTier1InNewNumeraire;
         emit NumeraireUpdated(oldEthFeed, ethNumeraireFeed, numeraireSymbol);
+        // #2419 — the dust floor was denominated in the old numeraire.
+        if (s.liquidationDustFloorNumeraire != 0) {
+            s.liquidationDustFloorNumeraire = 0;
+            emit PartialLiquidationSizingSet(
+                s.partialLiqTargetHfCeilingBps,
+                s.partialLiqDeepUnderwaterHfBps,
+                0
+            );
+        }
     }
 
     /// @notice Update only the principal threshold for finer cadences,

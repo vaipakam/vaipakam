@@ -98,6 +98,7 @@ import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -111,6 +112,7 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 
 contract DeployDiamond is Script, ArtifactRootBase {
     // ── Deployed addresses (logged at the end) ──────────────────────────
@@ -125,12 +127,28 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @notice Operator entry point — reads `ADMIN_ADDRESS`,
     ///         `TREASURY_ADDRESS`, `DEPLOYER_PRIVATE_KEY` from env and
     ///         delegates to `runWith(...)`. Foundry's `forge script
-    ///         DeployDiamond --broadcast` invokes this.
+    ///         DeployDiamond --ffi --broadcast` invokes this (the storage-layout
+    ///         record in {runWith} needs `--ffi`).
+    /// @dev    #947 — when `ADMIN_PRIVATE_KEY` is also set (every deploy
+    ///         wrapper requires it), `ADMIN_ADDRESS` must be that key's
+    ///         address. Step 6 moves every role and the Diamond's ownership
+    ///         to `ADMIN_ADDRESS` and the deployer then renounces everything,
+    ///         so a mistyped address would leave the new Diamond owned by a
+    ///         key nobody running the deploy holds. Checked before anything
+    ///         is deployed.
     function run() external virtual {
-        runWith(
-            vm.envAddress("ADMIN_ADDRESS"),
-            vm.envAddress("TREASURY_ADDRESS"),
-            vm.envUint("DEPLOYER_PRIVATE_KEY")
+        address admin = vm.envAddress("ADMIN_ADDRESS");
+        requireAdminIsKey(admin, vm.envOr("ADMIN_PRIVATE_KEY", uint256(0)));
+        runWith(admin, vm.envAddress("TREASURY_ADDRESS"), vm.envUint("DEPLOYER_PRIVATE_KEY"));
+    }
+
+    /// @notice #947 — refuses an admin address that is not the address of
+    ///         the admin key the operator supplied. A zero key means none
+    ///         was supplied and nothing can be compared.
+    function requireAdminIsKey(address admin, uint256 adminKey) public pure {
+        require(
+            adminKey == 0 || vm.addr(adminKey) == admin,
+            "DeployDiamond: ADMIN_ADDRESS is not the address of ADMIN_PRIVATE_KEY - fix the typo before every role is handed to it"
         );
     }
 
@@ -205,10 +223,36 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ) public virtual {
         address deployerAddr = vm.addr(deployerKey);
 
+        // #947 — Step 6 hands every role and the ERC-173 ownership to
+        // `admin`, then the deployer renounces everything, with nothing in
+        // between to undo it. So the admin is checked here, before anything
+        // is deployed: the zero address would leave the Diamond with no
+        // owner and no role holder at all. On a production chain the admin
+        // must also be a different key from the deployer: the runbook's
+        // topology is a throwaway deployer that ends with no role, and an
+        // admin equal to it skips the Step 6 handover entirely.
+        require(admin != address(0), "DeployDiamond: admin is the zero address - every role and the ownership would be lost");
+        require(
+            admin != deployerAddr || !Deployments.requiresProductionGovernance(),
+            "DeployDiamond: on a production chain the admin must not be the deployer key"
+        );
+
         // #2070 r27 P1 — a live broadcast carrying DEPLOY_SKIP_ARTIFACTS is
         // refused HERE, before anything is deployed: the simulation fails, so
         // no transaction is sent and no Diamond reaches a chain unrecorded.
-        Deployments.artifactWritesEnabled();
+        //
+        // #2092 item 1 — a run that writes the artifact also writes the chain's
+        // storage-layout record and its anchor at the end of Step 7 (the layout
+        // every later in-place refresh of this Diamond is checked against;
+        // {StorageLayoutRecord}). Both guard calls go through ffi, so such a
+        // run needs `--ffi`. This precondition runs FIRST, before any
+        // transaction and any artifact write: a run without `--ffi`, or from a
+        // checkout whose golden layout is stale, is refused while nothing has
+        // changed, rather than after `addresses.json` already names the new
+        // Diamond. In `runWith`, not `run`, so `--sig runWith(...)` cannot skip
+        // it; `forge test` and a redirected artifact root skip it by the
+        // library's own rule ({StorageLayoutRecord.active}).
+        if (Deployments.artifactWritesEnabled()) StorageLayoutRecord.requireCurrentGolden("DeployDiamond");
 
         console.log("=== Vaipakam Diamond Deployment ===");
         console.log("Admin:   ", admin);
@@ -381,6 +425,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // payer's wallet or a user's vault moves it, and records the accrual,
         // through this facet's Diamond-internal entries (self-calls).
         TreasuryFeeFacet treasuryFeeFacet = new TreasuryFeeFacet();
+        // #2419 - the one 1e18 valuation rule. RiskFacet and every facet that
+        // inlines LibRiskMath value an amount through its views (self-calls).
+        NumeraireValueFacet numeraireValueFacet = new NumeraireValueFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             new RewardCompensationDispatchFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -415,7 +462,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](96);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](97);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -506,6 +553,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[93] = _buildCut(address(fallbackCustodyFacet), _getFallbackCustodySelectors());
         cuts[94] = _buildCut(address(swapAttemptFacet), _getSwapAttemptSelectors());
         cuts[95] = _buildCut(address(treasuryFeeFacet), _getTreasuryFeeSelectors());
+        cuts[96] = _buildCut(address(numeraireValueFacet), _getNumeraireValueSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -941,23 +989,19 @@ contract DeployDiamond is Script, ArtifactRootBase {
         console.log("Reward custody holder bound:", rewardCustodyHolder);
         console.log("Slice 4: fresh deployment marked rebased (0).");
 
-        // 5e. Unpause the protocol. The Diamond is born paused (see
-        //     `VaipakamDiamond.constructor` — `LibPausable.pause()` is
-        //     the last constructor write) so the half-cut window
-        //     between `diamondCut 1/2` and `diamondCut 2/2` cannot be
-        //     exploited via half-2 selectors. By this point every
-        //     facet in `cuts` is cut, every init call above has
-        //     landed, and the post-cut facet-count assertion
-        //     (`actualAfterCut2 == cuts.length`) has passed — safe
-        //     to flip the bit back. The deployer holds PAUSER_ROLE
-        //     from Step 5a's `initializeAccessControl`, so this call
-        //     succeeds without an extra grant. Mainnet operators that
-        //     want a multi-eye review window before unpausing can
-        //     comment this line out and run a separate manual
-        //     `setPaused(false)` after `--phase verify` confirms the
-        //     post-cut state.
-        AdminFacet(diamond).unpause();
-        console.log("Protocol unpaused.");
+        // 5e. The Diamond STAYS PAUSED (#945). It is born paused (see
+        //     `VaipakamDiamond.constructor`) so the half-cut window between
+        //     `diamondCut 1/2` and `2/2` cannot be exploited, and it used to
+        //     be unpaused here. But this script is only the contracts phase:
+        //     the price feeds, the sanctions screen, the swap routes and the
+        //     CCIP lanes are configured by LATER phases, and the admin key
+        //     still owns the Diamond until the handover. Unpausing here made
+        //     `createOffer` / `acceptOffer` public before any of that existed.
+        //     The first unpause is now `Launch.s.sol`, which reads every
+        //     `LibLaunchReadiness` requirement off the chain first, and on a
+        //     production chain only prints the Timelock proposal (owner
+        //     decision 2026-10-23: the Timelock unpauses after handover).
+        console.log("Protocol left PAUSED - run Launch.s.sol once the chain is configured.");
 
         // 5f. Enable the canonical-limit-order (GTC) master flags
         //     (Issue #102 / ADR-0010). Each is governance-tunable via
@@ -1192,6 +1236,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("fallbackCustodyFacet", address(fallbackCustodyFacet));
         Deployments.writeFacet("swapAttemptFacet", address(swapAttemptFacet));
         Deployments.writeFacet("treasuryFeeFacet", address(treasuryFeeFacet));
+        Deployments.writeFacet("numeraireValueFacet", address(numeraireValueFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -1263,6 +1308,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // leave the inventory describing a Diamond that was never deployed.
         Deployments.finalizeArtifact(diamond, _facetRecordingFailure);
 
+        // #2092 item 1 — the chain now runs this checkout's layout. A fresh
+        // Diamond replaces any record an earlier deployment left: the anchor
+        // names this Diamond, so the old one's record can no longer be used.
+        StorageLayoutRecord.record(diamond);
+
         console.log("");
         console.log("Admin:                ", admin);
         console.log("Treasury:             ", treasury);
@@ -1305,7 +1355,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getAccessControlSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](16);
+        s = new bytes4[](17);
         s[0] = AccessControlFacet.initializeAccessControl.selector;
         s[1] = AccessControlFacet.grantRole.selector;
         s[2] = AccessControlFacet.revokeRole.selector;
@@ -1331,10 +1381,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // Gated by `onlyRole(DEFAULT_ADMIN_ROLE)`.
         s[14] = AccessControlFacet.transferAdmin.selector;
         s[15] = AccessControlFacet.EMERGENCY_REVOKER_ROLE.selector;
+        // #945 — the role epoch a Timelock launch is bound to.
+        s[16] = AccessControlFacet.roleEpoch.selector;
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](49);
+        s = new bytes4[](50);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -1396,10 +1448,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[46] = AdminFacet.getRateModelMaxDeviationBps.selector;
         s[47] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
         s[48] = AdminFacet.unpauseIfPauseEpoch.selector;
+        // #945 — the gated first unpause (the launch).
+        s[49] = AdminFacet.launch.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](31);
+        s = new bytes4[](33);
         s[0] = ProfileFacet.updateKYCStatus.selector;
         s[1] = ProfileFacet.getUserCountry.selector;
         s[2] = ProfileFacet.isKYCVerified.selector;
@@ -1440,6 +1494,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[29] = ProfileFacet.isRecipientBarred.selector;
         // #1347 — per-offer creator Full VPFI tariff opt-in.
         s[30] = ProfileFacet.setOfferCreatorFullTariff.selector;
+        // #2721 — paid-notification billing consent (set + read).
+        s[31] = ProfileFacet.setNotificationFeeConsent.selector;
+        s[32] = ProfileFacet.getNotificationFeeConsent.selector;
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
@@ -1482,7 +1539,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](34);
+        s = new bytes4[](35);
         s[0] = OracleAdminFacet.setChainlinkRegistry.selector;
         s[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
         s[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
@@ -1535,6 +1592,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // reference asset list (constitution-level governance set).
         s[32] = OracleAdminFacet.setTierReferenceAssets.selector;
         s[33] = OracleAdminFacet.getTierReferenceAssets.selector;
+        // #945 — the launch readiness check prices WETH through the
+        // Diamond's own oracle, so it reads which WETH is configured.
+        s[34] = OracleAdminFacet.getWethContract.selector;
     }
 
     function _getNftSelectors() internal pure returns (bytes4[] memory s) {
@@ -3352,6 +3412,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      curated `RedeployFacets` cuts it from that library.
     function _getTreasuryFeeSelectors() internal pure returns (bytes4[] memory s) {
         s = FacetSelectors.treasuryFee();
+    }
+
+    /// @dev #2419 - the valuation host. Returns the ONE list in
+    ///      `FacetSelectors.numeraireValue()`, as for the treasury fee host:
+    ///      both curated refresh scripts cut it from that library.
+    function _getNumeraireValueSelectors() internal pure returns (bytes4[] memory s) {
+        s = FacetSelectors.numeraireValue();
     }
 
     /// @dev 3b-ii-B (#1566) — the per-day closure proof.

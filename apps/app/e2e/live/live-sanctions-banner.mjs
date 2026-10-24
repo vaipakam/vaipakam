@@ -227,17 +227,28 @@ await ctx.addInitScript(() => {
 const ledger = createReadLedger({
   flag: watchedRead('isSanctionedAddress(address)', DIAMOND, WALLET),
 });
-const { wsViolations } = attachLedger(page, ledger, READ_METHODS);
+const { wsViolations, settled } = attachLedger(page, ledger, READ_METHODS);
 
-/** A request the read-only session refused outranks every other outcome:
- *  print it and FAIL, before any BLOCKED can hide it. */
+/** A request the read-only session refused, or a flag read a reachable
+ *  provider refused as malformed, outranks every other outcome: print it
+ *  and FAIL, before any BLOCKED can hide it. Every exit runs this first. */
 async function failIfRefused() {
+  // Let the page's in-flight flag reads land first: one a provider is
+  // refusing as malformed outranks the exit about to be taken.
+  await settled();
   // The guard's refusals, plus non-read methods the page sent on its own
   // WebSocket (a door the guard does not cover; those were not prevented).
   const all = [...blockedRequests, ...wsViolations];
-  if (all.length === 0) return;
-  console.log(`FAIL read-only: the page attempted ${all.length} non-read request(s)`);
+  // The page's own flag reads the provider refused as malformed (#1633 r5):
+  // a defect in what the page sent, not an RPC outage.
+  const faults = ledger.faults();
+  if (all.length === 0 && faults.length === 0) return;
+  if (all.length > 0) console.log(`FAIL read-only: the page attempted ${all.length} non-read request(s)`);
   for (const b of all) console.log(`  ${b.reason} — ${b.url}`);
+  if (faults.length > 0) {
+    console.log(`FAIL: a reachable provider refused ${faults.length} of the page's sanctions reads as malformed`);
+    for (const f of faults) console.log(`  ${f.kind}: ${f.why}`);
+  }
   await done();
   process.exit(1);
 }
@@ -245,7 +256,6 @@ async function failIfRefused() {
 /** Every BLOCKED exit after launch goes through here. */
 async function stopBlocked(reason) {
   await failIfRefused();
-  await done();
   await blocked(reason);
 }
 
@@ -297,6 +307,8 @@ let failures = 0;
  * `until`, ANSWERED by then — what the page knew when the banner was
  * seen) are judged first:
  *   - never sent            → FAIL: the app did not ask;
+ *   - refused as malformed  → FAIL: the app sent a bad read (the shared
+ *                             classifier's client fault, #1633 r5);
  *   - sent, never answered  → BLOCKED: its RPC, not the banner;
  *   - answered the opposite → BLOCKED: a stale provider, not the banner;
  *   - answered `expected`   → `outcome` decides: 'pass', 'fail', or
@@ -310,6 +322,12 @@ async function check(label, expected, since, until, outcome, banner) {
   };
   if (j.state === 'none') {
     console.log(`FAIL ${label}: the page never sent its sanctions read of this wallet in this window`);
+    show();
+    failures++;
+    return;
+  }
+  if (j.state === 'fault') {
+    console.log(`FAIL ${label}: a reachable provider refused the page's sanctions read as malformed (${j.why})`);
     show();
     failures++;
     return;

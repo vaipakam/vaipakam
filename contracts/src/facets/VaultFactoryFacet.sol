@@ -125,6 +125,13 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         uint64 minActiveExpires
     );
 
+    /// @notice Emitted when the mandatory minimum vault version changes
+    ///         (#2363). Every user whose vault is stamped below `version` is
+    ///         refused the vault-dependent entry points until they (or
+    ///         anyone) call {upgradeUserVault}; zero clears the requirement.
+    /// @custom:event-category informational/config
+    event MandatoryVaultVersionSet(uint256 previousVersion, uint256 version);
+
     /// @notice Emitted when the shared vault implementation is upgraded.
     /// @param oldImplementation The address of the previous implementation.
     /// @param newImplementation The address of the new implementation.
@@ -183,6 +190,11 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     ///      ERC-20 loan, which rents nothing.
     error NotRentalLoan();
     error VaultUpgradeRequired();
+    /// @dev #2363 — a mandatory vault version above `currentVaultVersion`
+    ///      is a bar no user can clear: {upgradeUserVault} can only stamp a
+    ///      user at `currentVaultVersion`, so every existing-vault user
+    ///      would be refused until an admin acted again.
+    error MandatoryVaultVersionUnreachable(uint256 version, uint256 currentVersion);
     /// @dev Stuck-recovery rejected: caller-supplied amount is zero.
     error AmountZero();
     /// @dev Stuck-recovery rejected: token has protocol-configured risk
@@ -224,16 +236,16 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     /**
      * @notice Initializes the shared vault implementation by deploying a new VaipakamVaultImplementation.
      * @dev VAULT_ADMIN_ROLE-only. Single-shot: reverts AlreadyInitialized
-     *      once `vaipakamVaultTemplate` is set. Deploys a fresh impl,
-     *      calls its `initialize(diamond, impl)` and stores both the
-     *      template and the diamond self-reference.
+     *      once `vaipakamVaultTemplate` is set. Deploys a fresh impl and
+     *      stores both the template and the diamond self-reference. The
+     *      impl is not initialized: its constructor locks it (#905), and
+     *      only the per-user proxies are ever initialized.
      */
     function initializeVaultImplementation() external onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.vaipakamVaultTemplate != address(0)) revert AlreadyInitialized();
 
         VaipakamVaultImplementation impl = new VaipakamVaultImplementation();
-        impl.initialize(address(this), address(impl)); // Assume initialize() in impl sets owner to Diamond
         s.vaipakamVaultTemplate = address(impl);
         s.diamondAddress = address(this);
     }
@@ -319,10 +331,19 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      *      below this value is blocked from all diamond-driven vault
      *      interactions (see getOrCreateUserVault) until they call
      *      {upgradeUserVault}. Set to 0 to clear the requirement.
-     * @param version The minimum required vault version (use currentVaultVersion).
+     *      Refuses a version above `currentVaultVersion` (#2363): the
+     *      permissionless repair stamps users at `currentVaultVersion` and
+     *      no higher, so such a bar would halt every existing-vault user
+     *      with no way for them to clear it.
+     * @param version The minimum required vault version (at most
+     *        currentVaultVersion; normally exactly it).
      */
     function setMandatoryVaultUpgrade(uint256 version) external onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (version > s.currentVaultVersion) {
+            revert MandatoryVaultVersionUnreachable(version, s.currentVaultVersion);
+        }
+        emit MandatoryVaultVersionSet(s.mandatoryVaultVersion, version);
         s.mandatoryVaultVersion = version;
     }
 

@@ -35,6 +35,14 @@
  * sitemap assertion below is therefore the load-bearing one. If someone
  * later adds a public nested route and lists it, that rule would quietly
  * withhold it from search, and this test fails first.
+ *
+ * ## The trailing-slash redirect leans on the same fact (#2079)
+ *
+ * `_redirects` answers `/<route>/` with a 301 to `/<route>`, for ONE
+ * segment only. That is complete only while every indexable URL is one
+ * segment, which is the same sitemap property the locale rule needs — so
+ * the redirect's assertions live here beside it rather than restating
+ * the sitemap read in a second file.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -44,6 +52,7 @@ import { describe, expect, it } from 'vitest';
 const appDir = resolve(__dirname, '..', '..');
 const publicDir = resolve(appDir, 'public');
 const headers = readFileSync(resolve(publicDir, '_headers.base'), 'utf8');
+const redirects = readFileSync(resolve(publicDir, '_redirects'), 'utf8');
 
 /** The sitemap, generating it first if this checkout has not built.
  *
@@ -124,5 +133,42 @@ describe('_headers.base', () => {
     // Named, not counted: whoever adds a nested public route needs to
     // know that this rule would hide it, not merely that a number moved.
     expect(nested).toEqual([]);
+  });
+});
+
+/** Every non-comment line of `_redirects`, as `[source, destination, status]`. */
+function redirectRules(src: string): string[][] {
+  return src
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '' && !l.startsWith('#'))
+    .map((l) => l.split(/\s+/));
+}
+
+describe('_redirects (#2079)', () => {
+  const rules = redirectRules(redirects);
+
+  it('sends every single-segment trailing-slash form to its slashless URL with a 301', () => {
+    // 301, not the 302 Cloudflare defaults to when no status is given:
+    // this is canonicalisation, and only a permanent redirect says so.
+    expect(rules).toContainEqual(['/:slug/', '/:slug', '301']);
+  });
+
+  it('carries no rule that could touch the root or a sitemap URL', () => {
+    // The root and every submitted URL must be served, not redirected.
+    // A rule whose source is one of them would bounce a crawler off the
+    // page the sitemap told it to index.
+    const submitted = new Set(
+      [...sitemap().matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => new URL(m[1]).pathname),
+    );
+    expect(submitted.size).toBeGreaterThan(0);
+    for (const [source] of rules) expect(submitted.has(source)).toBe(false);
+  });
+
+  it('stays far inside the documented rule limits', () => {
+    // 2,000 static + 100 dynamic. One rule today; the margin is the point.
+    const dynamic = rules.filter(([source]) => /[:*]/.test(source));
+    expect(dynamic.length).toBeLessThanOrEqual(10);
+    expect(rules.length).toBeLessThanOrEqual(100);
   });
 });

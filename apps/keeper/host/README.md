@@ -78,7 +78,10 @@ resolve.
 
 [`deploy/`](deploy/) is the install kit for an Ubuntu machine: an
 `install.sh`, the systemd units, an updater that deploys every merge to
-`main`, and the env template. The procedure, including the
+`main`, and the env template. The machine never builds the keeper: CI
+([`keeper-host-release.yml`](../../../.github/workflows/keeper-host-release.yml))
+builds and attests each bundle, and the updater installs one only after
+`gh attestation verify` accepts it. The procedure, including the
 one-copy-per-key rule and the disarmed-then-armed checks, is the runbook
 [`docs/ops/KeeperMachine.md`](../../../docs/ops/KeeperMachine.md).
 

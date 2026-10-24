@@ -30,6 +30,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../../src/facets/TreasuryFeeFacet.sol";
+import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
@@ -131,7 +132,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](27);
         // #1503 item 12 — the reward-migration hook is ATOMIC with the sale
         // settlement now, so `transferLenderRewardEntry` must resolve here;
         // unrouted it would bubble as the deploy-drift failure and revert
@@ -216,6 +217,14 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
             facetAddress: address(new TreasuryFeeFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
+        });
+        // #2419 - RiskFacet (LTV / HF) and the offer facets value every amount
+        // through NumeraireValueFacet by self-call, so a hand-built Diamond
+        // that cuts any of them must cut this host too.
+        cuts[26] = IDiamondCut.FacetCut({
+            facetAddress: address(new NumeraireValueFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getNumeraireValueFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

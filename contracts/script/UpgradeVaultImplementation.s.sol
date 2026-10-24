@@ -8,6 +8,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 
 /**
  * @title  UpgradeVaultImplementation
@@ -26,14 +27,16 @@ import {Deployments} from "./lib/Deployments.sol";
  *         retarget step. Run this only when the vault implementation bytecode
  *         actually changed since the live template was last deployed.
  *
- * @dev    GENESIS-PARITY TEMPLATE INIT
- *         Mirrors {VaultFactoryFacet.initializeVaultImplementation}: after
- *         deploying the fresh impl we call `initialize(diamond, address(impl))`
- *         on the template itself, locking its owner to the diamond so a griefer
- *         cannot front-run the (constructor-less, non-`_disableInitializers`)
- *         template's `initialize`. `upgradeVaultImplementation` itself only
- *         checks `code.length != 0`; it neither initialises nor validates
- *         storage-layout compatibility — that is the operator's responsibility.
+ * @dev    NO TEMPLATE INIT (#905)
+ *         The implementation's constructor calls `_disableInitializers()`, so
+ *         a freshly deployed template is locked the moment it exists and
+ *         nobody can front-run an `initialize` on it. This script used to
+ *         initialize the template itself to close that window; that call
+ *         would now revert, and is gone, as it is from
+ *         {VaultFactoryFacet.initializeVaultImplementation}.
+ *         `upgradeVaultImplementation` itself only checks `code.length != 0`;
+ *         it does not validate storage-layout compatibility. This script
+ *         does (#2092): see STORAGE SAFETY below.
  *
  * @dev    LAZY vs FORCED PROXY UPGRADE
  *         `upgradeVaultImplementation` only re-points the SHARED template and
@@ -53,6 +56,10 @@ import {Deployments} from "./lib/Deployments.sol";
  *         insert / reorder / type change would silently corrupt live vault
  *         state — do a fresh deploy in that case. Per owner policy (2026-06-19)
  *         this in-place path is TESTNET-ONLY; mainnet rollouts are always fresh.
+ *         Since #2092 the script refuses such a change itself: it runs the
+ *         storage-layout guard against the chain's record
+ *         (`deployments/<slug>/storage-layout.json`) before broadcasting, and
+ *         rewrites the record after the retarget. Run it with `--ffi`.
  *
  *         Env:
  *           - DEPLOYER_PRIVATE_KEY : deployer — deploys + initialises the impl,
@@ -70,7 +77,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *         Usage (from contracts/, on main) — run once per chain. Use `--slow`:
  *         the admin owner is EIP-7702-delegated on at least Base Sepolia, and a
  *         delegated account may have only one in-flight tx (no gapped nonces).
- *           forge script script/UpgradeVaultImplementation.s.sol --sig "run()" \
+ *           forge script script/UpgradeVaultImplementation.s.sol --sig "run()" --ffi \
  *             --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
  *           # then the same with $ARB_SEPOLIA_RPC_URL
  */
@@ -106,6 +113,13 @@ contract UpgradeVaultImplementation is Script {
             "UpgradeVaultImplementation: vault template uninitialised (run initializeVaultImplementation first)"
         );
 
+        // #2092 item 1 — the vault template is a UUPS root of the storage
+        // guard: refuse code that drops a layout fact this chain records,
+        // before anything is broadcast (needs `--ffi`). This replaces the
+        // operator-only precondition the STORAGE SAFETY note above used to
+        // leave to judgement.
+        StorageLayoutRecord.requireAppendOnly("UpgradeVaultImplementation", diamond);
+
         // OPTIONAL eager per-user upgrade list. Default = none (lazy upgrade).
         address[] memory users = vm.envOr("VAULT_UPGRADE_USERS", ",", new address[](0));
 
@@ -116,7 +130,7 @@ contract UpgradeVaultImplementation is Script {
         console.log("Old impl:  ", oldImpl);
         console.log("Eager users:", users.length);
 
-        // ── Deployer: fund admin gas (if low), deploy + genesis-init the impl ──
+        // ── Deployer: fund admin gas (if low), deploy the impl ──
         vm.startBroadcast(deployerKey);
         if (admin.balance < 0.01 ether) {
             // `.call` not `.transfer` (Codex #1182): the admin is the
@@ -126,9 +140,9 @@ contract UpgradeVaultImplementation is Script {
             require(topUpOk, "UpgradeVaultImplementation: admin gas top-up failed");
             console.log("Topped up admin with 0.01 ETH");
         }
+        // Nothing to initialize: the constructor locks the implementation
+        // (#905), and only per-user proxies are ever initialized.
         VaipakamVaultImplementation impl = new VaipakamVaultImplementation();
-        // Genesis parity: lock the fresh template's owner to the diamond.
-        impl.initialize(diamond, address(impl));
         vm.stopBroadcast();
         address newImpl = address(impl);
         require(newImpl != oldImpl, "UpgradeVaultImplementation: fresh impl collided with old (impossible)");
@@ -153,6 +167,7 @@ contract UpgradeVaultImplementation is Script {
         // addresses.json stale vs the live diamond. The eager loop is a
         // best-effort convenience, not part of recording the template bump.
         Deployments.writeVaultImpl(newImpl);
+        StorageLayoutRecord.record(diamond);
 
         // ── Optional: eagerly upgrade the known dev-wallet vaults ──
         // `upgradeUserVault` is permissionless; the deployer signs. Each call

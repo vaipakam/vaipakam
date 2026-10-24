@@ -47,7 +47,7 @@ contract ExportedFacetParityTest is Test, DiamondFacetNames {
     string internal constant MANIFEST = "../packages/contracts/scripts/diamond-facets.json";
 
     function _diamondFacets() internal pure returns (string[] memory all) {
-        string[96] memory cut = cutFacetNames();
+        string[97] memory cut = cutFacetNames();
         all = new string[](cut.length + 1);
         for (uint256 i = 0; i < cut.length; i++) all[i] = cut[i];
         all[cut.length] = "DiamondCutFacet";

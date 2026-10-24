@@ -556,6 +556,11 @@
   },
   {
     "type": "error",
+    "name": "AlreadyLaunched",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ArmedFreshPaidAlreadyRebased",
     "inputs": []
   },
@@ -2245,6 +2250,11 @@
         "internalType": "uint64"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "LaunchGateCallInvalid",
+    "inputs": []
   },
   {
     "type": "error",
@@ -5139,6 +5149,17 @@
     "type": "error",
     "name": "SwapAttemptHostMissing",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TokenDecimalsUnreadable",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

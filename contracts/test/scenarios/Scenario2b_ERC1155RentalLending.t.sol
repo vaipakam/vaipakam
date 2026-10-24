@@ -33,6 +33,7 @@ import {ERC1155RentableMock} from "../mocks/ERC1155RentableMock.sol";
 import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../../src/facets/TreasuryFeeFacet.sol";
+import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {defaultAdapterCalls} from "../helpers/AdapterCallHelpers.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
@@ -143,7 +144,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         helperTest = new HelperTest();
         vaultImpl = new VaipakamVaultImplementation();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -214,6 +215,14 @@ contract Scenario2b_ERC1155RentalLending is Test {
             facetAddress: address(new TreasuryFeeFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
+        });
+        // #2419 - RiskFacet (LTV / HF) and the offer facets value every amount
+        // through NumeraireValueFacet by self-call, so a hand-built Diamond
+        // that cuts any of them must cut this host too.
+        cuts[21] = IDiamondCut.FacetCut({
+            facetAddress: address(new NumeraireValueFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getNumeraireValueFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

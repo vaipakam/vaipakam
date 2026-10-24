@@ -94,6 +94,7 @@ import {
   chooseMenuValue,
   clientsFor,
   ensureConnected,
+  indexerOrigin,
   launch,
   LivePreconditionError,
   requireSiteUrl,
@@ -221,25 +222,7 @@ const erc20Read = (token, functionName, args = []) =>
 // worker. Node's global fetch rides the same optional LIVE_PROXY_SETUP
 // dispatcher swap driver.mjs performs at import time, so the probes
 // work wherever the page traffic does.
-const INDEXER = process.env.INDEXER_ORIGIN ?? 'https://indexer.vaipakam.com';
-// An operator override that is not an absolute http(s) origin never
-// reaches a server: `fetch` rejects on URL parsing, the drive catch
-// records it, and the batch reports an unusable CONFIG as a product FAIL
-// (Codex #1621 r10). Validated here, where exiting is free.
-{
-  let parsed = null;
-  try {
-    parsed = new URL(INDEXER);
-  } catch {
-    /* reported just below */
-  }
-  if (!parsed || !/^https?:$/.test(parsed.protocol)) {
-    blockedSync(
-      `INDEXER_ORIGIN is not an absolute http(s) origin: ${JSON.stringify(INDEXER)}` +
-        ' — the indexer probes this drive asserts against could never be reached.',
-    );
-  }
-}
+const INDEXER = indexerOrigin();
 
 /** GET an indexer route; returns { status, body } with the body parsed
  *  leniently (null on non-JSON) — status/shape asserts are the
@@ -766,13 +749,19 @@ try {
   const chartUnavailable = chartCard.getByText(
     /couldn.t load the rate history right now/i,
   );
-  // `copy.desk.chart.empty` — "No loans agreed yet for this pair — the
+  // `copy.desk.chart.empty` — "No loans agreed yet at this duration — the
   // chart only shows rates people actually agreed." (matched on its distinctive
   // second half so the tape's similar "No loans agreed yet…" copy can't
   // collide even if scoping ever changes).
   const chartEmptyMarket = chartCard.getByText(/chart only shows rates people actually agreed/i);
   // `copy.desk.chart.emptyRange` — "No loans agreed in this period…"
   const chartEmptyRange = chartCard.getByText(/no loans agreed in this period/i);
+  // #1142 — `emptyUnplaced` (the pair has loans no tenor holds) and
+  // `emptyCatchingUp` (the tape shows a newer loan than the chart) are honest
+  // empty states too.
+  const chartEmptyOther = chartCard.getByText(
+    /no loans with confirmed terms at this duration|has not caught up with the newest loans/i,
+  );
   // The wrapper div mounts before lightweight-charts initializes, so a
   // "drawn series" claim must see the library's actual OUTPUT — a
   // <canvas> child — not just the container (Codex #1143 round-1 P2:
@@ -784,6 +773,7 @@ try {
       (await chartUnavailable.isVisible().catch(() => false)) ||
       (await chartEmptyMarket.isVisible().catch(() => false)) ||
       (await chartEmptyRange.isVisible().catch(() => false)) ||
+      (await chartEmptyOther.isVisible().catch(() => false)) ||
       (await chartCanvas.count().catch(() => 0)) > 0,
     { timeoutMs: 45_000, intervalMs: 2_000 },
   );
@@ -801,8 +791,10 @@ try {
             : ''
         }`
       : (await chartEmptyMarket.isVisible().catch(() => false))
-        ? 'honest market-history empty copy ("…chart draws only executed rates.")'
-        : 'honest range-scoped empty copy ("No loans agreed in this period…")';
+        ? 'honest market-history empty copy ("…chart only shows rates people actually agreed.")'
+        : (await chartEmptyOther.isVisible().catch(() => false))
+          ? 'honest unplaced or catching-up empty copy (#1142)'
+          : 'honest range-scoped empty copy ("No loans agreed in this period…")';
   // The interval/range chip groups render in EVERY chart state (they
   // sit outside the tri-state branch). The Apache-2.0 TradingView
   // attribution link, by contrast, shows ONLY when a chart actually
@@ -842,14 +834,23 @@ try {
   // Wire probe — the exact worker route the chart reads, for the
   // driven market with the UI's default view params (1d × 30d): must
   // 200 with a `buckets` array (empty is fine — the driven market
-  // usually has no fills; the count is recorded either way).
+  // usually has no fills; the count is recorded either way) AND the
+  // #1142 disclosures the app requires (the `unplaced` count, each
+  // bucket's `unrecordedPrincipalFills`): without them the desk shows
+  // the chart as unavailable.
   const candlesProbe = await indexerGet(
     `${INDEXER}/loans/rate-candles?chainId=${CHAIN_ID}` +
       `&lendingAsset=${asAddress(WETH, 'bundle weth')}` +
       `&collateralAsset=${asAddress(TLIQ, 'bundle liquidToken')}` +
       `&durationDays=${tenor}&interval=1d&range=30d`,
   );
-  if (candlesProbe.status !== 200 || !Array.isArray(candlesProbe.body?.buckets)) {
+  const unplacedOk =
+    Number.isInteger(candlesProbe.body?.unplaced?.count) &&
+    typeof candlesProbe.body?.unplaced?.capped === 'boolean';
+  const bucketsOk =
+    Array.isArray(candlesProbe.body?.buckets) &&
+    candlesProbe.body.buckets.every((b) => Number.isInteger(b?.unrecordedPrincipalFills));
+  if (candlesProbe.status !== 200 || !bucketsOk || !unplacedOk) {
     throw new Error(
       `/loans/rate-candles wire probe failed — status ${candlesProbe.status}, ` +
         `body ${JSON.stringify(candlesProbe.body)?.slice(0, 300)}`,
@@ -1102,13 +1103,16 @@ try {
   // ---- step 7: tape panel — indexer-backed, ASSERTED healthy ---------
   // (Codex round-2 P2 #3.) The market-scoped /loans/recent route is
   // production-healthy post-migration, so the tape must resolve to
-  // real fills or the honest empty copy (`copy.desk.tapeEmpty`:
-  // "No loans agreed yet for this pair.") — the unavailable copy
+  // real fills or an honest empty copy (`copy.desk.tapeEmpty`: "No loans
+  // agreed yet at this duration.", or `tapeEmptyUnplaced` when the pair has
+  // loans whose tenor is unknown, #1142) — the unavailable copy
   // (`copy.desk.tapeUnavailable`: "We couldn't load recent loans right
   // now.") is a FAIL.
   const tapeCard = page.locator('.card').filter({ hasText: 'Recent loans' }).first();
   await tapeCard.waitFor({ timeout: 30_000 });
-  const tapeEmpty = tapeCard.getByText('No loans agreed yet for this pair.', { exact: true });
+  const tapeEmpty = tapeCard.getByText(
+    /^No loans (agreed yet|with confirmed terms) at this duration( yet)?\.$/,
+  );
   const tapeUnavailable = tapeCard.getByText(/couldn.t load recent loans right now/i);
   const tapeRows = tapeCard.locator('.desk-tape-row');
   await pollChain(
@@ -1131,7 +1135,7 @@ try {
     'PASS',
     tapeFillCount > 0
       ? `${tapeFillCount} fill row(s) rendered`
-      : 'honest market-scoped empty state ("No loans agreed yet for this pair.")',
+      : 'honest market-scoped empty state',
   );
 
   // ---- step 7b (phase 2, #1130): History tab — ASSERTED healthy ------

@@ -28,6 +28,13 @@ import {
   foldRateCandles,
   type CandleFillRow,
 } from './rateCandles';
+import {
+  PLACED_IN_TENOR_SQL,
+  PLACEMENT_RULE,
+  placedTenorOf,
+  readUnplacedCount,
+  unplacedOnPairStatement,
+} from './marketPlacement';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -136,6 +143,12 @@ function loanToJson(row: LoanRow): Record<string, unknown> {
     // Backed only on the explicit 0, for the reason above.
     initRateBps: row.init_terms_unbacked === 0 ? (row.init_rate_bps ?? null) : null,
     initDurationDays: row.init_terms_unbacked === 0 ? (row.init_duration_days ?? null) : null,
+    // #1142 — the tenor MARKET the loan is a fill of, by the one placement
+    // rule the candles and the market-scoped `/loans/recent` select on
+    // (marketPlacement.ts), so a client re-checking a scoped page compares
+    // the key the server used. null = placed in no market: the agreed terms
+    // are not confirmed, so any tenor would be a guess.
+    marketDurationDays: placedTenorOf(row),
     collateralAmount: row.collateral_amount,
     assetType: row.asset_type,
     collateralAssetType: row.collateral_asset_type,
@@ -1260,7 +1273,13 @@ export async function handleLoansRecent(req: Request, env: Env): Promise<Respons
       binds.push(market.collateralAsset);
     }
     if (market.durationDays !== null) {
-      conds.push('duration_days = ?');
+      // #1142 — scope by the one placement rule the candles use
+      // (marketPlacement.ts): the AGREED tenor, and only when the agreed
+      // terms are confirmed. `LoanExtended` rewrites the live
+      // `duration_days`, which moved an extended 30d fill into the 60d tape;
+      // an unconfirmed snapshot names a tenor that may be a guess. Rides
+      // 0071's partial index.
+      conds.push(PLACED_IN_TENOR_SQL);
       binds.push(market.durationDays);
     }
     if (excludeSaleVehicles) {
@@ -1271,13 +1290,50 @@ export async function handleLoansRecent(req: Request, env: Env): Promise<Respons
        WHERE ${conds.join(' AND ')}
        ORDER BY loan_id DESC LIMIT ?`,
     ).bind(...binds, limit);
-    const rows = await stmt.all<LoanRow>();
+    // #1142 — a tape scoped to one (pair, tenor) market also states how many
+    // loans on the pair no tenor holds (all time, capped), read in the same
+    // batch, so an empty tape never reads as "no loans agreed" while the
+    // pair has loans whose tenor is unknown (Codex #2689 r5).
+    const marketScoped =
+      market.lendingAsset !== null &&
+      market.collateralAsset !== null &&
+      market.durationDays !== null;
+    let rows: D1Result<LoanRow>;
+    let unplaced: ReturnType<typeof readUnplacedCount> | null = null;
+    if (marketScoped) {
+      const [tapeRows, unplacedRows] = await env.DB.batch([
+        stmt,
+        unplacedOnPairStatement(
+          env.DB,
+          chainId,
+          market.lendingAsset!,
+          market.collateralAsset!,
+          0,
+        ),
+      ]);
+      rows = tapeRows as D1Result<LoanRow>;
+      unplaced = readUnplacedCount(unplacedRows as D1Result<{ n: number }>);
+    } else {
+      rows = await stmt.all<LoanRow>();
+    }
     const loans = (rows.results ?? []).map(loanToJson);
     const next =
       loans.length === limit && loans.length > 0
         ? (loans[loans.length - 1] as { loanId: number }).loanId
         : null;
-    return jsonResponse({ chainId, loans, nextBefore: next });
+    // The scope this page was actually read under, so a reader can verify
+    // the filters were applied — an empty page included, which has no row
+    // to check (#1142, Codex #2689 r5). `placement` names the rule that
+    // chose the tenor; null when no tenor was asked for. `unplaced` is null
+    // unless the page is scoped to one full market.
+    const scope = {
+      lendingAsset: market.lendingAsset,
+      collateralAsset: market.collateralAsset,
+      durationDays: market.durationDays,
+      placement: market.durationDays !== null ? PLACEMENT_RULE : null,
+      excludeSaleVehicles,
+    };
+    return jsonResponse({ chainId, loans, nextBefore: next, scope, unplaced });
   } catch (err) {
     console.error('[loanRoutes] recent failed', err);
     return jsonResponse({ error: 'recent-failed' }, 500);
@@ -1431,7 +1487,9 @@ export async function handleLoansTimeseries(
  *   ?chainId=8453&lendingAsset=0x..&collateralAsset=0x..&durationDays=30
  *   &interval=1h|4h|1d&range=7d|30d|90d|all
  *
- * → { chainId, buckets: [{ t, open, high, low, close, fills, principalTotal }] }
+ * → { chainId, buckets: [{ t, open, high, low, close, fills, principalTotal,
+ *                           unrecordedPrincipalFills }],
+ *     unplaced: { count, capped }, truncated }
  *
  * Executed-rate OHLC series for ONE market (ProRateTerminalDesign.md §7). All
  * three market params are REQUIRED — a candle series is per-market by
@@ -1462,11 +1520,21 @@ export async function handleLoansTimeseries(
  * 30d fill into the 60d market at its original start_at. So BOTH the tenor
  * scope AND the selected rate/principal read the init_* snapshot columns
  * (stamped at every LoanInitiated insert path, never mutated — migration
- * 0032 §2), COALESCEd to the mutable column only for rows written by a
- * pre-snapshot worker in the migration→deploy window (the 0032 backfill
- * fills everything that exists at apply time). The COALESCE tenor
- * expression is spelled IDENTICALLY to the 0032 expression index so the
- * planner can match it textually; correctness doesn't depend on the index.
+ * 0032 §2).
+ *
+ * PLACEMENT (#1142, Codex #2689 r2–r3): the market is chosen by the one rule
+ * in marketPlacement.ts. A loan is a fill of this tenor only when its agreed
+ * terms are confirmed by the ledger (`init_terms_unbacked = 0`, 0058), so
+ * every rate drawn is a backed one. The rule used to COALESCE to the live
+ * columns, which plotted, and filed under a tenor, terms nobody could back. A
+ * loan on this pair whose terms are not confirmed is in no tenor market: the
+ * response counts those in range as `unplaced` (pair-wide, every tenor), and
+ * the desk says so, rather than drawing a guess or dropping them silently.
+ * The count is read in the same batch as the candles (one snapshot) and stops
+ * at `UNPLACED_COUNT_CAP`; past it, `capped: true` says "more than".
+ * A drawn fill whose PRINCIPAL is not confirmed (`init_principal_unbacked`,
+ * 0056) is counted in its bucket's `unrecordedPrincipalFills` and left out of
+ * `principalTotal`.
  * `start_at` needs no snapshot — it is written once at insert and no
  * handler updates it (LoanExtended/partial repay reset `start_time`, a
  * different column).
@@ -1476,7 +1544,7 @@ export async function handleLoansTimeseries(
  * JS (`foldRateCandles`). Rationale in rateCandles.ts: principal MUST be
  * BigInt-folded (the /loans/stats pattern), and SQLite has no first/last
  * aggregate for open/close, so one ordered select + one JS pass is the
- * simplest correct shape. Rides `idx_loans_market_start_at` (migration 0032).
+ * simplest correct shape. Rides `idx_loans_placed_tenor_start_at` (0071).
  *
  * Buckets: only where fills >= 1 (no empty/interpolated buckets — §5.3),
  * ascending by t. `range=all` = no lower time bound.
@@ -1531,10 +1599,9 @@ export async function handleLoansRateCandles(
       'chain_id = ?',
       'lending_asset = ?',
       'collateral_asset = ?',
-      // Tenor scope on the INIT duration (see the immutable-fill-terms
-      // header note) — an extended loan's fill stays in the market it
-      // executed in. Expression spelled exactly like the 0032 index.
-      'COALESCE(init_duration_days, duration_days) = ?',
+      // The one placement rule (see PLACEMENT above): the agreed tenor,
+      // and only when the agreed terms are confirmed.
+      PLACED_IN_TENOR_SQL,
       'is_sale_vehicle = 0',
       'asset_type = 0',
       'collateral_asset_type = 0',
@@ -1545,29 +1612,41 @@ export async function handleLoansRateCandles(
       market.collateralAsset,
       market.durationDays,
     ];
-    if (rangeDays !== null) {
+    const since =
+      rangeDays === null ? null : Math.floor(Date.now() / 1000) - rangeDays * 86400;
+    if (since !== null) {
       conds.push('start_at >= ?');
-      binds.push(Math.floor(Date.now() / 1000) - rangeDays * 86400);
+      binds.push(since);
     }
-    // Aliased so CandleFillRow / foldRateCandles stay shape-agnostic: the
-    // fill's terms are the INIT snapshot, never the mutated live values.
+    // The INIT snapshot and its provenance flags; never the live values.
     // #1247 PAG-009 — bounded scan: `range=all` has no start bound, so
     // a long-lived busy market would otherwise make this an unbounded
     // D1 read per request. Scan the NEWEST CANDLE_SCAN_CAP fills
     // (DESC + reverse for the fold's ascending order) and say so —
     // a truncated series drops the OLDEST candles, never recent ones.
-    const rows = await env.DB.prepare(
-      `SELECT loan_id, start_at,
-              COALESCE(init_rate_bps, interest_rate_bps) AS interest_rate_bps,
-              COALESCE(init_principal, principal) AS principal
-       FROM loans
-       WHERE ${conds.join(' AND ')}
-       ORDER BY start_at DESC, loan_id DESC
-       LIMIT ?`,
-    )
-      .bind(...binds, CANDLE_SCAN_CAP + 1)
-      .all<CandleFillRow>();
-    const fills = rows.results ?? [];
+    // The candle read and the unplaced count (the loans on this pair in
+    // range that no tenor market holds, marketPlacement.ts) run in ONE
+    // batch, so both describe the same snapshot: a loan whose flag clears
+    // between two separate reads would otherwise be counted by both or by
+    // neither. `range=all` counts from the epoch.
+    const [rows, unplacedRows] = await env.DB.batch([
+      env.DB.prepare(
+        `SELECT loan_id, start_at, init_rate_bps,
+                init_principal, init_principal_unbacked
+         FROM loans
+         WHERE ${conds.join(' AND ')}
+         ORDER BY start_at DESC, loan_id DESC
+         LIMIT ?`,
+      ).bind(...binds, CANDLE_SCAN_CAP + 1),
+      unplacedOnPairStatement(
+        env.DB,
+        chainId,
+        market.lendingAsset,
+        market.collateralAsset,
+        since ?? 0,
+      ),
+    ]);
+    const fills = (rows.results ?? []) as CandleFillRow[];
     const truncated = fills.length > CANDLE_SCAN_CAP;
     const scanned = (truncated ? fills.slice(0, CANDLE_SCAN_CAP) : fills)
       .slice()
@@ -1584,7 +1663,8 @@ export async function handleLoansRateCandles(
     // `truncated` disclosure covers its approximation.
     const buckets =
       truncated && folded.length > 1 ? folded.slice(1) : folded;
-    return jsonResponse({ chainId, buckets, truncated }, 200, {
+    const unplaced = readUnplacedCount(unplacedRows as D1Result<{ n: number }>);
+    return jsonResponse({ chainId, buckets, unplaced, truncated }, 200, {
       'Cache-Control': 'public, max-age=60',
     });
   } catch (err) {

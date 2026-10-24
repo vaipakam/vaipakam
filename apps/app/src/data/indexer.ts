@@ -294,6 +294,13 @@ export interface IndexedLoan {
    *  through `initiatedTerms`. */
   initRateBps?: number | null;
   initDurationDays?: number | null;
+  /** #1142 — the tenor market this loan is a fill of: its agreed duration
+   *  when the indexer has confirmed the agreed terms, `null` when it has not
+   *  (the loan is in no market, since any tenor would be a guess). The key
+   *  the candles and the market-scoped tape select on. Absent on a row that
+   *  did not come from the indexer's loan routes; the desk reads absent as
+   *  "in no market". */
+  marketDurationDays?: number | null;
   collateralAmount: string;
   assetType: number;
   collateralAssetType: number;
@@ -364,6 +371,24 @@ export interface RecentLoansPage {
   chainId: number;
   loans: IndexedLoan[];
   nextBefore: number | null;
+  /** The scope the page was read under, as the worker applied it.
+   *  `placement` names the rule that chose the tenor (#1142); null when
+   *  no tenor was asked for. A market-scoped reader requires it: an empty
+   *  page has no row from which to tell a scoped answer from an unscoped
+   *  one. */
+  scope?: RecentLoansScope | null;
+  /** #1142 — on a page scoped to one full (pair, tenor) market: loans on
+   *  the PAIR, all time, that no tenor market holds (agreed terms
+   *  unconfirmed), capped like the candles' count. Null otherwise. */
+  unplaced?: UnplacedCount | null;
+}
+
+export interface RecentLoansScope {
+  lendingAsset: string | null;
+  collateralAsset: string | null;
+  durationDays: number | null;
+  placement: string | null;
+  excludeSaleVehicles: boolean;
 }
 
 /** Cross-status recent loans, optionally market-scoped server-side —
@@ -408,8 +433,14 @@ export interface RateCandleBucket {
   fills: number;
   /** Total principal as a decimal STRING in the lending asset's raw
    *  base units — format with the token's decimals metadata, same as
-   *  every other indexer amount field. */
+   *  every other indexer amount field. Sums only the fills whose
+   *  principal is recorded. */
   principalTotal: string;
+  /** #1142 — fills whose principal is NOT recorded and so is left out of
+   *  `principalTotal`; above zero the total is a floor. Required: a bucket
+   *  without it cannot say whether its total is complete, so the desk treats
+   *  such a response as unavailable. */
+  unrecordedPrincipalFills: number;
 }
 
 export interface RateCandlesResponse {
@@ -419,6 +450,18 @@ export interface RateCandlesResponse {
    *  dropped older fills (the OLDEST candles are missing, never recent
    *  ones). Optional so a not-yet-redeployed Worker parses fine. */
   truncated?: boolean;
+  /** #1142 — loans on this PAIR in the range (any tenor) that no tenor
+   *  market holds, because their agreed terms are not confirmed. Required: a
+   *  response without it cannot say whether the drawn fills are everything,
+   *  so the desk treats it as unavailable. */
+  unplaced: UnplacedCount;
+}
+
+/** #1142 — the candle response's unplaced disclosure. The server stops
+ *  counting at a cap; `capped: true` means MORE than `count` such loans. */
+export interface UnplacedCount {
+  count: number;
+  capped: boolean;
 }
 
 /** Executed-rate candles for one (pair, tenor) market — the Rate Desk
@@ -555,6 +598,11 @@ export interface IndexedActivityEvent {
 export interface ActivityPage {
   chainId: number;
   events: IndexedActivityEvent[];
+  /** #2643 — repaired loans' endings, merged into the page's order, when
+   *  asked for with `repairObservations`. Raw: read it only through
+   *  `readRepairObservations` (`lib/repairObservation.ts`), which treats
+   *  null, absent and malformed alike as NOT KNOWN. */
+  repairObservations?: unknown;
   nextBefore: string | null;
 }
 
@@ -564,12 +612,16 @@ export interface ActivityPage {
  *  and filter client-side by participation, like apps/defi does. */
 export function fetchActivity(
   chainId: number,
-  opts: { actor?: string; limit?: number; before?: string } = {},
+  opts: { actor?: string; limit?: number; before?: string; repairObservations?: boolean } = {},
 ): Promise<ActivityPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
   if (opts.actor) params.set('actor', opts.actor.toLowerCase());
   if (opts.limit) params.set('limit', String(opts.limit));
   if (opts.before) params.set('before', opts.before);
+  // #2643 — opt-in: the merged entries take page slots, so only a caller
+  // that renders them asks. The indexer serves them only on an unfiltered
+  // feed (no actor, offer or kind), which is how Activity reads it.
+  if (opts.repairObservations) params.set('repairObservations', '1');
   return getJson<ActivityPage>(`/activity?${params}`);
 }
 

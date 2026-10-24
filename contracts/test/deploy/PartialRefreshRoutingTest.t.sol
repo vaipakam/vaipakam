@@ -15,6 +15,7 @@ import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
 import {SwapToRepayIntentFacet} from "../../src/facets/SwapToRepayIntentFacet.sol";
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
+import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
 
 /**
  * @title  PartialRefreshRoutingTest
@@ -601,6 +602,52 @@ contract PartialRefreshRoutingTest is Test {
 
         ReplaceStaleFacets script = new ReplaceStaleFacets();
         vm.expectRevert(abi.encodeWithSelector(ReplaceStaleFacets.PredatesPerRentalRenterRows.selector, diamond));
+        script.runWith(diamond, DEPLOYER_KEY);
+    }
+
+    /// @dev #2419 fixture - a current Diamond with the #2419 marker
+    ///      unrouted, as on a Diamond from before the 1e18 value rule.
+    function _unrouteNumeraireValueMarker() internal {
+        bytes4[] memory sels = new bytes4[](1);
+        sels[0] = NumeraireValueFacet.getLiquidNumeraireValue.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: sels
+        });
+        vm.prank(deployer);
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
+        assertEq(IDiamondLoupe(diamond).facetAddress(sels[0]), address(0), "fixture-live: the #2419 marker is unrouted");
+        assertTrue(
+            IDiamondLoupe(diamond).facetAddress(VaultFactoryFacet.vaultSetRentalUser.selector) != address(0),
+            "fixture-live: the #902 marker stays routed, so that refusal is not what fires"
+        );
+    }
+
+    /// @notice #2419 - the curated refresh refuses a Diamond from before the
+    ///         1e18 numeraire value rule. It carries the valuation host and
+    ///         its risk consumers but not OracleFacet (the liquidity probe
+    ///         the strict KYC valuation relies on) or AdminFacet (the dust
+    ///         floor, now 1e18-scaled), so across the boundary it would leave
+    ///         the new valuation beside the old classifier and setter.
+    /// @dev    Straddle: the same script against a current Diamond runs to
+    ///         completion ({test_RedeployFacets_IsIdempotent_OnCurrentDiamond}).
+    function test_RedeployFacets_RefusesADiamondBeforeTheNumeraireValueRule() public {
+        _unrouteNumeraireValueMarker();
+        RedeployFacets script = new RedeployFacets();
+        vm.expectRevert(abi.encodeWithSelector(RedeployFacets.PredatesNumeraireValueRule.selector, diamond));
+        script.runWith(diamond, DEPLOYER_KEY);
+    }
+
+    /// @notice #2419 - `ReplaceStaleFacets` refuses the same Diamond: it
+    ///         carries the offer facets (the create-time bounds, now on the
+    ///         1e18 rule) but not RiskFacet, which enforces them, or
+    ///         AdminFacet's dust floor.
+    function test_ReplaceStaleFacets_RefusesADiamondBeforeTheNumeraireValueRule() public {
+        _unrouteNumeraireValueMarker();
+        ReplaceStaleFacets script = new ReplaceStaleFacets();
+        vm.expectRevert(abi.encodeWithSelector(ReplaceStaleFacets.PredatesNumeraireValueRule.selector, diamond));
         script.runWith(diamond, DEPLOYER_KEY);
     }
 

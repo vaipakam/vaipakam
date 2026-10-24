@@ -3,8 +3,11 @@
 // is: every page renders normally and the kill-switch banner copy
 // appears NOWHERE. (Flipping the switch on production is an operator
 // action we don't do for a review — exception stated in the PR body.)
+import { formatUnits, parseAbi, parseUnits } from 'viem';
 import {
+  exitWithVerdict,
   blocked,
+  clientsFor,
   ensureConnected,
   launch,
   requireSiteUrl,
@@ -28,7 +31,17 @@ const PAGES = [
   '/vault', '/activity', '/vpfi', '/nft', '/settings', '/faucet', '/help',
 ];
 
-const { page, done } = await launch({ role: 'lender' });
+// The post-offer review's fixtures: the faucet tokens it lends and posts as
+// collateral on Base Sepolia, and the amount it lends.
+const LEND_ASSET = '0x2affacdea8119e38d9754b2c2c15ec79af360807';
+const COLLATERAL_ASSET = '0x2A6c7149199991243aCbc04e1d59Aa052A6f00c3';
+const LEND_AMOUNT = '25';
+const ERC20_ABI = parseAbi([
+  'function balanceOf(address) view returns (uint256)',
+  'function decimals() view returns (uint8)',
+]);
+
+const { page, done, account } = await launch({ role: 'lender' });
 const rpc = watchPageRpc(page);
 // Connect BEFORE the sweep: several killable surfaces render only in
 // the connected branch (Vpfi.tsx shows the connect-first card to an
@@ -91,79 +104,120 @@ console.log('driving lend post-offer review…');
 // fails. Without the skip an error document reaches `pasteAssetLive` and
 // the run dies on a missing form control — still exit 1, but blaming a UI
 // selector for a route that never served.
-const lendResp = await page.goto(`${SITE}/lend`, {
-  waitUntil: 'domcontentloaded',
-  timeout: 60000,
-});
-const lendStatus = lendResp?.status();
-if (typeof lendStatus === 'number' && lendStatus >= 400) {
-  console.log(`FAIL — /lend answered HTTP ${lendStatus}; post-offer review not driven`);
-  failures++;
-} else {
-  await page.waitForTimeout(2500);
-  await ensureConnected(page);
-  await pasteAssetLive(page, 'lending-asset', '0x2affacdea8119e38d9754b2c2c15ec79af360807');
-  await page.waitForTimeout(1500);
-  await page.locator('input[placeholder="0.0"]').fill('25');
-  await page.getByRole('button', { name: /see matching offers/i }).click();
-  await page.waitForTimeout(2000);
-  await page.getByRole('button', { name: /post my own lending offer/i }).click();
-  await page.waitForTimeout(800);
-  await page.locator('input[placeholder="5"]').fill('9');
-  await pasteAssetLive(page, 'collateral-asset', '0x2A6c7149199991243aCbc04e1d59Aa052A6f00c3');
-  await page.waitForTimeout(1500);
-  await page.locator('input[placeholder="0.0"]:visible').last().fill('100');
-  await page.getByRole('button', { name: /continue to review/i }).click();
-  await page.waitForTimeout(3000);
-  const post = page.getByRole('button', { name: /post lending offer/i });
-  // The submit button is gated on LIVE chain reads (grace seconds, leg
-  // liquidity, token metadata, wallet balance, the sanctions oracle). With
-  // the RPC unavailable — or the hardcoded faucet fixture drained or
-  // redeployed — none of those settle, the button never enables, and the
-  // deadline below used to spend a FAIL on it. The old message admitted as
-  // much ("a closed gate or the kill switch") while still reporting a
-  // kill-switch product regression for an outage (Codex #1621 r13).
-  rpc.reset();
-  let reviewOk = false;
-  const reviewDeadline = Date.now() + 90_000;
-  for (;;) {
-    for (const box of await page.locator('input[type="checkbox"]:visible').all()) {
-      if (!(await box.isChecked().catch(() => true))) await box.check().catch(() => {});
-    }
-    await page.waitForTimeout(2000);
-    const reviewBody = await page.locator('body').innerText();
-    if (reviewBody.toLowerCase().includes(KILL_COPY)) {
-      console.log('FAIL — kill banner visible in the post-offer review');
-      break;
-    }
-    if (await post.isEnabled().catch(() => false)) { reviewOk = true; break; }
-    if (Date.now() > reviewDeadline) {
-      // Nothing answered in the window ⇒ the gates this button waits on
-      // could not have resolved either way, so the kill switch was never
-      // observed here. BLOCKED, not a FAIL against the banner.
-      //
-      // But only when the RPC outage is the run's ONLY problem (Codex
-      // #1621 r14). A route in the sweep above may already have proven a
-      // defect — an HTTP 500, or the banner copy actually present — and
-      // exiting 2 here would discard it and report "verified nothing"
-      // about a run that verified something real. Same evidence-precedence
-      // rule live-ux-sweep and live-recover-locales apply.
-      if (failures === 0 && (await rpc.settled()) === 0) {
-        await done();
-        await blocked(
-          'the submit gate never resolved and the page received no answer from' +
-            ' its JSON-RPC endpoint in that window, so nothing was observed' +
-            ' about the post-offer kill switch. Check the chain endpoint and' +
-            ' that the lender wallet still holds the faucet fixture token.',
-        );
-      }
-      console.log('FAIL — sign button never enabled with a live RPC (a closed gate or the kill switch)');
-      break;
-    }
+// The review's submit gate needs the lender to HOLD what the review posts
+// (`useEligibility`'s balance check), and that is a FIXTURE, not product
+// state: an underfunded lender keeps the gate shut while the RPC answers
+// normally, so the RPC gate below cannot catch it and the drive used to fall
+// through to a kill-switch FAIL (#1633). Checked first, from the chain; an
+// underfunded or unreadable fixture is BLOCKED when it is the run's only
+// problem, and the review is reported as not driven otherwise.
+let fixtureProblem = null;
+try {
+  const { pub } = clientsFor(84532);
+  const [balance, decimals] = await Promise.all([
+    pub.readContract({ address: LEND_ASSET, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] }),
+    pub.readContract({ address: LEND_ASSET, abi: ERC20_ABI, functionName: 'decimals' }),
+  ]);
+  if (balance < parseUnits(LEND_AMOUNT, decimals)) {
+    fixtureProblem =
+      `the lender holds ${formatUnits(balance, decimals)} of the fixture token ${LEND_ASSET},` +
+      ` under the ${LEND_AMOUNT} the review posts`;
   }
-  console.log(`${reviewOk ? 'PASS' : 'FAIL'} post-offer review: no banner, sign button enabled`);
-  if (!reviewOk) failures++;
+} catch (err) {
+  fixtureProblem = `the lender's fixture-token balance could not be read: ${String(err?.message ?? err).split('\n')[0].slice(0, 200)}`;
 }
+if (fixtureProblem !== null && failures === 0) {
+  await blocked(
+    `${fixtureProblem}, so the post-offer review's submit gate cannot open and nothing` +
+      ' was observed about its kill switch. Top up the lender with the faucet token.',
+  );
+}
+if (fixtureProblem !== null) {
+  console.log(`NOT DRIVEN — post-offer review: ${fixtureProblem}`);
+} else {
+  const lendResp = await page.goto(`${SITE}/lend`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
+  });
+  const lendStatus = lendResp?.status();
+  if (typeof lendStatus === 'number' && lendStatus >= 400) {
+    console.log(`FAIL — /lend answered HTTP ${lendStatus}; post-offer review not driven`);
+    failures++;
+  } else {
+    await page.waitForTimeout(2500);
+    await ensureConnected(page);
+    await pasteAssetLive(page, 'lending-asset', LEND_ASSET);
+    await page.waitForTimeout(1500);
+    await page.locator('input[placeholder="0.0"]').fill(LEND_AMOUNT);
+    await page.getByRole('button', { name: /see matching offers/i }).click();
+    await page.waitForTimeout(2000);
+    await page.getByRole('button', { name: /post my own lending offer/i }).click();
+    await page.waitForTimeout(800);
+    await page.locator('input[placeholder="5"]').fill('9');
+    await pasteAssetLive(page, 'collateral-asset', COLLATERAL_ASSET);
+    await page.waitForTimeout(1500);
+    await page.locator('input[placeholder="0.0"]:visible').last().fill('100');
+    // The window opens immediately before the click (#1633 r5): the review's
+    // gating reads start on the click, and a reset after the wait below
+    // orphaned the ones that had already answered, so a fast RPC read as
+    // silent and the drive went BLOCKED.
+    rpc.reset();
+    await page.getByRole('button', { name: /continue to review/i }).click();
+    await page.waitForTimeout(3000);
+    const post = page.getByRole('button', { name: /post lending offer/i });
+    // The submit button is gated on LIVE chain reads (grace seconds, leg
+    // liquidity, token metadata, wallet balance, the sanctions oracle). With
+    // the RPC unavailable — or the hardcoded faucet fixture drained or
+    // redeployed — none of those settle, the button never enables, and the
+    // deadline below used to spend a FAIL on it. The old message admitted as
+    // much ("a closed gate or the kill switch") while still reporting a
+    // kill-switch product regression for an outage (Codex #1621 r13). The
+    // RPC window opened just before the click above.
+    let reviewOk = false;
+    const reviewDeadline = Date.now() + 90_000;
+    for (;;) {
+      for (const box of await page.locator('input[type="checkbox"]:visible').all()) {
+        if (!(await box.isChecked().catch(() => true))) await box.check().catch(() => {});
+      }
+      await page.waitForTimeout(2000);
+      const reviewBody = await page.locator('body').innerText();
+      if (reviewBody.toLowerCase().includes(KILL_COPY)) {
+        console.log('FAIL — kill banner visible in the post-offer review');
+        break;
+      }
+      if (await post.isEnabled().catch(() => false)) { reviewOk = true; break; }
+      if (Date.now() > reviewDeadline) {
+        // Nothing answered in the window ⇒ the gates this button waits on
+        // could not have resolved either way, so the kill switch was never
+        // observed here. BLOCKED, not a FAIL against the banner.
+        //
+        // But only when the RPC outage is the run's ONLY problem (Codex
+        // #1621 r14). A route in the sweep above may already have proven a
+        // defect — an HTTP 500, or the banner copy actually present — and
+        // exiting 2 here would discard it and report "verified nothing"
+        // about a run that verified something real. Same evidence-precedence
+        // rule live-ux-sweep and live-recover-locales apply.
+        if (failures === 0 && (await rpc.settled()) === 0) {
+          await blocked(
+            'the submit gate never resolved and the page received no answer from' +
+              ' its JSON-RPC endpoint in that window, so nothing was observed' +
+              ' about the post-offer kill switch. Check the chain endpoint and' +
+              ' that the lender wallet still holds the faucet fixture token.',
+          );
+        }
+        console.log('FAIL — sign button never enabled with a live RPC (a closed gate or the kill switch)');
+        break;
+      }
+    }
+    console.log(`${reviewOk ? 'PASS' : 'FAIL'} post-offer review: no banner, sign button enabled`);
+    if (!reviewOk) failures++;
+  }
 
+}
 await done();
-process.exit(failures === 0 ? 0 : 1);
+// A request the page sent that a reachable provider refused as malformed is
+// a defect in the page wherever the sweep met it, so it FAILS the run
+// (#1633 r1) — including beside a review that otherwise passed. Judged by
+// the shared exit, AFTER `done()`'s drain, so a refusal still landing at
+// the close is counted (#1633 r6).
+await exitWithVerdict(failures === 0 ? 0 : 1);

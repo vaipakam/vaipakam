@@ -221,6 +221,21 @@ including people who never will.
 - Display names may be shown for convenience, but names never decide asset
   identity, ownership, authorization, or safety.
 
+## Page Integrity
+
+- The app runs only script it serves from its own address. The few
+  scripts that must run inside the page before anything else loads (the
+  theme, the language and direction, and the start-up failure notice)
+  are each allowed by their exact content, so any other script placed
+  in the page is refused, including one an attacker manages to inject.
+- The app never turns text into code at run time, and its policy says
+  so: a dependency that needs that is a finding to investigate, not a
+  reason to loosen the policy.
+- This narrows what an injected script can do inside the app. It does
+  not protect against a compromised deployment, which serves its own
+  policy, or against software on the user's own device such as a
+  browser extension. The app does not claim otherwise.
+
 ## Data Authority and Freshness
 
 The app uses chain reads and indexed reads for different jobs.
@@ -1258,6 +1273,23 @@ The app uses chain reads and indexed reads for different jobs.
   than silently narrowing to held positions only; a wallet with more
   participation history than one read returns folds into the page's
   recent-activity-only disclosure.
+- Beyond the wallet's own loans, an event is the wallet's when the wallet is
+  one of its PARTICIPANTS: the wallet that acted in it, or a wallet it names as
+  affected (a counterparty, a buyer, the owner of a setting, intent, vault,
+  perk or reward). It is never the wallet's merely because the wallet's address
+  appears somewhere in the event: an administrative event, a treasury or
+  cross-deployment record, a service operator's own accounting, or an address
+  the event only approves or permits does not put a row on the wallet's page.
+  Which addresses count as participants is one platform rule that the history
+  service and the app share, written down for every event that names an
+  address, so a new kind of event is decided on purpose rather than shown or
+  hidden by accident. Every kind the rule admits has a plain-language name in
+  the reader's language. Sanctions screening records are not feed rows (a
+  flagged wallet is told by the in-app banner); the funds consequences that are
+  the wallet's own (proceeds or rewards held, set aside or forfeited) are rows,
+  in the in-app flagged wording only, with no list or provider named. A setting
+  recorded against the wallet's vault rather than the wallet (the risk-access
+  consents) is not yet shown; that gap is tracked (#2707). (#2703)
 - An Activity row states the asset and amount its transaction moved or offered
   when the activity record carries them as normalized fields — exact, or as a
   range for an offer that commits one. It never reconstructs an amount the
@@ -2940,6 +2972,13 @@ is the borrower's own money.
   Publishing a nested public page would break that, so it is a decision
   to be taken knowingly and with the exclusion rule revisited alongside
   it — not a change that should be able to pass unremarked.
+- **Each indexable page has exactly one address.** Its form with a
+  trailing slash is not a second page: a request for it is sent,
+  permanently, to the address without the slash, keeping any query
+  string, before anything is served. So the response and the page can
+  never disagree about whether that address belongs in an index, and a
+  crawler never meets a copy of a listed page that its response headers
+  withhold.
 
 ## Privacy and Legal Posture
 
@@ -3583,6 +3622,38 @@ Its intended behaviour, as the test oracle for this surface:
   the history service answers participant-history queries (a tracked
   indexer follow-up), and until then the feed must not present its
   narrower scope as the wallet's complete history.
+- A position of the wallet's whose ending the platform found by checking the
+  chain, because the ending itself was never announced, appears in the feed
+  as an observation and is worded as one: the position had ended, in the
+  state the chain showed, by a given block, and when and how it ended was not
+  recorded. It carries no transaction link and names no one who acted,
+  because neither was seen, and any time it shows is the time of the checked
+  block, not of the ending. It sits in the feed in the order of that block and
+  opens the position. Only the wallet's own positions are shown, by the same
+  participation rule as every other row. When the history cannot say whether
+  any such entries exist, the feed states that a position's ending may be
+  missing rather than presenting itself as complete. (#2643; the history
+  side of this is stated under the record corrections above.)
+- Every kind of event the platform files under one of the wallet's loans or
+  offers, or under the wallet itself, is shown with a plain-language name in
+  the reader's language, never a name generated from the contract's event. None is hidden: each is something
+  that happened on the chain to the wallet's loan or offer. Record-keeping and
+  companion events (a status edge, a fee record, a swap route tried) never
+  name a row on their own when their transaction did something more
+  meaningful; they are counted in that row's "more in this transaction". An
+  outcome (a liquidation, a failed collateral sale, a claim) names the row
+  over the steps inside it, and a more specific outcome over a general one (a
+  failed sale with no price for the split says so). A name that one event
+  uses for changes in both directions (a loan's VPFI entering or leaving the
+  discount-tier exclusion) names the change, never one direction, and an
+  event that also confirms a setting already in place (automatic
+  grace-period listing switched on when it was already on) names the
+  resulting setting rather than a change. When a transaction's only sign of
+  the outcome is the loan's status moving into an end state (the last daily
+  rental deduction repays the loan), the row is named by that end state
+  ("Loan repaid"), not by the step that caused it. A share
+  held back because the wallet is flagged is named in the in-app wording
+  only, with no list or provider named. (#2658)
 - Each activity row states the asset and amount its transaction moved or
   offered, when that is known: a loan start states the principal, an offer
   creation or cancellation states the offer's size (as "X–Y" when the offer
@@ -4360,6 +4431,27 @@ Its intended behaviour, as the test oracle for this surface:
   an offer that hasn't become a loan yet names that offer. The
   verdict is always scoped to the current network, with a visible
   reminder that token ids repeat across networks.
+- The verifier is built to be held up against a copy of itself,
+  because a copied page can render any verdict and can add a step
+  that asks the visitor to connect a wallet and sign, which is how a
+  wallet is drained. No page can prevent being copied, so the real
+  one states what a visitor can check without trusting the page:
+  - it says permanently, on the page itself, that checking a token
+    never needs a wallet, a signature or an approval, and that a
+    "verifier" asking for any of those is not Vaipakam's;
+  - it names, in full and never shortened, the contract address the
+    token was checked against, linked to the network's block explorer,
+    and says that this address, not a name or picture, is what makes a
+    token a Vaipakam position;
+  - every verdict, "live" or "does not exist", links the same token on
+    the block explorer, labelled as an independent view that may run a
+    few blocks behind.
+- Help lists the Vaipakam contract address for every supported network
+  in full, and explains how to recognise a fake verifier or a fake
+  position NFT: the real verifier never asks for a wallet, names and
+  pictures can be copied but contract addresses cannot, and the app is
+  best opened by typing its address or from the visitor's own bookmark
+  rather than from a link inside an NFT, a message or an email.
 - Advanced mode's loan-health detail states, alongside the health
   factor and loan-to-value, roughly how far the collateral's value
   can fall before liquidation begins — explicitly framed as
@@ -4513,7 +4605,31 @@ Its intended behaviour, as the test oracle for this surface:
   when it is neither, alongside how much size remains. Recent fills for
   the market are listed honestly: a market with
   no fills says so, and internal bookkeeping from a loan-sale never
-  appears as a fill. Positions show under the book with their health
+  appears as a fill. A fill is a fact about the moment the loan was
+  agreed: the tape, the header's last executed rate and the chart's
+  per-fill markers show the rate and amount the loan was agreed at,
+  and it stays in the tenor market it was agreed in. An extension,
+  a partial repayment or a match changing the loan later moves none of
+  that. A loan belongs to a tenor market only once its agreed terms are
+  confirmed from its opening record. Until then its tenor is unknown, so
+  it is shown under no duration, never under a guessed or current one.
+  The recent-loans list states how many such loans the pair has in all,
+  and an empty list then says only that no loan with confirmed terms
+  sits at this duration. The chart states how many the pair has in the
+  period,
+  counted from the same reading of the data as the chart itself. Past a
+  stated limit the chart says "more than" that many rather than an exact
+  figure. A rate history that does not state these exclusions (how many
+  loans it leaves out, and in each bucket how many amounts are
+  unconfirmed) is shown as unavailable, never as complete, and so is a
+  tape that does not state it was read under this rule for this market:
+  an empty tape counts as "no loans yet" only when the indexer says so.
+  When the tape already shows a loan in the chosen period that the
+  chart's last refresh did not include, the chart says it is catching up
+  rather than claiming the period is empty.
+  Where only the agreed amount cannot be confirmed, the fill appears, with
+  its own marker on a sparse chart, and its amount reads as not recorded. The loan's current terms are never
+  shown in place of agreed ones. Positions show under the book with their health
   status and lead to the existing manage flows. A rate-history chart
   shows the market's **executed** rates over a chosen interval and
   range, under strict thin-market honesty rules: points exist only
@@ -4525,7 +4641,12 @@ Its intended behaviour, as the test oracle for this surface:
   candlestick shapes, which would misrepresent a thin market as a
   liquid one; every plotted bucket's hover detail discloses the number
   of fills and the total principal it aggregates, never bare
-  open/high/low/close alone; the order book's current quoted mid may be
+  open/high/low/close alone; a bucket whose total leaves out fills whose
+  agreed amount cannot be confirmed says the total is a minimum and how
+  many it leaves out; when the pair has loans in the period whose agreed
+  terms are unconfirmed, an empty chart claims only that no confirmed
+  loan sits at this duration, never that none was agreed; a clipped
+  history is disclosed whether or not anything is drawn; the order book's current quoted mid may be
   overlaid for context but must be drawn in a visibly distinct style
   and labelled as a quote — a resting intention, never blended with
   executed rates; and the chart area shows no daily percent-change

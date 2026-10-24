@@ -53,7 +53,8 @@ import {
   type ServerOrchestrationResult,
   type ServerRankedQuote,
 } from './serverQuotes';
-import { getFlashLoanProvider } from './flashLoanProviders';
+import { flashLoanRoute } from './flashLoanProviders';
+import { discountPathBlocker } from './discountPath';
 import {
   BPS,
   MIN_PARTIAL_FRACTION_BPS,
@@ -1173,30 +1174,27 @@ async function tryFlashLoanDiscountedPath(
 ): Promise<boolean> {
   const { env, chain, ctx, publicClient, loanId, loanIdBig, loan, quotes } = args;
 
-  // Gate 1 — per-chain provider config.
-  const provider = getFlashLoanProvider(chain.id);
-  if (!provider) {
-    // Either chain unsupported OR FlashLoanLiquidator not deployed
-    // yet. Silent skip — the bot continues with the legacy branches.
+  // Gate 1 — the static route: our FlashLoanLiquidator and a provider on
+  // this chain (`flashLoanRoute`, the same reading the start-up posture line
+  // makes). Silent per loan, because the posture line already names every
+  // armed chain this build has no route on; the bot continues with the
+  // legacy branches.
+  const resolvedRoute = flashLoanRoute(chain.id);
+  if ('missing' in resolvedRoute) return false;
+  const { route } = resolvedRoute;
+
+  // Gate 2 — the operator has armed this chain (`DISCOUNT_PATH_CHAIN_IDS`,
+  // discountPath.ts, #2633). The Diamond has its own discount-path
+  // switch, but no cheap view of it: the only read is a per-loan
+  // eth_call of triggerLiquidationDiscounted, matched on its
+  // `DiscountPathDisabled` revert. So the operator names the chain once
+  // that switch is on, and an unnamed chain, an unset setting or one that
+  // cannot be read keeps the path inert.
+  const blocker = discountPathBlocker(env.DISCOUNT_PATH_CHAIN_IDS, chain.id);
+  if (blocker !== null) {
+    console.log(`[keeper] loan=${loanId} chain=${chain.name} flash-loan-skip not-armed: ${blocker}`);
     return false;
   }
-
-  // Gate 2 — diamond-side master kill-switch. Read live (governance
-  // can flip it at any tick). Use ConfigFacet.getTierLiqDiscountBps
-  // as a proxy: it always returns non-zero defaults regardless of
-  // the kill-switch, so we read the kill-switch differently. The
-  // diamond doesn't expose a direct `getDiscountPathEnabled()`
-  // view; instead we use eth_call to triggerLiquidationDiscounted
-  // with a known-Active loan and check whether the revert reason
-  // matches `DiscountPathDisabled` — but that's expensive per
-  // loan. Cheaper: rely on a per-chain env override
-  // `DISCOUNT_PATH_ENABLED_<chainId>` set by the operator when
-  // they flip the flag on. If unset, treat as disabled (safe
-  // default — the path stays inert until the operator
-  // affirmatively turns it on).
-  const enabledKey = `DISCOUNT_PATH_ENABLED_${chain.id}`;
-  const enabledFlag = (env as unknown as Record<string, string | undefined>)[enabledKey];
-  if (enabledFlag !== 'true') return false;
 
   // Gate 3 — profitability simulation. We already have the full-
   // size collateral→principal quote bundle from the main flow (the
@@ -1224,8 +1222,7 @@ async function tryFlashLoanDiscountedPath(
   // Aave V3 standard premium = 5 BPS. Reading the exact value from
   // `IAaveV3Pool.FLASHLOAN_PREMIUM_TOTAL()` costs a per-tick RPC
   // call; the standard 5 BPS holds on every chain we target, so
-  // we use the conservative constant. Operator can override via
-  // `FLASH_PREMIUM_BPS_<chainId>` if a chain ever bumps it.
+  // we use the conservative constant. There is no override.
   const flashFeeBps = 5;
   const flashFee = (totalDebtEstimate * BigInt(flashFeeBps)) / 10_000n;
 
@@ -1239,17 +1236,14 @@ async function tryFlashLoanDiscountedPath(
   const simulatedProceeds = bestQuote.expectedOutput;
 
   // Gas headroom — order-of-magnitude estimate for a flash-loan
-  // tx (~600k gas at 2 gwei on an L2 = ~1.2e-3 ETH). Express as
-  // a fixed bigint in principal-token units; operator can fine-
-  // tune via `FLASH_GAS_HEADROOM_PRINCIPAL_<chainId>`. v1 default:
-  // 1 ether of principal-token (overstated on L2s, ~$2-3 worth on
-  // most chains — comfortably profitable trades clear this easily).
-  const gasHeadroomKey = `FLASH_GAS_HEADROOM_PRINCIPAL_${chain.id}`;
-  const gasHeadroomRaw =
-    (env as unknown as Record<string, string | undefined>)[gasHeadroomKey];
-  const gasHeadroom = gasHeadroomRaw
-    ? BigInt(gasHeadroomRaw)
-    : 10n ** 18n; // 1 token (18-dec convention)
+  // tx (~600k gas at 2 gwei on an L2 = ~1.2e-3 ETH), as a fixed
+  // amount of the principal token: 1e18 base units, which is one
+  // token only for an 18-decimal principal. There is no override:
+  // the per-chain `FLASH_GAS_HEADROOM_PRINCIPAL_<chainId>` this
+  // read before #2633 was never carried by `resolveEnv`, so it was
+  // always this constant. Sizing it per principal token, with the
+  // debt estimate above, is #2697.
+  const gasHeadroom = 10n ** 18n;
 
   const requiredProceeds = totalDebtEstimate + flashFee + gasHeadroom;
   if (simulatedProceeds < requiredProceeds) {
@@ -1261,13 +1255,6 @@ async function tryFlashLoanDiscountedPath(
     );
     return false;
   }
-
-  // Provider preference — Aave V3 first (broader asset coverage,
-  // 5 BPS premium), Balancer V2 fallback (zero-fee but narrower
-  // asset list).
-  const useAave = !!provider.aaveV3Pool;
-  const useBalancer = !useAave && !!provider.balancerV2Vault;
-  if (!useAave && !useBalancer) return false;
 
   const account = ctx.wallet.account;
   if (!account) return false;
@@ -1284,7 +1271,7 @@ async function tryFlashLoanDiscountedPath(
     sellToken: loan.collateralAsset,
     buyToken: loan.principalAsset,
     sellAmount: loan.collateralAmount,
-    taker: provider.liquidator as Address,
+    taker: route.liquidator,
   });
   if (directQuotes.ranked.length === 0) {
     console.log(
@@ -1309,9 +1296,9 @@ async function tryFlashLoanDiscountedPath(
   }
 
   try {
-    const fnName = useAave ? 'liquidateViaAaveV3' : 'liquidateViaBalancerV2';
+    const fnName = route.via === 'aave-v3' ? 'liquidateViaAaveV3' : 'liquidateViaBalancerV2';
     const hash = await ctx.wallet.writeContract({
-      address: provider.liquidator as Address,
+      address: route.liquidator,
       abi: FlashLoanLiquidatorABI,
       functionName: fnName,
       args: [
@@ -1328,7 +1315,7 @@ async function tryFlashLoanDiscountedPath(
     });
     console.log(
       `[keeper] loan=${loanId} chain=${chain.name} submitted-flashloan ` +
-        `tx=${hash} via=${useAave ? 'aave-v3' : 'balancer-v2'} ` +
+        `tx=${hash} via=${route.via} ` +
         `swap=${bestDirect.kind} expected=${bestDirect.expectedOutput}`,
     );
     return true;

@@ -1,10 +1,14 @@
-import { defineConfig, loadEnv, type Plugin } from 'vite';
+import { build, defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { cloudflare } from '@cloudflare/vite-plugin';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  applyScriptHashes,
+  scriptHashSources,
+} from './scripts/cspScriptHashes.mjs';
 
 // Stamp the commit + build time into the bundle (shown on the Help page)
 // so a tester can always tell which build they're looking at.
@@ -20,6 +24,12 @@ process.env.VITE_BUILD_HASH = (() => {
   }
 })();
 process.env.VITE_BUILD_TIME = new Date().toISOString();
+
+// #2687 — whether this build registers the service worker. Set here on
+// every build, never left to an env file (a value already in the process
+// environment outranks `.env*`): the e2e build stubs requests with
+// Playwright, which a worker would sit in front of.
+process.env.VITE_SERVICE_WORKER = process.env.APP_E2E ? 'off' : 'on';
 
 // The Cloudflare plugin boots a workerd sandbox with the dev server —
 // unnecessary for the fork-tier e2e (plain SPA serving is enough) and
@@ -110,12 +120,90 @@ function e2eDeploymentsBundle(): Plugin {
   };
 }
 
+// #43 (ET-017) — the Content-Security-Policy allows inline scripts only by
+// hash. This writes the hashes of the BUILT page's inline scripts into the
+// built `_headers`, replacing the placeholder `_headers.base` carries in
+// `script-src`. Runs after Vite writes the client output (the public
+// directory, and so `_headers`, is in place by then), and throws rather
+// than ship a policy it could not complete. See scripts/cspScriptHashes.mjs.
+/** `file`'s text, or `null` when it does not exist (any other error throws). */
+function readIfPresent(file: string): string | null {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw e;
+  }
+}
+
+function cspScriptHashes(): Plugin {
+  return {
+    name: 'vaipakam-csp-script-hashes',
+    apply: 'build',
+    writeBundle(options) {
+      const outDir = options.dir;
+      if (!outDir) return;
+      // Each file is read once and its absence handled from that read, so
+      // what is hashed and rewritten is exactly what was read.
+      const page = readIfPresent(path.join(outDir, 'index.html'));
+      // The worker environment of the Cloudflare plugin writes no page.
+      if (page === null) return;
+      const headersFile = path.join(outDir, '_headers');
+      const headers = readIfPresent(headersFile);
+      if (headers === null) {
+        this.error(`[csp] ${headersFile} is missing; run the prebuild (scripts/generate-seo.mjs) first.`);
+      }
+      const sources = scriptHashSources(page);
+      fs.writeFileSync(headersFile, applyScriptHashes(headers, sources));
+      console.log(`[csp] script-src allows ${sources.length} inline script hash(es)`);
+    },
+  };
+}
+
+// #2687 — builds `sw/sw.ts` into `dist/sw.js` beside the app. A second,
+// self-contained build because a service worker must be one classic script
+// at a fixed address, while the app's output is hashed ES-module chunks.
+// `__SHELL_VERSION__` names this build's cache, so the worker file changes
+// with every build (which is what makes a browser install the new one) and
+// the new worker can delete the old build's cache.
+function serviceWorker(): Plugin {
+  return {
+    name: 'vaipakam-service-worker',
+    apply: 'build',
+    async writeBundle(options, bundle) {
+      // Only the client output carries the page; the Cloudflare plugin's
+      // worker environment writes none and gets no service worker.
+      if (!options.dir || !('index.html' in bundle)) return;
+      const version = `${process.env.VITE_BUILD_HASH}-${process.env.VITE_BUILD_TIME}`;
+      await build({
+        configFile: false,
+        logLevel: 'warn',
+        publicDir: false,
+        define: { __SHELL_VERSION__: JSON.stringify(version) },
+        build: {
+          outDir: options.dir,
+          emptyOutDir: false,
+          copyPublicDir: false,
+          sourcemap: false,
+          lib: {
+            entry: fileURLToPath(new URL('./sw/sw.ts', import.meta.url)),
+            formats: ['iife'],
+            name: 'vaipakamServiceWorker',
+            fileName: () => 'sw.js',
+          },
+        },
+      });
+      console.log(`[sw] dist/sw.js written for shell ${version}`);
+    },
+  };
+}
+
 export default defineConfig(({ mode, command }) => {
   checkIndexerOrigin(mode, command);
   return {
   plugins: process.env.APP_E2E
-    ? [e2eDeploymentsBundle(), react()]
-    : [react(), cloudflare()],
+    ? [e2eDeploymentsBundle(), react(), cspScriptHashes()]
+    : [react(), cloudflare(), cspScriptHashes(), serviceWorker()],
   build: {
     rollupOptions: {
       output: {

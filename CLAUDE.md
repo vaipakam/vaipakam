@@ -192,14 +192,48 @@ runs half of it on old code:
   OracleFacet carries, to tell a missing price (the lender takes all the
   collateral) from a distrusted one (the close-out refuses). It is inlined into
   FallbackCustodyFacet (the fallback entry), RiskFacet (the discounted
-  liquidation) and ClaimFacet (the backstop par check); find the set again with
+  liquidation), ClaimFacet (the backstop par check) and DefaultedFacet (the
+  liquid time-based default's priced-pair route, #2419); find the set again with
   a grep for `tryOracleRate`, `collateralEquivalent`, `principalEquivalent` and
   `computeFallbackEntitlements`, not from this list. Any of them refreshed onto
   a Diamond whose OracleFacet predates #666 reverts `FunctionDoesNotExist` on
   that path (a hard revert, never a misread price). `RefreshAllFacetsInPlace`
-  carries all four and `UpgradeOracleFacet` adds the selector; `RedeployFacets`
-  carries the three consumers but not OracleFacet, so it refuses such a Diamond
+  carries all five and `UpgradeOracleFacet` adds the selector; `RedeployFacets`
+  carries the four consumers but not OracleFacet, so it refuses such a Diamond
   (`PredatesOraclePriceStatus`) and the oracle is refreshed first.
+
+- **NumeraireValueFacet + every facet that values an amount in the numeraire
+  (#2419).** `RiskFacet` (LTV, health factor, the collapse test, the
+  partial-liquidation snapshots and the liquidator KYC value) and the facets
+  whose code reaches `LibRiskMath` (today `OfferCreateFacet`,
+  `OfferMatchFacet`, `OfferMatchIntentFacet`, `OfferMutateFacet` and
+  `RiskPreviewFacet`) value through a self-call to `getNumeraireValue` /
+  `getAmountForNumeraireValue`, the one 1e18 rule in `LibNumeraireValue`.
+  Every KYC comparison values through it too: `getLiquidNumeraireValue` (an
+  illiquid asset is worth 0) from `DefaultedFacet` and `OfferAcceptFacet`,
+  and from `LoanFacet`, `PrecloseFacet` and `EarlyWithdrawalDirectFacet`
+  through `LibCompliance`; `getNumeraireValue` from
+  `RiskSplitLiquidationFacet`'s liquidator check.
+  Find the set again from the compiled runtime bytecode, not from this list
+  or from imports: search for `c85e9b37`, `563622af` and `0d7bd547` (the
+  optimizer pushes `getLiquidNumeraireValue`'s `1af7aa8e` shifted right by
+  its trailing zero bit, so the raw selector does not appear), and note that
+  importing a library that reaches the rule does not put it in a facet.
+  `PartialWithdrawalFacet` inlines the same library and needs no host. A
+  consumer refreshed without the host reverts `FunctionDoesNotExist` on every
+  health-factor read or KYC comparison — every liquidation, every borrow and
+  every default (a hard revert, never a misread value). All three refresh
+  scripts carry the host, but only `RefreshAllFacetsInPlace` carries the whole
+  behaviour: the oracle's liquidity probe and pair LTV preview, AdminFacet's
+  dust floor and the offer bounds move with it. So `RedeployFacets` and
+  `ReplaceStaleFacets` refuse a Diamond that does not already route
+  `getLiquidNumeraireValue` (`PredatesNumeraireValueRule`); the #2419 crossing
+  is the all-facets refresh or a fresh deploy. Values were whole numeraire units before #2419,
+  and the partial-liquidation dust
+  floor is now 1e18-scaled too: a floor stored on the old scale is below the
+  one-unit minimum, so it reads as no floor (dust handling off, and the
+  sizing getter says so) until it is set again, and the setter refuses an
+  old-scale value by name.
 
 - **VaultFactoryFacet + the vault implementation + every facet that sets a
   renter (#902).** Every rental step writes the renter through one route,
@@ -376,9 +410,11 @@ passes `--full`), so a deploy cannot proceed past a failing check; it is
 also runnable standalone (`bash script/predeploy-check.sh`).
 
 `--full` **delegates to `run-regression.sh`** (#1620) — it does not carry
-its own regression command. There is exactly one chunking implementation;
-if the viaIR ceiling moves again, `run-regression.sh` is the only place to
-fix, and both the mainnet preflight and the release-track
+its own regression command. There is exactly one chunking implementation,
+`contracts/script/lib/forge-chunks.sh`, which `run-regression.sh` and the
+non-full deploy-sanity step both use (#2712); if the viaIR ceiling or the
+runner's memory moves again, that file and the two chunk-size knobs are the
+only places to fix, and both the mainnet preflight and the release-track
 `mainnet-gate.yml` inherit the fix. Don't re-inline a `forge test` call
 here: an un-chunked pass trips the ceiling as a COMPILE failure, which this
 gate reports with the same "regression failed" wording as a red test — a
@@ -640,10 +676,42 @@ node contracts/script/storage-layout-guard.mjs write   # builds src/, then write
   slot is a parameter, never another pointer in the same file.
 - **Facets declare no state variables.** The guard refuses one that does.
 
+**Each chain carries its own record** (#2092 item 1):
+`contracts/deployments/<slug>/storage-layout.json`, the golden ledger as it
+stood when code last reached that chain, plus `storage-layout.anchor.json`,
+which binds it to every code location the record governs: the Diamond, its
+diamondCut facet and the rest of the facet list, the
+vault and adapter templates, and every UUPS proxy the chain reaches (found from
+`addresses.json` and the Diamond's satellites, never listed by hand), and the
+runtime code hash at each of them, since an address alone does not identify
+the code there. Commit the
+two together; a refresh from a checkout whose pair is out of date is refused.
+`DeployDiamond` writes them, `DeployVPFIToken` and `DeployCrosschain` check and
+rewrite them (the proxies they add are governed code), and
+every in-place script (`RefreshAllFacetsInPlace`, `RefreshChangedFacetsInPlace`,
+`RedeployFacets`, `ReplaceStaleFacets`, `UpgradeOracleFacet`,
+`MigrateRiskTermsCommitReveal`, `UpgradeVaultImplementation`) runs
+`check --base <record>` before its first transaction, refuses on failure, on a
+missing record or on an anchor the live chain no longer matches, and rewrites
+the pair afterwards. They call the guard
+through `vm.tryFfi`, so **run them with `--ffi`** (the wrappers do); a run
+without it is refused before anything is sent. The calls sit in each script's
+`runWith` body so `--sig` cannot skip them; the library skips itself under
+`forge test` and for a redirected artifact root. **Never `forge script
+--resume` one of these scripts**: resume sends the saved plan without running
+the script, so neither check runs. After one stops part-way, confirm from its
+broadcast journal that the chain runs only that partial change, re-anchor with
+`AnchorStorageLayoutRecord.s.sol` from the same commit, and run it again. Do
+not enable ffi or a `storage-layout/` read in `foundry.toml` (#2603). A new script that changes
+deployed code in place calls `StorageLayoutRecord.requireAppendOnly` and
+`record` the same way.
+
 ## Conventions
 
 - Interest rates and fees use **basis points** (BPS, 1/10000)
-- Health factor and USD values are scaled to **1e18**
+- Health factor and numeraire (USD) values are scaled to **1e18**, through
+  the one rule in `LibNumeraireValue` (#2419): debt legs round up,
+  collateral legs and threshold comparisons round down
 - Facets use `ReentrancyGuard` and `Pausable` from OpenZeppelin
 - Token operations use `SafeERC20`
 - Custom errors (not require strings) for gas efficiency
@@ -1624,9 +1692,27 @@ Three profiles live in `contracts/foundry.toml`:
   Same `viaIR + optimizer=200` settings as default. Used by
   `ci.yml`'s contracts-fast + slither jobs (build-docs runs its
   `forge doc --build` under `quick` instead — #1493).
-  Cold compile: ~5 min, ~3.2 GB peak RSS. Skips the 94 non-positive
-  top-level test files + invariants + fork tests — those run locally
-  at end-of-step under the default profile.
+  Skips the 94 non-positive top-level test files + invariants + fork
+  tests — those run locally at end-of-step under the default profile.
+  **Measured cold on CI (2026-10-23): about 63 min for the
+  contracts-fast job, with solc peaking under 10 GB of the runner's
+  16 GB.** The peak comes in the deploy-sanity compile, which
+  `predeploy-check.sh` runs in chunks of 16 suites (#2712). Run as one
+  `forge test` it peaked at 14.7 GB (15.8 GB for the whole runner,
+  #2603), which left no headroom. Chunking costs time, because each chunk
+  re-pays the codegen of the deploy scripts its tests instantiate: step 2
+  went from 22 to 29–38 minutes, and the job's timeout is 90 (#2718 tracks
+  the repeated codegen). The
+  old "~5 min, ~3.2 GB" figure is history. That compile also depends on the CI Foundry
+  pin. From v1.8.4, `forge test` stops reusing the `forge build --skip
+  test` artifacts and recompiles 469 files, and the runner dies. So
+  contracts-fast and slither (which share its forge cache) are pinned to
+  v1.8.3. Move the pin only to a version that still compiles 33 files in
+  that step. The pin is scoped to those two jobs on purpose: v1.8.3
+  predates a Foundry fix for stale cached bytecode behind
+  `type(X).runtimeCode`, which the full regression's
+  `test/helpers/LibOneTx*Fill` use, so the release gate and the e2e jobs
+  stay on `stable`.
 - **`quick`** — fast inner-loop iteration. Compiles `src/` + `lib/`
   only (skips project `test/` and `script/`); viaIR + optimizer still
   ON (some src/ facets, e.g. `VaultFactoryFacet.sol:631`,

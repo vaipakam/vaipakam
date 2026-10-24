@@ -124,6 +124,11 @@
   },
   {
     "type": "error",
+    "name": "AlreadyLaunched",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "AmountTooHigh",
     "inputs": []
   },
@@ -1794,6 +1799,11 @@
   },
   {
     "type": "error",
+    "name": "LaunchGateCallInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "LegacyDayNotStampable",
     "inputs": [
       {
@@ -2047,6 +2057,17 @@
     "type": "error",
     "name": "NotOfferCreator",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NumeraireScaleUnsupported",
+    "inputs": [
+      {
+        "name": "decimalsSum",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -2324,6 +2345,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PriceZero",
+    "inputs": []
   },
   {
     "type": "error",
@@ -4518,6 +4544,17 @@
         "name": "status",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TokenDecimalsUnreadable",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

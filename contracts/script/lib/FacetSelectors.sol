@@ -12,6 +12,7 @@ import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.so
 import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../../src/facets/TreasuryFeeFacet.sol";
+import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
 
 /**
  * @title  FacetSelectors
@@ -115,9 +116,9 @@ library FacetSelectors {
         s[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
     }
 
-    /// @notice Full external selector surface of {ProfileFacet} (31).
+    /// @notice Full external selector surface of {ProfileFacet} (33).
     function profile() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](31);
+        s = new bytes4[](33);
         s[0] = ProfileFacet.updateKYCStatus.selector;
         s[1] = ProfileFacet.getUserCountry.selector;
         s[2] = ProfileFacet.isKYCVerified.selector;
@@ -152,6 +153,9 @@ library FacetSelectors {
         s[29] = ProfileFacet.isRecipientBarred.selector;
         // #1347 — per-offer creator Full VPFI tariff opt-in.
         s[30] = ProfileFacet.setOfferCreatorFullTariff.selector;
+        // #2721 — paid-notification billing consent (set + read).
+        s[31] = ProfileFacet.setNotificationFeeConsent.selector;
+        s[32] = ProfileFacet.getNotificationFeeConsent.selector;
     }
 
     /// @notice Full external selector surface of {VaipakamNFTFacet} (29) — mirrors
@@ -441,5 +445,31 @@ library FacetSelectors {
         s[0] = TreasuryFeeFacet.collectFeeFromPayer.selector;
         s[1] = TreasuryFeeFacet.collectFeeFromVault.selector;
         s[2] = TreasuryFeeFacet.collectFeeFromDiamond.selector;
+    }
+
+    /// @notice Full external selector surface of {NumeraireValueFacet} (3).
+    ///
+    /// @dev    #2419. The one 1e18 valuation rule. `RiskFacet` (every LTV,
+    ///         HF and partial-liquidation read), the facets that reach
+    ///         `LibRiskMath`, and every KYC comparison (`Defaulted`,
+    ///         `OfferAccept`, `RiskSplitLiquidation`, and `Loan`, `Preclose`
+    ///         and `EarlyWithdrawalDirect` through `LibCompliance`) value
+    ///         through these selectors by self-call —
+    ///         among the facets the curated scripts refresh, `RiskFacet` and
+    ///         `RiskPreviewFacet` in `RedeployFacets`, `OfferCreateFacet` and
+    ///         `RiskPreviewFacet` in `ReplaceStaleFacets`. A curated refresh
+    ///         of those WITHOUT this facet would revert `FunctionDoesNotExist`
+    ///         on every health-factor read — every liquidation and every
+    ///         borrow — so both scripts cut it.
+    ///
+    ///         The ONLY copy of the list, as for {treasuryFee}:
+    ///         `DeployDiamond` (`_getNumeraireValueSelectors`) and `HelperTest`
+    ///         (`getNumeraireValueFacetSelectors`) return it, and
+    ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
+    function numeraireValue() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = NumeraireValueFacet.getNumeraireValue.selector;
+        s[1] = NumeraireValueFacet.getAmountForNumeraireValue.selector;
+        s[2] = NumeraireValueFacet.getLiquidNumeraireValue.selector;
     }
 }

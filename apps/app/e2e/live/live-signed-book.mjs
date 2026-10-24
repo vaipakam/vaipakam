@@ -103,6 +103,7 @@ import {
   chooseMenuValue,
   clientsFor,
   ensureConnected,
+  indexerOrigin,
   launch,
   LivePreconditionError,
   requireSiteUrl,
@@ -213,25 +214,7 @@ const ERC20_ABI = [
 ];
 
 // ---- indexer wire (same conventions as live-rate-desk.mjs) ----------
-const INDEXER = process.env.INDEXER_ORIGIN ?? 'https://indexer.vaipakam.com';
-// An operator override that is not an absolute http(s) origin never
-// reaches a server: `fetch` rejects on URL parsing, the drive catch
-// records it, and the batch reports an unusable CONFIG as a product FAIL
-// (Codex #1621 r10). Validated here, where exiting is free.
-{
-  let parsed = null;
-  try {
-    parsed = new URL(INDEXER);
-  } catch {
-    /* reported just below */
-  }
-  if (!parsed || !/^https?:$/.test(parsed.protocol)) {
-    blockedSync(
-      `INDEXER_ORIGIN is not an absolute http(s) origin: ${JSON.stringify(INDEXER)}` +
-        ' — the indexer probes this drive asserts against could never be reached.',
-    );
-  }
-}
+const INDEXER = indexerOrigin();
 // wss:// origin derived from the probe origin — the same derivation the
 // app's indexerWsOrigin() performs on VITE_INDEXER_ORIGIN.
 const INDEXER_WS = INDEXER.replace(/^http/, 'ws');
@@ -871,7 +854,19 @@ try {
   // incident it is (first hit live 2026-07-10: cursor wedged ~14 h at
   // block 43949149 while Arb Sepolia's cursor was current — a
   // chain-scoped ingest stall that predated the phase-3 deploy).
-  const statsProbe = await indexerGet(`${INDEXER}/offers/stats?chainId=${CHAIN_ID}`);
+  // A transport failure is classified like a non-200: freshness UNKNOWN,
+  // recorded and carried on from (#1633). This is an informational
+  // precondition for step 7, not an assertion — letting the fetch throw
+  // ended the drive on a request whose 503 it already tolerated.
+  let statsProbe;
+  try {
+    statsProbe = await indexerGet(`${INDEXER}/offers/stats?chainId=${CHAIN_ID}`);
+  } catch (err) {
+    statsProbe = {
+      status: `no response — ${String(err?.message ?? err).split('\n')[0].slice(0, 120)}`,
+      body: null,
+    };
+  }
   const ingestCursor = statsProbe.body?.indexer ?? null;
   const cursorAgeSec =
     ingestCursor?.updatedAt != null

@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
+import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -17,9 +18,9 @@ import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -233,7 +234,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///         dust position (both residual debt AND collateral below the
     ///         configured dust floor) out of a non-dust loan. The keeper must
     ///         use full liquidation instead of stranding an un-liquidatable
-    ///         scrap as an Active loan.
+    ///         scrap as an Active loan. Both residuals are 1e18-scaled
+    ///         numeraire values (#2419), on the dust floor's scale.
     error PartialLeavesDust(uint256 residualDebt, uint256 residualCollateral);
     /// @notice Partial swap proceeds were large enough to retire all
     ///         outstanding principal — at that point the loan is no
@@ -311,8 +313,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
     /**
      * @notice Updates risk parameters for an asset.
-     * @dev Callable only by Diamond owner (multi-sig/governance).
-     *      Validates params. Emits RiskParamsUpdated.
+     * @dev RISK_ADMIN_ROLE (the Timelock after the handover). Validates
+     *      params. Emits RiskParamsUpdated.
+     *
+     *      NOT pause-gated (#945, owner decision 2026-10-23): a Diamond
+     *      stays paused from its birth until the launch step, so risk limits
+     *      must be settable while paused or a chain would launch with none.
+     *      The pause guards user-facing entry points; this is a governance
+     *      setter whose role check carries the Timelock delay.
      *
      *      PR2 of the internal-match work (2026-05-14) retired the
      *      per-asset `liqThresholdBps`. The liquidation threshold is
@@ -332,7 +340,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 loanInitMaxLtvBps,
         uint256 liqBonusBps,
         uint256 reserveFactorBps
-    ) external whenNotPaused onlyRole(LibAccessControl.RISK_ADMIN_ROLE) {
+    ) external onlyRole(LibAccessControl.RISK_ADMIN_ROLE) {
         if (asset == address(0)) revert InvalidAsset();
         // Setter-range audit (2026-05-02): bounded floors on the
         // numeric tunables. Previously: maxLtv only `> 0` (allowed
@@ -387,7 +395,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      * @dev    Range-bounded to `[MIN_ADMISSION_HEALTH_FACTOR,
      *         MAX_ADMISSION_HEALTH_FACTOR]` (1.2e18 … 2.0e18); the default
      *         (unset) is `MIN_HEALTH_FACTOR` (1.5e18). RISK_ADMIN_ROLE-gated,
-     *         same as {updateRiskParams}. The optimistic delta+cooldown
+     *         same as {updateRiskParams}, and like it NOT pause-gated so
+     *         the floor can be set before launch (#945). The optimistic delta+cooldown
      *         "risk-steward" machinery is intentionally deferred to the
      *         governance card (#404) — this ships the bounded direct setter.
      *
@@ -403,7 +412,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      */
     function setMinHealthFactor(
         uint256 newMinHealthFactor
-    ) external whenNotPaused onlyRole(LibAccessControl.RISK_ADMIN_ROLE) {
+    ) external onlyRole(LibAccessControl.RISK_ADMIN_ROLE) {
         if (
             newMinHealthFactor < LibVaipakam.MIN_ADMISSION_HEALTH_FACTOR ||
             newMinHealthFactor > LibVaipakam.MAX_ADMISSION_HEALTH_FACTOR
@@ -451,11 +460,12 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         (uint256 borrowedValueNumeraire, uint256 collateralValueNumeraire) = _computeNumeraireValues(loan);
         if (collateralValueNumeraire == 0) revert ZeroCollateral();
 
-        // Rounds DOWN (borrower-favourable by <=1 BPS). A loan exactly at the
-        // cap slips 1 BPS under; given 1e18-scaled numeraire-quoted values
-        // the absolute error is sub-dust and acceptable. Do NOT change to
-        // ceilDiv without retuning `maxLTVBps` thresholds.
-        ltv = (borrowedValueNumeraire * LibVaipakam.BASIS_POINTS) / collateralValueNumeraire;
+        // The final division rounds DOWN, by under 1 BPS. Both legs are
+        // 1e18-scaled (#2419) with the debt rounded up and the collateral
+        // down, so the legs themselves already err toward the lender. Do
+        // NOT change this division to ceilDiv without retuning the
+        // `maxLTVBps` thresholds.
+        ltv = LibRiskMath.ltvBps(borrowedValueNumeraire, collateralValueNumeraire);
     }
 
     /**
@@ -483,7 +493,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
         (uint256 borrowValueNumeraire, uint256 collateralValueNumeraire) = _computeNumeraireValues(loan);
 
-        if (borrowValueNumeraire == 0) return type(uint256).max; // Infinite HF if no borrow
 
         // PR2 of internal-match work: per-asset `liqThresholdBps` was
         // retired. HF now reads the snapshotted per-tier liquidation
@@ -492,14 +501,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 liqThresholdBps = uint256(loan.liquidationLtvBpsAtInit);
         // Rounds DOWN on both steps — HF is slightly under-reported, which
         // means liquidation may trigger marginally earlier than theoretical.
-        // Protocol-favourable (safe direction). Error magnitude: sub-wei on
-        // HF_SCALE (1e18) for realistic collateral sizes.
-        uint256 riskAdjustedCollateral = (collateralValueNumeraire *
-            liqThresholdBps) / LibVaipakam.BASIS_POINTS;
-
-        healthFactor =
-            (riskAdjustedCollateral * LibVaipakam.HF_SCALE) /
-            borrowValueNumeraire;
+        // Lender-favourable (the safe direction), as are the legs: debt
+        // rounded up, collateral down, both at 1e18 precision (#2419). The
+        // error is a few units of the last digit of HF_SCALE. No borrow
+        // reads as an infinite HF. One rule, full precision:
+        // {LibRiskMath.healthFactor}.
+        healthFactor = LibRiskMath.healthFactor(
+            collateralValueNumeraire, liqThresholdBps, borrowValueNumeraire
+        );
     }
 
     /**
@@ -523,20 +532,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         (uint256 borrowValueNumeraire, uint256 collateralValueNumeraire) = _computeNumeraireValues(loan);
         if (collateralValueNumeraire == 0) revert ZeroCollateral();
 
-        uint256 ltv = (borrowValueNumeraire * LibVaipakam.BASIS_POINTS) / collateralValueNumeraire;
+        uint256 ltv = LibRiskMath.ltvBps(borrowValueNumeraire, collateralValueNumeraire);
 
-        uint256 hf;
-        if (borrowValueNumeraire == 0) {
-            hf = type(uint256).max;
-        } else {
-            // PR2 of internal-match work: read snapshotted per-tier
-            // liquidation threshold from the loan instead of the
-            // retired per-asset `liqThresholdBps`.
-            uint256 liqThresholdBps = uint256(loan.liquidationLtvBpsAtInit);
-            uint256 riskAdjustedCollateral = (collateralValueNumeraire * liqThresholdBps)
-                / LibVaipakam.BASIS_POINTS;
-            hf = (riskAdjustedCollateral * LibVaipakam.HF_SCALE) / borrowValueNumeraire;
-        }
+        // PR2 of internal-match work: read snapshotted per-tier
+        // liquidation threshold from the loan instead of the retired
+        // per-asset `liqThresholdBps`. Same rule as {calculateHealthFactor}.
+        uint256 hf = LibRiskMath.healthFactor(
+            collateralValueNumeraire,
+            uint256(loan.liquidationLtvBpsAtInit),
+            borrowValueNumeraire
+        );
 
         return ltv > LibVaipakam.cfgVolatilityLtvThresholdBps() || hf < LibVaipakam.HF_SCALE;
     }
@@ -1917,11 +1922,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///      caller isn't cleared for that value tier. No-op when KYC enforcement
     ///      is off (retail default — `meetsKYCRequirement` short-circuits true).
     function _assertLiquidatorKyc(address principalAsset, uint256 bonus) private view {
-        (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
-            .getAssetPrice(principalAsset);
-        uint8 tokenDecimals = IERC20Metadata(principalAsset).decimals();
-        uint256 bonusNumeraire =
-            (bonus * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
+        // Rounded down, as every threshold comparison is (#2419).
+        uint256 bonusNumeraire = NumeraireValueFacet(address(this))
+            .getNumeraireValue(principalAsset, bonus, false);
         if (!ProfileFacet(address(this)).meetsKYCRequirement(msg.sender, bonusNumeraire))
             revert KYCRequired();
     }
@@ -1951,29 +1954,30 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///      RiskFacet/RiskMatchLiquidationFacet split so both facets share
     ///      one accrual model. Call sites here now read the library helper.
 
-    /// @dev Fetch oracle prices and ERC20 decimals for principal and
-    ///      collateral, returning each side's value quoted in the active
-    ///      numeraire (USD by post-deploy default). Used by calculateLTV,
-    ///      calculateHealthFactor, and isCollateralValueCollapsed — the latter
-    ///      previously re-ran the full fetch twice (once per view) for ~6-9k
-    ///      of duplicated oracle/staticcall overhead. Numeraire-quoted prices
-    ///      come from `OracleFacet.getAssetPrice` (Numeraire generalization (b1)).
+    /// @dev Each side of `loan` valued in the active numeraire (USD by
+    ///      post-deploy default), 1e18-scaled, through the one shared rule
+    ///      ({NumeraireValueFacet.getNumeraireValue}, #2419). The debt (the
+    ///      current borrow balance, accrued interest included) rounds UP and
+    ///      the collateral DOWN, so every ratio built on the pair — LTV, HF,
+    ///      the collapse test, the partial-liquidation snapshots — errs
+    ///      toward the lender, by at most one 1e-18 unit per side. Used by
+    ///      calculateLTV, calculateHealthFactor and isCollateralValueCollapsed
+    ///      (one fetch for both of the latter's ratios) and by the partial
+    ///      liquidation.
     function _computeNumeraireValues(
         LibVaipakam.Loan storage loan
     ) internal view returns (uint256 borrowValueNumeraire, uint256 collateralValueNumeraire) {
-        uint256 currentBorrowBalance = LibEntitlement.currentBorrowBalance(loan);
-
-        (uint256 borrowPrice, uint8 borrowFeedDecimals) = OracleFacet(address(this))
-            .getAssetPrice(loan.principalAsset);
-        uint8 borrowTokenDecimals = IERC20Metadata(loan.principalAsset).decimals();
-        borrowValueNumeraire = (currentBorrowBalance * borrowPrice) /
-            (10 ** borrowFeedDecimals) / (10 ** borrowTokenDecimals);
-
-        (uint256 collateralPrice, uint8 collateralFeedDecimals) = OracleFacet(address(this))
-            .getAssetPrice(loan.collateralAsset);
-        uint8 collateralTokenDecimals = IERC20Metadata(loan.collateralAsset).decimals();
-        collateralValueNumeraire = (loan.collateralAmount * collateralPrice) /
-            (10 ** collateralFeedDecimals) / (10 ** collateralTokenDecimals);
+        NumeraireValueFacet values = NumeraireValueFacet(address(this));
+        borrowValueNumeraire = values.getNumeraireValue(
+            loan.principalAsset,
+            LibEntitlement.currentBorrowBalance(loan),
+            true
+        );
+        collateralValueNumeraire = values.getNumeraireValue(
+            loan.collateralAsset,
+            loan.collateralAmount,
+            false
+        );
     }
 
     /// @dev #395 (Approach A) graduated-close-factor guard — two checks that
@@ -2000,8 +2004,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///
     ///      Both checks are GATED on a configured dust floor (`> 0`); dust
     ///      handling is off by default (Codex r3 P2 — no USD-scaled default on
-    ///      a possibly-rotated numeraire). Thresholds are range-clamped at the
-    ///      setter, so reads are trusted.
+    ///      a possibly-rotated numeraire), and a rotation resets it to off.
+    ///      The floor and the four snapshots share one scale: 1e18-scaled
+    ///      numeraire values from {_computeNumeraireValues} (#2419).
+    ///      Thresholds are range-clamped at the setter, so reads are trusted.
     function _assertPartialSizing(
         uint256 hfBefore,
         uint256 hfAfter,

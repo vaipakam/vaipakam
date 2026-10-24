@@ -72,7 +72,10 @@ contract OracleLiquidityORTest is Test {
         mockAsset       = address(new ERC20Mock("Asset", "AST", 18));
         mockRegistry    = makeAddr("registry");
         mockFeed        = makeAddr("feed");
-        mockWeth        = makeAddr("weth");
+        // #2419 — a real token, not a bare address: the classifier and the
+        // route search read each asset's (and each quote's) `decimals()`,
+        // and a codeless WETH reads as unreadable, so as Illiquid.
+        mockWeth        = address(new ERC20Mock("Wrapped Ether", "WETH", 18));
         mockEthUsdFeed  = makeAddr("ethNumeraireFeed");
         mockDenom       = makeAddr("denom");
 
@@ -507,6 +510,24 @@ contract OracleLiquidityORTest is Test {
         assertEq(
             uint256(OracleFacet(address(diamond)).checkLiquidityOnActiveNetwork(mockWeth)),
             uint256(LibVaipakam.LiquidityStatus.Illiquid)
+        );
+    }
+
+    /// @notice #2419 (Codex #2690 r1): a WETH whose `decimals()` cannot be
+    ///         read is Illiquid, like any other such asset. The decimals read
+    ///         sits on the common path, so the WETH shortcut cannot report
+    ///         Liquid an asset every valuation of which refuses.
+    function testActiveNetwork_wethUnreadableDecimals_isIlliquid() public {
+        vm.mockCallRevert(mockWeth, abi.encodeWithSignature("decimals()"), "");
+        assertEq(
+            uint256(OracleFacet(address(diamond)).checkLiquidity(mockWeth)),
+            uint256(LibVaipakam.LiquidityStatus.Illiquid),
+            "checkLiquidity"
+        );
+        assertEq(
+            uint256(OracleFacet(address(diamond)).checkLiquidityOnActiveNetwork(mockWeth)),
+            uint256(LibVaipakam.LiquidityStatus.Illiquid),
+            "checkLiquidityOnActiveNetwork"
         );
     }
 

@@ -682,9 +682,9 @@ library LibOfferMatch {
                 cap
             );
             // `capFloor == type(uint256).max` ⇒ cap is 0 (no borrow) ⇒
-            // reject. `capFloor == 0` ⇒ no create-time bound (missing
-            // oracle) ⇒ leave it to the runtime gate. Otherwise the
-            // matched collateral must meet the floor.
+            // reject. `capFloor == 0` only for a zero match amount (a
+            // missing or zero price reverts, #2419). Otherwise the matched
+            // collateral must meet the floor.
             if (
                 capFloor == type(uint256).max
                 || (capFloor != 0 && r.reqCollateral < capFloor)

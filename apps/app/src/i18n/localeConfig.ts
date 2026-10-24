@@ -23,7 +23,8 @@
  *   1. Fill `src/i18n/locales/<code>.json` (hand-authored, or
  *      `pnpm --filter @vaipakam/i18n translate -- --locales-dir
  *      apps/app/src/i18n/locales <code>`).
- *   2. Add the code to `TRANSLATED_LOCALES` below.
+ *   2. Add the code to `translatedLocales.json` (read below as
+ *      `TRANSLATED_LOCALES`).
  *   3. Flip `visible: true` in `PICKER_VISIBLE` below if not already.
  *   Lazy loaders in `i18n/index.ts` already cover every supported
  *   code — no wiring change needed there.
@@ -33,15 +34,18 @@ import {
   SUPPORTED_LOCALES,
   type SupportedLocale,
 } from '@vaipakam/i18n/glossary';
+import TRANSLATED from './translatedLocales.json';
 import {
   LOCALE_NATIVE_LABELS,
   type LocaleDisplayConfig,
 } from '@vaipakam/i18n/localeDisplay';
 
-/** Locales with genuinely translated bundles in apps/app. */
-/** Locales with genuinely translated bundles in apps/app. */
-export const TRANSLATED_LOCALES = ['en', 'es', 'ja', 'hi', 'ta', 'zh', 'fr', 'de', 'ar', 'ko'] as const;
-export type TranslatedLocale = (typeof TRANSLATED_LOCALES)[number];
+/** Locales with genuinely translated bundles in apps/app.
+ *
+ *  DATA in `translatedLocales.json`, not code, so the plain-Node live
+ *  drives read the same list without importing TypeScript: the desk i18n
+ *  capture refuses an operator-selected locale outside it (#1633). */
+export const TRANSLATED_LOCALES: readonly string[] = TRANSLATED;
 
 /** Master switch. When false, the Language card is not rendered at
  *  all; stored preferences keep working. */

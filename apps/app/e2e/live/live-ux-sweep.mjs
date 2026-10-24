@@ -91,6 +91,7 @@ import {
   addressOf,
   blockedSync,
   LiveSetupError,
+  parseAppRouteList,
   requireSiteUrl,
   SITE,
   visit,
@@ -416,6 +417,13 @@ async function resolveLoanDetailRoute(page) {
 }
 
 const routesEnv = process.env.UX_SWEEP_ROUTES;
+// Validated ONCE, before any session launches: an unusable selector is
+// operator input, so it is BLOCKED (#1633), and checking it inside the
+// session loop would have launched a browser first.
+const requestedRoutes = routesEnv ? parseAppRouteList(routesEnv) : null;
+if (requestedRoutes && 'error' in requestedRoutes) {
+  blockedSync(`UX_SWEEP_ROUTES=${JSON.stringify(routesEnv)} is unusable: ${requestedRoutes.error} — nothing to sweep.`);
+}
 
 // The sweep's whole output is these artifacts — nowhere to write them is
 // a missing precondition, not a finding (#1581).
@@ -478,21 +486,9 @@ const backgroundNetworkBySession = {};
 const backgroundBeacon = [];
 
 for (const session of activeSessions) {
-  const routes = routesEnv
-    ? routesEnv.split(',').map((s) => s.trim()).filter(Boolean)
-    : [...(session.routes ?? STATIC_ROUTES)];
-  // A selector that normalises to NOTHING is BLOCKED, not PASS (Codex
-  // #1621 r6) — the same rule DESK_I18N_LOCALES got, on the sibling
-  // selector I did not revisit. `UX_SWEEP_ROUTES=",,,"` is non-empty, so
-  // the default does not apply; unfiltered it produced empty route names
-  // that re-visited SITE and exited 0 having swept none of the routes
-  // asked for.
-  if (routes.length === 0) {
-    blockedSync(
-      `UX_SWEEP_ROUTES=${JSON.stringify(routesEnv)} selects no routes —` +
-        ` nothing to sweep.`,
-    );
-  }
+  // A selector that normalises to NOTHING, or to a route that is not
+  // app-relative, was refused above (`parseAppRouteList`).
+  const routes = requestedRoutes ? [...requestedRoutes.routes] : [...(session.routes ?? STATIC_ROUTES)];
 
   report.sessions.push({
     key: session.key,
@@ -619,23 +615,45 @@ page.on('response', async (res) => {
 // (#1581). Later sessions keep exiting 1 — by then the site is known to
 // serve, and the per-route loop below already records its own nav
 // failures as findings rather than crashing.
+//
+// A later session's entry — the navigation and the connect — is caught
+// rather than left to throw (#1633). Thrown, it escaped past the verdict
+// below: the read-only violations earlier sessions had collected were
+// never reported and this session's browser was never closed. It is a
+// finding like any route that would not load (the site is known to serve
+// by then), recorded with the others, and this session's passes are
+// skipped while its close-out still runs.
+let entryError = null;
 if (!reachabilityProven) {
   await visit(page, '/');
   reachabilityProven = true;
 } else {
-  await page.goto(SITE, { waitUntil: 'domcontentloaded' });
+  try {
+    await page.goto(SITE, { waitUntil: 'domcontentloaded' });
+  } catch (err) {
+    entryError = `entry navigation failed: ${String(err?.message ?? err).split('\n')[0]}`;
+  }
 }
-if (session.connect) {
-  await ensureConnected(page);
+if (entryError === null && session.connect) {
+  try {
+    await ensureConnected(page);
+  } catch (err) {
+    entryError = `wallet connect on entry failed: ${String(err?.message ?? err).split('\n')[0]}`;
+  }
+}
+if (entryError !== null) {
+  routesAttempted += 1;
+  allNavFailures.push({ session: session.key, pass: 'entry', route: '/', loadMs: 0, error: entryError });
+  console.error(`session ${session.key}: ${entryError} — its passes are skipped`);
 }
 
-if (!routesEnv && session.harvestLoanDetail) {
+if (entryError === null && !routesEnv && session.harvestLoanDetail) {
   const detail = await resolveLoanDetailRoute(page);
   if (detail) routes.splice(routes.indexOf('/claims'), 0, detail);
   else report.loanDetailSkipped = 'no /positions/:id link found on the rendered positions page';
 }
 
-for (const pass of session.passes) {
+for (const pass of entryError === null ? session.passes : []) {
   const passReport = {
     name: pass.name,
     session: session.key,

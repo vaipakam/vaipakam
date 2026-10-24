@@ -19,12 +19,14 @@
  * because on a machine there is no deploy step to do it.
  *
  * `--check` loads everything, reports the configuration it would run with,
- * and exits 0 without starting the clock or touching the database. The
- * machine's updater (`host/deploy/update.sh`) runs a new build this way
- * before switching to it, so a build that cannot even load never replaces
- * the one that is running.
+ * and exits 0 without starting the clock or touching the database. CI runs
+ * each new bundle this way before publishing it, and the machine's updater
+ * (`host/deploy/update.sh`) runs it again on the machine's own Node before
+ * switching to it, so a bundle that cannot even load never replaces the
+ * one that is running.
  */
 
+import { discountPathPosture } from '../src/discountPath';
 import { buildHostEnv } from './hostEnv';
 import { createHostLeaseRenewal, createHostTick } from './hostTick';
 import { createTickRunner, minuteFloor, msUntilNextMinute } from './scheduler';
@@ -35,8 +37,11 @@ function log(line: string): void {
 }
 
 function main(): void {
-  const { missingD1, refusedD1 } = buildHostEnv(process.env);
+  const { env, missingD1, refusedD1 } = buildHostEnv(process.env);
   if (refusedD1 !== null) log(`[keeper-host] ${refusedD1}; every tick will decline`);
+  // #2633 — the discount path's arming, stated once from the parser the
+  // passes use, so it is readable without waiting for a loan to reach it.
+  log(`[keeper-host] discount path: ${discountPathPosture(env.DISCOUNT_PATH_CHAIN_IDS)}`);
   if (process.argv.includes('--check')) {
     log(
       `[keeper-host] check: build loads; database ${missingD1.length > 0 ? `not configured (${missingD1.join(', ')} unset)` : 'configured'}`,

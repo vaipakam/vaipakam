@@ -42,8 +42,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, parseAbi } from 'viem';
 import {
+  exitWithVerdict,
+  blocked,
   blockedSync,
   ensureConnected,
+  watchPageRpc,
   launch,
   precondition,
   requireSiteUrl,
@@ -58,6 +61,7 @@ import {
 // FAIL. Fail with the real diagnostic instead.
 requireSiteUrl();
 import { splitBlocked } from './readOnlyFindings.mjs';
+import { classifyRpcFailure } from './rpc-verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIAMOND = readDiamond();
@@ -97,6 +101,9 @@ function readDiamond() {
 const ORACLE_ABI = parseAbi([
   'function getSanctionsOracle() view returns (address)',
 ]);
+/** The probe the page itself makes of a configured oracle (`Recover.tsx`
+ *  `probeSanctionsOracle`): a benign `isSanctioned(0x0)` must answer. */
+const ORACLE_PROBE_ABI = parseAbi(['function isSanctioned(address) view returns (bool)']);
 const pub = createPublicClient({
   transport: http(process.env.BASE_SEPOLIA_RPC ?? 'https://sepolia.base.org'),
 });
@@ -132,6 +139,9 @@ const BEACON_ORIGINS = new Set([
 ]);
 
 const fails = [];
+/** What this run could not judge, and why. Decided at the end: a FAIL
+ *  outranks it, and it outranks a PASS (#1633). */
+const unresolved = [];
 /** Console/page errors from the separately-opened guide page. */
 const guideErrors = [];
 const check = (label, ok) => {
@@ -225,6 +235,10 @@ const { page, ctx, done, blockedRequests, consoleErrors } = await launch({
   role: 'borrower',
   readOnly: true,
 });
+// A chain request the page sends that a reachable provider refuses as
+// malformed — the availability probe included — is a FAIL, and it outranks
+// the "couldn't check" posture's BLOCKED (#1633 r3).
+const rpc = watchPageRpc(page);
 try {
   // The live oracle setting decides which posture is CORRECT — read it
   // first so this driver checks the deployment it actually found. A
@@ -399,11 +413,54 @@ try {
   // have the page render against current chain state while the assertion
   // picks its expected posture from a minutes-old read — a legitimate
   // configuration change reported as a product FAIL.
-  const oracleNow = await precondition('re-reading the sanctions oracle before the posture check', () =>
-    pub.readContract({ address: DIAMOND, abi: ORACLE_ABI, functionName: 'getSanctionsOracle' }),
-  );
-  const oracleSetNow = oracleNow.toLowerCase() !== ZERO;
-  if (oracleSetNow !== oracleSet) {
+  //
+  // NOT a `precondition()` (#1633). By here Help, the guide and both
+  // Settings modes have been judged, and `precondition` exits BLOCKED on
+  // the spot — so one failed RPC read discarded every defect already found
+  // on those served pages. A failed re-read leaves only the posture
+  // UNJUDGED, which the end of the run reports in its place.
+  //
+  // A failed re-read is NOT recorded here (#1633 r1): only the postures
+  // whose correctness depends on the oracle need it, and the posture is not
+  // known yet. Recording it up front let a transient failure of this
+  // separate client hide a posture that is wrong whatever the oracle says.
+  //
+  // The SAME two steps the page takes (#1633 r3), so a configured oracle
+  // that does not answer is told apart from an outage: 'unset', 'live', or
+  // 'reverts' (configured, and its `isSanctioned` is refused by the chain),
+  // and null when either read could not be made.
+  let oracleNow = null;
+  let oracleReadError = null;
+  let oracleRevert = null;
+  try {
+    const configured = await pub.readContract({
+      address: DIAMOND,
+      abi: ORACLE_ABI,
+      functionName: 'getSanctionsOracle',
+    });
+    if (configured.toLowerCase() === ZERO) {
+      oracleNow = 'unset';
+    } else {
+      try {
+        await pub.readContract({ address: configured, abi: ORACLE_PROBE_ABI, functionName: 'isSanctioned', args: [ZERO] });
+        oracleNow = 'live';
+      } catch (err) {
+        // A revert, or empty return data (no code at the address), is the
+        // chain ANSWERING that this oracle cannot be asked; anything else
+        // is this client failing to ask.
+        const noData = Boolean(err?.walk?.((e) => e?.name === 'ContractFunctionZeroDataError'));
+        const reverted =
+          classifyRpcFailure(err) === 'answered' || Boolean(err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError'));
+        if (!reverted && !noData) throw err;
+        oracleNow = 'reverts';
+        oracleRevert = `${configured}.isSanctioned(0x0) ${noData ? 'returns no data' : 'reverts'}: ${String(err?.shortMessage ?? err?.message ?? err).split('\n')[0].slice(0, 160)}`;
+      }
+    }
+  } catch (err) {
+    oracleReadError = String(err?.message ?? err).split('\n')[0].slice(0, 200);
+  }
+  const oracleSetNow = oracleNow === null ? null : oracleNow !== 'unset';
+  if (oracleSetNow !== null && oracleSetNow !== oracleSet) {
     console.log(
       `note: the sanctions oracle changed mid-run (${oracleSet ? 'configured' : 'UNSET'}` +
         ` → ${oracleSetNow ? 'configured' : 'UNSET'}); judging against the CURRENT setting`,
@@ -425,32 +482,69 @@ try {
   const posture = await settledPosture(page);
   check(`/recover settles on a definite state (got ${posture ?? 'STILL PROBING'})`, posture !== null);
 
-  // WALLET-SPECIFIC postures are correct whatever the oracle says, and
-  // they render AHEAD of the availability state — a durable unresolved
-  // record locks the page before it ever asks about the oracle, and a
-  // flagged wallet is blocked either way. Judging them against the
-  // oracle branch made a correct page look like a deployment failure
-  // the moment the oracle was reset under a profile carrying a pending
-  // record (Codex #1561 r3). The driver can't clear either condition
-  // from a read-only run, so both are skips wherever they appear.
-  if (posture === 'sanctioned' || posture === 'pending') {
+  // Each posture is judged by what its correctness depends on, so the
+  // oracle is consulted ONLY for the postures it decides (#1633 r1, r3):
+  //
+  //  - `form` / `unavailable` — the availability arms: `form` is right only
+  //    for a configured oracle that ANSWERS, `unavailable` only for an unset
+  //    one, judged against the RE-READ probe (re-reading and then asserting
+  //    on the stale value would have been no fix at all). Unjudged when that
+  //    probe could not be made.
+  //  - `sanctioned` / `pending` — WALLET-SPECIFIC: correct whatever the
+  //    oracle says, and they render AHEAD of the availability state — a
+  //    durable unresolved record locks the page before it ever asks about
+  //    the oracle, and a flagged wallet is blocked either way. Judging them
+  //    against the oracle made a correct page look like a deployment failure
+  //    the moment the oracle was reset under a profile carrying a pending
+  //    record (Codex #1561 r3). The driver can't clear either condition from
+  //    a read-only run, so both are skips.
+  //  - `wrongChain` / `contractWallet` — WRONG whatever the oracle says:
+  //    `launch` injects a plain EOA already on the review chain, so the page
+  //    has misread the wallet. No oracle value is needed to say so.
+  //  - `unreachable` — the page's OWN probe failed. When the configured
+  //    oracle itself REVERTS the probe, the page is right to say so and the
+  //    deployment is what is broken: a FAIL naming the oracle, never an
+  //    outage (#1633 r3). A malformed probe the page sent fails through the
+  //    session's RPC faults. Otherwise the page could not reach the chain,
+  //    which says nothing about whether recovery is correctly offered or
+  //    withheld; judging it against the oracle recorded an outage as a FAIL
+  //    (#1633). Unresolved, so a run whose only problem it is exits BLOCKED.
+  if (posture === 'unreachable' && oracleNow === 'reverts') {
+    check(`the configured sanctions oracle answers the availability probe (${oracleRevert})`, false);
+  } else if (posture === 'unreachable') {
+    unresolved.push(
+      '/recover showed its own "couldn\'t check whether recovery is available" state: the' +
+        ' page could not reach the chain, so the configured/unconfigured posture was not observed.',
+    );
+  } else if (posture === 'sanctioned' || posture === 'pending') {
     console.log(
       `skip  this wallet is in the "${posture}" posture — the form is correctly ` +
         'withheld regardless of the oracle setting; re-run with a clean, unflagged ' +
         'wallet with no outstanding attempt to exercise the availability arms.',
     );
-  } else if (oracleSetNow) {
-    // Configured deployment: the form is the correct posture for a
-    // clean wallet with nothing outstanding. Judged against the RE-READ
-    // setting, not the run-opening snapshot — re-reading and then
-    // asserting on the stale value would have been no fix at all.
-    check('oracle configured → form offered', posture === 'form');
-  } else {
-    // Shipped retail default: recovery must be presented as
-    // unavailable, never as a form that could only produce a doomed
-    // signature.
-    check('oracle unset → recovery presented as unavailable', posture === 'unavailable');
+  } else if (posture === 'wrongChain' || posture === 'contractWallet') {
+    check(`/recover reads the injected EOA on the review chain as usable (got ${posture})`, false);
+  } else if (posture === 'form' || posture === 'unavailable') {
+    if (oracleNow === null) {
+      unresolved.push(
+        `/recover settled on "${posture}", but the sanctions oracle could not be re-read to say` +
+          ` whether that is the right availability arm: ${oracleReadError}`,
+      );
+    } else if (oracleNow === 'reverts') {
+      // The page offered or withheld the form against an oracle that cannot
+      // answer: either way it did not run the probe it exists to run.
+      check(`oracle configured but its probe reverts → "couldn't check" shown, not "${posture}" (${oracleRevert})`, false);
+    } else if (oracleNow === 'live') {
+      // Configured deployment: the form is the correct posture for a clean
+      // wallet with nothing outstanding.
+      check('oracle configured → form offered', posture === 'form');
+    } else {
+      // Shipped retail default: recovery must be presented as unavailable,
+      // never as a form that could only produce a doomed signature.
+      check('oracle unset → recovery presented as unavailable', posture === 'unavailable');
+    }
   }
+  // (A null posture already failed its "settles on a definite state" check.)
 
   // 4. Meta robots too — belt and braces with the header above, since
   //    the two are set in different places and can drift apart.
@@ -460,6 +554,9 @@ try {
     .catch(() => null);
   check(`meta robots is noindex,nofollow (got ${robots})`, hasRobotsDirectives(robots));
 } finally {
+  // Let the page's in-flight chain answers land before the browser closes,
+  // so a malformed request among them is recorded (bounded).
+  await rpc.settled(5_000).catch(() => {});
   await done();
 }
 
@@ -511,9 +608,16 @@ if (allConsoleErrors.length) {
   for (const e of allConsoleErrors.slice(0, 12)) console.log(`  ${e.slice(0, 200)}`);
 }
 if (pageErrors.length) fails.push(`${pageErrors.length} uncaught page error(s)`);
+// After `done()`, so nothing more can land: every chain request the page
+// sent that a reachable provider refused as malformed.
+const rpcFaults = rpc.sessionFaults();
+if (rpcFaults.length) fails.push(`page chain requests refused as malformed: ${rpcFaults.join(', ')}`);
 
 if (fails.length) {
   console.log('\nFAILED checks:', fails.join(' | '));
+  if (unresolved.length) console.log(`(also unresolved: ${unresolved.join(' | ')})`);
   process.exit(1);
 }
+if (unresolved.length) await blocked(unresolved.join('\n  '));
 console.log('\nlive recover review: ALL CHECKS PASSED');
+await exitWithVerdict(0);

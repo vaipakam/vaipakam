@@ -49,6 +49,13 @@ contract HandoverProbe is Handover {
  *      gate to name it. The predecessor gate (`DeployerZeroRolesTest`) could
  *      not fail any of these: it never read the chain.
  */
+/// @dev Exposes the proof the gate prints for the deploy wrappers to record.
+contract HandoverGateProofHarness is HandoverGate {
+    function handoverProof(address diamond, address timelock) external view returns (uint64, uint64) {
+        return _printHandoverProof(diamond, timelock);
+    }
+}
+
 contract HandoverGateTest is Test {
     uint256 internal constant ADMIN_KEY = 0xA11CE;
     uint256 internal constant DELAY = 1 hours;
@@ -89,6 +96,33 @@ contract HandoverGateTest is Test {
         vm.etch(governanceSafe, hex"00");
         vm.etch(pauserSafe, hex"00");
         gate = new HandoverGate();
+    }
+
+    // ─── The proof a pass prints (#945, Codex #2686 r9 + r14) ──────────────
+
+    /// @notice A pass prints the Diamond's role epoch and the Timelock's
+    ///         executed-call count, both read in the state it proved: the
+    ///         launch binds both, so a role change or ANY Timelock call
+    ///         after this proof makes the launch proposal refuse.
+    function test_Proof_CarriesTheRoleEpochAndTheTimelockCallCount() public {
+        _build(_none());
+        HandoverGateProofHarness h = new HandoverGateProofHarness();
+        (uint64 epoch, uint64 calls) = h.handoverProof(address(diamond), address(timelock));
+        assertEq(epoch, AccessControlFacet(address(diamond)).roleEpoch());
+        assertEq(calls, timelock.executedCalls());
+    }
+
+    /// @notice A Timelock that does not count its calls cannot be bound,
+    ///         so the gate refuses to print a proof for it.
+    function test_Proof_RefusesATimelockWithoutACallCount() public {
+        _build(_none());
+        HandoverGateProofHarness h = new HandoverGateProofHarness();
+        vm.expectRevert(
+            bytes(
+                "HandoverGate: the Timelock does not count its executed calls (executedCalls) - it predates the launch binding (#945); fresh deploy"
+            )
+        );
+        h.handoverProof(address(diamond), stranger);
     }
 
     // ─── Scenarios ──────────────────────────────────────────────────────────
@@ -319,6 +353,25 @@ contract HandoverGateTest is Test {
         _assertContains(failures, "Timelock delay");
     }
 
+    /// @notice The registry routes VPFI through a pool other than the
+    ///         artifact's (Codex #2686 r7): the artifact's pool was proven
+    ///         Timelock-owned, the routed one was not, so the gate fails.
+    function test_RegistryRoutingAnotherPool_Fails() public {
+        HandoverGate.Inputs memory inp = _build(_none());
+        cctRegistry.setPool(address(vpfiToken), address(0xBAD));
+        (string[] memory failures,) = gate.evaluate(inp, _logs());
+        _assertContains(failures, "the CCIP registry routes VPFI through");
+    }
+
+    /// @notice The routed pool's rate limits are settable by someone other
+    ///         than the bounded governor: the gate fails.
+    function test_PoolRateAdminNotTheGovernor_Fails() public {
+        HandoverGate.Inputs memory inp = _build(_none());
+        tokenPool.setRateLimitAdmin(stranger);
+        (string[] memory failures,) = gate.evaluate(inp, _logs());
+        _assertContains(failures, "VPFI pool rate-limit admin is");
+    }
+
     // ─── Fixture ────────────────────────────────────────────────────────────
 
     function _none() internal pure returns (Twist memory t) {}
@@ -367,6 +420,8 @@ contract HandoverGateTest is Test {
         vpfiToken = new OwnableERC20Stub(admin);
         cctRegistry = new TokenAdminRegistryStub();
         cctRegistry.seed(address(vpfiToken), admin);
+        cctRegistry.setPool(address(vpfiToken), address(tokenPool));
+        tokenPool.setRateLimitAdmin(address(rateGovernor));
 
         vm.startPrank(admin);
         messenger.setGuardian(t.wrongGuardian ? stranger : pauserSafe);
@@ -409,6 +464,8 @@ contract HandoverGateTest is Test {
         inp.botHolders = c.botHolders;
         inp.targets = c.targets;
         inp.vpfiToken = address(vpfiToken);
+        inp.vpfiPool = address(tokenPool);
+        inp.rateGovernor = address(rateGovernor);
         inp.cctRegistry = address(cctRegistry);
         inp.production = false;
     }

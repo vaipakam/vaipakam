@@ -89,7 +89,24 @@ library LibNotificationFee {
         uint256 configuredFeeVpfi1e18
     );
 
+    /// @notice Emitted when a wallet sets or revokes its consent to be
+    ///         billed for paid notifications (#2721). `cap` is the most VPFI
+    ///         it agreed to pay per loan side; zero revokes.
+    /// @custom:event-category informational/config
+    event NotificationFeeConsentSet(address indexed user, uint256 previousCap, uint256 cap);
+
     error NotifFeeVpfiTokenNotSet();
+    /// @notice #2721 — `payer` has not agreed to pay `fee` per loan side:
+    ///         it never consented, revoked, or capped its consent below the
+    ///         fee now configured. Nothing is debited.
+    error NotificationFeeNotConsented(address payer, uint256 fee, uint256 consentedCap);
+    /// @notice #2721 — a paid-notification fee is billed only on a loan
+    ///         that is still open. Nothing is debited.
+    error NotificationBillingLoanNotActive(uint256 loanId);
+    /// @notice #2721 — a consent cap above the protocol's fee ceiling would
+    ///         record a figure no bill can reach; consent to the ceiling
+    ///         itself to accept any fee governance can set.
+    error NotificationFeeConsentAboveCeiling(uint256 cap, uint256 ceiling);
 
     /// @notice The flat VPFI amount (18-dec, raw) billed per loan-side
     ///         notification — the configured native-VPFI tariff.
@@ -98,6 +115,22 @@ library LibNotificationFee {
     ///         the §14.2 conversion class is forbidden at launch.
     function vpfiAmountForFee() internal view returns (uint256) {
         return LibVaipakam.cfgNotificationFee();
+    }
+
+    /// @notice Records `user`'s consent to be billed for paid notifications
+    ///         (#2721): at most `cap` VPFI per loan side. Zero revokes.
+    /// @dev    The only writer of `notificationFeeConsentCap`. The consent is
+    ///         the user's own: the caller (`ProfileFacet`) passes
+    ///         `msg.sender`, never an argument. A cap above
+    ///         `MAX_NOTIFICATION_FEE_CEIL` is refused rather than stored, so
+    ///         the record always names a fee a bill could actually charge.
+    function setConsent(address user, uint256 cap) internal {
+        if (cap > LibVaipakam.MAX_NOTIFICATION_FEE_CEIL) {
+            revert NotificationFeeConsentAboveCeiling(cap, LibVaipakam.MAX_NOTIFICATION_FEE_CEIL);
+        }
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        emit NotificationFeeConsentSet(user, s.notificationFeeConsentCap[user], cap);
+        s.notificationFeeConsentCap[user] = cap;
     }
 
     /// @notice Bills a loan-side once. Idempotent — repeated calls on an
@@ -113,6 +146,15 @@ library LibNotificationFee {
     ///         visibility.
     /// @param  loanId        Loan to bill (used as the recycle refId).
     /// @param  isLenderSide  true ⇒ bill the lender side; false ⇒ borrower.
+    ///
+    ///         Two refusals run before anything moves (#2721). The loan must
+    ///         be `Active`, and `payer` must have consented, through
+    ///         {setConsent}, to a cap at least the fee being billed. The
+    ///         billing role therefore cannot charge a wallet that never
+    ///         agreed to pay, charge more than it agreed to, or charge on a
+    ///         closed loan. An already-billed side stays a silent no-op
+    ///         whatever its loan's status, so a retry never turns into a
+    ///         revert.
     /// @param  payer         The vault owner (lender or borrower). The
     ///                       caller (`LoanFacet.markNotifBilled`) supplies
     ///                       whichever party matches `isLenderSide`.
@@ -128,7 +170,14 @@ library LibNotificationFee {
             if (loan.borrowerNotifBilled) return;
         }
 
+        if (loan.status != LibVaipakam.LoanStatus.Active) {
+            revert NotificationBillingLoanNotActive(loanId);
+        }
         uint256 vpfiAmount = vpfiAmountForFee();
+        uint256 consentedCap = s.notificationFeeConsentCap[payer];
+        if (consentedCap == 0 || vpfiAmount > consentedCap) {
+            revert NotificationFeeNotConsented(payer, vpfiAmount, consentedCap);
+        }
 
         address vpfi = s.vpfiToken;
         if (vpfi == address(0)) revert NotifFeeVpfiTokenNotSet();

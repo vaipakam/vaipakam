@@ -559,6 +559,15 @@ then deploy.
       four above, those have safe defaults, so an omission degrades tuning
       rather than turning a duty off.
 
+      `DISCOUNT_PATH_CHAIN_IDS` is a plain var, not a secret, so it can be
+      read back, but it ARMS something and belongs in the record by value:
+      the chains on which the flash-loan discount branch of the liquidator
+      runs (#2633). Unset, that branch skips on every chain and the partial
+      / split / atomic branches still run. It is a chain list, not `true`,
+      ships empty, and does anything only on a chain that also has a
+      FlashLoanLiquidator (none today; sizing #2697). It is cleared with the
+      flags in §7a step 3B and re-armed only by the owner's decision.
+
       **Do NOT set them here.** They arm signing against a database §§4–6
       have not restored: a matcher or liquidator pass reading half-imported
       state would submit real transactions from a real key. Re-arming is
@@ -1836,7 +1845,8 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    `KEEPER_ENABLED=false` and every per-pass flag (`REWARD_REMIT_ENABLED`,
    `REWARD_COMMIT_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED`,
    `GRACE_DEFAULT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`,
-   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`) empty — by editing the
+   `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
+   `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
    Never paste a value from that file anywhere.
 
@@ -1855,16 +1865,16 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
      (`apps/keeper/host/hostEnv.ts` binds `KEEPER_DB` from that pin, never
      from a host setting), so the machine reaches the new `vaipakam-keeper-db`
      only once it runs a build carrying §1 step 5's recovery commit — the new
-     pin, the wrangler ids and `SUCCESSOR.id`. The updater installs whatever
-     branch `/opt/vaipakam-keeper/deploy-branch` names (`main` unless
-     `KEEPER_DEPLOY_BRANCH` set another at install). Get that commit onto the
-     installed branch BEFORE the service starts: merge it to `main` and run
-     `sudo systemctl start vaipakam-keeper-update.service` once, or, while
-     it is still under review, write its branch name to
-     `/opt/vaipakam-keeper/deploy-branch` (on a rebuild, install with
-     `KEEPER_DEPLOY_BRANCH=<recovery branch>`) and run the update service once;
-     set it back to `main` after the merge. The update service reports the
-     installed commit in its log — confirm it is the recovery one.
+     pin, the wrangler ids and `SUCCESSOR.id`. The machine deploys only
+     bundles CI built and attested from `main` (`KeeperMachine.md` §1), so
+     an unmerged recovery branch cannot reach it. Get the commit onto the
+     machine BEFORE the service starts: merge it to `main`, wait for the
+     `keeper host release` workflow run of that merge to finish, then run
+     `sudo systemctl start vaipakam-keeper-update.service` once. The update
+     service reports the installed commit in its log (`journalctl -u
+     vaipakam-keeper-update`) — confirm it is the recovery one. If it logs
+     `waiting for CI to publish the keeper build`, the workflow has not
+     published yet; run the update service again once it has.
 
    A machine started with either place still pointing at the lost account
    does not fail loudly: the shared reads go to an account or database that

@@ -754,7 +754,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](49);
+        selectors = new bytes4[](50);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -811,6 +811,7 @@ contract HelperTest {
         selectors[46] = AdminFacet.getRateModelMaxDeviationBps.selector;
         selectors[47] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
         selectors[48] = AdminFacet.unpauseIfPauseEpoch.selector;
+        selectors[49] = AdminFacet.launch.selector;
         return selectors;
     }
 
@@ -819,7 +820,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](31);
+        selectors = new bytes4[](33);
         selectors[0] = ProfileFacet.updateKYCStatus.selector;
         selectors[1] = ProfileFacet.getUserCountry.selector;
         selectors[2] = ProfileFacet.isKYCVerified.selector;
@@ -856,6 +857,9 @@ contract HelperTest {
         selectors[29] = ProfileFacet.isRecipientBarred.selector;
         // #1347 — per-offer creator Full VPFI tariff opt-in.
         selectors[30] = ProfileFacet.setOfferCreatorFullTariff.selector;
+        // #2721 — paid-notification billing consent (set + read).
+        selectors[31] = ProfileFacet.setNotificationFeeConsent.selector;
+        selectors[32] = ProfileFacet.getNotificationFeeConsent.selector;
         return selectors;
     }
 
@@ -1686,7 +1690,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](17);
         selectors[0] = AccessControlFacet.initializeAccessControl.selector;
         selectors[1] = AccessControlFacet.grantRole.selector;
         selectors[2] = AccessControlFacet.revokeRole.selector;
@@ -1703,6 +1707,7 @@ contract HelperTest {
         selectors[13] = AccessControlFacet.transferAdmin.selector;
         selectors[14] = AccessControlFacet.VAULT_ADMIN_ROLE.selector;
         selectors[15] = AccessControlFacet.EMERGENCY_REVOKER_ROLE.selector;
+        selectors[16] = AccessControlFacet.roleEpoch.selector;
         return selectors;
     }
 
@@ -2743,6 +2748,12 @@ contract HelperTest {
         selectors = FacetSelectors.treasuryFee();
     }
 
+    /// #2419 - the valuation host. Returns the ONE list in
+    /// `FacetSelectors.numeraireValue()` (the same one `DeployDiamond` cuts).
+    function getNumeraireValueFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = FacetSelectors.numeraireValue();
+    }
+
     /// 3b-ii-B (#1566) — the per-day closure proof. Mirrors `DeployDiamond._getRewardClosureSelectors`.
     function getRewardClosureFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](6);
@@ -3085,7 +3096,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](34);
+        selectors = new bytes4[](35);
         selectors[0] = OracleAdminFacet.setChainlinkRegistry.selector;
         selectors[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
         selectors[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
@@ -3120,6 +3131,7 @@ contract HelperTest {
         selectors[31] = OracleAdminFacet.getPeerProtocolAddresses.selector;
         selectors[32] = OracleAdminFacet.setTierReferenceAssets.selector;
         selectors[33] = OracleAdminFacet.getTierReferenceAssets.selector;
+        selectors[34] = OracleAdminFacet.getWethContract.selector;
         return selectors;
     }
 

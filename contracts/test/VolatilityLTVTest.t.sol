@@ -10,6 +10,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {LibNumeraireValue} from "../src/libraries/LibNumeraireValue.sol";
 
 /// @title VolatilityLTVTest
 /// @notice Pinpoint coverage for the 110% LTV collapse trigger — the
@@ -212,16 +213,36 @@ contract VolatilityLTVTest is SetupTest, IVaipakamErrors {
         RiskFacet(address(diamond)).isCollateralValueCollapsed(loanId);
     }
 
-    /// @dev Zero collateral value (price=0) → ZeroCollateral. This path
-    ///      fires AFTER the liquidity check, so both sides must stay
-    ///      Liquid; we flip the oracle price to $0 instead.
+    /// @dev Zero collateral VALUE → ZeroCollateral. This path fires AFTER
+    ///      the liquidity check, so both sides must stay Liquid. Since #2419
+    ///      values are 1e18-scaled and a zero price is refused outright, so
+    ///      the value reaches zero only when the collateral is worth less
+    ///      than 1e-18 of a numeraire unit: here one wei of an 18-decimal
+    ///      token at a price of 1e-18 (an 18-decimal feed reading 1).
     function testCollapsedPredicateRevertsForZeroCollateralValue() public {
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        loan.collateralAmount = 1;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
+        // 1 wei × 1 ÷ 10^(18 + 18 − 18) floors to 0.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encode(uint256(1), uint8(18))
+        );
+        vm.expectRevert(RiskFacet.ZeroCollateral.selector);
+        RiskFacet(address(diamond)).isCollateralValueCollapsed(loanId);
+    }
+
+    /// @dev #2419 — a zero price is refused by the valuation rule itself,
+    ///      whatever reaches it, rather than read as a collateral worth
+    ///      nothing (or a debt that is not there).
+    function testCollapsedPredicateRefusesZeroPrice() public {
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
             abi.encode(0, 8)
         );
-        vm.expectRevert(RiskFacet.ZeroCollateral.selector);
+        vm.expectRevert(LibNumeraireValue.PriceZero.selector);
         RiskFacet(address(diamond)).isCollateralValueCollapsed(loanId);
     }
 }

@@ -1,0 +1,14 @@
+# The keeper's own top-level slice (docs/ops/KeeperMachine.md, #2651).
+#
+# Under cgroup v2, a unit's memory protection holds only as far as each of its
+# ancestors grants it. The default parent, system.slice, grants none. This
+# slice sits directly under the root, where nothing is above it to grant or
+# withhold, so the MemoryLow here is what lets vaipakam-keeper.service's own
+# take effect. Only the keeper runs in it.
+
+[Unit]
+Description=Vaipakam keeper
+Documentation=https://github.com/vaipakam/vaipakam/blob/main/docs/ops/KeeperMachine.md
+
+[Slice]
+MemoryLow=320M

@@ -58,7 +58,7 @@ const ufetch = globalThis.fetch;
 
 import { chromium } from '@playwright/test';
 import { requireSiteUrl } from './driver.mjs';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 // Dynamic, not a static import: a static one is HOISTED above the shim
 // block above, so driver.mjs would capture its own `globalThis.fetch`
@@ -113,6 +113,31 @@ if (LOCALES.length === 0) {
     `DESK_I18N_LOCALES=${JSON.stringify(process.env.DESK_I18N_LOCALES)} selects` +
       ` no locales — nothing to capture.`,
   );
+}
+// An operator-selected locale the app does not ship translated is BLOCKED,
+// not run (#1633). `pt` is a valid, routable code that renders English by
+// design, so capturing it reported every desk string as an untranslated
+// finding — operator input judged as a product regression. Checked against
+// the app's own list (`src/i18n/translatedLocales.json`), and only when the
+// operator chose the locales: the default list is the set this drive
+// believes the app ships, kept explicit so a locale dropped from the app is
+// still captured, and fails, rather than silently leaving the check.
+if (process.env.DESK_I18N_LOCALES) {
+  const listFile = new URL('../../src/i18n/translatedLocales.json', import.meta.url);
+  let translated;
+  try {
+    translated = new Set(JSON.parse(readFileSync(listFile, 'utf8')));
+  } catch (err) {
+    blockedSync(`cannot read the app's translated-locale list\n  path: ${listFile.pathname}\n  ${err.message}`);
+  }
+  const untranslated = LOCALES.filter((code) => !translated.has(code));
+  if (untranslated.length) {
+    blockedSync(
+      `DESK_I18N_LOCALES selects locale(s) the app does not ship translated: ${untranslated.join(', ')}` +
+        ` — capturing them would report English-by-design as missing translations.` +
+        ` Translated: ${[...translated].join(', ')}.`,
+    );
+  }
 }
 
 // A read-only capture never mutates state. Chain READS are JSON-RPC POSTs, so

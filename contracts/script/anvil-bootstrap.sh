@@ -90,7 +90,7 @@ export ADMIN_ADDRESS="$ADMIN_ADDR"
 export TREASURY_ADDRESS="$TREASURY_ADDR"
 
 echo "[1/6] DeployDiamond"
-forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
+forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --ffi --broadcast --slow
 
 # Stamp the REAL diamond-creation block into addresses.json.
 #
@@ -169,6 +169,12 @@ echo "    Multicall3 etched (mock at $MULTICALL3_DEPLOYED â†’ canonical 0xcA11â€
 
 echo "[4/6] BootstrapAnvil (flip Range Orders master flags ON)"
 forge script script/BootstrapAnvil.s.sol --rpc-url "$RPC" --broadcast --slow
+
+# DeployDiamond leaves the Diamond paused (#945); every chain goes live
+# through the same launch step. On anvil it prints the readiness checks the
+# local mocks do not satisfy as warnings, then unpauses with the admin key.
+echo "[4b/6] Launch (readiness report + first unpause)"
+forge script script/Launch.s.sol --rpc-url "$RPC" --broadcast --slow
 
 echo "[5/6] SeedAnvilOffers (one matchable lender + borrower pair)"
 forge script script/SeedAnvilOffers.s.sol --rpc-url "$RPC" --broadcast --slow

@@ -3,6 +3,8 @@ pragma solidity ^0.8.29;
 
 import {DeployDiamond} from "../DeployDiamond.s.sol";
 import {DeployTestnetMocks} from "../DeployTestnetMocks.s.sol";
+import {Launch} from "../Launch.s.sol";
+import {Deployments} from "../lib/Deployments.sol";
 import {WETH9} from "@chainlink/contracts/src/v0.8/vendor/canonical-weth/WETH9.sol";
 
 /**
@@ -91,6 +93,17 @@ contract DeployE2EFixture is DeployDiamond, DeployTestnetMocks {
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         runWith(vm.addr(adminKey), vm.envAddress("TREASURY_ADDRESS"), deployerKey);
         _deployTestnetMocks(deployerKey, adminKey, diamond, CANONICAL_WETH);
+        // The deploy leaves the Diamond paused (#945); the fixture goes live
+        // through the same launch step every chain uses. On 31337 it reports
+        // the readiness checks the mocks do not meet, then the admin unpauses.
+        Launch launcher = new Launch();
+        launcher.launch(
+            diamond,
+            launcher.declaredFromEnv(diamond),
+            Deployments.readTimelockOptional(),
+            vm.addr(adminKey),
+            adminKey
+        );
         // Every admin flag stays at its fresh-deployment default. The
         // auto-refinance switch in particular stays OFF: since #2349 it gates
         // only the automated refinance routes (a delegated keeper, the

@@ -136,6 +136,6 @@ for (const [event, fields] of carries) {
 console.log(
   `✓ activity-refs surface OK — ${carries.size} event(s) carry a reference across ` +
     `${pairs} event/field pair(s); ${allowlisted} deliberately not scoped. References are ` +
-    'read from the ABI by src/activityRefs.ts under src/activityRefsPolicy.json; that is ' +
+    'read from the ABI by packages/lib/src/activityRefs.ts under packages/lib/src/activityRefsPolicy.json; that is ' +
     'enforced by execution in test/activityRefsCoverage.test.ts + test/activityLedger.test.ts.',
 );

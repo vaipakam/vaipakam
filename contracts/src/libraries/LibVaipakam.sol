@@ -33,8 +33,9 @@ import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
  *      every wei of discrepancy favours a safe party. Per-site
  *      comments (`// Rounds DOWN — ...`) state the rationale at each
  *      division. Summary:
- *      - **LTV**: rounds DOWN → 1-BPS *under*-reported → borrower
- *        favour, sub-dust absolute error, acceptable.
+ *      - **LTV**: the final division rounds DOWN → under 1 BPS
+ *        *under*-reported → borrower favour; its two legs err the other
+ *        way (see Numeraire valuation below).
  *      - **Health Factor**: rounds DOWN → slightly under-reported →
  *        protocol favour (liquidation may trigger marginally earlier).
  *      - **Interest accrual (simple)**: rounds DOWN on
@@ -46,13 +47,18 @@ import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
  *        half-pool, dust retained as over-emission guard.
  *      - **Liquidation bonus**: rounds DOWN on `(proceeds * bps) /
  *        10000` → bonus under-paid by <=1 wei (treasury favour).
- *      - **Oracle USD conversion**: `amount * price / 10**feedDec /
- *        10**tokenDec` — two sequential divides; error stays sub-dust
- *        because USD values are 1e18-scaled.
+ *      - **Numeraire valuation** (`LibNumeraireValue`, #2419): one
+ *        full-precision `amount * price * 1e18 / 10**(feedDec + tokenDec)`
+ *        with a single rounding the caller names — debt and principal
+ *        legs UP, collateral legs and threshold comparisons DOWN (lender
+ *        favour by <=1e-18 numeraire unit per leg). Values are
+ *        1e18-scaled; no risk path values in whole units.
  *
  *      New division on a money path MUST state direction + who it
- *      favours + why it's safe. `ceilDiv` is reserved for cases where
- *      rounding down is actively dangerous (none currently).
+ *      favours + why it's safe. Rounding UP is reserved for cases where
+ *      rounding down is actively dangerous — today the debt legs of a
+ *      numeraire valuation, where a floor would report a sub-unit debt
+ *      as no debt.
  */
 library LibVaipakam {
     using EnumerableSet for EnumerableSet.Bytes32Set; // #625 WI-2a — intent registry
@@ -365,9 +371,10 @@ library LibVaipakam {
     // can never swap more than 100% of remaining collateral, by definition.
     uint256 constant MAX_PARTIAL_LIQUIDATION_CLOSE_FACTOR_BPS_DEFAULT = 10_000;
     // #395 graduated partial-liquidation sizing (Approach A). The two HF
-    // thresholds are BPS-of-HF_SCALE; the dust floor is whole-numeraire — the
-    // same scale {RiskFacet._computeNumeraireValues} returns ($1k == 1_000
-    // with 8-decimal feeds, NOT 1e18-scaled). See the per-field notes below.
+    // thresholds are BPS-of-HF_SCALE; the dust floor is a 1e18-scaled
+    // numeraire value — the scale {RiskFacet._computeNumeraireValues}
+    // returns ($1k == 1_000e18; #2419 — it was whole units before). See the
+    // per-field notes below.
     //  - Target HF ceiling: a routine partial may not leave the borrower
     //    above this HF (prevents over-liquidation). Default HF 1.20.
     //    Bounded (1.05, 1.50] so it always sits strictly above the HF=1.00
@@ -381,17 +388,22 @@ library LibVaipakam {
     uint256 constant PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS_DEFAULT = 9_500;
     uint256 constant MIN_PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS = 8_000; // HF 0.80
     uint256 constant MAX_PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS = 9_900; // HF 0.99
-    //  - Dust floor: gates the dust waiver/prevention. UNITS: the same
-    //    whole-numeraire scale {RiskFacet._computeNumeraireValues} returns
-    //    (whole-USD with 8-decimal feeds; NOT 1e18-scaled). DEFAULT 0 ⇒
-    //    DISABLED (Codex r3 P2): there is no universally-correct default
-    //    because the active numeraire can be rotated away from USD, so a
-    //    hard-coded $1k default would mis-classify ordinary loans as dust on
-    //    a non-USD deployment. Governance sets an explicit floor in the
-    //    active numeraire to switch dust handling on. Capped at 100_000 so a
-    //    misconfigured floor can't turn every routine partial into a full
-    //    close.
-    uint256 constant MAX_LIQUIDATION_DUST_FLOOR_NUMERAIRE = 100_000;
+    //  - Dust floor: gates the dust waiver/prevention. UNITS: a 1e18-scaled
+    //    numeraire value, the scale {RiskFacet._computeNumeraireValues}
+    //    returns (#2419). DEFAULT 0 ⇒ DISABLED (Codex r3 P2): there is no
+    //    universally-correct default because the active numeraire can be
+    //    rotated away from USD, so a hard-coded $1k default would
+    //    mis-classify ordinary loans as dust on a non-USD deployment.
+    //    Governance sets an explicit floor in the active numeraire to switch
+    //    dust handling on, and a rotation resets it to 0
+    //    (`NumeraireConfigFacet.setNumeraire`). A nonzero floor is bounded
+    //    to [1, 100_000] numeraire units: the cap so a misconfigured floor
+    //    can't turn every routine partial into a full close, the minimum so
+    //    a value written on the pre-#2419 whole-unit scale (every one of
+    //    which is below 1e18) is refused by name instead of silently
+    //    reading as a floor of a fraction of a cent.
+    uint256 constant MIN_LIQUIDATION_DUST_FLOOR_NUMERAIRE = 1e18;
+    uint256 constant MAX_LIQUIDATION_DUST_FLOOR_NUMERAIRE = 100_000e18;
     uint256 constant LOAN_INITIATION_FEE_BPS = 20; // 0.2% fee deducted from ERC-20 principal at loan initiation (rev-8 fee freeze, #1352; was 10 = 0.1%). Charged once at accept — no post-init reader, so the bump affects new originations only (open loans already paid their LIF)
     // Fallback-path split (README §7): lender gets principal + accrued
     // interest + {FALLBACK_LENDER_BONUS_BPS} of principal; treasury gets
@@ -5076,9 +5088,9 @@ library LibVaipakam {
         /// @dev HF (BPS of HF_SCALE; 9_500 = HF 0.95) at/below which the ceiling
         ///      is waived so a keeper may delever aggressively to restore solvency.
         uint16 partialLiqDeepUnderwaterHfBps; // 0 ⇒ default (9_500)
-        /// @dev Dust floor in the whole-numeraire scale
-        ///      {RiskFacet._computeNumeraireValues} returns (whole-USD with
-        ///      8-decimal feeds; NOT 1e18-scaled). 0 ⇒ dust handling DISABLED
+        /// @dev Dust floor as a 1e18-scaled numeraire value, the scale
+        ///      {RiskFacet._computeNumeraireValues} returns (#2419; whole
+        ///      units before it). 0 ⇒ dust handling DISABLED
         ///      (Codex r3 P2 — no USD-scaled default that would misfire on a
         ///      rotated numeraire). When governance sets it (> 0), it both
         ///      WAIVES the over-liquidation ceiling for a PRE-partial dust
@@ -8182,6 +8194,15 @@ library LibVaipakam {
         ///      did not count never sizes the day's recycled budget. Written by
         ///      `LibVpfiRecycle.recordChainRecycled`. Appended — append-only.
         mapping(uint256 => mapping(uint32 => uint256)) chainDailyRecycledReported;
+        /// @dev #2721 — per wallet, the most VPFI it agreed to be billed per
+        ///      loan side for paid notifications; zero means no consent. Set
+        ///      only by the wallet itself (`ProfileFacet.setNotificationFeeConsent`,
+        ///      through `LibNotificationFee.setConsent`) and read by
+        ///      `LibNotificationFee.bill`, which refuses a payer whose cap is
+        ///      zero or below the fee being billed. Before this record the
+        ///      billing role could debit any loan party; the opt-in lived only
+        ///      off-chain. Appended — append-only.
+        mapping(address => uint256) notificationFeeConsentCap;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -10076,8 +10097,15 @@ library LibVaipakam {
     ///      storage-field note. Governance opts in with a floor in the active
     ///      numeraire; `RiskFacet._assertPartialSizing` skips both the dust
     ///      waiver and the dust-prevention check while this is 0.
+    ///      A stored value below {MIN_LIQUIDATION_DUST_FLOOR_NUMERAIRE} reads
+    ///      as 0 (#2419): the setter never writes one, so such a value can
+    ///      only be a floor written on the earlier whole-unit scale, and it
+    ///      is reported and applied as what it now is, no floor, rather than
+    ///      as a floor of a fraction of a cent. The reader and the getter
+    ///      both go through here, so they cannot disagree.
     function cfgLiquidationDustFloorNumeraire() internal view returns (uint256) {
-        return storageSlot().liquidationDustFloorNumeraire;
+        uint256 v = storageSlot().liquidationDustFloorNumeraire;
+        return v < MIN_LIQUIDATION_DUST_FLOOR_NUMERAIRE ? 0 : v;
     }
 
     /// @dev #400 — active quote-time rate model; `address(0)` ⇒ identity

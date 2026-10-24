@@ -634,6 +634,15 @@ if [ "$FRESH" = "1" ]; then
       || { echo "ERROR: could not record the prior deployment in archive-manifest.json; refusing --fresh (nothing moved)" >&2; exit 1; }
     mv "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" "$BACKUP"
     echo "  ✓ backed up prior addresses.json → $(basename "$BACKUP") — recorded in archive-manifest.json; COMMIT IT"
+    # #2092 — the retired Diamond's storage-layout record and its anchor go
+    # with its addresses (Codex #2684 r1 P2), so the new deploy writes a fresh
+    # pair instead of overwriting the only copy of the old one.
+    for rec in storage-layout storage-layout.anchor; do
+      if [ -f "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/$rec.json" ]; then
+        mv "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/$rec.json" \
+          "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/$rec.prior-rehearsal.$TS.json"
+      fi
+    done
     if [ -n "$PRIOR_DIAMOND" ] && [ "$PRIOR_DIAMOND" != "null" ]; then
       echo "  retired Diamond $PRIOR_DIAMOND (deploy block ${PRIOR_DEPLOY_BLOCK:-0}) is in archive-manifest.json for the indexer"
       seed_retired_deployments_now "$REPO_ROOT"
@@ -765,7 +774,7 @@ if step_done "diamond"; then
 else
   echo
   echo "[2] DeployDiamond.s.sol"
-  forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --ffi --broadcast --slow
   snapshot_addresses "post-diamond"
   mark_done "diamond"
 fi
@@ -834,6 +843,13 @@ else
   mark_done "timelock"
 fi
 
+# ── 3a. LaunchGate (#945) ─────────────────────────────────────────────
+# The stateless contract a Timelock launch batch calls to re-check readiness
+# inside its execution. Deterministic address, no owner; a re-run is a no-op.
+echo
+echo "[3a] DeployLaunchGate.s.sol"
+forge script script/DeployLaunchGate.s.sol --rpc-url "$RPC" --broadcast --slow
+
 # ── 3b. Canonical VPFI token ──────────────────────────────────────────
 # MUST land BEFORE DeployCrosschain, whose canonical branch (Base) reads
 # `.vpfiToken` to wrap the existing token in the CCIP LockRelease pool; nothing
@@ -854,7 +870,7 @@ if [ "$SKIP_VPFI" = "0" ] && [ "$IS_CANONICAL" = "1" ]; then
     # unconditionally (unlike testnet/mainnet, whose archive gates on .diamond),
     # so this is defensive here — kept for parity with the other wrappers (#857).
     VPFI_TOKEN_FRESH="$FRESH" \
-      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
+      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --ffi --broadcast --slow
     snapshot_addresses "post-vpfitoken"
     mark_done "vpfitoken"
   fi
@@ -881,7 +897,7 @@ if [ "$SKIP_VPFI" = "0" ] && step_done "crosschain"; then
 elif [ "$SKIP_VPFI" = "0" ]; then
   echo
   echo "[4] DeployCrosschain.s.sol  (CCIP cross-chain stack)"
-  forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --ffi --broadcast --slow
   snapshot_addresses "post-crosschain"
   mark_done "crosschain"
 else
@@ -1022,7 +1038,8 @@ fi
 # Reads sentinel state from the deployed Diamond + (where applicable)
 # the BuyAdapter rate limits. Logs a clear PASS/FAIL line per check
 # so a deploy that landed structurally but mis-configured (e.g.
-# default-uint256.max rate limits, paused diamond, missing treasury)
+# default-uint256.max rate limits, missing treasury; a paused diamond is
+# expected here — the launch step is what unpauses it, #945)
 # fails LOUDLY here rather than silently shipping a broken state.
 # Health-check log is also persisted to .history/ for audit trail.
 
@@ -1683,6 +1700,17 @@ echo "     Wires chain selectors, remote messengers, the vpfi-buy /"
 echo "     vpfi-reward channel peers, the TokenPool lanes + rate limits,"
 echo "     and the TokenAdminRegistry CCT registration. Run it once per"
 echo "     chain. The multi-chain orchestrators do this automatically."
-echo "  3. Role rotation to governance + timelock — DeploymentRunbook §6"
+echo "  3. REQUIRED — the sanctions screen (#946). Until it is set every"
+echo "     wallet reads as unsanctioned; on a testnet it is the admin's"
+echo "     TestnetSanctionsOverlay:"
+echo "        forge script script/ConfigureSanctionsOracle.s.sol --rpc-url <rpc> --broadcast"
+echo "  4. REQUIRED — launch (#945). This script leaves the Diamond PAUSED."
+echo "     After steps 1-3 (and a swap adapter), the launch step reads every"
+echo "     readiness requirement off the chain, refuses while one is NOT MET,"
+echo "     then the admin key unpauses. Set CCIP_LANE_CHAIN_IDS to the lanes the"
+echo "     VPFI pool carries (exactly); with --skip-vpfi leave it unset, and the"
+echo "     CCIP checks report this deployment as carrying no cross-chain VPFI:"
+echo "        forge script script/Launch.s.sol --rpc-url <rpc> --broadcast"
+echo "  5. Role rotation to governance + timelock — DeploymentRunbook §6"
 echo "     (multi-party ceremony, deliberately out of any script)"
 echo "═══════════════════════════════════════════════════════════════"

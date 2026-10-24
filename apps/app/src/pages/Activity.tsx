@@ -4,7 +4,7 @@
  * loan/offer links back into the app.
  */
 import { Fragment, useMemo, useState } from 'react';
-import { ExternalLink, History, LoaderCircle } from 'lucide-react';
+import { ExternalLink, History, LoaderCircle, SearchCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useModal } from 'connectkit';
@@ -21,6 +21,7 @@ import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { formatTimeAgo, shortAddress } from '../lib/format';
 import {
   coalesceByTx,
+  isWalletActivity,
   legText,
   rowValue,
   type ActivityRowView,
@@ -29,6 +30,12 @@ import {
   type RowValue,
   type ValueLeg,
 } from '../lib/activityView';
+import {
+  mergeFeed,
+  readRepairObservations,
+  type RepairObservation,
+} from '../lib/repairObservation';
+import { catalogText } from '../lib/catalogText';
 import { useTokenMeta } from '../contracts/erc20';
 import { signalAware } from '../chain/railHealth';
 
@@ -74,11 +81,12 @@ function RowValueText({ value }: { value: RowValue }) {
  *  action, a single substance sub-line (loan/offer id · who acted · when
  *  · how many sub-events it stood in for), and an explorer link. */
 function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string }) {
-  const { event, label, hiddenCount } = row;
-  // Prefer the translated catalog label for a known event kind; fall
-  // back to the pure module's humanized label for a kind the app
-  // doesn't map yet (English — unavoidable for an unknown event).
-  const displayLabel = copy.activity.labels[event.kind] ?? label;
+  const { event, label, labelSource, hiddenCount } = row;
+  // Prefer the translated catalog label (per kind, or per destination for a
+  // status edge into an end state); fall back to the pure module's label for
+  // a kind the app doesn't map yet (English — unavoidable for an unknown
+  // event).
+  const displayLabel = catalogText(copy.activity[labelSource.catalog], labelSource.key) ?? label;
   const value = useMemo(() => rowValue(row), [row]);
   const hasValue = value.legs.length > 0 || value.unstated;
   const context = [
@@ -139,6 +147,33 @@ function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string
   );
 }
 
+/** #2643 — a repaired loan's ending: what a check of the chain observed.
+ *  No transaction link and no actor, because neither was seen; the time is
+ *  the checked block's, not the ending's. */
+function RepairObservationRow({ observation }: { observation: RepairObservation }) {
+  const status =
+    catalogText(copy.activity.repairStatus, observation.observedStatus) ??
+    copy.activity.repairStatusOther;
+  return (
+    <div className="item-row activity-row" data-testid="activity-repair-observation">
+      <Link to={`/positions/${observation.loanId}`} className="activity-row-link">
+        <span className="row-main">
+          <span className="row-title">
+            <SearchCheck size={14} aria-hidden /> {copy.activity.repairTitle(observation.loanId)}
+          </span>
+          <br />
+          <span className="row-sub">
+            {copy.activity.repairBody(status, observation.observedBlock)}
+            {observation.observedAt !== null
+              ? ` · ${copy.activity.repairCheckedAgo(formatTimeAgo(observation.observedAt))}`
+              : ''}
+          </span>
+        </span>
+      </Link>
+    </div>
+  );
+}
+
 /** Client-side reveal page size — caps the initial DOM (the old feed
  *  rendered ~5,500px unpaginated). */
 const PAGE = 25;
@@ -148,20 +183,25 @@ const PAGE = 25;
  *  behind the page's conditional branches. */
 function ActivityFeed({
   events,
+  observations,
   truncated,
   explorer,
   visible,
   onLoadMore,
 }: {
   events: IndexedActivityEvent[];
+  observations: RepairObservation[];
   truncated: boolean;
   explorer: string;
   visible: number;
   onLoadMore: () => void;
 }) {
-  const rows = useMemo(() => coalesceByTx(events), [events]);
-  const shown = rows.slice(0, visible);
-  const hasMore = rows.length > visible;
+  const items = useMemo(
+    () => mergeFeed(coalesceByTx(events), observations),
+    [events, observations],
+  );
+  const shown = items.slice(0, visible);
+  const hasMore = items.length > visible;
 
   return (
     <>
@@ -175,9 +215,13 @@ function ActivityFeed({
         </div>
       ) : null}
       <div className="row-list">
-        {shown.map((row) => (
-          <ActivityRow key={row.key} row={row} explorer={explorer} />
-        ))}
+        {shown.map((item) =>
+          item.type === 'tx' ? (
+            <ActivityRow key={item.key} row={item.row} explorer={explorer} />
+          ) : (
+            <RepairObservationRow key={item.key} observation={item.observation} />
+          ),
+        )}
       </div>
       {hasMore ? (
         <button
@@ -212,11 +256,11 @@ export function Activity() {
     setVisible(PAGE);
   }
 
-  // The worker's actor column is non-exhaustive (a keeper-triggered
+  // The worker's actor column is one wallet per row (a keeper-triggered
   // LoanDefaulted has actor null; OfferAccepted stores only the
-  // acceptor), so fetch broadly and keep an event when the wallet is a
-  // PARTICIPANT: recorded actor, mentioned in the event args, or the
-  // event belongs to one of the wallet's own loans.
+  // acceptor), so fetch broadly and keep an event when the event belongs
+  // to one of the wallet's own loans or the wallet is one of its
+  // PARTICIPANTS by the shared rule (#2703, `isWalletActivity`).
   // The filter needs the wallet's loan-id set INCLUDING the indexer
   // leg: the live chain enumeration only sees currently-held position
   // NFTs, so a chain-only fallback would silently drop actor-null
@@ -285,6 +329,10 @@ export function Activity() {
     refetchInterval: signalAware(60_000),
     queryFn: async (): Promise<{
       events: IndexedActivityEvent[];
+      /** #2643 — repaired loans' endings for the wallet's loans. */
+      observations: RepairObservation[];
+      /** False when any page could not say which loans were repaired. */
+      observationsKnown: boolean;
       truncated: boolean;
     } | null> => {
       // Protocol-wide feed, so one busy day can push a wallet's events
@@ -295,20 +343,23 @@ export function Activity() {
       // partial slice as the wallet's complete history.
       const me = address!.toLowerCase();
       const mine: IndexedActivityEvent[] = [];
+      const observations: RepairObservation[] = [];
+      let observationsKnown = true;
       let before: string | undefined;
       let truncated = true;
       for (let i = 0; i < 5; i++) {
-        const page = await fetchActivity(readChain.chainId, { limit: 100, before });
+        const page = await fetchActivity(readChain.chainId, {
+          limit: 100,
+          before,
+          repairObservations: true,
+        });
         if (page === null) return null; // any page failing → unavailable
-        mine.push(
-          ...page.events.filter((ev) => {
-            if (ev.actor && ev.actor.toLowerCase() === me) return true;
-            if (ev.loanId !== null && myLoanIds.has(ev.loanId)) return true;
-            const argsStr =
-              typeof ev.args === 'string' ? ev.args : JSON.stringify(ev.args ?? {});
-            return argsStr.toLowerCase().includes(me);
-          }),
-        );
+        // An observation names a loan and nothing else (no actor, no
+        // args), so the wallet's loan ids are the whole participation test.
+        const pageObservations = readRepairObservations(page.repairObservations, readChain.chainId);
+        if (pageObservations === null) observationsKnown = false;
+        else observations.push(...pageObservations.filter((o) => myLoanIds.has(o.loanId)));
+        mine.push(...page.events.filter((ev) => isWalletActivity(ev, me, myLoanIds)));
         if (page.nextBefore === null) {
           truncated = false;
           break;
@@ -320,10 +371,11 @@ export function Activity() {
         // truncated banner yet offer no "load older" path. 50 distinct
         // txs ⇒ ~50 coalesced rows ⇒ a real second reveal page.
         const distinctTx = new Set(mine.map((e) => e.txHash || `${e.blockNumber}:${e.logIndex}`));
-        if (distinctTx.size >= 50) break; // plenty of rows — still truncated
+        // Each observation is a row of its own.
+        if (distinctTx.size + observations.length >= 50) break; // plenty of rows — still truncated
         before = page.nextBefore;
       }
-      return { events: mine, truncated };
+      return { events: mine, observations, observationsKnown, truncated };
     },
   });
 
@@ -370,12 +422,17 @@ export function Activity() {
             <Link to="/positions">{copy.activity.positionsLink}</Link>.
           </p>
         </>
-      ) : activity.data.events.length === 0 ? (
+      ) : activity.data.events.length === 0 && activity.data.observations.length === 0 ? (
         <>
           {/* A STALLED indexer returning zero rows is exactly the
               misleading empty feed — the self-gating note must cover
               this branch too, not only the non-empty one. */}
           <MarketFreshnessNote />
+          {activity.data.observationsKnown ? null : (
+            <p className="muted" role="status">
+              {copy.activity.repairUnknownNote}
+            </p>
+          )}
           {participantTruncated ? (
             <p className="muted" role="status">
               {copy.activity.participantTruncatedNote}
@@ -422,8 +479,14 @@ export function Activity() {
               {copy.activity.participantTruncatedNote}
             </p>
           ) : null}
+          {activity.data.observationsKnown ? null : (
+            <p className="muted" role="status">
+              {copy.activity.repairUnknownNote}
+            </p>
+          )}
           <ActivityFeed
             events={activity.data.events}
+            observations={activity.data.observations}
             truncated={activity.data.truncated}
             explorer={readChain.blockExplorer}
             visible={visible}

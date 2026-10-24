@@ -51,6 +51,12 @@ contract CancelAfterPartialFillTest is SetupTest {
 
     function setUp() public {
         setupHelper();
+        // #2419 — the fixtures lend thousands of wei against hundreds of wei
+        // of collateral. On whole-unit values both legs read 0 and no
+        // offer-time bound applied; at 1e18 precision they are valued, so
+        // collateral is priced at $50 to keep every fixture inside the
+        // offer-time HF / LTV bounds. No expected figure depends on the price.
+        mockOraclePrice(mockCollateralERC20, 50e8, 8);
 
         // Range / partial-fill flags ON — the matchOffers path is the
         // ONLY way to land a partial fill (direct-accept consumes the

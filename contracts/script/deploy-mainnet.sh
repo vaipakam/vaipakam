@@ -91,6 +91,15 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #       every role holder from the chain's role events and fails on any
 #       key the governance plan does not name.
 #
+#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase launch
+#       The first unpause (#945). The contracts phase leaves the Diamond
+#       PAUSED, so it is never live under the hot admin key. After the
+#       handover gate, Launch.s.sol reads every readiness requirement off
+#       the chain (treasury, sanctions oracle, price feed, swap route,
+#       CCIP lanes), and prints the Timelock `schedule` / `execute` calls
+#       for the Governance Safe. Broadcasts nothing; re-run after the
+#       Timelock executes to confirm and record it.
+#
 #   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase abi-sync
 #       Runs the three export scripts. No on-chain effect — safe to
 #       re-run. Usually run after `--phase contracts` lands.
@@ -205,6 +214,8 @@ source "$SCRIPT_DIR/lib/sentinel-reads.sh"
 source "$SCRIPT_DIR/lib/ccip-lanes.sh"
 # shellcheck source=lib/artifact-code-check.sh
 source "$SCRIPT_DIR/lib/artifact-code-check.sh"
+# shellcheck source=lib/handover-proof.sh
+source "$SCRIPT_DIR/lib/handover-proof.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 
 # ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
@@ -304,6 +315,11 @@ Phases:
                     chain's role holders, owners and CCT admin must
                     match the governance topology. Run after the Safe
                     has executed every acceptOwnership.
+  launch          — The first unpause (Launch.s.sol, #945). Broadcasts
+                    nothing: requires every readiness check met and the
+                    handover done, then prints the Timelock proposal the
+                    Governance Safe schedules. Re-run to record it once
+                    executed.
   abi-sync        — packages/contracts ABI + deployments.json sync
                     + sibling keeper-bot repo (when present).
   cf-app         — Build + wrangler deploy apps/app (the dApp).
@@ -692,7 +708,7 @@ archive_chain_state() {
     || { echo "ERROR: could not record the deployment being archived in archive-manifest.json; refusing to archive" >&2; exit 1; }
 
   mkdir -p "$archive"
-  for entry in addresses.json deployment_source.json .markers .history; do
+  for entry in addresses.json deployment_source.json storage-layout.json storage-layout.anchor.json .markers .history; do
     if [ -e "$deploy_dir/$entry" ]; then
       mv "$deploy_dir/$entry" "$archive/" 2>/dev/null || true
     fi
@@ -1007,11 +1023,19 @@ EOF
     || { echo "ERROR: could not mark the live publication in archive-manifest.json (another deploy on $CHAIN_SLUG may be in progress — check for a live forge child before live-begin --force)" >&2; exit 1; }
   export VAIPAKAM_LIVE_PUBLICATION_TOKEN="$LIVE_PUB_TOKEN"
   echo "[2] DeployDiamond.s.sol"
-  forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --ffi --broadcast --slow
 
   echo
   echo "[3] DeployTimelock.s.sol"
   forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow
+
+  # [3a] The LaunchGate (#945): the stateless contract the launch batch calls
+  # to re-check readiness inside the Timelock's execution. Deterministic
+  # address, no owner, no-op when already there. Deployed here so the launch
+  # phase, which broadcasts nothing, finds it.
+  echo
+  echo "[3a] DeployLaunchGate.s.sol"
+  forge script script/DeployLaunchGate.s.sol --rpc-url "$RPC" --broadcast --slow
 
   # [3b] Canonical VPFI token — MUST land BEFORE DeployCrosschain, whose
   # canonical branch (Base) reads `.vpfiToken` to wrap the existing token in the
@@ -1032,7 +1056,7 @@ EOF
     echo
     echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
     VPFI_TOKEN_FRESH="$FRESH" \
-      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
+      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --ffi --broadcast --slow
   fi
 
   # DeployCrosschain.s.sol deploys the whole T-068 CCIP stack for this
@@ -1047,7 +1071,7 @@ EOF
   # is no per-adapter setRateLimits step any more.
   echo
   echo "[4] DeployCrosschain.s.sol  (CCIP cross-chain stack)"
-  forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --ffi --broadcast --slow
 
   echo
   echo "✓ contracts phase done."
@@ -1666,12 +1690,98 @@ phase_handover_gate() {
   echo "deploy-mainnet.sh — handover-gate  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
 
+  # The gate prints what it proved, the role epoch and the Timelock's
+  # executed-call count, on lines of their own; the launch binds its
+  # Timelock call to both, so a role that changes hands (Codex #2686 r9) or
+  # any Timelock call that executes (r14) after this proof makes the launch
+  # refuse. The record is cleared first, so a failing gate leaves no older
+  # proof behind; pipefail makes a failing gate fail this phase.
+  clear_handover_proof "$MARKERS_DIR"
+  local hg_log="$MARKERS_DIR/handover-gate.log"
   CHAIN_SLUG="$CHAIN_SLUG" forge script script/HandoverGate.s.sol \
-    --rpc-url "$RPC"
+    --rpc-url "$RPC" 2>&1 | tee "$hg_log"
+  record_handover_proof "$hg_log" "$MARKERS_DIR" || exit 1
+  load_handover_proof "$MARKERS_DIR" || exit 1
 
   mark_phase_done "handover-gate"
   echo
-  echo "✓ handover-gate passed: the chain holds the governance topology."
+  echo "✓ handover-gate passed: the chain holds the governance topology (role epoch $HANDOVER_ROLE_EPOCH, after Timelock call $HANDOVER_TIMELOCK_CALLS)."
+}
+
+# ── Phase: launch ─────────────────────────────────────────────────────
+# The first unpause of a production Diamond (#945; owner decision
+# 2026-10-23: the Timelock unpauses after handover). DeployDiamond leaves
+# the Diamond paused, so it is never live under the hot admin key. This
+# phase BROADCASTS NOTHING: Launch.s.sol requires every LibLaunchReadiness
+# check to be met (NOT MET and NOT CHECKED both refuse), the Timelock to
+# hold UNPAUSER_ROLE and the admin key to hold neither it nor the role
+# root, then prints the Timelock `scheduleBatch` call for the Governance
+# Safe, the `executeBatch` call for after the delay, and the operation's
+# state. The call is AdminFacet.launch(epoch, gate, assertReady(...)): the
+# Diamond calls LaunchGate.assertReady itself and unpauses only when it
+# returns, so the checks are read again on-chain when it executes, an
+# incident pause recorded during the delay makes it revert, and so does a
+# role changing hands after the handover gate proved them (the call carries
+# that phase's role epoch). The CCIP checks read the VPFI pool from
+# CCIP_TOKEN_ADMIN_REGISTRY and require it to be the artifact's
+# vpfiTokenPool, carrying exactly the CCIP_LANE_CHAIN_IDS lanes (resolved
+# per chain, as ccip-wire does); the proposal prints those declared values
+# and the WETH for the Safe to review. The phase is recorded only when
+# Launch.requireLaunched() finds the Diamond's own first-unpause record
+# naming the Timelock and a launch gate; any other unpause makes
+# Launch.s.sol refuse.
+phase_launch() {
+  _assert_rpc_chain
+  if ! phase_already_done "handover-gate"; then
+    cat >&2 <<EOF
+Refusing --phase launch on MAINNET: the handover gate has not passed here.
+A production Diamond is unpaused only by the Timelock, after the live gate
+has proven the governance topology. Run:
+  bash contracts/script/deploy-mainnet.sh $CHAIN_SLUG --phase handover-gate
+EOF
+    exit 1
+  fi
+
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "deploy-mainnet.sh — launch  ($CHAIN_SLUG)"
+  echo "═══════════════════════════════════════════════════════════════"
+
+  # The launch declares the lane set the VPFI pool must carry EXACTLY
+  # (Codex #2686 r7): the same per-chain list the ccip-wire phase wired.
+  resolve_ccip_lane_chain_ids "$CCIP_SLUG" || exit 1
+
+  # What the handover gate proved (the role epoch and the Timelock's call
+  # count): the Timelock call is bound to both, and Launch.s.sol refuses a
+  # production proposal without them, or once a role has changed hands or
+  # the Timelock has executed a call since (re-run --phase handover-gate).
+  local proof_rc=0
+  load_handover_proof "$MARKERS_DIR" || proof_rc=$?
+  if [ "$proof_rc" -ne 0 ]; then
+    echo "Refusing --phase launch on MAINNET: no handover proof recorded by --phase handover-gate. Re-run it." >&2
+    exit 1
+  fi
+
+  CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --rpc-url "$RPC"
+
+  # Recorded only on the Diamond's own evidence (Launch.requireLaunched:
+  # its first unpause was the Timelock's, through a launch gate), never from
+  # the pause bit — an unpause by anyone else, or a plain Timelock unpause,
+  # must not be written down as the launch.
+  # The message is the decision's own `launched:` line, which says whether
+  # the Diamond is paused NOW: a launch followed by an incident pause is
+  # recorded as launched, and must not be reported as live.
+  if LAUNCH_EVIDENCE=$(CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --sig "requireLaunched()" \
+       --rpc-url "$RPC" 2>/dev/null); then
+    mark_phase_done "launch"
+    echo
+    echo "✓ launch recorded: $(printf '%s\n' "$LAUNCH_EVIDENCE" | sed -n 's/^ *launched: //p' | head -n 1)"
+  else
+    echo
+    echo "launch: readiness passed and the Timelock proposal is printed above."
+    echo "The Diamond stays PAUSED until the Governance Safe schedules it and,"
+    echo "after the delay, it is executed. Re-run --phase launch afterwards to"
+    echo "confirm and record it."
+  fi
 }
 
 # ── Phase: abi-sync ───────────────────────────────────────────────────
@@ -2115,7 +2225,54 @@ phase_verify() {
   echo "  ✓ governor is rateLimitAdmin + lanes present — rate limits enforced."
 
   echo
-  echo "verify OK. Continue with the role-rotation ceremony (DeploymentRunbook §6)."
+  echo
+  echo "[5] Pause state and launch readiness (#945, #946)"
+  # The contracts phase leaves the Diamond PAUSED and only --phase launch
+  # unpauses it. A Diamond that is live with no launch recorded went live
+  # some other way, before anything proved it was configured: fail.
+  VERIFY_PAUSED=$(cast call "$DIAMOND" 'paused()(bool)' --rpc-url "$RPC" 2>/dev/null || echo "")
+  if [ -z "$VERIFY_PAUSED" ]; then
+    echo "  ✗ FAIL: paused() unreadable on $DIAMOND." >&2
+    exit 1
+  fi
+  if phase_already_done "launch"; then
+    echo "  launch recorded; paused() = $VERIFY_PAUSED"
+  elif [ "$VERIFY_PAUSED" != "true" ]; then
+    echo "  ✗ FAIL: the Diamond is UNPAUSED but no launch is recorded for $CHAIN_SLUG." >&2
+    echo "          It went live outside --phase launch, before the readiness" >&2
+    echo "          checks were read. Investigate who unpaused it." >&2
+    exit 1
+  else
+    echo "  ✓ paused, as it must be until --phase launch"
+  fi
+  # The lane set the launch declares, resolved as --phase launch does.
+  resolve_ccip_lane_chain_ids "$CCIP_SLUG" || exit 1
+  # And the handover proof it binds, loaded as --phase launch does (Codex
+  # #2686 r14): without it the report and the verdict below judge a launch
+  # the launch phase would never propose. Absent before the handover gate
+  # has run, which the report then names as the reason.
+  local verify_proof_rc=0
+  load_handover_proof "$MARKERS_DIR" || verify_proof_rc=$?
+  [ "$verify_proof_rc" -eq 2 ] && exit 1
+  # The same readiness list --phase launch enforces, reported here so a
+  # green verify never implies a launch would pass. A NOT MET line (the
+  # sanctions oracle above all, #946) is printed, not hidden; the launch
+  # phase is where it refuses.
+  CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --sig "report()" --rpc-url "$RPC"
+  # The launch verdict is stated, not implied by "verify OK": verify checks
+  # the deployment and runs before the handover, when a launch still
+  # refuses by design, so a refusal here does not fail the phase.
+  if CHAIN_SLUG="$CHAIN_SLUG" forge script script/Launch.s.sol --sig "requireLaunchable()" \
+       --rpc-url "$RPC" >/dev/null 2>&1; then
+    VERIFY_LAUNCH="a launch run would proceed, or has launched (see the report above)"
+  else
+    VERIFY_LAUNCH="NOT launchable yet - --phase launch refuses for the reason the report above prints"
+  fi
+
+  echo
+  echo "verify OK: the deployment checks above passed."
+  echo "Launch: $VERIFY_LAUNCH."
+  echo "Continue with the role-rotation ceremony (DeploymentRunbook §6)."
   mark_phase_done "verify"
 }
 
@@ -2129,6 +2286,7 @@ case "$PHASE" in
   configure)     phase_configure ;;
   handover)      phase_handover ;;
   handover-gate) phase_handover_gate ;;
+  launch)        phase_launch ;;
   abi-sync)      phase_abi_sync ;;
   cf-app)       phase_cf_app ;;
   cf-www)        phase_cf_www ;;

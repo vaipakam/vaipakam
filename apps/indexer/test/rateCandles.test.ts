@@ -3,7 +3,10 @@
  * `GET /loans/rate-candles`. Pins the §7 aggregation contract:
  * bucket-boundary assignment per interval, chronological OHLC with the
  * loan_id tiebreak, BigInt principal folding past 2^53, and the
- * "candles only where fills >= 1, ascending t" output shape.
+ * "candles only where fills >= 1, ascending t" output shape, and the
+ * #1142 principal provenance: an unconfirmed amount is counted, never summed.
+ * (Which loans are fills of the market at all is the placement rule,
+ * pinned in marketTapeTenor.test.ts and rateCandlesRoute.test.ts.)
  *
  * (The SQL-side row scoping — is_sale_vehicle = 0, ERC-20 both legs,
  * market equality, range bound — is exercised against a real SQLite
@@ -18,6 +21,7 @@ import {
   type CandleFillRow,
 } from '../src/rateCandles';
 
+/** A placed fill whose principal the ledger backs. */
 function fill(
   loanId: number,
   startAt: number,
@@ -27,8 +31,9 @@ function fill(
   return {
     loan_id: loanId,
     start_at: startAt,
-    interest_rate_bps: rateBps,
-    principal,
+    init_rate_bps: rateBps,
+    init_principal: principal,
+    init_principal_unbacked: 0,
   };
 }
 
@@ -110,6 +115,7 @@ describe('OHLC ordering', () => {
         close: 550,
         fills: 4,
         principalTotal: '4000',
+        unrecordedPrincipalFills: 0,
       },
     ]);
   });
@@ -166,25 +172,47 @@ describe('principal folding (BigInt, never Number)', () => {
     expect(buckets[0].principalTotal).toBe('42');
   });
 
-  it('skips a malformed-principal row entirely (fills stays consistent with the fold)', () => {
+  it('draws a malformed-principal fill at its rate and counts its principal as unrecorded', () => {
     const buckets = foldRateCandles(
       [fill(1, 0, 500, '100'), fill(2, 1, 900, 'not-a-number')],
       3600,
     );
-    expect(buckets[0].fills).toBe(1);
+    expect(buckets[0].fills).toBe(2);
     expect(buckets[0].principalTotal).toBe('100');
-    expect(buckets[0].close).toBe(500); // the bad row's rate never lands
+    expect(buckets[0].unrecordedPrincipalFills).toBe(1);
+    expect(buckets[0].close).toBe(900); // the rate IS recorded, so it lands
   });
 
-  it('treats an empty principal as zero (stub-era rows)', () => {
+  it('treats an empty principal as unrecorded, never as zero', () => {
     const buckets = foldRateCandles([fill(1, 0, 500, '')], 3600);
     expect(buckets[0].fills).toBe(1);
     expect(buckets[0].principalTotal).toBe('0');
+    expect(buckets[0].unrecordedPrincipalFills).toBe(1);
   });
 });
 
 describe('empty input', () => {
   it('folds no rows to no buckets', () => {
     expect(foldRateCandles([], 3600)).toEqual([]);
+  });
+});
+
+describe('principal provenance (#1142)', () => {
+  it('draws a fill whose principal is unbacked, leaving it out of the total', () => {
+    const out = foldRateCandles(
+      [fill(1, 0, 500, '100'), { ...fill(2, 1, 700, '5000'), init_principal_unbacked: 1 }],
+      3600,
+    );
+    expect(out[0]).toMatchObject({
+      fills: 2,
+      close: 700,
+      principalTotal: '100',
+      unrecordedPrincipalFills: 1,
+    });
+  });
+
+  it('treats an absent principal flag as unbacked (only an explicit 0 backs)', () => {
+    const out = foldRateCandles([{ ...fill(1, 0, 500, '100'), init_principal_unbacked: null }], 3600);
+    expect(out[0]).toMatchObject({ principalTotal: '0', unrecordedPrincipalFills: 1 });
   });
 });

@@ -13,7 +13,6 @@ import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
@@ -32,6 +31,7 @@ import {FeeEntitlementFacet} from "./FeeEntitlementFacet.sol";
 import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
 import {OfferAcceptFeeFacet} from "./OfferAcceptFeeFacet.sol";
+import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 
 /**
  * @title OfferAcceptFacet
@@ -1825,24 +1825,17 @@ contract OfferAcceptFacet is
 
     /// @dev 1e18-scaled numeraire value of `amount` units of `asset`, or 0 when
     ///      the asset is illiquid (unpriced). Shared by both legs of
-    ///      {_calculateTransactionValueNumeraire}; kept as a single private helper
-    ///      so the (oracle price + decimals + scale) sequence isn't emitted twice
-    ///      — the dedup keeps OfferAcceptFacet under the EIP-170 runtime ceiling
-    ///      (#951 Codex #959 round-5). An illiquid NFT-rental leg is worth 0 here,
-    ///      matching the prior explicit `+= 0`.
+    ///      {_calculateTransactionValueNumeraire}. #2419 — the value comes from
+    ///      the one shared rule ({NumeraireValueFacet.getLiquidNumeraireValue},
+    ///      rounded down), reached by self-call so the full-precision
+    ///      arithmetic is not inlined into this near-limit facet. An illiquid
+    ///      NFT-rental leg is worth 0 here, matching the prior explicit `+= 0`.
     function _liquidNumeraireValue(address asset, uint256 amount)
         private
         view
         returns (uint256)
     {
-        if (
-            OracleFacet(address(this)).checkLiquidity(asset)
-                != LibVaipakam.LiquidityStatus.Liquid
-        ) return 0;
-        (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
-            .getAssetPrice(asset);
-        uint8 tokenDecimals = IERC20Metadata(asset).decimals();
-        return (amount * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
+        return NumeraireValueFacet(address(this)).getLiquidNumeraireValue(asset, amount);
     }
 
     // Internal: Calculate transaction value in the active numeraire for KYC (liquid parts only)

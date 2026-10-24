@@ -25,6 +25,7 @@
     "FallbackCustodyFacet",
     "SwapAttemptFacet",
     "TreasuryFeeFacet",
+    "NumeraireValueFacet",
     "IntentDispatchFacet",
     "AutoLifecycleFacet",
     "EncumbranceMutateFacet",

@@ -114,19 +114,32 @@ export const FLASH_LOAN_PROVIDERS: Record<number, FlashLoanProviderConfig> = {
   97: {}, // BNB Testnet
 };
 
+/** The static half of the discount path on a chain: who to call and how. */
+export interface FlashLoanRoute {
+  /** Our FlashLoanLiquidator on this chain. */
+  liquidator: `0x${string}`;
+  /** The provider the run borrows from: Aave V3 first, Balancer V2 otherwise. */
+  via: 'aave-v3' | 'balancer-v2';
+}
+
 /**
- * Lookup helper. Returns `undefined` when:
- *   - We have no entry for `chainId` (unsupported chain).
- *   - Or the `liquidator` slot is empty (receiver not deployed
- *     here yet — skip the discount-path branch).
+ * #2633 r2 — the ONE reading of this table. The discount branch in
+ * `keeper.ts` and the machine's start-up posture line (`discountPath.ts`)
+ * both resolve a chain here, so the line cannot call a chain ready that the
+ * branch would skip. A chain needs an entry, our liquidator, and at least one
+ * provider; `missing` names the first that is absent.
  *
- * The caller (keeper.ts) treats both cases identically.
+ * Aave V3 is preferred (broader asset coverage, 5 BPS premium), Balancer V2
+ * the fallback (zero fee, narrower asset list).
  */
-export function getFlashLoanProvider(
+export function flashLoanRoute(
   chainId: number,
-): FlashLoanProviderConfig | undefined {
-  const cfg = FLASH_LOAN_PROVIDERS[chainId];
-  if (!cfg) return undefined;
-  if (!cfg.liquidator) return undefined;
-  return cfg;
+  table: Readonly<Record<number, FlashLoanProviderConfig>> = FLASH_LOAN_PROVIDERS,
+): { route: FlashLoanRoute } | { missing: string } {
+  const cfg = table[chainId];
+  if (!cfg) return { missing: 'this build has no flash-loan entry for the chain' };
+  if (!cfg.liquidator) return { missing: 'no FlashLoanLiquidator configured' };
+  if (cfg.aaveV3Pool) return { route: { liquidator: cfg.liquidator, via: 'aave-v3' } };
+  if (cfg.balancerV2Vault) return { route: { liquidator: cfg.liquidator, via: 'balancer-v2' } };
+  return { missing: 'no flash-loan provider (Aave V3 pool or Balancer V2 vault) configured' };
 }

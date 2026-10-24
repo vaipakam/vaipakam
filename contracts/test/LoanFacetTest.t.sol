@@ -41,6 +41,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -169,7 +170,7 @@ contract LoanFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](18);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](19);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -278,6 +279,14 @@ contract LoanFacetTest is Test {
             facetAddress: address(new TreasuryFeeFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
+        });
+        // #2419 - RiskFacet (LTV / HF) and the offer facets value every amount
+        // through NumeraireValueFacet by self-call, so a hand-built Diamond
+        // that cuts any of them must cut this host too.
+        cuts[18] = IDiamondCut.FacetCut({
+            facetAddress: address(new NumeraireValueFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getNumeraireValueFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

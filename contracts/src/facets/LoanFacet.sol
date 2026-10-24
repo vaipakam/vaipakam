@@ -1303,6 +1303,15 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *           - caller missing `NOTIF_BILLER_ROLE`
      *           - loanId past `nextLoanId` or never-initialized
      *             (InvalidLoanStatus)
+     *           - the loan is no longer `Active`
+     *             (`NotificationBillingLoanNotActive`, #2721)
+     *           - the payer never consented, revoked, or capped its
+     *             consent below the configured fee
+     *             (`NotificationFeeNotConsented`, #2721). The consent is
+     *             the payer's own on-chain record
+     *             (`ProfileFacet.setNotificationFeeConsent`); the billing
+     *             role cannot create it. This and the status check run
+     *             before anything moves, and only for a side not yet billed
      *           - VPFI not configured (`NotifFeeVpfiTokenNotSet`). No
      *             oracle and no WETH are touched on this path — the fee is
      *             a flat VPFI quantity, so the pre-#1346 "oracle stale /
@@ -1371,7 +1380,9 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *         subscribers are notified for free and never trigger
      *         this call. The on-chain billed flag is the source of
      *         truth that "this loan-side has paid for the notification
-     *         service this lifetime."
+     *         service this lifetime." Which subscribers are PaidPush is
+     *         the watcher's record, but it no longer decides who CAN be
+     *         charged: the payer's on-chain consent does (#2721).
      *
      * @param  loanId        Loan being billed.
      * @param  isLenderSide  true ⇒ bill `loan.lender`; false ⇒ bill

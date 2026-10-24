@@ -57,6 +57,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {defaultAdapterCalls, emptyAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
@@ -222,7 +223,7 @@ contract DefaultedFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -375,6 +376,14 @@ contract DefaultedFacetTest is Test {
             facetAddress: address(new TreasuryFeeFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
+        });
+        // #2419 - RiskFacet (LTV / HF) and the offer facets value every amount
+        // through NumeraireValueFacet by self-call, so a hand-built Diamond
+        // that cuts any of them must cut this host too.
+        cuts[24] = IDiamondCut.FacetCut({
+            facetAddress: address(new NumeraireValueFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getNumeraireValueFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -1849,6 +1858,260 @@ contract DefaultedFacetTest is Test {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
         _assertVaultHeldFallbackEntry(loanId, diamondCol0);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #2419 — liquid collateral against a principal with no usable
+    ///      price: the default still completes. It attempts no swap (a sale
+    ///      with no oracle floor) and enters the fallback directly, the same
+    ///      entry a failed swap takes, rather than reverting on the price.
+    function testTriggerDefaultLiquidUnpricedPairEntersFallbackWithoutSwap() public {
+        uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0
+        );
+        vm.warp(block.timestamp + 33 days + 3);
+
+        // The principal's price reads zero: the strict read refuses it, the
+        // status read reports it unavailable, and the liquidity probe (which
+        // needs a price) classifies it Illiquid, as the live probe does.
+        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockERC20),
+            abi.encodeWithSelector(OracleFacet.ZeroPrice.selector, mockERC20)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPriceStatus.selector, mockERC20),
+            abi.encode(OracleFacet.PriceStatus.Unavailable, uint256(0), uint8(8))
+        );
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
+
+        vm.expectCall(
+            address(ZeroExProxyMock(mockZeroExProxy)),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            0
+        );
+        vm.expectEmit(true, true, false, true);
+        emit DefaultedFacet.LoanFallbackPending(
+            loanId,
+            lender,
+            true,
+            LibVaipakam.LoanStatus.FallbackPending
+        );
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
+        _assertVaultHeldFallbackEntry(loanId, diamondCol0);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #2419 (Codex #2690 r1) — the COLLATERAL leg unpriced. A missing
+    ///      collateral price makes the live probe report the collateral
+    ///      Illiquid, so a loan that began liquid, and that neither party
+    ///      consented to as illiquid, would otherwise fall to
+    ///      `LiquidationFailed` and could not default at all. It enters the
+    ///      fallback like a principal-unpriced loan: no swap, curable, the
+    ///      collateral back in the borrower's vault under the lien.
+    function testTriggerDefaultCollateralUnpricedEntersFallbackWithoutConsent() public {
+        uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0
+        );
+        // The loan began liquid; nobody consented to an illiquid close-out.
+        {
+            LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+            assertEq(uint8(l.collateralLiquidity), uint8(LibVaipakam.LiquidityStatus.Liquid));
+            l.riskAndTermsConsentFromBoth = false;
+            TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        }
+        vm.warp(block.timestamp + 33 days + 3);
+
+        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encodeWithSelector(OracleFacet.StalePriceData.selector)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPriceStatus.selector, mockCollateralERC20),
+            abi.encode(OracleFacet.PriceStatus.Unavailable, uint256(0), uint8(8))
+        );
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
+
+        vm.expectCall(
+            address(ZeroExProxyMock(mockZeroExProxy)),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            0
+        );
+        vm.expectEmit(true, true, false, true);
+        emit DefaultedFacet.LoanFallbackPending(
+            loanId,
+            lender,
+            false,
+            LibVaipakam.LoanStatus.FallbackPending
+        );
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
+        _assertVaultHeldFallbackEntry(loanId, diamondCol0);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #2419 — a loan that began liquid whose collateral token no longer
+    ///      answers `decimals()` cannot be valued: the live probe calls it
+    ///      Illiquid and the pair reads as UNPRICED (never a revert), so the
+    ///      default enters the fallback without a swap and without consent.
+    function testTriggerDefaultUnreadableCollateralDecimalsEntersFallback() public {
+        uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0
+        );
+        {
+            LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+            assertEq(uint8(l.collateralLiquidity), uint8(LibVaipakam.LiquidityStatus.Liquid));
+            l.riskAndTermsConsentFromBoth = false;
+            TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        }
+        vm.warp(block.timestamp + 33 days + 3);
+
+        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
+        vm.mockCallRevert(mockCollateralERC20, abi.encodeWithSignature("decimals()"), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
+
+        vm.expectCall(
+            address(ZeroExProxyMock(mockZeroExProxy)),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            0
+        );
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
+        _assertVaultHeldFallbackEntry(loanId, diamondCol0);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #2419 / #666 — collateral price DISTRUSTED, principal price
+    ///      MISSING: the missing-price rule wins (owner decision 2026-10-22),
+    ///      so the default enters the unpriced fallback. The live classifier,
+    ///      which would refuse the distrusted collateral, is not consulted
+    ///      (mocked to revert here to prove it).
+    function testTriggerDefaultDistrustedCollateralMissingPrincipalEntersFallback() public {
+        uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0
+        );
+        {
+            LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+            l.riskAndTermsConsentFromBoth = false;
+            TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        }
+        vm.warp(block.timestamp + 33 days + 3);
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPriceStatus.selector, mockCollateralERC20),
+            abi.encode(OracleFacet.PriceStatus.Divergent, uint256(0), uint8(8))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPriceStatus.selector, mockERC20),
+            abi.encode(OracleFacet.PriceStatus.Unavailable, uint256(0), uint8(8))
+        );
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.checkLiquidityOnActiveNetwork.selector, mockCollateralERC20),
+            abi.encodeWithSelector(OracleFacet.OraclePriceDivergence.selector)
+        );
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
+
+        vm.expectCall(
+            address(ZeroExProxyMock(mockZeroExProxy)),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            0
+        );
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
+        _assertVaultHeldFallbackEntry(loanId, diamondCol0);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #2419 — a loan that began illiquid on a leg (here the principal)
+    ///      was consented as illiquid and defaults IN KIND, whatever the live
+    ///      probe says about the collateral now: no swap, no risk math (which
+    ///      would refuse such a loan with IlliquidLoanNoRiskMath), the lender
+    ///      takes the collateral.
+    function testTriggerDefaultIlliquidAtOriginationDefaultsInKindWhenCollateralLiquidNow() public {
+        uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0
+        );
+        {
+            LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+            l.principalLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
+            l.riskAndTermsConsentFromBoth = true;
+            TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        }
+        vm.warp(block.timestamp + 33 days + 3);
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+
+        vm.expectCall(
+            address(ZeroExProxyMock(mockZeroExProxy)),
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            0
+        );
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
+        (address asset, uint256 amount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        assertEq(asset, mockCollateralERC20, "lender claims the collateral in kind");
+        assertEq(amount, 2000 ether);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #2419 — a loan illiquid on either leg at origination defaults in
+    ///      kind on its consent without consulting the live market check, so
+    ///      a distrusted collateral price (the check would refuse it, #666)
+    ///      cannot hold the default up.
+    function testTriggerDefaultIlliquidAtOriginationSkipsTheLiveCheck() public {
+        uint256 loanId = createAndAcceptOffer(mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0
+        );
+        {
+            LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+            l.principalLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
+            l.riskAndTermsConsentFromBoth = true;
+            TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+        }
+        vm.warp(block.timestamp + 33 days + 3);
+        MockVaultWithdraw.deliversAll(address(diamond));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.checkLiquidityOnActiveNetwork.selector, mockCollateralERC20),
+            abi.encodeWithSelector(OracleFacet.OraclePriceDivergence.selector)
+        );
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.checkLiquidityOnActiveNetwork.selector, mockCollateralERC20),
+            0
+        );
+
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
+        (address asset, uint256 amount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+        assertEq(asset, mockCollateralERC20, "lender claims the collateral in kind");
+        assertEq(amount, 2000 ether);
         vm.clearMockedCalls();
     }
 

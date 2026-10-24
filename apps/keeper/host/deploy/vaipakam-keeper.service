@@ -41,6 +41,22 @@ TimeoutStopSec=infinity
 Restart=always
 RestartSec=30
 
+# Memory (#2651). On this 1 GB machine the kernel otherwise swaps the keeper
+# out to make room for an updater run or anything else, and every
+# swapped page a tick touches is read back from disk while the tick waits.
+# Up to MemoryLow, the keeper's memory is reclaimed only once nothing
+# unprotected is left to reclaim. It reserves nothing: memory the keeper is
+# not using stays free for the rest. Protection holds only as far as the
+# keeper's slice grants it, which is why the keeper runs in a top-level slice
+# of its own whose MemoryLow is the same. 320M is the keeper's measured
+# footprint (about 140 MiB resident and 110 MiB swapped, 2026-10-23) with room
+# to grow.
+Slice=vaipakam.slice
+MemoryLow=320M
+# If the machine runs out of memory anyway, the kernel's OOM killer picks
+# another process first. A deploy step it kills is retried by the next run.
+OOMScoreAdjust=-500
+
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
