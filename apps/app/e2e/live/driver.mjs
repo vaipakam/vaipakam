@@ -628,48 +628,36 @@ export function normaliseWallets(raw) {
 }
 
 /**
- * Read and parse the dev wallet file WITHOUT ever echoing its contents
- * (#2715). Node's `JSON.parse` quotes the text it failed on — a bare
- * private key, or an `.env`-style `KEY=0x…` file pointed at by
- * TESTNET_WALLETS_FILE, would be printed into the console and every batch
- * log. So no parser or reader message is passed on: each failure is
- * described by its KIND only (the read error's code; "not valid JSON"),
- * and `normaliseWallets`' own messages, which name entry indexes and never
- * a value, are the only text forwarded. The raw error is not returned
- * either, so it cannot ride along as a `cause`.
+ * Parse the dev wallet file's TEXT, without ever repeating it (#2715).
  *
- * `read` is injectable so the test can feed it hostile contents.
- *
- * @returns {{ ok: true, wallets: object } | { ok: false, why: string }}
+ * `JSON.parse`'s error message quotes the input it failed on for some
+ * inputs (`Unexpected token 'd', "deadbeef…" is not valid JSON`), and the
+ * callers print the message. A wallet file that is not JSON — a bare key,
+ * an `.env`-style `KEY=0x…` line — would then be echoed to the console and
+ * into every batch log, which a drive must never do with key material. So
+ * a parse failure is reported by what it is and where, never by the
+ * parser's words: the line and column V8 reports carry no content, and are
+ * kept only when the message states them in that exact form.
  */
-export function parseWalletFile(path, read = (p) => fs.readFileSync(p, 'utf8')) {
-  let text;
+export function parseWalletFileText(text) {
   try {
-    text = read(path);
+    return JSON.parse(text);
   } catch (err) {
-    return { ok: false, why: `it could not be read (${typeof err?.code === 'string' ? err.code : 'read error'})` };
-  }
-  let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    return { ok: false, why: 'it is not valid JSON (its contents are not shown: the file holds keys)' };
-  }
-  try {
-    return { ok: true, wallets: normaliseWallets(json) };
-  } catch (err) {
-    return { ok: false, why: String(err?.message ?? 'its shape is not a wallet file') };
+    const at = /\(line (\d+) column (\d+)\)/.exec(String(err?.message ?? ''));
+    throw new Error(`the wallet file is not valid JSON${at ? ` (line ${at[1]}, column ${at[2]})` : ''}`);
   }
 }
 
 function loadWallets(opts = {}) {
   if (WALLETS !== undefined) return WALLETS;
-  const parsed = parseWalletFile(WALLETS_PATH);
-  if (!parsed.ok) {
+  let raw;
+  try {
+    raw = normaliseWallets(parseWalletFileText(fs.readFileSync(WALLETS_PATH, 'utf8')));
+  } catch (err) {
     if (opts.throwOnUnreadable) {
       throw new LiveSetupError(
-        `cannot read the dev wallet file.\n  path: ${WALLETS_PATH}\n  ${parsed.why}`,
-        undefined,
+        `cannot read the dev wallet file.\n  path: ${WALLETS_PATH}\n  ${err.message}`,
+        err,
         'credential',
       );
     }
@@ -683,12 +671,12 @@ function loadWallets(opts = {}) {
     // this message and `walletFor`'s were separate copies of it.
     blockedSync(
       `cannot read the dev wallet file — this driver signs, so it cannot run` +
-        ` without one.\n  path: ${WALLETS_PATH}\n  ${parsed.why}` +
+        ` without one.\n  path: ${WALLETS_PATH}\n  ${err.message}` +
         `\n  → set TESTNET_WALLETS_FILE, or run a watch-only drive` +
         ` (live-position-observe.mjs) which needs no key.`,
     );
   }
-  WALLETS = parsed.wallets;
+  WALLETS = raw;
   return WALLETS;
 }
 

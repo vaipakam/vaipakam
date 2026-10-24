@@ -6,7 +6,7 @@
 // wallet-file element threw a raw TypeError. They are inputs, so a bad one
 // is BLOCKED by the drive that reads it; these pin the parsing.
 import { describe, expect, it } from 'vitest';
-import { normaliseWallets, parseAppRouteList, parseOrigin, parseWalletFile } from './driver.mjs';
+import { normaliseWallets, parseAppRouteList, parseOrigin, parseWalletFileText } from './driver.mjs';
 
 describe('parseOrigin', () => {
   it('drops a trailing slash, so a route appends to a bare origin', () => {
@@ -52,6 +52,32 @@ describe('parseAppRouteList', () => {
   });
 });
 
+describe('parseWalletFileText (#2715)', () => {
+  const KEY = '0x' + 'ab'.repeat(32);
+  it('parses a valid file', () => {
+    expect(parseWalletFileText(JSON.stringify({ lender: { privateKey: KEY } }))).toEqual({ lender: { privateKey: KEY } });
+  });
+
+  // Each of these makes V8's own message quote the input; none may reach ours.
+  it.each([
+    ['a bare key', KEY],
+    ['a bare key without 0x', 'ab'.repeat(32)],
+    ['an .env line', `LENDER_KEY=${KEY}`],
+    ['a key in a broken object', `{"lender":{"privateKey":${KEY}}}`],
+    ['a truncated file', `{"lender":{"privateKey":"${KEY}"`],
+  ])('reports %s without repeating any of it', (_label, text) => {
+    let message;
+    try {
+      parseWalletFileText(text);
+    } catch (e) {
+      message = e.message;
+    }
+    expect(message).toMatch(/^the wallet file is not valid JSON/);
+    expect(message).not.toContain('ab'.repeat(8));
+    expect(message).not.toContain('LENDER');
+  });
+});
+
 describe('normaliseWallets', () => {
   it('keys the array form by role, or by name', () => {
     const a = { role: 'lender', address: '0x1' };
@@ -73,41 +99,5 @@ describe('normaliseWallets', () => {
   it('throws a described error on a file that is neither shape', () => {
     expect(() => normaliseWallets('nope')).toThrow(/neither a role map nor an array/);
     expect(() => normaliseWallets(null)).toThrow(/neither a role map nor an array/);
-  });
-});
-
-// #2715 — a wallet file that is not JSON must never have its contents
-// echoed: Node's JSON.parse quotes the text it failed on, and the file
-// holds private keys.
-describe('parseWalletFile', () => {
-  const KEY = `0x${'ab'.repeat(32)}`;
-  const from = (text) => parseWalletFile('/dev/wallets.json', () => text);
-
-  it('describes a non-JSON file by kind only, never by content', () => {
-    for (const text of [KEY, `PRIVATE_KEY=${KEY}`, 'deadbeefcafe', `{"lender": {"privateKey": "${KEY}"`]) {
-      const r = from(text);
-      expect(r.ok).toBe(false);
-      expect(r.why).toMatch(/not valid JSON/);
-      expect(r.why).not.toContain(KEY);
-      expect(r.why).not.toContain('deadbeef');
-      expect(r.why).not.toContain('ab'.repeat(8));
-    }
-  });
-
-  it('names a read failure by its code, not its message', () => {
-    const r = parseWalletFile('/dev/wallets.json', () => {
-      throw Object.assign(new Error(`ENOENT: no such file, open ${KEY}`), { code: 'ENOENT' });
-    });
-    expect(r).toEqual({ ok: false, why: 'it could not be read (ENOENT)' });
-  });
-
-  it('forwards only normaliseWallets\u2019 own index-naming message for a bad shape', () => {
-    expect(from(JSON.stringify([KEY]))).toEqual({ ok: false, why: 'entry 0 of the wallet array is not an object carrying a role or name' });
-    expect(from('42').why).not.toContain(KEY);
-  });
-
-  it('returns the normalised wallets for a good file', () => {
-    const w = { role: 'lender', address: '0x1', privateKey: KEY };
-    expect(from(JSON.stringify([w]))).toEqual({ ok: true, wallets: { lender: w } });
   });
 });
