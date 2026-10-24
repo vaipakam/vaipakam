@@ -68,6 +68,30 @@ export function expectedBacked(backed, c) {
 }
 
 /**
+ * The withheld-reading notice the page states for an indexer reason code
+ * (RecyclingAccount `backingWithheldText`): the standing sentence, the
+ * reason, and the pending schema update when the indexer names one. An
+ * unknown code is stated with the code itself, never dropped.
+ */
+export function expectedWithheld(code, pendingMigration, c) {
+  const reasons = {
+    'not-captured-yet': c.backingReasonNotCaptured,
+    'read-failed': c.backingReasonReadFailed,
+    'snapshot-stale': c.backingReasonStale,
+    'chain-behind': c.backingReasonChainBehind,
+    'snapshot-other-deployment': c.backingReasonOtherDeployment,
+  };
+  const reason = Object.prototype.hasOwnProperty.call(reasons, code)
+    ? reasons[code]
+    : fill(c.backingReasonUnrecognised, { code });
+  const pending =
+    pendingMigration === null || pendingMigration === undefined
+      ? ''
+      : ' ' + fill(c.custodyPendingMigration, { migration: pendingMigration });
+  return `${c.backingUnavailable} ${reason}${pending}`;
+}
+
+/**
  * Every check, in reading order.
  *
  * @param {{ rec: any, loop: any, snap: Snapshot, copy: any, diamond: string|null, chainId: number }} input
@@ -106,9 +130,15 @@ export function reviewAnalytics({ rec, loop, snap, copy, diamond, chainId }) {
   // ── the backing block ───────────────────────────────────────────────────
   if (b.unavailableReason !== null && b.unavailableReason !== undefined) {
     check(
-      'a withheld reading is withheld whole, with a reason',
+      'a withheld reading is withheld whole',
       has('recycling-backing-unavailable') && !has('recycling-backed') && !has('recycling-asof'),
-      `indexer reason ${b.unavailableReason}; page: ${text('recycling-backing-unavailable') ?? 'no withheld notice'}`,
+      `page: ${has('recycling-backing-unavailable') ? 'withheld notice' : 'no withheld notice'}${has('recycling-backed') ? ', verdict cell shown' : ''}${has('recycling-asof') ? ', reading moment shown' : ''}`,
+    );
+    const wantWithheld = norm(expectedWithheld(b.unavailableReason, b.pendingMigration, c));
+    check(
+      "the withheld notice states the indexer's reason",
+      text('recycling-backing-unavailable') === wantWithheld,
+      `indexer reason ${b.unavailableReason}; expected "${wantWithheld}"; page "${text('recycling-backing-unavailable')}"`,
     );
   } else {
     check(
@@ -173,6 +203,18 @@ export function reviewAnalytics({ rec, loop, snap, copy, diamond, chainId }) {
     );
   }
 
+  // ── the scope the totals speak for ──────────────────────────────────────
+  if (rec.scope === 'global') {
+    check('no local-only scope note on programme-wide totals', !has('recycling-scope-note'));
+  } else {
+    const wantScope = norm(rec.scope === 'empty' ? c.scopeEmpty : c.scopeLocalOnly);
+    check(
+      "the scope note states the indexer's scope",
+      text('recycling-scope-note') === wantScope,
+      `scope ${rec.scope}; expected "${wantScope}"; page "${text('recycling-scope-note')}"`,
+    );
+  }
+
   // ── the day series ──────────────────────────────────────────────────────
   const daily = Array.isArray(rec.daily) ? rec.daily : [];
   const servedDays = daily.map((d) => d.dayId);
@@ -196,10 +238,12 @@ export function reviewAnalytics({ rec, loop, snap, copy, diamond, chainId }) {
       rec.fromDay === rec.toDay
         ? fill(c.windowSingleDay, { day: rec.fromDay })
         : fill(c.windowRange, { from: rec.fromDay, to: rec.toDay });
+    const totals = rec.scope === 'global' ? c.windowTotalsWholeProgramme : c.windowTotalsRecordedHere;
+    const wantWindow = norm(`${range} ${totals}`);
     check(
-      'the window note states the range the indexer served',
-      (text('recycling-window') ?? '').startsWith(norm(range)),
-      `expected to start with "${norm(range)}"; page "${text('recycling-window')}"`,
+      'the window note states the range the indexer served, and what the totals cover',
+      text('recycling-window') === wantWindow,
+      `scope ${rec.scope}; expected "${wantWindow}"; page "${text('recycling-window')}"`,
     );
   } else {
     check('no window note describes a table that is not there', !has('recycling-window'));

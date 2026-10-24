@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import enBundle from '../../src/i18n/locales/en.json' with { type: 'json' };
 
-import { expectedBacked, fill, reviewAnalytics } from './analyticsRecyclingReview.mjs';
+import { expectedBacked, expectedWithheld, fill, reviewAnalytics } from './analyticsRecyclingReview.mjs';
 
 const copy = enBundle.copy;
 const c = copy.recycling;
@@ -51,7 +51,9 @@ function pageFor(rec, loop) {
   const snap = {};
   const b = rec.backing;
   if (b.unavailableReason !== null) {
-    snap['recycling-backing-unavailable'] = { text: c.backingUnavailable };
+    snap['recycling-backing-unavailable'] = {
+      text: expectedWithheld(b.unavailableReason, b.pendingMigration, c),
+    };
   } else {
     const want = expectedBacked(b.backed, c);
     snap['recycling-backed'] = { text: want.prefix ? `${want.text} 1.5 VPFI` : want.text, verdict: want.posture };
@@ -74,8 +76,13 @@ function pageFor(rec, loop) {
     if (d.estimate) snap[`estimate-${d.dayId}`] = { text: c.estimateBadge };
   }
   snap['recycling-window'] = {
-    text: `${fill(c.windowRange, { from: rec.fromDay, to: rec.toDay })} ${c.windowTotalsWholeProgramme}`,
+    text: `${fill(c.windowRange, { from: rec.fromDay, to: rec.toDay })} ${
+      rec.scope === 'global' ? c.windowTotalsWholeProgramme : c.windowTotalsRecordedHere
+    }`,
   };
+  if (rec.scope !== 'global') {
+    snap['recycling-scope-note'] = { text: rec.scope === 'empty' ? c.scopeEmpty : c.scopeLocalOnly };
+  }
   snap['loop-recorded-before'] = {
     text:
       loop.recordedBefore === null
@@ -138,11 +145,37 @@ describe('reviewAnalytics', () => {
 
   it('accepts a withheld reading only when the page withholds it whole', () => {
     const rec = recBody();
-    rec.backing.unavailableReason = 'stale';
+    rec.backing.unavailableReason = 'snapshot-stale';
     expect(failed(run(rec, loopBody()))).toEqual([]);
     const snap = pageFor(rec, loopBody());
     snap['recycling-backed'] = { text: c.backedYesHolder, verdict: 'yes' };
-    expect(failed(run(rec, loopBody(), snap))).toEqual(['a withheld reading is withheld whole, with a reason']);
+    expect(failed(run(rec, loopBody(), snap))).toEqual(['a withheld reading is withheld whole']);
+  });
+
+  it('fails a withheld notice that drops or misstates the indexer’s reason', () => {
+    const rec = recBody();
+    rec.backing.unavailableReason = 'snapshot-stale';
+    const empty = pageFor(rec, loopBody());
+    empty['recycling-backing-unavailable'].text = '';
+    expect(failed(run(rec, loopBody(), empty))).toEqual(["the withheld notice states the indexer's reason"]);
+    const bare = pageFor(rec, loopBody());
+    bare['recycling-backing-unavailable'].text = c.backingUnavailable;
+    expect(failed(run(rec, loopBody(), bare))).toEqual(["the withheld notice states the indexer's reason"]);
+    const wrong = pageFor(rec, loopBody());
+    wrong['recycling-backing-unavailable'].text = `${c.backingUnavailable} ${c.backingReasonNotCaptured}`;
+    expect(failed(run(rec, loopBody(), wrong))).toEqual(["the withheld notice states the indexer's reason"]);
+  });
+
+  it('expects an unrecognised reason to be stated with its code, and a pending update named', () => {
+    expect(expectedWithheld('new-code', null, c)).toBe(
+      `${c.backingUnavailable} ${fill(c.backingReasonUnrecognised, { code: 'new-code' })}`,
+    );
+    expect(expectedWithheld('read-failed', '0056_x.sql', c)).toBe(
+      `${c.backingUnavailable} ${c.backingReasonReadFailed} ${fill(c.custodyPendingMigration, { migration: '0056_x.sql' })}`,
+    );
+    const rec = recBody();
+    rec.backing.unavailableReason = 'new-code';
+    expect(failed(run(rec, loopBody()))).toEqual([]);
   });
 
   it('fails a day the indexer did not serve, and a missing estimate badge', () => {
@@ -154,6 +187,22 @@ describe('reviewAnalytics', () => {
       'the day table has exactly the programme days the indexer served',
       'a day carries the estimate badge exactly when the indexer calls it an estimate',
     ]);
+  });
+
+  it('fails a window or scope note that misstates what the totals cover', () => {
+    const rec = recBody();
+    rec.scope = 'local-only';
+    expect(failed(run(rec, loopBody()))).toEqual([]);
+    const snap = pageFor(rec, loopBody());
+    snap['recycling-window'].text = `${fill(c.windowRange, { from: 0, to: 2 })} ${c.windowTotalsWholeProgramme}`;
+    delete snap['recycling-scope-note'];
+    expect(failed(run(rec, loopBody(), snap))).toEqual([
+      "the scope note states the indexer's scope",
+      'the window note states the range the indexer served, and what the totals cover',
+    ]);
+    const global = pageFor(recBody(), loopBody());
+    global['recycling-scope-note'] = { text: c.scopeLocalOnly };
+    expect(failed(run(recBody(), loopBody(), global))).toEqual(['no local-only scope note on programme-wide totals']);
   });
 
   it('names each failing holder leg the indexer reports, and no other', () => {
