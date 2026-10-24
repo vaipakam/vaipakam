@@ -68,6 +68,9 @@
 # Usage:
 #   bash script/predeploy-check.sh            # deploy-sanity suite only
 #   bash script/predeploy-check.sh --full     # + full (chunked) regression
+#   bash script/predeploy-check.sh --full --shard 2/4 --manifest m/2.tsv
+#                                             # CI only: shard 2 of the regression
+#                                             # (#2770; see run-regression.sh)
 #
 # It is also invoked automatically as a preflight step inside
 # `deploy-chain.sh`, `deploy-testnet.sh` and `deploy-mainnet.sh`, so a
@@ -82,12 +85,24 @@ cd "$CONTRACTS_DIR"
 
 # ── Arguments ─────────────────────────────────────────────────────────
 MODE_FULL=0
-for arg in "$@"; do
-  case "$arg" in
+# `--shard i/N` / `--manifest FILE` (#2770) pass straight to run-regression.sh,
+# which owns the shard rule; they mean nothing without `--full`.
+REGRESSION_ARGS=()
+while (( $# )); do
+  case "$1" in
     --full) MODE_FULL=1 ;;
-    *) echo "predeploy-check.sh: unknown argument '$arg'" >&2; exit 2 ;;
+    --shard|--manifest)
+      if (( $# < 2 )); then echo "predeploy-check.sh: $1 needs a value" >&2; exit 2; fi
+      REGRESSION_ARGS+=("$1" "$2"); shift ;;
+    --shard=*|--manifest=*) REGRESSION_ARGS+=("$1") ;;
+    *) echo "predeploy-check.sh: unknown argument '$1'" >&2; exit 2 ;;
   esac
+  shift
 done
+if (( ${#REGRESSION_ARGS[@]} )) && [ "$MODE_FULL" -ne 1 ]; then
+  echo "predeploy-check.sh: --shard / --manifest shard the full regression and need --full" >&2
+  exit 2
+fi
 
 FAIL=0
 
@@ -192,8 +207,17 @@ if [ "$MODE_FULL" -eq 1 ]; then
   # 100 runs — and run as their own pass); plain `run-regression.sh` without
   # `--invariants` is exactly that scope, so the gate's semantics are
   # unchanged. It forces FOUNDRY_PROFILE=default itself.
-  if bash "$SCRIPT_DIR/run-regression.sh"; then
-    echo "  ✓ full regression passes"
+  #
+  # Sharded (#2770): with `--shard i/N` this step runs only shard i's chunks
+  # and every OTHER step runs in full, so each shard is a complete preflight
+  # over 1/N of the regression. A green shard is not a green regression:
+  # `run-regression.sh --verify-shards` over every shard's `--manifest` is.
+  if bash "$SCRIPT_DIR/run-regression.sh" ${REGRESSION_ARGS[@]+"${REGRESSION_ARGS[@]}"}; then
+    if (( ${#REGRESSION_ARGS[@]} )); then
+      echo "  ✓ this shard of the full regression passes (verify every shard before relying on it)"
+    else
+      echo "  ✓ full regression passes"
+    fi
   else
     echo "  ✗ regression failed — do not deploy red contracts" >&2
     FAIL=1
@@ -787,5 +811,11 @@ if [ "$FAIL" -ne 0 ]; then
   echo "✗ pre-deploy sanity check FAILED — do not deploy until the" >&2
   echo "  problems above are resolved." >&2
   exit 1
+fi
+if (( ${#REGRESSION_ARGS[@]} )); then
+  # One shard's green says nothing about the chunks other shards hold.
+  echo "✓ pre-deploy sanity check passed for THIS SHARD of the regression — not a"
+  echo "  deploy verdict until run-regression.sh --verify-shards accepts every shard."
+  exit 0
 fi
 echo "✓ pre-deploy sanity check passed — safe to proceed with the deploy."
