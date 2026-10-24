@@ -1,4 +1,4 @@
-## Thread — Metrics, fee log and option thresholds on the shared 1e18 valuation (PR #TBD)
+## Thread — Metrics, fee log and option thresholds on the shared 1e18 valuation (PR #2779)
 
 The last valuations outside the risk and KYC paths now read the same shared
 rule the loan risk checks use (#2419): the protocol metrics views, the
