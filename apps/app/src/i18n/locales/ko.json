@@ -2475,6 +2475,7 @@
         "KeeperActionsUpdated": "키퍼 권한 업데이트됨",
         "KeeperRevoked": "키퍼 제거됨",
         "VPFIDiscountConsentChanged": "VPFI 수수료 할인 설정 업데이트됨",
+        "NotificationFeeConsentSet": "유료 알림 과금 동의 업데이트됨",
         "LenderIntentSet": "상시 대출 의향 설정됨",
         "LenderIntentFunded": "상시 대출 의향에 자금 추가됨",
         "LenderIntentCapitalWithdrawn": "상시 대출 의향에서 자금 인출됨",

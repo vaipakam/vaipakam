@@ -2475,6 +2475,7 @@
         "KeeperActionsUpdated": "キーパーの権限を更新",
         "KeeperRevoked": "キーパーを削除",
         "VPFIDiscountConsentChanged": "VPFI 手数料割引の設定を更新",
+        "NotificationFeeConsentSet": "有料通知の課金同意を更新",
         "LenderIntentSet": "常設の貸付インテントを設定",
         "LenderIntentFunded": "常設の貸付インテントに資金を追加",
         "LenderIntentCapitalWithdrawn": "常設の貸付インテントから資金を引き出し",

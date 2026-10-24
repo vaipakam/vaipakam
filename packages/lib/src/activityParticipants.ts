@@ -119,6 +119,7 @@ const PARTIES: ReadonlyMap<string, readonly string[]> = new Map<string, readonly
   ['KeeperActionsUpdated', ['user']],
   ['KeeperRevoked', ['user']],
   ['VPFIDiscountConsentChanged', ['user']],
+  ['NotificationFeeConsentSet', ['user']],
   ['TermsAccepted', ['user']],
   // ── Vault and position NFTs.
   ['UserVaultCreated', ['user']],

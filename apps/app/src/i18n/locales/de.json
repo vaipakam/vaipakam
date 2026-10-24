@@ -2475,6 +2475,7 @@
         "KeeperActionsUpdated": "Keeper-Berechtigungen aktualisiert",
         "KeeperRevoked": "Keeper entfernt",
         "VPFIDiscountConsentChanged": "Einstellung für VPFI-Gebührenrabatt aktualisiert",
+        "NotificationFeeConsentSet": "Zustimmung zur Abrechnung kostenpflichtiger Benachrichtigungen aktualisiert",
         "LenderIntentSet": "Dauerhafte Verleihabsicht festgelegt",
         "LenderIntentFunded": "Dauerhafte Verleihabsicht finanziert",
         "LenderIntentCapitalWithdrawn": "Kapital aus einer dauerhaften Verleihabsicht abgezogen",

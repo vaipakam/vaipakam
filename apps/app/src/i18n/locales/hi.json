@@ -2475,6 +2475,7 @@
         "KeeperActionsUpdated": "कीपर अनुमतियाँ अपडेट की गईं",
         "KeeperRevoked": "कीपर हटाया गया",
         "VPFIDiscountConsentChanged": "VPFI शुल्क छूट सेटिंग अपडेट की गई",
+        "NotificationFeeConsentSet": "सशुल्क सूचना बिलिंग की सहमति अपडेट की गई",
         "LenderIntentSet": "स्थायी उधार-इरादा सेट किया गया",
         "LenderIntentFunded": "स्थायी उधार-इरादे में धन जोड़ा गया",
         "LenderIntentCapitalWithdrawn": "स्थायी उधार-इरादे से पूँजी निकाली गई",

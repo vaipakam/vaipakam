@@ -2475,6 +2475,7 @@
         "KeeperActionsUpdated": "تم تحديث أذونات الـ keeper",
         "KeeperRevoked": "تمت إزالة الـ keeper",
         "VPFIDiscountConsentChanged": "تم تحديث إعداد خصم الرسوم بـ VPFI",
+        "NotificationFeeConsentSet": "تم تحديث الموافقة على رسوم الإشعارات المدفوعة",
         "LenderIntentSet": "تم تعيين نية إقراض دائمة",
         "LenderIntentFunded": "تم تمويل نية إقراض دائمة",
         "LenderIntentCapitalWithdrawn": "تم سحب رأس مال من نية إقراض دائمة",
