@@ -8785,19 +8785,20 @@ if (!visited.some((v) => /^\/positions\/\d+$/.test(v.path))) {
   );
   process.exit(2);
 }
-// #2094 — AND THE EXIT CHOOSER WAS ASSERTED WHERE THE WALLET GAVE IT A
-// POSITION. Forced-close-only visits are detail pages too, so the gate
-// above passes on a run that reached only rentals while the wallet also
-// held a position the chooser renders for — every such one raced out or
-// fell past the cap. A wallet with none was told so before the walk.
-if (
-  ROLE === 'lender' &&
-  mine.some((l) => l.visitMode === 'full') &&
-  !visited.some((v) => isDetailPath(v.path) && v.visitMode === 'full')
-) {
+// #2094 — AND THE EXIT CHOOSER WAS ASSERTED. Forced-close-only visits are
+// detail pages too, so the gate above passes on a run that reached only
+// rentals or flagged positions. A lender run advertises the chooser, and an
+// advertised assertion that never ran is not a clean run (round 1 below),
+// so this reads the OBSERVATIONS alone: whatever the wallet held, and
+// whatever changed between discovery and the visits, no full observation
+// is exit 2. The pool only chooses the explanation.
+if (ROLE === 'lender' && !visited.some((v) => isDetailPath(v.path) && v.visitMode === 'full')) {
   console.log(
-    '\nBLOCKED: the lender exit chooser was not asserted on any position — this wallet holds' +
-      ' positions it renders for, and none was observed in full.',
+    '\nBLOCKED: the lender exit chooser was not asserted on any position — ' +
+      (mine.some((l) => l.visitMode === 'full')
+        ? 'this wallet holds positions it renders for, and none was observed in full.'
+        : 'every position this wallet holds is a rental or a flagged holder, where the chooser' +
+          ' correctly does not render, so only the forced-close card was asserted.'),
   );
   process.exit(2);
 }
