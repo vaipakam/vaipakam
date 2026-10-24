@@ -4488,6 +4488,22 @@
   },
   {
     "type": "error",
+    "name": "RewardClockNotLaunchedOnBase",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyActivationBlockedByStagedEarmark",
     "inputs": [
       {

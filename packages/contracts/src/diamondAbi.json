@@ -1957,6 +1957,7 @@
 {"type":"error","name":"GovernorArmingDayNotFuture","inputs":[{"name":"dayId","type":"uint256","internalType":"uint256"},{"name":"today","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"InvalidRecycleSurplusMultiple","inputs":[{"name":"multiple","type":"uint16","internalType":"uint16"},{"name":"maxAllowed","type":"uint16","internalType":"uint16"}]},
 {"type":"error","name":"KeeperAllocateTargetIsCanonical","inputs":[{"name":"chainId","type":"uint32","internalType":"uint32"}]},
+{"type":"error","name":"RewardClockNotLaunchedOnBase","inputs":[{"name":"sourceChainId","type":"uint32","internalType":"uint32"},{"name":"dayId","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"SurplusFlagNotForCanonicalChain","inputs":[{"name":"chainId","type":"uint32","internalType":"uint32"}]},
 {"type":"function","name":"broadcastGlobal","inputs":[{"name":"dayId","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"payable"},
 {"type":"function","name":"broadcastGlobalTo","inputs":[{"name":"dayId","type":"uint256","internalType":"uint256"},{"name":"destChainId","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"payable"},
