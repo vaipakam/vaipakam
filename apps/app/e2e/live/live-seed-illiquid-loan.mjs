@@ -900,6 +900,51 @@ try {
 // =====================================================================
 // Report + verdict.
 // =====================================================================
+/**
+ * The request and loan ids FROM THE PLAN'S OWN RECORD (#2695 r3): a stop can
+ * come after `createOffer` or `acceptOffer` mined but before the page said
+ * so — `armedClick` fails on the UI, and the happy path that decodes the
+ * receipt never runs. The plan still holds each allowed send's hash, so the
+ * ids are recovered from those receipts here, whatever the UI did, before
+ * the report says what is standing. A hash with no receipt yet, or a send
+ * with no hash, is stated with where to look, never guessed.
+ */
+async function idFromStep(stepId, eventName, pick) {
+  const st = PLAN.steps().find((x) => x.id === stepId && x.status === 'consumed');
+  if (!st) return null;
+  if (!st.record.hash) {
+    console.log(`  ${stepId}: allowed, but no hash came back (${st.record.outcome ?? 'awaiting provider'}) — it may still have been broadcast; check the wallet's transactions on ${EXPLORER}`);
+    return null;
+  }
+  try {
+    const r = await pub.waitForTransactionReceipt({ hash: st.record.hash, timeout: 90_000 });
+    if (r.status !== 'success') {
+      console.log(`  ${stepId} ${st.record.hash} REVERTED at block ${r.blockNumber} — it created nothing`);
+      return null;
+    }
+    const ev = diamondEvents(r).events.filter((e) => e.eventName === eventName);
+    if (ev.length !== 1) {
+      console.log(`  ${stepId} ${st.record.hash} mined with ${ev.length} ${eventName} event(s) — inspect ${EXPLORER}/tx/${st.record.hash}`);
+      return null;
+    }
+    return pick(ev[0].args);
+  } catch (e) {
+    console.log(`  ${stepId} ${st.record.hash}: no receipt yet (${String(e?.shortMessage ?? e?.message).slice(0, 100)}) — look it up at ${EXPLORER}/tx/${st.record.hash}`);
+    return null;
+  }
+}
+if (REQUEST_ID === null || LOAN_ID === null) {
+  console.log('\n=== ids from the plan\u2019s own receipts ===');
+  if (REQUEST_ID === null) {
+    REQUEST_ID = await idFromStep('b-create', 'OfferCreated', (a) => (eq(a.creator, BORROWER) ? a.offerId : null));
+    if (REQUEST_ID !== null) console.log(`  b-create created request #${REQUEST_ID}`);
+  }
+  if (LOAN_ID === null) {
+    LOAN_ID = await idFromStep('l-accept', 'OfferAccepted', (a) => (REQUEST_ID !== null && a.offerId === REQUEST_ID ? a.loanId : null));
+    if (LOAN_ID !== null) console.log(`  l-accept opened loan ${LOAN_ID}`);
+  }
+}
+
 console.log('\n=== write plan ===');
 for (const s of PLAN.steps()) {
   console.log(`  ${s.id.padEnd(16)} ${s.status.padEnd(9)} ${s.record.hash ? `${EXPLORER}/tx/${s.record.hash}` : (s.record.outcome ?? '')}`);
