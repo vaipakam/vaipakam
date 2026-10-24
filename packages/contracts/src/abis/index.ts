@@ -57,6 +57,8 @@ import SwapAttemptFacetABI from './SwapAttemptFacet.json';
 import TreasuryFeeFacetABI from './TreasuryFeeFacet.json';
 // #2419 — the valuation host (the one 1e18 numeraire-value rule).
 import NumeraireValueFacetABI from './NumeraireValueFacet.json';
+// #2769 — the paid-notification fee host (charge + consent).
+import NotificationFeeFacetABI from './NotificationFeeFacet.json';
 import RiskSplitLiquidationFacetABI from './RiskSplitLiquidationFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
@@ -210,6 +212,7 @@ export {
   SwapAttemptFacetABI,
   TreasuryFeeFacetABI,
   NumeraireValueFacetABI,
+  NotificationFeeFacetABI,
   RiskSplitLiquidationFacetABI,
   ClaimFacetABI,
   OracleFacetABI,

@@ -2185,7 +2185,7 @@ library LibVaipakam {
         // docs/RangeOffersDesign.md §"1% match fee mechanic."
         address matcher;
         // ── T-032 — notification-fee billed flags ──────────────────────
-        // Set by `LoanFacet.markNotifBilled` (callable only by
+        // Set by `NotificationFeeFacet.markNotifBilled` (callable only by
         // `NOTIF_BILLER_ROLE` — held by the off-chain hf-watcher) the
         // first time a paid-tier (Push-Protocol) notification fires
         // for the corresponding side of this loan. Once set, the user's
@@ -3522,7 +3522,7 @@ library LibVaipakam {
         ///      Divided by totalLoansEverCreated to yield averageApr.
         uint256 interestRateBpsSum;
         /// @dev T-032 — cumulative VPFI debited from user vaults via
-        ///      `LoanFacet.markNotifBilled`. Since #1346 that VPFI lands in
+        ///      `NotificationFeeFacet.markNotifBilled`. Since #1346 that VPFI lands in
         ///      DIAMOND CUSTODY and credits the recycle bucket, not the
         ///      treasury; this counter is the lifetime total either way.
         ///      Never decremented; the operator monitors this for
@@ -8196,7 +8196,7 @@ library LibVaipakam {
         mapping(uint256 => mapping(uint32 => uint256)) chainDailyRecycledReported;
         /// @dev #2721 — per wallet, the most VPFI it agreed to be billed per
         ///      loan side for paid notifications; zero means no consent. Set
-        ///      only by the wallet itself (`ProfileFacet.setNotificationFeeConsent`,
+        ///      only by the wallet itself (`NotificationFeeFacet.setNotificationFeeConsent`,
         ///      through `LibNotificationFee.setConsent`) and read by
         ///      `LibNotificationFee.bill`, which refuses a payer whose cap is
         ///      zero or below the fee being billed. Before this record the
