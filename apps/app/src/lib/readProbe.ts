@@ -81,7 +81,15 @@ export type ReadProbeEvent =
       error?: ReadProbeErrorLink[];
     }
   /** A query's fetch failed and it will try again. */
-  | { v: V; kind: "query-retrying"; queryHash: string; queryKey: string; failureCount: number }
+  | {
+      v: V;
+      kind: "query-retrying";
+      queryHash: string;
+      queryKey: string;
+      /** The chain the query's key names, when it names exactly one. */
+      chainId?: number;
+      failureCount: number;
+    }
   /**
    * A query reached an outcome. `error` is sent for every query that
    * settles in error. `ok` and `cancelled` are sent only for a query this
@@ -92,6 +100,8 @@ export type ReadProbeEvent =
       kind: "query-settled";
       queryHash: string;
       queryKey: string;
+      /** The chain the query's key names, when it names exactly one. */
+      chainId?: number;
       outcome: "ok" | "error" | "cancelled";
       failureCount: number;
       /** Whether data from an earlier fetch was still being shown. */
@@ -137,6 +147,29 @@ function keyText(key: unknown): string {
     return "(unserialisable query key)";
   }
 }
+
+/**
+ * The chain a query reads, as its key states it: wagmi puts the options
+ * object, `chainId` included, in the key, and the app's own keys do the
+ * same. A key that names no chain, or more than one, gives `undefined`, and
+ * the driver then judges the query against the chain it observes. The
+ * chain is never guessed from the query's position or name.
+ */
+export function queryChainOf(key: unknown): number | undefined {
+  if (!Array.isArray(key)) return undefined;
+  const named = new Set<number>();
+  for (const part of key) {
+    if (part === null || typeof part !== "object" || Array.isArray(part)) continue;
+    const id = (part as Record<string, unknown>).chainId;
+    if (typeof id === "number" && Number.isSafeInteger(id) && id > 0) named.add(id);
+  }
+  return named.size === 1 ? [...named][0] : undefined;
+}
+
+const chainField = (key: unknown): { chainId?: number } => {
+  const chainId = queryChainOf(key);
+  return chainId === undefined ? {} : { chainId };
+};
 
 /**
  * The driver's report function, wrapped so the app never depends on it,
@@ -230,6 +263,7 @@ export function attachReadProbe(
         kind: "query-settled",
         queryHash: query.queryHash,
         queryKey: keyText(query.queryKey),
+        ...chainField(query.queryKey),
         outcome,
         failureCount: query.state.fetchFailureCount,
         hadData: query.state.data !== undefined,
@@ -252,6 +286,7 @@ export function attachReadProbe(
         kind: "query-retrying",
         queryHash: query.queryHash,
         queryKey: keyText(query.queryKey),
+        ...chainField(query.queryKey),
         failureCount: action.failureCount,
       });
       return;

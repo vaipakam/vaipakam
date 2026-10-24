@@ -594,18 +594,53 @@ describe('classifyRpcResponse — responses that only look answered', () => {
     expect(verdicts(out)).toEqual(['unreachable', 'unreachable']);
   });
 
-  it('still reports an OMISSION per call rather than poisoning the batch', () => {
-    // The distinction that keeps the surplus rule from swallowing round
-    // 23's finding: an omission costs exactly one call, and the members
-    // that did come back are still trustworthy.
+  // #2783 r2: an omission can shift answers too. viem resolves the sorted
+  // members by position, so dropping id 1 from a batch of 1 and 2 hands
+  // call 1 the id-2 answer, and it succeeds in the page.
+  it('calls a call handed another member by an omission a misread', () => {
     const out = classifyRpcResponse(
       200,
-      JSON.stringify([{ jsonrpc: '2.0', id: 1, result: '0x1' }]),
+      JSON.stringify([{ jsonrpc: '2.0', id: 2, result: '0xc' }]),
       rpcReq(call(1), call(2)),
     );
-    expect(verdicts(out)).toEqual(['ok', 'unreachable']);
+    expect(verdicts(out)).toEqual(['unreachable', 'unreachable']);
+    expect(out[0].why).toMatch(/handed another call's answer/);
+    expect(out[0].misattributable).toBe(true);
+    // Call 2 is handed nothing, and simply fails in the page.
     expect(out[1].why).toBe('omitted from batch response');
-    // The omitted call FAILS in the page, which the app reports itself.
+    expect(out[1].misattributable).toBeUndefined();
+  });
+
+  it('costs only the dropped call when the omission shifts nothing', () => {
+    // Dropping the LAST member: every call still gets its own, by position.
+    const out = classifyRpcResponse(
+      200,
+      JSON.stringify([
+        { jsonrpc: '2.0', id: 2, result: '0x2' },
+        { jsonrpc: '2.0', id: 1, result: '0x1' },
+      ]),
+      rpcReq(call(1), call(2), call(3)),
+    );
+    expect(verdicts(out)).toEqual(['ok', 'ok', 'unreachable']);
+    expect(out.some((o) => o.misattributable)).toBe(false);
+  });
+
+  it('follows the dropped member in the middle of a batch', () => {
+    const out = classifyRpcResponse(
+      200,
+      JSON.stringify([
+        { jsonrpc: '2.0', id: 1, result: '0x1' },
+        { jsonrpc: '2.0', id: 3, result: '0x3' },
+      ]),
+      rpcReq(call(1), call(2), call(3)),
+    );
+    expect(verdicts(out)).toEqual(['ok', 'unreachable', 'unreachable']);
+    expect(out.map((o) => o.misattributable === true)).toEqual([false, true, false]);
+  });
+
+  it('does not call a wholly empty batch a misread: nothing came back to hand on', () => {
+    const out = classifyRpcResponse(200, '[]', rpcReq(call(1), call(2)));
+    expect(verdicts(out)).toEqual(['unreachable', 'unreachable']);
     expect(out.some((o) => o.misattributable)).toBe(false);
   });
 

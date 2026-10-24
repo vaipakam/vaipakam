@@ -1078,20 +1078,38 @@ export function classifyRpcResponse(status, body, requestBody) {
   // POSITIONALLY, so an extra member shifts every answer along by one: ask
   // for ids 10 and 11, get back 9, 10 and 11, and the first call is handed
   // the id-9 result while both requested ids are present and look fine.
-  // That is the difference from an OMISSION, which costs exactly one call
-  // and is still reported per call below — here there is no member left we
-  // can trust, so nothing may be recorded as ok (#1529 review round 24).
+  // Here there is no member left we can trust, so nothing may be recorded
+  // as ok (#1529 review round 24).
   if (unattributable) {
     return answerable.map((c) =>
       out(c, 'unreachable', 'unexpected or duplicate member in batch response', misread),
     );
   }
 
-  return answerable.map((c) => {
-    const member = byId.get(c.id);
-    // Nothing came back for this call. On a 200 that is a batch that
-    // dropped a member — the read fails in the page, silently.
+  // Every member left is a requested id, at most once. What remains is an
+  // OMISSION, and whether it costs one call or misattributes others
+  // depends on WHERE it falls, so this follows viem's own resolution rather
+  // than approximating it: the HTTP transport sorts the members by
+  // `(a, b) => a.id - b.id` and hands member i to the i-th request of the
+  // batch, in body order (viem `clients/transports/http.js`,
+  // `utils/promise/createBatchScheduler.js`). A call handed its own member
+  // is judged on it; a call handed nothing fails in the page; a call handed
+  // ANOTHER call's member can succeed with that answer, which no read report
+  // can show, so it is a misread (#2783 r2). Dropping id 1 from a batch of
+  // 1 and 2 hands call 1 the id-2 answer; dropping id 2 costs call 2 alone.
+  //
+  // A COMPLETE batch is still matched by id: for viem's numeric ids the
+  // sort lines every member up with its own call, so position and id agree.
+  if (byId.size === answerable.length) {
+    return answerable.map((c) => memberOutcome(c, byId.get(c.id)));
+  }
+  const handed = [...members].sort((a, b) => a.id - b.id);
+  return answerable.map((c, i) => {
+    const member = handed[i];
     if (member === undefined) return out(c, 'unreachable', 'omitted from batch response');
+    if (member.id !== c.id) {
+      return out(c, 'unreachable', "handed another call's answer: the batch response omitted a member", misread);
+    }
     return memberOutcome(c, member);
   });
 }
@@ -1225,8 +1243,9 @@ export function recordRpcResponse({ status, body, requestBody, url, cohort }, le
  * now reported as observed.
  *
  * `misread` is a verdict too, of the provider: a batch answered in a shape
- * viem resolves by POSITION (a surplus or duplicate member, one response
- * for a batch, a member with no result), so a call can be handed another
+ * viem resolves by POSITION (a surplus or duplicate member, an omission
+ * that shifts another call's answer, one response for a batch, a member
+ * with no result), so a call can be handed another
  * call's answer and SUCCEED in the page.
  * The app cannot see that (its read did not fail), so no report from it
  * can stand in for this one (#2783 r1). Each entry keeps its `cohort`.

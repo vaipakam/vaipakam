@@ -144,6 +144,8 @@ function causeText(chain) {
 
 const isChain = (c) => Array.isArray(c);
 const isCount = (n) => typeof n === 'number' && Number.isFinite(n);
+/** A query's chain is optional; when sent it must be a chain id. */
+const optionalChain = (c) => c === undefined || (Number.isSafeInteger(c) && c > 0);
 
 /**
  * A per-page record of what the app reported.
@@ -205,16 +207,23 @@ export function createReadProbe({
         }
         case 'query-retrying':
           if (typeof event.queryHash !== 'string' || typeof event.queryKey !== 'string') break;
-          p.retrying.set(event.queryHash, { queryKey: event.queryKey, failureCount: event.failureCount });
+          if (!optionalChain(event.chainId)) break;
+          p.retrying.set(event.queryHash, {
+            queryKey: event.queryKey,
+            chainId: event.chainId ?? null,
+            failureCount: event.failureCount,
+          });
           return;
         case 'query-settled': {
           if (typeof event.queryHash !== 'string' || typeof event.queryKey !== 'string') break;
+          if (!optionalChain(event.chainId)) break;
           if (!['ok', 'error', 'cancelled'].includes(event.outcome)) break;
           if (event.outcome === 'error' && !isChain(event.error)) break;
           p.retrying.delete(event.queryHash);
           if (event.outcome === 'error') {
             p.settled.push({
               queryKey: event.queryKey,
+              chainId: event.chainId ?? null,
               failureCount: isCount(event.failureCount) ? event.failureCount : null,
               hadData: event.hadData === true,
               error: event.error,
@@ -254,7 +263,9 @@ export function createReadProbe({
 /**
  * One page's report, judged. `chainId` is the chain the drive observes;
  * a read on any other chain (the app's ENS lookups on Ethereum) is listed
- * under `elsewhere` and decides nothing.
+ * under `elsewhere` and decides nothing. An RPC request always carries its
+ * chain; a query carries one only when its key names exactly one chain,
+ * and a query that names none is judged against the observed chain.
  *
  * @returns {{ armed: boolean, refused: string[], unserved: string[],
  *   pending: string[], faults: string[], answered: string[],
@@ -290,8 +301,13 @@ export function judgeReadProbe(page, { chainId = null } = {}) {
     if (offChain) out.elsewhere.push(line);
     else place(verdict, line);
   }
+  // A query names its chain only when its key does; one that names none
+  // is judged against the observed chain, never excused.
+  const queryOffChain = (q) => chainId !== null && q.chainId !== null && q.chainId !== chainId;
   for (const q of page?.retrying?.values() ?? []) {
-    out.pending.push(`query ${q.queryKey} — still waiting to retry when the page was judged`);
+    const line = `query ${q.queryKey} — still waiting to retry when the page was judged`;
+    if (queryOffChain(q)) out.elsewhere.push(line);
+    else out.pending.push(line);
   }
   for (const s of page?.settled ?? []) {
     const verdict = classifyQueryError(s.error);
@@ -303,7 +319,8 @@ export function judgeReadProbe(page, { chainId = null } = {}) {
     const line =
       `query ${s.queryKey} — settled in error after ${attempts} failed attempt(s)` +
       `${s.hadData ? ', over data from an earlier fetch' : ''}: ${causeText(s.error)}`;
-    place(verdict, line);
+    if (queryOffChain(s)) out.elsewhere.push(line);
+    else place(verdict, line);
   }
   return out;
 }

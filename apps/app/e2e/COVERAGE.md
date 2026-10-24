@@ -218,15 +218,17 @@ any request still in flight or query still waiting to retry:
 - a revert is an answer only for a method that executes code
   (`eth_call`, `eth_estimateGas`); on any other method it is unserved;
 - a read the app cancelled is reported and decides nothing, and a read on
-  another chain (the ENS lookup on mainnet) is listed apart;
+  another chain (the ENS lookup on mainnet) is listed apart: an RPC
+  request always carries its chain, a query only when its key names one;
 - a loaded page that never announced the report is BLOCKED, naming a
   build that predates #1672.
 
 The wire ledger now decides only what one response proves: a malformed
 request or envelope is a FAIL wherever it happened, the same rule
 `watchPageRpc` applies, and a batch answered in a shape viem resolves by
-position (a surplus or duplicate member, one response for a batch, a
-member with neither result nor error) is BLOCKED as a misread, because a
+position (a surplus or duplicate member, an omission that shifts
+another call's answer, one response for a batch, a member with neither
+result nor error) is BLOCKED as a misread, because a
 call there can be handed another call's answer and succeed in the page.
 Any other failed attempt is named beside an unserved read, or stated as
 recovered wire noise when every page reported every read served. A later

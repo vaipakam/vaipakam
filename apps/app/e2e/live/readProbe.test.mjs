@@ -193,6 +193,29 @@ describe('judgeReadProbe', () => {
     expect(j.elsewhere).toHaveLength(1);
   });
 
+  // #2783 r2 P2 — a query names its chain only through its key.
+  it('lists a query whose key names another chain, and judges one that names none', () => {
+    const p = createReadProbe();
+    const err = [{ name: 'ContractFunctionZeroDataError' }];
+    p.record(1, { v: 1, kind: 'armed' });
+    p.record(1, { v: 1, kind: 'query-settled', queryHash: 'a', queryKey: '["ensName"]', chainId: 1, outcome: 'error', failureCount: 1, hadData: false, error: err });
+    p.record(1, { v: 1, kind: 'query-settled', queryHash: 'b', queryKey: '["loan"]', outcome: 'error', failureCount: 1, hadData: false, error: err });
+    p.record(1, { v: 1, kind: 'query-retrying', queryHash: 'c', queryKey: '["ensAvatar"]', chainId: 1, failureCount: 1 });
+    const j = p.of(1, { chainId: 84532 });
+    expect(j.elsewhere).toHaveLength(2);
+    expect(j.unserved).toHaveLength(1);
+    expect(j.unserved[0]).toContain('["loan"]');
+    expect(j.pending).toEqual([]);
+    expect(j.refused).toEqual([]);
+  });
+
+  it('refuses a query chain that is not a chain id', () => {
+    const p = createReadProbe();
+    p.record(1, { v: 1, kind: 'query-retrying', queryHash: 'c', queryKey: '[]', chainId: '1', failureCount: 1 });
+    p.record(1, { v: 1, kind: 'query-settled', queryHash: 'd', queryKey: '[]', chainId: 0, outcome: 'ok', failureCount: 0, hadData: true });
+    expect(p.of(1).refused).toHaveLength(2);
+  });
+
   it('refuses a report shape it does not read, rather than reading it as clean', () => {
     const p = createReadProbe();
     p.record(1, { v: 2, kind: 'armed' });
@@ -310,6 +333,24 @@ describe("the app's report, read by this drive", () => {
     expect(j.unserved).toHaveLength(1);
     expect(j.unserved[0]).toContain('["exhausted"]');
     expect(j.unserved[0]).toContain('after 2 failed attempt(s)');
+  });
+
+  // #2783 r2 P2 — the header's ENS lookup on Ethereum fails over to a
+  // short address by design; its query must not block an observation of
+  // another chain.
+  it("lists a failed query on another chain apart, from wagmi's own key shape", async () => {
+    const { probe, client } = wired();
+    await client
+      .fetchQuery({
+        queryKey: ['ensName', { address: '0x00000000000000000000000000000000000000aa', chainId: 1 }],
+        queryFn: () => Promise.reject(Object.assign(new Error('zero data'), { name: 'ContractFunctionZeroDataError' })),
+        retry: false,
+      })
+      .catch(() => {});
+    const j = probe.of(1, { chainId: 84532 });
+    expect(j.unserved).toEqual([]);
+    expect(j.elsewhere).toHaveLength(1);
+    expect(j.elsewhere[0]).toContain('ensName');
   });
 
   it('reports a revert as answered and a malformed request as a fault', async () => {

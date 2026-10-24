@@ -7,6 +7,7 @@ import {
   READ_PROBE_VERSION,
   attachReadProbe,
   probeTransport,
+  queryChainOf,
   readProbeErrorChain,
   type ReadProbeEvent,
 } from "./readProbe";
@@ -242,5 +243,31 @@ describe("readProbeErrorChain", () => {
     expect(readProbeErrorChain(self)).toEqual([{ name: "Loop" }]);
     expect(readProbeErrorChain("plain")).toEqual([{ message: "plain" }]);
     expect(readProbeErrorChain(undefined)).toEqual([]);
+  });
+});
+
+describe("queryChainOf", () => {
+  it("reads the chain a key's options object names", () => {
+    expect(queryChainOf(["ensName", { address: "0xaa", chainId: 1 }])).toBe(1);
+    expect(queryChainOf(["readContract", { chainId: 84532 }, { chainId: 84532 }])).toBe(84532);
+  });
+
+  it("names no chain for a key that states none, or more than one", () => {
+    expect(queryChainOf(["myLoans", "0xaa"])).toBeUndefined();
+    expect(queryChainOf(["pair", { chainId: 1 }, { chainId: 84532 }])).toBeUndefined();
+    expect(queryChainOf(["x", { chainId: "1" }, { chainId: 0 }])).toBeUndefined();
+    expect(queryChainOf("not-an-array")).toBeUndefined();
+  });
+
+  it("sends the chain on a query report only when the key names one", async () => {
+    const { events, host } = driver();
+    const c = new QueryClient({ defaultOptions: { queries: { retry: 0 } } });
+    attachReadProbe(c, host);
+    const fail = () => Promise.reject(new Error("down"));
+    await c.fetchQuery({ queryKey: ["ensName", { chainId: 1 }], queryFn: fail }).catch(() => {});
+    await c.fetchQuery({ queryKey: ["loan"], queryFn: fail }).catch(() => {});
+    const settled = kinds(events, "query-settled");
+    expect(settled[0]).toMatchObject({ chainId: 1 });
+    expect(settled[1]).not.toHaveProperty("chainId");
   });
 });
