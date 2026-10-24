@@ -630,7 +630,7 @@ contract VaipakamRewardFlowTest is Test {
             abi.encodeWithSelector(
                 VaipakamRewardMessenger.PayloadSizeMismatch.selector,
                 14 * 32,
-                6 * 32
+                10 * 32
             )
         );
         rewardMirror.onCrossChainMessage(
@@ -797,7 +797,7 @@ contract VaipakamRewardFlowTest is Test {
             abi.encodeWithSelector(
                 VaipakamRewardMessenger.PayloadSizeMismatch.selector,
                 20 * 32,
-                6 * 32
+                10 * 32
             )
         );
         rewardMirror.onCrossChainMessage(
@@ -1194,7 +1194,7 @@ contract VaipakamRewardFlowTest is Test {
             abi.encodeWithSelector(
                 VaipakamRewardMessenger.PayloadSizeMismatch.selector,
                 sevenWords.length,
-                uint256(6 * 32)
+                uint256(10 * 32)
             )
         );
         rewardMirror.onCrossChainMessage(

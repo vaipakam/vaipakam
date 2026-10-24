@@ -586,16 +586,21 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverChainReport(CHAIN_ARB, 1, 10e18, 5e18);
     }
 
-    function testOnChainReportRevertsAfterFinalization() public {
+    /// @dev #2621 — a mirror report landing after its day is finalized is
+    ///      not refused (that would discard its chain-wide figures too): it
+    ///      is announced as late, and changes none of the finalized day.
+    function testOnChainReportAfterFinalizationLeavesTheDayAlone() public {
         _configureCanonical();
         messenger.deliverChainReport(CHAIN_BASE, 1, 10e18, 5e18);
         messenger.deliverChainReport(CHAIN_ARB, 1, 10e18, 5e18);
         messenger.deliverChainReport(CHAIN_OP, 1, 10e18, 5e18);
         _agg().finalizeDay(1);
+        uint256 countBefore = _agg().getChainDailyReportCount(1);
 
-        vm.expectRevert(ReportAfterFinalization.selector);
-        // Even with a fresh chain id (if list grew) the finalized-gate fires first.
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RewardAggregatorFacet.ChainReportArrivedAfterFinalization(CHAIN_ARB, 1, 0);
         messenger.deliverChainReport(CHAIN_ARB, 1, 1, 1);
+        assertEq(_agg().getChainDailyReportCount(1), countBefore, "the finalized day takes no late report");
     }
 
     /// @dev #1195 E3 (Pass-2) — the BASE-path self-report (`closeDay`) now also
