@@ -125,6 +125,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     ///      id — the reward facets derive chain identity from it directly.
     function _configureCanonical() internal {
         vm.chainId(CHAIN_BASE);
+        // A canonical chain runs its reward clock before reports can reach
+        // it: Base refuses a report while its own clock is unset (#2620).
+        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(block.timestamp);
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(true);
         _rep().setRewardMessenger(address(messenger));
@@ -228,9 +231,6 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testCloseDayCanonicalWritesDirectlyAndEmits() public {
         _configureCanonical();
-        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
-            block.timestamp
-        );
 
         // Seed a non-zero local total on day 1 via mutator, then warp.
         _mut().setDailyLenderInterest(1, alice, 60e18, 60e18);
@@ -259,9 +259,6 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testCloseDayCanonicalRefundsMsgValue() public {
         _configureCanonical();
-        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
-            block.timestamp
-        );
         _mut().setDailyLenderInterest(1, alice, 1e18, 1e18);
         _mut().setKnownGlobalSet(1, false);
         vm.warp(block.timestamp + 2 days + 1);
@@ -277,9 +274,6 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testCloseDayRevertsBeforeDayElapsed() public {
         _configureCanonical();
-        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
-            block.timestamp
-        );
         // today == 0, so day 0 is not elapsed.
         vm.expectRevert(RewardDayNotElapsed.selector);
         _rep().closeDay(0);
@@ -292,9 +286,6 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testCloseDayRevertsOnDuplicate() public {
         _configureCanonical();
-        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
-            block.timestamp
-        );
         _mut().setDailyLenderInterest(1, alice, 1e18, 1e18);
         _mut().setKnownGlobalSet(1, false);
         vm.warp(block.timestamp + 2 days + 1);
@@ -610,7 +601,6 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     ///      report).
     function testCloseDayRevertsAfterFinalization() public {
         _configureCanonical();
-        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(block.timestamp);
         messenger.deliverChainReport(CHAIN_BASE, 1, 10e18, 5e18);
         messenger.deliverChainReport(CHAIN_ARB, 1, 10e18, 5e18);
         messenger.deliverChainReport(CHAIN_OP, 1, 10e18, 5e18);
@@ -1064,9 +1054,6 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function testCloseDayPauseGated() public {
         _configureCanonical();
-        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
-            block.timestamp
-        );
         _mut().setDailyLenderInterest(1, alice, 1e18, 1e18);
         _mut().setKnownGlobalSet(1, false);
         vm.warp(block.timestamp + 2 days + 1);
@@ -1148,9 +1135,6 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         // for symmetry (we pretend Base is also a mirror for itself, just
         // for the broadcast-land assertion).
         _configureCanonical();
-        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
-            block.timestamp
-        );
 
         _mut().setDailyLenderInterest(1, alice, 40e18, 40e18); // base local
         _mut().setKnownGlobalSet(1, false); // roll back mutator auto-finalize
@@ -1395,9 +1379,6 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     /// reported, so it finalizes with that chain zeroed.
     function testClockMismatchDropsDayFiguresKeepsChainWide() public {
         _configureCanonical();
-        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
-            block.timestamp
-        );
         uint256 baseLaunch = block.timestamp;
         ChainDayReport memory r = ChainDayReport({
             dayId: 1,
@@ -1430,12 +1411,33 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertTrue(_agg().isChainReported(1, CHAIN_ARB), "a matching clock counts");
     }
 
+    /// #2620 review — a report reaching Base before Base's own clock is set
+    /// is refused, not dropped as a mismatch: the mirror's close is stamped
+    /// sent for good, so the delivery must stay re-executable until Base's
+    /// clock runs.
+    function testReportRefusedWhileBaseClockUnset() public {
+        vm.chainId(CHAIN_BASE);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(true);
+        _rep().setRewardMessenger(address(messenger));
+        ChainDayReport memory r;
+        r.dayId = 1;
+        r.lenderNumeraire18 = 25e18;
+        r.rewardLaunchTimestamp = block.timestamp;
+        vm.expectRevert(
+            abi.encodeWithSelector(RewardAggregatorFacet.RewardClockNotLaunchedOnBase.selector, CHAIN_ARB, uint256(1))
+        );
+        messenger.deliverChainDayReport(CHAIN_ARB, r);
+
+        // Once Base's clock runs on the same moment, the same delivery lands.
+        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(block.timestamp);
+        messenger.deliverChainDayReport(CHAIN_ARB, r);
+        assertTrue(_agg().isChainReported(1, CHAIN_ARB), "re-executed after launch, it counts");
+    }
+
     /// #2620 — a report on Base's clock is taken exactly as before.
     function testMatchingClockCountsDayFigures() public {
         _configureCanonical();
-        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
-            block.timestamp
-        );
         messenger.deliverChainReport(CHAIN_ARB, 1, 25e18, 15e18);
         assertTrue(_agg().isChainReported(1, CHAIN_ARB), "interest recorded");
         (uint256 lender, uint256 borrower) = _agg().getChainReport(1, CHAIN_ARB);
@@ -1551,9 +1553,6 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     /// one uniform ledger for B2/B3's netting.
     function testCloseDayCanonicalRecordsOwnLedger() public {
         _configureCanonical();
-        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
-            block.timestamp
-        );
         _mut().setDailyLenderInterest(1, alice, 40e18, 40e18);
         _mut().setKnownGlobalSet(1, false);
         _mut().setRecycleCreditedCumulativeRaw(55e18);

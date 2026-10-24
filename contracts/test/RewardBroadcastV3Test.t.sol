@@ -126,6 +126,7 @@ abstract contract RewardBroadcastV3Harness is SetupTest, IVaipakamErrors {
 
     function _configureCanonical() internal {
         vm.chainId(CHAIN_BASE);
+        _ensureRewardClockLaunched();
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(true);
         _rep().setRewardMessenger(address(messenger));
@@ -364,9 +365,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
     /// @dev Arm the governor for the current day + 1 and finalize that day
     ///      with CHAIN_OP missing — the R1 zeroed-destination shape.
     function _armAndFinalizeWithOpZeroed() internal returns (uint256 dayId) {
-        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
-            block.timestamp
-        );
+        _ensureRewardClockLaunched();
         (uint256 today, ) = InteractionRewardsLensFacet(address(diamond))
             .getInteractionCurrentDay();
         dayId = today + 1;

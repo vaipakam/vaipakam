@@ -158,6 +158,7 @@ contract RepatriationTransportTest is SetupTest {
         // role for the shared setup; tests re-pick their role via
         // `_armBase()` / `_armMirror()`.
         vm.chainId(CHAIN_BASE);
+        _ensureRewardClockLaunched();
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(true);
         _rep().setRewardMessenger(address(messenger));
@@ -244,6 +245,7 @@ contract RepatriationTransportTest is SetupTest {
     /// to disabled (no bound), so only bound-pinning tests enable them.
     function _armBase() internal {
         vm.chainId(CHAIN_BASE);
+        _ensureRewardClockLaunched();
         _rep().setIsCanonicalRewardChain(true);
         _repat().setRepatriationEndpoints(address(0), address(returnReceiver));
     }

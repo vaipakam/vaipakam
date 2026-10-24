@@ -225,6 +225,15 @@ contract RewardAggregatorFacet is
         uint256 baseLaunchTimestamp
     );
 
+    /// @notice #2620 review — a day report reached Base before Base's own
+    ///         reward clock was set. Not a clock MISMATCH: there is nothing
+    ///         to compare against yet, and dropping the report's day figures
+    ///         would zero that chain's day for good (its close is stamped sent
+    ///         and is never re-sent). Refused instead, so the transport records
+    ///         the delivery failed and it can be re-executed once Base's
+    ///         clock is set.
+    error RewardClockNotLaunchedOnBase(uint32 sourceChainId, uint256 dayId);
+
     /**
      * @notice Record a mirror's closed-day {ChainDayReport} under
      *         `sourceChainId` — the ONE report ingress (#2621).
@@ -247,6 +256,11 @@ contract RewardAggregatorFacet is
      *      revert would take the chain-wide figures back with it and leave a
      *      message no retry could deliver.
      *
+     *      The one refusal is a Base whose own reward clock is not yet set:
+     *      there is no clock to compare against, and the condition passes, so
+     *      the report reverts {RewardClockNotLaunchedOnBase} and stays
+     *      re-executable rather than being dropped as a mismatch.
+     *
      *      Membership of `expectedSourceChainIds` gates nothing here (#2618):
      *      the list decides only whose day figures a finalization sums.
      *      Rejects a second report of the same `(dayId, sourceChainId)`.
@@ -261,12 +275,13 @@ contract RewardAggregatorFacet is
         ChainDayReport calldata r
     ) external onlyRewardMessenger onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 baseLaunch = s.interactionLaunchTimestamp;
+        if (baseLaunch == 0) revert RewardClockNotLaunchedOnBase(sourceChainId, r.dayId);
         if (r.custodyEra > s.chainCustodyEraReported[sourceChainId]) {
             s.chainCustodyEraReported[sourceChainId] = r.custodyEra;
             emit ChainCustodyEraReported(sourceChainId, r.custodyEra);
         }
 
-        uint256 baseLaunch = s.interactionLaunchTimestamp;
         if (r.rewardLaunchTimestamp != baseLaunch) {
             _applyChainWideFigures(s, sourceChainId, r);
             emit ChainReportClockMismatch(sourceChainId, r.dayId, r.rewardLaunchTimestamp, baseLaunch);

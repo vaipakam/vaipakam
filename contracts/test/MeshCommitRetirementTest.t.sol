@@ -72,6 +72,7 @@ contract MeshCommitRetirementTest is SetupTest {
 
     function _configureCanonical() internal {
         vm.chainId(CHAIN_BASE);
+        _ensureRewardClockLaunched();
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(true);
         _rep().setRewardMessenger(address(messenger));

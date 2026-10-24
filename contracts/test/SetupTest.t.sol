@@ -226,6 +226,16 @@ contract SetupTest is Test {
     // address constant ZERO_EX_PROXY = 0xDef1C0ded9bec7F1a1670819833240f027b25EfF;
 
     // Mock Oracle responses
+
+    /// @dev Start this Diamond's reward clock at `block.timestamp` unless it
+    ///      already runs. A canonical chain runs its clock before day reports
+    ///      can reach it: Base refuses a report while its own clock is unset
+    ///      (#2620), so a test standing a Diamond up as Base calls this first.
+    function _ensureRewardClockLaunched() internal {
+        if (InteractionRewardsLensFacet(address(diamond)).getInteractionLaunchTimestamp() == 0) {
+            InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(block.timestamp);
+        }
+    }
     function mockOracleLiquidity(
         address asset,
         LibVaipakam.LiquidityStatus status
