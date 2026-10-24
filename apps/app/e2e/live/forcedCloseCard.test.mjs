@@ -14,6 +14,7 @@ import {
   monetaryAmountsIn,
   reconcileEligibility,
   saysCheckRunning,
+  wrongRouteForAsset,
 } from './forcedCloseCard.mjs';
 import { durationSamplesFor, durationUnitsFor, durationVocabularyFor } from './durationVocabulary.mjs';
 
@@ -54,40 +55,94 @@ describe('cardSettled', () => {
   });
 });
 
+// The page's facts at a block, all read, resolving to `ready-needs-route`;
+// each case overrides the ones it is about (#2133).
+const CHAIN_FACTS = Object.freeze({
+  active: true,
+  consentFromBoth: true,
+  assetType: 'erc20',
+  collateralIsNft: false,
+  defaultable: true,
+  sequencerHealthy: true,
+  paused: false,
+  internalMatchCandidate: false,
+  collateralIlliquid: false,
+  ltvCollapsed: false,
+});
+const chainFacts = (over = {}) => ({ ...CHAIN_FACTS, ...over });
+
 describe('declaredStateConsistent', () => {
-  it('requires not-yet to mean the chain said not defaultable', () => {
-    expect(declaredStateConsistent('not-yet', { defaultable: false })).toEqual({ judged: true, consistent: true });
-    const v = declaredStateConsistent('not-yet', { defaultable: true });
+  // #2133 — the comparison is the page's RULE over the page's facts at the
+  // named block, so every resolved state is checked against every gate
+  // before it, not against the two facts the drive used to read.
+  it('verifies each resolved state when the facts at the block resolve to it and nothing else', () => {
+    const cases = [
+      ['blocked-paused', { paused: true }],
+      ['not-yet', { defaultable: false }],
+      ['blocked-sequencer', { sequencerHealthy: false }],
+      ['ready-internal-match', { internalMatchCandidate: true }],
+      ['ready-rental', { assetType: 'rental' }],
+      ['ready-in-kind', { ltvCollapsed: true }],
+      ['ready-in-kind', { collateralIsNft: true }],
+      ['blocked-no-consent', { collateralIlliquid: true, consentFromBoth: false }],
+      ['ready-needs-route', {}],
+    ];
+    for (const [state, over] of cases) {
+      expect(declaredStateConsistent(state, chainFacts(over)), state).toEqual({ judged: true, consistent: true });
+    }
+  });
+
+  it('CONTRADICTS a refusal that is not the one the chain makes — the #2133 case', () => {
+    // The grace window is still open, and the card says the protocol is
+    // paused. Both refuse; only one is the chain's reason.
+    const v = declaredStateConsistent('blocked-paused', chainFacts({ defaultable: false }));
     expect(v.judged).toBe(true);
     expect(v.consistent).toBe(false);
-    expect(v.why).toMatch(/isLoanDefaultable to be false/);
+    expect(v.why).toMatch(/resolves to "not-yet"/);
+    expect(v.why).toMatch(/paused=false/);
+    // And the reverse: a deadline refusal while the protocol is paused.
+    expect(declaredStateConsistent('not-yet', chainFacts({ paused: true, defaultable: false })).consistent).toBe(false);
+    // The sequencer refusal on a loan still inside its window.
+    expect(declaredStateConsistent('blocked-sequencer', chainFacts({ defaultable: false, sequencerHealthy: false })).consistent).toBe(false);
+    // The consent refusal where consent was given.
+    expect(declaredStateConsistent('blocked-no-consent', chainFacts({ collateralIlliquid: true })).consistent).toBe(false);
   });
 
-  it('requires every ready state to mean defaultable, and reads the match where the order implies it', () => {
-    for (const state of ['ready-in-kind', 'ready-needs-route', 'ready-rental', 'blocked-no-consent']) {
-      expect(declaredStateConsistent(state, { defaultable: true, internalMatch: false }).consistent).toBe(true);
-      expect(declaredStateConsistent(state, { defaultable: true, internalMatch: true }).consistent).toBe(false);
-      expect(declaredStateConsistent(state, { defaultable: false, internalMatch: false }).consistent).toBe(false);
-    }
-    expect(declaredStateConsistent('ready-internal-match', { defaultable: true, internalMatch: true }).consistent).toBe(true);
-    expect(declaredStateConsistent('ready-internal-match', { defaultable: true, internalMatch: false }).consistent).toBe(false);
+  it('contradicts a rental route on an ERC-20 loan and a collateral route on a rental', () => {
+    expect(declaredStateConsistent('ready-rental', chainFacts()).consistent).toBe(false);
+    expect(declaredStateConsistent('ready-in-kind', chainFacts({ assetType: 'rental' })).consistent).toBe(false);
+    expect(declaredStateConsistent('ready-needs-route', chainFacts({ assetType: 'rental' })).consistent).toBe(false);
   });
 
-  it('expects nothing of the match for a state resolved before that question', () => {
-    // `blocked-sequencer` is resolved between the two questions, so a
-    // candidate either way is consistent with it, and an unread match is
-    // not a reason to leave it unjudged.
-    expect(declaredStateConsistent('blocked-sequencer', { defaultable: true, internalMatch: true })).toEqual({ judged: true, consistent: true });
-    expect(declaredStateConsistent('blocked-sequencer', { defaultable: true })).toEqual({ judged: true, consistent: true });
+  it('is unjudged, never contradicted, when an unread fact leaves the declared state one of several', () => {
+    const v = declaredStateConsistent('not-yet', chainFacts({ paused: undefined, defaultable: false }));
+    expect(v.judged).toBe(false);
+    expect(v.why).toMatch(/^paused could not be read at the declared block/);
+    expect(v.why).toMatch(/"blocked-paused"/);
   });
 
-  it('is UNJUDGED, never consistent, for states that imply nothing it re-reads', () => {
-    // Round 1 P2: these three used to come out `consistent` with zero
-    // comparisons made — a claim the chain agreed, resting on nothing. A
-    // wrongly declared pause must not be affirmed by a verifier that
-    // never reads the pause flag.
-    for (const state of ['blocked-paused', 'unknown', 'not-applicable']) {
-      for (const facts of [{}, { defaultable: false, internalMatch: true }]) {
+  it('lets a read fact contradict the declaration even when another fact was unreadable', () => {
+    // No value of the unread match makes a not-defaultable loan ready.
+    const v = declaredStateConsistent('ready-in-kind', chainFacts({ defaultable: false, internalMatchCandidate: undefined }));
+    expect(v.judged).toBe(true);
+    expect(v.consistent).toBe(false);
+    expect(v.why).toMatch(/resolves to "not-yet"/);
+  });
+
+  it('names the views it lacked when the declaration is out of reach of several states', () => {
+    const v = declaredStateConsistent('ready-rental', chainFacts({ paused: undefined }));
+    expect(v.consistent).toBe(false);
+    expect(v.why).toMatch(/one of .*never to that/);
+    expect(v.why).toMatch(/unread: paused/);
+  });
+
+  it('ignores an unread fact the rule never reaches', () => {
+    expect(declaredStateConsistent('blocked-paused', { active: true, paused: true })).toEqual({ judged: true, consistent: true });
+  });
+
+  it('is UNJUDGED for the page answers, which are not decisions the chain makes', () => {
+    for (const state of ['unknown', 'not-applicable']) {
+      for (const facts of [{}, chainFacts()]) {
         const v = declaredStateConsistent(state, facts);
         expect(v.judged).toBe(false);
         expect(v.consistent).toBeUndefined();
@@ -96,40 +151,12 @@ describe('declaredStateConsistent', () => {
     }
   });
 
-  it('is unjudged, never contradicted, when an implied fact could not be read', () => {
-    const v = declaredStateConsistent('ready-in-kind', { defaultable: true, internalMatch: undefined });
-    expect(v.judged).toBe(false);
-    expect(v.why).toMatch(/hasInternalMatchCandidate could not be read/);
-    expect(declaredStateConsistent('not-yet', {}).judged).toBe(false);
+  it('is unjudged with no facts, and on a state it does not know', () => {
     expect(declaredStateConsistent('not-yet', undefined).judged).toBe(false);
-  });
-
-  it('is unjudged on a state it does not know', () => {
-    const v = declaredStateConsistent('ready-something-new', { defaultable: true });
+    const v = declaredStateConsistent('ready-something-new', chainFacts());
     expect(v.judged).toBe(false);
     expect(v.why).toMatch(/does not recognise/);
-    expect(declaredStateConsistent(undefined, { defaultable: true }).judged).toBe(false);
-  });
-
-  it('stops at the first contradiction and names it', () => {
-    const v = declaredStateConsistent('ready-in-kind', { defaultable: false, internalMatch: true });
-    expect(v.why).toMatch(/isLoanDefaultable/);
-  });
-
-  // Round 3 P2 — a readable contradiction outranks an unreadable sibling.
-  it('lets a readable fact contradict the declaration even when another implied fact was unreadable', () => {
-    const v = declaredStateConsistent('ready-in-kind', { defaultable: undefined, internalMatch: true });
-    expect(v.judged).toBe(true);
-    expect(v.consistent).toBe(false);
-    expect(v.why).toMatch(/hasInternalMatchCandidate to be false/);
-  });
-
-  it('is unjudged only when nothing readable contradicted, and names every unreadable fact', () => {
-    const v = declaredStateConsistent('ready-in-kind', { defaultable: undefined, internalMatch: false });
-    expect(v.judged).toBe(false);
-    expect(v.why).toMatch(/^isLoanDefaultable could not be read/);
-    const both = declaredStateConsistent('ready-in-kind', {});
-    expect(both.why).toMatch(/isLoanDefaultable and hasInternalMatchCandidate could not be read/);
+    expect(declaredStateConsistent(undefined, chainFacts()).judged).toBe(false);
   });
 });
 
@@ -394,12 +421,12 @@ describe('forcedCloseVerdict', () => {
           ...notYet,
           declaredState: 'not-yet',
           declaredBlock: '100',
-          declaredChain: { defaultable: true, internalMatch: false },
+          declaredChain: chainFacts({ defaultable: true, internalMatchCandidate: false }),
         },
         declaredCopy,
       );
       expect(v.verdict).toBe('fail');
-      expect(v.why).toMatch(/requires isLoanDefaultable to be false/);
+      expect(v.why).toMatch(/resolves to "ready-needs-route"/);
       expect(v.declaredFacts).toBe('contradicted');
     });
 
@@ -409,7 +436,7 @@ describe('forcedCloseVerdict', () => {
           ...notYet,
           declaredState: 'not-yet',
           declaredBlock: '100',
-          declaredChain: { defaultable: false, internalMatch: false },
+          declaredChain: chainFacts({ defaultable: false, internalMatchCandidate: false }),
         },
         declaredCopy,
       );
@@ -434,7 +461,7 @@ describe('forcedCloseVerdict', () => {
           ...notYet,
           declaredState: 'not-yet',
           declaredBlock: '100',
-          declaredChain: { defaultable: undefined, internalMatch: false },
+          declaredChain: chainFacts({ defaultable: undefined, internalMatchCandidate: false }),
         },
         declaredCopy,
       );
@@ -459,7 +486,7 @@ describe('forcedCloseVerdict', () => {
           ...notYet,
           declaredState: 'not-yet',
           declaredBlock: '100',
-          declaredChain: { defaultable: false, internalMatch: false },
+          declaredChain: chainFacts({ defaultable: false, internalMatchCandidate: false }),
           seenRenders: [
             { ...withheldControl, text: FORCED_CLOSE.notYet, visibleText: FORCED_CLOSE.notYet, declaredState: 'unknown', declaredBlock: null },
             { ...withheldControl, text: FORCED_CLOSE.notYet, visibleText: FORCED_CLOSE.notYet, declaredState: 'not-yet', declaredBlock: '100' },
@@ -507,7 +534,7 @@ describe('forcedCloseVerdict', () => {
           ...notYet,
           declaredState: 'not-yet',
           declaredBlock: '100',
-          declaredChain: { defaultable: false, internalMatch: false },
+          declaredChain: chainFacts({ defaultable: false, internalMatchCandidate: false }),
           seenRenders: [{ ...withheldControl, text: FORCED_CLOSE.unknown, visibleText: FORCED_CLOSE.unknown }],
         },
         declaredCopy,
@@ -522,7 +549,7 @@ describe('forcedCloseVerdict', () => {
           ...painting(FORCED_CLOSE.readyNeedsRoute),
           declaredState: 'ready-in-kind',
           declaredBlock: '100',
-          declaredChain: { defaultable: true, internalMatch: false },
+          declaredChain: chainFacts({ defaultable: true, internalMatchCandidate: false }),
         },
         declaredCopy,
       );
@@ -537,19 +564,21 @@ describe('forcedCloseVerdict', () => {
           ...painting(FORCED_CLOSE.readyNeedsRoute),
           declaredState: 'ready-needs-route',
           declaredBlock: '100',
-          declaredChain: { defaultable: true, internalMatch: false },
+          declaredChain: chainFacts({ defaultable: true, internalMatchCandidate: false }),
         },
         declaredCopy,
       );
       expect(match.verdict).toBe('pass');
-      // A record predating `stateCopy` runs only the class checks.
+      // A record predating `stateCopy` runs only the class checks. The
+      // chain here resolves to the declared state, so only the painted
+      // copy disagrees, and that is the check the older record lacks.
       const { stateCopy: _dropped, ...older } = declaredCopy;
       const legacy = forcedCloseVerdict(
         {
           ...painting(FORCED_CLOSE.readyNeedsRoute),
           declaredState: 'ready-in-kind',
           declaredBlock: '100',
-          declaredChain: { defaultable: true, internalMatch: false },
+          declaredChain: chainFacts({ ltvCollapsed: true }),
         },
         older,
       );
@@ -562,7 +591,7 @@ describe('forcedCloseVerdict', () => {
           ...notYet,
           declaredState: 'not-yet',
           declaredBlock: '100',
-          declaredChain: { defaultable: false, internalMatch: false },
+          declaredChain: chainFacts({ defaultable: false, internalMatchCandidate: false }),
           seenRenders: [
             { ...withheldControl, text: FORCED_CLOSE.readyNeedsRoute, visibleText: FORCED_CLOSE.readyNeedsRoute, declaredState: 'not-yet', declaredBlock: '99' },
           ],
@@ -605,7 +634,7 @@ describe('forcedCloseVerdict', () => {
           submitDisabled: false,
           confirmExpected: true,
           confirmText: null,
-          declaredChain: { defaultable: false, internalMatch: false },
+          declaredChain: chainFacts({ defaultable: false, internalMatchCandidate: false }),
         },
         declaredCopy,
       );
@@ -6528,6 +6557,215 @@ describe('round 67 review findings', () => {
         copy,
       );
       expect(v.why ?? '').not.toMatch(/establishes THAT and not WHY/);
+    });
+  });
+
+  // #2094 — the route the card paints, held to what the loan is.
+  describe('the painted route against the loan\'s asset type', () => {
+    const stateCopy = {
+      unknown: FORCED_CLOSE.unknown,
+      'not-yet': FORCED_CLOSE.notYet,
+      'blocked-paused': FORCED_CLOSE.blockedPaused,
+      'blocked-sequencer': FORCED_CLOSE.blockedSequencer,
+      'blocked-no-consent': FORCED_CLOSE.blockedNoConsent,
+      'ready-in-kind': FORCED_CLOSE.readyInKind,
+      'ready-internal-match': FORCED_CLOSE.readyInternalMatch,
+      'ready-rental': FORCED_CLOSE.readyRental,
+      'ready-needs-route': FORCED_CLOSE.readyNeedsRoute,
+    };
+    const routed = { ...copy, stateCopy };
+    const on = (loanAssetType, body, extra = {}) =>
+      card(FORCED_CLOSE.title, body, { loanAssetType, defaultable: true, defaultableBefore: true, ...extra });
+
+    it('FAILS a collateral route painted on an NFT rental', () => {
+      for (const body of [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyNeedsRoute, FORCED_CLOSE.blockedNoConsent]) {
+        const v = forcedCloseVerdict(on('rental', body), routed);
+        expect(v.verdict, label(body)).toBe('fail');
+        expect(v.failKind).toBe('inferred');
+        expect(v.why).toMatch(/the loan is an NFT rental/);
+      }
+    });
+
+    it('FAILS the rental route painted on an ERC-20 loan', () => {
+      const v = forcedCloseVerdict(on('erc20', FORCED_CLOSE.readyRental), routed);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/resolves only for an NFT rental/);
+    });
+
+    it('judges an earlier render too, after the card settled on the right route', () => {
+      const v = wrongRouteForAsset(
+        on('rental', FORCED_CLOSE.readyRental, {
+          seenRenders: [{ text: FORCED_CLOSE.readyInKind, bodyText: FORCED_CLOSE.readyInKind }],
+        }),
+        routed,
+      );
+      expect(v?.verdict).toBe('fail');
+    });
+
+    it('accepts every state the rule can resolve for that kind of loan', () => {
+      for (const body of [
+        FORCED_CLOSE.readyRental,
+        FORCED_CLOSE.notYet,
+        FORCED_CLOSE.blockedPaused,
+        FORCED_CLOSE.blockedSequencer,
+        FORCED_CLOSE.unknown,
+      ]) {
+        expect(wrongRouteForAsset(on('rental', body), routed), label(body)).toBeNull();
+      }
+      for (const body of [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyNeedsRoute, FORCED_CLOSE.blockedNoConsent]) {
+        expect(wrongRouteForAsset(on('erc20', body), routed), label(body)).toBeNull();
+      }
+    });
+
+    it('judges nothing without the loan\'s asset type or the state copy', () => {
+      expect(wrongRouteForAsset(on(undefined, FORCED_CLOSE.readyInKind), routed)).toBeNull();
+      expect(wrongRouteForAsset(on('rental', FORCED_CLOSE.readyInKind), copy)).toBeNull();
+    });
+  });
+
+  // #2133 — THE STRONGER ANSWER: each refusal checked against its own gate,
+  // at the block the render that painted it named.
+  describe('a refusal reason checked at its own block', () => {
+    const stateCopy = {
+      unknown: FORCED_CLOSE.unknown,
+      'not-yet': FORCED_CLOSE.notYet,
+      'blocked-paused': FORCED_CLOSE.blockedPaused,
+      'blocked-sequencer': FORCED_CLOSE.blockedSequencer,
+      'blocked-no-consent': FORCED_CLOSE.blockedNoConsent,
+      'ready-in-kind': FORCED_CLOSE.readyInKind,
+      'ready-internal-match': FORCED_CLOSE.readyInternalMatch,
+      'ready-rental': FORCED_CLOSE.readyRental,
+      'ready-needs-route': FORCED_CLOSE.readyNeedsRoute,
+    };
+    const checked = { ...copy, stateCopy };
+    const REFUSALS = [
+      ['blocked-paused', FORCED_CLOSE.blockedPaused, { paused: true }],
+      ['not-yet', FORCED_CLOSE.notYet, { defaultable: false }],
+      ['blocked-sequencer', FORCED_CLOSE.blockedSequencer, { sequencerHealthy: false }],
+      ['blocked-no-consent', FORCED_CLOSE.blockedNoConsent, { collateralIlliquid: true, consentFromBoth: false }],
+    ];
+    const heading = (state) => (state === 'not-yet' ? FORCED_CLOSE.titlePending : FORCED_CLOSE.title);
+    const refusing = (state, body, over, extra = {}) =>
+      card(heading(state), body, {
+        defaultable: false,
+        defaultableBefore: false,
+        declaredState: state,
+        declaredBlock: '100',
+        declaredChain: chainFacts(over),
+        ...extra,
+      });
+
+    for (const [state, body, over] of REFUSALS) {
+      it(`PASSES "${state}" as VERIFIED when the chain at the block makes that refusal`, () => {
+        const v = forcedCloseVerdict(refusing(state, body, over), checked);
+        expect(v.verdict, v.why).toBe('pass');
+        expect(v.reasonChecked).toBe('verified');
+        expect(v.declaredFacts).toBe('consistent');
+      });
+    }
+
+    it('FAILS a card that names the wrong refusal: paused, while the grace window is still open', () => {
+      const v = forcedCloseVerdict(
+        refusing('blocked-paused', FORCED_CLOSE.blockedPaused, { defaultable: false }),
+        checked,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.declaredFacts).toBe('contradicted');
+      expect(v.why).toMatch(/resolves to "not-yet"/);
+      expect(v.reasonChecked).toBe('not checked');
+    });
+
+    it('stays INCOMPLETE, saying why, when a gate behind the refusal could not be read', () => {
+      const v = forcedCloseVerdict(
+        refusing('not-yet', FORCED_CLOSE.notYet, { defaultable: false, paused: undefined }),
+        checked,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/could not be checked against its own gate: paused could not be read/);
+      expect(v.reasonChecked).toBe('not checked');
+    });
+
+    it('stays INCOMPLETE on a card that names no block or was not read there', () => {
+      const unread = forcedCloseVerdict(
+        refusing('blocked-paused', FORCED_CLOSE.blockedPaused, { paused: true }, {
+          declaredChain: undefined,
+          declaredChainWhy: "the card names block 100, ahead of this observer's 90",
+        }),
+        checked,
+      );
+      expect(unread.verdict).toBe('blocked');
+      expect(unread.why).toMatch(/ahead of this observer's 90/);
+      const undeclared = forcedCloseVerdict(
+        card(FORCED_CLOSE.title, FORCED_CLOSE.blockedPaused, { defaultable: false, defaultableBefore: false }),
+        checked,
+      );
+      expect(undeclared.verdict).toBe('blocked');
+      expect(undeclared.why).toMatch(/declared no state/);
+      expect(undeclared.reasonChecked).toBe('not checked');
+    });
+
+    it('checks an EARLIER render at its own block, and a correct settled refusal does not vouch for it', () => {
+      const earlier = {
+        text: `${FORCED_CLOSE.title} ${FORCED_CLOSE.blockedSequencer}`,
+        visibleText: `${FORCED_CLOSE.title} ${FORCED_CLOSE.blockedSequencer}`,
+        bodyText: FORCED_CLOSE.blockedSequencer,
+        bodyVisibleText: FORCED_CLOSE.blockedSequencer,
+        submitVisible: true,
+        submitDisabled: true,
+        declaredState: 'blocked-sequencer',
+        declaredBlock: '95',
+      };
+      const base = refusing('blocked-paused', FORCED_CLOSE.blockedPaused, { paused: true }, { seenRenders: [earlier] });
+      // Not read at 95: the earlier refusal is unchecked.
+      const unread = forcedCloseVerdict(base, checked);
+      expect(unread.verdict).toBe('blocked');
+      expect(unread.why).toMatch(/not read at block 95/);
+      // Read at 95, where the sequencer was healthy: a contradicted render.
+      const wrong = forcedCloseVerdict(
+        { ...base, renderChainAt: { 95: chainFacts({ paused: true }) } },
+        checked,
+      );
+      expect(wrong.verdict).toBe('fail');
+      expect(wrong.why).toMatch(/^a render this drive read: the card declares "blocked-sequencer"/);
+      // Read at 95, where the sequencer WAS down: both refusals verified.
+      const right = forcedCloseVerdict(
+        { ...base, renderChainAt: { 95: chainFacts({ sequencerHealthy: false }) } },
+        checked,
+      );
+      expect(right.verdict, right.why).toBe('pass');
+      expect(right.reasonChecked).toBe('verified');
+    });
+
+    it('does not accuse a verified refusal when the close-out simulates cleanly at both ends', () => {
+      // The chain refused at the render's block and accepts at both ends of
+      // the window: the answer moved inside it, which is not the card's fault.
+      const v = forcedCloseVerdict(
+        refusing('blocked-paused', FORCED_CLOSE.blockedPaused, { paused: true }, {
+          defaultable: true,
+          defaultableBefore: true,
+        }),
+        checked,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/is the chain's own at the block it named/);
+    });
+
+    it('needs no simulation for a verified refusal', () => {
+      const v = forcedCloseVerdict(
+        refusing('blocked-paused', FORCED_CLOSE.blockedPaused, { paused: true }, {
+          defaultable: undefined,
+          defaultableBefore: undefined,
+        }),
+        checked,
+      );
+      expect(v.why ?? '').not.toMatch(/could not simulate/);
+    });
+
+    it('stamps reasonChecked on a verdict whose card stated no refusal', () => {
+      const v = forcedCloseVerdict(card(FORCED_CLOSE.title, FORCED_CLOSE.unknown), checked);
+      expect(v.reasonChecked).toBe('none stated');
     });
   });
 

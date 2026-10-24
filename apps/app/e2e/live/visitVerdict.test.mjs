@@ -410,6 +410,39 @@ describe('the forced-close card (#2069)', () => {
   });
 });
 
+describe('a forced-close-only visit (#2094)', () => {
+  // A rental, or a flagged holder's position: the lender exit card is
+  // correctly absent, and the visit exists for the forced-close card.
+  const fcOnly = (over) => ({
+    path: '/positions/9',
+    http: 200,
+    visitMode: 'forced-close',
+    chooser: false,
+    ...over,
+  });
+
+  it('does not report the correctly absent exit chooser', () => {
+    expect(visitProblems(fcOnly({ forcedCloseVerdict: { verdict: 'pass', why: 'present' } }), 'lender')).toEqual([]);
+  });
+
+  it('still reports the forced-close card, and a crash on the page', () => {
+    const fail = { verdict: 'fail', failKind: 'observed', why: 'the card states an amount it cannot know' };
+    expect(visitProblems(fcOnly({ forcedCloseVerdict: fail }), 'lender')).toEqual([`forced-close card: ${fail.why}`]);
+    expect(visitProblems(fcOnly({ hooks: true }), 'lender')).toEqual(['HOOKS-ORDER CRASH']);
+    expect(visitProblems(fcOnly({ http: 500 }), 'lender')).toEqual(['navigation returned 500']);
+  });
+
+  it('runs no lender-card shape rule, even on fields a full visit would fail', () => {
+    expect(visitProblems(fcOnly({ lenderBlurb: false, waitRow: false, waitFirst: false }), 'lender')).toEqual([]);
+  });
+
+  it('leaves a full visit judged exactly as before', () => {
+    expect(visitProblems(lender({ visitMode: 'full', chooser: false }), 'lender')).toEqual([
+      'lender chooser MISSING on an eligible loan',
+    ]);
+  });
+});
+
 describe('the forced-close card is judged above the chooser suppressions', () => {
   const fail = { verdict: 'fail', why: 'card absent on a held Active lender position' };
 
