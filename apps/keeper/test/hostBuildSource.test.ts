@@ -92,6 +92,25 @@ describe('build-source.sh against a real repository (#2651)', () => {
     expect(digest(next)).not.toBe(digest(base));
   });
 
+  it('gives every account the same digest, whatever the archive\'s or the caller\'s permission bits (#2651)', () => {
+    // CI digests as a runner user and the keeper machine as root. Root's tar
+    // keeps the archive's modes and anyone else's applies their umask, so a
+    // digest of the extracted modes named different bundles on each side.
+    commit('files');
+    git('update-index', '--chmod=+x', 'apps/keeper/src/main.ts');
+    const base = commit('base');
+    const digests = new Set<string>();
+    for (const tarUmask of ['0002', '0022']) {
+      git('config', 'tar.umask', tarUmask);
+      for (const umask of ['022', '077']) {
+        const result = spawnSync('bash', ['-c', `umask ${umask}; exec bash "$0" digest "$1" "$2" "$3"`, script, dir, base, join(scratch, `d-${tarUmask}-${umask}`)], { encoding: 'utf8' });
+        expect(result.status, result.stderr).toBe(0);
+        digests.add(result.stdout.trim());
+      }
+    }
+    expect(digests.size).toBe(1);
+  });
+
   it('sees a mode change', () => {
     const base = commit('base');
     git('update-index', '--chmod=+x', 'apps/keeper/src/main.ts');

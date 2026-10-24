@@ -35,4 +35,11 @@ the machine keeps the keeper it is running and says the verifier is missing.
 After a merge that changes the keeper, the machine waits a few minutes for
 CI to publish the bundle and logs once that it is waiting.
 
+The build-source digest now ignores permission bits beyond git's own
+executable bit. Before, it read the modes of the extracted export, which
+differ between root (the keeper machine) and any other account (the CI
+runner), so the two sides named the same source differently and the machine
+would never have found CI's bundle. The first CI run showed it; a test now
+digests under several umasks and archive modes and requires one answer.
+
 Refs #2651.
