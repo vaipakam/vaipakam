@@ -148,6 +148,7 @@ import {
   rpcRequestCalls,
   summariseRpcLedger,
 } from './rpc-verdict.mjs';
+import { QUERY_PROBE_BINDING, createQueryProbe } from './queryProbe.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -2190,32 +2191,34 @@ const malformedRpc = [];
 /**
  * Every per-call outcome the routed shim observed, in attempt order.
  *
- * Not the two buckets above, because one HTTP attempt cannot settle the
- * question: viem retries a failed read (`retryCount: 3`) and `wagmi.ts`
- * wraps these transports in `fallback([...])`, so a transient 429 the
- * page recovered from is indistinguishable, at this layer, from a dead
- * endpoint. `summariseRpcLedger` reconciles the attempts once the run is
- * over and fills the buckets then (#1529 review round 23).
+ * It decides what one response proves — a malformed request, which joins
+ * `malformedRpc` — and nothing else. Whether a read was left unserved is
+ * the page's query cache's answer (`queryProbe` below, #1672): viem
+ * retries a failed read and `wagmi.ts` falls back between endpoints, and
+ * no rule over the attempts can tell a recovered retry from a read the
+ * page consumed as a failure. A failed attempt is named beside that
+ * answer, for attribution.
  */
 const rpcLedger = [];
 
 /**
- * WHOSE PAGE a recorded attempt belongs to (#2100).
+ * What each page's query cache reported about its reads (#1672). Filled
+ * through the binding installed below, keyed by the page's cohort, and
+ * judged per visit just before the page closes.
+ */
+const queryProbe = createQueryProbe();
+
+/**
+ * WHOSE PAGE a recorded attempt, or a query report, belongs to (#2100,
+ * #1672).
  *
- * `summariseRpcLedger` lets a later success clear an earlier failure of
- * the same `callKey`, which is right for viem's retries and its
- * `fallback` alternates and wrong across pages: the same read recurs on
- * every route, so one page's outage was erased by the next page repeating
- * it. The ledger now carries a cohort and reconciles only within one.
- *
- * The PAGE is the identity, looked up through the request's own frame, so
- * an attempt is attributed to the page that issued it however the visits
- * interleave. Where Playwright cannot supply one — a service worker, a
- * request whose frame has already gone — the CURRENT visit's cohort
- * stands in. That fallback is the conservative direction: a late success
- * from the previous page then carries this page's cohort and therefore
- * clears nothing, so a recovered failure is reported rather than a real
- * one suppressed, which is the way this drive errs everywhere else.
+ * The PAGE is the identity, looked up through the request's own frame (or
+ * the binding's source page), so an attempt is attributed to the page
+ * that issued it however the visits interleave. Where Playwright cannot
+ * supply one — a service worker, a request whose frame has already gone —
+ * the CURRENT visit's cohort stands in. Since #1672 a cohort only says
+ * which page's failed attempts to name beside that page's unserved read;
+ * it no longer decides anything.
  */
 const pageCohorts = new WeakMap();
 let cohortSeq = 0;
@@ -2243,15 +2246,6 @@ const cohortOfRequest = (request) => {
 // advertises itself as read-only and a page regression must not be able
 // to POST to a backend while we scrape.
 const routeHandler = async (route) => {
-  // ROUND 108 P2 — WHEN THIS REQUEST WAS BEGUN, on the ordering clock.
-  //
-  // The ledger's retry rule needs to tell a RETRY from an already-in-flight
-  // SIBLING, and the distinguishing fact is causal: a retry is sent after
-  // the failure came back, a sibling was sent before it. Stamped at the top
-  // of the handler, which is the earliest this drive sees the request, and
-  // on the same monotonic clock `recordRpcResponse` stamps arrival with —
-  // two origins would make the comparison meaningless.
-  const requestedAt = orderingNow();
   const req = route.request();
   const method = req.method().toUpperCase();
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
@@ -2364,29 +2358,6 @@ const routeHandler = async (route) => {
       }
     });
     await route.fulfill({ status: resp.status, headers, body: buf });
-    // Stamped HERE — the instant delivery completed — and on the ordering
-    // clock. Rounds 112 and 113 are one question answered from both sides,
-    // and the answer is that this boundary is the only defensible one.
-    //
-    // Round 112: stamping at record time is too LATE. Several statements
-    // separate the fulfill from the record, and viem can issue its retry in
-    // that gap, so a genuine retry's request lands at or before the stamp
-    // and the causal test refuses it as an in-flight sibling — a recovered
-    // failure kept in the ledger, and a correctly rendered page BLOCKED.
-    //
-    // Round 113: stamping before the fulfill is too EARLY. Fulfillment is
-    // awaited, so a request begun WHILE it is pending is stamped after a
-    // pre-fulfill mark even though the page has not seen the failure and it
-    // cannot be a reaction to it. The causal test would then read an
-    // in-flight sibling as a retry and clear a failure whose original
-    // caller consumed an error — certifying a funds surface that was never
-    // fully served, which is the accusing direction and the worse one.
-    //
-    // There is no stamp for "Chromium handed this to the page", so the
-    // ambiguous interval is closed by taking the LATER edge of it: a
-    // request begun during fulfillment is treated as unable to prove
-    // recovery, because it is.
-    const deliveredAt = orderingNow();
     // A resolved fetch is not the same as an answered call. The provider
     // can hand back a JSON-RPC error, or a 429, over a perfectly healthy
     // HTTP response — and passing that on without a verdict is how a
@@ -2415,10 +2386,8 @@ const routeHandler = async (route) => {
         requestBody: req.postData(),
         // Redact BEFORE truncating, as the catch path does below.
         url: redact(req.url()).slice(0, 160),
-        requestedAt,
-        deliveredAt,
-        // Whose page issued it (#2100) — the ledger reconciles retries
-        // only within one cohort.
+        // Whose page issued it (#2100), so an unserved read's report can
+        // name that page's failed attempts.
         cohort: cohortOfRequest(req),
       },
       rpcLedger,
@@ -2567,6 +2536,14 @@ await discovery('exposing the wallet binding', () =>
 await discovery('installing the provider init script', () =>
   ctx.addInitScript(initScript),
 );
+// #1672 — the app reports its query cache's settled errors through this,
+// and announces itself on every load. Installed before any page exists,
+// so it is defined before the app's first script runs.
+await discovery('exposing the query-state report', () =>
+  ctx.exposeBinding(QUERY_PROBE_BINDING, (source, event) =>
+    queryProbe.record(source?.page ? cohortOfPage(source.page) : currentCohort, event),
+  ),
+);
 if (REFI_POSTURE) {
   // The Refinance form is an Advanced-mode surface; see `REFI_POSTURE`.
   await discovery('seeding Advanced mode', () =>
@@ -2599,21 +2576,9 @@ if (REFI_POSTURE) {
  * it — everything else here measures durations against deadlines, where a
  * wall clock is fine and a different origin would be confusing.
  *
- * ROUND 115 P2 — AND THE LEDGER IS ON THIS CLOCK TOO NOW.
- *
- * This note used to say the retry-recovery window in `rpc-verdict.mjs` was
- * deliberately left on the wall clock, because a backward step there
- * under-reports rather than accuses and moving it would mean changing what
- * `at` means for every caller. That reasoning was sound on its own and was
- * overtaken: round 108 established that `requestedAt` is COMPARED against
- * `at`, so two clock origins there make the comparison meaningless, and the
- * caller-wide work the note called a reason not to has since been done —
- * `requestedAt` and `deliveredAt` are both stamped here with `orderingNow`,
- * and the ledger falls back to its own `performance.now()`.
- *
- * Left as a correction rather than deleted: a note calling the opposite
- * design deliberate is exactly what steers a maintenance change back into
- * the mixed-origin comparison this replaced.
+ * The RPC ledger took ordering stamps on this clock too, for its retry
+ * recovery rule; #1672 retired that rule (the query cache now answers
+ * whether a read was served), so the floor's stamps are the ones left.
  */
 const orderingNow = () => performance.now();
 
@@ -2879,6 +2844,8 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
       }
     : null;
   const out = {
+    // #1672 — whose query reports and failed attempts are this visit's.
+    cohort: cohortOfPage(page),
     path,
     http,
     pageErrors,
@@ -2967,6 +2934,10 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
       ? refinancePostureVerdict(refinancePostureObs, REFI_POSTURE_COPY)
       : null,
   };
+  // #1672 — what the page's query cache reported, taken while the page
+  // is still open. Every observation above has been made, so a read that
+  // settled in error any time up to here is one they may have rested on.
+  out.queryState = queryProbe.of(cohortOfPage(page));
   await page.close();
   return out;
 }
@@ -8324,19 +8295,44 @@ for (const v of visited) {
   // refuses the analytics beacon, and the sandbox proxy resets page
   // WebSockets. Neither is an app defect.
   (v.consoleErrors ?? []).slice(0, 4).forEach((e) => console.log(`      c ${e}`));
+  // #1672 — reads the chain answered with a revert, which the app is
+  // expected to handle. Reported, never judged.
+  (v.queryState?.answered ?? []).slice(0, 4).forEach((l) => console.log(`      q ${l}`));
 }
 
-// Settle the routed-fetch attempts now that no more will arrive. Until
-// this point `rpcLedger` holds ATTEMPTS, not verdicts — a read viem
-// retried successfully, or reached through the fallback transport, must
-// not be reported as a failure just because its first try was refused
-// (#1529 review round 23). Merged into the same two buckets the wallet
-// path and the catch path already fill, so the report and the exit
-// contract below are unchanged.
-{
-  const settled = summariseRpcLedger(rpcLedger);
-  malformedRpc.push(...settled.malformed);
-  routeFailures.push(...settled.unreachable);
+// The wire's findings, now that no more attempts will arrive. A malformed
+// request is a defect wherever it happened and joins the bucket the wallet
+// path fills. A failed attempt decides nothing on its own (#1672): whether
+// a read was left unserved is the query cache's answer, judged next, and
+// the attempts are named beside it.
+const wire = summariseRpcLedger(rpcLedger);
+malformedRpc.push(...wire.malformed);
+
+// #1672 — what each page's query cache reported. Only visits whose page
+// loaded carry a report; a navigation failure is its own finding.
+const probedVisits = visited.filter((v) => v.queryState);
+/** Pages that loaded and never announced the report: an older build. */
+const queryUnreported = probedVisits.filter((v) => !v.queryState.armed).map((v) => v.path);
+/** Report events in a shape this drive does not read. */
+const queryRefused = probedVisits.flatMap((v) => v.queryState.refused.map((r) => `${v.path}: ${r}`));
+/** Reads a page asked for and never got. */
+const unservedReads = probedVisits.flatMap((v) =>
+  v.queryState.unserved.map((line) => ({ path: v.path, cohort: v.cohort, line })),
+);
+// A read that settled because a reachable provider refused the request as
+// malformed is the same defect the wire bucket holds, seen from the page.
+malformedRpc.push(
+  ...probedVisits.flatMap((v) =>
+    v.queryState.faults.map((line) => ({ url: v.path, why: `a read settled on a malformed request: ${line}` })),
+  ),
+);
+if (wire.failedAttempts.length && unservedReads.length === 0) {
+  console.log(
+    `\nwire: ${wire.failedAttempts.length} failed RPC attempt(s), and every page's query cache` +
+      ` reported every read it owns as served — so each was a retry or fallback the page` +
+      ` recovered from, or a read made outside the cache, which this drive does not judge.`,
+  );
+  wire.failedAttempts.slice(0, 4).forEach((r) => console.log(`  ${r.why} → ${r.url}`));
 }
 
 // A refusal is never just informational. Printing it while the exit code
@@ -8578,6 +8574,39 @@ if (routeFailures.length) {
     `  → the site, the RPC endpoint or the egress proxy was unreachable.` +
       ` Nothing observed here can be trusted; re-run.`,
   );
+  process.exit(2);
+}
+// #1672 — a read the page asked for and never got, as its own query cache
+// reports it: retries spent, settled in error, and not because the chain
+// answered. The page ran without that data, so what was observed on it is
+// not a statement about the app. Same class as the gate above.
+if (unservedReads.length) {
+  console.log(
+    `\nBLOCKED: ${unservedReads.length} read(s) were left unserved — the page's own query` +
+      ` cache settled them in error after its retries.`,
+  );
+  for (const u of unservedReads.slice(0, 6)) {
+    console.log(`  ${u.path}: ${u.line}`);
+    wire.failedAttempts
+      .filter((a) => a.cohort === u.cohort)
+      .slice(0, 3)
+      .forEach((a) => console.log(`      wire: ${a.why} → ${a.url}`));
+  }
+  console.log(`  → an RPC endpoint or the indexer did not answer. Nothing observed on those pages can be trusted; re-run.`);
+  process.exit(2);
+}
+// #1672 — without the report, whether every read was served cannot be
+// decided from here (the wire cannot tell a recovered retry from a read
+// the page consumed as a failure), so the run vouches for nothing.
+if (queryUnreported.length || queryRefused.length) {
+  console.log(`\nBLOCKED: the page did not report its query state, so whether every read was served is undecided.`);
+  if (queryUnreported.length) {
+    console.log(
+      `  ${queryUnreported.length} loaded page(s) never announced the report (${queryUnreported.slice(0, 4).join(', ')})` +
+        ` — the deployed build predates #1672. Deploy a build that carries it, then re-run.`,
+    );
+  }
+  queryRefused.slice(0, 4).forEach((r) => console.log(`  ${r} — update this drive to read it.`));
   process.exit(2);
 }
 // #1633 item 4 — the site itself was not served, which no other gate

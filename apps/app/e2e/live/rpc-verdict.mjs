@@ -749,16 +749,13 @@ export function blockNumberFromWsFrame(payload) {
 }
 
 /**
- * Identity of a LOGICAL read: the same call retried on the same endpoint,
- * or re-sent to a fallback endpoint, carries the same key.
+ * A call's method and params, as one string — what `summariseRpcLedger`
+ * de-duplicates its report lines by.
  *
- * This is what makes a verdict survivable. The shim sees individual HTTP
- * ATTEMPTS, and viem's default `retryCount` is 3 — plus `wagmi.ts` wraps
- * the mainnet reads in `fallback([...])` and the chain reads in
- * `fallback([webSocket, http])`. So a transient 429 that viem then
- * retries successfully looks, at this layer, exactly like a permanent
- * failure. Judging each attempt on its own made the drive exit 2 BLOCKED
- * on a page that rendered perfectly (#1529 review round 23).
+ * NOT an operation's identity, and it must not be read as one: a retry, a
+ * fallback attempt and an unrelated poll of the same read all carry the
+ * same key, which is why the ledger no longer decides whether a read was
+ * served (#1672).
  */
 function callKey(call) {
   let params;
@@ -780,7 +777,7 @@ function callKey(call) {
  * was neither an answer nor a fault: `watchPageRpc` counted zero and the
  * drive went BLOCKED, and the RPC audit's ledger read a failed attempt.
  * Judged from the request alone, before the response, exactly as a reused
- * batch id is: `client-fault`, unrecoverable, one per chain member, named
+ * batch id is: `client-fault`, one per chain member, named
  * by the lax reader so the report says what the page was trying to send.
  *
  * Chain methods only (`isChainRpcMethod`). A POST that merely carries a
@@ -799,7 +796,6 @@ function malformedChainEnvelope(requestBody) {
       method: m.method,
       verdict: 'client-fault',
       why: 'malformed json-rpc envelope',
-      recoverable: false,
     }));
 }
 
@@ -888,10 +884,7 @@ export function classifyRpcResponse(status, body, requestBody) {
 
   const parsed = parseJson(body);
   const statusOk = status >= 200 && status < 300;
-  // `recoverable: false` marks a fault in the request ENVELOPE rather
-  // than in the call — see `summariseRpcLedger`, which must not let a
-  // later success for the same method and params erase it.
-  const out = (c, verdict, why, recoverable = true) => ({
+  const out = (c, verdict, why) => ({
     key: callKey(c),
     // The call's own JSON-RPC id, absent for a notification, so a caller
     // holding per-id state (`createCallLedger`, `watchPageRpc`) can settle
@@ -901,9 +894,6 @@ export function classifyRpcResponse(status, body, requestBody) {
     method: String(c.method),
     verdict,
     why,
-    // Carried ONLY when false, so every other outcome keeps the shape it
-    // has always had and nothing downstream has to learn a new field.
-    ...(recoverable ? {} : { recoverable: false }),
   });
 
   // ROUND 73 P2 — A BATCH THAT REUSES A REQUEST ID IS MALFORMED, and
@@ -954,7 +944,7 @@ export function classifyRpcResponse(status, body, requestBody) {
   });
   if (reusedId) {
     return answerable.map((c) =>
-      out(c, 'client-fault', 'duplicate id in the request batch', false),
+      out(c, 'client-fault', 'duplicate id in the request batch'),
     );
   }
 
@@ -1188,280 +1178,64 @@ export function createSocketCalls() {
 /**
  * Append a routed response's per-call outcomes to the run's ledger.
  *
- * A LEDGER rather than the two verdict buckets directly, because a single
- * attempt cannot decide the question: see `callKey`. The buckets are
- * filled once, at the end, by `summariseRpcLedger`.
+ * The ledger is the WIRE's record, and since #1672 it decides only what a
+ * single response proves: a reachable provider rejecting the page's
+ * request as malformed, and the request envelope itself being malformed.
+ * Whether a read was left UNSERVED is not decided here. One attempt cannot
+ * say, and #1672 records why no rule over many attempts can either: a
+ * retry carries a fresh id, concurrent duplicates are byte-identical, and
+ * a retry chain's timing overlaps a poll's. The page's query cache, which
+ * owns the retry policy, answers that (`queryProbe.mjs`); a failed attempt
+ * recorded here is attribution for that answer.
  *
  * @param {{status: number, body: Buffer|string|undefined,
- *          requestBody: string|undefined, url: string}} response
+ *          requestBody: string|undefined, url: string, cohort?: number}} response
+ *   `cohort` is the issuing page, so a report can name the failed attempts
+ *   of the page whose read went unserved.
  * @param {Array} ledger
  */
-/**
- * Per-response identity for {@link recordRpcResponse}; see its round-95
- * note. Declared ABOVE its only writer rather than below it: a `let` is
- * not initialised until its own line runs, so a future caller reached
- * during module evaluation would throw on the temporal dead zone rather
- * than read a zero. Nothing calls it that early today, which is exactly
- * the kind of thing that stops being true quietly.
- */
-let responseSeq = 0;
-
-export function recordRpcResponse(
-  { status, body, requestBody, url, requestedAt, deliveredAt, cohort },
-  ledger,
-) {
-  // WHEN, as well as what (round 94 P2). Recovery is scoped by time
-  // because nothing else can scope it — see `RETRY_RECOVERY_WINDOW_MS`.
-  //
-  // ROUND 108 P2 — ON A MONOTONIC CLOCK, and no longer only by time.
-  //
-  // Round 102 moved the floor's ordering proof off `Date.now()` and left
-  // this one on it deliberately, because a backward clock step here
-  // under-reports rather than accuses. That reasoning still holds on its
-  // own, and is now beside the point: `requestedAt` below is compared
-  // against this value, so the two must be on the SAME clock or the
-  // comparison is meaningless. `performance.now()` counts from an arbitrary
-  // origin and is unaffected by clock adjustment; only differences are ever
-  // read here, so the changed origin costs nothing.
-  //
-  // ROUND 112 P2 — AND THE CALLER MAY STAMP IT EARLIER, because this
-  // function does not run when the response is delivered.
-  //
-  // The drive records AFTER `route.fulfill` on purpose: the page must get
-  // the provider's real answer whatever we go on to conclude about it. But
-  // several statements separate the two, and viem can have issued its retry
-  // in between — so a genuine retry's `requestedAt` could be at or before
-  // this `at`, and the causal test below would reject it as an in-flight
-  // sibling. A recovered failure then stays in the ledger and a correctly
-  // rendered page exits BLOCKED.
-  //
-  // ROUND 113 P2 — AND NOT TOO EARLY EITHER. `deliveredAt` is stamped at
-  // the instant delivery COMPLETED, not before it began: fulfillment is
-  // awaited, and a request begun while it was pending cannot be a reaction
-  // to a failure the page had not yet seen. Stamping the near edge would
-  // have let such a sibling clear the failure — certifying a funds surface
-  // whose original caller consumed an error, which is the worse direction.
-  //
-  // The fallback keeps callers that cannot stamp it — and the catch paths —
-  // on the old behaviour.
-  const at = typeof deliveredAt === 'number' ? deliveredAt : performance.now();
-  // ROUND 95 P2 — AND *WHICH RESPONSE*, because time alone cannot separate
-  // a retry from a SIBLING. A JSON-RPC batch is one request carrying many
-  // calls, and viem's batch scheduler will happily put two reads of the
-  // same method and params into it — which is one `callKey`. Both outcomes
-  // are then classified out of the same response body and stamped with the
-  // same `at`, so an error in the earlier array slot and an `ok` in the
-  // later one satisfied the recovery predicate exactly: later index, zero
-  // elapsed. Nothing had retried anything. The first caller consumed its
-  // error, the card may have rendered a degraded funds surface from it,
-  // and the ledger came out clean.
-  //
-  // A retry is by definition a SECOND response. So an outcome may only
-  // clear a failure it did not arrive with, and this id — monotonic,
-  // per-response, never reused — is what says so.
-  const response = ++responseSeq;
+export function recordRpcResponse({ status, body, requestBody, url, cohort }, ledger) {
   for (const outcome of classifyRpcResponse(status, body, requestBody)) {
-    // AND WHOSE PAGE (#2100). The ledger is global to the run and a
-    // `callKey` recurs across routes, so without this a failure that
-    // degraded one page could be cleared by another page repeating the
-    // read. See `recoveredAfter`; the drive supplies the cohort.
-    ledger.push({ ...outcome, url, at, response, requestedAt, cohort });
+    ledger.push({ ...outcome, url, cohort });
   }
 }
 
 /**
- * How long after a failed attempt a success may still be one of its
- * RETRIES rather than a separate poll.
+ * The ledger's two findings.
  *
- * ROUND 94 P2 — because `callKey` is method plus params, and a page polls
- * the same method and params forever. A success from a LATER POLL was
- * clearing a failure the page had already consumed: one poll exhausted
- * every retry, the card may have rendered a degraded funds surface from
- * it, and the next poll's success wiped the record clean.
+ * `malformed` is a verdict: every call a reachable provider rejected as
+ * malformed, and every malformed envelope, is a defect in what the page
+ * sent, wherever and whenever it happened. That is the rule
+ * `watchPageRpc.sessionFaults` has applied since #1633, and it needs no
+ * operation identity, because one response proves it. The ledger used to
+ * let a later success of the same method and params clear a call fault,
+ * reading the fault as the provider's mistake; telling a retry from a
+ * sibling read was the part that could not be done (#1672), so a fault is
+ * now reported as observed.
  *
- * NOTHING IDENTIFIES A LOGICAL REQUEST FROM OUTSIDE THE PAGE, and that is
- * measured rather than assumed: viem's `buildRequest` wraps the transport
- * in `withRetry`, and the HTTP transport takes `body.id ?? idCache.take()`
- * per call — so every attempt carries a FRESH id and two retries differ
- * from two polls in no observable way. Grouping by request identity is
- * therefore not available; time is what is left.
+ * `failedAttempts` is NOT a verdict. It is every attempt the provider did
+ * not answer, for the report to name beside an unserved read the query
+ * cache reported, or to state as wire noise when the cache reported every
+ * read served. Each entry keeps its `cohort`.
  *
- * One thing IS observable, and round 95 P2 found it by finding where its
- * absence hurt: two outcomes decoded from the SAME response are certainly
- * not a retry of one another, whatever their timestamps say. That test
- * lives in `recoveredAfter` and runs before this window, which cannot
- * express it — siblings are zero milliseconds apart.
- *
- * The ladder this has to cover is viem's default: `retryCount: 3` with
- * `retryDelay: 150` backing off exponentially, so ~150 + 300 + 600 ms
- * plus the transport time of each attempt. 1.5s covers that and stays
- * below any poll cadence the app can produce — its reads refetch on new
- * blocks, and the deployment's chain is on two-second blocks.
- *
- * THE RESIDUAL, and its direction. A provider slower than this window
- * means a genuine retry-recovery is not credited, so the run exits 2
- * BLOCKED on a page that recovered — loud and re-runnable, which is the
- * direction round 23 chose this rule's existence to avoid and the one
- * this file takes when it must pick. A page polling faster than 1.5s
- * would mis-scope the other way; none does.
- */
-const RETRY_RECOVERY_WINDOW_MS = 1_500;
-
-/**
- * Turn the attempt ledger into the two verdict buckets.
- *
- * A failed attempt is only a real failure if the same logical call did
- * not go on to succeed. viem retries (`retryCount: 3`) and falls back to
- * a second endpoint, and the page is unharmed when one of those works —
- * reporting the first attempt would exit 2 BLOCKED on a page that
- * rendered correctly.
- *
- * Only a LATER success clears a failure. An earlier one must not: a call
- * that worked at first and then failed for good is a genuine failure, and
- * letting the early success cancel it would hide exactly the kind of
- * mid-run degradation this drive is meant to notice.
- *
- * And only a success from the SAME COHORT — one page's traffic (#2100).
- * A `callKey` recurs on every route, so without that scope one page's
- * outage is erased by the next page repeating the read.
- *
- * The wallet path deliberately has no equivalent. There `pub.request` is
- * our own viem client, which exhausts its retries internally and throws
- * once — so what that path records is already a final answer.
+ * Both are de-duplicated per page, call and reason: a read retried three
+ * times and still dead is one line, not three.
  *
  * @returns {{malformed: Array<{url: string, why: string}>,
- *            unreachable: Array<{url: string, why: string}>}}
+ *            failedAttempts: Array<{url: string, why: string, cohort?: number}>}}
  */
 export function summariseRpcLedger(ledger) {
-  // Every success per call, with when it happened — a single "last one"
-  // cannot answer a question that is now about proximity rather than
-  // order (round 94).
-  const oks = new Map();
-  ledger.forEach((e, i) => {
-    if (e.verdict !== 'ok') return;
-    const list = oks.get(e.key);
-    const ok = {
-      i,
-      at: e.at,
-      response: e.response,
-      requestedAt: e.requestedAt,
-      cohort: e.cohort,
-    };
-    if (list) list.push(ok);
-    else oks.set(e.key, [ok]);
-  });
-  /** Did a LATER success plausibly belong to the same logical request? */
-  const recoveredAfter = (e, i) => {
-    const list = oks.get(e.key);
-    if (!list) return false;
-    return list.some(({ i: j, at, response, requestedAt, cohort }) => {
-      if (j <= i) return false;
-      // #2100 — A RETRY HAPPENS INSIDE THE SAME COHORT, and a cohort is
-      // one page's traffic.
-      //
-      // `callKey` is method plus params, and the ledger is global to the
-      // run, so the SAME read recurs on every route this drive visits. A
-      // failure that degraded page A was therefore cleared the moment page
-      // B repeated that call successfully — and page B always does, since
-      // the routes read the same contract. Two ways that hurts, and the
-      // second is the worse: the run can pass while concealing that one
-      // page's observation was untrustworthy, and page A's degraded
-      // surface is then blamed on the PRODUCT, because the evidence
-      // explaining it has been suppressed. Exit 1 means "the app did
-      // something wrong"; this could manufacture one.
-      //
-      // The three tests below all narrow WHEN a success may clear a
-      // failure, and each was a round of the same seam — time window,
-      // same-response siblings, causal ordering. Scope is the thing none
-      // of them can express, so it is stated directly rather than by
-      // tightening time again: viem's retries and its `fallback`
-      // alternates all happen within the page that issued the read, so
-      // restricting recovery to one cohort keeps the rule doing what it
-      // was written for (#1529 r23) while removing what it was never
-      // meant to cover.
-      //
-      // Same `undefined`-means-older rule as every field here: a record
-      // written before cohorts were carried is judged the way it was.
-      if (typeof cohort === 'number' && typeof e.cohort === 'number' && cohort !== e.cohort) {
-        return false;
-      }
-      // A SIBLING IN THE SAME RESPONSE IS NOT A RETRY (round 95 P2), and
-      // this is checked before the window rather than inside it: siblings
-      // are zero milliseconds apart, so every time-based test passes them.
-      // Same `undefined`-means-older rule as the timestamps below — a
-      // record written before responses were identified is judged the way
-      // it always was.
-      if (
-        typeof response === 'number' &&
-        typeof e.response === 'number' &&
-        response === e.response
-      ) {
-        return false;
-      }
-      // A record predating the timestamps cannot be scoped by them, and
-      // must keep behaving as it did — the `undefined`-means-older rule
-      // every field in this project follows.
-      if (typeof at !== 'number' || typeof e.at !== 'number') return true;
-      // ROUND 108 P2 — A RETRY IS INITIATED AFTER THE FAILURE IS KNOWN.
-      //
-      // Round 95 excluded siblings decoded from the SAME response. Separate
-      // responses can be siblings too: three independent hooks on one mount
-      // each call the same pinned read, producing identical `callKey`s in
-      // different HTTP responses. If one errors and a concurrent sibling
-      // succeeds, a time-only test calls the failure recovered — while the
-      // failing caller consumed its error and may have rendered a degraded
-      // funds surface.
-      //
-      // The distinguishing fact is causal, not temporal: a retry is SENT
-      // after the failure came back, an already-in-flight sibling was sent
-      // before it. `requestedAt` is stamped when this drive begins serving
-      // the request, so a success requested before the failure landed cannot
-      // be that failure's retry.
-      //
-      // Same `undefined`-means-older rule as everything else here: a record
-      // written before request times were carried is judged the way it was.
-      // ROUND 109 P2 — EQUAL TIMESTAMPS CARRY NO ORDER, so `<=`. Two
-      // handlers can read the same `performance.now()`, and `<` then
-      // accepted a sibling as causally later on no evidence. The floor's
-      // ordering test in the drive settled this in round 87 for exactly the
-      // same reason and uses `>=`; this is that rule, applied here.
-      if (typeof requestedAt === 'number' && requestedAt <= e.at) return false;
-      return at - e.at <= RETRY_RECOVERY_WINDOW_MS;
-    });
-  };
-
   const malformed = [];
-  const unreachable = [];
+  const failedAttempts = [];
   const seen = new Set();
-  ledger.forEach((e, i) => {
-    if (e.verdict === 'ok') return;
-    // ROUND 74 P2 — A FAULT IN THE REQUEST ENVELOPE IS NOT RECOVERABLE.
-    //
-    // The round-23 rule exists for viem's retries and endpoint fallback,
-    // and it is sound for a fault that is a property of the CALL: a
-    // `callKey` is method plus params, so the same method and params
-    // succeeding later proves the earlier `-32602` was the provider being
-    // wrong rather than the page being malformed. That test stays green
-    // and stays right.
-    //
-    // A DUPLICATE ID is a property of the BATCH ENVELOPE, which no
-    // `callKey` carries — ids are deliberately excluded from it. So the
-    // very next refresh of the same read cleared the finding, and the
-    // drive exited 0 having watched the page consume ambiguously
-    // attributed answers. The finding as reported said "only
-    // `unreachable` is recoverable", which would have taken round 23's
-    // case with it; what actually distinguishes them is what the fault is
-    // a property of, so that is what is recorded.
-    if (e.recoverable !== false && recoveredAfter(e, i)) return;
-    // One entry per (verdict, call, reason): a read retried three times
-    // and still dead is one problem, not three.
-    const dedupe = `${e.verdict}|${e.key}|${e.why}`;
-    if (seen.has(dedupe)) return;
+  for (const e of ledger) {
+    if (e.verdict === 'ok') continue;
+    const dedupe = `${e.cohort}|${e.verdict}|${e.key}|${e.why}`;
+    if (seen.has(dedupe)) continue;
     seen.add(dedupe);
-    (e.verdict === 'client-fault' ? malformed : unreachable).push({
-      url: e.url,
-      why: `${e.method} — ${e.why}`,
-    });
-  });
-  return { malformed, unreachable };
+    const why = `${e.method} — ${e.why}`;
+    if (e.verdict === 'client-fault') malformed.push({ url: e.url, why });
+    else failedAttempts.push({ url: e.url, why, cohort: e.cohort });
+  }
+  return { malformed, failedAttempts };
 }

@@ -16,6 +16,7 @@ import './i18n';
 import { LanguageRemount } from './i18n/LanguageRemount';
 import './styles/global.css';
 import { registerServiceWorker } from './lib/registerServiceWorker';
+import { attachQueryStateProbe } from './lib/queryStateProbe';
 
 // UX-005 (Codex #1169 r1) — with route-level code splitting, a user who
 // keeps the app open across a production deploy holds a STALE entry that
@@ -69,6 +70,9 @@ const queryClient = new QueryClient({
     },
   },
 });
+// #1672 — inert unless a live-review driver installed its report before
+// load; see `lib/queryStateProbe.ts`.
+attachQueryStateProbe(queryClient);
 
 /** ConnectKit needs the RESOLVED theme (it has no 'system' mode that
  *  tracks ours), so this bridge lives under ThemeProvider. */

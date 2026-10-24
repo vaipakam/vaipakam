@@ -790,27 +790,28 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
     for (const r of responses) recordRpcResponse(r, l);
     return l;
   };
-  const attempt = (status, body, requestBody, url = 'https://rpc.example') => ({
+  const attempt = (status, body, requestBody, url = 'https://rpc.example', cohort = 1) => ({
     status,
     body,
     requestBody,
     url,
+    cohort,
   });
 
-  it('files a client fault as an app finding, not as flaky egress', () => {
+  it('files a client fault as an app finding', () => {
     const out = summariseRpcLedger(
       ledgerOf(attempt(200, errBody(1, rpcErr(-32602)), rpcReq(call(1)))),
     );
     expect(out.malformed).toEqual([
       { url: 'https://rpc.example', why: 'eth_call — json-rpc -32602' },
     ]);
-    expect(out.unreachable).toEqual([]);
+    expect(out.failedAttempts).toEqual([]);
   });
 
-  it('files an unreachable provider as BLOCKED, not as an app finding', () => {
-    const out = summariseRpcLedger(ledgerOf(attempt(429, 'slow down', rpcReq(call(1)))));
-    expect(out.unreachable).toEqual([
-      { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
+  it('names an unanswered attempt for attribution, with its page', () => {
+    const out = summariseRpcLedger(ledgerOf(attempt(429, 'slow down', rpcReq(call(1)), undefined, 3)));
+    expect(out.failedAttempts).toEqual([
+      { url: 'https://rpc.example', why: 'eth_call — HTTP 429', cohort: 3 },
     ]);
     expect(out.malformed).toEqual([]);
   });
@@ -823,314 +824,35 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
         attempt(200, '<!doctype html>', undefined),
       ),
     );
-    expect(out).toEqual({ malformed: [], unreachable: [] });
+    expect(out).toEqual({ malformed: [], failedAttempts: [] });
   });
 
-  // ROUND 94 P2 — a LATER POLL is not a retry, and `callKey` cannot tell
-  // them apart: it is method plus params, and a page polls the same method
-  // and params forever. One poll exhausting every retry — with the card
-  // possibly rendering a degraded funds surface from it — was cleared by
-  // the next poll's success, and the run passed.
-  //
-  // Nothing identifies a logical request from outside the page: viem takes
-  // a fresh id per attempt, so two retries and two polls differ in no
-  // observable way. Time is the discriminator that remains, and these
-  // cases pin both of its edges.
-  describe('recovery is scoped to the retry window (round 94)', () => {
-    const failed = (at) => ({
-      key: 'eth_call|[]',
-      method: 'eth_call',
-      verdict: 'unreachable',
-      why: 'HTTP 429',
-      url: 'https://rpc.example',
-      at,
-    });
-    const ok = (at) => ({ key: 'eth_call|[]', method: 'eth_call', verdict: 'ok', at });
-
-    it('still clears a failure a retry recovered', () => {
-      const out = summariseRpcLedger([failed(1_000), ok(1_650)]);
-      expect(out.unreachable).toEqual([]);
-    });
-
-    it('does NOT clear it from a poll seconds later', () => {
-      const out = summariseRpcLedger([failed(1_000), ok(4_000)]);
-      expect(out.unreachable).toEqual([
-        { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
-      ]);
-    });
-
-    it('leaves a record without timestamps behaving as it did', () => {
-      // `undefined` means a shape predating the field, which every rule in
-      // this project treats as "keep the old behaviour" rather than as
-      // evidence of anything.
-      const out = summariseRpcLedger([
-        { key: 'eth_call|[]', method: 'eth_call', verdict: 'unreachable', why: 'HTTP 429', url: 'u' },
-        { key: 'eth_call|[]', method: 'eth_call', verdict: 'ok' },
-      ]);
-      expect(out.unreachable).toEqual([]);
-    });
-  });
-
-  // ROUND 95 P2 — a SIBLING IN THE SAME BATCH is not a retry either, and
-  // time cannot say so: both outcomes are decoded from one response body
-  // and stamped with one `at`, so the later array slot satisfied every
-  // window the round-94 rule could express. The first caller had already
-  // consumed its error.
-  describe('recovery excludes siblings of the same response (round 95)', () => {
-    const batchOfSameCall = (first, second) =>
-      ledgerOf(
-        attempt(200, `[${first},${second}]`, rpcReq(call(1), call(2))),
-      );
-
-    it('does NOT let a batch sibling clear its neighbour', () => {
-      const out = summariseRpcLedger(
-        batchOfSameCall(errBody(1, rpcErr(-32005, 'limit')), okBody(2)),
-      );
-      expect(out.unreachable).toEqual([
-        { url: 'https://rpc.example', why: 'eth_call — json-rpc -32005' },
-      ]);
-    });
-
-    it('still clears it when the success is a SEPARATE response in time', () => {
-      // The same two outcomes, one per response — which is what a retry
-      // actually looks like — recover exactly as they did before.
-      const ledger = ledgerOf(
-        attempt(200, errBody(1, rpcErr(-32005, 'limit')), rpcReq(call(1))),
-        attempt(200, okBody(1), rpcReq(call(1))),
-      );
-      expect(summariseRpcLedger(ledger)).toEqual({ malformed: [], unreachable: [] });
-    });
-
-    it('leaves a record without response ids behaving as it did', () => {
-      // `undefined` means a shape predating the field — keep the old
-      // behaviour, never read it as evidence.
-      const out = summariseRpcLedger([
-        { key: 'eth_call|[]', method: 'eth_call', verdict: 'unreachable', why: 'HTTP 429', url: 'u', at: 10 },
-        { key: 'eth_call|[]', method: 'eth_call', verdict: 'ok', at: 10 },
-      ]);
-      expect(out.unreachable).toEqual([]);
-    });
-  });
-
-  // ROUND 108 P2 — A CONCURRENT SIBLING IN A SEPARATE RESPONSE IS NOT A
-  // RETRY EITHER.
-  //
-  // Round 95 excluded siblings decoded from the SAME response. Separate
-  // responses can be siblings too: three independent hooks on one mount each
-  // call the same pinned read, producing identical `callKey`s in different
-  // HTTP responses. If one errors and a concurrent sibling succeeds, a
-  // time-only test calls the failure recovered — while the failing caller
-  // consumed its error and may have rendered a degraded funds surface.
-  //
-  // The distinguishing fact is causal: a retry is SENT after the failure
-  // came back; an already-in-flight sibling was sent before it.
-  describe('recovery requires causal ordering (round 108)', () => {
-    const failed = (at) => ({
-      key: 'eth_call|[]',
-      method: 'eth_call',
-      verdict: 'unreachable',
-      why: 'HTTP 429',
-      url: 'https://rpc.example',
-      at,
-      response: 1,
-    });
-    const ok = (at, requestedAt) => ({
-      key: 'eth_call|[]',
-      method: 'eth_call',
-      verdict: 'ok',
-      at,
-      response: 2,
-      requestedAt,
-    });
-
-    it('does NOT clear a failure with a sibling requested before it landed', () => {
-      // Both in flight together: the success was asked for at 900, before
-      // the failure came back at 1000.
-      const out = summariseRpcLedger([failed(1_000), ok(1_200, 900)]);
-      expect(out.unreachable).toEqual([
-        { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
-      ]);
-    });
-
-    it('still clears one with a retry requested AFTER the failure landed', () => {
-      const out = summariseRpcLedger([failed(1_000), ok(1_200, 1_050)]);
-      expect(out.unreachable).toEqual([]);
-    });
-
-    // ROUND 109 P2 — and EQUAL timestamps carry no order either. Two
-    // handlers can read the same monotonic value; the floor's ordering test
-    // settled this in round 87 and refuses equality for the same reason.
-    it('does NOT clear one with a sibling requested at the same instant', () => {
-      const out = summariseRpcLedger([failed(1_000), ok(1_200, 1_000)]);
-      expect(out.unreachable).toEqual([
-        { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
-      ]);
-    });
-
-    it('leaves a record without request times behaving as it did', () => {
-      // `undefined` means a shape predating the field — keep the old
-      // behaviour, never read it as evidence.
-      const out = summariseRpcLedger([failed(1_000), ok(1_200, undefined)]);
-      expect(out.unreachable).toEqual([]);
-    });
-
-    // ROUND 112 P2 — AND THE FAILURE IS STAMPED WHEN THE PAGE GETS IT.
-    //
-    // The causal test is only as good as the instant it compares against.
-    // The drive records a response AFTER handing it to the page, on purpose
-    // — the page must get the provider's real answer whatever we conclude
-    // about it — so the page can receive a failure, viem can issue its
-    // retry, and only THEN does the arrival get stamped. The retry's
-    // `requestedAt` is therefore at or before that stamp, and the rule
-    // above reads a genuine retry as an in-flight sibling: the failure
-    // stays in the ledger and a correctly rendered page exits BLOCKED.
-    //
-    // So the caller stamps the instant of delivery and the ledger uses it.
-    it('uses the delivery stamp the caller supplies as the arrival time', () => {
-      const l = [];
-      recordRpcResponse(
-        {
-          status: 429,
-          body: 'slow down',
-          requestBody: rpcReq(call(1, 'eth_call')),
-          url: 'https://rpc.example',
-          deliveredAt: 1_000,
-        },
-        l,
-      );
-      expect(l[0].at, 'the supplied delivery stamp is the arrival time').toBe(1_000);
-    });
-
-    it('clears a retry sent in the gap between delivery and recording', () => {
-      // The shape the drive actually produces: delivery at 1000, the retry
-      // asked for at 1050, the record written at 1100. Stamped at record
-      // time the retry looks simultaneous-or-earlier and is refused;
-      // stamped at delivery it is plainly later.
-      const l = [];
-      recordRpcResponse(
-        {
-          status: 429,
-          body: 'slow down',
-          requestBody: rpcReq(call(1, 'eth_call')),
-          url: 'https://rpc.example',
-          deliveredAt: 1_000,
-        },
-        l,
-      );
-      recordRpcResponse(
-        {
-          status: 200,
-          body: okBody(1),
-          requestBody: rpcReq(call(1, 'eth_call')),
-          url: 'https://rpc.example',
-          deliveredAt: 1_100,
-          requestedAt: 1_050,
-        },
-        l,
-      );
-      expect(summariseRpcLedger(l).unreachable).toEqual([]);
-    });
-
-    // ROUND 113 P2 — AND A REQUEST BEGUN *DURING* DELIVERY PROVES NOTHING.
-    //
-    // The first version of the round-112 fix stamped the near edge, before
-    // the awaited fulfill. Fulfillment takes time, so a sibling started
-    // while it was pending was stamped LATER than the failure's arrival
-    // even though the page had not seen the failure and it could not be a
-    // reaction to it — and a later success then cleared a call whose
-    // original caller consumed an error. There is no stamp for "the page
-    // received this", so the ambiguous interval is closed at its far edge:
-    // `deliveredAt` is the instant delivery COMPLETED, and anything begun
-    // before that cannot prove recovery.
-    it('does NOT clear a failure with a request begun while it was being delivered', () => {
-      const l = [];
-      recordRpcResponse(
-        {
-          status: 429,
-          body: 'slow down',
-          requestBody: rpcReq(call(1, 'eth_call')),
-          url: 'https://rpc.example',
-          // Delivery began around 1000 and completed at 1100.
-          deliveredAt: 1_100,
-        },
-        l,
-      );
-      recordRpcResponse(
-        {
-          status: 200,
-          body: okBody(1),
-          requestBody: rpcReq(call(1, 'eth_call')),
-          url: 'https://rpc.example',
-          deliveredAt: 1_300,
-          // Begun mid-delivery. Later than the near edge, earlier than
-          // receipt — no evidence of causation either way, so refused.
-          requestedAt: 1_050,
-        },
-        l,
-      );
-      expect(summariseRpcLedger(l).unreachable).toEqual([
-        { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
-      ]);
-    });
-
-    it('still refuses a sibling that was in flight before delivery', () => {
-      // The fix must not undo round 108: asked for at 900, delivered at
-      // 1000 — never a reaction to it.
-      const l = [];
-      recordRpcResponse(
-        {
-          status: 429,
-          body: 'slow down',
-          requestBody: rpcReq(call(1, 'eth_call')),
-          url: 'https://rpc.example',
-          deliveredAt: 1_000,
-        },
-        l,
-      );
-      recordRpcResponse(
-        {
-          status: 200,
-          body: okBody(1),
-          requestBody: rpcReq(call(1, 'eth_call')),
-          url: 'https://rpc.example',
-          deliveredAt: 1_100,
-          requestedAt: 900,
-        },
-        l,
-      );
-      expect(summariseRpcLedger(l).unreachable).toEqual([
-        { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
-      ]);
-    });
-  });
-
-  describe('reconciliation across attempts (round 23)', () => {
-    it('clears a failure that a LATER attempt recovered', () => {
-      // viem retries, and wagmi wraps these transports in fallback([...]).
-      // The page got its answer, so the drive must not exit 2.
+  // #1672 — the ledger no longer decides whether a read was served, so a
+  // later success clears nothing: there is no recovery rule left to get
+  // wrong. Whether the page recovered is the query cache's answer.
+  describe('a later success clears nothing (#1672)', () => {
+    it('keeps a failed attempt that a later attempt of the same call followed', () => {
       const out = summariseRpcLedger(
         ledgerOf(
           attempt(429, 'slow down', rpcReq(call(1, 'eth_getLogs'))),
           attempt(200, okBody(1), rpcReq(call(1, 'eth_getLogs')), 'https://backup.example'),
         ),
       );
-      expect(out).toEqual({ malformed: [], unreachable: [] });
+      expect(out.failedAttempts).toHaveLength(1);
+      expect(out.malformed).toEqual([]);
     });
 
-    it('clears a client fault the same way', () => {
+    it('keeps a client fault however the same call fared later, as watchPageRpc does', () => {
       const out = summariseRpcLedger(
         ledgerOf(
           attempt(400, errBody(1, rpcErr(-32602)), rpcReq(call(1))),
           attempt(200, okBody(1), rpcReq(call(1))),
         ),
       );
-      expect(out).toEqual({ malformed: [], unreachable: [] });
+      expect(out.malformed).toHaveLength(1);
     });
 
-    // ROUND 74 P2 — but an ENVELOPE fault is not recoverable, because
-    // `callKey` is method plus params and carries no id at all, so the
-    // very next refresh of the same read shared its key and erased it.
-    it('keeps a duplicate-id fault despite a later success on the same key', () => {
+    it('keeps a duplicate-id envelope fault', () => {
       const out = summariseRpcLedger(
         ledgerOf(
           attempt(
@@ -1144,66 +866,34 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
       expect(out.malformed).toHaveLength(1);
       expect(out.malformed[0].why).toMatch(/duplicate id/);
     });
+  });
 
-    it('does NOT let an earlier success clear a later failure', () => {
-      // A read that worked and then died for good is a real failure;
-      // cancelling it would hide exactly the mid-run degradation this
-      // drive exists to notice.
-      const out = summariseRpcLedger(
-        ledgerOf(
-          attempt(200, okBody(1), rpcReq(call(1, 'eth_getLogs'))),
-          attempt(429, 'slow down', rpcReq(call(1, 'eth_getLogs'))),
-        ),
-      );
-      expect(out.unreachable).toHaveLength(1);
-    });
-
-    it('only clears the SAME logical call', () => {
-      // A different read succeeding says nothing about this one.
-      const out = summariseRpcLedger(
-        ledgerOf(
-          attempt(429, 'slow down', rpcReq(call(1, 'eth_getLogs'))),
-          attempt(200, okBody(2), rpcReq(call(2, 'eth_getBalance'))),
-        ),
-      );
-      expect(out.unreachable).toHaveLength(1);
-      expect(out.unreachable[0].why).toContain('eth_getLogs');
-    });
-
-    it('distinguishes the same method on different params', () => {
-      const a = rpcReq(call(1, 'eth_call', ['0xAAA']));
-      const b = rpcReq(call(2, 'eth_call', ['0xBBB']));
-      const out = summariseRpcLedger(
-        ledgerOf(attempt(429, 'slow down', a), attempt(200, okBody(2), b)),
-      );
-      expect(out.unreachable).toHaveLength(1);
-    });
-
+  describe('one line per page, call and reason', () => {
     it('collapses a read retried to death into one entry', () => {
       const req = rpcReq(call(1, 'eth_getLogs'));
       const out = summariseRpcLedger(
-        ledgerOf(
-          attempt(429, 'slow down', req),
-          attempt(429, 'slow down', req),
-          attempt(429, 'slow down', req),
-        ),
+        ledgerOf(attempt(429, 'slow down', req), attempt(429, 'slow down', req), attempt(429, 'slow down', req)),
       );
-      expect(out.unreachable).toHaveLength(1);
+      expect(out.failedAttempts).toHaveLength(1);
     });
 
-    it('reports a batch sibling that never recovered while clearing one that did', () => {
-      const batch = rpcReq(call(1, 'eth_call'), call(2, 'eth_getLogs'));
+    it('keeps the same failure on two pages as two lines, one per page', () => {
+      const req = rpcReq(call(1, 'eth_getLogs'));
+      const out = summariseRpcLedger(
+        ledgerOf(attempt(429, 'slow down', req, undefined, 1), attempt(429, 'slow down', req, undefined, 2)),
+      );
+      expect(out.failedAttempts.map((a) => a.cohort)).toEqual([1, 2]);
+    });
+
+    it('keeps different calls and different reasons apart', () => {
       const out = summariseRpcLedger(
         ledgerOf(
-          attempt(200, JSON.stringify([
-            { jsonrpc: '2.0', id: 1, error: rpcErr(-32005) },
-            { jsonrpc: '2.0', id: 2, error: rpcErr(-32005) },
-          ]), batch),
-          attempt(200, okBody(1), rpcReq(call(1, 'eth_call'))),
+          attempt(429, 'slow down', rpcReq(call(1, 'eth_call', ['0xAAA']))),
+          attempt(429, 'slow down', rpcReq(call(2, 'eth_call', ['0xBBB']))),
+          attempt(503, 'down', rpcReq(call(3, 'eth_call', ['0xAAA']))),
         ),
       );
-      expect(out.unreachable).toHaveLength(1);
-      expect(out.unreachable[0].why).toContain('eth_getLogs');
+      expect(out.failedAttempts).toHaveLength(3);
     });
   });
 });
@@ -1825,75 +1515,6 @@ describe('round 63 P2 — the chain-id reader refuses a reused id too', () => {
   });
 });
 
-describe('#2100 — a retry is reconciled only inside its own page cohort', () => {
-  // The ledger is global to the run and a `callKey` recurs on every route,
-  // so before this the next page's success cleared the previous page's
-  // outage. Entries are written the way `recordRpcResponse` writes them.
-  const entry = (over) => ({
-    verdict: 'unreachable',
-    key: 'eth_call|0xabc',
-    method: 'eth_call',
-    why: 'HTTP 429',
-    url: 'https://rpc.example',
-    recoverable: true,
-    ...over,
-  });
-  const okEntry = (over) => entry({ verdict: 'ok', why: '', ...over });
-
-  it('does not let another page clear a failure', () => {
-    const out = summariseRpcLedger([
-      entry({ at: 1_000, response: 1, requestedAt: 900, cohort: 1 }),
-      okEntry({ at: 1_200, response: 2, requestedAt: 1_100, cohort: 2 }),
-    ]);
-    expect(out.unreachable).toEqual([
-      { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
-    ]);
-  });
-
-  it('still clears a retry within the same page', () => {
-    const out = summariseRpcLedger([
-      entry({ at: 1_000, response: 1, requestedAt: 900, cohort: 1 }),
-      okEntry({ at: 1_200, response: 2, requestedAt: 1_100, cohort: 1 }),
-    ]);
-    expect(out).toEqual({ malformed: [], unreachable: [] });
-  });
-
-  // The undefined-means-older rule: a ledger written before cohorts were
-  // carried is judged exactly as it was.
-  it('judges cohort-less records the way it always did', () => {
-    const out = summariseRpcLedger([
-      entry({ at: 1_000, response: 1, requestedAt: 900 }),
-      okEntry({ at: 1_200, response: 2, requestedAt: 1_100 }),
-    ]);
-    expect(out).toEqual({ malformed: [], unreachable: [] });
-    const mixed = summariseRpcLedger([
-      entry({ at: 1_000, response: 1, requestedAt: 900, cohort: 1 }),
-      okEntry({ at: 1_200, response: 2, requestedAt: 1_100 }),
-    ]);
-    expect(mixed).toEqual({ malformed: [], unreachable: [] });
-  });
-
-  // The cohort narrows recovery; it never widens it. Every other test the
-  // rule already had still decides the same way inside one cohort.
-  it('leaves the other narrowing tests intact within a cohort', () => {
-    const sibling = summariseRpcLedger([
-      entry({ at: 1_000, response: 7, requestedAt: 900, cohort: 1 }),
-      okEntry({ at: 1_000, response: 7, requestedAt: 900, cohort: 1 }),
-    ]);
-    expect(sibling.unreachable).toHaveLength(1);
-    const tooLate = summariseRpcLedger([
-      entry({ at: 1_000, response: 1, requestedAt: 900, cohort: 1 }),
-      okEntry({ at: 4_000, response: 2, requestedAt: 3_900, cohort: 1 }),
-    ]);
-    expect(tooLate.unreachable).toHaveLength(1);
-    const inFlight = summariseRpcLedger([
-      entry({ at: 1_000, response: 1, requestedAt: 900, cohort: 1 }),
-      okEntry({ at: 1_100, response: 2, requestedAt: 950, cohort: 1 }),
-    ]);
-    expect(inFlight.unreachable).toHaveLength(1);
-  });
-});
-
 describe('classifyRpcResponse — each outcome names its call (#1633)', () => {
   it('carries the call id, so a per-id ledger settles each call from one classification', () => {
     const out = classifyRpcResponse(
@@ -2004,7 +1625,6 @@ describe('classifyRpcResponse on a malformed chain envelope (#1633 r3)', () => {
           method: req.method,
           verdict: 'client-fault',
           why: 'malformed json-rpc envelope',
-          recoverable: false,
         });
       }
     }
