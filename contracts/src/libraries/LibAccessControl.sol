@@ -64,8 +64,9 @@ library LibAccessControl {
     ///      Distinct from `WATCHER_ROLE` because the operations have
     ///      different blast radii: WATCHER's worst case is a 2h freeze
     ///      (recoverable by PAUSER_ROLE); NOTIF_BILLER's worst case is
-    ///      false-billing capped per loan-side at the fee ceiling
-    ///      (`MAX_NOTIFICATION_FEE_CEIL`). Rotating one without
+    ///      an early bill: since #2721 it can charge only a wallet that
+    ///      consented on-chain, at most the cap that wallet chose, once per
+    ///      side of a loan that is still active. Rotating one without
     ///      the other lets the operator respond proportionally to a
     ///      compromise on either side.
     bytes32 internal constant NOTIF_BILLER_ROLE = keccak256("NOTIF_BILLER_ROLE");

@@ -20,6 +20,8 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {LibNotificationFee} from "../src/libraries/LibNotificationFee.sol";
 
 /**
  * @title NotificationFeeTest
@@ -50,6 +52,10 @@ contract NotificationFeeTest is SetupTest {
     // Recycling M1: the default flat tariff is 0.5 VPFI — the exact amount
     // billed with no config override (no oracle, no numeraire conversion).
     uint256 internal constant EXPECTED_VPFI_AMOUNT = 5e17; // 0.5 VPFI
+
+    // #2721 — the cap both parties consent to in setUp. It covers the
+    // default tariff and the 3 VPFI the configured-fee test sets.
+    uint256 internal constant CONSENT_CAP = 5e18; // 5 VPFI
 
     function setUp() public {
         setupHelper();
@@ -90,12 +96,23 @@ contract NotificationFeeTest is SetupTest {
         vpfiToken.approve(address(diamond), type(uint256).max);
         VPFIDiscountFacet(address(diamond)).depositVPFIToVault(50e18);
         vm.stopPrank();
+
+        // #2721 — both parties agree to be billed, up to CONSENT_CAP per
+        // loan side. The consent tests below revoke or exceed it.
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setNotificationFeeConsent(CONSENT_CAP);
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setNotificationFeeConsent(CONSENT_CAP);
     }
 
-    /// @dev Scaffolds a minimal Loan record. `markNotifBilled` gates on
-    ///      existence, not status, so the full offer→loan flow is
-    ///      unnecessary for these tests.
+    /// @dev Scaffolds a minimal Active Loan record. `markNotifBilled` reads
+    ///      only existence, status and the parties, so the full offer→loan
+    ///      flow is unnecessary for these tests.
     function _scaffoldLoan(uint256 loanId) internal {
+        _scaffoldLoanWithStatus(loanId, LibVaipakam.LoanStatus.Active);
+    }
+
+    function _scaffoldLoanWithStatus(uint256 loanId, LibVaipakam.LoanStatus status) internal {
         LibVaipakam.Loan memory loan;
         loan.lender = lender;
         loan.borrower = borrower;
@@ -103,7 +120,7 @@ contract NotificationFeeTest is SetupTest {
         loan.principalAsset = mockERC20;
         loan.interestRateBps = 500;
         loan.durationDays = 30;
-        loan.status = LibVaipakam.LoanStatus.Active;
+        loan.status = status;
         TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
         if (loanId > 0) {
             TestMutatorFacet(address(diamond)).setNextLoanId(loanId);
@@ -468,5 +485,163 @@ contract NotificationFeeTest is SetupTest {
             2 * EXPECTED_VPFI_AMOUNT,
             "accrued counter saw both bills"
         );
+    }
+
+    // ─── #2721 — on-chain billing consent ────────────────────────────────
+
+    /// @dev The billing role cannot charge a wallet that never agreed to
+    ///      pay: a leaked biller key against a non-consenting payer moves
+    ///      nothing and leaves the side unbilled.
+    function test_markNotifBilled_RefusesPayerWithoutConsent() public {
+        _scaffoldLoan(1);
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setNotificationFeeConsent(0);
+        address borrowerVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(borrower);
+        uint256 vaultBefore = vpfiToken.balanceOf(borrowerVault);
+
+        vm.prank(billerBot);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibNotificationFee.NotificationFeeNotConsented.selector,
+                borrower,
+                EXPECTED_VPFI_AMOUNT,
+                uint256(0)
+            )
+        );
+        LoanFacet(address(diamond)).markNotifBilled(1, false);
+
+        assertEq(vpfiToken.balanceOf(borrowerVault), vaultBefore, "nothing debited");
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
+        assertFalse(loan.borrowerNotifBilled, "side stays unbilled");
+    }
+
+    /// @dev A fee raised above the payer's cap is refused: consent to a
+    ///      lower fee is not consent to a later, higher one.
+    function test_markNotifBilled_RefusesFeeAboveConsentedCap() public {
+        _scaffoldLoan(1);
+        ConfigFacet(address(diamond)).setNotificationFee(6e18);
+
+        vm.prank(billerBot);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibNotificationFee.NotificationFeeNotConsented.selector,
+                lender,
+                uint256(6e18),
+                CONSENT_CAP
+            )
+        );
+        LoanFacet(address(diamond)).markNotifBilled(1, true);
+    }
+
+    /// @dev A fee exactly at the cap is within the consent.
+    function test_markNotifBilled_BillsAtExactlyTheConsentedCap() public {
+        _scaffoldLoan(1);
+        ConfigFacet(address(diamond)).setNotificationFee(CONSENT_CAP);
+        address lenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
+        uint256 vaultBefore = vpfiToken.balanceOf(lenderVault);
+
+        vm.prank(billerBot);
+        LoanFacet(address(diamond)).markNotifBilled(1, true);
+
+        assertEq(vaultBefore - vpfiToken.balanceOf(lenderVault), CONSENT_CAP, "billed the cap");
+    }
+
+    /// @dev A closed loan's parties cannot be billed, consent or not.
+    function test_markNotifBilled_RefusesALoanThatIsNotActive() public {
+        LibVaipakam.LoanStatus[4] memory closed = [
+            LibVaipakam.LoanStatus.Repaid,
+            LibVaipakam.LoanStatus.Defaulted,
+            LibVaipakam.LoanStatus.Settled,
+            LibVaipakam.LoanStatus.FallbackPending
+        ];
+        for (uint256 i; i < closed.length; ++i) {
+            _scaffoldLoanWithStatus(1, closed[i]);
+            vm.prank(billerBot);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    LibNotificationFee.NotificationBillingLoanNotActive.selector,
+                    uint256(1)
+                )
+            );
+            LoanFacet(address(diamond)).markNotifBilled(1, true);
+        }
+    }
+
+    /// @dev A retry on a side billed while the loan was open stays a
+    ///      silent no-op after the loan closes, and after consent is
+    ///      revoked: the refusals guard new debits only.
+    function test_markNotifBilled_BilledSideStaysANoOpAfterCloseAndRevoke() public {
+        _scaffoldLoan(1);
+        vm.prank(billerBot);
+        LoanFacet(address(diamond)).markNotifBilled(1, true);
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
+        loan.status = LibVaipakam.LoanStatus.Repaid;
+        TestMutatorFacet(address(diamond)).setLoan(1, loan);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setNotificationFeeConsent(0);
+
+        vm.prank(billerBot);
+        LoanFacet(address(diamond)).markNotifBilled(1, true);
+    }
+
+    function test_setNotificationFeeConsent_RecordsTheCallersOwnCapAndEmits() public {
+        address alice = makeAddr("alice");
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit LibNotificationFee.NotificationFeeConsentSet(alice, 0, 2e18);
+        vm.prank(alice);
+        ProfileFacet(address(diamond)).setNotificationFeeConsent(2e18);
+
+        (uint256 cap, bool covers) = ProfileFacet(address(diamond)).getNotificationFeeConsent(alice);
+        assertEq(cap, 2e18, "alice's cap");
+        assertTrue(covers, "2 VPFI covers the 0.5 VPFI default");
+
+        // Nobody else's record moved.
+        (uint256 otherCap, ) = ProfileFacet(address(diamond)).getNotificationFeeConsent(makeAddr("bob"));
+        assertEq(otherCap, 0, "bob untouched");
+
+        // A revoke reports the previous cap.
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit LibNotificationFee.NotificationFeeConsentSet(alice, 2e18, 0);
+        vm.prank(alice);
+        ProfileFacet(address(diamond)).setNotificationFeeConsent(0);
+        (cap, covers) = ProfileFacet(address(diamond)).getNotificationFeeConsent(alice);
+        assertEq(cap, 0, "revoked");
+        assertFalse(covers, "no consent covers nothing");
+    }
+
+    function test_getNotificationFeeConsent_ReportsACapBelowTheCurrentFee() public {
+        ConfigFacet(address(diamond)).setNotificationFee(6e18);
+        (uint256 cap, bool covers) = ProfileFacet(address(diamond)).getNotificationFeeConsent(lender);
+        assertEq(cap, CONSENT_CAP, "cap as set");
+        assertFalse(covers, "5 VPFI does not cover a 6 VPFI fee");
+    }
+
+    function test_setNotificationFeeConsent_RefusesACapAboveTheCeiling() public {
+        uint256 ceiling = LibVaipakam.MAX_NOTIFICATION_FEE_CEIL;
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibNotificationFee.NotificationFeeConsentAboveCeiling.selector,
+                ceiling + 1,
+                ceiling
+            )
+        );
+        ProfileFacet(address(diamond)).setNotificationFeeConsent(ceiling + 1);
+
+        // The ceiling itself is accepted: consent to any fee governance can set.
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setNotificationFeeConsent(ceiling);
+    }
+
+    /// @dev Withdrawing consent stays possible while the protocol is paused.
+    function test_setNotificationFeeConsent_RevokeWorksWhilePaused() public {
+        AdminFacet(address(diamond)).pause();
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setNotificationFeeConsent(0);
+        (uint256 cap, ) = ProfileFacet(address(diamond)).getNotificationFeeConsent(lender);
+        assertEq(cap, 0, "revoked while paused");
     }
 }
