@@ -55,6 +55,29 @@ export const MAX_INTEREST_BPS = 10_000n;
 export const FAUCET_ILLIQUID_UNITS = 1_000n;
 
 /**
+ * offerSchema.ts OFFER_DURATION_BUCKETS_DAYS — the only lengths the form's
+ * duration menu offers (further filtered by the live maxOfferDurationDays).
+ * A length outside it has no menu row, so the drive could never select it.
+ * Mirrored because the drive runs in plain Node; `seedLoanExpected.test.mjs`
+ * pins it to the app's own constant.
+ */
+export const FORM_DURATION_BUCKETS_DAYS = Object.freeze([7, 14, 30, 60, 90, 180, 365]);
+
+/**
+ * format.ts `parseExactUnits`, mirrored for the same reason and pinned the
+ * same way: a typed decimal as base units WITHOUT rounding, or `'invalid'`
+ * / `'too-precise'` — the form refuses both, so a drive must refuse them
+ * before it writes anything rather than stall on a form that never enables.
+ */
+export function formExactUnits(value, decimals) {
+  const m = /^(\d*)(?:\.(\d*))?$/.exec(String(value).trim());
+  if (!m || (m[1] === '' && (m[2] ?? '') === '')) return 'invalid';
+  const frac = (m[2] ?? '').replace(/0+$/, '');
+  if (frac.length > decimals) return 'too-precise';
+  return BigInt((m[1] || '0') + frac.padEnd(decimals, '0'));
+}
+
+/**
  * `mint(to, amount)` on the faucet token, as Faucet.tsx `mintErc20` sends
  * it: to the connected wallet itself, `ILLIQUID_UNITS` whole tokens at the
  * token's decimals. Anything else — another recipient, another amount — is

@@ -16,9 +16,19 @@
 //
 // WHAT IT CHECKS (the lender is the `lender` role, or REFI_VIEWER_ROLE):
 //   preconditions (BLOCKED on a miss): the build matches the workers.dev
-//     deploy; the request exists, is open, is a refinance request
-//     (refinanceTargetLoanId > 0) posted by that loan's borrower; the loan
-//     is Active; the viewer is neither party.
+//     deploy; the RPC is Base Sepolia; the request exists, is open, is a
+//     refinance request (refinanceTargetLoanId > 0) posted by that loan's
+//     borrower; the loan is Active; the viewer is neither party; and the
+//     request can be TAKEN now, read the way the app reads it
+//     (refinanceRequestReview.ts: `checkRefinanceRequest`, then the loan's
+//     recorded request via `getRefinanceRequest`). A request the app would
+//     show as unavailable is not this review's subject, so it BLOCKS; a
+//     Diamond without those getters is the app's `unchecked` case, which the
+//     banner then says, and the drive proceeds on it.
+//   EVERYTHING THE PAGE IS JUDGED AGAINST — the fee and grace config (ONE
+//     snapshot, watchedConfig.mjs), the collateral's liquidity and the
+//     request's standing — is read before AND after the observation
+//     (observation.mjs): a change is a state race, BLOCKED, never a FAIL.
 //   1. NO RECEIPT BEFORE THE ANSWER — an observer installed before the
 //      first paint records every moment the funding receipt (`dl.receipt`)
 //      is in the page without the refinance banner beside it. Any such
@@ -36,7 +46,8 @@
 //      participants' nonces are where the preflight read them.
 //
 // Verdicts (THREE_VERDICT_DRIVERS): 0 PASS, 1 FAIL (a check above), 2
-// BLOCKED (a precondition). MANUAL-ONLY: it needs REFI_REQUEST_ID naming a
+// BLOCKED (a precondition, a state race around the observation, or no-write
+// evidence the RPC could not supply). MANUAL-ONLY: it needs REFI_REQUEST_ID naming a
 // standing refinance request, which no batch can supply.
 //
 // Run (from apps/app/e2e/live/):
@@ -48,6 +59,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { erc20Abi } from 'viem';
+import { observeAgainstChain } from './observation.mjs';
+import { nonceBaseline, reconcileNonce } from './noWriteSettlement.mjs';
+import { readWatchedConfig } from './watchedConfig.mjs';
 import {
   addressOf,
   blockedSync,
@@ -115,6 +129,45 @@ const read = (functionName, args = [], blockNumber) =>
 const token = (address, functionName, blockNumber) =>
   pub.readContract({ address, abi: erc20Abi, functionName, blockNumber });
 
+/** The app's missing-selector test (contracts/preflights.ts
+ *  `isMissingSelectorError`): a Diamond that does not route the getter. */
+const isMissingSelector = (e) =>
+  /function does not exist|functiondoesnotexist|functionnotfound|0xa9ad62f8/i.test(
+    [e?.data, e?.cause?.data, e?.shortMessage, e?.message].map((x) => (typeof x === 'string' ? x : JSON.stringify(x ?? ''))).join(' '),
+  );
+const revertName = (e) => {
+  const reverted = typeof e?.walk === 'function' ? e.walk((x) => x?.name === 'ContractFunctionRevertedError') : null;
+  return reverted ? (reverted.data?.errorName ?? reverted.reason ?? 'reverted') : null;
+};
+
+/**
+ * The request's standing, read the way the app reads it
+ * (refinanceRequestReview.ts `readStanding`): `checkRefinanceRequest`
+ * reverting is `blocked` (its error named), a Diamond without it is
+ * `unchecked`; then the loan's recorded request must be THIS one and live.
+ */
+async function readStanding(loanId, blockNumber) {
+  try {
+    await read('checkRefinanceRequest', [loanId, REQUEST_ID], blockNumber);
+  } catch (e) {
+    if (isMissingSelector(e)) return { kind: 'unchecked' };
+    const name = revertName(e);
+    if (name) return { kind: 'blocked', reason: name };
+    throw e;
+  }
+  let recorded;
+  try {
+    recorded = await read('getRefinanceRequest', [loanId], blockNumber);
+  } catch (e) {
+    if (isMissingSelector(e)) return { kind: 'unchecked' };
+    throw e;
+  }
+  const [recordedOfferId, live] = recorded;
+  if (BigInt(recordedOfferId) !== REQUEST_ID) return { kind: 'blocked', reason: `RefinanceRequestNotRecorded (the loan records #${recordedOfferId})` };
+  if (!live) return { kind: 'blocked', reason: 'RefinanceRequestNotLive' };
+  return { kind: 'takeable' };
+}
+
 const checks = [];
 function check(label, ok, observed) {
   checks.push({ label, ok: Boolean(ok) });
@@ -135,6 +188,22 @@ async function pollUntil(fn, { timeoutMs, everyMs = 1_000 }) {
   return null;
 }
 
+/**
+ * EVERYTHING the page is judged against, in one object, so the race rule
+ * (observation.mjs) compares all of it before and after the observation:
+ * the governance snapshot (fees, grace — watchedConfig.mjs), the
+ * collateral's liquidity (it decides the warning) and the request's
+ * standing (it decides the banner).
+ */
+async function judgedState(ctx, loanId, blockNumber) {
+  const [watched, collateralLiquidity, standing] = await Promise.all([
+    readWatchedConfig(read, ctx, blockNumber),
+    read('checkLiquidity', [ctx.collateralAsset], blockNumber),
+    readStanding(loanId, blockNumber),
+  ]);
+  return { ...watched, collateralLiquidity: Number(collateralLiquidity), standing };
+}
+
 // =====================================================================
 // 0. Preconditions — pinned to one block.
 // =====================================================================
@@ -151,6 +220,8 @@ try {
   const [site, ref] = await Promise.all([indexHash(SITE), indexHash(WORKERS_DEV_URL)]);
   console.log(`build  ${SITE} → ${site}\nbuild  ${WORKERS_DEV_URL} → ${ref}`);
   if (site !== ref) blocked(`${SITE} serves ${site} but the workers.dev deploy serves ${ref}`);
+  const chainId = await pub.getChainId();
+  if (chainId !== CHAIN_ID) blocked(`the RPC is chain ${chainId}, not ${CHAIN_ID} — no live Base Sepolia state would be reviewed`);
   const head = await pub.getBlockNumber();
   const req = await read('getOfferDetails', [REQUEST_ID], head);
   if (/^0x0{40}$/i.test(req.creator)) blocked(`request #${REQUEST_ID} does not exist (or was cancelled)`);
@@ -164,32 +235,37 @@ try {
   if (Number(loan.status) !== 0) blocked(`loan #${loanId} is not Active (status ${loan.status})`);
   if (!eq(loan.borrower, req.creator)) blocked(`request #${REQUEST_ID} was posted by ${req.creator}, not loan #${loanId}'s borrower ${loan.borrower}`);
   if (eq(VIEWER, loan.borrower) || eq(VIEWER, loan.lender)) blocked(`the viewer ${VIEWER} is a party to loan #${loanId}`);
-  const [pDec, pSym, cDec, cSym, fees, buckets, collLiq, nonceViewer, nonceBorrower] = await Promise.all([
+  const ctx = { principalAsset: req.lendingAsset, collateralAsset: req.collateralAsset };
+  const [pDec, pSym, cDec, cSym, baseline, viewerBase, borrowerBase] = await Promise.all([
     token(req.lendingAsset, 'decimals', head),
     token(req.lendingAsset, 'symbol', head),
     token(req.collateralAsset, 'decimals', head),
     token(req.collateralAsset, 'symbol', head),
-    read('getFeesConfig', [], head),
-    read('getGraceBuckets', [], head),
-    read('checkLiquidity', [req.collateralAsset], head),
-    pub.getTransactionCount({ address: VIEWER, blockNumber: head }),
-    pub.getTransactionCount({ address: loan.borrower, blockNumber: head }),
+    judgedState(ctx, loanId, head),
+    nonceBaseline(pub, VIEWER),
+    nonceBaseline(pub, loan.borrower),
   ]);
+  if (baseline.standing.kind === 'blocked') {
+    blocked(`request #${REQUEST_ID} cannot be taken now (${baseline.standing.reason}) — the app shows it as unavailable, with no receipt; it is not a fixture for this review`);
+  }
+  for (const [who, b] of [['viewer', viewerBase], ['borrower', borrowerBase]]) {
+    if (b.blocked) blocked(`no nonce baseline for the ${who}: ${b.blocked}`);
+  }
   pre = {
     head,
     req,
     loanId,
+    ctx,
+    baseline,
     borrower: loan.borrower,
     principal: { decimals: Number(pDec), symbol: pSym },
     collateral: { decimals: Number(cDec), symbol: cSym },
-    treasuryFeeBps: fees[0],
-    graceSeconds: graceSecondsFrom(buckets, req.durationDays),
-    illiquid: Number(collLiq) === 1,
-    nonces: { viewer: nonceViewer, borrower: nonceBorrower },
+    nonces: { viewer: viewerBase.nonce, borrower: borrowerBase.nonce },
   };
   console.log(
     `pre   @${head}: request #${REQUEST_ID} refinances loan #${loanId} (Active), carry-over ${req.refinanceCarryOver}, ` +
-      `collateral ${pre.illiquid ? 'Illiquid' : 'Liquid'}, created by the loan's borrower ${loan.borrower}`,
+      `standing ${baseline.standing.kind}, collateral ${baseline.collateralLiquidity === 1 ? 'Illiquid' : 'Liquid'}, ` +
+      `created by the loan's borrower ${loan.borrower}`,
   );
 } catch (err) {
   blocked(`reading the preconditions failed: ${String(err?.shortMessage ?? err?.message ?? err).slice(0, 300)}`);
@@ -245,12 +321,37 @@ try {
       return !/preparing|checking/i.test(t.slice(Math.max(0, t.indexOf('Before you sign'))));
     }, { timeoutMs: 60_000 });
     await page.waitForTimeout(3_000);
-    const reviewText = squash(await page.locator('main').innerText().catch(() => page.locator('body').innerText()));
+    // RULE 1 (observation.mjs): the page is read BETWEEN two reads of
+    // everything it is judged against; a change around it — or against the
+    // preflight — is a state race, BLOCKED, never a FAIL.
+    const result = await observeAgainstChain({
+      baseline: pre.baseline,
+      readConfig: () => judgedState(pre.ctx, pre.loanId),
+      observe: async () => ({
+        reviewText: squash(await page.locator('main').innerText().catch(() => page.locator('body').innerText())),
+        order: await page.evaluate(() => window.__refiReceiptOrder),
+        bannerText: (await page.locator('[data-testid="refinance-request-banner"]').count())
+          ? squash(await page.locator('[data-testid="refinance-request-banner"]').first().innerText())
+          : '',
+        rows: await page.locator('main dl.receipt .receipt-row').evaluateAll((els) =>
+          els.map((r) => ({ label: r.querySelector('dt')?.textContent ?? '', value: r.querySelector('dd')?.textContent ?? '' })),
+        ),
+      }),
+    });
+    if (result.state !== 'stable') {
+      await session.done().catch(() => {});
+      blocked(
+        result.state === 'race'
+          ? `what the review is judged against moved around the observation (${result.changes.join('; ')}) — a state race, not a product defect; rerun once it is stable`
+          : `what the review is judged against could not be read around the observation (${result.error})`,
+      );
+    }
+    const config = result.config;
+    const { reviewText, order, bannerText, rows } = result.observed;
     console.log(`\n--- lender review (as rendered, never consented) ---\n${reviewText.slice(0, 4000)}\n---`);
     await session.shot('refi-review-01');
 
     // 1. No receipt before the refinance answer.
-    const order = await page.evaluate(() => window.__refiReceiptOrder);
     check(
       'no funding receipt is ever shown without the refinance banner (observed from the first paint)',
       order.receiptSeen > 0 && order.receiptWithoutBanner === 0,
@@ -258,26 +359,25 @@ try {
         (order.firstViolation ? `; first: ${order.firstViolation}` : ''),
     );
 
-    // 2. The banner names the loan.
-    const banner = page.locator('[data-testid="refinance-request-banner"]');
-    const bannerText = (await banner.count()) ? squash(await banner.first().innerText()) : '';
+    // 2. The banner names the loan — and, on a Diamond without the standing
+    // getters, says it could not check the request (the app's `unchecked`).
     const wantBanner = squash(EN.match.refinanceRequestBanner.split('{{loanId}}').join(String(pre.loanId)));
-    check(`the refinance banner names loan #${pre.loanId} (copy.match.refinanceRequestBanner)`, bannerText.startsWith(wantBanner), bannerText || '(no banner)');
-    if (bannerText.length > wantBanner.length) {
-      console.log(`info  banner carries more after the template: "${bannerText.slice(wantBanner.length).trim()}"`);
-    }
-
-    // 3. The receipt, figure by figure, carry-over line included.
-    const rows = await page.locator('main dl.receipt .receipt-row').evaluateAll((els) =>
-      els.map((r) => ({ label: r.querySelector('dt')?.textContent ?? '', value: r.querySelector('dd')?.textContent ?? '' })),
+    const wantFull = config.standing.kind === 'unchecked' ? squash(`${wantBanner} ${EN.match.refinanceRequestUnchecked}`) : wantBanner;
+    check(
+      `the refinance banner names loan #${pre.loanId} (copy.match.refinanceRequestBanner${config.standing.kind === 'unchecked' ? ' + refinanceRequestUnchecked' : ''})`,
+      bannerText === wantFull,
+      bannerText || '(no banner)',
     );
+
+    // 3. The receipt, figure by figure and EXACTLY (reviewTerms.mjs), the
+    // carry-over line included — against the config read around it.
     const terms = compareLenderReceipt(rows, {
       en: EN,
       req: pre.req,
       principal: pre.principal,
       collateral: pre.collateral,
-      treasuryFeeBps: pre.treasuryFeeBps,
-      graceSeconds: pre.graceSeconds,
+      treasuryFeeBps: config.treasuryFeeBps,
+      graceSeconds: graceSecondsFrom(config.graceBuckets, pre.req.durationDays),
     });
     check(
       `the receipt matches the request on chain (${terms.compared.join(', ')})`,
@@ -293,8 +393,8 @@ try {
       squash(youCanLose) || '(no row)',
     );
 
-    // 4. The illiquid disclosure.
-    if (pre.illiquid) {
+    // 4. The illiquid disclosure, when the chain classifies the collateral so.
+    if (config.collateralLiquidity === 1) {
       check('the review carries the illiquid warning (copy.match.illiquidWarning)', reviewText.includes(squash(EN.match.illiquidWarning)));
     }
   }
@@ -307,11 +407,15 @@ try {
 // 5. Nothing was written.
 const signing = (session.blockedRequests ?? []).filter((r) => /sign|send|wallet rpc/i.test(r.reason));
 check('no signing or sending request reached the read-only wallet', signing.length === 0, signing.map((r) => r.reason).join('; ') || 'none');
-const [nv, nb] = await Promise.all([
-  pub.getTransactionCount({ address: VIEWER }),
-  pub.getTransactionCount({ address: pre.borrower }),
-]);
-check('neither participant’s nonce moved', nv === pre.nonces.viewer && nb === pre.nonces.borrower, `viewer ${pre.nonces.viewer}→${nv}, borrower ${pre.nonces.borrower}→${nb}`);
+// Both tags against the both-tag baseline (noWriteSettlement.mjs). A read
+// that fails, or a node view that moved backwards, cannot show "nothing
+// written": that is said, and the run ends BLOCKED rather than PASS or FAIL.
+let nonceEvidence = null;
+for (const [who, address] of [['viewer', VIEWER], ['borrower', pre.borrower]]) {
+  const r = await reconcileNonce(pub, address, pre.nonces[who]);
+  if (r.kind === 'unknown') nonceEvidence ??= `${who}: ${r.why}`;
+  else check(`the ${who}’s nonce did not move`, r.kind === 'unchanged', r.kind === 'unchanged' ? `${pre.nonces[who]}` : `${r.from} → ${r.to}`);
+}
 if ((session.blockedRequests ?? []).length) {
   console.log(`info  read-only session refused ${session.blockedRequests.length} page request(s): ${session.blockedRequests.map((r) => r.reason).slice(0, 8).join('; ')}`);
 }
@@ -319,5 +423,10 @@ if ((session.blockedRequests ?? []).length) {
 const failed = checks.filter((c) => !c.ok);
 console.log(`\n=== ${checks.length - failed.length}/${checks.length} checks passed ===`);
 for (const c of failed) console.log(`FAILED: ${c.label}`);
-console.log(failed.length ? '\nOUTCOME: FAIL' : '\nOUTCOME: PASS');
-process.exit(failed.length ? 1 : 0);
+if (failed.length) {
+  console.log('\nOUTCOME: FAIL');
+  process.exit(1);
+}
+if (nonceEvidence) blocked(`every review check passed, but the no-write evidence could not be read (${nonceEvidence})`);
+console.log('\nOUTCOME: PASS');
+process.exit(0);

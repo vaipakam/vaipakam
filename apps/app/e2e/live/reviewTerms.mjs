@@ -16,10 +16,12 @@
  *     it (`templateRegex`): the literal text must match exactly, and each
  *     `{{placeholder}}` is captured. A row that does not fit its template is
  *     UNPARSEABLE — a failure, not a skip.
- *   - Captured values are compared with the chain at the precision the app
- *     displays: an amount is the token's own symbol plus a number that must
- *     equal the true value as `formatTokenAmount` would round it (four
- *     significant digits below one, four decimals above); a percent is
+ *   - Captured values are compared with the chain: an amount is the
+ *     token's own symbol plus a number that must equal the on-chain amount
+ *     EXACTLY, in base units — since #2537 every receipt amount is rendered
+ *     by `formatTokenAmountExact` (en-US grouping, every significant
+ *     decimal), so a nearby-but-different figure is a mismatch, never a
+ *     rounding allowance; a percent is
  *     `formatBpsAsPercent`'s two-decimal figure; a length is parsed back
  *     through the en.json unit words and compared in days; a grace window is
  *     compared as the exact label `formatGraceSeconds` renders for the
@@ -71,25 +73,41 @@ export function matchTemplate(template, text, opts) {
 
 export const squash = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 
-/** "0.005 WETH" / "1,234.5 USDC" → { num, symbol }; null if not that shape. */
+/** "0.005 WETH" / "1,234.5 USDC" → { text, symbol } with `text` the number
+ *  as rendered (grouping removed, never converted through a float); null if
+ *  not that shape. An approximation mark (`~`) is not that shape: an exact
+ *  receipt never carries one. */
 export function parseAmount(s) {
-  const m = /^~?\s*([\d,]+(?:\.\d+)?)\s+(\S+)$/.exec(squash(s));
+  const m = /^(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d+))?\s+(\S+)$/.exec(squash(s));
   if (!m) return null;
-  return { num: Number(m[1].replace(/,/g, '')), symbol: m[2] };
+  return { text: m[2] === undefined ? m[1].replace(/,/g, '') : `${m[1].replace(/,/g, '')}.${m[2]}`, symbol: m[3] };
 }
 
 /**
- * Does a displayed number equal the raw on-chain amount AT DISPLAY
- * PRECISION? Mirrors `formatTokenAmount`'s rounding rule without copying
- * its code: below one, four significant digits; otherwise four decimals.
+ * The displayed decimal as base units, EXACTLY: null when it carries more
+ * significant decimals than the token has (it cannot be any on-chain
+ * amount) or is not a plain decimal.
  */
-export function amountMatches(displayed, raw, decimals) {
-  if (typeof displayed !== 'number' || !Number.isFinite(displayed)) return false;
-  const truth = Number(raw) / 10 ** decimals;
-  if (truth === 0) return displayed === 0;
-  const halfStep =
-    Math.abs(truth) < 1 ? 0.5 * 10 ** (Math.floor(Math.log10(Math.abs(truth))) - 3) : 0.5e-4;
-  return Math.abs(displayed - truth) <= halfStep * (1 + 1e-9);
+export function exactUnits(text, decimals) {
+  const m = /^(\d+)(?:\.(\d+))?$/.exec(String(text ?? ''));
+  if (!m) return null;
+  const frac = (m[2] ?? '').replace(/0+$/, '');
+  if (frac.length > decimals) return null;
+  return BigInt(m[1] + frac.padEnd(decimals, '0'));
+}
+
+/** Does the displayed decimal equal the raw on-chain amount exactly? */
+export function amountMatches(displayedText, raw, decimals) {
+  const units = exactUnits(displayedText, decimals);
+  return units !== null && units === BigInt(raw);
+}
+
+/** The raw amount as the exact decimal it should render as (for reports). */
+function exactText(raw, decimals) {
+  const s = BigInt(raw).toString().padStart(decimals + 1, '0');
+  const int = s.slice(0, s.length - decimals);
+  const frac = s.slice(s.length - decimals).replace(/0+$/, '');
+  return frac ? `${int}.${frac}` : int;
 }
 
 /** "2%" / "0.2%" → bps as a Number (two decimals of percent, as displayed). */
@@ -214,8 +232,8 @@ function comparer(rows, en) {
   const amount = (label, shown, raw, decimals, symbol) => {
     compared.push(label);
     const p = parseAmount(shown ?? '');
-    const truth = `${Number(raw) / 10 ** decimals} ${symbol}`;
-    L.want(label, p !== null && p.symbol === symbol && amountMatches(p.num, raw, decimals), shown, truth);
+    const truth = `${exactText(raw, decimals)} ${symbol}`;
+    L.want(label, p !== null && p.symbol === symbol && amountMatches(p.text, raw, decimals), shown, truth);
   };
   const percent = (label, shown, bps) => {
     compared.push(label);

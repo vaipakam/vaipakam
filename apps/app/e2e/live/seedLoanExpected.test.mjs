@@ -11,12 +11,15 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { encodeFunctionData, erc20Abi, parseUnits } from 'viem';
 
-import { initialOfferForm, toCreateOfferPayload } from '../../src/lib/offerSchema';
+import { parseExactUnits } from '../../src/lib/format';
+import { initialOfferForm, OFFER_DURATION_BUCKETS_DAYS, toCreateOfferPayload } from '../../src/lib/offerSchema';
 import { structMismatches } from './expectedPayload.mjs';
 import { acceptTermsTypes, decodeTxForComparison, ZERO_HASH } from './refinanceExpected.mjs';
 import {
   expectedFaucetMintCall,
   expectedRequestAcceptTerms,
+  FORM_DURATION_BUCKETS_DAYS,
+  formExactUnits,
   requestParams,
   requestRecordMismatches,
   seedPlanSteps,
@@ -112,6 +115,32 @@ describe('seedLoanExpected — the borrow request is the app’s own payload', (
     const fn = ABI.find((e) => e.type === 'function' && e.name === 'createOffer');
     const fields = fn.inputs[0].components.map((c) => c.name).sort();
     expect(Object.keys(requestParams(INTENT)).sort()).toEqual(fields);
+  });
+});
+
+describe('seedLoanExpected — the form\u2019s own input rules, mirrored and pinned', () => {
+  it('offers exactly the app\u2019s duration buckets', () => {
+    expect([...FORM_DURATION_BUCKETS_DAYS]).toEqual([...OFFER_DURATION_BUCKETS_DAYS]);
+  });
+
+  it('parses amounts exactly as the app does, refusal for refusal', () => {
+    for (const [v, d] of [
+      ['0.0001', 18],
+      ['100', 18],
+      ['1.000000000000000001', 18],
+      ['1.0000000000000000001', 18],
+      ['0.1234567', 6],
+      ['0.1200000', 6],
+      ['.5', 18],
+      ['5.', 18],
+      ['', 18],
+      ['.', 18],
+      ['1e3', 18],
+      ['-1', 18],
+      ['0', 18],
+    ]) {
+      expect(formExactUnits(v, d), `${v} @ ${d}`).toEqual(parseExactUnits(v, d));
+    }
   });
 });
 

@@ -675,6 +675,20 @@ export function addressOf(role) {
 }
 
 /**
+ * A role's address when the wallet file carries a usable credential for it,
+ * else null — never an exit. For a drive that only READS about a role it does
+ * not sign as (the seeder notes whether the role that will later fund the
+ * refinance can afford it), where `addressOf` would BLOCK a run that does not
+ * need that role at all. Same validation as `walletFor`, so there is no
+ * second rule; a wallet file that cannot be loaded still exits, as it does
+ * for every role.
+ */
+export function optionalAddressOf(role) {
+  const r = validateWalletEntry(loadWallets(), role);
+  return r.ok ? r.wallet.address : null;
+}
+
+/**
  * Assert a signing driver's credential UP FRONT.
  *
  * Loading the wallet file lazily (so keyless drives can import this

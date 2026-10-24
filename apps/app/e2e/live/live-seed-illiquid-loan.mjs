@@ -58,11 +58,18 @@
 //   (C) THE GATE LIVES IN THE WALLET (`launch({ signingGate,
 //       pinnedChainId: 84532 })`), so no page-side wrapper can be skipped
 //       and no chain switch can move a signature to another network.
-//   (D) PERMIT2 IS OUT OF PLAN. The app routes an accept or post through a
+//   (D) PERMIT2 IS OUT OF PLAN. The app routes the borrower's POST through a
 //       Permit2 signature when the wallet already holds a covering Permit2
-//       approval and no Diamond allowance. The plan carries the classic
-//       approve path only, so a wallet with such an approval is BLOCKED
-//       before anything is written rather than refused mid-drive.
+//       approval and no Diamond allowance (a lender funding a BORROW request
+//       never takes that path — OfferFlow offers it for lender offers only).
+//       The plan carries the classic approve path only, so a borrower with
+//       such an approval is BLOCKED before anything is written.
+//   (E) CONFIG HELD STILL. Governance values and both participants'
+//       sanctions screening come from ONE snapshot (watchedConfig.mjs), read
+//       at the pinned preflight block and re-read immediately before each
+//       role is armed: a change is a state race — BLOCKED before any write,
+//       a stop (UNDETERMINED) after one. The same rule as the refinance
+//       drive's, from the same module.
 //
 // Verdicts (the FOUR-verdict contract — FOUR_VERDICT_DRIVERS):
 //   0 PASS     — the loan is open and every outcome check passed; the
@@ -98,9 +105,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { decodeEventLog, erc20Abi, formatUnits, parseUnits } from 'viem';
+import { decodeEventLog, erc20Abi, formatUnits, parseAbi } from 'viem';
 import {
   addressOf,
+  optionalAddressOf,
   blockedSync,
   chooseMenuValue,
   CHAINS,
@@ -114,8 +122,17 @@ import {
 } from './driver.mjs';
 import { redactUrl } from './redact.mjs';
 import { decodeTxForComparison } from './refinanceExpected.mjs';
-import { requestRecordMismatches, seedPlanSteps } from './seedLoanExpected.mjs';
+import {
+  FAUCET_ILLIQUID_UNITS,
+  FORM_DURATION_BUCKETS_DAYS,
+  formExactUnits,
+  requestRecordMismatches,
+  seedPlanSteps,
+} from './seedLoanExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
+import { readWatchedConfig } from './watchedConfig.mjs';
+import { configChanges } from './observation.mjs';
+import { nonceBaseline, reconcileNonce } from './noWriteSettlement.mjs';
 
 // ---------------------------------------------------------------------
 // Output hygiene FIRST: the RPC URL may carry a provider key, and viem
@@ -144,12 +161,6 @@ for (const k of ['log', 'error', 'warn']) {
 
 requireSiteUrl();
 const LENDER_ROLE = process.env.SEED_LENDER_ROLE ?? 'newLender';
-if (LENDER_ROLE === 'lender' || LENDER_ROLE === 'borrower') {
-  blockedSync(
-    `SEED_LENDER_ROLE=${LENDER_ROLE} would not seed a refinance fixture: live-refinance.mjs needs a loan ` +
-      'whose borrower is the `borrower` role and whose lender is NOT the `lender` role (that role funds the refinance).',
-  );
-}
 requireSigningRole('borrower');
 requireSigningRole(LENDER_ROLE);
 
@@ -167,21 +178,33 @@ const MIN_GAS_WEI = 10n ** 15n;
 const LIQUIDITY_ILLIQUID = 1;
 const LOAN_ACTIVE = 0;
 
+// The inputs are held to the FORM's own rules before anything is read or
+// written (#2695 r1): a value the form would refuse — a length with no menu
+// row, a zero or over-precise amount — would otherwise pass the preflight
+// and stall the drive at a form that never enables, possibly after the
+// faucet mint. The amount rule is applied once the token decimals are read.
 const PRINCIPAL_RAW = process.env.SEED_PRINCIPAL ?? '0.0001';
 const COLLATERAL_RAW = process.env.SEED_COLLATERAL ?? '100';
 const RATE_PCT = process.env.SEED_RATE_PCT ?? '10';
 const DAYS_RAW = process.env.SEED_DAYS ?? '30';
-const DECIMAL_RE = /^\d+(\.\d+)?$/;
-if (![PRINCIPAL_RAW, COLLATERAL_RAW].every((v) => DECIMAL_RE.test(v)) || !/^\d+(\.\d{1,2})?$/.test(RATE_PCT) || !/^\d+$/.test(DAYS_RAW)) {
-  blockedSync(
-    `SEED_PRINCIPAL / SEED_COLLATERAL / SEED_RATE_PCT / SEED_DAYS are not numbers: ` +
-      `${PRINCIPAL_RAW} / ${COLLATERAL_RAW} / ${RATE_PCT} / ${DAYS_RAW}`,
-  );
+if (!/^\d+(\.\d{1,2})?$/.test(RATE_PCT) || !/^\d+$/.test(DAYS_RAW)) {
+  blockedSync(`SEED_RATE_PCT / SEED_DAYS are not numbers: ${RATE_PCT} / ${DAYS_RAW}`);
 }
 const RATE_BPS = BigInt(Math.round(Number(RATE_PCT) * 100));
 const DAYS = BigInt(DAYS_RAW);
 if (RATE_BPS <= 0n || RATE_BPS > 10_000n) blockedSync(`SEED_RATE_PCT must be above 0 and at most 100; got ${RATE_PCT}`);
-if (DAYS < 1n) blockedSync(`SEED_DAYS must be at least 1; got ${DAYS_RAW}`);
+if (!FORM_DURATION_BUCKETS_DAYS.includes(Number(DAYS))) {
+  blockedSync(`SEED_DAYS must be one of the form's lengths (${FORM_DURATION_BUCKETS_DAYS.join(', ')}); got ${DAYS_RAW}`);
+}
+/** The form's amount rule (format.ts parseExactUnits): positive and no finer
+ *  than the token — else BLOCKED before anything is written. */
+function formAmount(name, raw, decimals) {
+  const v = formExactUnits(raw, decimals);
+  if (v === 'invalid') blockedSync(`${name}=${raw} is not a decimal amount the form accepts`);
+  if (v === 'too-precise') blockedSync(`${name}=${raw} has more decimals than the token's ${decimals}; the form refuses it`);
+  if (v <= 0n) blockedSync(`${name} must be above zero; got ${raw}`);
+  return v;
+}
 
 const eq = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 const squash = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
@@ -239,16 +262,38 @@ const FAUCET_ABI = [
 const { pub } = clientsFor(CHAIN_ID);
 const BORROWER = addressOf('borrower');
 const LENDER = addressOf(LENDER_ROLE);
-/** The wallet that will FUND the refinance later — only its balance is read. */
-let REFI_LENDER = null;
-try {
-  REFI_LENDER = addressOf('lender');
-} catch {
-  /* not in the wallet file — the note below says so */
+/** The wallet that will FUND the refinance later — only read about, never
+ *  signed for, so its absence is a note, not an exit. */
+const REFI_LENDER = optionalAddressOf('lender');
+// The fixture's parties are distinct WALLETS, not distinct role names
+// (#2695 r1): a SEED_LENDER_ROLE whose key resolves to the borrower would
+// escrow the collateral and then fail the accept; one resolving to the
+// `lender` role would open a loan the refinance drive cannot use.
+if (eq(LENDER, BORROWER)) {
+  blockedSync(`SEED_LENDER_ROLE=${LENDER_ROLE} resolves to the borrower's address ${BORROWER}; the fixture needs a different lender`);
 }
+if (REFI_LENDER && eq(LENDER, REFI_LENDER)) {
+  blockedSync(
+    `SEED_LENDER_ROLE=${LENDER_ROLE} resolves to the \`lender\` role's address ${REFI_LENDER} — ` +
+      'live-refinance.mjs needs a loan whose lender is NOT that role (it funds the refinance)',
+  );
+}
+/** The oracle interface the Diamond calls (ISanctionsList), asked directly
+ *  so an unavailable oracle is seen as such (watchedConfig.mjs). */
+const SANCTIONS_LIST_ABI = parseAbi(['function isSanctioned(address addr) view returns (bool)']);
+const WATCHED_CTX = {
+  principalAsset: WETH,
+  collateralAsset: TILQ,
+  participants: { borrower: BORROWER, lender: LENDER },
+  readOracle: (oracle, who, blockNumber) =>
+    pub.readContract({ address: oracle, abi: SANCTIONS_LIST_ABI, functionName: 'isSanctioned', args: [who], ...(blockNumber !== undefined ? { blockNumber } : {}) }),
+};
 
 const read = (functionName, args = [], blockNumber) =>
   pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName, args, ...(blockNumber !== undefined ? { blockNumber } : {}) });
+/** THE governance snapshot (watchedConfig.mjs) — the only way this drive
+ *  reads config or screens a participant. */
+const readConfig = (blockNumber) => readWatchedConfig(read, WATCHED_CTX, blockNumber);
 const tokenRead = (address, functionName, args = [], blockNumber) =>
   pub.readContract({ address, abi: erc20Abi, functionName, args, ...(blockNumber !== undefined ? { blockNumber } : {}) });
 const chainNow = async () => (await pub.getBlock({ blockTag: 'latest' })).timestamp;
@@ -339,61 +384,43 @@ try {
     tokenRead(TILQ, 'decimals', [], head),
     tokenRead(TILQ, 'symbol', [], head),
   ]);
-  const principal = parseUnits(PRINCIPAL_RAW, Number(pDec));
-  const collateralAmount = parseUnits(COLLATERAL_RAW, Number(cDec));
-  const [
-    pLiq,
-    cLiq,
-    paused,
-    pPaused,
-    cPaused,
-    riskGate,
-    cfgBundle,
-    riskTermsHash,
-    sancB,
-    sancL,
-    tosB,
-    tosL,
-  ] = await Promise.all([
+  const principal = formAmount('SEED_PRINCIPAL', PRINCIPAL_RAW, Number(pDec));
+  const collateralAmount = formAmount('SEED_COLLATERAL', COLLATERAL_RAW, Number(cDec));
+  // Governance values and both participants' screening: ONE snapshot.
+  const watched = await readConfig(head);
+  const [pLiq, cLiq, tosB, tosL] = await Promise.all([
     read('checkLiquidity', [WETH], head),
     read('checkLiquidity', [TILQ], head),
-    read('paused', [], head),
-    read('isAssetPaused', [WETH], head),
-    read('isAssetPaused', [TILQ], head),
-    read('getRiskAccessGateEnabled', [], head),
-    read('getProtocolConfigBundle', [], head),
-    read('getCurrentRiskTermsHash', [], head),
-    read('isSanctionedAddress', [BORROWER], head),
-    read('isSanctionedAddress', [LENDER], head),
     read('hasAcceptedCurrentTerms', [BORROWER], head),
     read('hasAcceptedCurrentTerms', [LENDER], head),
   ]);
-  const [bEth, lEth, bTilq, lWeth, bTilqDiamond, bTilqPermit2, lWethDiamond, lWethPermit2, bNonce, lNonce] =
-    await Promise.all([
-      pub.getBalance({ address: BORROWER, blockNumber: head }),
-      pub.getBalance({ address: LENDER, blockNumber: head }),
-      tokenRead(TILQ, 'balanceOf', [BORROWER], head),
-      tokenRead(WETH, 'balanceOf', [LENDER], head),
-      tokenRead(TILQ, 'allowance', [BORROWER, DIAMOND], head),
-      tokenRead(TILQ, 'allowance', [BORROWER, PERMIT2], head),
-      tokenRead(WETH, 'allowance', [LENDER, DIAMOND], head),
-      tokenRead(WETH, 'allowance', [LENDER, PERMIT2], head),
-      pub.getTransactionCount({ address: BORROWER, blockNumber: head }),
-      pub.getTransactionCount({ address: LENDER, blockNumber: head }),
-    ]);
+  const [bEth, lEth, bTilq, lWeth, bTilqDiamond, bTilqPermit2, lWethDiamond] = await Promise.all([
+    pub.getBalance({ address: BORROWER, blockNumber: head }),
+    pub.getBalance({ address: LENDER, blockNumber: head }),
+    tokenRead(TILQ, 'balanceOf', [BORROWER], head),
+    tokenRead(WETH, 'balanceOf', [LENDER], head),
+    tokenRead(TILQ, 'allowance', [BORROWER, DIAMOND], head),
+    tokenRead(TILQ, 'allowance', [BORROWER, PERMIT2], head),
+    tokenRead(WETH, 'allowance', [LENDER, DIAMOND], head),
+  ]);
+  // The nonce baselines, read at BOTH tags (noWriteSettlement.mjs): a wallet
+  // with a transaction already pending gives no baseline, since that send
+  // could mine during the drive and read as one the gate never allowed.
+  const [bBase, lBase] = await Promise.all([nonceBaseline(pub, BORROWER), nonceBaseline(pub, LENDER)]);
   const refiLenderWeth = REFI_LENDER ? await tokenRead(WETH, 'balanceOf', [REFI_LENDER], head) : null;
+  const faucetUnit = FAUCET_ILLIQUID_UNITS * 10n ** BigInt(cDec);
   pre = {
     head,
+    watched,
     pDec: Number(pDec),
     cDec: Number(cDec),
     cSym,
     principal,
     collateralAmount,
-    riskTermsHash,
-    maxDays: BigInt(cfgBundle[14]),
+    riskTermsHash: watched.riskTermsHash,
     needsMint: bTilq < collateralAmount,
     allowances: { bTilqDiamond, lWethDiamond },
-    nonces: { borrower: bNonce, lender: lNonce },
+    nonces: { borrower: bBase.nonce, lender: lBase.nonce },
     refiLenderWeth,
   };
   const want = (label, ok, observed) => {
@@ -402,25 +429,45 @@ try {
   };
   want(`principal asset WETH ${WETH} classified Liquid`, Number(pLiq) === 0, `checkLiquidity = ${pLiq}`);
   want(`collateral ${cSym} ${TILQ} classified ILLIQUID — the fixture's point`, Number(cLiq) === LIQUIDITY_ILLIQUID, `checkLiquidity = ${cLiq}`);
-  want('protocol not paused', paused === false, paused);
-  want('neither asset paused (isAssetPaused — an operator posture)', pPaused === false && cPaused === false, `${pPaused} / ${cPaused}`);
-  want('risk-access gate disabled (no tier / pair-consent setup in the plan)', riskGate === false, riskGate);
-  want(`SEED_DAYS (${DAYS}) within the live maxOfferDurationDays`, DAYS <= pre.maxDays, `${pre.maxDays}`);
-  want('neither wallet flagged by the Diamond’s sanctions screen', sancB === false && sancL === false, `${sancB} / ${sancL}`);
+  want('protocol not paused', watched.paused === false, watched.paused);
+  want(
+    'neither asset paused (isAssetPaused — an operator posture)',
+    watched.principalPaused === false && watched.collateralPaused === false,
+    `${watched.principalPaused} / ${watched.collateralPaused}`,
+  );
+  want('risk-access gate disabled (no tier / pair-consent setup in the plan)', watched.riskAccessGate === false, watched.riskAccessGate);
+  const maxDays = BigInt(watched.maxOfferDurationDays);
+  want(`SEED_DAYS (${DAYS}) within the live maxOfferDurationDays (the menu hides longer lengths)`, DAYS <= maxDays, `${maxDays}`);
+  // TRI-STATE screening (watchedConfig.mjs): a flagged participant and an
+  // oracle that did not answer both BLOCK; an unset oracle screened nobody,
+  // which is said, never read as "clean".
+  for (const label of ['borrower', 'lender']) {
+    const sc = watched[`screen:${label}`];
+    want(`${label} sanctions screen is neither flagged nor unavailable`, sc.state === 'clean' || sc.state === 'unset', sc.state);
+    if (sc.state === 'unset') note(`no sanctions oracle is configured, so the ${label} was screened by nobody (stated, not "clean")`);
+  }
   want('both wallets accepted the current Terms (a Terms step is not in the plan)', tosB === true && tosL === true, `${tosB} / ${tosL}`);
   want('borrower has gas', bEth >= MIN_GAS_WEI, `${formatUnits(bEth, 18)} ETH`);
   want('lender has gas', lEth >= MIN_GAS_WEI, `${formatUnits(lEth, 18)} ETH`);
   want(`lender holds the principal (${PRINCIPAL_RAW} WETH)`, lWeth >= principal, `${formatUnits(lWeth, pre.pDec)} WETH`);
-  // (D) — the app would take the Permit2 path, which is not in the plan.
+  // One faucet press is the only mint the plan allows: it must cover the
+  // shortfall, or the drive would mint and still be short.
+  want(
+    `the borrower's ${cSym} plus at most one faucet press covers the collateral`,
+    bTilq + (pre.needsMint ? faucetUnit : 0n) >= collateralAmount,
+    `holds ${formatUnits(bTilq, pre.cDec)}, one press mints ${FAUCET_ILLIQUID_UNITS}, needs ${COLLATERAL_RAW}`,
+  );
+  want('borrower nonce baseline (no transaction pending at startup)', !bBase.blocked, bBase.blocked ?? `nonce ${bBase.nonce}`);
+  want('lender nonce baseline (no transaction pending at startup)', !lBase.blocked, lBase.blocked ?? `nonce ${lBase.nonce}`);
+  // (D) — posting with zero Diamond allowance and a covering Permit2
+  // approval would route the app through a Permit2 signature, which the plan
+  // does not carry. The lender's accept of a BORROW request never takes the
+  // Permit2 path (OfferFlow: lender offers only), so only the borrower's leg
+  // is checked.
   want(
     'borrower holds no covering tILQ→Permit2 approval (the app would sign a Permit2 post instead)',
     !(bTilqDiamond === 0n && bTilqPermit2 >= collateralAmount),
     `Diamond ${bTilqDiamond}, Permit2 ${bTilqPermit2}`,
-  );
-  want(
-    'lender holds no covering WETH→Permit2 approval (the app would sign a Permit2 accept instead)',
-    !(lWethDiamond === 0n && lWethPermit2 >= principal),
-    `Diamond ${lWethDiamond}, Permit2 ${lWethPermit2}`,
   );
   console.log(
     `pre   borrower ${cSym}: ${formatUnits(bTilq, pre.cDec)} — ${pre.needsMint ? 'short of the collateral, so the plan presses the faucet once' : 'covers the collateral, no faucet step'}`,
@@ -433,11 +480,17 @@ try {
         'live-refinance.mjs would BLOCK on its balance; lower SEED_PRINCIPAL or fund that wallet',
     );
   }
+  // The initiation fee at the LIVE rate is the most the borrower can be
+  // charged; a VPFI hold-tier discount (resolved by the contract at accept,
+  // not read here) can only lower it. Both figures are stated as such.
+  const lifCap = (principal * BigInt(watched.lifBps)) / 10_000n;
   console.log(
     '\nFUNDS THIS RUN MOVES (Base Sepolia, testnet tokens):\n' +
-      (pre.needsMint ? `  - faucet mints 1000 ${cSym} to the borrower ${BORROWER}\n` : '') +
+      (pre.needsMint ? `  - faucet mints ${FAUCET_ILLIQUID_UNITS} ${cSym} to the borrower ${BORROWER}\n` : '') +
       `  - ${COLLATERAL_RAW} ${cSym} leave the borrower's wallet into its own vault, escrowed under the request\n` +
-      `  - at accept, ${PRINCIPAL_RAW} WETH leave the lender ${LENDER}; the loan-initiation fee is taken from it in WETH and the borrower receives the rest\n` +
+      `  - at accept, ${PRINCIPAL_RAW} WETH leave the lender ${LENDER}; the loan-initiation fee is taken from it in WETH: ` +
+      `at most ${formatUnits(lifCap, pre.pDec)} WETH (${Number(watched.lifBps) / 100}% live rate — lower if the borrower's VPFI hold tier discounts it, which the contract decides at accept), ` +
+      `so the borrower receives at least ${formatUnits(principal - lifCap, pre.pDec)} WETH\n` +
       `  - terms: ${RATE_PCT}% a year ceiling, ${DAYS} days, full-term interest (the form's default), collateral handed over in kind on default\n` +
       '  - gas from both wallets',
   );
@@ -559,6 +612,13 @@ async function seedProfile(ctx) {
   });
 }
 const sessions = { borrower: null, lender: null };
+/** Each session's wallet-level refusal log (driver.mjs `blockedRequests`),
+ *  kept by reference past the session's close: a refusal the wallet made
+ *  BEFORE the gate was asked — a switch to another chain, say — is a
+ *  safety stop even if the page recovered from it, so it halts the drive
+ *  and the run cannot PASS. */
+const walletLogs = { borrower: [], lender: [] };
+const walletRefusals = () => ['borrower', 'lender'].flatMap((r) => walletLogs[r].map((x) => `${r}: ${x.reason}`));
 async function closeSession(role) {
   const s = sessions[role];
   sessions[role] = null;
@@ -577,6 +637,7 @@ for (const [role, walletRole] of [['borrower', 'borrower'], ['lender', LENDER_RO
       pinnedChainId: CHAIN_ID,
       signingGate: signingGateFor(role),
     });
+    walletLogs[role] = sessions[role].blockedRequests;
     await seedProfile(sessions[role].ctx);
     await sessions[role].page.goto(SITE, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     const lang = await pollUntil('<html lang>', async () => (await sessions[role].page.evaluate(() => document.documentElement.lang || '')) || null, { timeoutMs: 30_000, everyMs: 1_000 });
@@ -591,6 +652,31 @@ for (const [role, walletRole] of [['borrower', 'borrower'], ['lender', LENDER_RO
 /** Arm `role`, click, and wait for `done` (a locator) or a submit error. */
 async function armedClick(role, page, button, done, label) {
   if (HALT) stop(`not ${label}: ${HALT}`);
+  if (walletRefusals().length) stop(`not ${label}: the wallet refused a request on its own (${walletRefusals().join('; ')})`);
+  // (E) — the config the plan and the reviews were built against must still
+  // hold at the moment the role is armed.
+  let now;
+  try {
+    now = await readConfig();
+  } catch (err) {
+    const why = `the governance snapshot could not be re-read before ${label} (${String(err?.shortMessage ?? err?.message).slice(0, 120)})`;
+    if (!anyAllowed()) {
+      await closeSession('borrower');
+      await closeSession('lender');
+      blockedNow(why);
+    }
+    stop(why);
+  }
+  const moved = configChanges(pre.watched, now);
+  if (moved.length) {
+    const why = `the chain config moved since the preflight (${moved.join('; ')}) — a state race, not a product defect`;
+    if (!anyAllowed()) {
+      await closeSession('borrower');
+      await closeSession('lender');
+      blockedNow(`${why}; rerun once it is stable`);
+    }
+    stop(`not ${label}: ${why}`);
+  }
   PLAN.arm(role);
   console.log(`info  write plan ARMED for the ${role}: ${label}`);
   await button.click();
@@ -604,6 +690,7 @@ async function armedClick(role, page, button, done, label) {
   PLAN.close();
   console.log(`info  write plan CLOSED after the ${role}: ${label}`);
   if (refusals.length) stop(`the ${role} page asked for a write the plan does not allow (${refusals.at(-1)})`);
+  if (walletRefusals().length) stop(`the wallet refused a request on its own during ${label} (${walletRefusals().join('; ')})`);
   if (HALT) stop(HALT);
   if (outcome !== 'done') stop(`${label} did not complete in the UI: ${outcome ?? 'timed out'}`);
 }
@@ -698,12 +785,15 @@ try {
   if (created.undecodable > 0 || oc.length !== 1 || !eq(oc[0].args.creator, BORROWER)) {
     stop(`the createOffer receipt carries ${oc.length} OfferCreated event(s) and ${created.undecodable} undecodable Diamond log(s)`);
   }
-  const stored = await read('getOfferDetails', [oc[0].args.offerId], create.receipt.blockNumber);
-  const mism = requestRecordMismatches(INTENT, stored, { borrower: BORROWER });
-  if (!check(`request #${oc[0].args.offerId} is stored exactly as posted, collateral classified Illiquid`, mism.length === 0, mism.join(' | ') || 'all terms match')) {
-    stop(`request #${oc[0].args.offerId} was stored other than posted`);
-  }
+  // The id is known from the receipt now — kept BEFORE the stored record is
+  // judged, so a stop below still reports the open request and its remedy.
+  // The lender's steps stay refused until REQUEST_STORED is set too.
   REQUEST_ID = oc[0].args.offerId;
+  const stored = await read('getOfferDetails', [REQUEST_ID], create.receipt.blockNumber);
+  const mism = requestRecordMismatches(INTENT, stored, { borrower: BORROWER });
+  if (!check(`request #${REQUEST_ID} is stored exactly as posted, collateral classified Illiquid`, mism.length === 0, mism.join(' | ') || 'all terms match')) {
+    stop(`request #${REQUEST_ID} was stored other than posted`);
+  }
   REQUEST_STORED = stored;
   console.log(`info  request #${REQUEST_ID} created at block ${create.receipt.blockNumber} (${create.step.record.hash})`);
   await closeSession('borrower');
@@ -797,28 +887,34 @@ console.log('\n=== write plan ===');
 for (const s of PLAN.steps()) {
   console.log(`  ${s.id.padEnd(16)} ${s.status.padEnd(9)} ${s.record.hash ? `${EXPLORER}/tx/${s.record.hash}` : (s.record.outcome ?? '')}`);
 }
-// The nonce is the record a lost hash cannot hide from.
+// The nonce is the record a lost hash cannot hide from — read at BOTH tags
+// against the both-tag baseline (noWriteSettlement.mjs `reconcileNonce`).
 let nonceEscape = false;
 let nonceUnknown = false;
 for (const [role, who] of [['borrower', BORROWER], ['lender', LENDER]]) {
   const allowed = PLAN.steps().filter((s) => s.role === role && s.kind === 'tx' && s.status === 'consumed').length;
-  try {
-    const [latest, pending] = await Promise.all([
-      pub.getTransactionCount({ address: who, blockTag: 'latest' }),
-      pub.getTransactionCount({ address: who, blockTag: 'pending' }),
-    ]);
-    const moved = latest - pre.nonces[role];
-    const ok = moved === allowed && pending === latest;
-    if (moved > allowed) nonceEscape = true;
-    if (!ok) nonceUnknown = true;
-    console.log(`nonce ${role}: ${allowed} send(s) allowed, ${moved} mined, ${pending - latest} pending${ok ? '' : ' — DOES NOT RECONCILE'}`);
-  } catch (e) {
+  const r = await reconcileNonce(pub, who, pre.nonces[role]);
+  if (r.kind === 'unknown') {
     nonceUnknown = true;
-    console.log(`nonce ${role}: unreadable (${String(e?.shortMessage ?? e?.message).slice(0, 120)})`);
+    console.log(`nonce ${role}: ${allowed} send(s) allowed — ${r.why}`);
+    continue;
   }
+  const sent = r.kind === 'unchanged' ? 0 : r.to - r.from;
+  if (sent > allowed) nonceEscape = true;
+  if (sent !== allowed) nonceUnknown = true;
+  console.log(`nonce ${role}: ${allowed} send(s) allowed, ${sent} counted${sent === allowed ? '' : ' — DOES NOT RECONCILE'}`);
 }
 const wrote = anyAllowed();
-if (wrote && LOAN_ID === null) {
+const failedNow = checks.filter((c) => !c.ok);
+const passing =
+  LOAN_ID !== null && failedNow.length === 0 && refusals.length === 0 && walletRefusals().length === 0 && !HALT && !nonceUnknown;
+if (walletRefusals().length) console.log(`\nwallet refusals: ${walletRefusals().join('; ')}`);
+if (wrote && !passing) {
+  if (LOAN_ID !== null) {
+    // Known from the accept receipt even when a later read failed: stated,
+    // with where to inspect it.
+    console.log(`\nloan ${LOAN_ID} WAS opened by this run's accept (from its receipt) — inspect it at ${EXPLORER}/address/${DIAMOND} or with getLoanDetails(${LOAN_ID}) before using it`);
+  }
   // What is standing, and how to unwind it — stated, never implied.
   console.log('\n=== standing state after the stop ===');
   try {
@@ -854,7 +950,7 @@ if (nonceEscape) {
   console.log('\nOUTCOME: FAIL — a wallet nonce moved beyond what the gate allowed');
   process.exit(1);
 }
-if (LOAN_ID !== null && failed.length === 0 && refusals.length === 0 && !HALT && !nonceUnknown) {
+if (passing) {
   console.log(`\nOUTCOME: PASS — loan ${LOAN_ID} is open and is the refinance fixture.`);
   console.log(`REFI_LOAN_ID=${LOAN_ID}`);
   console.log(`\nNext: SITE_URL=${SITE} REFI_LOAN_ID=${LOAN_ID} node live-refinance.mjs`);
