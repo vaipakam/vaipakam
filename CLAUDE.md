@@ -1811,6 +1811,19 @@ it fails the regression, so fix it by adding the subdir.
 the release-track `mainnet-gate.yml` inherit all of the above — including the
 exhaustiveness guard.
 
+**The release-track gate runs it SHARDED** (#2770). The script builds its chunk
+list (the plan) before running anything; `--shard i/N` runs every Nth chunk of
+it, so N parallel runners each carry a share and no compile unit grows, which
+is why sharding costs no memory. `mainnet-gate.yml` runs
+`predeploy-check.sh --full --shard i/N --manifest …` once per matrix entry, and
+its `mainnet-gate-full` job passes only when every shard succeeded **and**
+`run-regression.sh --verify-shards` accepts their manifests: one plan digest,
+shards 1..N once each, every chunk run once and passed. A green shard is not a
+green regression; do not read one as a deploy verdict. Local runs and
+`deploy-mainnet.sh` stay unsharded. `contracts/script/run-regression.test.sh`
+(stub forge, seconds) tests the plan and the verifier, and runs unconditionally
+in `ci.yml`.
+
 The principled cause-fix that keeps each unit small is to return **lean DTOs**
 from paginated / array views (the #603 `OfferSummary`/`LoanSummary` pattern) —
 never an array of a 40+-field struct, whose ABI coder inflates peak stack.

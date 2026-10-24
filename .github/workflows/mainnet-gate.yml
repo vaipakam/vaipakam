@@ -10,41 +10,28 @@
 # operator-local responsibility at end-of-step + mainnet preflight.
 #
 # This workflow is the release-track full-regression gate — it runs
-# `predeploy-check.sh --full` on the same `ubuntu-latest` runner,
-# under the default foundry profile, bit-identical to what
-# `deploy-mainnet.sh` invokes at preflight step [1b]. So a force-push
+# `predeploy-check.sh --full` on `ubuntu-latest` runners, under the
+# default foundry profile, as the preflight `deploy-mainnet.sh` invokes
+# at step [1b], sharded as described below. So a force-push
 # between PR merge and tag, or any drift between the operator's
 # local box and the artifact lineage being shipped, is caught
 # before deploy.
 #
-# Runner-ceiling caveat (per ADR-0011, 2026-05-27; revised #1620):
-# the ceiling problem is now addressed IN PRINCIPLE but still
-# UNMEASURED on a GitHub-hosted runner.
-#
-# What changed: `predeploy-check.sh --full` used to run a single
-# `forge test --match-path 'test/*.t.sol'` pass, whose peak RSS is the
-# ~17.7 GB figure that overruns the 16 GB `ubuntu-latest` ceiling. It
-# now DELEGATES to `run-regression.sh`, which splits the suite into
-# chunked `--match-path` invocations sized to stay under the viaIR
-# whole-unit stack ceiling. Peak RSS is therefore bounded by the
-# largest single chunk plus the cached `src/` compile, not by the
-# whole corpus at once — structurally a far better fit for a 16 GB
-# runner.
-#
-# What has NOT changed: nobody has measured it here. The narrow
-# `release/**` + `v*` trigger set means this workflow still has not
-# been exercised on the current corpus — no release-track refs exist
-# yet on this repo. Before the FIRST push to a `release/**` branch or
-# the first `v*` tag, the operator should still either:
-#   (a) confirm `predeploy-check.sh --full` fits on `ubuntu-latest`
-#       for that release commit's corpus (measure the chunked run with
-#       `/usr/bin/time -v bash script/run-regression.sh`), or
-#   (b) move this workflow to a self-hosted runner / a different
-#       scheduled path.
-# If a chunk does prove too large, `CHUNK_SIZE` / `SUBDIR_CHUNK_SIZE`
-# tune it down without touching this workflow. Discovering the OOM gap
-# at cutover would be expensive; documenting the gap here keeps the
-# operator's pre-cutover checklist honest.
+# Runner fit (#2714 / #2770): `predeploy-check.sh --full` delegates to
+# `run-regression.sh`, which splits the suite into chunked `--match-path`
+# invocations sized to stay under the viaIR whole-unit stack ceiling, so
+# peak memory is bounded by the largest chunk, not the whole corpus. What
+# did NOT fit was TIME: run as one job, the chunks are sequential and each
+# re-compiles the deploy script and facets (#2718), and a single
+# `ubuntu-latest` job was still running past three and a half hours on
+# 2026-10-24 (run 40055515200) against a 45-minute limit nobody had
+# measured. So the regression is SHARDED across a matrix of runners: each
+# runs the whole preflight with the regression cut to every Nth chunk
+# (`--shard i/N`), and `mainnet-gate-full` verifies the shards' manifests
+# cover every chunk once (`--verify-shards`). Memory per runner is
+# unchanged, since no chunk grows. If a chunk ever proves too large,
+# `CHUNK_SIZE` / `SUBDIR_CHUNK_SIZE` still tune it down; if a shard runs
+# long, add a matrix entry.
 #
 # This workflow is the safety net at the line that matters: before a
 # release-track commit hits any deployable branch / tag, the full
@@ -53,10 +40,11 @@
 #   - push to `release/*` branches (e.g. `release/v0.1.0`, `release/sepolia`)
 #   - push of a `v*` tag (the mainnet-deploy artifact lineage)
 #
-# Each trigger runs `bash contracts/script/predeploy-check.sh --full` —
-# bit-identical to what `deploy-mainnet.sh` invokes at preflight step [1b].
-# So a mainnet cutover that follows the release-train can't ship a state
-# the deploy script would reject.
+# Each trigger runs `bash contracts/script/predeploy-check.sh --full`, the
+# preflight `deploy-mainnet.sh` invokes at step [1b], split into shards whose
+# union is verified to be the whole regression. So a mainnet cutover that
+# follows the release-train can't ship a state the deploy script would
+# reject.
 #
 # Required-status-check enforcement: when a release/* branch is created
 # or a v* tag is pushed, this workflow runs. To gate merges INTO
@@ -93,12 +81,27 @@ permissions:
   contents: read
 
 jobs:
-  mainnet-gate-full:
-    name: mainnet-gate-full (forge + predeploy-check --full)
+  # The full regression, SHARDED across parallel runners (#2770). Each shard
+  # runs the complete preflight (`predeploy-check.sh --full`) with step 2
+  # restricted to its share of the regression's chunks, so every static check
+  # still runs on every shard, and every chunk's compile unit is the same size
+  # as in the unsharded run: a shard needs no more memory than before, it just
+  # carries a fraction of the chunks. The union is verified by the
+  # `mainnet-gate-full` job below, which is the check a ruleset should require.
+  #
+  # To change the shard count, edit `shard:` only; the count passed to the
+  # script is the matrix size (`strategy.job-total`), so the two cannot drift.
+  regression-shard:
+    name: mainnet-gate shard ${{ matrix.shard }}/${{ strategy.job-total }}
     runs-on: ubuntu-latest
-    # The full regression is the long pole; budget generously. Local
-    # cold runs hit ~10-15 min on CLAUDE.md's reference hardware.
-    timeout-minutes: 45
+    # Set from the measured per-chunk times (#2714); see the PR that set it.
+    timeout-minutes: 120
+    strategy:
+      # Every shard runs to completion even when one fails, so one red run
+      # names every failing chunk.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     defaults:
       run:
         working-directory: contracts
@@ -131,21 +134,78 @@ jobs:
           restore-keys: |
             forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-
 
-      # The actual hard gate. Identical invocation to what
-      # `deploy-mainnet.sh` runs at preflight step [1b], so CI agreement
-      # with the mainnet runbook is preserved at the boundary that
-      # matters.
-      - name: Pre-deploy check (full regression)
-        run: bash script/predeploy-check.sh --full
+      # The actual hard gate, one shard of it. The same invocation
+      # `deploy-mainnet.sh` runs at preflight step [1b], with the regression
+      # step cut to this shard's chunks. The manifest records what it ran.
+      - name: Pre-deploy check (full regression, shard ${{ matrix.shard }}/${{ strategy.job-total }})
+        run: |
+          mkdir -p "$RUNNER_TEMP/regression-manifest"
+          bash script/predeploy-check.sh --full \
+            --shard "${{ matrix.shard }}/${{ strategy.job-total }}" \
+            --manifest "$RUNNER_TEMP/regression-manifest/shard-${{ matrix.shard }}.tsv"
+
+      # Uploaded even when the shard failed, so the verifier can name the
+      # failing chunks rather than only a missing manifest.
+      - name: Upload this shard's manifest
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: regression-manifest-${{ matrix.shard }}
+          path: ${{ runner.temp }}/regression-manifest/shard-${{ matrix.shard }}.tsv
+          if-no-files-found: ignore
+          retention-days: 30
 
       # On v* tags, also print the resolved compiler version + facet
       # bytecode sizes for audit-trail capture in the workflow run log.
       # No code change, just observable evidence the build that gated
-      # the release matched the configured solc + size budget.
+      # the release matched the configured solc + size budget. Once, on
+      # shard 1. `--skip test`: the facets are in src/, and a bare
+      # `forge build` compiles the whole test tree (#636).
       - name: Audit trail — solc + facet sizes
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 1
         run: |
           forge --version
           echo
           echo "Facet runtime bytecode sizes (EIP-170 ceiling = 24576 bytes):"
-          forge build --sizes 2>&1 | grep -E '^[ │]+[A-Z][a-zA-Z0-9]+(Facet|Library|Diamond)\b' || true
+          forge build --skip test --sizes 2>&1 | grep -E '^[ │]+[A-Z][a-zA-Z0-9]+(Facet|Library|Diamond)\b' || true
+
+  # The gate's verdict, under the job name the ruleset note above refers to.
+  # Green only when every shard succeeded AND their manifests are N distinct
+  # shards of the plan this commit builds that between them passed every
+  # chunk exactly once (`run-regression.sh --verify-shards`). The first
+  # condition covers each shard's static steps, which a manifest does not
+  # record; the second covers a shard missing from the matrix, a shard split
+  # a different number of ways, or one whose environment changed the plan.
+  mainnet-gate-full:
+    name: mainnet-gate-full (forge + predeploy-check --full)
+    needs: regression-shard
+    # Runs when a shard failed too, so the run says which chunks.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: contracts
+
+    steps:
+      # The plan is built from the test tree alone (no compile), so no
+      # submodules and no Foundry.
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Download every shard's manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: regression-manifest-*
+          path: ${{ runner.temp }}/regression-manifest
+          merge-multiple: true
+
+      - name: Every chunk ran once, on one shard, and passed
+        run: bash script/run-regression.sh --verify-shards "$RUNNER_TEMP/regression-manifest"
+
+      - name: Every shard succeeded
+        env:
+          SHARDS: ${{ needs.regression-shard.result }}
+        run: |
+          echo "regression-shard: $SHARDS"
+          [ "$SHARDS" = success ]

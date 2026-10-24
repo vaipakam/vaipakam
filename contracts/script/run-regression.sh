@@ -26,6 +26,26 @@
 #   bash script/run-regression.sh              # full suite minus invariants
 #   bash script/run-regression.sh --invariants # ALSO run the invariant suites
 #   CHUNK_SIZE=20 bash script/run-regression.sh # smaller chunks if a chunk trips
+#
+#   SHARDED (#2770) — the same chunks split across parallel machines:
+#   bash script/run-regression.sh --shard 2/4 --manifest shard-2.tsv
+#   bash script/run-regression.sh --list-chunks           # the plan, no forge
+#   bash script/run-regression.sh --verify-shards DIR     # union check over
+#                                                         # DIR/*.tsv manifests
+#
+# SHARDING (#2770): the chunk list is built first (the PLAN), then run. With
+# `--shard i/N` this run executes only the plan's chunks whose position p
+# (0-based) has p % N == i-1, so N shards together run every chunk exactly
+# once. Each chunk's compile unit is unchanged, so a shard needs no more
+# memory than the unsharded run; sharding buys wall time, not headroom.
+# `--manifest FILE` records what this run did: the plan's digest, the shard,
+# and one `pass`/`fail` line per chunk it ran. `--verify-shards DIR` rebuilds
+# the plan and requires the manifests in DIR to be N distinct shards of THAT
+# plan (same digest, indices 1..N once each) that between them passed every
+# chunk exactly once. That union check is what makes a sharded gate as
+# strong as the single run: a shard left out of the CI matrix, a shard given
+# a different N, or a shard whose environment changed the plan (a FORK_URL_*
+# or a chunk size) fails it instead of passing with chunks unrun.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."   # -> contracts/
@@ -46,7 +66,7 @@ export FOUNDRY_PROFILE=default
 # `mainnet-gate.yml`, not just on the operator's box.
 PREFIX=(ionice -c 2 -n 0)
 if ! "${PREFIX[@]}" true 2>/dev/null; then
-  echo "note: ionice unavailable or not permitted — running without the IO-priority boost"
+  echo "note: ionice unavailable or not permitted — running without the IO-priority boost" >&2
   PREFIX=()
 fi
 
@@ -54,12 +74,39 @@ CHUNK_SIZE="${CHUNK_SIZE:-25}"
 
 RUN_INVARIANTS=0
 FORGE_ARGS=()
-for a in "$@"; do
-  case "$a" in
+SHARD=""          # "i/N"; unset (SHARDED=0) = run every chunk
+SHARDED=0
+MANIFEST=""       # file this run records its chunks in
+MODE=run          # run | list | verify
+VERIFY_DIR=""
+die() { echo "run-regression: $*" >&2; exit 2; }
+while (( $# )); do
+  case "$1" in
     --invariants) RUN_INVARIANTS=1 ;;
-    *) FORGE_ARGS+=("$a") ;;
+    --shard) (( $# > 1 )) || die "--shard needs i/N"; SHARDED=1; SHARD="$2"; shift ;;
+    --shard=*) SHARDED=1; SHARD="${1#--shard=}" ;;
+    --manifest) (( $# > 1 )) || die "--manifest needs a file"; MANIFEST="$2"; shift ;;
+    --manifest=*) MANIFEST="${1#--manifest=}" ;;
+    --list-chunks) MODE=list ;;
+    --verify-shards) (( $# > 1 )) || die "--verify-shards needs a directory"; MODE=verify; VERIFY_DIR="$2"; shift ;;
+    --verify-shards=*) MODE=verify; VERIFY_DIR="${1#--verify-shards=}" ;;
+    *) FORGE_ARGS+=("$1") ;;
   esac
+  shift
 done
+
+SHARD_I=1 SHARD_N=1
+if (( SHARDED )); then
+  [ "$MODE" = run ] || die "--shard applies to a run, not to --list-chunks / --verify-shards"
+  [[ "$SHARD" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || die "--shard must be i/N with 1 <= i <= N, got '$SHARD'"
+  SHARD_I="${BASH_REMATCH[1]}" SHARD_N="${BASH_REMATCH[2]}"
+  (( SHARD_I <= SHARD_N )) || die "--shard must be i/N with 1 <= i <= N, got '$SHARD'"
+fi
+if [ "$MODE" != run ] && { [ -n "$MANIFEST" ] || (( ${#FORGE_ARGS[@]} )); }; then
+  die "--list-chunks / --verify-shards take no forge arguments and write no manifest"
+fi
+# Planning notes go to stderr while listing, so stdout is the plan alone.
+note() { if [ "$MODE" = run ]; then echo "$@"; else echo "$@" >&2; fi; }
 
 # Subdirectories that hold *.t.sol (excluding invariants, which run separately).
 # A new such subdir must be added here; the exhaustiveness guard fails loudly
@@ -74,7 +121,12 @@ SUBDIRS=(scenarios deploy fork seaport token)
 mapfile -t TOP < <(forge_test_stems test)
 
 FAILED=0
-run() {  # run(label, glob)
+# The PLAN: every chunk this regression consists of, in order, built before
+# anything runs so a shard can take its share and a verifier can rebuild it.
+PLAN_LABELS=() PLAN_GLOBS=()
+plan() { PLAN_LABELS+=("$1"); PLAN_GLOBS+=("$2"); }
+
+run() {  # run(label, glob) -> 0 pass, 1 fail
   local label="$1"; local glob="$2"
   # #1780 — the deploy chunk carries `FacetSizeLimitTest`'s headroom report,
   # which ALWAYS PASSES by design (it reports facets running out of EIP-170
@@ -93,11 +145,14 @@ run() {  # run(label, glob)
   esac
   echo ""
   echo "===== $label : forge test --match-path '$glob' ${extra[*]} ====="
-  "${PREFIX[@]}" forge test --match-path "$glob" "${FORGE_ARGS[@]}" "${extra[@]}" \
-    || { echo "CHUNK FAILED: $label" >&2; FAILED=1; }
+  if "${PREFIX[@]}" forge test --match-path "$glob" "${FORGE_ARGS[@]}" "${extra[@]}"; then
+    return 0
+  fi
+  echo "CHUNK FAILED: $label" >&2
+  return 1
 }
 
-# run_chunks(label, dir, size, stem...) — one `run` per chunk the shared
+# run_chunks(label, dir, size, stem...) — one `plan` entry per chunk the shared
 # helper (script/lib/forge-chunks.sh) cuts. A bad size aborts the run rather
 # than quietly running nothing.
 run_chunks() {
@@ -107,7 +162,7 @@ run_chunks() {
   local globs=() i=0 g
   mapfile -t globs <<<"$out"
   for g in "${globs[@]}"; do
-    i=$((i+1)); run "$label #$i" "$g"
+    i=$((i+1)); plan "$label #$i" "$g"
   done
 }
 
@@ -167,13 +222,13 @@ for sub in "${SUBDIRS[@]}"; do
       have=0
       for v in "${needs[@]}"; do [ -n "${!v:-}" ] && have=1; done
       if (( have )); then kept+=("$stem")
-      else echo "  fork: skip $stem (needs one of: ${needs[*]})"; fi
+      else note "  fork: skip $stem (needs one of: ${needs[*]})"; fi
     done
     if (( ${#kept[@]} == 0 )); then
-      echo ""
-      echo "===== subdir (fork) : SKIPPED — no matching FORK_URL_* set"
-      echo "      (each fork test self-skips without its RPC; Seaport also exceeds the"
-      echo "       viaIR bounded-compile ceiling — full build only. See #601/#603.)"
+      note ""
+      note "===== subdir (fork) : SKIPPED — no matching FORK_URL_* set"
+      note "      (each fork test self-skips without its RPC; Seaport also exceeds the"
+      note "       viaIR bounded-compile ceiling — full build only. See #601/#603.)"
       continue
     fi
     SUBFILES=("${kept[@]}")
@@ -183,7 +238,7 @@ done
 
 # ── Optional invariants pass ─────────────────────────────────────────────────
 if (( RUN_INVARIANTS )); then
-  run "invariants" "test/invariants/*.t.sol"
+  plan "invariants" "test/invariants/*.t.sol"
 fi
 
 # ── Exhaustiveness guard ─────────────────────────────────────────────────────
@@ -203,6 +258,104 @@ if (( ${#MISSED[@]} > 0 )); then
   FAILED=1
 fi
 
+# The plan's identity: a digest over the chunk globs in order, and over any
+# extra forge arguments. Two runs share it exactly when they would run the
+# same tests, so shards whose environments disagree (a FORK_URL_*, a chunk
+# size, --invariants) cannot be verified as parts of one regression, and nor
+# can a shard narrowed by a forge filter such as --match-test: the verifier
+# takes no forge arguments, so only an unfiltered shard matches its plan.
+PLAN_DIGEST=$({ printf 'chunk\t%s\n' "${PLAN_GLOBS[@]}"; printf 'forge-arg\t%s\n' ${FORGE_ARGS[@]+"${FORGE_ARGS[@]}"}; } | sha256sum | cut -d' ' -f1)
+
+# ── --list-chunks ────────────────────────────────────────────────────────────
+if [ "$MODE" = list ]; then
+  (( FAILED )) && exit 1
+  for k in "${!PLAN_GLOBS[@]}"; do printf '%s\t%s\n' "${PLAN_LABELS[$k]}" "${PLAN_GLOBS[$k]}"; done
+  exit 0
+fi
+
+# ── --verify-shards DIR ──────────────────────────────────────────────────────
+# Read every DIR/*.tsv manifest and require: one plan digest, equal to this
+# plan's; one N; shard indices 1..N exactly once; and every planned chunk run
+# by exactly one shard, which passed it. Nothing run that is not planned.
+if [ "$MODE" = verify ]; then
+  (( FAILED )) && exit 1
+  [ -d "$VERIFY_DIR" ] || die "--verify-shards: '$VERIFY_DIR' is not a directory"
+  mapfile -t MANIFESTS < <(find "$VERIFY_DIR" -type f -name '*.tsv' | LC_ALL=C sort)
+  (( ${#MANIFESTS[@]} )) || { echo "verify-shards: no *.tsv manifests in $VERIFY_DIR" >&2; exit 1; }
+  BAD=0
+  declare -A SEEN_SHARD=() RAN=() PLANNED=()
+  for g in "${PLAN_GLOBS[@]}"; do PLANNED["$g"]=1; done
+  N=""
+  for m in "${MANIFESTS[@]}"; do
+    md=$(awk -F'\t' '$1=="plan"{print $2}' "$m")
+    ms=$(awk -F'\t' '$1=="shard"{print $2}' "$m")
+    mc=$(awk -F'\t' '$1=="complete"{print "yes"}' "$m")
+    if [ "$md" != "$PLAN_DIGEST" ]; then
+      echo "verify-shards: $m was cut from a different plan (digest ${md:-none}, expected $PLAN_DIGEST)" >&2; BAD=1; continue
+    fi
+    if ! [[ "$ms" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]]; then
+      echo "verify-shards: $m names no shard i/N" >&2; BAD=1; continue
+    fi
+    if [ -z "$N" ]; then N="${BASH_REMATCH[2]}"
+    elif [ "$N" != "${BASH_REMATCH[2]}" ]; then
+      echo "verify-shards: $m is shard $ms, but another manifest split the plan $N ways" >&2; BAD=1; continue
+    fi
+    if [ -n "${SEEN_SHARD[${BASH_REMATCH[1]}]:-}" ]; then
+      echo "verify-shards: shard ${BASH_REMATCH[1]} reported twice ($m and ${SEEN_SHARD[${BASH_REMATCH[1]}]})" >&2; BAD=1; continue
+    fi
+    SEEN_SHARD["${BASH_REMATCH[1]}"]="$m"
+    [ "$mc" = yes ] || { echo "verify-shards: $m never recorded completing — the shard stopped mid-run" >&2; BAD=1; }
+    while IFS=$'\t' read -r status glob; do
+      case "$status" in pass|fail) ;; *) continue ;; esac
+      if [ -z "${PLANNED[$glob]:-}" ]; then
+        echo "verify-shards: $m ran $glob, which the plan does not contain" >&2; BAD=1
+      elif [ -n "${RAN[$glob]:-}" ]; then
+        echo "verify-shards: $glob was run by two shards" >&2; BAD=1
+      else
+        RAN["$glob"]="$status"
+      fi
+    done < "$m"
+  done
+  if [ -n "$N" ]; then
+    for ((k=1; k<=N; k++)); do
+      [ -n "${SEEN_SHARD[$k]:-}" ] || { echo "verify-shards: no manifest for shard $k/$N" >&2; BAD=1; }
+    done
+  fi
+  for g in "${PLAN_GLOBS[@]}"; do
+    case "${RAN[$g]:-}" in
+      pass) ;;
+      fail) echo "verify-shards: chunk FAILED: $g" >&2; BAD=1 ;;
+      *) echo "verify-shards: chunk never run by any shard: $g" >&2; BAD=1 ;;
+    esac
+  done
+  if (( BAD )); then echo "REGRESSION (sharded): NOT verified ^^^" >&2; exit 1; fi
+  echo "REGRESSION (sharded): verified — ${#PLAN_GLOBS[@]} chunks across ${N} shards, each run once and passed (plan $PLAN_DIGEST)"
+  exit 0
+fi
+
+# ── Run this shard's chunks ──────────────────────────────────────────────────
+if [ -n "$MANIFEST" ]; then
+  : > "$MANIFEST" || die "cannot write manifest '$MANIFEST'"
+  printf 'plan\t%s\nshard\t%s/%s\n' "$PLAN_DIGEST" "$SHARD_I" "$SHARD_N" >> "$MANIFEST"
+fi
+MINE=0
+for k in "${!PLAN_GLOBS[@]}"; do
+  (( k % SHARD_N == SHARD_I - 1 )) || continue
+  MINE=$((MINE+1))
+  if run "${PLAN_LABELS[$k]}" "${PLAN_GLOBS[$k]}"; then st=pass; else st=fail; FAILED=1; fi
+  [ -n "$MANIFEST" ] && printf '%s\t%s\n' "$st" "${PLAN_GLOBS[$k]}" >> "$MANIFEST"
+done
+# Written last, so a manifest without it is a shard that died mid-run.
+[ -n "$MANIFEST" ] && printf 'complete\t%s\n' "$MINE" >> "$MANIFEST"
+if (( SHARDED )); then
+  echo ""
+  echo "shard $SHARD_I/$SHARD_N ran $MINE of ${#PLAN_GLOBS[@]} chunks (plan $PLAN_DIGEST)"
+fi
+
 echo ""
 if (( FAILED )); then echo "REGRESSION: FAILURES above ^^^" >&2; exit 1; fi
-echo "REGRESSION: green (all chunks + exhaustiveness guard)"
+if (( SHARDED )); then
+  echo "REGRESSION: shard $SHARD_I/$SHARD_N green — the whole regression is green only once --verify-shards accepts every shard"
+else
+  echo "REGRESSION: green (all chunks + exhaustiveness guard)"
+fi
