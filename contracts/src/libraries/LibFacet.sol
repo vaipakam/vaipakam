@@ -9,9 +9,8 @@ import {LibRevert} from "./LibRevert.sol";
 import {LibDelivery} from "./LibDelivery.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
-import {OracleFacet} from "../facets/OracleFacet.sol";
+import {LibNumeraireValueRead} from "./LibNumeraireValueRead.sol";
 import {ITreasuryFeeHost} from "../interfaces/ITreasuryFeeHost.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @title LibFacet
 /// @notice Shared facet-level helpers previously duplicated across
@@ -102,39 +101,32 @@ library LibFacet {
     /// @dev Records a timestamped, numeraire-priced fee accrual against the
     ///      analytics log only. Internal to {recordTreasuryAccrual} and
     ///      {transferToTreasury}; callers that need the full "move + record"
-    ///      behaviour should use one of those instead. Pricing is
-    ///      best-effort: when OracleFacet has no feed for the asset (e.g.
-    ///      illiquid / stale), the event is logged with
+    ///      behaviour should use one of those instead. The value is the
+    ///      shared rule's (#2419), 1e18-scaled and rounded down, read
+    ///      best-effort: when the rule cannot value the asset (no or
+    ///      untrusted price, unreadable decimals) the event is logged with
     ///      `numeraireValue == 0`, but the asset-denominated fee is still
     ///      captured in `treasuryBalances[asset]` when treasury is the
-    ///      Diamond. No-op on zero amount.
+    ///      Diamond. The log is analytics and never blocks the settlement it
+    ///      records: an event value above the field's width is stored at the
+    ///      field's maximum, and the cumulative total stops at the uint256
+    ///      maximum instead of overflowing. No-op on zero amount.
     function accrueTreasuryFee(address asset, uint256 amount) private {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 numeraireValue = _priceForAccrual(asset, amount);
+        uint256 numeraireValue = LibNumeraireValueRead.valueOrZero(asset, amount);
         s.feeEventsLog.push(
             LibVaipakam.FeeEvent({
                 timestamp: uint64(block.timestamp),
-                numeraireValue: SafeCast.toUint192(numeraireValue)
+                numeraireValue: numeraireValue > type(uint192).max
+                    ? type(uint192).max
+                    : uint192(numeraireValue)
             })
         );
-        s.cumulativeFeesNumeraire += numeraireValue;
-    }
-
-    /// @dev Best-effort numeraire-quoted pricing for fee-accrual events.
-    ///      Returns 0 if the oracle lookup reverts (e.g. asset lacks a
-    ///      Chainlink feed), so a fee accrual never blocks a settlement path.
-    function _priceForAccrual(
-        address asset,
-        uint256 amount
-    ) private view returns (uint256) {
-        if (asset == address(0) || amount == 0) return 0;
-        (bool ok, bytes memory ret) = address(this).staticcall(
-            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, asset)
-        );
-        if (!ok || ret.length < 64) return 0;
-        (uint256 price, uint8 decimals) = abi.decode(ret, (uint256, uint8));
-        return (amount * price) / (10 ** decimals);
+        uint256 cumulative = s.cumulativeFeesNumeraire;
+        s.cumulativeFeesNumeraire = numeraireValue > type(uint256).max - cumulative
+            ? type(uint256).max
+            : cumulative + numeraireValue;
     }
 
     /// @dev Resolves (and lazily deploys) the per-user vault proxy.
