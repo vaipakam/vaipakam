@@ -12,14 +12,24 @@ import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
-/// @title RewardClosureProofTest
+/// @title RewardClosureProofBase
 /// @notice 3b-ii-B — a past day is proven CLOSED once every obligation covering it
 ///         has terminated: a starter-keyed, resumable walk in the accumulation's
 ///         shape (ascending ids, the cover check, completeness by conservation
 ///         against the folded side totals), admissible once the fold has reached the
 ///         day — the chain's own day close is not required. An omission poisons only its
 ///         author's walk; the day is stamped by the first walk to complete.
-contract RewardClosureProofTest is SetupTest, IVaipakamErrors {
+///
+///         The suite is TWO contracts over this one base — the days that prove
+///         closed, and the walks that refuse or stay open — because solc 0.8.29
+///         (viaIR) cannot assemble it as one: with all nine tests in a single
+///         contract the compile stops with an internal compiler error, "Assembly
+///         exception for bytecode: Tag too large for reserved space", and every
+///         suite compiled with it goes unrun (#2777). Each test alone, either
+///         half, and every eight of the nine compile. The split is the shape the
+///         tests already had, not a size trim: add a test to the contract whose
+///         behaviour it pins, and split again rather than merging back.
+abstract contract RewardClosureProofBase is SetupTest, IVaipakamErrors {
     MockRewardMessenger internal messenger;
     address internal alice;
     address internal bob;
@@ -72,7 +82,11 @@ contract RewardClosureProofTest is SetupTest, IVaipakamErrors {
 
     function _ids(uint256 a) internal pure returns (uint256[] memory r) { r = new uint256[](1); r[0] = a; }
     function _ids(uint256 a, uint256 b) internal pure returns (uint256[] memory r) { r = new uint256[](2); r[0] = a; r[1] = b; }
+}
 
+/// @notice The days that prove CLOSED: every covering entry terminated, the fold
+///         alone sufficing, and a day with nothing to visit closing at the start.
+contract RewardClosureProofTest is RewardClosureProofBase {
     /// @dev Two covering lender entries, both terminated — one settled whole, one
     ///      part-claimed past the day; the borrower side has nothing. The proof
     ///      completes on one page and the stamp is irreversible.
@@ -93,24 +107,6 @@ contract RewardClosureProofTest is SetupTest, IVaipakamErrors {
         assertTrue(w.completed); assertEq(w.lenderConservation, 3e18); assertEq(w.lenderCursor, id2);
         vm.expectRevert(abi.encodeWithSelector(ClosureDayAlreadyClosed.selector, D));
         _clo().startDayClosure(D);
-    }
-
-    /// @dev An entry still standing on the day is named, and the page leaves nothing
-    ///      behind; once it settles past the day the same page passes.
-    function test_AnOpenEntry_IsNamed_AndThePageLeavesNothing() public {
-        uint256 id1 = _lenderEntry(alice, 1e18, 1, 5);
-        uint256 id2 = _lenderEntry(bob, 2e18, 1, 5);
-        _mut().setRewardEntryProcessedRaw(id1, true);
-        _mut().setRewardEntryClaimNextDayRaw(id2, uint64(D)); // settled THROUGH day 2 only: day 3 still owed
-        _closeLocally(D);
-        (, uint64 nonce, ) = _clo().startDayClosure(D);
-        assertFalse(_clo().isEntryTerminatedOn(id2, D));
-        vm.expectRevert(abi.encodeWithSelector(ClosureEntryOpen.selector, D, id2));
-        _clo().proveDayClosurePage(D, nonce, 0, _ids(id1, id2));
-        LibVaipakam.ClosureWalk memory w = _clo().getClosureWalk(D, address(this), nonce);
-        assertEq(w.lenderCursor, 0, "the refused page applied nothing");
-        _mut().setRewardEntryClaimNextDayRaw(id2, uint64(D + 1));
-        assertTrue(_clo().proveDayClosurePage(D, nonce, 0, _ids(id1, id2)));
     }
 
     /// @dev Admissibility: an elapsed day the fold has reached — nothing before; the chain's own
@@ -144,6 +140,38 @@ contract RewardClosureProofTest is SetupTest, IVaipakamErrors {
         assertFalse(closed, "fixture-live: the lender side has an entry to visit");
         assertTrue(_clo().proveDayClosurePage(D, nonce, 0, _ids(id1)), "proven closed by the fold alone");
         assertTrue(_clo().isDayObligationsClosed(D));
+    }
+
+    /// @dev A day with no obligation on either side closes at the start — only once
+    ///      the chain has closed it, with the fold at the day.
+    function test_ANoObligationDay_ClosesAtStart() public {
+        _lenderEntry(alice, 1e18, 1, 3); // ends before day 3
+        _closeLocally(D);
+        (, , bool closed) = _clo().startDayClosure(D);
+        assertTrue(closed, "nothing to visit on either side");
+        assertTrue(_clo().isDayObligationsClosed(D));
+    }
+}
+
+/// @notice The walks that REFUSE or keep a day open: a standing entry, an omission,
+///         a staged day, an open legacy domain, and a conservation overrun.
+contract RewardClosureProofRefusalTest is RewardClosureProofBase {
+    /// @dev An entry still standing on the day is named, and the page leaves nothing
+    ///      behind; once it settles past the day the same page passes.
+    function test_AnOpenEntry_IsNamed_AndThePageLeavesNothing() public {
+        uint256 id1 = _lenderEntry(alice, 1e18, 1, 5);
+        uint256 id2 = _lenderEntry(bob, 2e18, 1, 5);
+        _mut().setRewardEntryProcessedRaw(id1, true);
+        _mut().setRewardEntryClaimNextDayRaw(id2, uint64(D)); // settled THROUGH day 2 only: day 3 still owed
+        _closeLocally(D);
+        (, uint64 nonce, ) = _clo().startDayClosure(D);
+        assertFalse(_clo().isEntryTerminatedOn(id2, D));
+        vm.expectRevert(abi.encodeWithSelector(ClosureEntryOpen.selector, D, id2));
+        _clo().proveDayClosurePage(D, nonce, 0, _ids(id1, id2));
+        LibVaipakam.ClosureWalk memory w = _clo().getClosureWalk(D, address(this), nonce);
+        assertEq(w.lenderCursor, 0, "the refused page applied nothing");
+        _mut().setRewardEntryClaimNextDayRaw(id2, uint64(D + 1));
+        assertTrue(_clo().proveDayClosurePage(D, nonce, 0, _ids(id1, id2)));
     }
 
     /// @dev An omitted id advances only its author's cursor past it: that walk can
@@ -195,16 +223,6 @@ contract RewardClosureProofTest is SetupTest, IVaipakamErrors {
         assertFalse(_clo().isEntryTerminatedOn(id1, D));
         _mut().setLegacyDomainOpenRaw(id1, uint64(D + 1), uint64(D + 1));
         assertTrue(_clo().isEntryTerminatedOn(id1, D), "a window past the day does not hold it");
-    }
-
-    /// @dev A day with no obligation on either side closes at the start — only once
-    ///      the chain has closed it, with the fold at the day.
-    function test_ANoObligationDay_ClosesAtStart() public {
-        _lenderEntry(alice, 1e18, 1, 3); // ends before day 3
-        _closeLocally(D);
-        (, , bool closed) = _clo().startDayClosure(D);
-        assertTrue(closed, "nothing to visit on either side");
-        assertTrue(_clo().isDayObligationsClosed(D));
     }
 
     /// @dev A visited figure the fold never carried overruns conservation: the day's
