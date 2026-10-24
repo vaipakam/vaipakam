@@ -734,158 +734,56 @@
         "internalType": "uint32"
       },
       {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "lenderNumeraire18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerNumeraire18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recycledCumulative18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recycledForDay18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "commitRetiredCumulative18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "commitReleasedCumulative18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "custodyEra",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "onChainReportReceived",
-    "inputs": [
-      {
-        "name": "sourceChainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "lenderNumeraire18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerNumeraire18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recycledCumulative18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recycledForDay18",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "onChainReportReceived",
-    "inputs": [
-      {
-        "name": "sourceChainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "lenderNumeraire18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerNumeraire18",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "onChainReportReceived",
-    "inputs": [
-      {
-        "name": "sourceChainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "lenderNumeraire18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerNumeraire18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recycledCumulative18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recycledForDay18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "commitRetiredCumulative18",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "commitReleasedCumulative18",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "r",
+        "type": "tuple",
+        "internalType": "struct ChainDayReport",
+        "components": [
+          {
+            "name": "dayId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "lenderNumeraire18",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "borrowerNumeraire18",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledCumulative18",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledForDay18",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "commitRetiredCumulative18",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "commitReleasedCumulative18",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "custodyEra",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "rewardLaunchTimestamp",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -1288,6 +1186,37 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ChainReportClockMismatch",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reporterLaunchTimestamp",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "baseLaunchTimestamp",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
