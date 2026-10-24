@@ -71,18 +71,23 @@ library LibRewardRemitDispatch {
     ///         receiver with — the ONE constant the send and its quote both
     ///         read. DERIVED from the mirror ingress it must carry, never
     ///         matched to another receiver's (#1566 PR 1 review): the Diamond's
-    ///         ingress as measured by the two cells that pin it — the typed (d5)
-    ///         one in `RewardTransportEpochTest`, the rooted (d6) one every
-    ///         ordinary remittance takes in `RewardTransportD6Test`, each cold
-    ///         and over the widest list — plus {REWARD_BUDGET_RECEIVER_RESERVE}
-    ///         for the receiver's own work, with a quarter's margin, rounded up.
-    ///         Measured 2026-10-12, after the custody-era rework took the era
-    ///         counting writes out of the ingress: typed 590,909, rooted 685,689
-    ///         — so (685,689 + 100,000) x 1.25, rounded up to 50,000. Re-derive
-    ///         it whenever either cell's figure moves. The 300,000 it replaced was below even the
-    ///         typed ingress, so automatic execution would have failed on every
-    ///         delivery to an activated mirror.
-    uint256 internal constant REWARD_BUDGET_DEST_GAS_LIMIT = 1_000_000;
+    ///         rooted (d6) ingress, the one wire a remittance takes since #2669
+    ///         retired the typed (d5) one, as measured by the cell that pins it
+    ///         in `RewardTransportD6Test` — cold, over the widest list — plus
+    ///         {REWARD_BUDGET_RECEIVER_RESERVE} for the receiver's own work,
+    ///         with a quarter's margin, rounded up to the next 50,000.
+    ///         Re-measured 2026-10-24 (#2777): rooted 710,205, so
+    ///         (710,205 + 100,000) x 1.25 = 1,012,756, rounded up to 1,050,000.
+    ///         The 2026-10-12 figure was 685,689 under a limit of 1,000,000; the
+    ///         ingress has grown by 24,516 since (not attributed commit by
+    ///         commit), which left the margin short. Re-derive it whenever the cell's figure
+    ///         moves; the cell fails once the margin is gone. Raising it raises only the
+    ///         destination-execution part of each remittance's CCIP fee, which
+    ///         the sender quotes on-chain from this same constant. The 300,000
+    ///         it once stood at was below even the ingress, so automatic
+    ///         execution would have failed on every delivery to an activated
+    ///         mirror.
+    uint256 internal constant REWARD_BUDGET_DEST_GAS_LIMIT = 1_050_000;
 
     /// @notice What the budget reserves for the receiver's own work around the
     ///         Diamond's ingress — the router's call, the frame decode, the token
