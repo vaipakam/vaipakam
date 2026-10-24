@@ -334,9 +334,13 @@ describe('the head sample waits for the readings in flight', () => {
     // the ledger's comparison on different origins, which is the mixed-
     // origin defect round 102 closed — so all three are pinned, and the
     // tracker's half is a negative over every clock it could reach for.
-    const driveStamps = [...src.matchAll(/const [a-z][A-Za-z]*At = ([A-Za-z.]+\(\))/g)];
-    expect(driveStamps.length, 'the drive ordering stamps were found').toBeGreaterThanOrEqual(2);
-    for (const m of driveStamps) {
+    //
+    // AMENDED FOR #1672 — the drive's own two stamps (`requestedAt`,
+    // `deliveredAt`) fed the ledger's retry-recovery rule, which #1672
+    // retired, so the drive takes none today and the floor's stamps are all
+    // the tracker's. Still asserted over the class: any the drive takes
+    // again must use `orderingNow`.
+    for (const m of src.matchAll(/const [a-z][A-Za-z]*At = ([A-Za-z.]+\(\))/g)) {
       expect(m[1], 'every drive ordering stamp uses orderingNow').toBe('orderingNow()');
     }
     const trackerStamps = [
@@ -360,66 +364,6 @@ describe('the head sample waits for the readings in flight', () => {
     // And the wall clock is still what deadlines use — a monotonic origin
     // there would be a different, confusing change.
     expect(src).toContain('const until = Date.now() + 20_000;');
-  });
-
-  // ROUND 109 SELF-REVIEW — AND THE LEDGER'S CLOCK IS THE SAME ONE.
-  //
-  // `requestedAt` is stamped in the drive and compared against `at` in
-  // `rpc-verdict.mjs`. The comparison is meaningless unless both come from
-  // `performance.now()`, and that pairing spans two files, so neither file's
-  // own tests can see it. This is the only place that can.
-  //
-  // AMENDED IN ROUND 112, which gave the ledger's `at` a second source: the
-  // caller may now stamp it before the fulfill. Both sources have to be
-  // monotonic, so the assertion is that every value `at` can take is —
-  // `deliveredAt`, which the drive stamps with `orderingNow`, or the local
-  // `performance.now()` fallback. Pinning the old literal would have failed
-  // on the correct change, which is the pin that gets widened without being
-  // read.
-  it('the ledger stamps arrival on the same clock the drive stamps requests', () => {
-    const verdictSrc = fs.readFileSync(
-      path.join(path.dirname(DRIVE), 'rpc-verdict.mjs'),
-      'utf8',
-    );
-    expect(src, 'the drive stamps requests monotonically').toContain(
-      'const orderingNow = () => performance.now();',
-    );
-    const atBinding = verdictSrc.match(/const at = (.+);/);
-    expect(atBinding, "the ledger's arrival stamp was not found").not.toBeNull();
-    // Every clock reading in it, however it is written.
-    const clocks = [...atBinding[1].matchAll(/([A-Za-z]+)\.now\(\)/g)].map((m) => m[1]);
-    expect(clocks.length, 'no clock reading in the arrival stamp').toBeGreaterThan(0);
-    for (const c of clocks) {
-      expect(c, 'the ledger stamps arrival monotonically').toBe('performance');
-    }
-    // And the other source is the drive's own ordering clock, not a second
-    // reading taken somewhere else.
-    if (atBinding[1].includes('deliveredAt')) {
-      expect(src, 'the caller stamps delivery on the ordering clock').toContain(
-        'const deliveredAt = orderingNow();',
-      );
-    }
-  });
-
-  // ROUND 113 P2 — AND THE DELIVERY STAMP IS TAKEN AFTER THE FULFILL.
-  //
-  // Which side of the await it sits on IS the fix, and the two sides fail
-  // in opposite directions: before it, a sibling begun during fulfillment
-  // is stamped later than the failure's arrival and clears a call whose
-  // caller consumed an error; several statements after it, a genuine retry
-  // is stamped earlier and a correctly rendered page exits BLOCKED. The
-  // ledger's own tests cannot see this — they receive the number, not where
-  // it was taken — so it is pinned here.
-  it('stamps delivery after the fulfill resolves, not before it begins', () => {
-    const fulfill = at('await route.fulfill({ status: resp.status, headers, body: buf });');
-    const stamp = at('const deliveredAt = orderingNow();');
-    expect(fulfill, 'the fulfill was not found').toBeGreaterThan(-1);
-    expect(stamp, 'the delivery stamp was not found').toBeGreaterThan(-1);
-    expect(stamp, 'the stamp must follow the fulfill').toBeGreaterThan(fulfill);
-    // And exactly one of each, so the ordering cannot be satisfied by a
-    // second copy somewhere else in the file.
-    expect([...src.matchAll(/const deliveredAt = orderingNow\(\);/g)]).toHaveLength(1);
-    expect([...src.matchAll(/await route\.fulfill\(/g)]).toHaveLength(1);
   });
 
   it('only trusts the floor when every endpoint the page used is bounded', () => {

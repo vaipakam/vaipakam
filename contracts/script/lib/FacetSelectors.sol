@@ -13,6 +13,7 @@ import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
+import {NotificationFeeFacet} from "../../src/facets/NotificationFeeFacet.sol";
 
 /**
  * @title  FacetSelectors
@@ -116,9 +117,9 @@ library FacetSelectors {
         s[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
     }
 
-    /// @notice Full external selector surface of {ProfileFacet} (33).
+    /// @notice Full external selector surface of {ProfileFacet} (31).
     function profile() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](33);
+        s = new bytes4[](31);
         s[0] = ProfileFacet.updateKYCStatus.selector;
         s[1] = ProfileFacet.getUserCountry.selector;
         s[2] = ProfileFacet.isKYCVerified.selector;
@@ -153,9 +154,6 @@ library FacetSelectors {
         s[29] = ProfileFacet.isRecipientBarred.selector;
         // #1347 — per-offer creator Full VPFI tariff opt-in.
         s[30] = ProfileFacet.setOfferCreatorFullTariff.selector;
-        // #2721 — paid-notification billing consent (set + read).
-        s[31] = ProfileFacet.setNotificationFeeConsent.selector;
-        s[32] = ProfileFacet.getNotificationFeeConsent.selector;
     }
 
     /// @notice Full external selector surface of {VaipakamNFTFacet} (29) — mirrors
@@ -445,6 +443,26 @@ library FacetSelectors {
         s[0] = TreasuryFeeFacet.collectFeeFromPayer.selector;
         s[1] = TreasuryFeeFacet.collectFeeFromVault.selector;
         s[2] = TreasuryFeeFacet.collectFeeFromDiamond.selector;
+    }
+
+    /// @notice Full external selector surface of {NotificationFeeFacet} (3).
+    ///
+    /// @dev    #2769. The paid-notification fee: the billing role's charge and
+    ///         the wallet's own consent to it, moved together off `LoanFacet`
+    ///         and `ProfileFacet` (selectors unchanged). `RedeployFacets`
+    ///         refreshes `LoanFacet` and `ProfileFacet`, so it cuts this host
+    ///         in the same cut: a Diamond that still routes the charge to an
+    ///         old `LoanFacet` would otherwise keep billing on that code.
+    ///
+    ///         The ONLY copy of the list, as for {treasuryFee}:
+    ///         `DeployDiamond` (`_getNotificationFeeSelectors`) and
+    ///         `HelperTest` (`getNotificationFeeFacetSelectors`) return it,
+    ///         and `RedeploySelectorParityTest` pins it to the compiled ABI.
+    function notificationFee() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = NotificationFeeFacet.markNotifBilled.selector;
+        s[1] = NotificationFeeFacet.setNotificationFeeConsent.selector;
+        s[2] = NotificationFeeFacet.getNotificationFeeConsent.selector;
     }
 
     /// @notice Full external selector surface of {NumeraireValueFacet} (3).

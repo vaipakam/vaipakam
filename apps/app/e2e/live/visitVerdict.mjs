@@ -191,6 +191,15 @@ function visitProblemList(v, role) {
     );
   }
 
+  // #2094 — A FORCED-CLOSE-ONLY VISIT ENDS HERE. The lender run visits a
+  // rental and a sanctions-flagged holder's position for the forced-close
+  // card alone: the exit chooser is correctly absent on both (it never
+  // renders on a rental, and is suppressed for a flagged holder), so its
+  // assertions below would fabricate a missing-chooser regression on
+  // exactly the positions this mode exists to reach. Its absence there is
+  // not asserted either; that needs a settled signal (#2776's shape).
+  if (v.visitMode === 'forced-close') return problems;
+
   if (preRaced(v)) return problems;
 
   if (!v.chooser) {
@@ -381,4 +390,34 @@ export function visitBlockedReason(v) {
  */
 export function visitVerdict(v, role) {
   return { problems: visitProblems(v, role), blocked: visitBlockedReason(v) };
+}
+
+/**
+ * Whether the drive's FIRST navigation shows the site itself could not be
+ * reached, and if so why, in words fit for a BLOCKED line (#1633 item 4).
+ *
+ * The first visit is the drive's reachability check, the job the shared
+ * `driver.mjs` `visit()` does for every other drive. `page.goto` does not
+ * throw for an HTTP error page, so a preview URL answering 404 or a CDN
+ * answering 502 resolved normally and the record went through
+ * `visitProblems` like any other route: a FAIL row, `failures` counted,
+ * exit 1. That reports an outage as a broken product, and it then walks
+ * every position page against the same error body.
+ *
+ * The rule matches the shared helper's: a thrown navigation, or a status
+ * of 400 or above, on the first navigation only. A later route answering
+ * 404 is a plausible product regression and stays a FAIL row. A missing
+ * status is not a blocker here (`visitProblems` still reports it), for
+ * the same reason the helper does not treat it as one.
+ *
+ * @param {object | undefined} v the first visit record
+ * @returns {string | null}
+ */
+export function firstNavigationBlocker(v) {
+  if (!v) return 'the first navigation never ran';
+  if (v.nav) return `opening ${v.path} failed: ${v.nav}`;
+  if (typeof v.http === 'number' && v.http >= 400) {
+    return `${v.path} answered HTTP ${v.http}`;
+  }
+  return null;
 }

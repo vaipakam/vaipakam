@@ -113,6 +113,11 @@ export const THREE_VERDICT_DRIVERS = new Set([
   // is declared in FOUR_VERDICT_DRIVERS below — #2434 r2.)
   // (live-internal-match-claim.mjs is NOT here either: with CLAIM=1 it can
   // exit 3 after its claim lands, so it is in FOUR_VERDICT_DRIVERS below.)
+  // Read-only: exits 2 only when REFI_REQUEST_ID does not name a standing
+  // refinance request of an Active loan, the build differs, or the read-only
+  // session cannot be set up — preconditions; every review check is PASS or
+  // FAIL. Also MANUAL-ONLY — see MANUAL_ONLY_DRIVERS below.
+  'live-refinance-lender-review.mjs',
   'live-rpc-audit.mjs',
   // Exits 2 when the chain is not in the state its EXPECT mode needs (the
   // operator's flag/clear write on the test list not done, or the Diamond
@@ -195,6 +200,17 @@ export const FOUR_VERDICT_DRIVERS = new Map([
       'was expected and showed nothing that says why, even when the nonce ' +
       'proves nothing was sent (#2505 r48)',
   ],
+  [
+    'live-seed-illiquid-loan.mjs',
+    // Exits 2 only BEFORE its first write (build mismatch, chain facts that
+    // would not yield a refinance fixture, short balances, a covering Permit2
+    // approval the plan does not cover, Terms not accepted, credentials, a
+    // browser session that could not be set up). Also MANUAL-ONLY — see
+    // MANUAL_ONLY_DRIVERS below.
+    'after its first write, a stop that no chain read shows to be a defect is ' +
+      'UNDETERMINED (exit 3), with what was sent and what is left standing ' +
+      '(an open request holding the collateral, a leftover approval) printed',
+  ],
 ]);
 
 /**
@@ -247,6 +263,17 @@ export const MANUAL_ONLY_DRIVERS = new Map([
     'live-refinance.mjs',
     'one-shot on-chain refinance: a success closes the loan it drives, and it ' +
       'needs REFI_LOAN_ID naming a fresh eligible loan — run it by hand',
+  ],
+  [
+    'live-seed-illiquid-loan.mjs',
+    'writes to the testnet to originate ONE loan — the fixture live-refinance.mjs ' +
+      'consumes — so an unattended batch would open a loan on every run; run it ' +
+      'by hand right before the refinance review',
+  ],
+  [
+    'live-refinance-lender-review.mjs',
+    'needs REFI_REQUEST_ID naming a STANDING refinance request (one a run of ' +
+      'live-refinance.mjs or the app posted), which no batch can supply — run it by hand (#2421)',
   ],
   [
     'live-sanctions-banner.mjs',

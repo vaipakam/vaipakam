@@ -627,11 +627,32 @@ export function normaliseWallets(raw) {
   throw new Error('the wallet file is neither a role map nor an array of wallets');
 }
 
+/**
+ * Parse the dev wallet file's TEXT, without ever repeating it (#2715).
+ *
+ * `JSON.parse`'s error message quotes the input it failed on for some
+ * inputs (`Unexpected token 'd', "deadbeef…" is not valid JSON`), and the
+ * callers print the message. A wallet file that is not JSON — a bare key,
+ * an `.env`-style `KEY=0x…` line — would then be echoed to the console and
+ * into every batch log, which a drive must never do with key material. So
+ * a parse failure is reported by what it is and where, never by the
+ * parser's words: the line and column V8 reports carry no content, and are
+ * kept only when the message states them in that exact form.
+ */
+export function parseWalletFileText(text) {
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    const at = /\(line (\d+) column (\d+)\)/.exec(String(err?.message ?? ''));
+    throw new Error(`the wallet file is not valid JSON${at ? ` (line ${at[1]}, column ${at[2]})` : ''}`);
+  }
+}
+
 function loadWallets(opts = {}) {
   if (WALLETS !== undefined) return WALLETS;
   let raw;
   try {
-    raw = normaliseWallets(JSON.parse(fs.readFileSync(WALLETS_PATH, 'utf8')));
+    raw = normaliseWallets(parseWalletFileText(fs.readFileSync(WALLETS_PATH, 'utf8')));
   } catch (err) {
     if (opts.throwOnUnreadable) {
       throw new LiveSetupError(
@@ -962,6 +983,20 @@ export function clientsFor(chainId) {
 
 export function addressOf(role) {
   return walletFor(role).address;
+}
+
+/**
+ * A role's address when the wallet file carries a usable credential for it,
+ * else null — never an exit. For a drive that only READS about a role it does
+ * not sign as (the seeder notes whether the role that will later fund the
+ * refinance can afford it), where `addressOf` would BLOCK a run that does not
+ * need that role at all. Same validation as `walletFor`, so there is no
+ * second rule; a wallet file that cannot be loaded still exits, as it does
+ * for every role.
+ */
+export function optionalAddressOf(role) {
+  const r = validateWalletEntry(loadWallets(), role);
+  return r.ok ? r.wallet.address : null;
 }
 
 /**

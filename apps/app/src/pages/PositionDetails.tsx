@@ -72,6 +72,7 @@ import { ConfirmReceipt } from '../components/ConfirmReceipt';
 import { RefinanceFlow } from '../components/RefinanceFlow';
 import { RefinancePendingCard } from '../components/RefinancePendingCard';
 import { EarlyRepayOptionsCard } from '../components/EarlyRepayOptionsCard';
+import { earlyRepayChooserRenders } from '../data/earlyRepayChooser';
 import { LenderExitOptionsCard } from '../components/LenderExitOptionsCard';
 import { ForcedCloseCard } from '../components/ForcedCloseCard';
 import {
@@ -3457,12 +3458,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         />
       ) : null}
 
-      {role === 'borrower' &&
-      row.status === 'active' &&
-      !closedThisSession &&
-      !isRental &&
-      !offsetPend.pending &&
-      !graceVerifiablyOver ? (
+      {/* #1557 — ONE rule, shared with the live review drive's mirror. */}
+      {earlyRepayChooserRenders({
+        viewerIsBorrower: role === 'borrower',
+        active: row.status === 'active',
+        closedThisSession,
+        rental: isRental,
+        offsetPending: offsetPend.pending,
+        graceVerifiablyOver,
+      }) ? (
         <EarlyRepayOptionsCard
           isAdvanced={isAdvanced}
           onSwitchToAdvanced={() => setMode('advanced')}
