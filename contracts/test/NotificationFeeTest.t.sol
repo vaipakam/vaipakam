@@ -22,11 +22,13 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibNotificationFee} from "../src/libraries/LibNotificationFee.sol";
+import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 
 /**
  * @title NotificationFeeTest
  * @notice T-032 + Recycling M1 (#1346) — coverage for
- *         `LoanFacet.markNotifBilled` + the `LibNotificationFee` library
+ *         `NotificationFeeFacet.markNotifBilled` + the `LibNotificationFee` library
  *         + the `ConfigFacet.setNotificationFee` setter.
  *
  * M1 re-shapes the tariff (see `LibNotificationFee` /
@@ -100,9 +102,9 @@ contract NotificationFeeTest is SetupTest {
         // #2721 — both parties agree to be billed, up to CONSENT_CAP per
         // loan side. The consent tests below revoke or exceed it.
         vm.prank(lender);
-        ProfileFacet(address(diamond)).setNotificationFeeConsent(CONSENT_CAP);
+        NotificationFeeFacet(address(diamond)).setNotificationFeeConsent(CONSENT_CAP);
         vm.prank(borrower);
-        ProfileFacet(address(diamond)).setNotificationFeeConsent(CONSENT_CAP);
+        NotificationFeeFacet(address(diamond)).setNotificationFeeConsent(CONSENT_CAP);
     }
 
     /// @dev Scaffolds a minimal Active Loan record. `markNotifBilled` reads
@@ -143,7 +145,7 @@ contract NotificationFeeTest is SetupTest {
             ConfigFacet(address(diamond)).getRecycleBucket();
 
         vm.prank(billerBot);
-        LoanFacet(address(diamond)).markNotifBilled(1, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
 
         // Vault lost the flat tariff.
         assertEq(
@@ -188,7 +190,7 @@ contract NotificationFeeTest is SetupTest {
             ConfigFacet(address(diamond)).getRecycleBucket();
 
         vm.prank(billerBot);
-        LoanFacet(address(diamond)).markNotifBilled(1, false);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, false);
 
         assertEq(
             vaultBefore - vpfiToken.balanceOf(borrowerVault),
@@ -235,7 +237,7 @@ contract NotificationFeeTest is SetupTest {
         );
 
         vm.prank(billerBot);
-        LoanFacet(address(diamond)).markNotifBilled(1, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
     }
 
     /**
@@ -258,7 +260,7 @@ contract NotificationFeeTest is SetupTest {
         );
 
         vm.prank(billerBot);
-        LoanFacet(address(diamond)).markNotifBilled(1, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
     }
 
     // ─── #973 / L26 — discount restamp on the vault debit ────────────────
@@ -281,7 +283,7 @@ contract NotificationFeeTest is SetupTest {
         );
 
         vm.prank(billerBot);
-        LoanFacet(address(diamond)).markNotifBilled(1, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
     }
 
     // ─── Idempotent ──────────────────────────────────────────────────────
@@ -292,11 +294,11 @@ contract NotificationFeeTest is SetupTest {
             .getOrCreateUserVault(lender);
 
         vm.prank(billerBot);
-        LoanFacet(address(diamond)).markNotifBilled(1, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
         uint256 vaultAfterFirst = vpfiToken.balanceOf(lenderVault);
 
         vm.prank(billerBot);
-        LoanFacet(address(diamond)).markNotifBilled(1, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
 
         assertEq(
             vpfiToken.balanceOf(lenderVault),
@@ -312,7 +314,7 @@ contract NotificationFeeTest is SetupTest {
         address attacker = makeAddr("attacker");
         vm.prank(attacker);
         vm.expectRevert(); // AccessControlUnauthorizedAccount(attacker, NOTIF_BILLER_ROLE)
-        LoanFacet(address(diamond)).markNotifBilled(1, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
     }
 
     // ─── Loan-existence guard ────────────────────────────────────────────
@@ -321,14 +323,14 @@ contract NotificationFeeTest is SetupTest {
         _scaffoldLoan(1);
         vm.prank(billerBot);
         vm.expectRevert(IVaipakamErrors.InvalidLoanStatus.selector);
-        LoanFacet(address(diamond)).markNotifBilled(0, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(0, true);
     }
 
     function test_markNotifBilled_RevertsOnLoanIdAboveNext() public {
         _scaffoldLoan(1);
         vm.prank(billerBot);
         vm.expectRevert(IVaipakamErrors.InvalidLoanStatus.selector);
-        LoanFacet(address(diamond)).markNotifBilled(2, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(2, true);
     }
 
     // ─── Insufficient VPFI ───────────────────────────────────────────────
@@ -347,7 +349,7 @@ contract NotificationFeeTest is SetupTest {
 
         vm.prank(billerBot);
         vm.expectRevert(); // ProxyCallFailed("Withdraw ERC20 failed") OR similar
-        LoanFacet(address(diamond)).markNotifBilled(1, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
     }
 
     // ─── Flat tariff — no oracle, exact configured amount ────────────────
@@ -364,7 +366,7 @@ contract NotificationFeeTest is SetupTest {
         uint256 vaultBefore = vpfiToken.balanceOf(lenderVault);
 
         vm.prank(billerBot);
-        LoanFacet(address(diamond)).markNotifBilled(1, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
 
         assertEq(
             vaultBefore - vpfiToken.balanceOf(lenderVault),
@@ -379,9 +381,9 @@ contract NotificationFeeTest is SetupTest {
         _scaffoldLoan(1);
 
         vm.prank(billerBot);
-        LoanFacet(address(diamond)).markNotifBilled(1, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
         vm.prank(billerBot);
-        LoanFacet(address(diamond)).markNotifBilled(1, false);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, false);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond))
             .getLoanDetails(1);
@@ -473,9 +475,9 @@ contract NotificationFeeTest is SetupTest {
             ConfigFacet(address(diamond)).getNotificationFeeConfig();
 
         vm.prank(billerBot);
-        LoanFacet(address(diamond)).markNotifBilled(1, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
         vm.prank(billerBot);
-        LoanFacet(address(diamond)).markNotifBilled(1, false);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, false);
 
         (, uint256 accruedAfter) =
             ConfigFacet(address(diamond)).getNotificationFeeConfig();
@@ -495,7 +497,7 @@ contract NotificationFeeTest is SetupTest {
     function test_markNotifBilled_RefusesPayerWithoutConsent() public {
         _scaffoldLoan(1);
         vm.prank(borrower);
-        ProfileFacet(address(diamond)).setNotificationFeeConsent(0);
+        NotificationFeeFacet(address(diamond)).setNotificationFeeConsent(0);
         address borrowerVault = VaultFactoryFacet(address(diamond))
             .getOrCreateUserVault(borrower);
         uint256 vaultBefore = vpfiToken.balanceOf(borrowerVault);
@@ -509,7 +511,7 @@ contract NotificationFeeTest is SetupTest {
                 uint256(0)
             )
         );
-        LoanFacet(address(diamond)).markNotifBilled(1, false);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, false);
 
         assertEq(vpfiToken.balanceOf(borrowerVault), vaultBefore, "nothing debited");
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
@@ -531,7 +533,7 @@ contract NotificationFeeTest is SetupTest {
                 CONSENT_CAP
             )
         );
-        LoanFacet(address(diamond)).markNotifBilled(1, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
     }
 
     /// @dev A fee exactly at the cap is within the consent.
@@ -543,7 +545,7 @@ contract NotificationFeeTest is SetupTest {
         uint256 vaultBefore = vpfiToken.balanceOf(lenderVault);
 
         vm.prank(billerBot);
-        LoanFacet(address(diamond)).markNotifBilled(1, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
 
         assertEq(vaultBefore - vpfiToken.balanceOf(lenderVault), CONSENT_CAP, "billed the cap");
     }
@@ -565,7 +567,7 @@ contract NotificationFeeTest is SetupTest {
                     uint256(1)
                 )
             );
-            LoanFacet(address(diamond)).markNotifBilled(1, true);
+            NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
         }
     }
 
@@ -575,16 +577,113 @@ contract NotificationFeeTest is SetupTest {
     function test_markNotifBilled_BilledSideStaysANoOpAfterCloseAndRevoke() public {
         _scaffoldLoan(1);
         vm.prank(billerBot);
-        LoanFacet(address(diamond)).markNotifBilled(1, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
         loan.status = LibVaipakam.LoanStatus.Repaid;
         TestMutatorFacet(address(diamond)).setLoan(1, loan);
         vm.prank(lender);
-        ProfileFacet(address(diamond)).setNotificationFeeConsent(0);
+        NotificationFeeFacet(address(diamond)).setNotificationFeeConsent(0);
 
         vm.prank(billerBot);
-        LoanFacet(address(diamond)).markNotifBilled(1, true);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
+    }
+
+    // ─── #2769 — the payer must read clean on the sanctions oracle ───────
+
+    /// @dev Installs a scriptable sanctions oracle. Callers read any vault
+    ///      address they need BEFORE flagging, because resolving a flagged
+    ///      wallet's vault is itself screened.
+    function _installSanctionsOracle() internal returns (MockSanctionsList oracle) {
+        oracle = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+    }
+
+    /// @dev A flagged payer is refused before anything moves, by name, and
+    ///      the side stays billable once the wallet is de-listed.
+    function test_markNotifBilled_RefusesFlaggedPayer_BillsOnceDelisted() public {
+        _scaffoldLoan(1);
+        address borrowerVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(borrower);
+        uint256 vaultBefore = vpfiToken.balanceOf(borrowerVault);
+        uint256 bucketBefore = ConfigFacet(address(diamond)).getRecycleBucket();
+        MockSanctionsList oracle = _installSanctionsOracle();
+        oracle.setFlagged(borrower, true);
+
+        vm.prank(billerBot);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, borrower)
+        );
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, false);
+
+        assertEq(vpfiToken.balanceOf(borrowerVault), vaultBefore, "nothing debited");
+        assertEq(ConfigFacet(address(diamond)).getRecycleBucket(), bucketBefore, "no bucket credit");
+        assertFalse(
+            LoanFacet(address(diamond)).getLoanDetails(1).borrowerNotifBilled,
+            "side stays unbilled"
+        );
+
+        oracle.setFlagged(borrower, false);
+        vm.prank(billerBot);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, false);
+        assertEq(
+            vpfiToken.balanceOf(borrowerVault),
+            vaultBefore - EXPECTED_VPFI_AMOUNT,
+            "billed once de-listed"
+        );
+    }
+
+    /// @dev The screen is on the payer, not on the loan: a flagged borrower
+    ///      does not stop the clean lender's side being billed.
+    function test_markNotifBilled_FlaggedCounterpartyDoesNotBlockTheCleanSide() public {
+        _scaffoldLoan(1);
+        address lenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
+        uint256 vaultBefore = vpfiToken.balanceOf(lenderVault);
+        MockSanctionsList oracle = _installSanctionsOracle();
+        oracle.setFlagged(borrower, true);
+
+        vm.prank(billerBot);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
+        assertEq(vpfiToken.balanceOf(lenderVault), vaultBefore - EXPECTED_VPFI_AMOUNT, "lender billed");
+    }
+
+    /// @dev While the oracle cannot be read the bill fails CLOSED, and the
+    ///      side is billed on a retry once the oracle answers again.
+    function test_markNotifBilled_RefusesDuringOracleOutage_BillsOnRetry() public {
+        _scaffoldLoan(1);
+        address lenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
+        uint256 vaultBefore = vpfiToken.balanceOf(lenderVault);
+        MockSanctionsList oracle = _installSanctionsOracle();
+        oracle.setRevertOnRead(true);
+
+        vm.prank(billerBot);
+        vm.expectRevert(IVaipakamErrors.SanctionsOracleUnavailable.selector);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
+        assertEq(vpfiToken.balanceOf(lenderVault), vaultBefore, "nothing debited during the outage");
+        assertFalse(
+            LoanFacet(address(diamond)).getLoanDetails(1).lenderNotifBilled,
+            "side stays unbilled"
+        );
+
+        oracle.setRevertOnRead(false);
+        vm.prank(billerBot);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
+        assertEq(vpfiToken.balanceOf(lenderVault), vaultBefore - EXPECTED_VPFI_AMOUNT, "billed on retry");
+    }
+
+    /// @dev An already-billed side stays a silent no-op even once its payer
+    ///      is flagged, so a retry of a completed bill never reverts.
+    function test_markNotifBilled_BilledSideStaysANoOpAfterTheFlag() public {
+        _scaffoldLoan(1);
+        vm.prank(billerBot);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
+
+        MockSanctionsList oracle = _installSanctionsOracle();
+        oracle.setFlagged(lender, true);
+        vm.prank(billerBot);
+        NotificationFeeFacet(address(diamond)).markNotifBilled(1, true);
     }
 
     function test_setNotificationFeeConsent_RecordsTheCallersOwnCapAndEmits() public {
@@ -592,29 +691,29 @@ contract NotificationFeeTest is SetupTest {
         vm.expectEmit(true, false, false, true, address(diamond));
         emit LibNotificationFee.NotificationFeeConsentSet(alice, 0, 2e18);
         vm.prank(alice);
-        ProfileFacet(address(diamond)).setNotificationFeeConsent(2e18);
+        NotificationFeeFacet(address(diamond)).setNotificationFeeConsent(2e18);
 
-        (uint256 cap, bool covers) = ProfileFacet(address(diamond)).getNotificationFeeConsent(alice);
+        (uint256 cap, bool covers) = NotificationFeeFacet(address(diamond)).getNotificationFeeConsent(alice);
         assertEq(cap, 2e18, "alice's cap");
         assertTrue(covers, "2 VPFI covers the 0.5 VPFI default");
 
         // Nobody else's record moved.
-        (uint256 otherCap, ) = ProfileFacet(address(diamond)).getNotificationFeeConsent(makeAddr("bob"));
+        (uint256 otherCap, ) = NotificationFeeFacet(address(diamond)).getNotificationFeeConsent(makeAddr("bob"));
         assertEq(otherCap, 0, "bob untouched");
 
         // A revoke reports the previous cap.
         vm.expectEmit(true, false, false, true, address(diamond));
         emit LibNotificationFee.NotificationFeeConsentSet(alice, 2e18, 0);
         vm.prank(alice);
-        ProfileFacet(address(diamond)).setNotificationFeeConsent(0);
-        (cap, covers) = ProfileFacet(address(diamond)).getNotificationFeeConsent(alice);
+        NotificationFeeFacet(address(diamond)).setNotificationFeeConsent(0);
+        (cap, covers) = NotificationFeeFacet(address(diamond)).getNotificationFeeConsent(alice);
         assertEq(cap, 0, "revoked");
         assertFalse(covers, "no consent covers nothing");
     }
 
     function test_getNotificationFeeConsent_ReportsACapBelowTheCurrentFee() public {
         ConfigFacet(address(diamond)).setNotificationFee(6e18);
-        (uint256 cap, bool covers) = ProfileFacet(address(diamond)).getNotificationFeeConsent(lender);
+        (uint256 cap, bool covers) = NotificationFeeFacet(address(diamond)).getNotificationFeeConsent(lender);
         assertEq(cap, CONSENT_CAP, "cap as set");
         assertFalse(covers, "5 VPFI does not cover a 6 VPFI fee");
     }
@@ -629,19 +728,19 @@ contract NotificationFeeTest is SetupTest {
                 ceiling
             )
         );
-        ProfileFacet(address(diamond)).setNotificationFeeConsent(ceiling + 1);
+        NotificationFeeFacet(address(diamond)).setNotificationFeeConsent(ceiling + 1);
 
         // The ceiling itself is accepted: consent to any fee governance can set.
         vm.prank(lender);
-        ProfileFacet(address(diamond)).setNotificationFeeConsent(ceiling);
+        NotificationFeeFacet(address(diamond)).setNotificationFeeConsent(ceiling);
     }
 
     /// @dev Withdrawing consent stays possible while the protocol is paused.
     function test_setNotificationFeeConsent_RevokeWorksWhilePaused() public {
         AdminFacet(address(diamond)).pause();
         vm.prank(lender);
-        ProfileFacet(address(diamond)).setNotificationFeeConsent(0);
-        (uint256 cap, ) = ProfileFacet(address(diamond)).getNotificationFeeConsent(lender);
+        NotificationFeeFacet(address(diamond)).setNotificationFeeConsent(0);
+        (uint256 cap, ) = NotificationFeeFacet(address(diamond)).getNotificationFeeConsent(lender);
         assertEq(cap, 0, "revoked while paused");
     }
 }

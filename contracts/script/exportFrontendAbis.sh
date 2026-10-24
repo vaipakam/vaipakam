@@ -332,6 +332,8 @@ FACETS=(
   "TreasuryFeeFacet"
   # #2419 -- the 1e18 valuation host RiskFacet and the offer facets self-call.
   "NumeraireValueFacet"
+  # #2769 -- the paid-notification fee host (charge + consent).
+  "NotificationFeeFacet"
   "RiskSplitLiquidationFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"

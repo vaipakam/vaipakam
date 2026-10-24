@@ -1,6 +1,6 @@
 /**
  * #2422 r12 — ONE watched-config snapshot. Every mutable governance value
- * the refinance drive reads is in WATCHED_CONFIG; the driver reads none of
+ * the live drives read is in WATCHED_CONFIG; a driver reads none of
  * those getters directly (only through `readWatchedConfig`); and every other
  * Diamond read it makes is classified as per-loan/user/offer STATE. A new
  * read that is neither fails here, so it cannot silently bypass the snapshot.
@@ -54,14 +54,27 @@ describe('watchedConfig — the one snapshot', () => {
     for (const fn of WATCHED_GETTERS) expect(Object.hasOwn(STATE_READS, fn), fn).toBe(false);
   });
 
-  it('the driver reads NO watched getter directly, and every other read it makes is classified', () => {
-    const reads = readsIn(src('live-refinance.mjs'));
-    expect(reads.length).toBeGreaterThan(10); // the scan found the driver's reads at all
-    const direct = reads.filter((fn) => WATCHED_GETTERS.includes(fn));
-    expect(direct, 'governance values must come from readWatchedConfig').toEqual([]);
-    const unclassified = reads.filter((fn) => !Object.hasOwn(STATE_READS, fn));
-    expect(unclassified, 'classify each new read: watched config, or state with a reason').toEqual([]);
-  });
+  // Every live drive that judges the page against chain config or writes on
+  // it goes through the ONE snapshot — the refinance drive, the fixture
+  // seeder that opens its loan, and the read-only review of a standing
+  // request (#2695 r1: the two newer drives had re-read governance values
+  // and screened sanctions on their own, and lost the tri-state and the
+  // race rule on the way).
+  for (const [driver, minReads] of [
+    ['live-refinance.mjs', 10],
+    ['live-seed-illiquid-loan.mjs', 4],
+    ['live-refinance-lender-review.mjs', 4],
+  ]) {
+    it(`${driver} reads NO watched getter directly, and every other read it makes is classified`, () => {
+      const reads = readsIn(src(driver));
+      expect(reads.length).toBeGreaterThan(minReads); // the scan found the driver's reads at all
+      const direct = reads.filter((fn) => WATCHED_GETTERS.includes(fn));
+      expect(direct, 'governance values must come from readWatchedConfig').toEqual([]);
+      const unclassified = reads.filter((fn) => !Object.hasOwn(STATE_READS, fn));
+      expect(unclassified, 'classify each new read: watched config, or state with a reason').toEqual([]);
+      expect(src(driver), 'the snapshot is read through readWatchedConfig').toMatch(/readWatchedConfig\(/);
+    });
+  }
 
   it('the expected-payload, outcome and review builders read nothing themselves — their config arrives from the snapshot', () => {
     for (const f of ['refinanceExpected.mjs', 'refinanceOutcome.mjs', 'reviewTerms.mjs']) {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  firstNavigationBlocker,
   preRaced,
   visitBlockedReason,
   visitProblemKinds,
@@ -409,6 +410,39 @@ describe('the forced-close card (#2069)', () => {
   });
 });
 
+describe('a forced-close-only visit (#2094)', () => {
+  // A rental, or a flagged holder's position: the lender exit card is
+  // correctly absent, and the visit exists for the forced-close card.
+  const fcOnly = (over) => ({
+    path: '/positions/9',
+    http: 200,
+    visitMode: 'forced-close',
+    chooser: false,
+    ...over,
+  });
+
+  it('does not report the correctly absent exit chooser', () => {
+    expect(visitProblems(fcOnly({ forcedCloseVerdict: { verdict: 'pass', why: 'present' } }), 'lender')).toEqual([]);
+  });
+
+  it('still reports the forced-close card, and a crash on the page', () => {
+    const fail = { verdict: 'fail', failKind: 'observed', why: 'the card states an amount it cannot know' };
+    expect(visitProblems(fcOnly({ forcedCloseVerdict: fail }), 'lender')).toEqual([`forced-close card: ${fail.why}`]);
+    expect(visitProblems(fcOnly({ hooks: true }), 'lender')).toEqual(['HOOKS-ORDER CRASH']);
+    expect(visitProblems(fcOnly({ http: 500 }), 'lender')).toEqual(['navigation returned 500']);
+  });
+
+  it('runs no lender-card shape rule, even on fields a full visit would fail', () => {
+    expect(visitProblems(fcOnly({ lenderBlurb: false, waitRow: false, waitFirst: false }), 'lender')).toEqual([]);
+  });
+
+  it('leaves a full visit judged exactly as before', () => {
+    expect(visitProblems(lender({ visitMode: 'full', chooser: false }), 'lender')).toEqual([
+      'lender chooser MISSING on an eligible loan',
+    ]);
+  });
+});
+
 describe('the forced-close card is judged above the chooser suppressions', () => {
   const fail = { verdict: 'fail', why: 'card absent on a held Active lender position' };
 
@@ -641,5 +675,37 @@ describe('the refinance posture banner (#2355)', () => {
     ]) {
       expect(visitProblems(borrower({ refinancePostureVerdict }), 'borrower')).toEqual([]);
     }
+  });
+});
+
+describe('firstNavigationBlocker (#1633 item 4)', () => {
+  it('blocks on an HTTP error page, which page.goto does not throw for', () => {
+    for (const http of [400, 404, 500, 502, 503]) {
+      expect(firstNavigationBlocker({ path: '/positions', http })).toBe(
+        `/positions answered HTTP ${http}`,
+      );
+    }
+  });
+
+  it('blocks on a thrown navigation', () => {
+    expect(
+      firstNavigationBlocker({ path: '/positions', nav: 'TimeoutError: 60000ms exceeded' }),
+    ).toBe('opening /positions failed: TimeoutError: 60000ms exceeded');
+  });
+
+  it('blocks when the first navigation never ran', () => {
+    expect(firstNavigationBlocker(undefined)).toBe('the first navigation never ran');
+  });
+
+  it('does not block a page that was served', () => {
+    for (const http of [200, 204, 304]) {
+      expect(firstNavigationBlocker({ path: '/positions', http })).toBeNull();
+    }
+  });
+
+  it('leaves a missing status to visitProblems, as the shared helper does', () => {
+    const v = { path: '/positions', http: null, pageErrors: [], consoleErrors: [] };
+    expect(firstNavigationBlocker(v)).toBeNull();
+    expect(visitProblems(v, 'borrower')).toContain('navigation returned no response');
   });
 });

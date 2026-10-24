@@ -1347,6 +1347,29 @@ jobs:
       - name: Every var-carrying Worker preserves its dashboard vars
         run: node apps/keeper/scripts/check-keep-vars.mjs
 
+  # -------------------------------------------------------------------
+  # regression-shards — run-regression.sh's plan, sharding and shard
+  # verification (#2770). The release-track gate (mainnet-gate.yml) runs
+  # the regression as parallel shards and trusts `--verify-shards` to prove
+  # they covered every chunk once; that gate only runs on release refs, so
+  # this is where a change to the plan or the verifier is tested before it
+  # merges. Un-path-gated like the two jobs above: the plan is built from the
+  # whole test tree, so a new test directory anywhere can break it. Bash
+  # only, with a stub forge; it compiles nothing.
+  regression-shards:
+    name: regression shards (unconditional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+
+      - name: Shards partition the regression and the verifier refuses gaps
+        run: bash contracts/script/run-regression.test.sh
+
   offchain-data-warm:
     name: ops/offchain-data-warm (typecheck + tests)
     needs: detect-changes

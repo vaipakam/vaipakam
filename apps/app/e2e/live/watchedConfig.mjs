@@ -95,6 +95,8 @@ export const STATE_READS = Object.freeze({
   getUserVaultAddress: 'one user’s vault',
   hasAcceptedCurrentTerms: 'one user’s terms acceptance',
   checkLiquidity: 'external oracle / pool state — a precondition on the collateral only, never a model input',
+  checkRefinanceRequest: 'one refinance request’s standing against its loan (reverts when it cannot be taken)',
+  getRefinanceRequest: 'one loan’s recorded refinance request',
 });
 
 /** The Diamond getters the snapshot reads (the screening's included). */

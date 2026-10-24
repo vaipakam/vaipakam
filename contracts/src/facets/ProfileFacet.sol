@@ -6,7 +6,6 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
-import {LibNotificationFee} from "../libraries/LibNotificationFee.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 /**
@@ -478,58 +477,6 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
             maxCStar,
             allowDowngrade
         );
-    }
-
-    // ─── Paid-notification billing consent (#2721) ────────────────────────
-
-    /**
-     * @notice Agree to be billed for paid Push notifications, at most
-     *         `maxFeePerLoanSide` VPFI per loan side, or revoke with zero.
-     *
-     * @dev    The on-chain half of the paid-notification opt-in. The
-     *         notification-billing role (`LoanFacet.markNotifBilled`) refuses
-     *         a payer whose consent is absent or below the fee configured at
-     *         billing time, so a compromised billing key cannot charge a
-     *         wallet that never agreed to pay, nor more than it agreed to.
-     *         The consent covers the caller's own vault only; nobody can set
-     *         it for another wallet.
-     *
-     *         Deliberately NOT `whenNotPaused`: withdrawing consent to be
-     *         charged must stay possible at every moment, and granting it
-     *         while paused moves nothing (billing is itself paused). Not a
-     *         sanctions-screened entry either: it moves no funds, and a
-     *         flagged wallet must still be able to revoke. The bill itself
-     *         does not screen the payer; this record does not change that.
-     *
-     *         Reverts {LibNotificationFee.NotificationFeeConsentAboveCeiling}
-     *         above `MAX_NOTIFICATION_FEE_CEIL`; consent to the ceiling itself
-     *         accepts any fee governance can set.
-     *
-     * @param maxFeePerLoanSide Most VPFI (18 decimals) the caller agrees to
-     *        pay per loan side; zero revokes.
-     */
-    function setNotificationFeeConsent(uint256 maxFeePerLoanSide) external {
-        LibNotificationFee.setConsent(msg.sender, maxFeePerLoanSide);
-    }
-
-    /**
-     * @notice `user`'s paid-notification billing consent, and whether it
-     *         covers the fee configured right now.
-     * @param user The wallet to read.
-     * @return maxFeePerLoanSide The most VPFI per loan side `user` agreed to
-     *         pay; zero means no consent.
-     * @return coversCurrentFee True iff a bill at the current fee would pass
-     *         the consent check (the loan must still be active as well).
-     */
-    function getNotificationFeeConsent(address user)
-        external
-        view
-        returns (uint256 maxFeePerLoanSide, bool coversCurrentFee)
-    {
-        maxFeePerLoanSide = LibVaipakam.storageSlot().notificationFeeConsentCap[user];
-        coversCurrentFee =
-            maxFeePerLoanSide != 0 &&
-            LibNotificationFee.vpfiAmountForFee() <= maxFeePerLoanSide;
     }
 
     // ─── Keeper Whitelist (README §3/§9) ──────────────────────────────────

@@ -132,6 +132,11 @@ export interface DeploymentFacets {
    *  health factor, offer bounds) goes through its one 1e18 rule. Optional:
    *  a chain deployed before it has no such key. */
   numeraireValueFacet?: HexAddress;
+  /** #2769 - the paid-notification fee host: the billing role's charge and a
+   *  wallet's own consent to be billed. Optional: a chain deployed before it
+   *  has no such key (the charge was on LoanFacet, the consent on
+   *  ProfileFacet). */
+  notificationFeeFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

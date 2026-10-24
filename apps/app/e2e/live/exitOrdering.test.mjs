@@ -302,8 +302,10 @@ describe('a funds defect that was READ outranks every blocker', () => {
     // The loop's own body, not everything after it: sliced to the end of
     // the file, this ordering rule could be satisfied by a `continue;`
     // and an increment sitting anywhere later in the drive (#2144 round 7).
-    const loop = blockFrom(src, 'for (const l of readyFirst) {');
-    const skip = loop.indexOf('continue;');
+    // #2094 r2 — the visit itself moved into `walkOne`, which both the
+    // walk and the held-seat pass call, so the rule is read there.
+    const loop = blockFrom(src, 'const walkOne = async (l) => {');
+    const skip = loop.indexOf('return;');
     const spend = loop.indexOf('observedDetails += 1;');
     expect(skip, 'the skip was not found').toBeGreaterThan(-1);
     expect(spend, 'the cap increment was not found').toBeGreaterThan(-1);
@@ -374,5 +376,67 @@ describe('a funds defect that was READ outranks every blocker', () => {
     expect(src, 'the copy validation still fails loudly').toContain(
       'is missing from ',
     );
+  });
+});
+
+// #1633 items 4 and 5 — every infrastructure blocker is judged before the
+// generic failure exit, so a run the harness could not complete never
+// exits 1 against the product.
+//
+// Item 5 named the allowlist gate, which the drive had already moved ahead
+// of `failures` by the time the sweep reached it; nothing pinned that, so a
+// later reorder could have put it back. Item 4 adds the unreachable-site
+// gate, which has to sit with the route gate for the same reason.
+describe('infrastructure blockers precede the generic failure exit', () => {
+  const src = fs.readFileSync(DRIVE, 'utf8');
+  const at = (needle, from = 0) => src.indexOf(needle, from);
+  const GENERIC_FAIL_EXIT = 'if (failures) process.exit(1);';
+  const BLOCKERS = [
+    ['route failures', 'if (routeFailures.length) {'],
+    ['unreachable site', 'if (siteUnreachable !== null) {'],
+    ['websocket RPC', 'if (wsRpcMethods.size) {'],
+    ['wrong chain', 'if (pageChainWrong.length) {'],
+    ['allowlist gap', 'if (allowlistTooNarrow.length || httpGaps.length) {'],
+    ['unknown chain', 'if (pageChainUnknown.length && !observedRemaining.length) {'],
+  ];
+
+  it('finds every guard it ranks, and the generic exit only once', () => {
+    for (const [name, needle] of BLOCKERS) {
+      expect(at(needle), `${name} guard not found in the drive`).toBeGreaterThan(-1);
+    }
+    expect(src.split(GENERIC_FAIL_EXIT).length - 1).toBe(1);
+  });
+
+  it.each(BLOCKERS)('ranks the %s gate ahead of it', (_name, needle) => {
+    expect(at(needle)).toBeLessThan(at(GENERIC_FAIL_EXIT));
+  });
+
+  it('keeps the unreachable-site gate beside the route gate', () => {
+    // Both are "the page was not served what it asked for". Ahead of the
+    // socket and chain gates, whose messages would misdirect a reader when
+    // the site itself never loaded.
+    expect(at('if (siteUnreachable !== null) {')).toBeGreaterThan(at('if (routeFailures.length) {'));
+    expect(at('if (siteUnreachable !== null) {')).toBeLessThan(at('if (wsRpcMethods.size) {'));
+  });
+
+  it('drains the proxied requests before any gate reads them (#1633 item 6)', () => {
+    const drain = at('await drainRouteHandlers();');
+    expect(drain).toBeGreaterThan(at('await browser.close();'));
+    expect(drain).toBeLessThan(at('if (routeFailures.length) {'));
+    expect(src).toContain("ctx.route('**/*', trackedRouteHandler)");
+    expect(src).toContain('signal: AbortSignal.timeout(ROUTE_FETCH_TIMEOUT_MS)');
+  });
+
+  it('waits for the page\'s own requests when the chooser wait runs out (#1633 item 6)', () => {
+    const wait = at("waitFor({ state: 'visible', timeout: 45_000 })");
+    const drain = at('if (!shown) await drainPageRequests(page, path);', wait);
+    const scrape = at('const text = await page.evaluate(() => document.body.innerText);');
+    expect(wait).toBeGreaterThan(-1);
+    expect(drain).toBeGreaterThan(wait);
+    expect(drain).toBeLessThan(scrape);
+    // Keyed by THIS page's cohort, so another page's traffic cannot hold it.
+    expect(
+      between(src, 'async function drainPageRequests(page, label) {', 'async function drainRouteHandlers() {'),
+    ).toContain('cohortOfPage(page)');
   });
 });

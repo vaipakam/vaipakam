@@ -88,6 +88,7 @@ import {
   http,
   numberToHex,
 } from 'viem';
+import * as viemChains from 'viem/chains';
 import {
   excursionExplains,
   jumpabilityMoved,
@@ -110,9 +111,23 @@ import {
   refinancePostureVerdict,
 } from './refinancePosture.mjs';
 import { redactUrl } from './redact.mjs';
-import { isDetailPath, visitProblemKinds, visitVerdict } from './visitVerdict.mjs';
-import { walkOrderFor } from './walkOrder.mjs';
+import {
+  firstNavigationBlocker,
+  isDetailPath,
+  visitProblemKinds,
+  visitVerdict,
+} from './visitVerdict.mjs';
+import { holdsLastSeatForFull, walkOrderFor } from './walkOrder.mjs';
 import { withVisibility } from './visibility.mjs';
+import {
+  EXCLUSION_WORDS,
+  chooserExclusion,
+  graceSecondsFromBuckets,
+  setAsideByDerivedGate,
+} from './chooserEligibility.mjs';
+import { createInFlight } from './inFlight.mjs';
+import { forcedCloseFacts, forcedCloseReadPlan } from './forcedCloseRule.mjs';
+import { forcedCloseOnlyWhy, lenderVisitMode } from './lenderPool.mjs';
 import { createPageHeadTracker } from './pageHead.mjs';
 import {
   EXECUTION_REVERTED,
@@ -133,6 +148,7 @@ import {
   rpcRequestCalls,
   summariseRpcLedger,
 } from './rpc-verdict.mjs';
+import { READ_PROBE_BINDING, createReadProbe } from './readProbe.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -262,6 +278,16 @@ if (!deployment?.diamond) {
   process.exit(2);
 }
 const DIAMOND = deployment.diamond;
+/**
+ * #2133 — the Multicall3 the page's forced-close aggregate goes through:
+ * the page takes it from its chain definition (`chain.contracts.multicall3`)
+ * and refuses a chain without one, so the drive takes the same field from
+ * the same viem definition. `undefined` leaves the exact-block reads
+ * unjudged, by name, rather than guessing an address.
+ */
+const MULTICALL3 = Object.values(viemChains).find((c) => c?.id === CHAIN_ID)?.contracts?.multicall3?.address;
+/** How many render blocks besides the settled one a visit re-reads. */
+const MAX_RENDER_BLOCKS = 8;
 const DIAMOND_ABI_VIEM = loadDiamondAbi();
 
 /**
@@ -972,25 +998,11 @@ const LOCK_EARLY_WITHDRAWAL_SALE = 2;
  * an EMPTY bucket set today. A first draft returned zero grace there,
  * which made every matured loan read as past-grace and skipped all eight
  * loans on the chain — the drive reported BLOCKED while the pages it
- * would have checked were rendering perfectly well. Mirror the app's
- * `readGraceSecondsLive` branch for branch; do not simplify it.
+ * would have checked were rendering perfectly well. The walk now lives in
+ * `chooserEligibility.mjs`, checked against the app's
+ * `graceSecondsFromBuckets` by its parity test (#1557), so it cannot be
+ * simplified here without CI noticing.
  */
-/** Mirrors `lib/grace.defaultGraceSeconds`, which in turn mirrors
- *  LibVaipakam.gracePeriod's compile-time schedule. Used when the chain
- *  publishes NO buckets — which is the case on Base Sepolia today, so
- *  this is the live path, not a corner. Treating an empty set as zero
- *  grace makes every matured loan look past-grace the instant it
- *  matures, which is how a first draft of this drive managed to skip
- *  every loan on the chain. */
-function defaultGraceSeconds(durationDays) {
-  if (durationDays < 7n) return 3_600n;
-  if (durationDays < 30n) return 86_400n;
-  if (durationDays < 90n) return 3n * 86_400n;
-  if (durationDays < 180n) return 7n * 86_400n;
-  if (durationDays < 365n) return 14n * 86_400n;
-  return 30n * 86_400n;
-}
-
 let graceBucketsCache;
 /** Drop the memo so the next {@link graceSecondsFor} re-reads the chain.
  *
@@ -1013,16 +1025,8 @@ async function graceSecondsFor(durationDays) {
       functionName: 'getGraceBuckets',
     }),
   );
-  const buckets = graceBucketsCache;
-  if (buckets.length > 0) {
-    for (const b of buckets) {
-      if (b.maxDurationDays === 0n) return b.graceSeconds; // catch-all
-      if (durationDays < b.maxDurationDays) return b.graceSeconds;
-    }
-    // Malformed set — the contract falls back to the last entry.
-    return buckets[buckets.length - 1].graceSeconds;
-  }
-  return defaultGraceSeconds(durationDays);
+  // The walk is the app's, mirrored and parity-tested (#1557).
+  return graceSecondsFromBuckets(graceBucketsCache, durationDays);
 }
 
 /**
@@ -1410,6 +1414,10 @@ for (const id of ids) {
     lenderTokenId: d.lenderTokenId,
     startTime: d.startTime,
     durationDays: d.durationDays,
+    // #2133 — the asset the page's liquidity read asks about. The page
+    // takes it from the loan row; a loan's collateral asset never changes,
+    // so the discovery read is the same answer.
+    collateralAsset: d.collateralAsset,
   };
   // Wrapped, because these two now propagate transport failures rather
   // than swallowing them: unwrapped, such a rejection would reach the top
@@ -1427,8 +1435,14 @@ for (const id of ids) {
   // The borrower branch keeps reading unconditionally: it uses the
   // authority in its own skip-reason reporting for ineligible loans,
   // and changing that is outside this PR.
+  // #2094 — an Active RENTAL clears the cheap gates too: the forced-close
+  // card renders on one (`lenderPool.mjs`), so its holder is needed.
   loan.authority =
-    ROLE === 'lender' && !(lenderStatusOk(loan.status) && loan.assetType === ASSET_ERC20)
+    ROLE === 'lender' &&
+    !(
+      (lenderStatusOk(loan.status) && loan.assetType === ASSET_ERC20) ||
+      (loan.status === STATUS_ACTIVE && loan.assetType !== ASSET_ERC20)
+    )
       ? null
       : await discovery(
           `reading the ${ROLE} authority for loan ${id}`,
@@ -1506,77 +1520,101 @@ for (const id of ids) {
  * report BLOCKED on a chain where the lender card is rendering perfectly
  * well on loans it had discarded.
  */
+/**
+ * The borrower facts, as the PAGE's rule takes them (#1557). The rule
+ * itself is `chooserExclusion`, the parity-tested mirror of the app's
+ * `earlyRepayChooserExclusion`, so no clause is written out here.
+ *
+ * `viewerIsBorrower` is "the borrower token resolves to a holder": the
+ * drive connects AS that holder, so a readable token is what makes the
+ * page's viewer the borrower. Nothing is closed in a watch-only session.
+ * The offset and grace facts are read only for an Active ERC-20 loan
+ * (above); for any other the rule has already returned on an earlier
+ * clause, so their `undefined` is never consulted.
+ */
+const borrowerFacts = (l) => ({
+  viewerIsBorrower: l.authority !== null,
+  active: l.status === STATUS_ACTIVE,
+  rental: l.assetType !== ASSET_ERC20,
+  offsetPending: l.offsetLocked === true,
+  graceVerifiablyOver: l.graceOver === true,
+  closedThisSession: false,
+});
+/**
+ * #2094 — the lender facts, as `lenderVisitMode` takes them. The pool is
+ * the union of the exit chooser's positions (visited in full) and the
+ * forced-close card's extra ones: an Active rental, and a sanctions-
+ * flagged holder's Active position (visited for that card alone).
+ */
+const lenderFacts = (l) => ({
+  held: l.authority !== null && l.authority !== undefined,
+  active: l.status === STATUS_ACTIVE,
+  fallbackPending: l.status === STATUS_FALLBACK_PENDING,
+  rental: l.assetType !== ASSET_ERC20,
+  holderFlagged: l.authoritySanctioned,
+});
+if (ROLE === 'lender') {
+  for (const l of loans) l.visitMode = lenderVisitMode(lenderFacts(l));
+}
 const eligible = loans.filter((l) =>
-  ROLE === 'lender'
-    ? lenderStatusOk(l.status) &&
-      l.assetType === ASSET_ERC20 &&
-      l.authority !== null &&
-      l.authoritySanctioned === false
-    : l.status === STATUS_ACTIVE &&
-      l.assetType === ASSET_ERC20 &&
-      l.authority !== null &&
-      l.offsetLocked === false &&
-      l.graceOver === false,
+  ROLE === 'lender' ? l.visitMode !== null : chooserExclusion(borrowerFacts(l)) === null,
 );
+/**
+ * #1557 direction 2 — AN EMPTY POOL MADE OF THE DRIVE'S OWN DERIVATIONS IS
+ * NAMED, not reported as an empty chain.
+ *
+ * Still BLOCKED: a chain whose loans have all aged past grace is a real
+ * state on a testnet, and exiting 1 there would leave the drive red for a
+ * reason that is nobody's defect. But the BLOCKED line used to read as
+ * "nothing to look at" in exactly the case #1529 hit, where a grace read
+ * that treated an empty bucket set as zero grace skipped all eight loans
+ * while their pages rendered the chooser. Saying which loans only the
+ * drive's own reading set aside is what lets a reader tell the two apart.
+ * Borrower runs only: the lender pool derives nothing (#1557 is about this
+ * chooser).
+ */
+function noteDerivedSetAside(pool) {
+  if (ROLE !== 'borrower') return;
+  const setAside = setAsideByDerivedGate(pool, borrowerFacts);
+  if (setAside.length === 0) return;
+  console.log(
+    `  but ${setAside.length} Active ERC-20 loan(s) with a live borrower were set aside` +
+      ` ONLY by this drive's own reading of the grace or offset gate:` +
+      ` ${setAside.map((l) => `${l.id} (${EXCLUSION_WORDS[chooserExclusion(borrowerFacts(l))]})`).join(', ')}` +
+      `\n  → that is the shape a drifted predicate takes (#1557). Open one of those pages:` +
+      ` if it shows the chooser, the drive is wrong, not the chain.`,
+  );
+}
 const dropped = loans.length - eligible.length;
 if (dropped > 0) {
   // Never silently narrow the candidate set — say what was set aside, and
   // why, so a shrinking pool is legible rather than mysterious.
+  // A borrower run names the reason the PAGE's rule gives (#1557).
   const why = (l) =>
-    (ROLE === 'lender' ? !lenderStatusOk(l.status) : l.status !== STATUS_ACTIVE)
-      ? 'not active'
-      : l.assetType !== ASSET_ERC20
-        ? 'NFT rental'
-        : l.authority === null
-          ? // For a lender run the authority is deliberately left unread
-            // when the cheap gates already fail, so `null` there means
-            // "not looked up", not "burned" — and the two earlier arms
-            // have already named the real reason.
-            `${ROLE} token burned`
-          : l.authoritySanctioned
-            ? 'holder sanctions-flagged (card correctly suppressed)'
-            : l.offsetLocked
-              ? 'offset in progress'
-              : 'past grace';
+    ROLE === 'borrower'
+      ? EXCLUSION_WORDS[chooserExclusion(borrowerFacts(l))]
+      : !lenderStatusOk(l.status)
+        ? 'not active'
+        : l.assetType !== ASSET_ERC20
+          ? // An Active rental is in the pool, so this one is in fallback:
+            // the forced-close card is Active-only and the chooser never
+            // renders on a rental.
+            'NFT rental past Active (neither card renders for it)'
+          : l.authority === null
+            ? `${ROLE} token burned`
+            : l.authoritySanctioned
+              ? // In the pool while Active; this one is in fallback, where
+                // the chooser is suppressed for a flagged holder and the
+                // forced-close card does not mount.
+                'holder sanctions-flagged, loan past Active (neither card renders for it)'
+              : 'holder sanctions status unread';
   console.log(
-    `skipping  ${dropped} loan(s) the chooser does not render for: ` +
+    `skipping  ${dropped} loan(s) ${ROLE === 'lender' ? 'neither lender card renders' : 'the chooser does not render'} for: ` +
       loans
         .filter((l) => !eligible.includes(l))
         .map((l) => `${l.id} (${why(l)})`)
         .join(', '),
   );
-  // ROUND 1 P2 — SAY WHAT THIS POOL CANNOT REACH.
-  //
-  // The candidate pool is the CHOOSER's, and it filters to ERC-20, so
-  // an overdue NFT rental is never visited. The forced-close card has a
-  // distinct `ready-rental` route the spec treats separately — ending a
-  // rental moves nothing of the borrower's and makes prepaid rent
-  // claimable — and none of it is exercised here. Widening the pool is
-  // a second discovery path and is tracked separately; until then the
-  // honest thing is for the run to state the gap rather than let a
-  // green tally imply the rental surface was covered.
-  if (ROLE === 'lender') {
-    if (loans.some((l) => l.assetType !== ASSET_ERC20)) {
-      console.log(
-        '          NOTE: rentals are outside this pool, so the forced-close ' +
-          "card's rental route is NOT covered by this run.",
-      );
-    }
-    // ROUND 5 P2 — the SAME pool also drops a sanctions-flagged holder,
-    // and that exclusion is right for the chooser (the card is
-    // correctly suppressed there) while being wrong for forced close:
-    // the spec deliberately keeps this card available to a flagged
-    // lender, because closing out an already-defaulted loan is a
-    // wind-down the protocol keeps open to every caller. A regression
-    // hiding it in exactly that supported state is undetectable here.
-    if (loans.some((l) => l.authoritySanctioned === true)) {
-      console.log(
-        '          NOTE: sanctions-flagged holders are outside this pool, so the ' +
-          'forced-close card is NOT verified for the flagged lender the spec ' +
-          'requires it to stay available to.',
-      );
-    }
-  }
 }
 
 // Which Active positions can actually exercise the forced-close card.
@@ -1787,6 +1825,13 @@ if (!observed) {
   const capableCount = (loans) => loans.filter((l) => acceptsCloseOut.has(l.id)).length;
   const [best] = [...byAuthority.entries()].sort((a, b) => {
     if (ROLE === 'lender') {
+      // #2094 — a wallet whose positions the exit chooser renders for goes
+      // first: forced-close-only positions widen what one run can reach,
+      // and must not hand the choice to a wallet where the chooser cannot
+      // be asserted at all while another wallet holds one it can.
+      const hasFull = (loans) => (loans.some((l) => l.visitMode === 'full') ? 1 : 0);
+      const byFull = hasFull(b[1]) - hasFull(a[1]);
+      if (byFull !== 0) return byFull;
       // Ahead of mere applicability: a card that MOUNTS still need not
       // OFFER anything, and the confirmation can only be read on one that
       // does (round 74).
@@ -1802,6 +1847,7 @@ if (!observed) {
     console.log(
       `\nBLOCKED: no ${ROLE}-eligible loans on chain — nothing verified.`,
     );
+    noteDerivedSetAside(loans);
     process.exit(2);
   }
   observed = best[1][0].authority;
@@ -1810,7 +1856,19 @@ const mine = eligible.filter((l) => l.authority.toLowerCase() === observed.toLow
 console.log(
   `observing ${observed} (watch-only, no key) — ${mine.length} eligible loan(s) as ${ROLE}`,
 );
-console.log(`asserting ${CHOOSER.what}`);
+// #2094 — SAY WHICH CARDS THIS RUN CAN ASSERT, before any of them runs. A
+// lender run asserts the exit chooser on `full` positions and the
+// forced-close card on every Active one; a wallet holding only rentals or
+// holding while flagged has no position the chooser renders for, and the
+// run says so here rather than letting a green tally imply it was checked.
+if (ROLE === 'lender' && !mine.some((l) => l.visitMode === 'full')) {
+  console.log(
+    `asserting the forced-close card only — this wallet holds no position the lender exit card renders for` +
+      ` (${[...new Set(mine.map((l) => forcedCloseOnlyWhy(lenderFacts(l))))].join(', ')})`,
+  );
+} else {
+  console.log(`asserting ${CHOOSER.what}${ROLE === 'lender' ? ', and the forced-close card' : ''}`);
+}
 for (const l of mine) {
   // Compared against the ORIGINATING party on the chosen side, so
   // "transferred" means what it says for either card. Reported because a
@@ -1819,11 +1877,18 @@ for (const l of mine) {
   // interesting half.
   const origin = ROLE === 'lender' ? l.lender : l.borrower;
   const moved = l.authority.toLowerCase() !== origin.toLowerCase();
-  console.log(`  loan ${l.id}${moved ? ` (position transferred from ${origin})` : ''}`);
+  const fcOnly = ROLE === 'lender' && l.visitMode === 'forced-close';
+  console.log(
+    `  loan ${l.id}${moved ? ` (position transferred from ${origin})` : ''}` +
+      (fcOnly ? ` — forced-close card only (${forcedCloseOnlyWhy(lenderFacts(l))})` : ''),
+  );
 }
 if (mine.length === 0) {
   console.error(
     `\nBLOCKED: ${observed} holds no eligible ${ROLE} position — nothing verified.`,
+  );
+  noteDerivedSetAside(
+    loans.filter((l) => l.authority !== null && l.authority.toLowerCase() === observed.toLowerCase()),
   );
   process.exit(2);
 }
@@ -2061,6 +2126,60 @@ function watchWebSockets(page) {
  */
 const routeFailures = [];
 /**
+ * How long this process waits for a page request it is proxying (#1633
+ * item 6).
+ *
+ * The proxied fetch had no deadline, so a dependency that STALLED (as
+ * opposed to failing) was recorded nowhere: the page waited, the 45s
+ * chooser wait expired, and the run reported "chooser MISSING" on an
+ * eligible loan, which is a product FAIL for an infrastructure fault.
+ * With a deadline the stall ends as an abort, the abort is filed in
+ * `routeFailures`, and the route gate reports the run BLOCKED.
+ *
+ * It is also what bounds the two waits that read the outcome: a visit
+ * whose chooser wait runs out waits for its own page's requests, and the
+ * report waits for every request (`routeInFlight`). Without a deadline
+ * neither wait could end. The chain probe in this file already had one
+ * of its own (`CHAIN_PROBE_TIMEOUT_MS`).
+ */
+const ROUTE_FETCH_TIMEOUT_MS = 30_000;
+/**
+ * Route handlers still running, so the report can wait for them (#1633
+ * item 6). See `inFlight.mjs`: the report is read only after every one
+ * has recorded its outcome, bounded by the fetch deadline, and a handler
+ * that still has not finished is filed as a route failure rather than
+ * left out of the verdict.
+ */
+const routeInFlight = createInFlight();
+// Called only once the router is installed, after `routeHandler` exists.
+// Keyed by the issuing page's cohort, so a visit waits for its own page's
+// requests and not for another page's.
+const trackedRouteHandler = routeInFlight.track(
+  (route) => routeHandler(route),
+  (route) => cohortOfRequest(route.request()),
+);
+/** The same wait, for ONE page's requests — see the chooser wait in `visit`. */
+async function drainPageRequests(page, label) {
+  const stuck = await routeInFlight.drain(ROUTE_FETCH_TIMEOUT_MS + 5_000, cohortOfPage(page));
+  if (stuck > 0) {
+    routeFailures.push({
+      url: label,
+      why: `${stuck} page request(s) still unanswered after the chooser wait`,
+    });
+  }
+}
+async function drainRouteHandlers() {
+  // A margin over the fetch deadline, so a handler whose fetch timed out
+  // has time to file its own failure before this files it again.
+  const stuck = await routeInFlight.drain(ROUTE_FETCH_TIMEOUT_MS + 5_000);
+  if (stuck > 0) {
+    routeFailures.push({
+      url: '(page requests)',
+      why: `${stuck} proxied request(s) were still unfinished when the run ended`,
+    });
+  }
+}
+/**
  * Requests the PAGE sent that a reachable provider rejected as malformed.
  *
  * The opposite verdict to `routeFailures` despite arriving down the same
@@ -2072,32 +2191,44 @@ const malformedRpc = [];
 /**
  * Every per-call outcome the routed shim observed, in attempt order.
  *
- * Not the two buckets above, because one HTTP attempt cannot settle the
- * question: viem retries a failed read (`retryCount: 3`) and `wagmi.ts`
- * wraps these transports in `fallback([...])`, so a transient 429 the
- * page recovered from is indistinguishable, at this layer, from a dead
- * endpoint. `summariseRpcLedger` reconciles the attempts once the run is
- * over and fills the buckets then (#1529 review round 23).
+ * It decides what one response proves — a malformed request, which joins
+ * `malformedRpc` — and nothing else. Whether a read was left unserved is
+ * the app's own answer (`readProbe` below, #1672): viem retries a failed
+ * read and `wagmi.ts` falls back between endpoints, and no rule over the
+ * attempts can tell a recovered retry from a read the page consumed as a
+ * failure. A failed attempt is named beside that answer, for attribution.
+ * One wire finding stays a finding of its own: a batch response viem may
+ * have resolved with another call's answer, which no read fails on
+ * (`misread`, #2783 r1).
  */
 const rpcLedger = [];
 
 /**
- * WHOSE PAGE a recorded attempt belongs to (#2100).
+ * What each page reported about its reads, from its RPC transport and its
+ * query cache (#1672). Filled through the binding installed below, keyed
+ * by the page's cohort, and judged per visit just before the page closes.
+ */
+const readProbe = createReadProbe();
+
+/**
+ * How long a visit waits, before it is judged, for the reads its page
+ * had not settled yet: a request in flight, or a query waiting to retry.
+ * Covers the app's one query retry and viem's own retries on a slow
+ * endpoint. A read still unsettled after it is unserved (#2783 r1).
+ */
+const READ_SETTLE_MS = 20_000;
+
+/**
+ * WHOSE PAGE a recorded attempt, or a query report, belongs to (#2100,
+ * #1672).
  *
- * `summariseRpcLedger` lets a later success clear an earlier failure of
- * the same `callKey`, which is right for viem's retries and its
- * `fallback` alternates and wrong across pages: the same read recurs on
- * every route, so one page's outage was erased by the next page repeating
- * it. The ledger now carries a cohort and reconciles only within one.
- *
- * The PAGE is the identity, looked up through the request's own frame, so
- * an attempt is attributed to the page that issued it however the visits
- * interleave. Where Playwright cannot supply one — a service worker, a
- * request whose frame has already gone — the CURRENT visit's cohort
- * stands in. That fallback is the conservative direction: a late success
- * from the previous page then carries this page's cohort and therefore
- * clears nothing, so a recovered failure is reported rather than a real
- * one suppressed, which is the way this drive errs everywhere else.
+ * The PAGE is the identity, looked up through the request's own frame (or
+ * the binding's source page), so an attempt is attributed to the page
+ * that issued it however the visits interleave. Where Playwright cannot
+ * supply one — a service worker, a request whose frame has already gone —
+ * the CURRENT visit's cohort stands in. Since #1672 a cohort only says
+ * which page's failed attempts to name beside that page's unserved read;
+ * it no longer decides anything.
  */
 const pageCohorts = new WeakMap();
 let cohortSeq = 0;
@@ -2125,15 +2256,6 @@ const cohortOfRequest = (request) => {
 // advertises itself as read-only and a page regression must not be able
 // to POST to a backend while we scrape.
 const routeHandler = async (route) => {
-  // ROUND 108 P2 — WHEN THIS REQUEST WAS BEGUN, on the ordering clock.
-  //
-  // The ledger's retry rule needs to tell a RETRY from an already-in-flight
-  // SIBLING, and the distinguishing fact is causal: a retry is sent after
-  // the failure came back, a sibling was sent before it. Stamped at the top
-  // of the handler, which is the earliest this drive sees the request, and
-  // on the same monotonic clock `recordRpcResponse` stamps arrival with —
-  // two origins would make the comparison meaningless.
-  const requestedAt = orderingNow();
   const req = route.request();
   const method = req.method().toUpperCase();
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
@@ -2234,6 +2356,9 @@ const routeHandler = async (route) => {
       ),
       body: req.postDataBuffer() ?? undefined,
       redirect: 'follow',
+      // Covers the body read below as well as the headers: a stall at
+      // either point ends as an abort that the catch files (#1633 item 6).
+      signal: AbortSignal.timeout(ROUTE_FETCH_TIMEOUT_MS),
     });
     const buf = Buffer.from(await resp.arrayBuffer());
     const headers = {};
@@ -2243,29 +2368,6 @@ const routeHandler = async (route) => {
       }
     });
     await route.fulfill({ status: resp.status, headers, body: buf });
-    // Stamped HERE — the instant delivery completed — and on the ordering
-    // clock. Rounds 112 and 113 are one question answered from both sides,
-    // and the answer is that this boundary is the only defensible one.
-    //
-    // Round 112: stamping at record time is too LATE. Several statements
-    // separate the fulfill from the record, and viem can issue its retry in
-    // that gap, so a genuine retry's request lands at or before the stamp
-    // and the causal test refuses it as an in-flight sibling — a recovered
-    // failure kept in the ledger, and a correctly rendered page BLOCKED.
-    //
-    // Round 113: stamping before the fulfill is too EARLY. Fulfillment is
-    // awaited, so a request begun WHILE it is pending is stamped after a
-    // pre-fulfill mark even though the page has not seen the failure and it
-    // cannot be a reaction to it. The causal test would then read an
-    // in-flight sibling as a retry and clear a failure whose original
-    // caller consumed an error — certifying a funds surface that was never
-    // fully served, which is the accusing direction and the worse one.
-    //
-    // There is no stamp for "Chromium handed this to the page", so the
-    // ambiguous interval is closed by taking the LATER edge of it: a
-    // request begun during fulfillment is treated as unable to prove
-    // recovery, because it is.
-    const deliveredAt = orderingNow();
     // A resolved fetch is not the same as an answered call. The provider
     // can hand back a JSON-RPC error, or a 429, over a perfectly healthy
     // HTTP response — and passing that on without a verdict is how a
@@ -2294,10 +2396,8 @@ const routeHandler = async (route) => {
         requestBody: req.postData(),
         // Redact BEFORE truncating, as the catch path does below.
         url: redact(req.url()).slice(0, 160),
-        requestedAt,
-        deliveredAt,
-        // Whose page issued it (#2100) — the ledger reconciles retries
-        // only within one cohort.
+        // Whose page issued it (#2100), so an unserved read's report can
+        // name that page's failed attempts.
         cohort: cohortOfRequest(req),
       },
       rpcLedger,
@@ -2438,13 +2538,22 @@ const initScript = () => {
 // the wrapping is a one-line change per site rather than a re-indent of
 // three large bodies — the behaviour of each handler is untouched.
 await discovery('installing the request router', () =>
-  ctx.route('**/*', routeHandler),
+  ctx.route('**/*', trackedRouteHandler),
 );
 await discovery('exposing the wallet binding', () =>
   ctx.exposeBinding('__watchRequest', watchRequestHandler),
 );
 await discovery('installing the provider init script', () =>
   ctx.addInitScript(initScript),
+);
+// #1672 — the app reports its reads through this (each RPC request's
+// final outcome, and each query that settled in error or is waiting to
+// retry), and announces itself on every load. Installed before any page
+// exists, so it is defined before the app's first script runs.
+await discovery('exposing the read report', () =>
+  ctx.exposeBinding(READ_PROBE_BINDING, (source, event) =>
+    readProbe.record(source?.page ? cohortOfPage(source.page) : currentCohort, event),
+  ),
 );
 if (REFI_POSTURE) {
   // The Refinance form is an Advanced-mode surface; see `REFI_POSTURE`.
@@ -2478,21 +2587,9 @@ if (REFI_POSTURE) {
  * it — everything else here measures durations against deadlines, where a
  * wall clock is fine and a different origin would be confusing.
  *
- * ROUND 115 P2 — AND THE LEDGER IS ON THIS CLOCK TOO NOW.
- *
- * This note used to say the retry-recovery window in `rpc-verdict.mjs` was
- * deliberately left on the wall clock, because a backward step there
- * under-reports rather than accuses and moving it would mean changing what
- * `at` means for every caller. That reasoning was sound on its own and was
- * overtaken: round 108 established that `requestedAt` is COMPARED against
- * `at`, so two clock origins there make the comparison meaningless, and the
- * caller-wide work the note called a reason not to has since been done —
- * `requestedAt` and `deliveredAt` are both stamped here with `orderingNow`,
- * and the ledger falls back to its own `performance.now()`.
- *
- * Left as a correction rather than deleted: a note calling the opposite
- * design deliberate is exactly what steers a maintenance change back into
- * the mixed-origin comparison this replaced.
+ * The RPC ledger took ordering stamps on this clock too, for its retry
+ * recovery rule; #1672 retired that rule (the app's own read report now
+ * answers whether a read was served), so the floor's stamps are the ones left.
  */
 const orderingNow = () => performance.now();
 
@@ -2637,12 +2734,22 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
       // wait for the assertion's own subject. A timeout here is NOT an
       // error to propagate — absence is a legitimate observation, and
       // the reporting below is what decides whether it is a failure.
-      await page
-        .locator('section.card')
-        .filter({ hasText: CHOOSER.title })
-        .first()
+      const chooserCard = page.locator('section.card').filter({ hasText: CHOOSER.title }).first();
+      const shown = await chooserCard
         .waitFor({ state: 'visible', timeout: 45_000 })
-        .catch(() => {});
+        .then(() => true, () => false);
+      // #1633 item 6 — THE WAIT RAN OUT, BUT DID THE PAGE'S DEPENDENCIES?
+      //
+      // A request the page was still waiting on when the 45s ran out made
+      // the absence a statement about that dependency, not about the app,
+      // and nothing recorded it: the run reported "chooser MISSING". So the
+      // requests THIS page has in flight now are waited for, each bounded
+      // by the proxy deadline. One that answers lets the page finish
+      // rendering before the scrape below; one that times out files its
+      // own route failure; one that outlives even this bound is filed here.
+      // Either filing blocks the run at the route gate. Requests begun
+      // during the wait are not waited for, so polling cannot hold it open.
+      if (!shown) await drainPageRequests(page, path);
     }
     // Short settle regardless: lets the cards below the chooser (the
     // hold card among them) finish their own reads before we scrape.
@@ -2663,8 +2770,13 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   const hooks = pageErrors.some((e) =>
     /Rendered (more|fewer) hooks|Rules of Hooks|change in the order of Hooks/i.test(e),
   );
-  const lenderCardText =
-    ROLE === 'lender' && loan ? await readLenderCardText(page) : null;
+  // #2094 — a forced-close-only visit (a rental, or a flagged holder's
+  // position) reads no lender exit card: the card is correctly absent
+  // there, and every read of it would wait out its own timeout for
+  // nothing. The forced-close observation below runs in both modes.
+  const forcedCloseOnly = ROLE === 'lender' && loan !== null && loan.visitMode === 'forced-close';
+  const lenderShapeJudged = ROLE === 'lender' && loan !== null && !forcedCloseOnly;
+  const lenderCardText = lenderShapeJudged ? await readLenderCardText(page) : null;
   // FORCED-CLOSE CARD (#2069), judged on its own evidence.
   //
   // `lenderHoldsActive` is deliberately STRICTER than lender-card
@@ -2743,6 +2855,8 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
       }
     : null;
   const out = {
+    // #1672 — whose query reports and failed attempts are this visit's.
+    cohort: cohortOfPage(page),
     path,
     http,
     pageErrors,
@@ -2763,7 +2877,7 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // past the card's end and reported the page footer as a row's
     // reason). Falls back to the full body when the card is absent, so
     // the `card=false` verdict is still computed from something.
-    ...(ROLE === 'lender' && loan ? lenderShapeOf(lenderCardText ?? text) : {}),
+    ...(lenderShapeJudged ? lenderShapeOf(lenderCardText ?? text) : {}),
     // WHAT THE SCRAPE ACTUALLY SAW (Codex #1853 r16). The
     // suppression below needs to know whether the card was on the
     // page AT THIS MOMENT — not whether a chain read taken later,
@@ -2772,7 +2886,11 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // first: a card that rendered here WITH A ROW MISSING, on a loan
     // that then went terminal before the snapshot, had its genuine
     // regression suppressed as a pre-render race.
-    cardAbsentAtScrape: ROLE === 'lender' && loan ? lenderCardText === null : false,
+    cardAbsentAtScrape: lenderShapeJudged ? lenderCardText === null : false,
+    // #2094 — which cards this visit judges (`lenderPool.mjs`), and why a
+    // forced-close-only one is that.
+    visitMode: ROLE === 'lender' && loan ? loan.visitMode : null,
+    forcedCloseOnlyWhy: forcedCloseOnly ? forcedCloseOnlyWhy(lenderFacts(loan)) : null,
     // The forced-close observation and its verdict, kept whole so the
     // reporter can print the reason rather than re-deriving it.
     forcedClose,
@@ -2807,9 +2925,7 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // FAILURE safe; it does nothing about the 30 seconds spent reaching
     // it — which is the same "handled the error, ignored the cost"
     // shape as the r3 rental read that could end the run.
-    ...(ROLE === 'lender' && loan
-      ? await lenderAdvancedOf(page, loan, lenderCardText === null)
-      : {}),
+    ...(lenderShapeJudged ? await lenderAdvancedOf(page, loan, lenderCardText === null) : {}),
     // Spread AFTER the shape scrape on purpose: where the probe observed
     // the card the scrape had missed, its later reading replaces the
     // earlier absence (Codex #1853 r17). Order is the mechanism here, so
@@ -2829,6 +2945,13 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
       ? refinancePostureVerdict(refinancePostureObs, REFI_POSTURE_COPY)
       : null,
   };
+  // #1672 — what the page reported about its reads, taken while the page
+  // is still open. Every observation above has been made, so a read that
+  // failed any time up to here is one they may have rested on. A read not
+  // settled yet is waited for first, a bounded time: closing the page now
+  // would drop its outcome and leave it looking served (#2783 r1).
+  await readProbe.settle(cohortOfPage(page), { timeoutMs: READ_SETTLE_MS });
+  out.readState = readProbe.of(cohortOfPage(page), { chainId: CHAIN_ID });
   await page.close();
   return out;
 }
@@ -3022,11 +3145,6 @@ async function stillEligible(loan) {
   // happened here.
   loan.status = Number(live.status);
   loan.authority = authorityNow;
-  if (lockedNow) return 'offset started since discovery';
-  if (authorityNow === null) return `${ROLE} token burned since discovery`;
-  if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
-    return 'position transferred since discovery';
-  }
   // The grace re-check below is a BORROWER gate. Applying it to a lender
   // run would skip a page whose card is correctly still rendering — and,
   // if it were the only candidate, report BLOCKED on a working surface.
@@ -3035,6 +3153,10 @@ async function stillEligible(loan) {
   // either direction between discovery and the visit, and a flag that
   // landed in that window correctly suppresses the card.
   if (ROLE === 'lender') {
+    if (authorityNow === null) return 'lender token burned since discovery';
+    if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
+      return 'position transferred since discovery';
+    }
     // UNCACHED, deliberately (Codex #1853 r8). The discovery cache is
     // keyed per authority for the whole sweep, so calling the cached
     // helper here returns the fulfilled promise from discovery and this
@@ -3047,12 +3169,44 @@ async function stillEligible(loan) {
     // flagged between discovery and the visit has its card correctly
     // suppressed by the page, and the drive would wait out the chooser
     // timeout and report a product FAIL.
-    const flaggedNow = await discovery(
-      `re-reading the sanctions status of ${observed}`,
-      () => sanctionedAuthorityUncached(authorityNow),
-    );
-    return flaggedNow ? 'holder sanctions-flagged since discovery' : null;
+    //
+    // #2094 — and the flag no longer only SKIPS. It moves a position
+    // between the two lender modes: a flag that landed since discovery
+    // leaves the forced-close card up while the chooser is withdrawn, so
+    // the visit goes ahead for that card alone, and a flag cleared since
+    // makes it a full visit. Read only for an ERC-20 position, where it
+    // decides the mode; a rental is a forced-close visit whoever holds it,
+    // so this read could only end the run there for nothing.
+    if (loan.assetType === ASSET_ERC20) {
+      loan.authoritySanctioned = await discovery(
+        `re-reading the sanctions status of ${observed}`,
+        () => sanctionedAuthorityUncached(authorityNow),
+      );
+    }
+    const mode = lenderVisitMode(lenderFacts(loan));
+    if (mode === null) {
+      return loan.authoritySanctioned
+        ? 'holder sanctions-flagged since discovery, on a loan past Active'
+        : 'no longer active';
+    }
+    if (mode !== loan.visitMode) {
+      console.log(
+        `  loan ${loan.id}: ${mode === 'full' ? 'holder no longer flagged' : 'holder sanctions-flagged'} since discovery` +
+          ` — observing ${mode === 'full' ? 'both lender cards' : 'the forced-close card only'}`,
+      );
+      loan.visitMode = mode;
+    }
+    return null;
   }
+  // The LIVE term, not the discovered one. `extendLoanInPlace` rewrites
+  // startTime and durationDays while the loan stays Active, so a stale
+  // term would judge an extended loan against its old deadline and skip a
+  // page that is correctly still chooser-eligible — and, if it was the
+  // only candidate, report BLOCKED (#1529 review round 10). The grace
+  // bucket follows the live duration too, since the bucket is chosen BY
+  // duration — and the SCHEDULE is re-read here as well, not just the
+  // term. A memo from discovery is exactly the stale input this function
+  // exists to rule out.
   // The LIVE term, not the discovered one. `extendLoanInPlace` rewrites
   // startTime and durationDays while the loan stays Active, so a stale
   // term would judge an extended loan against its old deadline and skip a
@@ -3064,8 +3218,19 @@ async function stillEligible(loan) {
   // exists to rule out.
   invalidateGraceBuckets();
   const grace = await graceSecondsFor(live.durationDays);
-  if (now > live.startTime + live.durationDays * 86_400n + grace) {
-    return 'crossed its grace deadline since discovery';
+  // #1557 — the PAGE's rule over the re-read facts, not a clause list of
+  // this function's own (see `borrowerFacts`). Rental and closed-this-
+  // session cannot change between discovery and the visit.
+  const reason = chooserExclusion({
+    ...borrowerFacts(loan),
+    viewerIsBorrower: authorityNow !== null,
+    active: Number(live.status) === STATUS_ACTIVE,
+    offsetPending: lockedNow,
+    graceVerifiablyOver: now > live.startTime + live.durationDays * 86_400n + grace,
+  });
+  if (reason !== null) return `${EXCLUSION_WORDS[reason]} since discovery`;
+  if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
+    return 'position transferred since discovery';
   }
   return null;
 }
@@ -4007,6 +4172,46 @@ async function probeDefaultable(loanId, blockNumber) {
  * reserves for a PRODUCT REGRESSION. A prerequisite read that could not
  * answer is BLOCKED, never a finding about the app.
  */
+/**
+ * #2133 — the PAGE'S OWN INPUTS to the forced-close decision, read at
+ * `block` the way the page reads them: its read plan in one Multicall3
+ * aggregate, mapped by its own rules (`forcedCloseRule.mjs`, pinned to the
+ * app's code by `forcedCloseRule.test.mjs`). The verdict then runs the
+ * page's rule over them and compares the state the card declared.
+ *
+ * A slot that reverts is an unread fact, exactly as on the page; the
+ * aggregate failing as a whole is a read this drive could not take, which
+ * goes through `discovery` like the other pinned reads.
+ *
+ * @returns {Promise<{facts: object|null, why: string|null}>}
+ */
+async function forcedCloseFactsAt(loan, block) {
+  if (!MULTICALL3) {
+    return {
+      facts: null,
+      why: `no Multicall3 is known for chain ${CHAIN_ID}, so the page's read plan cannot be issued`,
+    };
+  }
+  const plan = forcedCloseReadPlan({
+    diamond: DIAMOND,
+    diamondAbi: DIAMOND_ABI_VIEM,
+    multicall3: MULTICALL3,
+    loanId: loan.id,
+    collateralAsset: loan.collateralAsset,
+  });
+  const slots = await discovery(
+    `reading loan ${loan.id}'s forced-close inputs at block ${block}`,
+    () =>
+      pub.multicall({
+        allowFailure: true,
+        blockNumber: block,
+        multicallAddress: MULTICALL3,
+        contracts: plan.map((e) => e.contract),
+      }),
+  );
+  return { facts: forcedCloseFacts(plan, slots), why: null };
+}
+
 async function observeForcedClose(page, loan, headBeforeNav, pageProviderSample) {
   // ROUND 55 P2 — BRACKET THE OBSERVATION, because the answer that
   // validates a render must not come from after it.
@@ -4344,16 +4549,43 @@ async function observeForcedClose(page, loan, headBeforeNav, pageProviderSample)
   } else if (declaredBlock > pinnedBlock) {
     declaredChainWhy = `the card names block ${declaredBlock}, ahead of this observer's ${pinnedBlock}`;
   } else {
-    declaredChain = await discovery(
-      `re-reading loan ${loan.id} at the block its card names (${declaredBlock})`,
-      async () => {
-        const [defaultable, internalMatch] = await Promise.all([
-          probeDefaultable(loan.id, declaredBlock),
-          probeInternalMatch(loan.id, declaredBlock),
-        ]);
-        return { defaultable, internalMatch };
-      },
-    );
+    const at = await forcedCloseFactsAt(loan, declaredBlock);
+    declaredChain = at.facts;
+    declaredChainWhy = at.why;
+  }
+  // #2133 — AND AT EVERY OTHER BLOCK A RENDER NAMED. The card re-resolves
+  // on each refetch, so the refusal a lender read earlier in the visit can
+  // have been dated at a different block from the settled one; each is
+  // checked against the chain at its own block, never vouched for by
+  // another render's. Bounded, and the blocks not read say why.
+  const renderChainAt = {};
+  const renderChainWhy = {};
+  {
+    const named = [
+      ...new Set(
+        (Array.isArray(card.seenRenders) ? card.seenRenders : [])
+          .filter(
+            (r) =>
+              typeof r?.declaredState === 'string' &&
+              r.declaredState !== 'unknown' &&
+              typeof r.declaredBlock === 'string' &&
+              /^[1-9]\d*$/.test(r.declaredBlock) &&
+              r.declaredBlock !== card.declaredBlock,
+          )
+          .map((r) => r.declaredBlock),
+      ),
+    ].sort((a, b) => (BigInt(a) > BigInt(b) ? -1 : 1));
+    for (const [i, b] of named.entries()) {
+      if (BigInt(b) > pinnedBlock) {
+        renderChainWhy[b] = `the render names block ${b}, ahead of this observer's ${pinnedBlock}`;
+      } else if (i >= MAX_RENDER_BLOCKS) {
+        renderChainWhy[b] = `this drive reads the chain at no more than ${MAX_RENDER_BLOCKS} render blocks per visit, and block ${b} was beyond that`;
+      } else {
+        const at = await forcedCloseFactsAt(loan, BigInt(b));
+        if (at.facts) renderChainAt[b] = at.facts;
+        else renderChainWhy[b] = at.why;
+      }
+    }
   }
 
   // ROUND 7 P2 — CONFIRM A MISSING-CARD FAIL BEFORE REPORTING IT.
@@ -4688,6 +4920,12 @@ async function observeForcedClose(page, loan, headBeforeNav, pageProviderSample)
     // ride in through `...card`.
     declaredChain,
     declaredChainWhy,
+    // #2133 — the same facts at every other block a render named.
+    renderChainAt,
+    renderChainWhy,
+    // #2094 — what the loan IS, from this drive's read; a loan's asset
+    // type never changes. The verdict holds every painted route to it.
+    loanAssetType: loan.assetType === ASSET_ERC20 ? 'erc20' : 'rental',
     // ROUND 64 P2 — WHICH SETTLEMENT the protocol would perform, both
     // ends of the same bracket. `triggerDefault` succeeding says the
     // close-out would run; it does not say whether the lender receives
@@ -7709,6 +7947,11 @@ async function anchorAudit(page, card) {
 const visited = [];
 const racedOut = [];
 visited.push(await visit('/positions'));
+// #1633 item 4 — the first navigation is this drive's reachability check.
+// When the site itself was not served, no position page is walked (each
+// would be judged against the same error body) and the run is reported
+// BLOCKED at the route gate below rather than as a FAIL row.
+const siteUnreachable = firstNavigationBlocker(visited[0]);
 // Walk candidates until MAX_POSITIONS pages have actually been OBSERVED,
 // not merely attempted. A pre-slice let a raced-out candidate consume the
 // quota, so the drive silently verified fewer pages than asked for — and
@@ -7793,17 +8036,58 @@ if (REFI_POSTURE) {
         : ''),
   );
 }
-for (const l of readyFirst) {
-  if (observedDetails >= MAX_POSITIONS) break;
+// #2094 r2 — a lender run's last seat is held for a full visit while it has
+// none and one is still ahead (`holdsLastSeatForFull`). A held candidate is
+// offered again after the walk, while seats remain.
+const held = [];
+const walkOne = async (l) => {
   const changed = await stillEligible(l);
   if (changed) {
     racedOut.push(`${l.id} (${changed})`);
+    return;
+  }
+  // #2094 — a forced-close-only position has no chooser to wait for.
+  visited.push(
+    await visit(`/positions/${l.id}`, {
+      expectChooser: !(ROLE === 'lender' && l.visitMode === 'forced-close'),
+      loan: l,
+    }),
+  );
+  observedDetails += 1;
+};
+for (const [i, l] of readyFirst.entries()) {
+  if (siteUnreachable !== null || observedDetails >= MAX_POSITIONS) break;
+  if (
+    ROLE === 'lender' &&
+    holdsLastSeatForFull({
+      seatsLeft: MAX_POSITIONS - observedDetails,
+      observedFull: visited.some((v) => isDetailPath(v.path) && v.visitMode === 'full'),
+      mode: l.visitMode,
+      fullAhead: readyFirst.some((x, j) => j > i && x.visitMode === 'full'),
+    })
+  ) {
+    held.push(l);
     continue;
   }
-  visited.push(await visit(`/positions/${l.id}`, { expectChooser: true, loan: l }));
-  observedDetails += 1;
+  await walkOne(l);
+}
+for (const l of held) {
+  if (siteUnreachable !== null || observedDetails >= MAX_POSITIONS) break;
+  await walkOne(l);
+}
+if (held.length && observedDetails >= MAX_POSITIONS) {
+  const unvisited = held.filter((l) => !visited.some((v) => v.path === `/positions/${l.id}`));
+  if (unvisited.length) {
+    console.log(
+      `\nheld back for the exit chooser: ${unvisited.map((l) => l.id).join(', ')}` +
+        `\n  → the cap's last seat went to a position the chooser renders for, so these forced-close-only` +
+        ` positions were not visited. Raise OBSERVE_MAX_POSITIONS to include them.`,
+    );
+  }
 }
 await browser.close();
+// Before anything below reads `routeFailures` or the ledger (#1633 item 6).
+await drainRouteHandlers();
 
 if (racedOut.length) {
   console.log(
@@ -7830,8 +8114,11 @@ for (const v of visited) {
   // outranks `blocked` at the exit below, and the module deliberately
   // returns both for every visit rather than choosing between them.
   const { problems } = visitVerdict(v, ROLE);
-  const verdict = problems.length ? 'FAIL' : 'ok';
-  if (problems.length) failures++;
+  // The unreachable first page is not a product finding (#1633 item 4):
+  // its row says so, and it is not counted toward `failures`.
+  const unreachable = v === visited[0] && siteUnreachable !== null;
+  const verdict = unreachable ? 'BLOCK' : problems.length ? 'FAIL' : 'ok';
+  if (problems.length && !unreachable) failures++;
   console.log(`${verdict.padEnd(5)} ${v.path.padEnd(16)} http=${v.http ?? '-'} connected=${v.connected ?? '-'}`);
   if (detail && !v.nav) {
     console.log(
@@ -7841,7 +8128,11 @@ for (const v of visited) {
           // reading it, and a reader looking at `card=true` deserves to
           // know which observation it came from — the whole point of the
           // rescrape is that the two disagreed.
-          `      card=${v.chooser}${v.cardRescraped ? ' (late)' : ''} blurb=${v.lenderBlurb} wait=${v.waitRow}` +
+          // #2094 — a forced-close-only visit judged no exit chooser, and
+          // its line says so rather than printing card=false as a finding.
+          (v.visitMode === 'forced-close'
+            ? `      exit chooser: not judged (forced-close card only — ${v.forcedCloseOnlyWhy})`
+            : `      card=${v.chooser}${v.cardRescraped ? ' (late)' : ''} blurb=${v.lenderBlurb} wait=${v.waitRow}` +
           ` sellNow=${v.sellNowRow} list=${v.listRow} waitFirst=${v.waitFirst}` +
           `\n      advanced: offered=${v.advancedOffered} jumps=${v.advancedJumps}` +
           ` anchorsOk=${v.advancedAnchorsOk ?? '-'}` +
@@ -7860,7 +8151,7 @@ for (const v of visited) {
                 .join(', ')}]`
             : '') +
           (v.advancedWhy ? ` (${v.advancedWhy})` : '') +
-          (v.advancedJumps ? '' : `\n      sell-now row: ${v.sellNowText ?? '-'}\n      listing row: ${v.listText ?? '-'}`) +
+          (v.advancedJumps ? '' : `\n      sell-now row: ${v.sellNowText ?? '-'}\n      listing row: ${v.listText ?? '-'}`)) +
           // Printed on EVERY lender detail visit, including a blocked
           // one. A verdict that only appears when it fails leaves the
           // reader unable to tell "checked and fine" from "never
@@ -7984,6 +8275,10 @@ for (const v of visited) {
               // said, `declaredFacts=` is what the chain said about it.
               ` declared=${v.forcedCloseDeclaredState ?? 'none'}@${v.forcedCloseDeclaredBlock ?? 'none'}` +
               ` declaredFacts=${v.forcedCloseVerdict?.declaredFacts ?? 'unobserved'}` +
+              // #2133 — whether each refusal the card showed was checked
+              // against its own gate (`verified`), could not be (`not
+              // checked`), or none was shown (`none stated`).
+              ` reason=${v.forcedCloseVerdict?.reasonChecked ?? 'unobserved'}` +
               ` head>pinned=${v.forcedCloseHeadPinned ?? 'unobserved'}` +
               ` head>sighting=${v.forcedCloseHeadPageSighting ?? 'unobserved'}` +
               ` head>=ceiling=${v.forcedCloseHeadCeiling ?? (v.forcedCloseCeilingSound === false ? 'unestablished' : 'unobserved')}` +
@@ -8014,19 +8309,51 @@ for (const v of visited) {
   // refuses the analytics beacon, and the sandbox proxy resets page
   // WebSockets. Neither is an app defect.
   (v.consoleErrors ?? []).slice(0, 4).forEach((e) => console.log(`      c ${e}`));
+  // #1672 — reads the chain answered with a revert, which the app is
+  // expected to handle, and reads on another chain (ENS on Ethereum).
+  // Reported, never judged.
+  (v.readState?.answered ?? []).slice(0, 4).forEach((l) => console.log(`      q ${l}`));
+  (v.readState?.elsewhere ?? []).slice(0, 2).forEach((l) => console.log(`      q (other chain) ${l}`));
 }
 
-// Settle the routed-fetch attempts now that no more will arrive. Until
-// this point `rpcLedger` holds ATTEMPTS, not verdicts — a read viem
-// retried successfully, or reached through the fallback transport, must
-// not be reported as a failure just because its first try was refused
-// (#1529 review round 23). Merged into the same two buckets the wallet
-// path and the catch path already fill, so the report and the exit
-// contract below are unchanged.
-{
-  const settled = summariseRpcLedger(rpcLedger);
-  malformedRpc.push(...settled.malformed);
-  routeFailures.push(...settled.unreachable);
+// The wire's findings, now that no more attempts will arrive. A malformed
+// request is a defect wherever it happened and joins the bucket the wallet
+// path fills. A misread batch is judged below. Any other failed attempt
+// decides nothing on its own (#1672): whether a read was left unserved is
+// the app's answer, judged next, and the attempts are named beside it.
+const wire = summariseRpcLedger(rpcLedger);
+malformedRpc.push(...wire.malformed);
+
+// #1672 — what each page reported about its reads. Only visits whose page
+// loaded carry a report; a navigation failure is its own finding.
+const probedVisits = visited.filter((v) => v.readState);
+/** Pages that loaded and never announced the report: an older build. */
+const readUnreported = probedVisits.filter((v) => !v.readState.armed).map((v) => v.path);
+/** Report events in a shape this drive does not read. */
+const readRefused = probedVisits.flatMap((v) => v.readState.refused.map((r) => `${v.path}: ${r}`));
+/** Reads a page asked for and never got, or had not got when judged. */
+const unservedReads = probedVisits.flatMap((v) => [
+  ...v.readState.unserved.map((line) => ({ path: v.path, cohort: v.cohort, line })),
+  ...v.readState.pending.map((line) => ({
+    path: v.path,
+    cohort: v.cohort,
+    line: `${line} (waited ${READ_SETTLE_MS / 1000}s)`,
+  })),
+]);
+// A read that failed because a reachable provider refused the request as
+// malformed is the same defect the wire bucket holds, seen from the page.
+malformedRpc.push(
+  ...probedVisits.flatMap((v) =>
+    v.readState.faults.map((line) => ({ url: v.path, why: `a read failed on a malformed request: ${line}` })),
+  ),
+);
+if (wire.failedAttempts.length && unservedReads.length === 0) {
+  console.log(
+    `\nwire: ${wire.failedAttempts.length} failed RPC attempt(s), and every page reported` +
+      ` every read as served — so each was an attempt viem retried or moved to a fallback` +
+      ` endpoint before the app's code saw an outcome.`,
+  );
+  wire.failedAttempts.slice(0, 4).forEach((r) => console.log(`  ${r.why} → ${r.url}`));
 }
 
 // A refusal is never just informational. Printing it while the exit code
@@ -8109,7 +8436,11 @@ if (ROLE === 'borrower') {
   );
 }
 
-console.log(`\n${visited.length - failures}/${visited.length} routes clean`);
+console.log(
+  siteUnreachable !== null
+    ? `\nno route reviewed: the site was not served`
+    : `\n${visited.length - failures}/${visited.length} routes clean`,
+);
 
 // A page-initiated write attempt is a regression in the app; a
 // too-narrow allowlist means this run simply cannot be trusted. Neither
@@ -8263,6 +8594,66 @@ if (routeFailures.length) {
   console.log(
     `  → the site, the RPC endpoint or the egress proxy was unreachable.` +
       ` Nothing observed here can be trusted; re-run.`,
+  );
+  process.exit(2);
+}
+// #2783 r1 — a provider answered a batch in a shape viem resolves by
+// POSITION, so a call may have been handed another call's answer and the
+// page rendered it as served. No report from the app can see that, so it
+// is judged from the wire. Same class as the gate above: the provider's
+// fault, and nothing observed on that page can be trusted.
+if (wire.misread.length) {
+  console.log(
+    `\nBLOCKED: ${wire.misread.length} RPC response(s) may have handed the page another call's answer` +
+      ` (a batch member surplus, duplicated, missing its result, or a batch answered once).`,
+  );
+  wire.misread.slice(0, 6).forEach((r) => console.log(`  ${r.why} → ${r.url}`));
+  console.log(`  → the RPC endpoint answered out of shape. Nothing observed on those pages can be trusted; re-run.`);
+  process.exit(2);
+}
+// #1672 — a read the page asked for and never got, as the app itself
+// reports it: an RPC request that failed after viem's retries, a query
+// that settled in error, or either still unsettled when the page was
+// judged — and not because the chain answered. The page ran without that
+// data, so what was observed on it is not a statement about the app. Same
+// class as the gate above.
+if (unservedReads.length) {
+  console.log(
+    `\nBLOCKED: ${unservedReads.length} read(s) were left unserved, as the page's own RPC client` +
+      ` and query cache reported them.`,
+  );
+  for (const u of unservedReads.slice(0, 6)) {
+    console.log(`  ${u.path}: ${u.line}`);
+    wire.failedAttempts
+      .filter((a) => a.cohort === u.cohort)
+      .slice(0, 3)
+      .forEach((a) => console.log(`      wire: ${a.why} → ${a.url}`));
+  }
+  console.log(`  → an RPC endpoint did not answer in time. Nothing observed on those pages can be trusted; re-run.`);
+  process.exit(2);
+}
+// #1672 — without the report, whether every read was served cannot be
+// decided from here (the wire cannot tell a recovered retry from a read
+// the page consumed as a failure), so the run vouches for nothing.
+if (readUnreported.length || readRefused.length) {
+  console.log(`\nBLOCKED: the page did not report its reads, so whether every read was served is undecided.`);
+  if (readUnreported.length) {
+    console.log(
+      `  ${readUnreported.length} loaded page(s) never announced the report (${readUnreported.slice(0, 4).join(', ')})` +
+        ` — the deployed build predates #1672. Deploy a build that carries it, then re-run.`,
+    );
+  }
+  readRefused.slice(0, 4).forEach((r) => console.log(`  ${r} — update this drive to read it.`));
+  process.exit(2);
+}
+// #1633 item 4 — the site itself was not served, which no other gate
+// sees: an HTTP error page is a fetch that SUCCEEDED, so it is not in
+// `routeFailures`. Same class as the gate above and placed with it, ahead
+// of `failures`, so an outage is not reported as a broken product.
+if (siteUnreachable !== null) {
+  console.log(`\nBLOCKED: the site was not served — ${siteUnreachable}.`);
+  console.log(
+    `  → no position page was walked. Check SITE_URL and the deployment, then re-run.`,
   );
   process.exit(2);
 }
@@ -8490,6 +8881,23 @@ if (advBlocked.length) {
 if (!visited.some((v) => /^\/positions\/\d+$/.test(v.path))) {
   console.log(
     '\nBLOCKED: no position detail page was observed — nothing verified.',
+  );
+  process.exit(2);
+}
+// #2094 — AND THE EXIT CHOOSER WAS ASSERTED. Forced-close-only visits are
+// detail pages too, so the gate above passes on a run that reached only
+// rentals or flagged positions. A lender run advertises the chooser, and an
+// advertised assertion that never ran is not a clean run (round 1 below),
+// so this reads the OBSERVATIONS alone: whatever the wallet held, and
+// whatever changed between discovery and the visits, no full observation
+// is exit 2. The pool only chooses the explanation.
+if (ROLE === 'lender' && !visited.some((v) => isDetailPath(v.path) && v.visitMode === 'full')) {
+  console.log(
+    '\nBLOCKED: the lender exit chooser was not asserted on any position — ' +
+      (mine.some((l) => l.visitMode === 'full')
+        ? 'this wallet holds positions it renders for, and none was observed in full.'
+        : 'every position this wallet holds is a rental or a flagged holder, where the chooser' +
+          ' correctly does not render, so only the forced-close card was asserted.'),
   );
   process.exit(2);
 }

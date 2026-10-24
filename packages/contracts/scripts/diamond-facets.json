@@ -26,6 +26,7 @@
     "SwapAttemptFacet",
     "TreasuryFeeFacet",
     "NumeraireValueFacet",
+    "NotificationFeeFacet",
     "IntentDispatchFacet",
     "AutoLifecycleFacet",
     "EncumbranceMutateFacet",

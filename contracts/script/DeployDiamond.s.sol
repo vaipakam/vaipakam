@@ -99,6 +99,7 @@ import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
+import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -428,6 +429,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #2419 - the one 1e18 valuation rule. RiskFacet and every facet that
         // inlines LibRiskMath value an amount through its views (self-calls).
         NumeraireValueFacet numeraireValueFacet = new NumeraireValueFacet();
+        // #2769 - the paid-notification fee: the billing role's charge and the
+        // wallet's own consent to it, moved off LoanFacet and ProfileFacet.
+        NotificationFeeFacet notificationFeeFacet = new NotificationFeeFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             new RewardCompensationDispatchFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -462,7 +466,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](97);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](98);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -554,6 +558,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[94] = _buildCut(address(swapAttemptFacet), _getSwapAttemptSelectors());
         cuts[95] = _buildCut(address(treasuryFeeFacet), _getTreasuryFeeSelectors());
         cuts[96] = _buildCut(address(numeraireValueFacet), _getNumeraireValueSelectors());
+        cuts[97] = _buildCut(address(notificationFeeFacet), _getNotificationFeeSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1237,6 +1242,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("swapAttemptFacet", address(swapAttemptFacet));
         Deployments.writeFacet("treasuryFeeFacet", address(treasuryFeeFacet));
         Deployments.writeFacet("numeraireValueFacet", address(numeraireValueFacet));
+        Deployments.writeFacet("notificationFeeFacet", address(notificationFeeFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -1453,7 +1459,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](33);
+        s = new bytes4[](31);
         s[0] = ProfileFacet.updateKYCStatus.selector;
         s[1] = ProfileFacet.getUserCountry.selector;
         s[2] = ProfileFacet.isKYCVerified.selector;
@@ -1494,9 +1500,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[29] = ProfileFacet.isRecipientBarred.selector;
         // #1347 — per-offer creator Full VPFI tariff opt-in.
         s[30] = ProfileFacet.setOfferCreatorFullTariff.selector;
-        // #2721 — paid-notification billing consent (set + read).
-        s[31] = ProfileFacet.setNotificationFeeConsent.selector;
-        s[32] = ProfileFacet.getNotificationFeeConsent.selector;
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
@@ -1836,12 +1839,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getLoanSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](3);
         s[0] = LoanFacet.initiateLoan.selector;
         s[1] = LoanFacet.getLoanDetails.selector;
         s[2] = LoanFacet.getLoanConsents.selector;
-        // T-032 — notification-bill writer entry. NOTIF_BILLER_ROLE-gated.
-        s[3] = LoanFacet.markNotifBilled.selector;
+        // `markNotifBilled` moved to NotificationFeeFacet in #2769.
     }
 
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {
@@ -3403,6 +3405,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      both curated refresh scripts cut it from that library.
     function _getNumeraireValueSelectors() internal pure returns (bytes4[] memory s) {
         s = FacetSelectors.numeraireValue();
+    }
+
+    /// @dev #2769 - the paid-notification fee host. Returns the ONE list in
+    ///      `FacetSelectors.notificationFee()`, which `RedeployFacets` also
+    ///      cuts.
+    function _getNotificationFeeSelectors() internal pure returns (bytes4[] memory s) {
+        s = FacetSelectors.notificationFee();
     }
 
     /// @dev 3b-ii-B (#1566) — the per-day closure proof.

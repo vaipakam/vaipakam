@@ -109,6 +109,7 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **VaipakamNFTFacet**   | Mint/update/burn position NFTs (ERC721, on-chain metadata)                  |
 | **ProfileFacet**       | User country (sanctions), KYC verification                                  |
 | **AdminFacet**         | Treasury, 0x proxy, allowance target config                                 |
+| **NotificationFeeFacet** | The paid-notification fee: `markNotifBilled` (`NOTIF_BILLER_ROLE`) and the wallet's own consent to it (`setNotificationFeeConsent` / `getNotificationFeeConsent`). Split off `LoanFacet` and `ProfileFacet` in #2769, when screening the payer pushed `LoanFacet` over EIP-170. **`markNotifBilled` is NOT on LoanFacet any more** |
 
 **Refresh-together families (#1566 slices 2–3, #2472, #2440).** Each facet set
 below carries one behaviour across a self-call or a fill, so refreshing a subset
@@ -1810,6 +1811,19 @@ it fails the regression, so fix it by adding the subdir.
 `predeploy-check.sh --full` delegates here (#1620), so the mainnet preflight and
 the release-track `mainnet-gate.yml` inherit all of the above — including the
 exhaustiveness guard.
+
+**The release-track gate runs it SHARDED** (#2770). The script builds its chunk
+list (the plan) before running anything; `--shard i/N` runs every Nth chunk of
+it, so N parallel runners each carry a share and no compile unit grows, which
+is why sharding costs no memory. `mainnet-gate.yml` runs
+`predeploy-check.sh --full --shard i/N --manifest …` once per matrix entry, and
+its `mainnet-gate-full` job passes only when every shard succeeded **and**
+`run-regression.sh --verify-shards` accepts their manifests: one plan digest,
+shards 1..N once each, every chunk run once and passed. A green shard is not a
+green regression; do not read one as a deploy verdict. Local runs and
+`deploy-mainnet.sh` stay unsharded. `contracts/script/run-regression.test.sh`
+(stub forge, seconds) tests the plan and the verifier, and runs unconditionally
+in `ci.yml`.
 
 The principled cause-fix that keeps each unit small is to return **lean DTOs**
 from paginated / array views (the #603 `OfferSummary`/`LoanSummary` pattern) —

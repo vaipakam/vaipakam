@@ -26,6 +26,7 @@ import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
+import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -254,6 +255,13 @@ contract RedeployFacets is Script {
         // ({_requireNumeraireValueRule}); a selector added to the host later
         // partitions to an Add below.
         NumeraireValueFacet numeraireValueFacet = new NumeraireValueFacet();
+        // #2769 - the paid-notification fee host. Its charge moved off
+        // LoanFacet and its consent off ProfileFacet, both refreshed here, so
+        // it rides the same cut: on a Diamond that still routes the charge to
+        // an old LoanFacet, refreshing LoanFacet alone would leave every bill
+        // on that old code. Already-routed selectors partition to a Replace
+        // that moves them here; unrouted ones to an Add.
+        NotificationFeeFacet notificationFeeFacet = new NotificationFeeFacet();
 
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("RiskSplitLiquidation: ", address(riskSplitLiquidationFacet));
@@ -275,6 +283,7 @@ contract RedeployFacets is Script {
         console.log("SwapAttemptFacet:     ", address(swapAttemptFacet));
         console.log("TreasuryFeeFacet:     ", address(treasuryFeeFacet));
         console.log("NumeraireValueFacet:  ", address(numeraireValueFacet));
+        console.log("NotificationFeeFacet: ", address(notificationFeeFacet));
 
         // #394 (Codex #647 rounds 5+7) — the runtime HF-floor knob selectors
         // need an Add on a PRE-#394 diamond (not yet routed → Replace reverts on
@@ -412,6 +421,9 @@ contract RedeployFacets is Script {
         // #2419 - the valuation host, from the one list the deploy cuts.
         (bytes4[] memory nvToAdd, bytes4[] memory nvToReplace) =
             _partitionByRouting(diamond, FacetSelectors.numeraireValue());
+        // #2769 - the paid-notification fee host, from the one list the deploy cuts.
+        (bytes4[] memory nfToAdd, bytes4[] memory nfToReplace) =
+            _partitionByRouting(diamond, FacetSelectors.notificationFee());
 
         uint256 nExtra =
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
@@ -433,7 +445,8 @@ contract RedeployFacets is Script {
             (fcToAdd.length > 0 ? 1 : 0) + (fcToReplace.length > 0 ? 1 : 0) +
             (saToAdd.length > 0 ? 1 : 0) + (saToReplace.length > 0 ? 1 : 0) +
             (tfToAdd.length > 0 ? 1 : 0) + (tfToReplace.length > 0 ? 1 : 0) +
-            (nvToAdd.length > 0 ? 1 : 0) + (nvToReplace.length > 0 ? 1 : 0);
+            (nvToAdd.length > 0 ? 1 : 0) + (nvToReplace.length > 0 ? 1 : 0) +
+            (nfToAdd.length > 0 ? 1 : 0) + (nfToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](9 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
@@ -612,6 +625,14 @@ contract RedeployFacets is Script {
         if (nvToAdd.length > 0) {
             cuts[idx++] = _add(address(numeraireValueFacet), nvToAdd);
         }
+        // #2769 - and the paid-notification fee host, in the same cut as the
+        // LoanFacet and ProfileFacet it moved off.
+        if (nfToReplace.length > 0) {
+            cuts[idx++] = _replace(address(notificationFeeFacet), nfToReplace);
+        }
+        if (nfToAdd.length > 0) {
+            cuts[idx++] = _add(address(notificationFeeFacet), nfToAdd);
+        }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
@@ -645,6 +666,8 @@ contract RedeployFacets is Script {
         console.log("  TreasuryFee selectors repl.:     ", tfToReplace.length);
         console.log("  NumeraireValue selectors added:  ", nvToAdd.length);
         console.log("  NumeraireValue selectors repl.:  ", nvToReplace.length);
+        console.log("  NotificationFee selectors added: ", nfToAdd.length);
+        console.log("  NotificationFee selectors repl.: ", nfToReplace.length);
     }
 
     /// @dev #1566 S2b - the fallback-custody boundary. From S2b the fallback

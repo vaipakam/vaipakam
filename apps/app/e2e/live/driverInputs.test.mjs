@@ -6,7 +6,7 @@
 // wallet-file element threw a raw TypeError. They are inputs, so a bad one
 // is BLOCKED by the drive that reads it; these pin the parsing.
 import { describe, expect, it } from 'vitest';
-import { normaliseWallets, parseAppRouteList, parseOrigin } from './driver.mjs';
+import { normaliseWallets, parseAppRouteList, parseOrigin, parseWalletFileText } from './driver.mjs';
 
 describe('parseOrigin', () => {
   it('drops a trailing slash, so a route appends to a bare origin', () => {
@@ -49,6 +49,32 @@ describe('parseAppRouteList', () => {
 
   it('refuses a selector that names no route', () => {
     expect(parseAppRouteList(',, ,')).toEqual({ error: 'it selects no routes' });
+  });
+});
+
+describe('parseWalletFileText (#2715)', () => {
+  const KEY = '0x' + 'ab'.repeat(32);
+  it('parses a valid file', () => {
+    expect(parseWalletFileText(JSON.stringify({ lender: { privateKey: KEY } }))).toEqual({ lender: { privateKey: KEY } });
+  });
+
+  // Each of these makes V8's own message quote the input; none may reach ours.
+  it.each([
+    ['a bare key', KEY],
+    ['a bare key without 0x', 'ab'.repeat(32)],
+    ['an .env line', `LENDER_KEY=${KEY}`],
+    ['a key in a broken object', `{"lender":{"privateKey":${KEY}}}`],
+    ['a truncated file', `{"lender":{"privateKey":"${KEY}"`],
+  ])('reports %s without repeating any of it', (_label, text) => {
+    let message;
+    try {
+      parseWalletFileText(text);
+    } catch (e) {
+      message = e.message;
+    }
+    expect(message).toMatch(/^the wallet file is not valid JSON/);
+    expect(message).not.toContain('ab'.repeat(8));
+    expect(message).not.toContain('LENDER');
   });
 });
 
