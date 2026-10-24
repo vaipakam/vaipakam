@@ -302,8 +302,10 @@ describe('a funds defect that was READ outranks every blocker', () => {
     // The loop's own body, not everything after it: sliced to the end of
     // the file, this ordering rule could be satisfied by a `continue;`
     // and an increment sitting anywhere later in the drive (#2144 round 7).
-    const loop = blockFrom(src, 'for (const l of readyFirst) {');
-    const skip = loop.indexOf('continue;');
+    // #2094 r2 — the visit itself moved into `walkOne`, which both the
+    // walk and the held-seat pass call, so the rule is read there.
+    const loop = blockFrom(src, 'const walkOne = async (l) => {');
+    const skip = loop.indexOf('return;');
     const spend = loop.indexOf('observedDetails += 1;');
     expect(skip, 'the skip was not found').toBeGreaterThan(-1);
     expect(spend, 'the cap increment was not found').toBeGreaterThan(-1);

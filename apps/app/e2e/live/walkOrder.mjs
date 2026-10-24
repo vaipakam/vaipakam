@@ -78,3 +78,29 @@ export function walkOrderFor({
   if (!banded.some(accepts)) return banded;
   return [...banded.filter(accepts), ...banded.filter((l) => !accepts(l))];
 }
+
+/**
+ * #2094 r2 — SHOULD THIS VISIT WAIT, SO THE LAST SEAT GOES TO A FULL ONE?
+ *
+ * A lender run asserts two things: the exit chooser, which only a FULL
+ * visit can check, and the forced-close card, which every visit checks. The
+ * order above ranks for the forced-close card's confirmation coverage, so
+ * a wallet with more close-out-ready rentals than the cap would spend every
+ * seat on forced-close-only visits and leave the chooser unasserted — a
+ * BLOCKED run over a healthy deployment, with the candidate that could have
+ * cleared it discovered and left unvisited.
+ *
+ * So the LAST seat is held for a full visit while the run has none and one
+ * is still ahead in the walk. Every earlier seat keeps the order above, and
+ * a held visit is not dropped: the drive offers it again once the walk has
+ * passed every full candidate, if seats remain.
+ *
+ * @param {object} args
+ * @param {number} args.seatsLeft visits the cap still allows
+ * @param {boolean} args.observedFull whether a full visit has been made
+ * @param {string|null|undefined} args.mode this candidate's visit mode
+ * @param {boolean} args.fullAhead whether a full candidate is still ahead
+ */
+export function holdsLastSeatForFull({ seatsLeft, observedFull, mode, fullAhead }) {
+  return seatsLeft === 1 && !observedFull && mode !== 'full' && fullAhead;
+}

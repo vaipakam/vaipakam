@@ -9,6 +9,7 @@ import {
   unitAfter,
   unitBefore,
 } from './durationVocabulary.mjs';
+import { FORCED_CLOSE_FACTS, statesReachable, unreadViews } from './forcedCloseRule.mjs';
 /**
  * Does the DEPLOYED forced-close card keep the two promises its spec
  * makes about what it may say?
@@ -1079,120 +1080,93 @@ export function cardSettled(snap, unknownCopy) {
 }
 
 /**
- * Every state `decideForcedClose` can resolve, with what each one
- * IMPLIES about the two facts this drive can re-read at the declared
- * block — `isLoanDefaultable` and `hasInternalMatchCandidate`.
- *
- * Derived from the resolver's ORDER, which is the contract's: the
- * repayment window is judged before anything else these two touch, so
- * `not-yet` means the chain said not defaultable and every state past it
- * means the chain said defaultable. The internal match is asked next and
- * returns on `true`, so `ready-internal-match` means a candidate was
- * found and every state resolved AFTER that question means none was.
- * `blocked-sequencer` is resolved BETWEEN the two questions, so it
- * implies defaultability and nothing about the match; `blocked-paused`
- * is resolved before either and implies nothing here at all.
- *
- * `undefined` for a fact means "no expectation", never "expected
- * unread". A state absent from this table is one this drive does not
- * know, which is reported rather than judged — the deployed bundle can
- * be ahead of this file.
+ * The states `decideForcedClose` can resolve. A name outside this list is
+ * one this drive does not know, which is reported rather than judged — the
+ * deployed bundle can be ahead of this file.
  */
-const DECLARED_STATE_IMPLIES = {
-  'not-yet': { defaultable: false, internalMatch: undefined },
-  'blocked-sequencer': { defaultable: true, internalMatch: undefined },
-  'ready-internal-match': { defaultable: true, internalMatch: true },
-  'ready-in-kind': { defaultable: true, internalMatch: false },
-  'ready-needs-route': { defaultable: true, internalMatch: false },
-  'ready-rental': { defaultable: true, internalMatch: false },
-  'blocked-no-consent': { defaultable: true, internalMatch: false },
-  'blocked-paused': { defaultable: undefined, internalMatch: undefined },
-  unknown: { defaultable: undefined, internalMatch: undefined },
-  'not-applicable': { defaultable: undefined, internalMatch: undefined },
-};
+const KNOWN_STATES = new Set([
+  'not-yet',
+  'blocked-sequencer',
+  'ready-internal-match',
+  'ready-in-kind',
+  'ready-needs-route',
+  'ready-rental',
+  'blocked-no-consent',
+  'blocked-paused',
+  'unknown',
+  'not-applicable',
+]);
+/**
+ * The two states that are the PAGE's answer rather than a decision the
+ * chain makes: `unknown` is what it shows while a read has not settled,
+ * and `not-applicable` unmounts the card. Neither can be compared with
+ * what the chain says at a block.
+ */
+const PAGE_ANSWERS = new Set(['unknown', 'not-applicable']);
+
+/** The facts that were read, in the rule's terms, for a `why`. */
+function readFactsText(facts) {
+  const parts = FORCED_CLOSE_FACTS.filter((k) => facts?.[k] !== undefined).map((k) => `${k}=${facts[k]}`);
+  return parts.length ? parts.join(', ') : 'no fact read';
+}
 
 /**
  * Does the state the card DECLARES agree with what the chain says at the
- * block the card NAMES (#2098, #2131)?
+ * block the card NAMES (#2098, #2131, #2133)?
  *
- * This is the check the two attributes exist to make possible. The
- * bracket elsewhere in this drive compares the card against the chain
- * over a span it had to establish from the outside — sampled heads, a
- * ceiling asked of every provider the page used. Here the card itself
- * says which block its facts came from, so the comparison is exact: the
- * same view functions, pinned to that block, either agree with the
- * declared state or they do not.
+ * `facts` are the page's own inputs to `decideForcedClose`, read at that
+ * block through the page's own read plan (`forcedCloseRule.mjs`, whose
+ * parity test pins the plan, the mapping and the rule to the app's code).
+ * The comparison is the RULE, not a list of facts per state: until #2133
+ * this was a table of what each state implied about the two facts the
+ * drive then read, and three states (`blocked-paused` among them) implied
+ * nothing it read, so a card naming the wrong refusal passed.
  *
- * Three answers, kept apart because they cost differently:
+ * A fact the drive could not read is not a value, so the rule is asked
+ * over every value it could take (`statesReachable`). Three answers, kept
+ * apart because they cost differently:
  *
- *   - `{ judged: true, consistent: true }` — every fact the state
- *     implies was read at the declared block and matched.
- *   - `{ judged: true, consistent: false, why }` — a fact was read and
- *     contradicts the declaration. This is a FAIL: the card stated a
- *     decision, dated it, and the chain at that date disagrees.
- *   - `{ judged: false, why }` — nothing was established: the state is
- *     not one this table knows, or a fact the state implies could not
- *     be read at that block. Neither is a finding about the product.
- *
- * `facts` carries `undefined` for a read that did not answer, and a
- * state's `undefined` expectation is never compared — so a fact that is
- * both unexpected and unread is silence, not a contradiction.
+ *   - `{ judged: true, consistent: true }` — the facts read leave exactly
+ *     one state, and it is the declared one. This is what makes a refusal
+ *     the card names VERIFIED rather than merely consistent with a refusal.
+ *   - `{ judged: true, consistent: false, why }` — no value of the unread
+ *     facts yields the declared state. A FAIL: the card stated a decision,
+ *     dated it, and the chain at that date resolves otherwise.
+ *   - `{ judged: false, why }` — nothing was established: a page answer
+ *     (`unknown`, `not-applicable`), a state this drive does not know, or
+ *     unread facts that leave the declared state one of several.
  */
 export function declaredStateConsistent(state, facts) {
-  const implies = typeof state === 'string' ? DECLARED_STATE_IMPLIES[state] : undefined;
-  if (!implies) {
+  if (typeof state !== 'string' || !KNOWN_STATES.has(state)) {
     return { judged: false, why: `the card declares a state this drive does not recognise ("${state}")` };
   }
-  const checks = [
-    ['defaultable', 'isLoanDefaultable'],
-    ['internalMatch', 'hasInternalMatchCandidate'],
-  ];
-  // ROUND 1 P2 — "CONSISTENT" MEANS AT LEAST ONE FACT WAS COMPARED. A
-  // state that implies nothing this drive re-reads (`blocked-paused`,
-  // `unknown`, `not-applicable`) used to fall through the loop untouched
-  // and come out `consistent` — a report claiming the chain agreed when
-  // no chain fact had been consulted, which is the same false PASS the
-  // whole `declaredFacts` status exists to prevent. Zero comparisons is
-  // unjudged, and says so.
-  // ROUND 3 P2 — EVERY READABLE FACT IS EXAMINED, AND A CONTRADICTION WINS.
-  // The first version returned `unjudged` at the first unreadable fact,
-  // so `ready-in-kind` with `isLoanDefaultable` unreadable and
-  // `hasInternalMatchCandidate` readable and TRUE — a definite
-  // contradiction of the declared route — was filed as "could not be
-  // read" and the drive passed while holding evidence against the card.
-  // A definite observation outranks an uncertain one, the rule this
-  // module applies everywhere else: the loop now runs to the end, and an
-  // unreadable fact only makes the result unjudged when nothing readable
-  // contradicted the declaration.
-  let compared = 0;
-  const unreadable = [];
-  for (const [key, view] of checks) {
-    const expected = implies[key];
-    if (expected === undefined) continue;
-    const actual = facts?.[key];
-    if (typeof actual !== 'boolean') {
-      unreadable.push(view);
-      continue;
-    }
-    if (actual !== expected) {
-      return {
-        judged: true,
-        consistent: false,
-        why: `the card declares "${state}", which requires ${view} to be ${expected} at the block it names, and the chain says ${actual} there`,
-      };
-    }
-    compared += 1;
-  }
-  if (unreadable.length > 0) {
-    return { judged: false, why: `${unreadable.join(' and ')} could not be read at the declared block` };
-  }
-  if (compared === 0) {
+  if (PAGE_ANSWERS.has(state)) {
     return {
       judged: false,
-      why: `"${state}" implies nothing about the facts this drive re-reads at the declared block`,
+      why: `"${state}" implies nothing about the chain: it is the page's own answer, not a decision the protocol makes`,
     };
   }
-  return { judged: true, consistent: true };
+  if (!facts || typeof facts !== 'object') {
+    return { judged: false, why: 'no chain fact was read at the declared block' };
+  }
+  const reachable = statesReachable(facts);
+  if (!reachable.has(state)) {
+    const only = reachable.size === 1 ? [...reachable][0] : null;
+    return {
+      judged: true,
+      consistent: false,
+      why:
+        only !== null
+          ? `the card declares "${state}", and the chain at the block it names resolves to "${only}" (${readFactsText(facts)})`
+          : `the card declares "${state}", and at the block it names the chain resolves to one of ${[...reachable].map((s) => `"${s}"`).join(', ')}, never to that (${readFactsText(facts)}; unread: ${unreadViews(facts).join(', ')})`,
+    };
+  }
+  if (reachable.size === 1) return { judged: true, consistent: true };
+  const others = [...reachable].filter((s) => s !== state).map((s) => `"${s}"`);
+  return {
+    judged: false,
+    why: `${unreadViews(facts).join(' and ')} could not be read at the declared block, so the chain there could resolve to ${others.join(', ')} as well`,
+  };
 }
 
 /**
@@ -1639,11 +1613,26 @@ function receiptRowFault(obs, copy) {
  * @param {{unknownCopy: string}} copy
  */
 export function forcedCloseVerdict(obs, copy) {
-  const verdict = forcedCloseVerdictBody(obs, copy);
+  const verdict = withReasonChecked(forcedCloseVerdictBody(obs, copy), obs, copy);
   if (typeof verdict.declaredFacts === 'string') return verdict;
   const declaredFacts =
     obs && typeof obs === 'object' ? judgeDeclared(obs, copy).declaredFacts : 'undeclared';
   return { ...verdict, declaredFacts };
+}
+
+/**
+ * EVERY verdict also carries `reasonChecked` (#2133), the refusal
+ * counterpart of `route=checked|unread`: `verified` when each refusal the
+ * card showed is the chain's own at the block that render named, `not
+ * checked` when at least one could not be checked, and `none stated` when
+ * the card showed no refusal. Stamped on the wrapper for the reason
+ * `declaredFacts` is.
+ */
+function withReasonChecked(verdict, obs, copy) {
+  const claims = withheldRefusalClaims(obs, copy);
+  const reasonChecked =
+    claims.length === 0 ? 'none stated' : claims.every((c) => c.verified) ? 'verified' : 'not checked';
+  return { ...verdict, reasonChecked };
 }
 
 /**
@@ -1665,6 +1654,127 @@ export function forcedCloseVerdict(obs, copy) {
  *                   not reached, a state this file does not know, or a
  *                   view that declined at that block.
  */
+/**
+ * The chain facts the drive read at `block`, or `undefined` where it did
+ * not read there. The settled render's block is `declaredChain`; every
+ * other block a render named is in `renderChainAt`, keyed by the block as
+ * the card published it (#2133).
+ */
+function chainAt(obs, block) {
+  if (typeof block !== 'string') return undefined;
+  if (block === obs.declaredBlock && obs.declaredChain && typeof obs.declaredChain === 'object') {
+    return obs.declaredChain;
+  }
+  const at = obs.renderChainAt && typeof obs.renderChainAt === 'object' ? obs.renderChainAt[block] : undefined;
+  return at && typeof at === 'object' ? at : undefined;
+}
+
+/**
+ * Every refusal the card SHOWED while withholding the action, and whether
+ * the chain at that render's own block makes that refusal (#2133).
+ *
+ * A refusal is verified when the render declared the state whose sentence
+ * it paints, and the page's rule over the facts read at the block it named
+ * leaves that state and no other. A reverting simulation says the
+ * close-out is refused; this says WHICH gate refused it, which is the
+ * claim the lender reads.
+ *
+ * Each claim is judged on its own render, so a correct settled refusal
+ * cannot vouch for a different one painted earlier.
+ *
+ * @returns {Array<{sentence: string, verified: boolean, why: string|null}>}
+ */
+export function withheldRefusalClaims(obs, copy) {
+  if (!obs || typeof obs !== 'object' || !Array.isArray(copy?.refusalStateCopy)) return [];
+  const offeredIn = (r) => r?.submitVisible !== false && !r?.submitDisabled;
+  const renders = [
+    {
+      text: obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text,
+      offered: offeredIn(obs),
+      declaredState: obs.declaredState,
+      declaredBlock: obs.declaredBlock,
+    },
+    ...(Array.isArray(obs.seenRenders) ? obs.seenRenders : []).map((r) => ({
+      text: r?.bodyVisibleText ?? r?.bodyText ?? r?.visibleText ?? r?.text,
+      offered: offeredIn(r),
+      declaredState: r?.declaredState,
+      declaredBlock: r?.declaredBlock,
+    })),
+  ];
+  const stateCopy = copy?.stateCopy && typeof copy.stateCopy === 'object' ? copy.stateCopy : {};
+  const claims = [];
+  for (const r of renders) {
+    if (r.offered || typeof r.text !== 'string') continue;
+    const sentence = copy.refusalStateCopy.find((s) => typeof s === 'string' && s !== '' && r.text.includes(s));
+    if (!sentence) continue;
+    let why = null;
+    if (typeof r.declaredState !== 'string') {
+      why = 'the card declared no state, so there is no decision to check';
+    } else if (stateCopy[r.declaredState] !== sentence) {
+      why = `the render declared "${r.declaredState}", which is not the state that sentence belongs to`;
+    } else if (typeof r.declaredBlock !== 'string') {
+      why = 'the render named no block';
+    } else {
+      const facts = chainAt(obs, r.declaredBlock);
+      if (!facts) {
+        const unreadWhy =
+          r.declaredBlock === obs.declaredBlock
+            ? obs.declaredChainWhy
+            : obs.renderChainWhy && typeof obs.renderChainWhy === 'object'
+              ? obs.renderChainWhy[r.declaredBlock]
+              : undefined;
+        why = typeof unreadWhy === 'string' ? unreadWhy : `the chain was not read at block ${r.declaredBlock}`;
+      } else {
+        const agreement = declaredStateConsistent(r.declaredState, facts);
+        if (!(agreement.judged && agreement.consistent)) {
+          why = agreement.why ?? 'the chain at that block contradicts it';
+        }
+      }
+    }
+    claims.push({ sentence, verified: why === null, why });
+  }
+  return claims;
+}
+
+/**
+ * The first render painting a state the page's rule never resolves for
+ * this loan's asset type, as a FAIL, or `null` (#2094). `obs.loanAssetType`
+ * is the drive's own read (`'erc20'` / `'rental'`); a record without it
+ * is not judged.
+ *
+ * `inferred`, not `observed`: it pairs the page's copy with this drive's
+ * chain read, and a page reading another deployment is the commonest cause
+ * of such a pairing failing, which the wrong-chain gates are ranked to say.
+ */
+export function wrongRouteForAsset(obs, copy) {
+  if (!obs || (obs.loanAssetType !== 'erc20' && obs.loanAssetType !== 'rental')) return null;
+  const stateCopy = copy?.stateCopy && typeof copy.stateCopy === 'object' ? copy.stateCopy : null;
+  if (!stateCopy) return null;
+  const possible = statesReachable({ assetType: obs.loanAssetType });
+  const texts = [
+    obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text,
+    ...(Array.isArray(obs.seenRenders) ? obs.seenRenders : []).map(
+      (r) => r?.bodyVisibleText ?? r?.bodyText ?? r?.visibleText ?? r?.text,
+    ),
+  ];
+  for (const text of texts) {
+    if (typeof text !== 'string') continue;
+    for (const [state, sentence] of Object.entries(stateCopy)) {
+      if (possible.has(state) || state === 'unknown') continue;
+      if (typeof sentence !== 'string' || sentence === '' || !text.includes(sentence)) continue;
+      return {
+        verdict: 'fail',
+        failKind: 'inferred',
+        why:
+          obs.loanAssetType === 'rental'
+            ? `the loan is an NFT rental, and a render this drive read paints the "${state}" explanation, which the page's rule never resolves for a rental — the lender is told the borrower's collateral is involved in a default that moves nothing of the borrower's`
+            : `the loan is an ERC-20 loan, and a render this drive read paints the "${state}" explanation, which the page's rule resolves only for an NFT rental`,
+      };
+    }
+  }
+  return null;
+}
+
 function judgeDeclared(obs, copy) {
   const declared = typeof obs.declaredState === 'string' ? obs.declaredState : null;
   const fail = (why, declaredFacts) => ({
@@ -1765,6 +1875,22 @@ function judgeDeclared(obs, copy) {
         `${where} declares the resolved state "${r.declaredState}" and ${how} — a resolved decision states the block it was made at`,
         'malformed',
       );
+    }
+  }
+  // #2133 — AND EVERY OTHER RENDER'S DECLARATION AGAINST THE CHAIN AT ITS
+  // OWN BLOCK, where the drive read there. The card re-resolves on each
+  // refetch, so an earlier render can have stated a decision the chain did
+  // not make at the block it named, and been replaced by a correct one
+  // before the poll settled. A dated statement the chain contradicts is a
+  // defect whenever it was shown.
+  for (const r of renders) {
+    if (r.settled || r.declaredState === null || PAGE_ANSWERS.has(r.declaredState)) continue;
+    if (!validBlock(r.declaredBlock)) continue;
+    const facts = chainAt(obs, r.declaredBlock);
+    if (!facts) continue;
+    const agreement = declaredStateConsistent(r.declaredState, facts);
+    if (agreement.judged && !agreement.consistent) {
+      return fail(`a render this drive read: ${agreement.why}`, 'contradicted');
     }
   }
   if (declared === null) return { declaredFacts: 'undeclared', failure: null };
@@ -2295,11 +2421,10 @@ function forcedCloseVerdictBody(obs, copy) {
   //       are read in the same DOM pass as that render's text.
   //
   //   (b) The declared state must agree with the chain at the declared
-  //       block. The drive re-reads the two facts the state implies
-  //       (`isLoanDefaultable`, `hasInternalMatchCandidate`) pinned to
-  //       that block; `declaredStateConsistent` says what each state
-  //       requires of them. A mismatch means the card dated a decision
-  //       and the chain at that date disagrees.
+  //       block. The drive re-reads the page's own inputs pinned to
+  //       that block and runs the page's rule over them (#2133);
+  //       `declaredStateConsistent` compares. A mismatch means the card
+  //       dated a decision and the chain at that date disagrees.
   //
   // BOTH ARE SILENT ON A RECORD WITHOUT THE ATTRIBUTES. `declaredState`
   // is `null` for a bundle that predates them and `undefined` for a
@@ -2319,6 +2444,21 @@ function forcedCloseVerdictBody(obs, copy) {
   {
     const declared = judgeDeclared(obs, copy);
     if (declared.failure) return declared.failure;
+  }
+
+  // #2094 — THE ROUTE THE CARD PAINTS AGAINST WHAT THE LOAN IS. A loan's
+  // asset type never changes, so a render explaining a route the page's
+  // own rule never resolves for that kind of loan is wrong at any block:
+  // the collateral routes on an NFT rental, whose default moves nothing of
+  // the borrower's, or the rental route on an ERC-20 loan. The set of
+  // routes is DERIVED from the rule (`statesReachable` with only the asset
+  // type fixed), not listed here, so the two cards' copy check each other
+  // through the one definition. Checked on every captured render, and
+  // whether or not the card declares a state — an older bundle paints the
+  // same copy.
+  {
+    const wrong = wrongRouteForAsset(obs, copy);
+    if (wrong) return wrong;
   }
 
 
@@ -3454,9 +3594,22 @@ function forcedCloseVerdictBody(obs, copy) {
     }
     return undefined;
   };
+  // #2133 — WHICH of those refusals the chain itself makes at the block the
+  // render named. A verified refusal needs no bracket to stand on; an
+  // unverified one is what the arms below still have to reason about.
+  const refusalClaims = withheldRefusalClaims(obs, copy);
+  const unverifiedRefusal = refusalClaims.find((c) => !c.verified);
 
   if (obs.defaultable === true && obs.defaultableBefore === true) {
     const claimed = refusalRenderClaim();
+    if (claimed && !unverifiedRefusal) {
+      // Every refusal the card showed is the chain's own at the block it
+      // named, yet the close-out simulates cleanly at both ends of the
+      // window: the answer moved inside it. Not the card's fault.
+      return notQuiet(
+        `the card's refusal ("${claimed}") is the chain's own at the block it named, while the protocol accepts this close-out at both ends of the window`,
+      );
+    }
     if (claimed) {
       // ROUND 85 P2 — the same interior question as the arm above. A grace
       // deadline crossing inside the observation leaves both ends `true`
@@ -3469,7 +3622,7 @@ function forcedCloseVerdictBody(obs, copy) {
       return {
         verdict: 'fail',
         failKind: 'inferred',
-        why: `a render this drive read withholds the action and states a refusal ("${claimed}"), but simulating that exact transaction against the protocol shows it would succeed — the lender is denied a close-out the protocol accepts, and given a reason that is not the protocol's`,
+        why: `a render this drive read withholds the action and states a refusal ("${unverifiedRefusal.sentence}"), but simulating that exact transaction against the protocol shows it would succeed — the lender is denied a close-out the protocol accepts, and given a reason that is not the protocol's`,
       };
     }
   }
@@ -3485,9 +3638,9 @@ function forcedCloseVerdictBody(obs, copy) {
   // is not the one the chain would give.
   //
   // A boolean simulation cannot settle this. `triggerDefault` reverting
-  // says the call is refused; it does not say which gate refused it, and
-  // this drive reads no gate. So the honest answer is that the state was
-  // NOT VERIFIED, and that is what it says.
+  // says the call is refused; it does not say which gate refused it. Where
+  // the gates could not be read either, the honest answer is that the
+  // state was NOT VERIFIED, and that is what it says.
   //
   // Reported as INCOMPLETE rather than as a defect, because the card may
   // be entirely right — the difference between "we checked and it is
@@ -3495,11 +3648,12 @@ function forcedCloseVerdictBody(obs, copy) {
   // built on, and collapsing it here would manufacture findings out of
   // a read this drive does not take.
   //
-  // The stronger answer is to read the gate behind each painted state —
-  // the pause flag, the sequencer feed, the deadline view, the consent
-  // fields — and compare. That is four bracketed protocol reads rather
-  // than a rewiring, so it is deferred rather than half-done here; the
-  // tracked in #2133.
+  // #2133 TAKES THE STRONGER ANSWER: the drive reads the page's own inputs
+  // (the pause flag, the sequencer feed, the deadline view, the consent
+  // field and the rest) at the block each render named, and runs the
+  // page's rule over them — see `withheldRefusalClaims`. A refusal that
+  // check verified needs none of the arms below; they now speak only for
+  // one it could not verify, and say why.
   // ROUND 68 P2 — AND AN UNREAD SIMULATION IS NOT A PASS EITHER.
   //
   // The two arms around this one require the bracket to have ANSWERED —
@@ -3513,7 +3667,7 @@ function forcedCloseVerdictBody(obs, copy) {
   // Above the `false`/`false` arm, because "we could not ask" is a
   // different and weaker statement than "we asked and it refused".
   if (obs.defaultable === undefined || obs.defaultableBefore === undefined) {
-    const claimed = refusalRenderClaim();
+    const claimed = unverifiedRefusal?.sentence;
     if (claimed) {
       return {
         verdict: 'blocked',
@@ -3541,7 +3695,7 @@ function forcedCloseVerdictBody(obs, copy) {
   // manufacture a verdict out of a race, the error rounds 55 and 56
   // spent themselves arguing against on the ready side.
   if (bracketDisagrees) {
-    const claimed = refusalRenderClaim();
+    const claimed = unverifiedRefusal?.sentence;
     if (claimed) {
       return {
         verdict: 'blocked',
@@ -3554,12 +3708,14 @@ function forcedCloseVerdictBody(obs, copy) {
     }
   }
   if (obs.defaultable === false && obs.defaultableBefore === false) {
-    const claimed = refusalRenderClaim();
-    if (claimed) {
+    // #2133 — a refusal the chain makes at the render's own block is
+    // VERIFIED and passes; only one this drive could not check is reported,
+    // and it says why it could not.
+    if (unverifiedRefusal) {
       return {
         verdict: 'blocked',
         blockedKind: 'incomplete',
-        why: `the card withholds the action and states a specific reason ("${claimed}"); the protocol does refuse the close-out, but a reverting simulation establishes THAT and not WHY, and this drive reads no gate — so the reason the lender is given was not verified`,
+        why: `the card withholds the action and states a specific reason ("${unverifiedRefusal.sentence}"); the protocol does refuse the close-out, but a reverting simulation establishes THAT and not WHY, and the reason could not be checked against its own gate: ${unverifiedRefusal.why}`,
       };
     }
   }

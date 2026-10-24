@@ -191,6 +191,15 @@ function visitProblemList(v, role) {
     );
   }
 
+  // #2094 — A FORCED-CLOSE-ONLY VISIT ENDS HERE. The lender run visits a
+  // rental and a sanctions-flagged holder's position for the forced-close
+  // card alone: the exit chooser is correctly absent on both (it never
+  // renders on a rental, and is suppressed for a flagged holder), so its
+  // assertions below would fabricate a missing-chooser regression on
+  // exactly the positions this mode exists to reach. Its absence there is
+  // not asserted either; that needs a settled signal (#2776's shape).
+  if (v.visitMode === 'forced-close') return problems;
+
   if (preRaced(v)) return problems;
 
   if (!v.chooser) {
