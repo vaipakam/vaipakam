@@ -533,6 +533,9 @@ describe('classifyRpcResponse — responses that only look answered', () => {
         method: 'eth_call',
         verdict: 'unreachable',
         why: 'neither result nor error',
+        // #2783 r1 — the page can SUCCEED on this, so it is not left to
+        // the app's own report.
+        misattributable: true,
       },
     ]);
   });
@@ -575,6 +578,8 @@ describe('classifyRpcResponse — responses that only look answered', () => {
     );
     expect(verdicts(out)).toEqual(['unreachable', 'unreachable']);
     expect(out[0].why).toMatch(/unexpected or duplicate member/);
+    // #2783 r1 — and flagged, because the page's read SUCCEEDS on it.
+    expect(out.every((o) => o.misattributable === true)).toBe(true);
   });
 
   it('rejects a batch carrying a DUPLICATE member', () => {
@@ -600,11 +605,19 @@ describe('classifyRpcResponse — responses that only look answered', () => {
     );
     expect(verdicts(out)).toEqual(['ok', 'unreachable']);
     expect(out[1].why).toBe('omitted from batch response');
+    // The omitted call FAILS in the page, which the app reports itself.
+    expect(out.some((o) => o.misattributable)).toBe(false);
   });
 
   it('calls a batch answered with a single response unreachable for every call', () => {
     const out = classifyRpcResponse(200, okBody(1), rpcReq(call(1), call(2)));
     expect(verdicts(out)).toEqual(['unreachable', 'unreachable']);
+    expect(out.every((o) => o.misattributable === true)).toBe(true);
+  });
+
+  it('does not flag an outage, which the page fails on and reports itself', () => {
+    const out = classifyRpcResponse(503, 'busy', rpcReq(call(1)));
+    expect(out[0].misattributable).toBeUndefined();
   });
 });
 
@@ -824,12 +837,33 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
         attempt(200, '<!doctype html>', undefined),
       ),
     );
-    expect(out).toEqual({ malformed: [], failedAttempts: [] });
+    expect(out).toEqual({ malformed: [], misread: [], failedAttempts: [] });
+  });
+
+  // #2783 r1 — viem resolves a batch by position, so a surplus member can
+  // hand a call another call's answer while every read SUCCEEDS in the
+  // page. That stays a finding of the wire's own, never mere attribution.
+  it('keeps a misread batch as its own finding, apart from failed attempts', () => {
+    const surplus = JSON.stringify([
+      { jsonrpc: '2.0', id: 9, result: '0x9' },
+      { jsonrpc: '2.0', id: 10, result: '0xa' },
+      { jsonrpc: '2.0', id: 11, result: '0xb' },
+    ]);
+    const out = summariseRpcLedger(
+      ledgerOf(
+        attempt(200, surplus, rpcReq(call(10, 'eth_call', ['0xa']), call(11, 'eth_call', ['0xb']))),
+        attempt(503, 'busy', rpcReq(call(1))),
+      ),
+    );
+    expect(out.misread).toHaveLength(2);
+    expect(out.misread[0].why).toMatch(/unexpected or duplicate member/);
+    expect(out.failedAttempts).toHaveLength(1);
+    expect(out.failedAttempts[0].why).toMatch(/HTTP 503/);
   });
 
   // #1672 — the ledger no longer decides whether a read was served, so a
   // later success clears nothing: there is no recovery rule left to get
-  // wrong. Whether the page recovered is the query cache's answer.
+  // wrong. Whether the page recovered is the app's own read report.
   describe('a later success clears nothing (#1672)', () => {
     it('keeps a failed attempt that a later attempt of the same call followed', () => {
       const out = summariseRpcLedger(

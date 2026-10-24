@@ -876,7 +876,11 @@ function answersDespiteStatus(parsed) {
  * @param {string|undefined} requestBody The page's request body.
  * @returns {Array<{key: string, method: string,
  *                  verdict: 'ok' | 'client-fault' | 'unreachable',
- *                  why?: string}>}
+ *                  why?: string, misattributable?: true}>}
+ *   `misattributable` marks a response viem may have resolved with another
+ *   call's answer, or with nothing: a surplus or duplicate batch member, a
+ *   batch answered with one response, or a member with neither a result
+ *   nor an error.
  */
 export function classifyRpcResponse(status, body, requestBody) {
   const calls = rpcCallsFromBody(requestBody);
@@ -884,7 +888,7 @@ export function classifyRpcResponse(status, body, requestBody) {
 
   const parsed = parseJson(body);
   const statusOk = status >= 200 && status < 300;
-  const out = (c, verdict, why) => ({
+  const out = (c, verdict, why, extra) => ({
     key: callKey(c),
     // The call's own JSON-RPC id, absent for a notification, so a caller
     // holding per-id state (`createCallLedger`, `watchPageRpc`) can settle
@@ -894,7 +898,14 @@ export function classifyRpcResponse(status, body, requestBody) {
     method: String(c.method),
     verdict,
     why,
+    ...extra,
   });
+  // A response viem may have RESOLVED, with the wrong value: it matches
+  // batch members to calls by position, so a surplus or duplicate member
+  // hands one call another's answer, and a member with no result hands it
+  // `undefined`, and either way the read can SUCCEED in the page. No report from the app can see that, so it stays
+  // a finding of its own (#2783 r1).
+  const misread = { misattributable: true };
 
   // ROUND 73 P2 — A BATCH THAT REUSES A REQUEST ID IS MALFORMED, and
   // judged before the response is looked at, because this is a fact about
@@ -1032,7 +1043,7 @@ export function classifyRpcResponse(status, body, requestBody) {
     // page `undefined`, so the read fails or renders degraded state while
     // this ledger contributes no verdict at all (#1529 review round 24).
     if (!member || !Object.prototype.hasOwnProperty.call(member, 'result')) {
-      return out(c, 'unreachable', 'neither result nor error');
+      return out(c, 'unreachable', 'neither result nor error', misread);
     }
     return out(c, 'ok');
   };
@@ -1043,7 +1054,7 @@ export function classifyRpcResponse(status, body, requestBody) {
   if (!Array.isArray(parsed)) {
     if (answerable.length === 0) return [];
     if (answerable.length === 1) return [memberOutcome(answerable[0], members[0])];
-    return answerable.map((c) => out(c, 'unreachable', 'batch answered with a single response'));
+    return answerable.map((c) => out(c, 'unreachable', 'batch answered with a single response', misread));
   }
 
   const wanted = new Set(answerable.map((c) => c.id));
@@ -1072,7 +1083,7 @@ export function classifyRpcResponse(status, body, requestBody) {
   // can trust, so nothing may be recorded as ok (#1529 review round 24).
   if (unattributable) {
     return answerable.map((c) =>
-      out(c, 'unreachable', 'unexpected or duplicate member in batch response'),
+      out(c, 'unreachable', 'unexpected or duplicate member in batch response', misread),
     );
   }
 
@@ -1184,9 +1195,9 @@ export function createSocketCalls() {
  * Whether a read was left UNSERVED is not decided here. One attempt cannot
  * say, and #1672 records why no rule over many attempts can either: a
  * retry carries a fresh id, concurrent duplicates are byte-identical, and
- * a retry chain's timing overlaps a poll's. The page's query cache, which
- * owns the retry policy, answers that (`queryProbe.mjs`); a failed attempt
- * recorded here is attribution for that answer.
+ * a retry chain's timing overlaps a poll's. The app answers that itself,
+ * from its RPC transport and its query cache (`readProbe.mjs`); a failed
+ * attempt recorded here is attribution for that answer.
  *
  * @param {{status: number, body: Buffer|string|undefined,
  *          requestBody: string|undefined, url: string, cohort?: number}} response
@@ -1201,7 +1212,7 @@ export function recordRpcResponse({ status, body, requestBody, url, cohort }, le
 }
 
 /**
- * The ledger's two findings.
+ * The ledger's findings.
  *
  * `malformed` is a verdict: every call a reachable provider rejected as
  * malformed, and every malformed envelope, is a defect in what the page
@@ -1213,19 +1224,28 @@ export function recordRpcResponse({ status, body, requestBody, url, cohort }, le
  * sibling read was the part that could not be done (#1672), so a fault is
  * now reported as observed.
  *
- * `failedAttempts` is NOT a verdict. It is every attempt the provider did
- * not answer, for the report to name beside an unserved read the query
- * cache reported, or to state as wire noise when the cache reported every
+ * `misread` is a verdict too, of the provider: a batch answered in a shape
+ * viem resolves by POSITION (a surplus or duplicate member, one response
+ * for a batch, a member with no result), so a call can be handed another
+ * call's answer and SUCCEED in the page.
+ * The app cannot see that (its read did not fail), so no report from it
+ * can stand in for this one (#2783 r1). Each entry keeps its `cohort`.
+ *
+ * `failedAttempts` is NOT a verdict. It is every other attempt the
+ * provider did not answer, for the report to name beside an unserved read
+ * the app reported, or to state as wire noise when the app reported every
  * read served. Each entry keeps its `cohort`.
  *
- * Both are de-duplicated per page, call and reason: a read retried three
+ * All three are de-duplicated per page, call and reason: a read retried three
  * times and still dead is one line, not three.
  *
  * @returns {{malformed: Array<{url: string, why: string}>,
+ *            misread: Array<{url: string, why: string, cohort?: number}>,
  *            failedAttempts: Array<{url: string, why: string, cohort?: number}>}}
  */
 export function summariseRpcLedger(ledger) {
   const malformed = [];
+  const misread = [];
   const failedAttempts = [];
   const seen = new Set();
   for (const e of ledger) {
@@ -1235,7 +1255,8 @@ export function summariseRpcLedger(ledger) {
     seen.add(dedupe);
     const why = `${e.method} — ${e.why}`;
     if (e.verdict === 'client-fault') malformed.push({ url: e.url, why });
+    else if (e.misattributable) misread.push({ url: e.url, why, cohort: e.cohort });
     else failedAttempts.push({ url: e.url, why, cohort: e.cohort });
   }
-  return { malformed, failedAttempts };
+  return { malformed, misread, failedAttempts };
 }

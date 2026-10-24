@@ -28,6 +28,7 @@ import {
 import { getDefaultConfig } from 'connectkit';
 import { SUPPORTED_CHAINS, ensMainnetRpcUrl } from './chains';
 import { connectionGeneration } from '../lib/dataRights';
+import { probeTransport } from '../lib/readProbe';
 
 const WC_PROJECT_ID =
   (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID as string | undefined)?.trim() ||
@@ -87,12 +88,18 @@ for (const c of SUPPORTED_CHAINS) {
 // layer (`LiveChainSync`), and any WS hiccup transparently drops to the
 // HTTP transport (which the block watcher polls instead). No WS URL ⇒
 // plain HTTP, identical to before.
+//
+// Each chain's transport is passed through `probeTransport` (#1672), which
+// returns it untouched unless a live-review driver installed its report
+// before load. Wrapped OUTSIDE the fallback, so a request is reported once,
+// with the outcome the app's code saw after viem's retries and fallbacks.
 const transports: Record<number, Transport> = {};
 for (const c of SUPPORTED_CHAINS) {
   const httpTransport = http(c.rpcUrl, { batch: true });
-  transports[c.chainId] = c.wsUrl
-    ? fallback([webSocket(c.wsUrl), httpTransport])
-    : httpTransport;
+  transports[c.chainId] = probeTransport(
+    c.wsUrl ? fallback([webSocket(c.wsUrl), httpTransport]) : httpTransport,
+    c.chainId,
+  );
 }
 
 // ENS-READ-ONLY mainnet client: app doesn't deploy on Ethereum
@@ -118,10 +125,13 @@ const chainsWithEns = chains.some((c) => c.id === mainnet.id)
   ? chains
   : [...chains, mainnet];
 if (!transports[mainnet.id]) {
-  transports[mainnet.id] = fallback([
-    http(ensMainnetRpcUrl(), { batch: true }),
-    http('https://eth.drpc.org', { batch: true }),
-  ]);
+  transports[mainnet.id] = probeTransport(
+    fallback([
+      http(ensMainnetRpcUrl(), { batch: true }),
+      http('https://eth.drpc.org', { batch: true }),
+    ]),
+    mainnet.id,
+  );
 }
 
 type NonEmptyChains = readonly [Chain, ...Chain[]];

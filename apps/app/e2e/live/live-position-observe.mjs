@@ -148,7 +148,7 @@ import {
   rpcRequestCalls,
   summariseRpcLedger,
 } from './rpc-verdict.mjs';
-import { QUERY_PROBE_BINDING, createQueryProbe } from './queryProbe.mjs';
+import { READ_PROBE_BINDING, createReadProbe } from './readProbe.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -2193,20 +2193,30 @@ const malformedRpc = [];
  *
  * It decides what one response proves — a malformed request, which joins
  * `malformedRpc` — and nothing else. Whether a read was left unserved is
- * the page's query cache's answer (`queryProbe` below, #1672): viem
- * retries a failed read and `wagmi.ts` falls back between endpoints, and
- * no rule over the attempts can tell a recovered retry from a read the
- * page consumed as a failure. A failed attempt is named beside that
- * answer, for attribution.
+ * the app's own answer (`readProbe` below, #1672): viem retries a failed
+ * read and `wagmi.ts` falls back between endpoints, and no rule over the
+ * attempts can tell a recovered retry from a read the page consumed as a
+ * failure. A failed attempt is named beside that answer, for attribution.
+ * One wire finding stays a finding of its own: a batch response viem may
+ * have resolved with another call's answer, which no read fails on
+ * (`misread`, #2783 r1).
  */
 const rpcLedger = [];
 
 /**
- * What each page's query cache reported about its reads (#1672). Filled
- * through the binding installed below, keyed by the page's cohort, and
- * judged per visit just before the page closes.
+ * What each page reported about its reads, from its RPC transport and its
+ * query cache (#1672). Filled through the binding installed below, keyed
+ * by the page's cohort, and judged per visit just before the page closes.
  */
-const queryProbe = createQueryProbe();
+const readProbe = createReadProbe();
+
+/**
+ * How long a visit waits, before it is judged, for the reads its page
+ * had not settled yet: a request in flight, or a query waiting to retry.
+ * Covers the app's one query retry and viem's own retries on a slow
+ * endpoint. A read still unsettled after it is unserved (#2783 r1).
+ */
+const READ_SETTLE_MS = 20_000;
 
 /**
  * WHOSE PAGE a recorded attempt, or a query report, belongs to (#2100,
@@ -2536,12 +2546,13 @@ await discovery('exposing the wallet binding', () =>
 await discovery('installing the provider init script', () =>
   ctx.addInitScript(initScript),
 );
-// #1672 — the app reports its query cache's settled errors through this,
-// and announces itself on every load. Installed before any page exists,
-// so it is defined before the app's first script runs.
-await discovery('exposing the query-state report', () =>
-  ctx.exposeBinding(QUERY_PROBE_BINDING, (source, event) =>
-    queryProbe.record(source?.page ? cohortOfPage(source.page) : currentCohort, event),
+// #1672 — the app reports its reads through this (each RPC request's
+// final outcome, and each query that settled in error or is waiting to
+// retry), and announces itself on every load. Installed before any page
+// exists, so it is defined before the app's first script runs.
+await discovery('exposing the read report', () =>
+  ctx.exposeBinding(READ_PROBE_BINDING, (source, event) =>
+    readProbe.record(source?.page ? cohortOfPage(source.page) : currentCohort, event),
   ),
 );
 if (REFI_POSTURE) {
@@ -2577,8 +2588,8 @@ if (REFI_POSTURE) {
  * wall clock is fine and a different origin would be confusing.
  *
  * The RPC ledger took ordering stamps on this clock too, for its retry
- * recovery rule; #1672 retired that rule (the query cache now answers
- * whether a read was served), so the floor's stamps are the ones left.
+ * recovery rule; #1672 retired that rule (the app's own read report now
+ * answers whether a read was served), so the floor's stamps are the ones left.
  */
 const orderingNow = () => performance.now();
 
@@ -2934,10 +2945,13 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
       ? refinancePostureVerdict(refinancePostureObs, REFI_POSTURE_COPY)
       : null,
   };
-  // #1672 — what the page's query cache reported, taken while the page
+  // #1672 — what the page reported about its reads, taken while the page
   // is still open. Every observation above has been made, so a read that
-  // settled in error any time up to here is one they may have rested on.
-  out.queryState = queryProbe.of(cohortOfPage(page));
+  // failed any time up to here is one they may have rested on. A read not
+  // settled yet is waited for first, a bounded time: closing the page now
+  // would drop its outcome and leave it looking served (#2783 r1).
+  await readProbe.settle(cohortOfPage(page), { timeoutMs: READ_SETTLE_MS });
+  out.readState = readProbe.of(cohortOfPage(page), { chainId: CHAIN_ID });
   await page.close();
   return out;
 }
@@ -8296,41 +8310,48 @@ for (const v of visited) {
   // WebSockets. Neither is an app defect.
   (v.consoleErrors ?? []).slice(0, 4).forEach((e) => console.log(`      c ${e}`));
   // #1672 — reads the chain answered with a revert, which the app is
-  // expected to handle. Reported, never judged.
-  (v.queryState?.answered ?? []).slice(0, 4).forEach((l) => console.log(`      q ${l}`));
+  // expected to handle, and reads on another chain (ENS on Ethereum).
+  // Reported, never judged.
+  (v.readState?.answered ?? []).slice(0, 4).forEach((l) => console.log(`      q ${l}`));
+  (v.readState?.elsewhere ?? []).slice(0, 2).forEach((l) => console.log(`      q (other chain) ${l}`));
 }
 
 // The wire's findings, now that no more attempts will arrive. A malformed
 // request is a defect wherever it happened and joins the bucket the wallet
-// path fills. A failed attempt decides nothing on its own (#1672): whether
-// a read was left unserved is the query cache's answer, judged next, and
-// the attempts are named beside it.
+// path fills. A misread batch is judged below. Any other failed attempt
+// decides nothing on its own (#1672): whether a read was left unserved is
+// the app's answer, judged next, and the attempts are named beside it.
 const wire = summariseRpcLedger(rpcLedger);
 malformedRpc.push(...wire.malformed);
 
-// #1672 — what each page's query cache reported. Only visits whose page
+// #1672 — what each page reported about its reads. Only visits whose page
 // loaded carry a report; a navigation failure is its own finding.
-const probedVisits = visited.filter((v) => v.queryState);
+const probedVisits = visited.filter((v) => v.readState);
 /** Pages that loaded and never announced the report: an older build. */
-const queryUnreported = probedVisits.filter((v) => !v.queryState.armed).map((v) => v.path);
+const readUnreported = probedVisits.filter((v) => !v.readState.armed).map((v) => v.path);
 /** Report events in a shape this drive does not read. */
-const queryRefused = probedVisits.flatMap((v) => v.queryState.refused.map((r) => `${v.path}: ${r}`));
-/** Reads a page asked for and never got. */
-const unservedReads = probedVisits.flatMap((v) =>
-  v.queryState.unserved.map((line) => ({ path: v.path, cohort: v.cohort, line })),
-);
-// A read that settled because a reachable provider refused the request as
+const readRefused = probedVisits.flatMap((v) => v.readState.refused.map((r) => `${v.path}: ${r}`));
+/** Reads a page asked for and never got, or had not got when judged. */
+const unservedReads = probedVisits.flatMap((v) => [
+  ...v.readState.unserved.map((line) => ({ path: v.path, cohort: v.cohort, line })),
+  ...v.readState.pending.map((line) => ({
+    path: v.path,
+    cohort: v.cohort,
+    line: `${line} (waited ${READ_SETTLE_MS / 1000}s)`,
+  })),
+]);
+// A read that failed because a reachable provider refused the request as
 // malformed is the same defect the wire bucket holds, seen from the page.
 malformedRpc.push(
   ...probedVisits.flatMap((v) =>
-    v.queryState.faults.map((line) => ({ url: v.path, why: `a read settled on a malformed request: ${line}` })),
+    v.readState.faults.map((line) => ({ url: v.path, why: `a read failed on a malformed request: ${line}` })),
   ),
 );
 if (wire.failedAttempts.length && unservedReads.length === 0) {
   console.log(
-    `\nwire: ${wire.failedAttempts.length} failed RPC attempt(s), and every page's query cache` +
-      ` reported every read it owns as served — so each was a retry or fallback the page` +
-      ` recovered from, or a read made outside the cache, which this drive does not judge.`,
+    `\nwire: ${wire.failedAttempts.length} failed RPC attempt(s), and every page reported` +
+      ` every read as served — so each was an attempt viem retried or moved to a fallback` +
+      ` endpoint before the app's code saw an outcome.`,
   );
   wire.failedAttempts.slice(0, 4).forEach((r) => console.log(`  ${r.why} → ${r.url}`));
 }
@@ -8576,14 +8597,30 @@ if (routeFailures.length) {
   );
   process.exit(2);
 }
-// #1672 — a read the page asked for and never got, as its own query cache
-// reports it: retries spent, settled in error, and not because the chain
-// answered. The page ran without that data, so what was observed on it is
-// not a statement about the app. Same class as the gate above.
+// #2783 r1 — a provider answered a batch in a shape viem resolves by
+// POSITION, so a call may have been handed another call's answer and the
+// page rendered it as served. No report from the app can see that, so it
+// is judged from the wire. Same class as the gate above: the provider's
+// fault, and nothing observed on that page can be trusted.
+if (wire.misread.length) {
+  console.log(
+    `\nBLOCKED: ${wire.misread.length} RPC response(s) may have handed the page another call's answer` +
+      ` (a batch member surplus, duplicated, missing its result, or a batch answered once).`,
+  );
+  wire.misread.slice(0, 6).forEach((r) => console.log(`  ${r.why} → ${r.url}`));
+  console.log(`  → the RPC endpoint answered out of shape. Nothing observed on those pages can be trusted; re-run.`);
+  process.exit(2);
+}
+// #1672 — a read the page asked for and never got, as the app itself
+// reports it: an RPC request that failed after viem's retries, a query
+// that settled in error, or either still unsettled when the page was
+// judged — and not because the chain answered. The page ran without that
+// data, so what was observed on it is not a statement about the app. Same
+// class as the gate above.
 if (unservedReads.length) {
   console.log(
-    `\nBLOCKED: ${unservedReads.length} read(s) were left unserved — the page's own query` +
-      ` cache settled them in error after its retries.`,
+    `\nBLOCKED: ${unservedReads.length} read(s) were left unserved, as the page's own RPC client` +
+      ` and query cache reported them.`,
   );
   for (const u of unservedReads.slice(0, 6)) {
     console.log(`  ${u.path}: ${u.line}`);
@@ -8592,21 +8629,21 @@ if (unservedReads.length) {
       .slice(0, 3)
       .forEach((a) => console.log(`      wire: ${a.why} → ${a.url}`));
   }
-  console.log(`  → an RPC endpoint or the indexer did not answer. Nothing observed on those pages can be trusted; re-run.`);
+  console.log(`  → an RPC endpoint did not answer in time. Nothing observed on those pages can be trusted; re-run.`);
   process.exit(2);
 }
 // #1672 — without the report, whether every read was served cannot be
 // decided from here (the wire cannot tell a recovered retry from a read
 // the page consumed as a failure), so the run vouches for nothing.
-if (queryUnreported.length || queryRefused.length) {
-  console.log(`\nBLOCKED: the page did not report its query state, so whether every read was served is undecided.`);
-  if (queryUnreported.length) {
+if (readUnreported.length || readRefused.length) {
+  console.log(`\nBLOCKED: the page did not report its reads, so whether every read was served is undecided.`);
+  if (readUnreported.length) {
     console.log(
-      `  ${queryUnreported.length} loaded page(s) never announced the report (${queryUnreported.slice(0, 4).join(', ')})` +
+      `  ${readUnreported.length} loaded page(s) never announced the report (${readUnreported.slice(0, 4).join(', ')})` +
         ` — the deployed build predates #1672. Deploy a build that carries it, then re-run.`,
     );
   }
-  queryRefused.slice(0, 4).forEach((r) => console.log(`  ${r} — update this drive to read it.`));
+  readRefused.slice(0, 4).forEach((r) => console.log(`  ${r} — update this drive to read it.`));
   process.exit(2);
 }
 // #1633 item 4 — the site itself was not served, which no other gate
