@@ -1,0 +1,184 @@
+# keeper host release — builds the keeper machine's bundle once for each
+# change of its build source, attests it, and publishes it (#2651).
+#
+# The keeper machine never builds. Building on it (about 1 GB of memory, a
+# burstable shape) pushed the keeper's own ticks past their run deadlines.
+# Its updater (apps/keeper/host/deploy/update.sh) takes the digest of a
+# commit's build source with that commit's build-source.sh. It downloads
+# `keeper-host-<digest>.mjs` and its attestation from the `keeper-host`
+# release, and installs the bundle only if `gh attestation verify` proves
+# three things:
+# - this workflow, run on main on a GitHub-hosted runner, signed those exact
+#   bytes;
+# - the commit it was built from is on main;
+# - that commit gives the build the same source.
+# See docs/ops/KeeperMachine.md §1.
+#
+# The bundle is named by the build-source digest, not by the commit, so a
+# merge that does not change what the build is given publishes nothing: the
+# run finds the bundle already there and stops after the digest.
+#
+# There are two jobs, so the one that runs third-party install scripts holds
+# no credential worth taking. `build` has read access only, no OIDC token
+# and no persisted git credential, and runs the build under `env -i`.
+# `publish` signs and uploads. It checks out nothing and runs no code from
+# the repository: only the attest action and `gh`.
+
+name: keeper host release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time, never cancelled mid-publish. A run queued behind
+# another replaces any older queued run. That is safe: the newest commit's
+# digest is always built, and that is the one the machine asks for.
+concurrency:
+  group: keeper-host-release
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: keeper-host
+  # Bundles kept in the release. The machine keeps its own last five
+  # releases for rollback, so this only bounds the release's size.
+  KEEP_BUNDLES: 10
+
+jobs:
+  build:
+    name: build keeper bundle
+    # update.sh accepts only a bundle built from main.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+      published: ${{ steps.published.outputs.published }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      # The same digest the machine takes, by the same script, over the
+      # same export the build is given.
+      - name: Digest the build source
+        id: digest
+        run: |
+          digest="$(bash apps/keeper/host/deploy/build-source.sh digest . "$GITHUB_SHA" "$RUNNER_TEMP/digest")"
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::no build-source digest for $GITHUB_SHA"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Build source digest: \`$digest\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check whether this build source is already published
+        id: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          names="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+          if grep -qxF "keeper-host-$DIGEST.mjs" <<< "$names" && grep -qxF "keeper-host-$DIGEST.sigstore.json" <<< "$names"; then
+            echo "published=yes" >> "$GITHUB_OUTPUT"
+            echo "Already published: \`keeper-host-$DIGEST.mjs\`, nothing to build." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "published=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.published.outputs.published == 'no'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      # Exactly the export the digest was taken over, built by build.sh
+      # with only the variables named here: no token, no OIDC request URL.
+      - name: Build
+        if: steps.published.outputs.published == 'no'
+        run: |
+          bash apps/keeper/host/deploy/build-source.sh export . "$GITHUB_SHA" "$RUNNER_TEMP/src.tar"
+          mkdir "$RUNNER_TEMP/out"
+          node_bin="$(dirname "$(command -v node)")"
+          env -i \
+            HOME="$RUNNER_TEMP/home" \
+            COREPACK_HOME="$RUNNER_TEMP/corepack" \
+            COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+            PATH="$node_bin:/usr/bin:/bin" \
+            bash apps/keeper/host/deploy/build.sh "$RUNNER_TEMP/src.tar" "$RUNNER_TEMP/out"
+
+      - name: Hand the bundle to the publish job
+        if: steps.published.outputs.published == 'no'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: keeper-host-bundle
+          path: ${{ runner.temp }}/out/keeper-host.mjs
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: attest and publish keeper bundle
+    needs: build
+    if: needs.build.outputs.published == 'no'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # the keeper-host release's assets
+      id-token: write # the OIDC token Sigstore certifies the signature with
+      attestations: write # the attestation, also kept in the repository's store
+    env:
+      DIGEST: ${{ needs.build.outputs.digest }}
+    steps:
+      - name: Take the bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: keeper-host-bundle
+          path: ${{ runner.temp }}/in
+
+      - name: Name the bundle by its build source
+        run: |
+          [[ "$DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          mkdir "$RUNNER_TEMP/release"
+          mv "$RUNNER_TEMP/in/keeper-host.mjs" "$RUNNER_TEMP/release/keeper-host-$DIGEST.mjs"
+
+      # SLSA build provenance over the bundle's bytes. The certificate names
+      # this workflow, main and the commit built, all from GitHub's OIDC
+      # token, so no later step can change what it says.
+      - name: Attest
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/release/keeper-host-${{ needs.build.outputs.digest }}.mjs
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          cp "$BUNDLE_PATH" "$RUNNER_TEMP/release/keeper-host-$DIGEST.sigstore.json"
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --prerelease --latest=false \
+              --title "Keeper machine bundles" \
+              --notes "Built and attested by .github/workflows/keeper-host-release.yml for the keeper machine, which verifies each attestation before it installs a bundle (docs/ops/KeeperMachine.md §1). keeper-host-<digest>.mjs is the bundle for one build source (apps/keeper/host/deploy/build-source.sh) and keeper-host-<digest>.sigstore.json its provenance attestation. Not a product release; the tag is only this release's anchor."
+          fi
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            "$RUNNER_TEMP/release/keeper-host-$DIGEST.mjs" \
+            "$RUNNER_TEMP/release/keeper-host-$DIGEST.sigstore.json"
+          {
+            echo "Published \`keeper-host-$DIGEST.mjs\`, built from \`$GITHUB_SHA\`."
+            echo "Verify: \`gh attestation verify keeper-host-$DIGEST.mjs --bundle keeper-host-$DIGEST.sigstore.json --repo $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/keeper-host-release.yml --source-ref refs/heads/main\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prune old bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq "[.assets[] | select(.name | test(\"^keeper-host-[0-9a-f]{64}\\\\.mjs$\"))] | sort_by(.createdAt) | reverse | .[$KEEP_BUNDLES:] | .[].name" |
+            while read -r name; do
+              [ "$name" != "keeper-host-$DIGEST.mjs" ] || continue
+              gh release delete-asset "$RELEASE_TAG" "$name" --repo "$GITHUB_REPOSITORY" --yes
+              gh release delete-asset "$RELEASE_TAG" "${name%.mjs}.sigstore.json" --repo "$GITHUB_REPOSITORY" --yes || true
+            done

@@ -18,83 +18,119 @@ before it does anything. Read §2 before starting anything.
 | --- | --- | --- |
 | `vaipakam-keeper.service` | a dynamic user, with the env file as a private credential | the keeper itself: one tick every UTC minute |
 | `vaipakam.slice` | (a slice, not a process) | the keeper's own top-level slice, so the keeper's memory protection takes effect |
-| `vaipakam-keeper-update.timer` → `.service` | root, building in a throwaway sandbox | every 5 minutes: deploy the branch's latest commit if it is not running (`update.sh`) |
+| `vaipakam-keeper-update.timer` → `.service` | root, verifying in a throwaway sandbox | every 5 minutes: deploy main's latest keeper build if it is not running (`update.sh`) |
 
-A merge to `main` is the deploy. Each run of `update.sh` does the following:
+A merge to `main` is the deploy. This machine never builds the keeper: CI
+does ([`keeper-host-release.yml`](../../.github/workflows/keeper-host-release.yml)),
+and the machine downloads what CI published and checks it. Each run of
+`update.sh` does the following:
 
 1. It fetches `main` into root's own checkout.
 2. If `current` is already that commit's release, it stops there. It also
-   stops if a build of that commit would be given exactly the source the
-   running release was built from (see "Which commits are built" below), and
-   logs once that it is staying on the running release.
-3. Otherwise it exports exactly that commit's build source and builds it in
-   a sandbox, as a fresh dynamic user that systemd deletes afterwards, with
-   that commit's own `build.sh`. The build runs the new bundle with
-   `--check`, to prove it loads.
-4. It installs that same commit's systemd units and `update.sh`, each only if
+   stops if that commit gives the build exactly the source the running
+   release has (see "Which commits are deployed" below), and logs once that it
+   is staying on the running release.
+3. Otherwise it downloads the bundle CI published for that commit's build
+   source, `keeper-host-<digest>.mjs`, and its attestation,
+   `keeper-host-<digest>.sigstore.json`, from the repository's
+   [`keeper-host` release](https://github.com/vaipakam/vaipakam/releases/tag/keeper-host).
+   CI builds a commit after it lands on `main`, so for a few minutes after a
+   merge the bundle is not there yet. The run then logs once `waiting for CI
+   to publish the keeper build of <commit>` and stops; a later run deploys it.
+4. It verifies the attestation with `gh attestation verify`. The attestation
+   must be signed for this repository's `keeper-host-release` workflow, run on
+   `main`, on a GitHub-hosted runner, over exactly the downloaded bytes. The
+   commit the signing certificate names as the build's source must be on
+   `main` and must give the build the same source as the commit being
+   deployed. Usually it is that commit.
+5. It runs the bundle with `--check`, with no settings and no network, to
+   prove it loads on this machine's Node.
+6. It installs that same commit's systemd units and `update.sh`, each only if
    it changed. So the keeper never runs under the units of another commit: a
    change that needs a new setting in its unit arrives with the code that
    needs it.
-5. It installs the bundle as `releases/<commit>` and switches `current` to it.
-6. It restarts a running keeper, unless neither the bundle nor the keeper's
+7. It installs the bundle as `releases/<commit>` and switches `current` to it.
+   `releases/<commit>/BUILT_FROM` names the commit CI built it from.
+8. It restarts a running keeper, unless neither the bundle nor the keeper's
    unit changed (a merge that did not touch the keeper).
 
-Any failure leaves the running keeper untouched, and the next run retries.
+Any failure leaves the running keeper untouched, and the next run retries. A
+bundle that fails verification is never installed, and every run says so in
+`journalctl -u vaipakam-keeper-update` until a newer commit replaces it.
 
-**Which commits are built (#2651).** This machine is small (about 1 GB of
-memory), and a build is the heaviest thing it does. Before #2651 it built
-every merge to `main`, about 32 a day. While one ran, the keeper's tick
-started several seconds late and the late remittance check often missed its
-read deadline: 37% of ticks during a build, against 0.2% outside one. Two
-rules now keep builds out of the keeper's way:
+**Why the machine does not build (#2651).** This machine is small (about 1 GB
+of memory, two shared CPUs on a burstable shape). It used to build every
+keeper change itself. While a build ran, the keeper's tick started late and
+the late remittance check missed its read deadline in about a third of ticks,
+against 0.3% outside a build. Lower CPU priority and memory protection for the
+keeper did not change that. A measurement during a build on 2026-10-23 showed
+why: the build's own CPU use was small (about 16%), but the hypervisor took
+48% of the machine's CPU time on average (68% at worst), and the machine
+swapped hard enough that all disk IO stalled 33% of the time. Priorities
+inside the machine cannot win back time the host does not give it. So the
+build moved to CI, and the machine now only downloads a bundle of about
+12 MB, verifies it and runs `--check`.
 
-- **Only a commit that gives the build different source is built.** A
-  build is given only the paths listed in
-  `apps/keeper/host/deploy/build-paths`:
-  - the root manifests and the lockfile;
-  - the keeper;
-  - the workspace packages its install reaches;
-  - the indexer modules it imports.
-  
-  `build-source.sh` exports those paths with `git archive` for the build,
-  and the same script takes a digest of that export: every path, mode and
-  byte, after git's own conversions. The updater compares the running
-  release's digest with the branch tip's. If they are equal, a build would be
-  given the same files and would make the same bundle, so the machine stays
-  on the release it has. Nothing is predicted: what is compared is what the
-  build reads. A path the build needs but the list leaves out makes the build
-  fail; it can never pass on stale input, and a test checks the list against
-  the bundle's real inputs. A commit from before `build-paths` gets the whole
-  tree and is always built, as before.
+**What CI does.** On every push to `main`, the workflow takes the same digest
+of the commit's build source (below) with the same script. If the release
+already holds a bundle for that digest, it stops there. Otherwise it builds
+exactly that export with `build.sh`, under `env -i` with no credential in
+reach. The build job holds a read-only token, no OIDC token and no persisted
+git credential, and starts from the lockfile with no cache. The build runs
+the bundle with `--check`. A separate job then signs a SLSA build provenance
+attestation over the bundle (`actions/attest`, through Sigstore's public-good
+instance, also kept in the repository's attestation store) and uploads both
+files to the `keeper-host` release. That release is a prerelease and never
+the latest release; it holds the newest ten bundles. Any bundle can be checked
+by hand:
 
-  As a result, the release the keeper reports can be older than the tip of
-  `main`. That is expected: it is the newest commit whose build source
-  differs.
-- **A build never competes with the keeper.**
-  - **CPU.** The updater and its build run at the lowest CPU priority
-    (`Nice=19`, `CPUWeight=1`), so the keeper's ticks come first.
-  - **Memory.** The keeper runs in a top-level slice of its own,
-    `vaipakam.slice`, with `MemoryLow=320M` on both the slice and the keeper.
-    The kernel reclaims the keeper's memory, up to that figure, only once
-    nothing unprotected is left to reclaim. So a build, an updater run or
-    anything else on the machine is swapped out before the keeper is. Before
-    this, the keeper itself was being pushed into swap: 112 MiB of it at one
-    reading, which every tick then had to read back. The protection reserves
-    nothing, so memory the keeper is not using stays free for the rest. The
-    slice is needed because, under cgroup v2, a unit's protection holds only
-    as far as its parent grants it, and `system.slice` grants none. The
-    figure is the keeper's measured footprint (about 140 MiB resident plus
-    110 MiB swapped, 2026-10-23) with room to grow. If memory runs out anyway,
-    the OOM killer picks the build (`OOMScoreAdjust=500`) before the keeper
-    (`-500`), and the next deploy run retries the build.
-  - **The build is not memory-capped.** A cap has to be sized from the
-    build's peak, and systemd's logged peak for the build unit is not a usable
-    figure: it reads 256K to 1.8M for builds that use nearly two CPU-minutes.
-    Protecting the keeper does not depend on the build's size.
-  - **Disk.** The units also ask for the lowest disk priority (`IOWeight=1`,
-    `IOSchedulingClass=idle`). That has no effect on this machine, because
-    its disk scheduler is `none`, which ignores both. The settings are kept
-    so that they take effect on a host whose scheduler honours them.
+```bash
+gh attestation verify keeper-host-<digest>.mjs \
+  --bundle keeper-host-<digest>.sigstore.json \
+  --repo vaipakam/vaipakam \
+  --signer-workflow vaipakam/vaipakam/.github/workflows/keeper-host-release.yml \
+  --source-ref refs/heads/main --deny-self-hosted-runners
+```
+
+**Which commits are deployed.** A build is given only the paths listed in
+`apps/keeper/host/deploy/build-paths`:
+- the root manifests and the lockfile;
+- the keeper;
+- the workspace packages its install reaches;
+- the indexer modules it imports.
+
+`build-source.sh` exports those paths with `git archive` for the build, and
+the same script takes a digest of that export: every path, mode and byte,
+after git's own conversions. CI names each bundle by that digest. The updater
+compares the running release's digest with the branch tip's. If they are
+equal, a build would be given the same files and would make the same bundle,
+so the machine stays on the release it has. Nothing is predicted: what is
+compared is what the build reads. A path the build needs but the list leaves
+out makes the build fail; it can never pass on stale input, and a test checks
+the list against the bundle's real inputs.
+
+As a result, the release the keeper reports can be older than the tip of
+`main`. That is expected: it is the newest commit whose build source differs.
+
+**A deploy never competes with the keeper.**
+- **CPU.** The updater, the verification and the load check run at the lowest
+  CPU priority (`Nice=19`, `CPUWeight=1`).
+- **Memory.** The keeper runs in a top-level slice of its own,
+  `vaipakam.slice`, with `MemoryLow=320M` on both the slice and the keeper.
+  The kernel reclaims the keeper's memory, up to that figure, only once
+  nothing unprotected is left to reclaim. So an updater run or anything else
+  on the machine is swapped out before the keeper is. The protection reserves
+  nothing, so memory the keeper is not using stays free for the rest. The
+  slice is needed because, under cgroup v2, a unit's protection holds only as
+  far as its parent grants it, and `system.slice` grants none. The figure is
+  the keeper's measured footprint (about 140 MiB resident plus 110 MiB
+  swapped, 2026-10-23) with room to grow. If memory runs out anyway, the OOM
+  killer picks a deploy step (`OOMScoreAdjust=500`) before the keeper
+  (`-500`), and the next deploy run retries.
+- **Disk.** The units also ask for the lowest disk priority (`IOWeight=1`,
+  `IOSchedulingClass=idle`). That has no effect on this machine, because its
+  disk scheduler is `none`, which ignores both. The settings are kept so that
+  they take effect on a host whose scheduler honours them.
 
 The units and the release are bound by one file, `kit-commit`, naming the
 commit whose units are installed and loaded. A deploy removes it before it
@@ -111,31 +147,40 @@ deploys paused, `sudo
 /opt/vaipakam-keeper/update.sh --kit-only` does that one step by hand. A
 reinstall and a deploy share one lock, so they never interleave.
 
-The build user is new for every build. It can read neither the env file nor
-write the releases, and nothing it writes survives the build: its source
-tree, Corepack's copy of pnpm and pnpm's package store all live in its private
-`/tmp`, which systemd deletes with it. So a build cannot leave tooling behind
-for a later one to run. Each build downloads its packages afresh, checked
-against the lockfile's integrity hashes, and Corepack checks pnpm against
-npm's signing keys. Builds run one at a time under one fixed unit name. Root
-chose the commit and built that commit's own export, so a release is always
-bound to its commit. Of the service accounts, only the keeper's dynamic user
-sees the env file.
+Verification and the load check each run as a fresh dynamic user that
+systemd deletes afterwards. That user can read neither the env file nor
+write the releases, sees only the two downloaded files, and keeps nothing:
+its home is its private `/tmp`, which systemd deletes with it. The load
+check also has no network. Of the service accounts, only the keeper's
+dynamic user sees the env file.
 
 Trust, stated plainly. **Root on this machine is fully trusted**: it can read
 `/etc/vaipakam/keeper.env`, and with it the signing key and the D1 token, and
-it runs the updater. The sandboxing above keeps the build away from the
+it runs the updater. The sandboxing above keeps the deploy steps away from the
 secrets; it does nothing to limit root, so anyone with root or `sudo` here
-holds the keeper key. **Whoever can merge to the deploy branch (`main`) holds
-root on this machine**: each deploy installs that commit's units and
-`update.sh`, and the updater runs as root, so a merged change to either runs
-as root at the next deploy, with the signing key, the D1 token and anything
-else here in reach. Branch protection on `main` is therefore part of this
-machine's security. Anyone who can tamper with a dependency the build fetches
-controls what the keeper runs (the build itself stays sandboxed). The
-Workers' auto-deploy carries the same trust for the keeper's code; root on
-the machine is the part it adds. Node comes from nodejs.org, verified against
-the release's published SHA-256 over TLS.
+holds the keeper key. **Whoever can merge to `main` holds root on this
+machine**: each deploy installs that commit's units and `update.sh`, and the
+updater runs as root, so a merged change to either runs as root at the next
+deploy, with the signing key, the D1 token and anything else here in reach.
+The same people control the bundle, because CI builds `main` and only `main`.
+Branch protection on `main` is therefore part of this machine's security.
+
+**What the machine trusts to accept a bundle.** Release assets can be uploaded
+by more accounts than can merge to `main`, so the download proves nothing by
+itself. The attestation is the check. Its certificate is issued by Sigstore's
+Fulcio from GitHub's OIDC token for the run that signed it, so the workflow
+path, the ref and the commit it names cannot be set by that workflow or by
+whoever uploaded the asset. Accepting a bundle therefore relies on:
+- GitHub Actions' hosted runners and OIDC tokens;
+- Sigstore's public-good instance and its trust root, which `gh` fetches and
+  checks through TUF;
+- the GitHub CLI, from GitHub's apt repository, whose keyring `install.sh`
+  checks against a pinned SHA-256.
+
+Anyone who can tamper with a dependency the CI build fetches controls what
+the keeper runs, as before. The Workers' auto-deploy carries the same trust
+for the keeper's code; root on the machine is the part it adds. Node comes
+from nodejs.org, verified against the release's published SHA-256 over TLS.
 
 Files on the machine, all root's:
 
@@ -143,10 +188,9 @@ Files on the machine, all root's:
 | --- | --- |
 | `/etc/vaipakam/keeper.env` | settings and secrets, `0600`. Never overwritten by the kit |
 | `/opt/vaipakam-keeper/current` | the running release (a symlink into `releases/<commit>`) |
-| `/opt/vaipakam-keeper/releases/` | the last five deployed builds, for rollback |
-| `/opt/vaipakam-keeper/build-source.sh` | the running kit's export and digest of a commit's build source, which decides whether a newer commit is built |
+| `/opt/vaipakam-keeper/releases/` | the last five deployed bundles, for rollback; each holds `SOURCE_COMMIT` and `BUILT_FROM` |
 | `/opt/vaipakam-keeper/checked` | the last running/newer commit pair found to give the build the same source, so it is not compared or logged again |
-| `/opt/vaipakam-keeper/deploy-branch` | the branch followed (default `main`) |
+| `/opt/vaipakam-keeper/awaiting` | the build-source digest whose CI bundle the machine last waited for, so the wait is logged once |
 | `/opt/vaipakam-keeper/repo` | the checkout the code comes from |
 
 ## 2. One keeper at a time (read first)
@@ -210,23 +254,26 @@ sudo bash install.sh
 
 The script does the following:
 
-- installs Node 22 and clones the repository as root;
+- installs Node 22, and the GitHub CLI from GitHub's apt repository (its
+  keyring checked against a pinned SHA-256), which verifies every bundle;
+- clones the repository as root;
 - installs the units and enables the update timer;
-- deploys the first build;
+- deploys the latest bundle CI has published;
 - creates `/etc/vaipakam/keeper.env` from the template, if there is none.
 
 It never enables or starts the keeper. That is the cutover in §5, so a
 machine that is installed but not cut over cannot start a second keeper at
 its next boot. Running it again is safe. It installs the units and
 `update.sh` of the commit that is running, never a newer one (each deploy
-installs its own commit's, step 4 of §1), so a re-run while deploys are
+installs its own commit's, step 6 of §1), so a re-run while deploys are
 paused leaves the machine on one commit's code and units. It also moves Node to
 the latest 22.x release. When Node or the keeper's unit changed, it restarts
 a running keeper onto them, after its current tick. So re-run it to take Node
-security releases. Node lives in `/usr/local/lib/vaipakam-node`, which the
+security releases; it moves the GitHub CLI to its latest release too. Node lives in `/usr/local/lib/vaipakam-node`, which the
 script owns outright: it keeps the version in use and the one before it, and
-removes older ones. Nothing in it is run, not even to read its version, unless all of it is root's and writable only by root; otherwise it is deleted and Node is installed again. A re-run keeps the branch the machine follows unless
-`KEEPER_DEPLOY_BRANCH` is set again, and leaves paused deploys paused (§6):
+removes older ones. Nothing in it is run, not even to read its version, unless all of it is root's and writable only by root; otherwise it is deleted and Node is installed again. The machine always
+follows `main`, the one branch CI builds the keeper from; the script refuses a
+`KEEPER_DEPLOY_BRANCH` naming any other. A re-run leaves paused deploys paused (§6):
 only the first install to complete turns the update timer on. One rule
 decides whether `/opt/vaipakam-keeper` is trusted: unless a completed install
 made it and everything in it is root's and writable only by root, the whole
@@ -406,7 +453,7 @@ empty.
   the database does not record.
 - **Pause deploys:** `sudo systemctl disable --now vaipakam-keeper-update.timer`,
   then `sudo systemctl stop vaipakam-keeper-update.service`. The second
-  command stops a deploy already running (and its build), so it cannot
+  command stops a deploy already running (and its verification), so it cannot
   switch `current` after you have paused. Stopping only the timer would let
   that deploy finish and switch anyway. A deploy stopped just after switching
   leaves `restart-pending`, and the next run, once deploys resume, restarts
@@ -418,14 +465,12 @@ empty.
   /opt/vaipakam-keeper/current`), run `sudo /opt/vaipakam-keeper/update.sh
   --kit-only` so the units are that release's own again (until then the
   keeper refuses to start, §1), and run `sudo systemctl restart
-  vaipakam-keeper`. **To return to the deploy branch**, resume deploys: the
-  next run sees that `current` is not the branch tip's release and deploys
-  it. The one exception is a branch tip whose build source is identical to
-  the rolled-back release's. That tip's bundle is the same one, so the
-  keeper stays on it. The branch is the one in `/opt/vaipakam-keeper/deploy-branch` (`main`
-  unless `KEEPER_DEPLOY_BRANCH` set another at install); check it, and to
-  follow `main` again re-run the install script with
-  `KEEPER_DEPLOY_BRANCH=main`.
+  vaipakam-keeper`. A rollback uses the bundles kept on the machine; it
+  needs neither CI nor the network. **To return to `main`**, resume deploys:
+  the next run sees that `current` is not the branch tip's release and
+  deploys it. The one exception is a branch tip whose build source is
+  identical to the rolled-back release's. That tip's bundle is the same one,
+  so the keeper stays on it.
 - **Move hosts:** on the old machine run `sudo systemctl disable --now
   vaipakam-keeper vaipakam-keeper-update.timer`. Then enable the new machine
   with the §5 cutover. `disable` matters: a unit

@@ -1,9 +1,11 @@
-# Everything a keeper build is given (#2651): update.sh exports exactly these
-# paths of the commit it deploys, and nothing else, to the build sandbox. So
-# two commits whose export of these paths is byte-identical build the same
-# bundle, and the updater builds a commit only when its export differs from
-# the running release's (build-source.sh). A path the build needs and this
-# list leaves out makes the build fail, never pass on stale input.
+# Everything a keeper build is given (#2651): CI exports exactly these paths
+# of the commit it builds, and nothing else, to build.sh
+# (.github/workflows/keeper-host-release.yml). So two commits whose export of
+# these paths is byte-identical build the same bundle; CI publishes it under
+# that export's digest (build-source.sh), and the keeper machine deploys a
+# commit only when its digest differs from the running release's. A path the
+# build needs and this list leaves out makes the build fail, never pass on
+# stale input.
 #
 # The root manifests decide what pnpm installs, and with which pnpm.
 package.json

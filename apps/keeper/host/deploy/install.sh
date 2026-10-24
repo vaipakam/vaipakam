@@ -9,15 +9,15 @@
 # same reason.
 #
 # Safe to run again: it never overwrites the env file, re-installs the units
-# and scripts from the deploy branch, and moves Node to the latest 22.x
-# (restarting a running keeper onto it). It never ENABLES or STARTS the
+# and scripts of the running release, moves Node to the latest 22.x
+# (restarting a running keeper onto it) and the GitHub CLI to its latest
+# release. It never ENABLES or STARTS the
 # keeper. That is the explicit cutover in docs/ops/KeeperMachine.md §5, so
 # a machine that is installed but not yet cut over cannot start a second
 # keeper at its next boot.
 #
-# KEEPER_DEPLOY_BRANCH picks the branch the machine follows from then on; it
-# is remembered in /opt/vaipakam-keeper/deploy-branch, and a later run
-# without it keeps the remembered branch (main on a first install).
+# The machine follows main, the one branch CI builds and attests the keeper
+# from (.github/workflows/keeper-host-release.yml); it never builds itself.
 #
 # Needs systemd 247 or newer (Ubuntu 22.04 or later) for LoadCredential=.
 set -euo pipefail
@@ -33,6 +33,12 @@ main() {
   umask 022
 
   [ "$(id -u)" -eq 0 ] || { echo "run as root (sudo)" >&2; exit 1; }
+  # Machines once could follow another branch. CI publishes builds of main
+  # only, so a machine on any other branch would never receive one.
+  if [ -n "${KEEPER_DEPLOY_BRANCH:-}" ] && [ "$KEEPER_DEPLOY_BRANCH" != main ]; then
+    echo "KEEPER_DEPLOY_BRANCH=$KEEPER_DEPLOY_BRANCH: the keeper machine follows main only, the one branch CI builds the keeper from" >&2
+    exit 1
+  fi
   # The keeper unit reads its env file through LoadCredential= (systemd 247).
   local systemd_version
   systemd_version="$(systemctl --version | awk 'NR==1 { print $2 }')"
@@ -62,6 +68,32 @@ main() {
   INSTALL_TMP="$(mktemp -d)"
   trap 'rm -rf "${INSTALL_TMP:-}"' EXIT
   local tmp="$INSTALL_TMP"
+
+  # The GitHub CLI, which verifies the provenance of every keeper bundle
+  # before update.sh installs it. It comes from GitHub's own apt repository,
+  # whose keyring is checked against the SHA-256 GitHub publishes for it
+  # (https://github.com/cli/cli/blob/trunk/docs/install_linux.md), so a
+  # substituted key stops the install instead of being trusted. The keyring
+  # and the source line are written again on every run, and apt moves gh to
+  # its latest release.
+  local GH_KEYRING_SHA256=6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b
+  local gh_keyring=/etc/apt/keyrings/githubcli-archive-keyring.gpg
+  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$tmp/githubcli.gpg"
+  if ! echo "$GH_KEYRING_SHA256  $tmp/githubcli.gpg" | sha256sum -c --quiet - >/dev/null 2>&1; then
+    echo "the GitHub CLI keyring at cli.github.com does not match the SHA-256 this script pins; check docs/install_linux.md in cli/cli before changing the pin" >&2
+    exit 1
+  fi
+  install -d -o root -g root -m 755 /etc/apt/keyrings
+  install -m 644 -o root -g root "$tmp/githubcli.gpg" "$gh_keyring"
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=$gh_keyring] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+  log "installing the GitHub CLI"
+  apt-get update -q >/dev/null
+  apt-get install -y -q gh >/dev/null
+  if ! gh attestation verify --help >/dev/null 2>&1; then
+    echo "the installed GitHub CLI ($(gh --version | head -1)) cannot verify attestations" >&2
+    exit 1
+  fi
+
   curl -fsSL "$base/SHASUMS256.txt" -o "$tmp/SHASUMS256.txt"
   local file
   file="$(grep -oE "node-v${NODE_MAJOR}\.[0-9]+\.[0-9]+-linux-${arch}\.tar\.xz" "$tmp/SHASUMS256.txt" | head -1)"
@@ -120,9 +152,9 @@ main() {
   for bin in node npm npx corepack; do ln -sfn "$NODE_HOME/current/bin/$bin" "/usr/local/bin/$bin"; done
 
   # Everything under /opt/vaipakam-keeper is root's: the checkout the code
-  # comes from, the scripts, the releases and the state files. Builds run as
-  # a throwaway dynamic user (build.sh), and the keeper as another, which is
-  # the only one that sees the env file.
+  # comes from, the scripts, the releases and the state files. A new bundle
+  # is verified and load-checked as a throwaway dynamic user (update.sh), and
+  # the keeper runs as another, which is the only one that sees the env file.
   #
   # One rule decides whether any of it is trusted, rather than a check per
   # file: the tree is used as it stands only if a completed install made it
@@ -148,12 +180,10 @@ main() {
       rm -rf "$ROOT"
     fi
   fi
-  # A reinstall must never move the machine to other code by itself. Read
-  # only now, from a tree that passed the rule above.
-  local BRANCH="${KEEPER_DEPLOY_BRANCH:-$(cat "$ROOT/deploy-branch" 2>/dev/null || echo main)}"
+  local BRANCH=main
   install -d -o root -g root -m 755 "$ROOT" "$ROOT/releases"
-  echo "$BRANCH" > "$ROOT/.deploy-branch.new"
-  mv -Tf "$ROOT/.deploy-branch.new" "$ROOT/deploy-branch"
+  # Where an older install remembered a branch to follow; nothing reads it.
+  rm -f "$ROOT/deploy-branch"
   if [ ! -d "$ROOT/repo/.git" ]; then
     rm -rf "$ROOT/repo"
     log "cloning $REPO_URL"
@@ -179,9 +209,8 @@ main() {
 
   # Only the updater is installed from here. It then installs the units (and
   # itself again) through --kit-only below, and from then on each deploy
-  # installs the units and the updater of the commit it deploys and builds
-  # with that commit's own build.sh, so code never runs under another
-  # commit's kit.
+  # installs the units and the updater of the commit it deploys, so code
+  # never runs under another commit's kit.
   install -m 755 -o root -g root "$kit/update.sh" "$ROOT/.update.sh.new"
   mv -Tf "$ROOT/.update.sh.new" "$ROOT/update.sh"
   rm -f "$ROOT/build.sh"
@@ -225,7 +254,7 @@ main() {
     systemctl enable --quiet --now vaipakam-keeper-update.timer
   fi
   if systemctl is-enabled --quiet vaipakam-keeper-update.timer; then
-    log "deploying the latest build (the first one can take a few minutes)"
+    log "deploying the latest release CI has published"
     systemctl start vaipakam-keeper-update.service
   else
     log "deploys are paused (the update timer is disabled), so nothing was deployed; resume per docs/ops/KeeperMachine.md §6"
