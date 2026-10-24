@@ -8194,6 +8194,15 @@ library LibVaipakam {
         ///      did not count never sizes the day's recycled budget. Written by
         ///      `LibVpfiRecycle.recordChainRecycled`. Appended — append-only.
         mapping(uint256 => mapping(uint32 => uint256)) chainDailyRecycledReported;
+        /// @dev #2721 — per wallet, the most VPFI it agreed to be billed per
+        ///      loan side for paid notifications; zero means no consent. Set
+        ///      only by the wallet itself (`ProfileFacet.setNotificationFeeConsent`,
+        ///      through `LibNotificationFee.setConsent`) and read by
+        ///      `LibNotificationFee.bill`, which refuses a payer whose cap is
+        ///      zero or below the fee being billed. Before this record the
+        ///      billing role could debit any loan party; the opt-in lived only
+        ///      off-chain. Appended — append-only.
+        mapping(address => uint256) notificationFeeConsentCap;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

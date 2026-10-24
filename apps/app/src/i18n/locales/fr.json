@@ -2475,6 +2475,7 @@
         "KeeperActionsUpdated": "Autorisations du keeper mises à jour",
         "KeeperRevoked": "Keeper retiré",
         "VPFIDiscountConsentChanged": "Paramètre de remise sur les frais en VPFI mis à jour",
+        "NotificationFeeConsentSet": "Consentement à la facturation des notifications payantes mis à jour",
         "LenderIntentSet": "Intention de prêt permanente définie",
         "LenderIntentFunded": "Intention de prêt permanente financée",
         "LenderIntentCapitalWithdrawn": "Capital retiré d’une intention de prêt permanente",

@@ -236,6 +236,7 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   KeeperActionsUpdated: { label: 'Keeper permissions updated', category: 'other', priority: 40 },
   KeeperRevoked: { label: 'Keeper removed', category: 'other', priority: 40 },
   VPFIDiscountConsentChanged: { label: 'VPFI fee discount setting updated', category: 'other', priority: 40 },
+  NotificationFeeConsentSet: { label: 'Paid notification billing consent updated', category: 'other', priority: 40 },
   LenderIntentSet: { label: 'Standing lending intent set', category: 'offer', priority: 50 },
   LenderIntentFunded: { label: 'Standing lending intent funded', category: 'offer', priority: 50 },
   LenderIntentCapitalWithdrawn: { label: 'Capital withdrawn from a standing lending intent', category: 'offer', priority: 50 },

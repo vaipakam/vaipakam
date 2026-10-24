@@ -5473,6 +5473,7 @@ const copySource = {
       KeeperActionsUpdated: 'Keeper permissions updated',
       KeeperRevoked: 'Keeper removed',
       VPFIDiscountConsentChanged: 'VPFI fee discount setting updated',
+      NotificationFeeConsentSet: 'Paid notification billing consent updated',
       LenderIntentSet: 'Standing lending intent set',
       LenderIntentFunded: 'Standing lending intent funded',
       LenderIntentCapitalWithdrawn: 'Capital withdrawn from a standing lending intent',

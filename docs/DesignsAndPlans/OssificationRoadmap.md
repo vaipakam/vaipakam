@@ -135,30 +135,33 @@ detect-and-exit, and a freeze *candidate*, never a free replace).
 **Honest carve-out (a custody-moving path that is *not* behind the timelock).**
 The rule above governs the *upgrade/parameter* surface. One operational debit
 sits outside it: `LoanFacet.markNotifBilled` (`NOTIF_BILLER_ROLE`) calls
-`LibNotificationFee.bill`, which pulls a fixed VPFI notification fee directly
-from a loan party's vault to the treasury — no timelock. Two honest sharp edges,
-not glossed:
-- **There is no on-chain paid-tier / subscription check.** `markNotifBilled`
-  debits whichever side it's told (`loan.lender` / `loan.borrower`); the only
-  on-chain guard is *idempotency* (the per-side `…NotifBilled` flag stops a
-  second debit), **not authorization**. "Opted-in" is enforced off-chain by the
-  biller, not by the contract. There is also **no loan-status check** —
-  `markNotifBilled` only rejects an out-of-range `loanId` (`0` or `> nextLoanId`),
-  so the billable set is **every loan ever opened** whose per-side flag is still
-  unset, not just *active* ones: a compromised biller can debit closed / settled
-  / defaulted loans' parties too.
-- **The role is a hot key until rotation.** `Handover.s.sol` leaves
-  `NOTIF_BILLER_ROLE` on the **ADMIN EOA** (not even an ops bot, and outside the
-  timelock) until a separate per-bot rotation. So the realistic blast radius of
-  a compromised biller key today is: one fixed VPFI fee skimmed from every
-  billable loan side, once each (bounded by the idempotency flag and the fixed
-  fee, but real).
-The fee is fixed and capped-per-loan-side, and the role can't re-point custody
-rules — so it's a fast-path *by necessity*, not a governance lever — but it is a
-role-gated path that moves user funds without the delay **and** without an
-on-chain authorization check, named here rather than hidden. Adding an on-chain
-subscription gate, and constraining / timelocking + promptly rotating the biller
-role off the ADMIN EOA, is in the #651 census scope.
+`LibNotificationFee.bill`, which pulls a fixed VPFI notification fee from a
+loan party's vault into Diamond custody and credits the recycle bucket (#1346)
+— no timelock. It is a fast path *by necessity* (billing happens when a
+notification is sent and cannot wait out a delay), so what bounds it is
+on-chain authorization, not delay:
+- **The payer's own on-chain consent (#2721).** Each wallet records, from its
+  own account, the most it agrees to pay per loan side
+  (`ProfileFacet.setNotificationFeeConsent`); zero withdraws it, and
+  withdrawing works while paused. `bill` refuses a payer with no consent or a
+  cap below the configured fee (`NotificationFeeNotConsented`), so consent to
+  a lower fee never covers a later, higher one. Before #2721 the opt-in lived
+  only off-chain and the contract debited whichever side it was told.
+- **Open loans only (#2721).** `bill` refuses a loan that is not `Active`
+  (`NotificationBillingLoanNotActive`). Before #2721 every loan ever opened was
+  billable, closed / settled / defaulted ones included.
+- **Once per loan side.** The per-side `…NotifBilled` flag still makes a retry
+  a no-op, now also after the loan closes or consent is withdrawn.
+- **A dedicated bot key, not the admin.** Since #669 `Handover.s.sol` grants
+  `NOTIF_BILLER_ROLE` to `NOTIF_BILLER_ADDRESS` and the admin renounces it, so
+  it is not left on the ADMIN EOA. (An earlier revision of this paragraph said
+  it stayed there until a separate rotation; that described the pre-#669
+  handover.)
+
+So the realistic blast radius of a compromised biller key is now an *early*
+charge: a wallet that already agreed to pay, at most the cap it chose, once per
+side of a loan that is still open. That is bounded and consented, and it is
+named here rather than hidden. The role still cannot re-point custody rules.
 
 **What "detect-and-exit" does and does not mean (honest):** the delay buys
 users a window to *observe* a queued custody-moving change and exit (repay,

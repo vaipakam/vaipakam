@@ -2475,6 +2475,7 @@
         "KeeperActionsUpdated": "Permisos del keeper actualizados",
         "KeeperRevoked": "Keeper eliminado",
         "VPFIDiscountConsentChanged": "Ajuste de descuento de comisiones en VPFI actualizado",
+        "NotificationFeeConsentSet": "Consentimiento de cobro de notificaciones de pago actualizado",
         "LenderIntentSet": "Intención de préstamo permanente establecida",
         "LenderIntentFunded": "Intención de préstamo permanente financiada",
         "LenderIntentCapitalWithdrawn": "Capital retirado de una intención de préstamo permanente",

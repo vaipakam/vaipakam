@@ -2475,6 +2475,7 @@
         "KeeperActionsUpdated": "Keeper 权限已更新",
         "KeeperRevoked": "Keeper 已移除",
         "VPFIDiscountConsentChanged": "VPFI 费用折扣设置已更新",
+        "NotificationFeeConsentSet": "付费通知计费同意已更新",
         "LenderIntentSet": "常设出借意向已设置",
         "LenderIntentFunded": "常设出借意向已注资",
         "LenderIntentCapitalWithdrawn": "已从常设出借意向中取出资金",

@@ -116,9 +116,9 @@ library FacetSelectors {
         s[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
     }
 
-    /// @notice Full external selector surface of {ProfileFacet} (31).
+    /// @notice Full external selector surface of {ProfileFacet} (33).
     function profile() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](31);
+        s = new bytes4[](33);
         s[0] = ProfileFacet.updateKYCStatus.selector;
         s[1] = ProfileFacet.getUserCountry.selector;
         s[2] = ProfileFacet.isKYCVerified.selector;
@@ -153,6 +153,9 @@ library FacetSelectors {
         s[29] = ProfileFacet.isRecipientBarred.selector;
         // #1347 — per-offer creator Full VPFI tariff opt-in.
         s[30] = ProfileFacet.setOfferCreatorFullTariff.selector;
+        // #2721 — paid-notification billing consent (set + read).
+        s[31] = ProfileFacet.setNotificationFeeConsent.selector;
+        s[32] = ProfileFacet.getNotificationFeeConsent.selector;
     }
 
     /// @notice Full external selector surface of {VaipakamNFTFacet} (29) — mirrors
