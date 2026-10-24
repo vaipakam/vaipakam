@@ -132,6 +132,7 @@ import {
     BUYBACK_RECEIVER_WIRE_GENERATION
 } from "../src/crosschain/BuybackRemittanceReceiver.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 
 /// @dev #1662 r8 — the per-receipt attribution watermark, armed in the
 ///      same paused run that removes the unattributed selectors.
@@ -1413,44 +1414,44 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///      refresh then skips that facet. Only reading the contents catches it.
     function _deployItems() internal returns (Item[] memory items) {
         items = new Item[](EXPECTED_FACETS);
-        items[0] = Item("diamondLoupeFacet", address(new DiamondLoupeFacet()), _getLoupeSelectors());
-        items[1] = Item("ownershipFacet", address(new OwnershipFacet()), _getOwnershipSelectors());
-        items[2] = Item("accessControlFacet", address(new AccessControlFacet()), _getAccessControlSelectors());
-        items[3] = Item("adminFacet", address(new AdminFacet()), _getAdminSelectors());
-        items[4] = Item("profileFacet", address(new ProfileFacet()), _getProfileSelectors());
-        items[5] = Item("oracleFacet", address(new OracleFacet()), _getOracleSelectors());
-        items[6] = Item("oracleAdminFacet", address(new OracleAdminFacet()), _getOracleAdminSelectors());
-        items[7] = Item("vaipakamNFTFacet", address(new VaipakamNFTFacet()), _getNftSelectors());
-        items[8] = Item("vaultFactoryFacet", address(new VaultFactoryFacet()), _getVaultFactorySelectors());
-        items[9] = Item("offerCreateFacet", address(new OfferCreateFacet()), _getOfferCreateSelectors());
-        items[10] = Item("loanFacet", address(new LoanFacet()), _getLoanSelectors());
-        items[11] = Item("repayFacet", address(new RepayFacet()), _getRepaySelectors());
-        items[12] = Item("defaultedFacet", address(new DefaultedFacet()), _getDefaultedSelectors());
-        items[13] = Item("riskFacet", address(new RiskFacet()), _getRiskSelectors());
-        items[14] = Item("claimFacet", address(new ClaimFacet()), _getClaimSelectors());
-        items[15] = Item("addCollateralFacet", address(new AddCollateralFacet()), _getAddCollateralSelectors());
-        items[16] = Item("treasuryFacet", address(new TreasuryFacet()), _getTreasurySelectors());
-        items[17] = Item("earlyWithdrawalFacet", address(new EarlyWithdrawalFacet()), _getEarlyWithdrawalSelectors());
+        items[0] = Item("diamondLoupeFacet", ArtifactDeploy.deploy(type(DiamondLoupeFacet).name), _getLoupeSelectors());
+        items[1] = Item("ownershipFacet", ArtifactDeploy.deploy(type(OwnershipFacet).name), _getOwnershipSelectors());
+        items[2] = Item("accessControlFacet", ArtifactDeploy.deploy(type(AccessControlFacet).name), _getAccessControlSelectors());
+        items[3] = Item("adminFacet", ArtifactDeploy.deploy(type(AdminFacet).name), _getAdminSelectors());
+        items[4] = Item("profileFacet", ArtifactDeploy.deploy(type(ProfileFacet).name), _getProfileSelectors());
+        items[5] = Item("oracleFacet", ArtifactDeploy.deploy(type(OracleFacet).name), _getOracleSelectors());
+        items[6] = Item("oracleAdminFacet", ArtifactDeploy.deploy(type(OracleAdminFacet).name), _getOracleAdminSelectors());
+        items[7] = Item("vaipakamNFTFacet", ArtifactDeploy.deploy(type(VaipakamNFTFacet).name), _getNftSelectors());
+        items[8] = Item("vaultFactoryFacet", ArtifactDeploy.deploy(type(VaultFactoryFacet).name), _getVaultFactorySelectors());
+        items[9] = Item("offerCreateFacet", ArtifactDeploy.deploy(type(OfferCreateFacet).name), _getOfferCreateSelectors());
+        items[10] = Item("loanFacet", ArtifactDeploy.deploy(type(LoanFacet).name), _getLoanSelectors());
+        items[11] = Item("repayFacet", ArtifactDeploy.deploy(type(RepayFacet).name), _getRepaySelectors());
+        items[12] = Item("defaultedFacet", ArtifactDeploy.deploy(type(DefaultedFacet).name), _getDefaultedSelectors());
+        items[13] = Item("riskFacet", ArtifactDeploy.deploy(type(RiskFacet).name), _getRiskSelectors());
+        items[14] = Item("claimFacet", ArtifactDeploy.deploy(type(ClaimFacet).name), _getClaimSelectors());
+        items[15] = Item("addCollateralFacet", ArtifactDeploy.deploy(type(AddCollateralFacet).name), _getAddCollateralSelectors());
+        items[16] = Item("treasuryFacet", ArtifactDeploy.deploy(type(TreasuryFacet).name), _getTreasurySelectors());
+        items[17] = Item("earlyWithdrawalFacet", ArtifactDeploy.deploy(type(EarlyWithdrawalFacet).name), _getEarlyWithdrawalSelectors());
         // #1780 — the direct lender-exit route. Must be refreshed WITH the listed
         // route: they were one facet, so refreshing only the listed one leaves
         // `sellLoanViaBuyOffer` on pre-refresh bytecode while everything around
         // it moves, which is exactly the full-refresh invariant this script
         // exists to hold.
-        items[72] = Item("earlyWithdrawalDirectFacet", address(new EarlyWithdrawalDirectFacet()), _getEarlyWithdrawalDirectSelectors());
+        items[72] = Item("earlyWithdrawalDirectFacet", ArtifactDeploy.deploy(type(EarlyWithdrawalDirectFacet).name), _getEarlyWithdrawalDirectSelectors());
         items[18] = Item(
             "partialWithdrawalFacet",
-            address(new PartialWithdrawalFacet()),
+            ArtifactDeploy.deploy(type(PartialWithdrawalFacet).name),
             _getPartialWithdrawalSelectors()
         );
-        items[19] = Item("precloseFacet", address(new PrecloseFacet()), _getPrecloseSelectors());
-        items[20] = Item("refinanceFacet", address(new RefinanceFacet()), _getRefinanceSelectors());
-        items[21] = Item("metricsFacet", address(new MetricsFacet()), _getMetricsSelectors());
-        items[22] = Item("vpfiTokenFacet", address(new VPFITokenFacet()), _getVpfiTokenSelectors());
-        items[23] = Item("vpfiDiscountFacet", address(new VPFIDiscountFacet()), _getVpfiDiscountSelectors());
-        items[24] = Item("consolidationFacet", address(new ConsolidationFacet()), _getConsolidationFacetSelectors());
+        items[19] = Item("precloseFacet", ArtifactDeploy.deploy(type(PrecloseFacet).name), _getPrecloseSelectors());
+        items[20] = Item("refinanceFacet", ArtifactDeploy.deploy(type(RefinanceFacet).name), _getRefinanceSelectors());
+        items[21] = Item("metricsFacet", ArtifactDeploy.deploy(type(MetricsFacet).name), _getMetricsSelectors());
+        items[22] = Item("vpfiTokenFacet", ArtifactDeploy.deploy(type(VPFITokenFacet).name), _getVpfiTokenSelectors());
+        items[23] = Item("vpfiDiscountFacet", ArtifactDeploy.deploy(type(VPFIDiscountFacet).name), _getVpfiDiscountSelectors());
+        items[24] = Item("consolidationFacet", ArtifactDeploy.deploy(type(ConsolidationFacet).name), _getConsolidationFacetSelectors());
         items[25] = Item(
             "interactionRewardsFacet",
-            address(new InteractionRewardsFacet()),
+            ArtifactDeploy.deploy(type(InteractionRewardsFacet).name),
             _getInteractionRewardsSelectors()
         );
         // #1351 slice 2c — the CLAIM entry points moved off
@@ -1465,7 +1466,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // pins `items[]` to the deployed Diamond's selector set.
         items[67] = Item(
             "rewardClaimFacet",
-            address(new RewardClaimFacet()),
+            ArtifactDeploy.deploy(type(RewardClaimFacet).name),
             _getRewardClaimFacetSelectors()
         );
         // #1434 — the claim-horizon sweep moved onto its OWN facet when expiry
@@ -1480,7 +1481,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // both, hole-free (the #1795 parity test asserts every slot).
         items[73] = Item(
             "rewardHorizonSweepFacet",
-            address(new RewardHorizonSweepFacet()),
+            ArtifactDeploy.deploy(type(RewardHorizonSweepFacet).name),
             _getRewardHorizonSweepSelectors()
         );
         // Slot 75: #1204's spend-gated perk channel (74 is taken by the
@@ -1489,13 +1490,13 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // refreshing 75 of 76).
         items[75] = Item(
             "perkFacet",
-            address(new PerkFacet()),
+            ArtifactDeploy.deploy(type(PerkFacet).name),
             _getPerkSelectors()
         );
         // Slot 76: #1569's broadcast split.
         items[76] = Item(
             "rewardBroadcastFacet",
-            address(new RewardBroadcastFacet()),
+            ArtifactDeploy.deploy(type(RewardBroadcastFacet).name),
             _getRewardBroadcastSelectors()
         );
         // Slot 77: #1566 slice 4 PR A — the custody facet. The refresh cuts
@@ -1504,7 +1505,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // per live chain, or the paused replacement ceremony.
         items[77] = Item(
             "rewardCustodyFacet",
-            address(new RewardCustodyFacet()),
+            ArtifactDeploy.deploy(type(RewardCustodyFacet).name),
             _getRewardCustodySelectors()
         );
         // Slot 78: #1566 closure 2 cutover PR 2 — the reconciliation facet.
@@ -1513,7 +1514,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // take this full refresh, never a curated one.
         items[78] = Item(
             "rewardReconciliationFacet",
-            address(new RewardReconciliationFacet()),
+            ArtifactDeploy.deploy(type(RewardReconciliationFacet).name),
             _getRewardReconciliationSelectors()
         );
         // Slot 79: #1566 transport epochs PR 3a — the mirror-side ingress facet,
@@ -1521,35 +1522,35 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // already (to the old remittance bytecode), so the partition cuts them
         // as Replace toward this facet and the remittance item no longer lists
         // them: one refresh moves both halves.
-        items[79] = Item("rewardIngressFacet", address(new RewardIngressFacet()), _getRewardIngressSelectors());
-        items[80] = Item("rewardEpochFacet", address(new RewardEpochFacet()), _getRewardEpochSelectors());
+        items[79] = Item("rewardIngressFacet", ArtifactDeploy.deploy(type(RewardIngressFacet).name), _getRewardIngressSelectors());
+        items[80] = Item("rewardEpochFacet", ArtifactDeploy.deploy(type(RewardEpochFacet).name), _getRewardEpochSelectors());
         // 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads, read-only.
-        items[81] = Item("rewardEpochViewFacet", address(new RewardEpochViewFacet()), _getRewardEpochViewSelectors());
+        items[81] = Item("rewardEpochViewFacet", ArtifactDeploy.deploy(type(RewardEpochViewFacet).name), _getRewardEpochViewSelectors());
         // 3b-ii-A2 (#2305) — the claim's entry walk, hosted; refreshed with the claim facet.
-        items[82] = Item("rewardStagingFacet", address(new RewardStagingFacet()), _getRewardStagingSelectors());
-        items[83] = Item("rewardClaimWalkFacet", address(new RewardClaimWalkFacet()), _getRewardClaimWalkSelectors());
-        items[84] = Item("rewardSweepWalkFacet", address(new RewardSweepWalkFacet()), _getRewardSweepWalkSelectors());
-        items[85] = Item("rewardStagingSettleFacet", address(new RewardStagingSettleFacet()), _getRewardStagingSettleSelectors());
-        items[86] = Item("rewardForfeitWalkFacet", address(new RewardForfeitWalkFacet()), _getRewardForfeitWalkSelectors());
-        items[87] = Item("rewardStagingDomainFacet", address(new RewardStagingDomainFacet()), _getRewardStagingDomainSelectors());
-        items[88] = Item("rewardClosureFacet", address(new RewardClosureFacet()), _getRewardClosureSelectors());
-        items[89] = Item("rewardEraFacet", address(new RewardEraFacet()), _getRewardEraSelectors());
-        items[90] = Item("serviceCapacityFacet", address(new ServiceCapacityFacet()), _getServiceCapacitySelectors());
-        items[91] = Item("offerMatchIntentFacet", address(new OfferMatchIntentFacet()), _getOfferMatchIntentSelectors());
+        items[82] = Item("rewardStagingFacet", ArtifactDeploy.deploy(type(RewardStagingFacet).name), _getRewardStagingSelectors());
+        items[83] = Item("rewardClaimWalkFacet", ArtifactDeploy.deploy(type(RewardClaimWalkFacet).name), _getRewardClaimWalkSelectors());
+        items[84] = Item("rewardSweepWalkFacet", ArtifactDeploy.deploy(type(RewardSweepWalkFacet).name), _getRewardSweepWalkSelectors());
+        items[85] = Item("rewardStagingSettleFacet", ArtifactDeploy.deploy(type(RewardStagingSettleFacet).name), _getRewardStagingSettleSelectors());
+        items[86] = Item("rewardForfeitWalkFacet", ArtifactDeploy.deploy(type(RewardForfeitWalkFacet).name), _getRewardForfeitWalkSelectors());
+        items[87] = Item("rewardStagingDomainFacet", ArtifactDeploy.deploy(type(RewardStagingDomainFacet).name), _getRewardStagingDomainSelectors());
+        items[88] = Item("rewardClosureFacet", ArtifactDeploy.deploy(type(RewardClosureFacet).name), _getRewardClosureSelectors());
+        items[89] = Item("rewardEraFacet", ArtifactDeploy.deploy(type(RewardEraFacet).name), _getRewardEraSelectors());
+        items[90] = Item("serviceCapacityFacet", ArtifactDeploy.deploy(type(ServiceCapacityFacet).name), _getServiceCapacitySelectors());
+        items[91] = Item("offerMatchIntentFacet", ArtifactDeploy.deploy(type(OfferMatchIntentFacet).name), _getOfferMatchIntentSelectors());
         // #2416 — refreshed WITH swapToRepayFacet (items[43]): one surface
         // across the two, so refreshing either alone splits the routes.
-        items[92] = Item("swapToRepayPartialFacet", address(new SwapToRepayPartialFacet()), _getSwapToRepayPartialFacetSelectors());
+        items[92] = Item("swapToRepayPartialFacet", ArtifactDeploy.deploy(type(SwapToRepayPartialFacet).name), _getSwapToRepayPartialFacetSelectors());
         // #1566 slice 2 - the fallback-custody host its three callers self-call.
-        items[93] = Item("fallbackCustodyFacet", address(new FallbackCustodyFacet()), _getFallbackCustodySelectors());
+        items[93] = Item("fallbackCustodyFacet", ArtifactDeploy.deploy(type(FallbackCustodyFacet).name), _getFallbackCustodySelectors());
         // #2472 - the swap-attempt host every failover seller self-calls.
-        items[94] = Item("swapAttemptFacet", address(new SwapAttemptFacet()), _getSwapAttemptSelectors());
+        items[94] = Item("swapAttemptFacet", ArtifactDeploy.deploy(type(SwapAttemptFacet).name), _getSwapAttemptSelectors());
         // #2440 - the treasury fee host every fee-charging facet self-calls.
-        items[95] = Item("treasuryFeeFacet", address(new TreasuryFeeFacet()), _getTreasuryFeeSelectors());
+        items[95] = Item("treasuryFeeFacet", ArtifactDeploy.deploy(type(TreasuryFeeFacet).name), _getTreasuryFeeSelectors());
         // #2419 - the valuation host RiskFacet and the LibRiskMath inliners self-call.
-        items[96] = Item("numeraireValueFacet", address(new NumeraireValueFacet()), _getNumeraireValueSelectors());
+        items[96] = Item("numeraireValueFacet", ArtifactDeploy.deploy(type(NumeraireValueFacet).name), _getNumeraireValueSelectors());
         // #2769 - the paid-notification fee host (charge + consent).
-        items[97] = Item("notificationFeeFacet", address(new NotificationFeeFacet()), _getNotificationFeeSelectors());
-        items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
+        items[97] = Item("notificationFeeFacet", ArtifactDeploy.deploy(type(NotificationFeeFacet).name), _getNotificationFeeSelectors());
+        items[26] = Item("rewardReporterFacet", ArtifactDeploy.deploy(type(RewardReporterFacet).name), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).
         // No special handling is needed: both facets are listed, the moved
@@ -1560,25 +1561,25 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // entirely and the move silently did not happen.)
         items[27] = Item(
             "rewardAggregatorFacet",
-            address(new RewardAggregatorFacet()),
+            ArtifactDeploy.deploy(type(RewardAggregatorFacet).name),
             _getRewardAggregatorSelectors()
         );
-        items[28] = Item("configFacet", address(new ConfigFacet()), _getConfigSelectors());
-        items[29] = Item("legalFacet", address(new LegalFacet()), _getLegalSelectors());
-        items[30] = Item("offerMatchFacet", address(new OfferMatchFacet()), _getOfferMatchSelectors());
-        items[31] = Item("offerCancelFacet", address(new OfferCancelFacet()), _getOfferCancelSelectors());
+        items[28] = Item("configFacet", ArtifactDeploy.deploy(type(ConfigFacet).name), _getConfigSelectors());
+        items[29] = Item("legalFacet", ArtifactDeploy.deploy(type(LegalFacet).name), _getLegalSelectors());
+        items[30] = Item("offerMatchFacet", ArtifactDeploy.deploy(type(OfferMatchFacet).name), _getOfferMatchSelectors());
+        items[31] = Item("offerCancelFacet", ArtifactDeploy.deploy(type(OfferCancelFacet).name), _getOfferCancelSelectors());
         items[32] = Item(
             "metricsDashboardFacet",
-            address(new MetricsDashboardFacet()),
+            ArtifactDeploy.deploy(type(MetricsDashboardFacet).name),
             _getMetricsDashboardSelectors()
         );
-        items[33] = Item("payrollFacet", address(new PayrollFacet()), _getPayrollSelectors());
+        items[33] = Item("payrollFacet", ArtifactDeploy.deploy(type(PayrollFacet).name), _getPayrollSelectors());
         items[34] = Item(
             "riskMatchLiquidationFacet",
-            address(new RiskMatchLiquidationFacet()),
+            ArtifactDeploy.deploy(type(RiskMatchLiquidationFacet).name),
             _getRiskMatchLiquidationSelectors()
         );
-        items[35] = Item("offerAcceptFacet", address(new OfferAcceptFacet()), _getOfferAcceptSelectors());
+        items[35] = Item("offerAcceptFacet", ArtifactDeploy.deploy(type(OfferAcceptFacet).name), _getOfferAcceptSelectors());
         // #1835 — the accept path's borrower-LIF charge on its own host. It
         // must refresh IN THE SAME RUN as `offerAcceptFacet`: the two halves
         // are one behaviour split across a `crossFacetCall`, so refreshing
@@ -1586,85 +1587,85 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // EarlyWithdrawal split records for its own pair).
         items[74] = Item(
             "offerAcceptFeeFacet",
-            address(new OfferAcceptFeeFacet()),
+            ArtifactDeploy.deploy(type(OfferAcceptFeeFacet).name),
             _getOfferAcceptFeeSelectors()
         );
-        items[36] = Item("offerMutateFacet", address(new OfferMutateFacet()), _getOfferMutateSelectors());
-        items[37] = Item("prepayListingFacet", address(new PrepayListingFacet()), _getPrepayListingSelectors());
+        items[36] = Item("offerMutateFacet", ArtifactDeploy.deploy(type(OfferMutateFacet).name), _getOfferMutateSelectors());
+        items[37] = Item("prepayListingFacet", ArtifactDeploy.deploy(type(PrepayListingFacet).name), _getPrepayListingSelectors());
         items[38] = Item(
             "nftPrepayListingFacet",
-            address(new NFTPrepayListingFacet()),
+            ArtifactDeploy.deploy(type(NFTPrepayListingFacet).name),
             _getNFTPrepayListingSelectors()
         );
         items[39] = Item(
             "nftPrepayDutchListingFacet",
-            address(new NFTPrepayDutchListingFacet()),
+            ArtifactDeploy.deploy(type(NFTPrepayDutchListingFacet).name),
             _getNFTPrepayDutchListingSelectors()
         );
         items[40] = Item(
             "nftPrepayListingAtomicFacet",
-            address(new NFTPrepayListingAtomicFacet()),
+            ArtifactDeploy.deploy(type(NFTPrepayListingAtomicFacet).name),
             _getNFTPrepayListingAtomicSelectors()
         );
         items[41] = Item(
             "nftPrepayAutoListFacet",
-            address(new NFTPrepayAutoListFacet()),
+            ArtifactDeploy.deploy(type(NFTPrepayAutoListFacet).name),
             _getNFTPrepayAutoListSelectors()
         );
         items[42] = Item(
             "offerParallelSaleFacet",
-            address(new OfferParallelSaleFacet()),
+            ArtifactDeploy.deploy(type(OfferParallelSaleFacet).name),
             _getOfferParallelSaleSelectors()
         );
-        items[43] = Item("swapToRepayFacet", address(new SwapToRepayFacet()), _getSwapToRepayFacetSelectors());
+        items[43] = Item("swapToRepayFacet", ArtifactDeploy.deploy(type(SwapToRepayFacet).name), _getSwapToRepayFacetSelectors());
         items[44] = Item(
             "swapToRepayIntentFacet",
-            address(new SwapToRepayIntentFacet()),
+            ArtifactDeploy.deploy(type(SwapToRepayIntentFacet).name),
             _getSwapToRepayIntentFacetSelectors()
         );
-        items[45] = Item("intentConfigFacet", address(new IntentConfigFacet()), _getIntentConfigSelectors());
+        items[45] = Item("intentConfigFacet", ArtifactDeploy.deploy(type(IntentConfigFacet).name), _getIntentConfigSelectors());
         items[46] = Item(
             "vpfiDiscountAccumulatorFacet",
-            address(new VPFIDiscountAccumulatorFacet()),
+            ArtifactDeploy.deploy(type(VPFIDiscountAccumulatorFacet).name),
             _getVpfiDiscountAccumulatorSelectors()
         );
         items[47] = Item(
             "mirrorTierReceiverFacet",
-            address(new MirrorTierReceiverFacet()),
+            ArtifactDeploy.deploy(type(MirrorTierReceiverFacet).name),
             _getMirrorTierReceiverSelectors()
         );
         items[48] = Item(
             "protocolBroadcastFacet",
-            address(new ProtocolBroadcastFacet()),
+            ArtifactDeploy.deploy(type(ProtocolBroadcastFacet).name),
             _getProtocolBroadcastSelectors()
         );
-        items[49] = Item("intentDispatchFacet", address(new IntentDispatchFacet()), _getIntentDispatchFacetSelectors());
-        items[50] = Item("autoLifecycleFacet", address(new AutoLifecycleFacet()), _getAutoLifecycleFacetSelectors());
+        items[49] = Item("intentDispatchFacet", ArtifactDeploy.deploy(type(IntentDispatchFacet).name), _getIntentDispatchFacetSelectors());
+        items[50] = Item("autoLifecycleFacet", ArtifactDeploy.deploy(type(AutoLifecycleFacet).name), _getAutoLifecycleFacetSelectors());
         items[51] = Item(
             "encumbranceMutateFacet",
-            address(new EncumbranceMutateFacet()),
+            ArtifactDeploy.deploy(type(EncumbranceMutateFacet).name),
             _getEncumbranceMutateFacetSelectors()
         );
-        items[52] = Item("repayPeriodicFacet", address(new RepayPeriodicFacet()), _getRepayPeriodicFacetSelectors());
-        items[53] = Item("signedOfferFacet", address(new SignedOfferFacet()), _getSignedOfferFacetSelectors());
-        items[54] = Item("lenderIntentFacet", address(new LenderIntentFacet()), _getLenderIntentFacetSelectors());
+        items[52] = Item("repayPeriodicFacet", ArtifactDeploy.deploy(type(RepayPeriodicFacet).name), _getRepayPeriodicFacetSelectors());
+        items[53] = Item("signedOfferFacet", ArtifactDeploy.deploy(type(SignedOfferFacet).name), _getSignedOfferFacetSelectors());
+        items[54] = Item("lenderIntentFacet", ArtifactDeploy.deploy(type(LenderIntentFacet).name), _getLenderIntentFacetSelectors());
         items[55] = Item(
             "aggregatorAdapterFactoryFacet",
-            address(new AggregatorAdapterFactoryFacet()),
+            ArtifactDeploy.deploy(type(AggregatorAdapterFactoryFacet).name),
             _getAggregatorAdapterFactorySelectors()
         );
-        items[56] = Item("backstopFacet", address(new BackstopFacet()), _getBackstopFacetSelectors());
+        items[56] = Item("backstopFacet", ArtifactDeploy.deploy(type(BackstopFacet).name), _getBackstopFacetSelectors());
         items[57] = Item(
             "riskSplitLiquidationFacet",
-            address(new RiskSplitLiquidationFacet()),
+            ArtifactDeploy.deploy(type(RiskSplitLiquidationFacet).name),
             _getRiskSplitLiquidationSelectors()
         );
-        items[58] = Item("numeraireConfigFacet", address(new NumeraireConfigFacet()), _getNumeraireConfigSelectors());
-        items[59] = Item("receiverFacet", address(new ReceiverFacet()), _getReceiverFacetSelectors());
-        items[60] = Item("riskAccessFacet", address(new RiskAccessFacet()), _getRiskAccessFacetSelectors());
+        items[58] = Item("numeraireConfigFacet", ArtifactDeploy.deploy(type(NumeraireConfigFacet).name), _getNumeraireConfigSelectors());
+        items[59] = Item("receiverFacet", ArtifactDeploy.deploy(type(ReceiverFacet).name), _getReceiverFacetSelectors());
+        items[60] = Item("riskAccessFacet", ArtifactDeploy.deploy(type(RiskAccessFacet).name), _getRiskAccessFacetSelectors());
         items[61] = Item(
             "rewardRemittanceFacet",
-            address(new RewardRemittanceFacet()),
+            ArtifactDeploy.deploy(type(RewardRemittanceFacet).name),
             _getRewardRemittanceSelectors()
         );
         // #1434 P2-w4 — the remittance lens: `_split` re-points the
@@ -1672,24 +1673,24 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // Diamond) via Replace and adds the new w4 views.
         items[70] = Item(
             "rewardRemittanceLensFacet",
-            address(new RewardRemittanceLensFacet()),
+            ArtifactDeploy.deploy(type(RewardRemittanceLensFacet).name),
             _getRewardRemittanceLensSelectors()
         );
         // #1434 P2-w4 — the compensation dispatch pair: `_split` re-points
         // the relocated manual selector via Replace + adds the supplemental.
         items[71] = Item(
             "rewardCompensationDispatchFacet",
-            address(new RewardCompensationDispatchFacet()),
+            ArtifactDeploy.deploy(type(RewardCompensationDispatchFacet).name),
             _getRewardCompensationDispatchSelectors()
         );
-        items[62] = Item("offerPreviewFacet", address(new OfferPreviewFacet()), _getOfferPreviewSelectors());
+        items[62] = Item("offerPreviewFacet", ArtifactDeploy.deploy(type(OfferPreviewFacet).name), _getOfferPreviewSelectors());
         // #1104 — RiskPreviewFacet split off RiskAccessFacet (items[60]).
-        items[63] = Item("riskPreviewFacet", address(new RiskPreviewFacet()), _getRiskPreviewFacetSelectors());
+        items[63] = Item("riskPreviewFacet", ArtifactDeploy.deploy(type(RiskPreviewFacet).name), _getRiskPreviewFacetSelectors());
         // #1212 (E-10 Claim-All) — generic best-effort delegatecall batcher.
         // NEW facet: `_split` routes its selector to Add on an existing diamond
         // (unrouted), so an in-place refresh installs Claim All instead of
         // leaving multicall(Call[]) unrouted while the ABI advertises it.
-        items[64] = Item("multicallFacet", address(new MulticallFacet()), _getMulticallFacetSelectors());
+        items[64] = Item("multicallFacet", ArtifactDeploy.deploy(type(MulticallFacet).name), _getMulticallFacetSelectors());
         // #1306 follow-up — InteractionRewardsLensFacet. NEW facet carved off
         // InteractionRewardsFacet (view/getter surface) for EIP-170 headroom.
         // `_split` re-points the view selectors (currently routed to the old
@@ -1697,7 +1698,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // refresh moves them cleanly.
         items[65] = Item(
             "interactionRewardsLensFacet",
-            address(new InteractionRewardsLensFacet()),
+            ArtifactDeploy.deploy(type(InteractionRewardsLensFacet).name),
             _getInteractionRewardsLensSelectors()
         );
         // #1347 (M2 PR-5a/5b) — Full VPFI fee-entitlement tariff facet. An
@@ -1707,7 +1708,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // and every ERC-20 accept reverts (Codex #1366 P2).
         items[66] = Item(
             "feeEntitlementFacet",
-            address(new FeeEntitlementFacet()),
+            ArtifactDeploy.deploy(type(FeeEntitlementFacet).name),
             _getFeeEntitlementFacetSelectors()
         );
         // #1222 M3 B2-c — commitment-GATE plumbing. NEW facet: an in-place
@@ -1717,7 +1718,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // to clear it, stranding that chain-day's remittance (Codex #1422 r3).
         items[68] = Item(
             "rewardCommitmentFacet",
-            address(new RewardCommitmentFacet()),
+            ArtifactDeploy.deploy(type(RewardCommitmentFacet).name),
             _getRewardCommitmentSelectors()
         );
         // #1568 C2 — repatriation accounting core. NEW facet: an in-place
@@ -1727,7 +1728,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // r3).
         items[69] = Item(
             "repatriationFacet",
-            address(new RepatriationFacet()),
+            ArtifactDeploy.deploy(type(RepatriationFacet).name),
             _getRepatriationSelectors()
         );
         // #1132 (S10 central enforcement) — terminal-transition register host.
@@ -1960,7 +1961,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 );
                 return;
             }
-            address newImpl = address(new RewardRemittanceReceiver());
+            address newImpl = ArtifactDeploy.deploy(type(RewardRemittanceReceiver).name);
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeRewardRemittanceReceiverImpl(newImpl);
             // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
@@ -1991,7 +1992,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
         if (gen < REWARD_MESSENGER_WIRE_GENERATION) {
-            address newImpl = address(new VaipakamRewardMessenger());
+            address newImpl = ArtifactDeploy.deploy(type(VaipakamRewardMessenger).name);
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeAddress(".rewardMessengerImpl", newImpl);
             // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
@@ -2024,7 +2025,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
         if (gen < VPFI_RETURN_SENDER_WIRE_GENERATION) {
-            address newImpl = address(new VpfiReturnSender());
+            address newImpl = ArtifactDeploy.deploy(type(VpfiReturnSender).name);
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeVpfiReturnSenderImpl(newImpl);
             // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
@@ -2054,7 +2055,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
         if (gen < VPFI_RETURN_RECEIVER_WIRE_GENERATION) {
-            address newImpl = address(new VpfiReturnReceiver());
+            address newImpl = ArtifactDeploy.deploy(type(VpfiReturnReceiver).name);
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeVpfiReturnReceiverImpl(newImpl);
             // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
@@ -2088,7 +2089,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
         if (gen < CCIP_MESSENGER_WIRE_GENERATION) {
             address router = CcipMessenger(proxy).getRouter();
-            address newImpl = address(new CcipMessenger(router));
+            address newImpl = ArtifactDeploy.deploy(type(CcipMessenger).name, abi.encode(router));
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeAddress(".ccipMessengerImpl", newImpl);
             // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is
@@ -2118,7 +2119,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         );
         if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
         if (gen < BUYBACK_RECEIVER_WIRE_GENERATION) {
-            address newImpl = address(new BuybackRemittanceReceiver());
+            address newImpl = ArtifactDeploy.deploy(type(BuybackRemittanceReceiver).name);
             UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
             Deployments.writeBuybackRemittanceReceiverImpl(newImpl);
             // #1566 transport epochs PR 3a (Codex #2224 r3) — the TARGET is

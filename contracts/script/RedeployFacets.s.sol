@@ -34,6 +34,7 @@ import {Deployments} from "./lib/Deployments.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
+import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 
 /**
  * @title RedeployFacets
@@ -138,18 +139,18 @@ contract RedeployFacets is Script {
 
         vm.startBroadcast(deployerKey);
 
-        RiskFacet riskFacet = new RiskFacet();
+        RiskFacet riskFacet = RiskFacet(ArtifactDeploy.deploy(type(RiskFacet).name));
         // #658 — the split liquidation path (triggerLiquidationSplit) got the
         // SAME eager-consolidation + post-withdraw VPFI-restamp wiring as the
         // RiskFacet liquidation entries, so refresh it together with RiskFacet
         // to avoid a half-applied liquidation family (new RiskFacet + stale
         // split path) on a curated redeploy.
         RiskSplitLiquidationFacet riskSplitLiquidationFacet =
-            new RiskSplitLiquidationFacet();
-        DefaultedFacet defaultedFacet = new DefaultedFacet();
-        LoanFacet loanFacet = new LoanFacet();
-        PrecloseFacet precloseFacet = new PrecloseFacet();
-        EarlyWithdrawalFacet earlyWithdrawalFacet = new EarlyWithdrawalFacet();
+            RiskSplitLiquidationFacet(ArtifactDeploy.deploy(type(RiskSplitLiquidationFacet).name));
+        DefaultedFacet defaultedFacet = DefaultedFacet(ArtifactDeploy.deploy(type(DefaultedFacet).name));
+        LoanFacet loanFacet = LoanFacet(ArtifactDeploy.deploy(type(LoanFacet).name));
+        PrecloseFacet precloseFacet = PrecloseFacet(ArtifactDeploy.deploy(type(PrecloseFacet).name));
+        EarlyWithdrawalFacet earlyWithdrawalFacet = EarlyWithdrawalFacet(ArtifactDeploy.deploy(type(EarlyWithdrawalFacet).name));
         // #1780 — the direct lender-exit route now lives in its own facet. It
         // must be refreshed WITH the listed route, not instead of it: the two
         // were one contract, so a curated redeploy that carried only
@@ -157,25 +158,25 @@ contract RedeployFacets is Script {
         // the pre-split bytecode while the listed route moved on — the exact
         // half-applied-family failure #1649 documents for the sale classifier.
         EarlyWithdrawalDirectFacet earlyWithdrawalDirectFacet =
-            new EarlyWithdrawalDirectFacet();
+            EarlyWithdrawalDirectFacet(ArtifactDeploy.deploy(type(EarlyWithdrawalDirectFacet).name));
         // #658 PR-B2 — refinance gained the lender-side eager-consolidation hook
         // (cross-calls ConsolidationFacet, like precloseDirect). Refresh it
         // alongside Preclose so a curated redeploy doesn't leave refinance on
         // stale bytecode that skips the consolidation while preclose applies it.
-        RefinanceFacet refinanceFacet = new RefinanceFacet();
+        RefinanceFacet refinanceFacet = RefinanceFacet(ArtifactDeploy.deploy(type(RefinanceFacet).name));
         // #658 PR-B2 — claimAsBorrower gained the post-withdraw VPFI restamp
         // (the claim-time half of the direct-preclose close-out). Refresh
         // ClaimFacet so a curated redeploy doesn't leave the claim path on stale
         // bytecode that skips the restamp after a preclosed borrower claims VPFI.
-        ClaimFacet claimFacet = new ClaimFacet();
+        ClaimFacet claimFacet = ClaimFacet(ArtifactDeploy.deploy(type(ClaimFacet).name));
         // #691 — the internal-match executors (triggerInternalMatchLiquidation +
         // attemptInternalMatchAutoDispatch) gained the eager-consolidation +
         // VPFI-restamp hooks. Refresh RiskMatchLiquidationFacet so a curated
         // redeploy doesn't leave transferred-position internal matches bypassing
         // the new consolidation while the rest of the close-out family is
         // upgraded.
-        RiskMatchLiquidationFacet riskMatchFacet = new RiskMatchLiquidationFacet();
-        ProfileFacet profileFacet = new ProfileFacet();
+        RiskMatchLiquidationFacet riskMatchFacet = RiskMatchLiquidationFacet(ArtifactDeploy.deploy(type(RiskMatchLiquidationFacet).name));
+        ProfileFacet profileFacet = ProfileFacet(ArtifactDeploy.deploy(type(ProfileFacet).name));
         // #658 — the refreshed RiskFacet liquidation paths cross-call
         // ConsolidationFacet's eager-consolidation + post-withdraw VPFI-restamp
         // entries. Those selectors are NEW (added in #658), so a curated
@@ -184,7 +185,7 @@ contract RedeployFacets is Script {
         // ConsolidationFacet alongside and cut its selectors (Replace the two
         // pre-existing #594 standalone entries, Add the four #658 internal-only
         // ones — partitioned by live routing, same as the #394 HF-floor knob).
-        ConsolidationFacet consolidationFacet = new ConsolidationFacet();
+        ConsolidationFacet consolidationFacet = ConsolidationFacet(ArtifactDeploy.deploy(type(ConsolidationFacet).name));
         // #1817 (Codex #1819 r9 P1) — the refreshed sale facets' intermediate
         // checkpoints reach `VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal`
         // through ConsolidationFacet, and `LibVPFIDiscount.rollupUserDiscountLocal`
@@ -195,14 +196,14 @@ contract RedeployFacets is Script {
         // zero-balance round trip. Deploy it alongside and route its FULL
         // surface (partitioned by live routing below).
         VPFIDiscountAccumulatorFacet accumulatorFacet =
-            new VPFIDiscountAccumulatorFacet();
+            VPFIDiscountAccumulatorFacet(ArtifactDeploy.deploy(type(VPFIDiscountAccumulatorFacet).name));
         // #1123 — VaipakamNFTFacet inlines the fail-closed movement gate into
         // transferFrom/safeTransferFrom, and VaultFactoryFacet registers a
         // recovery-banned wallet into the confirmed-flagged registry. A curated
         // redeploy MUST re-cut both or raw transfers / recovery bans stay on the
         // old fail-open bytecode while the rest of the movement surface is upgraded.
-        VaipakamNFTFacet nftFacet = new VaipakamNFTFacet();
-        VaultFactoryFacet vaultFactoryFacet = new VaultFactoryFacet();
+        VaipakamNFTFacet nftFacet = VaipakamNFTFacet(ArtifactDeploy.deploy(type(VaipakamNFTFacet).name));
+        VaultFactoryFacet vaultFactoryFacet = VaultFactoryFacet(ArtifactDeploy.deploy(type(VaultFactoryFacet).name));
         // #1649 — #1503 gave both `EarlyWithdrawalFacet` sale entry points
         // (`sellLoanViaBuyOffer`, `createLoanSaleOffer`) a cross-facet call to
         // `RiskPreviewFacet.saleAdmission`. That selector is NEW, so refreshing
@@ -211,7 +212,7 @@ contract RedeployFacets is Script {
         // through the fallback, with the new bytecode live. Deploy the
         // classifier's host alongside and cut its selectors (partitioned by
         // routing below), exactly as #658 does for ConsolidationFacet.
-        RiskPreviewFacet riskPreviewFacet = new RiskPreviewFacet();
+        RiskPreviewFacet riskPreviewFacet = RiskPreviewFacet(ArtifactDeploy.deploy(type(RiskPreviewFacet).name));
         // #1503 item 28 (Codex #1801 r4 P1) — the same dependency, one step
         // further out. The refreshed sale routes READ the seller's paid-through
         // mark; these two facets are what WRITE it — `RepayPeriodicFacet` passes
@@ -222,8 +223,8 @@ contract RedeployFacets is Script {
         // borrower already paid: the exact bug item 28 fixes, reintroduced by
         // the upgrade meant to deliver it. Silent, and only visible as sellers
         // being over-charged.
-        RepayPeriodicFacet repayPeriodicFacet = new RepayPeriodicFacet();
-        EncumbranceMutateFacet encumbranceMutateFacet = new EncumbranceMutateFacet();
+        RepayPeriodicFacet repayPeriodicFacet = RepayPeriodicFacet(ArtifactDeploy.deploy(type(RepayPeriodicFacet).name));
+        EncumbranceMutateFacet encumbranceMutateFacet = EncumbranceMutateFacet(ArtifactDeploy.deploy(type(EncumbranceMutateFacet).name));
         // #1566 slice 2 - RiskFacet and DefaultedFacet now ENTER the fallback, and
         // ClaimFacet retries its swap and disposes of it, by self-calling this
         // host. Its selectors are NEW on any Diamond cut before the split, so
@@ -235,18 +236,18 @@ contract RedeployFacets is Script {
         // routing below), in the same cut as its callers. Since S2b a Diamond
         // from before vault-held fallback custody never reaches this point:
         // `runWith` refuses it first (`_requireVaultHeldFallbackCustody`).
-        FallbackCustodyFacet fallbackCustodyFacet = new FallbackCustodyFacet();
+        FallbackCustodyFacet fallbackCustodyFacet = FallbackCustodyFacet(ArtifactDeploy.deploy(type(FallbackCustodyFacet).name));
         // #2472 - the swap-attempt host. Risk, Defaulted, RepayPeriodic and
         // FallbackCustody run every failover attempt by self-calling it, so it
         // rides the same cut as those callers. On a pre-#2472 Diamond its one
         // selector is unrouted and partitions to an Add below.
-        SwapAttemptFacet swapAttemptFacet = new SwapAttemptFacet();
+        SwapAttemptFacet swapAttemptFacet = SwapAttemptFacet(ArtifactDeploy.deploy(type(SwapAttemptFacet).name));
         // #2440 - the treasury fee host. Defaulted, Preclose, Refinance,
         // EarlyWithdrawal and RepayPeriodic move every fee into the treasury by
         // self-calling it, so it rides the same cut as those callers. On a
         // pre-#2440 Diamond its two selectors are unrouted and partition to an
         // Add below.
-        TreasuryFeeFacet treasuryFeeFacet = new TreasuryFeeFacet();
+        TreasuryFeeFacet treasuryFeeFacet = TreasuryFeeFacet(ArtifactDeploy.deploy(type(TreasuryFeeFacet).name));
         // #2419 - the valuation host. RiskFacet (every LTV / HF read),
         // RiskPreviewFacet (LibRiskMath) and every KYC comparison (Defaulted,
         // RiskSplitLiquidation, and Loan, Preclose and EarlyWithdrawalDirect
@@ -254,14 +255,14 @@ contract RedeployFacets is Script {
         // the same cut. The target already routes it
         // ({_requireNumeraireValueRule}); a selector added to the host later
         // partitions to an Add below.
-        NumeraireValueFacet numeraireValueFacet = new NumeraireValueFacet();
+        NumeraireValueFacet numeraireValueFacet = NumeraireValueFacet(ArtifactDeploy.deploy(type(NumeraireValueFacet).name));
         // #2769 - the paid-notification fee host. Its charge moved off
         // LoanFacet and its consent off ProfileFacet, both refreshed here, so
         // it rides the same cut: on a Diamond that still routes the charge to
         // an old LoanFacet, refreshing LoanFacet alone would leave every bill
         // on that old code. Already-routed selectors partition to a Replace
         // that moves them here; unrouted ones to an Add.
-        NotificationFeeFacet notificationFeeFacet = new NotificationFeeFacet();
+        NotificationFeeFacet notificationFeeFacet = NotificationFeeFacet(ArtifactDeploy.deploy(type(NotificationFeeFacet).name));
 
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("RiskSplitLiquidation: ", address(riskSplitLiquidationFacet));

@@ -8,6 +8,7 @@ import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
+import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 
 /**
  * @title MigrateRiskTermsCommitReveal
@@ -87,7 +88,7 @@ contract MigrateRiskTermsCommitReveal is Script {
 
         vm.startBroadcast(deployerKey);
 
-        RiskAccessFacet riskAccessFacet = new RiskAccessFacet();
+        RiskAccessFacet riskAccessFacet = RiskAccessFacet(ArtifactDeploy.deploy(type(RiskAccessFacet).name));
         console.log("New RiskAccessFacet:", address(riskAccessFacet));
 
         uint256 nCuts =
