@@ -95,9 +95,11 @@ jobs:
   regression-shard:
     name: mainnet-gate shard ${{ matrix.shard }}/${{ strategy.job-total }}
     runs-on: ubuntu-latest
-    # From run 40055515200's per-chunk times (#2714): four shards come to
-    # about 61-67 min of chunks each, plus about 20 min of build, guards and
-    # setup, so a shard needs about 85 min. 120 leaves a third in hand. Add a
+    # Measured. Run 40055515200 (#2714) timed every chunk unsharded. Run
+    # 40072735019 then ran FOUR shards: 60, 81, 100 and 102 min, of which
+    # about 24 min is the build and guards every shard repeats. 102 against
+    # 120 was too thin, so there are five: by the same chunk times a shard's
+    # chunks drop from 65-77 to about 56-66 min, about 90 min a shard. Add a
     # matrix entry before raising this.
     timeout-minutes: 120
     strategy:
@@ -105,7 +107,7 @@ jobs:
       # names every failing chunk.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5]
     defaults:
       run:
         working-directory: contracts
