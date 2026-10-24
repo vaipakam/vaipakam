@@ -154,30 +154,6 @@
   },
   {
     "type": "function",
-    "name": "getNotificationFeeConsent",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "maxFeePerLoanSide",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "coversCurrentFee",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getSanctionsOracle",
     "inputs": [],
     "outputs": [
@@ -455,19 +431,6 @@
         "name": "enabled",
         "type": "bool",
         "internalType": "bool"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setNotificationFeeConsent",
-    "inputs": [
-      {
-        "name": "maxFeePerLoanSide",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -768,31 +731,6 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NotificationFeeConsentSet",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "previousCap",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "cap",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -2875,22 +2813,6 @@
     "type": "error",
     "name": "NotOwner",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotificationFeeConsentAboveCeiling",
-    "inputs": [
-      {
-        "name": "cap",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "ceiling",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",

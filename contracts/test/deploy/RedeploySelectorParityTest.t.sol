@@ -121,6 +121,13 @@ contract RedeploySelectorParityTest is Test {
         _assertParity("NumeraireValueFacet", FacetSelectors.numeraireValue());
     }
 
+    /// @dev #2769 - `RedeployFacets` cuts the paid-notification fee host with
+    ///      LoanFacet and ProfileFacet, which it moved off. Pinned so an
+    ///      unlisted selector cannot stay routed to the old host's code.
+    function test_NotificationFeeSelectors_MatchCompiledAbi() public view {
+        _assertParity("NotificationFeeFacet", FacetSelectors.notificationFee());
+    }
+
     /// @dev #1503 item 28 — the RETIRED 3-argument resident-payout selector must
     ///      be GONE from the facet's compiled surface, so the curated refresh's
     ///      Remove leg targets a genuinely-retired entry point and no dual entry

@@ -102,6 +102,7 @@ import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
+import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -263,7 +264,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // 96 -> 97: NumeraireValueFacet (#2419) - the one 1e18 valuation rule,
     // self-called by RiskFacet, every facet that inlines LibRiskMath and
     // every KYC comparison.
-    uint256 public constant EXPECTED_FACETS = 97;
+    // 97 -> 98: NotificationFeeFacet (#2769) - the paid-notification charge and
+    // the wallet's consent to it, moved off LoanFacet and ProfileFacet. Both
+    // already-routed moves are cut as Replaces pointing here.
+    uint256 public constant EXPECTED_FACETS = 98;
 
     /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
     ///         {_requireSlice3Diamond}.
@@ -1543,6 +1547,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[95] = Item("treasuryFeeFacet", address(new TreasuryFeeFacet()), _getTreasuryFeeSelectors());
         // #2419 - the valuation host RiskFacet and the LibRiskMath inliners self-call.
         items[96] = Item("numeraireValueFacet", address(new NumeraireValueFacet()), _getNumeraireValueSelectors());
+        // #2769 - the paid-notification fee host (charge + consent).
+        items[97] = Item("notificationFeeFacet", address(new NotificationFeeFacet()), _getNotificationFeeSelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

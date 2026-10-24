@@ -86,7 +86,10 @@ abstract contract DiamondFacetNames {
     ///      96 → 97 with `NumeraireValueFacet` (#2419 — the one 1e18
     ///      valuation rule, self-called by RiskFacet and the LibRiskMath
     ///      inliners).
-    function cutFacetNames() internal pure returns (string[97] memory) {
+    ///      97 → 98 with `NotificationFeeFacet` (#2769 — the paid-notification
+    ///      charge and the wallet's consent to it, moved off LoanFacet and
+    ///      ProfileFacet).
+    function cutFacetNames() internal pure returns (string[98] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -207,6 +210,8 @@ abstract contract DiamondFacetNames {
             "TreasuryFeeFacet",
             // #2419 - the 1e18 valuation host RiskFacet and the offer facets self-call.
             "NumeraireValueFacet",
+            // #2769 - the paid-notification fee host (charge + consent).
+            "NotificationFeeFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",

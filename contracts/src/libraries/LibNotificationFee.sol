@@ -6,6 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {LibVPFIDiscount} from "./LibVPFIDiscount.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
  * @title LibNotificationFee
@@ -32,7 +33,7 @@ import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
  *              stay in Diamond custody as protocol-owned recycled reward
  *              runway (governor §5), never routed to treasury.
  *
- * @dev Library, delegatecalled from `LoanFacet.markNotifBilled` (the
+ * @dev Library, delegatecalled from `NotificationFeeFacet.markNotifBilled` (the
  *      `NOTIF_BILLER_ROLE`-gated external entry). `address(this)`
  *      resolves to the Diamond inside any function below.
  *
@@ -133,6 +134,29 @@ library LibNotificationFee {
         s.notificationFeeConsentCap[user] = cap;
     }
 
+    /// @notice #2769 — the payer must read clean on the sanctions oracle before
+    ///         a fee leaves its vault.
+    /// @dev    A flagged wallet's vault is frozen, not seized, so the protocol
+    ///         must not charge it. Billing is discretionary and retryable, so
+    ///         the bill FAILS CLOSED while screening is unavailable: a refused
+    ///         bill leaves the side unbilled for a later retry, while a bill
+    ///         taken during an outage could not be undone. Three outcomes:
+    ///           - no oracle configured: no screen, the deploy-window rule
+    ///             every Tier-1 gate follows;
+    ///           - the oracle (or the payer's declared recovery source) flags
+    ///             the payer: `SanctionedAddress(payer)`;
+    ///           - the oracle is set but cannot be read:
+    ///             `SanctionsOracleUnavailable()`.
+    ///         The vault withdrawal also screens its owner, but that screen
+    ///         fails open during an outage and reports from deep inside the
+    ///         withdrawal. This one states the rule where the fee is charged.
+    function _requireClearedPayer(LibVaipakam.Storage storage s, address payer) private view {
+        if (s.sanctionsOracle == address(0)) return;
+        LibVaipakam.SanctionsRead st = LibVaipakam.sanctionsStatus(payer);
+        if (st == LibVaipakam.SanctionsRead.Flagged) revert LibVaipakam.SanctionedAddress(payer);
+        if (st == LibVaipakam.SanctionsRead.Unavailable) revert IVaipakamErrors.SanctionsOracleUnavailable();
+    }
+
     /// @notice Bills a loan-side once. Idempotent — repeated calls on an
     ///         already-billed side are silent no-ops, matching the "first
     ///         notification only" UX promise of T-032.
@@ -147,16 +171,19 @@ library LibNotificationFee {
     /// @param  loanId        Loan to bill (used as the recycle refId).
     /// @param  isLenderSide  true ⇒ bill the lender side; false ⇒ borrower.
     ///
-    ///         Two refusals run before anything moves (#2721). The loan must
-    ///         be `Active`, and `payer` must have consented, through
-    ///         {setConsent}, to a cap at least the fee being billed. The
-    ///         billing role therefore cannot charge a wallet that never
-    ///         agreed to pay, charge more than it agreed to, or charge on a
-    ///         closed loan. An already-billed side stays a silent no-op
+    ///         Three refusals run before anything moves. The loan must be
+    ///         `Active`, and `payer` must have consented, through
+    ///         {setConsent}, to a cap at least the fee being billed (#2721).
+    ///         Where a sanctions oracle is configured, `payer` must also read
+    ///         clean on it, and an unreadable oracle refuses the bill
+    ///         (#2769, {_requireClearedPayer}). The billing role therefore
+    ///         cannot charge a wallet that never agreed to pay, charge more
+    ///         than it agreed to, charge on a closed loan, or charge a
+    ///         flagged wallet. An already-billed side stays a silent no-op
     ///         whatever its loan's status, so a retry never turns into a
     ///         revert.
     /// @param  payer         The vault owner (lender or borrower). The
-    ///                       caller (`LoanFacet.markNotifBilled`) supplies
+    ///                       caller (`NotificationFeeFacet.markNotifBilled`) supplies
     ///                       whichever party matches `isLenderSide`.
     function bill(uint256 loanId, bool isLenderSide, address payer) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -178,6 +205,7 @@ library LibNotificationFee {
         if (consentedCap == 0 || vpfiAmount > consentedCap) {
             revert NotificationFeeNotConsented(payer, vpfiAmount, consentedCap);
         }
+        _requireClearedPayer(s, payer);
 
         address vpfi = s.vpfiToken;
         if (vpfi == address(0)) revert NotifFeeVpfiTokenNotSet();

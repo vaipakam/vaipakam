@@ -820,7 +820,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](33);
+        selectors = new bytes4[](31);
         selectors[0] = ProfileFacet.updateKYCStatus.selector;
         selectors[1] = ProfileFacet.getUserCountry.selector;
         selectors[2] = ProfileFacet.isKYCVerified.selector;
@@ -857,9 +857,6 @@ contract HelperTest {
         selectors[29] = ProfileFacet.isRecipientBarred.selector;
         // #1347 — per-offer creator Full VPFI tariff opt-in.
         selectors[30] = ProfileFacet.setOfferCreatorFullTariff.selector;
-        // #2721 — paid-notification billing consent (set + read).
-        selectors[31] = ProfileFacet.setNotificationFeeConsent.selector;
-        selectors[32] = ProfileFacet.getNotificationFeeConsent.selector;
         return selectors;
     }
 
@@ -1005,13 +1002,11 @@ contract HelperTest {
     }
 
     function getLoanFacetSelectors() public pure returns (bytes4[] memory) {
-        bytes4[] memory selectors = new bytes4[](4);
+        bytes4[] memory selectors = new bytes4[](3);
         selectors[0] = LoanFacet.initiateLoan.selector;
         selectors[1] = LoanFacet.getLoanDetails.selector;
         selectors[2] = LoanFacet.getLoanConsents.selector;
-        // T-032 — NOTIF_BILLER_ROLE-gated entry the watcher calls on
-        // first PaidPush-tier notification fired for a loan-side.
-        selectors[3] = LoanFacet.markNotifBilled.selector;
+        // `markNotifBilled` moved to NotificationFeeFacet in #2769.
         return selectors;
     }
 
@@ -2752,6 +2747,12 @@ contract HelperTest {
     /// `FacetSelectors.numeraireValue()` (the same one `DeployDiamond` cuts).
     function getNumeraireValueFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = FacetSelectors.numeraireValue();
+    }
+
+    /// #2769 - the paid-notification fee host. Returns the ONE list in
+    /// `FacetSelectors.notificationFee()` (the same one `DeployDiamond` cuts).
+    function getNotificationFeeFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = FacetSelectors.notificationFee();
     }
 
     /// 3b-ii-B (#1566) — the per-day closure proof. Mirrors `DeployDiamond._getRewardClosureSelectors`.

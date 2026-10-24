@@ -134,7 +134,7 @@ detect-and-exit, and a freeze *candidate*, never a free replace).
 
 **Honest carve-out (a custody-moving path that is *not* behind the timelock).**
 The rule above governs the *upgrade/parameter* surface. One operational debit
-sits outside it: `LoanFacet.markNotifBilled` (`NOTIF_BILLER_ROLE`) calls
+sits outside it: `NotificationFeeFacet.markNotifBilled` (`NOTIF_BILLER_ROLE`) calls
 `LibNotificationFee.bill`, which pulls a fixed VPFI notification fee from a
 loan party's vault into Diamond custody and credits the recycle bucket (#1346)
 — no timelock. It is a fast path *by necessity* (billing happens when a
@@ -142,7 +142,7 @@ notification is sent and cannot wait out a delay), so what bounds it is
 on-chain authorization, not delay:
 - **The payer's own on-chain consent (#2721).** Each wallet records, from its
   own account, the most it agrees to pay per loan side
-  (`ProfileFacet.setNotificationFeeConsent`); zero withdraws it, and
+  (`NotificationFeeFacet.setNotificationFeeConsent`); zero withdraws it, and
   withdrawing works while paused. `bill` refuses a payer with no consent or a
   cap below the configured fee (`NotificationFeeNotConsented`), so consent to
   a lower fee never covers a later, higher one. Before #2721 the opt-in lived
@@ -150,6 +150,11 @@ on-chain authorization, not delay:
 - **Open loans only (#2721).** `bill` refuses a loan that is not `Active`
   (`NotificationBillingLoanNotActive`). Before #2721 every loan ever opened was
   billable, closed / settled / defaulted ones included.
+- **Not a flagged wallet (#2769).** Where a sanctions oracle is configured,
+  `bill` refuses a payer it flags (`SanctionedAddress`), and refuses every bill
+  while the oracle cannot be read (`SanctionsOracleUnavailable`) rather than
+  charging a wallet nobody could screen. A flagged wallet's vault is frozen,
+  not seized, and consent does not change that.
 - **Once per loan side.** The per-side `…NotifBilled` flag still makes a retry
   a no-op, now also after the loan closes or consent is withdrawn.
 - **A dedicated bot key, not the admin.** Since #669 `Handover.s.sol` grants
@@ -159,8 +164,8 @@ on-chain authorization, not delay:
   handover.)
 
 So the realistic blast radius of a compromised biller key is now an *early*
-charge: a wallet that already agreed to pay, at most the cap it chose, once per
-side of a loan that is still open. That is bounded and consented, and it is
+charge: a clean wallet that already agreed to pay, at most the cap it chose,
+once per side of a loan that is still open. That is bounded and consented, and it is
 named here rather than hidden. The role still cannot re-point custody rules.
 
 **What "detect-and-exit" does and does not mean (honest):** the delay buys
