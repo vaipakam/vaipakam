@@ -117,7 +117,7 @@ import {
   visitProblemKinds,
   visitVerdict,
 } from './visitVerdict.mjs';
-import { walkOrderFor } from './walkOrder.mjs';
+import { holdsLastSeatForFull, walkOrderFor } from './walkOrder.mjs';
 import { withVisibility } from './visibility.mjs';
 import {
   EXCLUSION_WORDS,
@@ -8051,12 +8051,15 @@ if (REFI_POSTURE) {
         : ''),
   );
 }
-for (const l of readyFirst) {
-  if (siteUnreachable !== null || observedDetails >= MAX_POSITIONS) break;
+// #2094 r2 — a lender run's last seat is held for a full visit while it has
+// none and one is still ahead (`holdsLastSeatForFull`). A held candidate is
+// offered again after the walk, while seats remain.
+const held = [];
+const walkOne = async (l) => {
   const changed = await stillEligible(l);
   if (changed) {
     racedOut.push(`${l.id} (${changed})`);
-    continue;
+    return;
   }
   // #2094 — a forced-close-only position has no chooser to wait for.
   visited.push(
@@ -8066,6 +8069,36 @@ for (const l of readyFirst) {
     }),
   );
   observedDetails += 1;
+};
+for (const [i, l] of readyFirst.entries()) {
+  if (siteUnreachable !== null || observedDetails >= MAX_POSITIONS) break;
+  if (
+    ROLE === 'lender' &&
+    holdsLastSeatForFull({
+      seatsLeft: MAX_POSITIONS - observedDetails,
+      observedFull: visited.some((v) => isDetailPath(v.path) && v.visitMode === 'full'),
+      mode: l.visitMode,
+      fullAhead: readyFirst.some((x, j) => j > i && x.visitMode === 'full'),
+    })
+  ) {
+    held.push(l);
+    continue;
+  }
+  await walkOne(l);
+}
+for (const l of held) {
+  if (siteUnreachable !== null || observedDetails >= MAX_POSITIONS) break;
+  await walkOne(l);
+}
+if (held.length && observedDetails >= MAX_POSITIONS) {
+  const unvisited = held.filter((l) => !visited.some((v) => v.path === `/positions/${l.id}`));
+  if (unvisited.length) {
+    console.log(
+      `\nheld back for the exit chooser: ${unvisited.map((l) => l.id).join(', ')}` +
+        `\n  → the cap's last seat went to a position the chooser renders for, so these forced-close-only` +
+        ` positions were not visited. Raise OBSERVE_MAX_POSITIONS to include them.`,
+    );
+  }
 }
 await browser.close();
 // Before anything below reads `routeFailures` or the ledger (#1633 item 6).
