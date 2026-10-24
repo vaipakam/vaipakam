@@ -27,15 +27,16 @@ import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
  *         retarget step. Run this only when the vault implementation bytecode
  *         actually changed since the live template was last deployed.
  *
- * @dev    GENESIS-PARITY TEMPLATE INIT
- *         Mirrors {VaultFactoryFacet.initializeVaultImplementation}: after
- *         deploying the fresh impl we call `initialize(diamond, address(impl))`
- *         on the template itself, locking its owner to the diamond so a griefer
- *         cannot front-run the (constructor-less, non-`_disableInitializers`)
- *         template's `initialize`. `upgradeVaultImplementation` itself only
- *         checks `code.length != 0`; it neither initialises nor validates
- *         storage-layout compatibility. This script does the latter (#2092):
- *         see STORAGE SAFETY below.
+ * @dev    NO TEMPLATE INIT (#905)
+ *         The implementation's constructor calls `_disableInitializers()`, so
+ *         a freshly deployed template is locked the moment it exists and
+ *         nobody can front-run an `initialize` on it. This script used to
+ *         initialize the template itself to close that window; that call
+ *         would now revert, and is gone, as it is from
+ *         {VaultFactoryFacet.initializeVaultImplementation}.
+ *         `upgradeVaultImplementation` itself only checks `code.length != 0`;
+ *         it does not validate storage-layout compatibility. This script
+ *         does (#2092): see STORAGE SAFETY below.
  *
  * @dev    LAZY vs FORCED PROXY UPGRADE
  *         `upgradeVaultImplementation` only re-points the SHARED template and
@@ -129,7 +130,7 @@ contract UpgradeVaultImplementation is Script {
         console.log("Old impl:  ", oldImpl);
         console.log("Eager users:", users.length);
 
-        // ── Deployer: fund admin gas (if low), deploy + genesis-init the impl ──
+        // ── Deployer: fund admin gas (if low), deploy the impl ──
         vm.startBroadcast(deployerKey);
         if (admin.balance < 0.01 ether) {
             // `.call` not `.transfer` (Codex #1182): the admin is the
@@ -139,9 +140,9 @@ contract UpgradeVaultImplementation is Script {
             require(topUpOk, "UpgradeVaultImplementation: admin gas top-up failed");
             console.log("Topped up admin with 0.01 ETH");
         }
+        // Nothing to initialize: the constructor locks the implementation
+        // (#905), and only per-user proxies are ever initialized.
         VaipakamVaultImplementation impl = new VaipakamVaultImplementation();
-        // Genesis parity: lock the fresh template's owner to the diamond.
-        impl.initialize(diamond, address(impl));
         vm.stopBroadcast();
         address newImpl = address(impl);
         require(newImpl != oldImpl, "UpgradeVaultImplementation: fresh impl collided with old (impossible)");
