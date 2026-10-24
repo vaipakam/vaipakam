@@ -42,7 +42,7 @@ Restart=always
 RestartSec=30
 
 # Memory (#2651). On this 1 GB machine the kernel otherwise swaps the keeper
-# out to make room for a build, an updater run or anything else, and every
+# out to make room for an updater run or anything else, and every
 # swapped page a tick touches is read back from disk while the tick waits.
 # Up to MemoryLow, the keeper's memory is reclaimed only once nothing
 # unprotected is left to reclaim. It reserves nothing: memory the keeper is
@@ -54,7 +54,7 @@ RestartSec=30
 Slice=vaipakam.slice
 MemoryLow=320M
 # If the machine runs out of memory anyway, the kernel's OOM killer picks
-# another process first. A build it kills is retried by the next deploy run.
+# another process first. A deploy step it kills is retried by the next run.
 OOMScoreAdjust=-500
 
 NoNewPrivileges=yes

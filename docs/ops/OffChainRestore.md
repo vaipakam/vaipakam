@@ -1865,16 +1865,16 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
      (`apps/keeper/host/hostEnv.ts` binds `KEEPER_DB` from that pin, never
      from a host setting), so the machine reaches the new `vaipakam-keeper-db`
      only once it runs a build carrying §1 step 5's recovery commit — the new
-     pin, the wrangler ids and `SUCCESSOR.id`. The updater installs whatever
-     branch `/opt/vaipakam-keeper/deploy-branch` names (`main` unless
-     `KEEPER_DEPLOY_BRANCH` set another at install). Get that commit onto the
-     installed branch BEFORE the service starts: merge it to `main` and run
-     `sudo systemctl start vaipakam-keeper-update.service` once, or, while
-     it is still under review, write its branch name to
-     `/opt/vaipakam-keeper/deploy-branch` (on a rebuild, install with
-     `KEEPER_DEPLOY_BRANCH=<recovery branch>`) and run the update service once;
-     set it back to `main` after the merge. The update service reports the
-     installed commit in its log — confirm it is the recovery one.
+     pin, the wrangler ids and `SUCCESSOR.id`. The machine deploys only
+     bundles CI built and attested from `main` (`KeeperMachine.md` §1), so
+     an unmerged recovery branch cannot reach it. Get the commit onto the
+     machine BEFORE the service starts: merge it to `main`, wait for the
+     `keeper host release` workflow run of that merge to finish, then run
+     `sudo systemctl start vaipakam-keeper-update.service` once. The update
+     service reports the installed commit in its log (`journalctl -u
+     vaipakam-keeper-update`) — confirm it is the recovery one. If it logs
+     `waiting for CI to publish the keeper build`, the workflow has not
+     published yet; run the update service again once it has.
 
    A machine started with either place still pointing at the lost account
    does not fail loudly: the shared reads go to an account or database that

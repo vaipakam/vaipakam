@@ -1,8 +1,9 @@
-# Deploys the latest commit of the deploy branch (update.sh). Runs as root
-# because it installs releases and restarts the keeper; the build itself runs
-# in a throwaway sandbox as a fresh dynamic user (build.sh), which can read
-# neither the keeper's env file nor its releases. A oneshot unit never runs
-# twice at once, so two deploys cannot interleave.
+# Deploys main's latest keeper build (update.sh). Runs as root because it
+# installs releases and restarts the keeper. It never builds: CI does, and
+# this downloads the bundle and verifies its attestation. Verifying it and
+# load-checking it each run in a throwaway sandbox as a fresh dynamic user,
+# which can read neither the keeper's env file nor its releases. A oneshot
+# unit never runs twice at once, so two deploys cannot interleave.
 
 [Unit]
 Description=Vaipakam keeper: deploy the latest commit
@@ -12,12 +13,13 @@ After=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/opt/vaipakam-keeper/update.sh
-# A build on a small machine can take a while.
-TimeoutStartSec=1800
+# A download, a verification and a load check, at the lowest priority on a
+# small machine.
+TimeoutStartSec=900
 # Never ahead of the keeper (#2651). On this machine a deploy that competed
 # with it for CPU or disk pushed its passes past their run deadlines. The
-# build itself runs in its own unit, which update.sh starts at the same
-# priority.
+# verification and the load check run in units of their own, which update.sh
+# starts at the same priority.
 Nice=19
 CPUWeight=1
 IOWeight=1

@@ -1,28 +1,31 @@
 #!/usr/bin/env bash
-# Builds the keeper bundle from one source tarball. Runs ONLY inside the
-# throwaway sandbox update.sh starts (systemd-run with DynamicUser=yes): a
-# fresh, unprivileged user with no access to the keeper's env file or its
-# releases, which systemd deletes when the build ends.
+# Builds the keeper's machine bundle from one source tarball. Run by CI
+# (.github/workflows/keeper-host-release.yml), never on the keeper machine,
+# which downloads the result and verifies its attestation instead (#2651).
 #
-# Nothing it writes outlives the build. The source tree, HOME, Corepack's
-# copy of pnpm and pnpm's package store all live in the unit's private /tmp,
-# which systemd removes with the unit. So no build can leave tooling or a
-# package behind for a later build to run: each one starts from the lockfile
-# and downloads what it needs, checked against the lockfile's hashes (and
-# pnpm against npm's signing keys, by Corepack). The only thing that leaves
-# is the bundle, written to the one directory update.sh bound in for it.
+# The tarball is the export build-source.sh makes of one commit: the paths
+# build-paths lists, and nothing else. So the bundle depends only on what
+# that export holds, and two commits with the same build-source digest are
+# given the same bundle. CI runs this with `env -i` and only the variables
+# it names, so a dependency's install script finds no credential in the
+# environment, and starts from the lockfile every time: no package store or
+# cache survives from one build to the next. Packages are checked against
+# the lockfile's integrity hashes, and pnpm against npm's signing keys by
+# Corepack. The build runs the new bundle with --check, so a bundle that
+# cannot even load is never published.
 #
 #   build.sh <source tarball> <output directory>
 set -euo pipefail
 
 src_tar="$1"
 out_dir="$2"
-work=/tmp/src
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
 
-mkdir -p "$work" "$HOME"
+mkdir -p "$HOME"
 tar -xf "$src_tar" -C "$work"
 cd "$work"
-corepack pnpm install --frozen-lockfile --filter '@vaipakam/keeper...' >/dev/null
-corepack pnpm --filter @vaipakam/keeper run build:host >/dev/null
-/usr/local/bin/node apps/keeper/dist/keeper-host.mjs --check
+corepack pnpm install --frozen-lockfile --filter '@vaipakam/keeper...'
+corepack pnpm --filter @vaipakam/keeper run build:host
+node apps/keeper/dist/keeper-host.mjs --check
 install -m 644 apps/keeper/dist/keeper-host.mjs "$out_dir/keeper-host.mjs"

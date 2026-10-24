@@ -15,8 +15,11 @@
 #     with the same digest hand the build the same files, so their bundles
 #     are the same, byte for byte.
 #
-# update.sh compares the running release's digest with the branch tip's and
-# builds only when they differ. Comparing what the build is given, rather
+# CI (.github/workflows/keeper-host-release.yml) builds the export and
+# publishes the bundle under its digest. update.sh compares the running
+# release's digest with the branch tip's, deploys only when they differ, and
+# then asks for the bundle by the tip's digest. Comparing what the build is
+# given, rather
 # than predicting which changes could matter to it, is the point: any path
 # the build can read is in the export, and nothing outside it can reach the
 # build. A path the build needs but build-paths leaves out makes the build
