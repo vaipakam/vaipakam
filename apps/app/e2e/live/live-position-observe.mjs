@@ -118,6 +118,12 @@ import {
 } from './visitVerdict.mjs';
 import { walkOrderFor } from './walkOrder.mjs';
 import { withVisibility } from './visibility.mjs';
+import {
+  EXCLUSION_WORDS,
+  chooserExclusion,
+  graceSecondsFromBuckets,
+  setAsideByDerivedGate,
+} from './chooserEligibility.mjs';
 import { createInFlight } from './inFlight.mjs';
 import { createPageHeadTracker } from './pageHead.mjs';
 import {
@@ -978,25 +984,11 @@ const LOCK_EARLY_WITHDRAWAL_SALE = 2;
  * an EMPTY bucket set today. A first draft returned zero grace there,
  * which made every matured loan read as past-grace and skipped all eight
  * loans on the chain — the drive reported BLOCKED while the pages it
- * would have checked were rendering perfectly well. Mirror the app's
- * `readGraceSecondsLive` branch for branch; do not simplify it.
+ * would have checked were rendering perfectly well. The walk now lives in
+ * `chooserEligibility.mjs`, checked against the app's
+ * `graceSecondsFromBuckets` by its parity test (#1557), so it cannot be
+ * simplified here without CI noticing.
  */
-/** Mirrors `lib/grace.defaultGraceSeconds`, which in turn mirrors
- *  LibVaipakam.gracePeriod's compile-time schedule. Used when the chain
- *  publishes NO buckets — which is the case on Base Sepolia today, so
- *  this is the live path, not a corner. Treating an empty set as zero
- *  grace makes every matured loan look past-grace the instant it
- *  matures, which is how a first draft of this drive managed to skip
- *  every loan on the chain. */
-function defaultGraceSeconds(durationDays) {
-  if (durationDays < 7n) return 3_600n;
-  if (durationDays < 30n) return 86_400n;
-  if (durationDays < 90n) return 3n * 86_400n;
-  if (durationDays < 180n) return 7n * 86_400n;
-  if (durationDays < 365n) return 14n * 86_400n;
-  return 30n * 86_400n;
-}
-
 let graceBucketsCache;
 /** Drop the memo so the next {@link graceSecondsFor} re-reads the chain.
  *
@@ -1019,16 +1011,8 @@ async function graceSecondsFor(durationDays) {
       functionName: 'getGraceBuckets',
     }),
   );
-  const buckets = graceBucketsCache;
-  if (buckets.length > 0) {
-    for (const b of buckets) {
-      if (b.maxDurationDays === 0n) return b.graceSeconds; // catch-all
-      if (durationDays < b.maxDurationDays) return b.graceSeconds;
-    }
-    // Malformed set — the contract falls back to the last entry.
-    return buckets[buckets.length - 1].graceSeconds;
-  }
-  return defaultGraceSeconds(durationDays);
+  // The walk is the app's, mirrored and parity-tested (#1557).
+  return graceSecondsFromBuckets(graceBucketsCache, durationDays);
 }
 
 /**
@@ -1512,24 +1496,69 @@ for (const id of ids) {
  * report BLOCKED on a chain where the lender card is rendering perfectly
  * well on loans it had discarded.
  */
+/**
+ * The borrower facts, as the PAGE's rule takes them (#1557). The rule
+ * itself is `chooserExclusion`, the parity-tested mirror of the app's
+ * `earlyRepayChooserExclusion`, so no clause is written out here.
+ *
+ * `viewerIsBorrower` is "the borrower token resolves to a holder": the
+ * drive connects AS that holder, so a readable token is what makes the
+ * page's viewer the borrower. Nothing is closed in a watch-only session.
+ * The offset and grace facts are read only for an Active ERC-20 loan
+ * (above); for any other the rule has already returned on an earlier
+ * clause, so their `undefined` is never consulted.
+ */
+const borrowerFacts = (l) => ({
+  viewerIsBorrower: l.authority !== null,
+  active: l.status === STATUS_ACTIVE,
+  rental: l.assetType !== ASSET_ERC20,
+  offsetPending: l.offsetLocked === true,
+  graceVerifiablyOver: l.graceOver === true,
+  closedThisSession: false,
+});
 const eligible = loans.filter((l) =>
   ROLE === 'lender'
     ? lenderStatusOk(l.status) &&
       l.assetType === ASSET_ERC20 &&
       l.authority !== null &&
       l.authoritySanctioned === false
-    : l.status === STATUS_ACTIVE &&
-      l.assetType === ASSET_ERC20 &&
-      l.authority !== null &&
-      l.offsetLocked === false &&
-      l.graceOver === false,
+    : chooserExclusion(borrowerFacts(l)) === null,
 );
+/**
+ * #1557 direction 2 — AN EMPTY POOL MADE OF THE DRIVE'S OWN DERIVATIONS IS
+ * NAMED, not reported as an empty chain.
+ *
+ * Still BLOCKED: a chain whose loans have all aged past grace is a real
+ * state on a testnet, and exiting 1 there would leave the drive red for a
+ * reason that is nobody's defect. But the BLOCKED line used to read as
+ * "nothing to look at" in exactly the case #1529 hit, where a grace read
+ * that treated an empty bucket set as zero grace skipped all eight loans
+ * while their pages rendered the chooser. Saying which loans only the
+ * drive's own reading set aside is what lets a reader tell the two apart.
+ * Borrower runs only: the lender pool derives nothing (#1557 is about this
+ * chooser).
+ */
+function noteDerivedSetAside(pool) {
+  if (ROLE !== 'borrower') return;
+  const setAside = setAsideByDerivedGate(pool, borrowerFacts);
+  if (setAside.length === 0) return;
+  console.log(
+    `  but ${setAside.length} Active ERC-20 loan(s) with a live borrower were set aside` +
+      ` ONLY by this drive's own reading of the grace or offset gate:` +
+      ` ${setAside.map((l) => `${l.id} (${EXCLUSION_WORDS[chooserExclusion(borrowerFacts(l))]})`).join(', ')}` +
+      `\n  → that is the shape a drifted predicate takes (#1557). Open one of those pages:` +
+      ` if it shows the chooser, the drive is wrong, not the chain.`,
+  );
+}
 const dropped = loans.length - eligible.length;
 if (dropped > 0) {
   // Never silently narrow the candidate set — say what was set aside, and
   // why, so a shrinking pool is legible rather than mysterious.
+  // A borrower run names the reason the PAGE's rule gives (#1557).
   const why = (l) =>
-    (ROLE === 'lender' ? !lenderStatusOk(l.status) : l.status !== STATUS_ACTIVE)
+    ROLE === 'borrower'
+      ? EXCLUSION_WORDS[chooserExclusion(borrowerFacts(l))]
+      : !lenderStatusOk(l.status)
       ? 'not active'
       : l.assetType !== ASSET_ERC20
         ? 'NFT rental'
@@ -1808,6 +1837,7 @@ if (!observed) {
     console.log(
       `\nBLOCKED: no ${ROLE}-eligible loans on chain — nothing verified.`,
     );
+    noteDerivedSetAside(loans);
     process.exit(2);
   }
   observed = best[1][0].authority;
@@ -1830,6 +1860,9 @@ for (const l of mine) {
 if (mine.length === 0) {
   console.error(
     `\nBLOCKED: ${observed} holds no eligible ${ROLE} position — nothing verified.`,
+  );
+  noteDerivedSetAside(
+    loans.filter((l) => l.authority !== null && l.authority.toLowerCase() === observed.toLowerCase()),
   );
   process.exit(2);
 }
@@ -3095,11 +3128,6 @@ async function stillEligible(loan) {
   // happened here.
   loan.status = Number(live.status);
   loan.authority = authorityNow;
-  if (lockedNow) return 'offset started since discovery';
-  if (authorityNow === null) return `${ROLE} token burned since discovery`;
-  if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
-    return 'position transferred since discovery';
-  }
   // The grace re-check below is a BORROWER gate. Applying it to a lender
   // run would skip a page whose card is correctly still rendering — and,
   // if it were the only candidate, report BLOCKED on a working surface.
@@ -3108,6 +3136,10 @@ async function stillEligible(loan) {
   // either direction between discovery and the visit, and a flag that
   // landed in that window correctly suppresses the card.
   if (ROLE === 'lender') {
+    if (authorityNow === null) return 'lender token burned since discovery';
+    if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
+      return 'position transferred since discovery';
+    }
     // UNCACHED, deliberately (Codex #1853 r8). The discovery cache is
     // keyed per authority for the whole sweep, so calling the cached
     // helper here returns the fulfilled promise from discovery and this
@@ -3135,10 +3167,30 @@ async function stillEligible(loan) {
   // duration — and the SCHEDULE is re-read here as well, not just the
   // term. A memo from discovery is exactly the stale input this function
   // exists to rule out.
+  // The LIVE term, not the discovered one. `extendLoanInPlace` rewrites
+  // startTime and durationDays while the loan stays Active, so a stale
+  // term would judge an extended loan against its old deadline and skip a
+  // page that is correctly still chooser-eligible — and, if it was the
+  // only candidate, report BLOCKED (#1529 review round 10). The grace
+  // bucket follows the live duration too, since the bucket is chosen BY
+  // duration — and the SCHEDULE is re-read here as well, not just the
+  // term. A memo from discovery is exactly the stale input this function
+  // exists to rule out.
   invalidateGraceBuckets();
   const grace = await graceSecondsFor(live.durationDays);
-  if (now > live.startTime + live.durationDays * 86_400n + grace) {
-    return 'crossed its grace deadline since discovery';
+  // #1557 — the PAGE's rule over the re-read facts, not a clause list of
+  // this function's own (see `borrowerFacts`). Rental and closed-this-
+  // session cannot change between discovery and the visit.
+  const reason = chooserExclusion({
+    ...borrowerFacts(loan),
+    viewerIsBorrower: authorityNow !== null,
+    active: Number(live.status) === STATUS_ACTIVE,
+    offsetPending: lockedNow,
+    graceVerifiablyOver: now > live.startTime + live.durationDays * 86_400n + grace,
+  });
+  if (reason !== null) return `${EXCLUSION_WORDS[reason]} since discovery`;
+  if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
+    return 'position transferred since discovery';
   }
   return null;
 }

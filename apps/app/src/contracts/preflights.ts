@@ -23,7 +23,11 @@ import {
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { copy } from '../content/copy';
 import { acceptBlockReason } from './acceptErrors';
-import { defaultGraceSeconds } from '../lib/grace';
+import {
+  defaultGraceSeconds,
+  graceSecondsFromBuckets,
+  type GraceBucket,
+} from '../lib/grace';
 import { formatTokenAmount } from '../lib/format';
 
 export { defaultGraceSeconds };
@@ -148,17 +152,8 @@ export async function readGraceSecondsLive(opts: {
     address: opts.diamondAddress,
     abi: DIAMOND_ABI_VIEM,
     functionName: 'getGraceBuckets',
-  })) as readonly { maxDurationDays: bigint; graceSeconds: bigint }[];
-  if (buckets.length > 0) {
-    for (const b of buckets) {
-      if (b.maxDurationDays === 0n) return b.graceSeconds; // catch-all
-      if (BigInt(opts.durationDays) < b.maxDurationDays) return b.graceSeconds;
-    }
-    // No match and no catch-all (malformed set) — the contract's
-    // defensive fallback returns the LAST entry's grace; mirror it.
-    return buckets[buckets.length - 1].graceSeconds;
-  }
-  return defaultGraceSeconds(opts.durationDays);
+  })) as readonly GraceBucket[];
+  return graceSecondsFromBuckets(buckets, opts.durationDays);
 }
 
 /** `VaipakamDiamond.FunctionDoesNotExist()` — the Diamond fallback's
