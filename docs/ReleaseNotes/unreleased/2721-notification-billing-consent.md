@@ -1,4 +1,4 @@
-## Notification billing — users must consent on-chain before they can be charged (PR #TBD)
+## Notification billing — users must consent on-chain before they can be charged (PR #2768)
 
 Before this change, the paid-notification fee could be taken from any loan party's vault. The bot holding the notification-billing role chose who to charge, and whether a user had opted into paid alerts was recorded only off-chain. The contract also never checked whether the loan was still open. A leaked billing key could therefore charge the fee once to every party of every loan ever opened, including users who never agreed to pay.
 
