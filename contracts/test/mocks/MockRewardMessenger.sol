@@ -5,10 +5,12 @@ import {
     IRewardMessenger,
     IRewardRemitAckIngress,
     RewardBroadcastV2,
-    RewardBroadcastV3
+    RewardBroadcastV3,
+    ChainDayReport
 } from "../../src/interfaces/IRewardMessenger.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
+import {InteractionRewardsLensFacet} from "../../src/facets/InteractionRewardsLensFacet.sol";
 import {RepatriationFacet} from "../../src/facets/RepatriationFacet.sol";
 import {RewardCommitmentFacet} from "../../src/facets/RewardCommitmentFacet.sol";
 
@@ -42,12 +44,14 @@ contract MockRewardMessenger is IRewardMessenger {
     // #1222 M3 B1 — recycled-report spies.
     uint256 public lastSendRecycledCumulative18;
     uint256 public lastSendRecycledForDay18;
-    // #1222 M3 B3 — commitment-retirement spies, plus the arity the diamond
-    // actually reached (8 = current, 6 = B1 shape) so a test can assert the
-    // reporter's generation-fallback shim took the branch it expected.
+    // #1222 M3 B3 — commitment-retirement spies.
     uint256 public lastSendCommitRetiredCumulative18;
     uint256 public lastSendCommitReleasedCumulative18;
-    uint256 public lastSendArity;
+    // #1566 PR C — custody era; #2620 — the reporter's reward clock; #2621 —
+    // the destination the diamond named.
+    uint64 public lastSendCustodyEra;
+    uint256 public lastSendRewardLaunch;
+    uint256 public lastSendDest;
     address public lastSendRefund;
     uint256 public lastSendValue;
     uint256 public sendCount;
@@ -101,10 +105,6 @@ contract MockRewardMessenger is IRewardMessenger {
     ///         reverts EMPTY (missing selector), which must trip the
     ///         facet's legacy-fallback shim.
     bool public v2Unsupported;
-    /// @notice #1222 M3 B3 — simulate a pre-B3 messenger proxy: the
-    ///         eight-argument send reverts EMPTY (missing selector), which
-    ///         must trip the reporter's 8 → 6 generation-fallback shim.
-    bool public b3Unsupported;
     /// @notice #1434 P2-w1 — simulate a pre-V3 messenger proxy: every V3
     ///         surface reverts EMPTY (missing selector), which must trip
     ///         the aggregator's V3 → V2 fallback (and turn the heal into
@@ -125,10 +125,6 @@ contract MockRewardMessenger is IRewardMessenger {
 
     function setRevertOnBroadcast(bool v) external {
         revertOnBroadcast = v;
-    }
-
-    function setB3Unsupported(bool v) external {
-        b3Unsupported = v;
     }
 
     function setV2Unsupported(bool v) external {
@@ -161,117 +157,36 @@ contract MockRewardMessenger is IRewardMessenger {
 
     // ─── IRewardMessenger — sender-side (called by Diamond) ───────────────
 
+    /// @dev The one report send (#2621). `revertOnSend` makes it revert with
+    ///      a reason, as a paused or underpaid messenger does.
     function sendChainReport(
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18,
+        uint256 destChainId,
+        ChainDayReport calldata r,
         address payable refundAddress
     ) external payable override {
         require(msg.sender == diamond, "MockMessenger: only diamond");
         if (revertOnSend) revert("MockMessenger: send revert");
-        lastSendDay = dayId;
-        lastSendLenderNumeraire18 = lenderNumeraire18;
-        lastSendBorrowerNumeraire18 = borrowerNumeraire18;
-        lastSendRecycledCumulative18 = recycledCumulative18;
-        lastSendRecycledForDay18 = recycledForDay18;
-        lastSendCommitRetiredCumulative18 = 0;
-        lastSendCommitReleasedCumulative18 = 0;
-        lastSendArity = 6;
+        lastSendDest = destChainId;
+        lastSendDay = r.dayId;
+        lastSendLenderNumeraire18 = r.lenderNumeraire18;
+        lastSendBorrowerNumeraire18 = r.borrowerNumeraire18;
+        lastSendRecycledCumulative18 = r.recycledCumulative18;
+        lastSendRecycledForDay18 = r.recycledForDay18;
+        lastSendCommitRetiredCumulative18 = r.commitRetiredCumulative18;
+        lastSendCommitReleasedCumulative18 = r.commitReleasedCumulative18;
+        lastSendCustodyEra = r.custodyEra;
+        lastSendRewardLaunch = r.rewardLaunchTimestamp;
         lastSendRefund = refundAddress;
         lastSendValue = msg.value;
         sendCount += 1;
     }
 
-    /// @dev #1222 M3 B3 — the CURRENT eight-argument send. `revertOnSendB3`
-    ///      makes ONLY this overload revert with empty returndata, which is
-    ///      exactly the shape an older messenger produces for an unknown
-    ///      selector — the trigger the reporter's generation-fallback shim
-    ///      accepts. That is how a test drives the 8 → 6 downgrade without
-    ///      deploying a second messenger generation.
-    function sendChainReport(
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18,
-        uint256 commitRetiredCumulative18,
-        uint256 commitReleasedCumulative18,
-        address payable refundAddress
-    ) external payable override {
-        require(msg.sender == diamond, "MockMessenger: only diamond");
-        if (b3Unsupported) {
-            assembly ("memory-safe") {
-                revert(0, 0)
-            }
-        }
-        if (revertOnSend) revert("MockMessenger: send revert");
-        lastSendDay = dayId;
-        lastSendLenderNumeraire18 = lenderNumeraire18;
-        lastSendBorrowerNumeraire18 = borrowerNumeraire18;
-        lastSendRecycledCumulative18 = recycledCumulative18;
-        lastSendRecycledForDay18 = recycledForDay18;
-        lastSendCommitRetiredCumulative18 = commitRetiredCumulative18;
-        lastSendCommitReleasedCumulative18 = commitReleasedCumulative18;
-        lastSendArity = 8;
-        lastSendRefund = refundAddress;
-        lastSendValue = msg.value;
-        sendCount += 1;
-    }
-
-    /// @dev #1566 PR C revision — the B4 send. `b4Unsupported` makes it the
-    ///      empty revert of an unknown selector, so a test can drive the
-    ///      reporter's downgrade to B3.
-    bool public b4Unsupported;
-    uint64 public lastSendCustodyEra;
-
-    function setB4Unsupported(bool v) external {
-        b4Unsupported = v;
-    }
-
-    function sendChainReport(
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18,
-        uint256 commitRetiredCumulative18,
-        uint256 commitReleasedCumulative18,
-        uint64 custodyEra,
-        address payable refundAddress
-    ) external payable override {
-        require(msg.sender == diamond, "MockMessenger: only diamond");
-        if (b4Unsupported) {
-            assembly ("memory-safe") {
-                revert(0, 0)
-            }
-        }
-        if (revertOnSend) revert("MockMessenger: send revert");
-        lastSendDay = dayId;
-        lastSendLenderNumeraire18 = lenderNumeraire18;
-        lastSendBorrowerNumeraire18 = borrowerNumeraire18;
-        lastSendRecycledCumulative18 = recycledCumulative18;
-        lastSendRecycledForDay18 = recycledForDay18;
-        lastSendCommitRetiredCumulative18 = commitRetiredCumulative18;
-        lastSendCommitReleasedCumulative18 = commitReleasedCumulative18;
-        lastSendCustodyEra = custodyEra;
-        lastSendArity = 9;
-        lastSendRefund = refundAddress;
-        lastSendValue = msg.value;
-        sendCount += 1;
-    }
-
-    function quoteSendChainReport(
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint64
-    ) external view override returns (uint256) {
+    function quoteSendChainReport(uint256, ChainDayReport calldata)
+        external
+        view
+        override
+        returns (uint256)
+    {
         return quoteNative;
     }
 
@@ -458,31 +373,6 @@ contract MockRewardMessenger is IRewardMessenger {
         IRewardRemitAckIngress(diamond).onRemitAckReceived(
             sourceChainId, remitId, amountReceived, remitter, classification
         );
-    }
-
-    function quoteSendChainReport(
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256
-    ) external view override returns (uint256) {
-        return quoteNative;
-    }
-
-    /// @dev #1222 M3 B3 — quote for the eight-word shape. The mock prices
-    ///      every shape identically (`quoteNative`); real CCIP prices by
-    ///      payload size.
-    function quoteSendChainReport(
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256
-    ) external view override returns (uint256) {
-        return quoteNative;
     }
 
     function quoteBroadcastGlobal(
@@ -794,16 +684,7 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 lenderNumeraire18,
         uint256 borrowerNumeraire18
     ) external {
-        // Legacy four-word shape: recycled fields absent → delivered as zero
-        // (matches the production messenger's legacy-decode path).
-        RewardAggregatorFacet(diamond).onChainReportReceived(
-            sourceChainId,
-            dayId,
-            lenderNumeraire18,
-            borrowerNumeraire18,
-            0,
-            0
-        );
+        _deliver(sourceChainId, dayId, lenderNumeraire18, borrowerNumeraire18, 0, 0, 0, 0, 0);
     }
 
     /// @notice #1222 M3 B1 — deliver a report carrying the recycled fields
@@ -816,19 +697,14 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 recycledCumulative18,
         uint256 recycledForDay18
     ) external {
-        RewardAggregatorFacet(diamond).onChainReportReceived(
-            sourceChainId,
-            dayId,
-            lenderNumeraire18,
-            borrowerNumeraire18,
-            recycledCumulative18,
-            recycledForDay18
+        _deliver(
+            sourceChainId, dayId, lenderNumeraire18, borrowerNumeraire18,
+            recycledCumulative18, recycledForDay18, 0, 0, 0
         );
     }
 
-    /// @notice #1222 M3 B3 — deliver the CURRENT eight-word report shape:
-    ///         the B1 recycled pair plus the reporting chain's
-    ///         commitment-retirement cumulatives.
+    /// @notice #1222 M3 B3 — deliver a report with the recycled pair plus the
+    ///         reporting chain's commitment-retirement cumulatives.
     function deliverChainReportB3(
         uint32 sourceChainId,
         uint256 dayId,
@@ -839,20 +715,15 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 commitRetiredCumulative18,
         uint256 commitReleasedCumulative18
     ) external {
-        RewardAggregatorFacet(diamond).onChainReportReceived(
-            sourceChainId,
-            dayId,
-            lenderNumeraire18,
-            borrowerNumeraire18,
-            recycledCumulative18,
-            recycledForDay18,
-            commitRetiredCumulative18,
-            commitReleasedCumulative18
+        _deliver(
+            sourceChainId, dayId, lenderNumeraire18, borrowerNumeraire18,
+            recycledCumulative18, recycledForDay18,
+            commitRetiredCumulative18, commitReleasedCumulative18, 0
         );
     }
 
-    /// @notice #1566 PR C revision — deliver a B4 report: the B3 words plus the
-    ///         reporting chain's live custody era.
+    /// @notice #1566 PR C revision — deliver a report carrying the reporting
+    ///         chain's live custody era.
     function deliverChainReportB4(
         uint32 sourceChainId,
         uint256 dayId,
@@ -860,12 +731,10 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 borrowerNumeraire18,
         uint64 custodyEra
     ) external {
-        RewardAggregatorFacet(diamond).onChainReportReceived(
-            sourceChainId, dayId, lenderNumeraire18, borrowerNumeraire18, 0, 0, 0, 0, custodyEra
-        );
+        _deliver(sourceChainId, dayId, lenderNumeraire18, borrowerNumeraire18, 0, 0, 0, 0, custodyEra);
     }
 
-    /// @notice #2459 r6 — a B4 day report carrying the chain's cumulatives too.
+    /// @notice #2459 r6 — a day report carrying the chain's cumulatives too.
     function deliverChainReportB4Full(
         uint32 sourceChainId,
         uint256 dayId,
@@ -877,16 +746,45 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 commitReleasedCumulative18,
         uint64 custodyEra
     ) external {
+        _deliver(
+            sourceChainId, dayId, lenderNumeraire18, borrowerNumeraire18,
+            recycledCumulative18, recycledForDay18,
+            commitRetiredCumulative18, commitReleasedCumulative18, custodyEra
+        );
+    }
+
+    /// @notice #2620 — deliver an exact {ChainDayReport}, its reward clock
+    ///         included, so a test can send one on a clock other than Base's.
+    function deliverChainDayReport(uint32 sourceChainId, ChainDayReport calldata r) external {
+        RewardAggregatorFacet(diamond).onChainReportReceived(sourceChainId, r);
+    }
+
+    /// @dev Every convenience wrapper above reports on Base's own reward
+    ///      clock — the configuration a correct deployment has.
+    function _deliver(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18,
+        uint64 custodyEra
+    ) internal {
         RewardAggregatorFacet(diamond).onChainReportReceived(
             sourceChainId,
-            dayId,
-            lenderNumeraire18,
-            borrowerNumeraire18,
-            recycledCumulative18,
-            recycledForDay18,
-            commitRetiredCumulative18,
-            commitReleasedCumulative18,
-            custodyEra
+            ChainDayReport({
+                dayId: dayId,
+                lenderNumeraire18: lenderNumeraire18,
+                borrowerNumeraire18: borrowerNumeraire18,
+                recycledCumulative18: recycledCumulative18,
+                recycledForDay18: recycledForDay18,
+                commitRetiredCumulative18: commitRetiredCumulative18,
+                commitReleasedCumulative18: commitReleasedCumulative18,
+                custodyEra: custodyEra,
+                rewardLaunchTimestamp: InteractionRewardsLensFacet(diamond).getInteractionLaunchTimestamp()
+            })
         );
     }
 

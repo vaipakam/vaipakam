@@ -12,6 +12,7 @@ import {MockCcipRouter} from "./mocks/MockCcipRouter.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {
     IRewardMessenger,
+    ChainDayReport,
     RewardBroadcastV2,
     RewardBroadcastV3
 } from "../src/interfaces/IRewardMessenger.sol";
@@ -32,64 +33,23 @@ contract MockRewardDiamond {
     uint256 public lastBcastBorrower;
     uint256 public bcastCount;
 
-    function onChainReportReceived(
-        uint32 src,
-        uint256 day,
-        uint256 l,
-        uint256 b,
-        uint256 recycledCum,
-        uint256 recycledForDay
-    ) external {
-        lastReportChain = src;
-        lastReportDay = day;
-        lastReportLender = l;
-        lastReportBorrower = b;
-        lastReportRecycledCum = recycledCum;
-        lastReportRecycledForDay = recycledForDay;
-        ++reportCount;
-    }
-
-    /// Codex #1413 r3 — the legacy ingress overload the production facet
-    /// also keeps: a decoded four-word wire report dispatches THIS selector.
-    function onChainReportReceived(
-        uint32 src,
-        uint256 day,
-        uint256 l,
-        uint256 b
-    ) external {
-        lastReportChain = src;
-        lastReportDay = day;
-        lastReportLender = l;
-        lastReportBorrower = b;
-        lastReportRecycledCum = 0;
-        lastReportRecycledForDay = 0;
-        ++reportCount;
-    }
-
-    /// #1566 PR C revision — the B4 ingress: the B3 figures plus the reporting
-    /// chain's custody era.
+    // #2621 — the one report shape's remaining fields.
     uint64 public lastReportCustodyEra;
     uint256 public lastReportCommitRetired;
+    uint256 public lastReportCommitReleased;
+    uint256 public lastReportRewardLaunch;
 
-    function onChainReportReceived(
-        uint32 src,
-        uint256 day,
-        uint256 l,
-        uint256 b,
-        uint256 recycledCum,
-        uint256 recycledForDay,
-        uint256 commitRetired,
-        uint256,
-        uint64 custodyEra
-    ) external {
+    function onChainReportReceived(uint32 src, ChainDayReport calldata r) external {
         lastReportChain = src;
-        lastReportDay = day;
-        lastReportLender = l;
-        lastReportBorrower = b;
-        lastReportRecycledCum = recycledCum;
-        lastReportRecycledForDay = recycledForDay;
-        lastReportCommitRetired = commitRetired;
-        lastReportCustodyEra = custodyEra;
+        lastReportDay = r.dayId;
+        lastReportLender = r.lenderNumeraire18;
+        lastReportBorrower = r.borrowerNumeraire18;
+        lastReportRecycledCum = r.recycledCumulative18;
+        lastReportRecycledForDay = r.recycledForDay18;
+        lastReportCommitRetired = r.commitRetiredCumulative18;
+        lastReportCommitReleased = r.commitReleasedCumulative18;
+        lastReportCustodyEra = r.custodyEra;
+        lastReportRewardLaunch = r.rewardLaunchTimestamp;
         ++reportCount;
     }
 
@@ -212,73 +172,13 @@ contract MockRewardDiamond {
     receive() external payable {}
 }
 
-/// @notice Codex #1413 r3 — a stand-in for a PRE-#1222 Base diamond: only
-///         the four-argument ingress exists. Proves the messenger routes a
-///         legacy wire report to the legacy selector (and that the six-word
-///         shape genuinely requires the widened diamond).
-contract MockLegacyOnlyRewardDiamond {
-    error FunctionDoesNotExist();
-
-    uint256 public lastReportChain;
-    uint256 public lastReportDay;
-    uint256 public reportCount;
-
-    function onChainReportReceived(
-        uint32 src,
-        uint256 day,
-        uint256,
-        uint256
-    ) external {
-        lastReportChain = src;
-        lastReportDay = day;
-        ++reportCount;
-    }
-
-    /// Mimic the production Diamond's fallback: an unrouted selector
-    /// reverts with the explicit error, never empty data — the ONLY shape
-    /// the messenger's r5 downgrade gate accepts.
-    fallback() external payable {
-        revert FunctionDoesNotExist();
-    }
-}
-
-/// @notice Codex #1413 r5 — a stub whose widened-ingress call reverts with
-///         EMPTY data (no such selector, no diamond-style fallback): the
-///         OOG-analog shape. The messenger must NOT downgrade — only the
-///         diamond's explicit FunctionDoesNotExist() qualifies.
-contract MockEmptyRevertingRewardDiamond {
-    uint256 public legacyCalls;
-
-    function onChainReportReceived(uint32, uint256, uint256, uint256)
-        external
-    {
-        ++legacyCalls;
-    }
-}
-
-/// @notice Codex #1413 r4 — a diamond stub whose WIDENED ingress reverts
-///         with a reasoned custom error: the messenger must bubble it, never
-///         downgrade to the legacy selector.
+/// @notice Codex #1413 r4 — a diamond stub whose ingress reverts with a
+///         reasoned custom error: the messenger must bubble it unchanged.
 contract MockRevertingRewardDiamond {
     error DuplicateReport();
 
-    uint256 public legacyCalls;
-
-    function onChainReportReceived(
-        uint32,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256
-    ) external pure {
+    function onChainReportReceived(uint32, ChainDayReport calldata) external pure {
         revert DuplicateReport();
-    }
-
-    function onChainReportReceived(uint32, uint256, uint256, uint256)
-        external
-    {
-        ++legacyCalls;
     }
 }
 
@@ -389,15 +289,25 @@ contract VaipakamRewardFlowTest is Test {
 
     // ─── REPORT: mirror → Base ──────────────────────────────────────────────
 
+    function _report(uint256 dayId) internal pure returns (ChainDayReport memory r) {
+        r.dayId = dayId;
+        r.lenderNumeraire18 = 1_000 ether;
+        r.borrowerNumeraire18 = 500 ether;
+        r.recycledCumulative18 = 77 ether;
+        r.recycledForDay18 = 7 ether;
+        r.commitRetiredCumulative18 = 3 ether;
+        r.commitReleasedCumulative18 = 1 ether;
+        r.custodyEra = 5;
+        r.rewardLaunchTimestamp = 1_792_540_800;
+    }
+
+    /// #2621 — every field of the one report shape crosses intact, the
+    /// reporter's reward-launch clock with it, and the quote prices exactly
+    /// the bytes the send emits.
     function test_Report_MirrorToBase() public {
         vm.prank(address(diamondMirror));
         rewardMirror.sendChainReport{value: fee}(
-            42,
-            1_000 ether,
-            500 ether,
-            77 ether,
-            7 ether,
-            payable(address(diamondMirror))
+            BASE, _report(42), payable(address(diamondMirror))
         );
         assertEq(router.pendingCount(), 1, "report captured");
 
@@ -408,63 +318,38 @@ contract VaipakamRewardFlowTest is Test {
         assertEq(diamondBase.lastReportDay(), 42, "dayId");
         assertEq(diamondBase.lastReportLender(), 1_000 ether, "lender numeraire");
         assertEq(diamondBase.lastReportBorrower(), 500 ether, "borrower numeraire");
-        // #1222 M3 B1 — the recycled pair rides the same six-word report.
         assertEq(diamondBase.lastReportRecycledCum(), 77 ether, "recycled cumulative");
         assertEq(diamondBase.lastReportRecycledForDay(), 7 ether, "recycled for-day");
+        assertEq(diamondBase.lastReportCommitRetired(), 3 ether, "commit retired");
+        assertEq(diamondBase.lastReportCommitReleased(), 1 ether, "commit released");
+        assertEq(diamondBase.lastReportCustodyEra(), 5, "custody era");
+        assertEq(diamondBase.lastReportRewardLaunch(), 1_792_540_800, "reward-launch clock");
+        assertEq(rewardMirror.quoteSendChainReport(BASE, _report(42)), fee, "quote prices the send");
     }
 
-    /// #1566 PR C revision — the B4 report carries the mirror's custody era to
-    /// Base's B4 ingress, every B3 figure with it; a Base diamond without the B4
-    /// ingress takes the report down the ladder rather than failing it.
-    function test_Report_B4_CarriesTheCustodyEra_AndDowngrades() public {
+    /// #2621 — a report goes only to the Base the caller names AND this
+    /// messenger holds. A disagreeing route reverts the send (and so the
+    /// Diamond's close, atomically with its stamp) and the quote alike.
+    function test_Report_RevertWhen_RouteMismatch() public {
         vm.prank(address(diamondMirror));
-        rewardMirror.sendChainReport{value: fee}(
-            42, 1_000 ether, 500 ether, 77 ether, 7 ether, 3 ether, 1 ether, uint64(5), payable(address(diamondMirror))
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamRewardMessenger.ReportRouteMismatch.selector, uint256(10), BASE)
         );
-        router.deliver(0, SEL_MIRROR);
-        assertEq(diamondBase.reportCount(), 1, "Base got the report");
-        assertEq(diamondBase.lastReportCustodyEra(), 5, "and the mirror's era with it");
-        assertEq(diamondBase.lastReportCommitRetired(), 3 ether, "every B3 figure travels too");
-        assertEq(diamondBase.lastReportRecycledCum(), 77 ether);
-        assertEq(
-            rewardMirror.quoteSendChainReport(42, 1_000 ether, 500 ether, 77 ether, 7 ether, 3 ether, 1 ether, uint64(5)),
-            fee,
-            "the B4 quote prices the B4 send"
-        );
+        rewardMirror.sendChainReport{value: fee}(10, _report(42), payable(address(diamondMirror)));
+        assertEq(router.pendingCount(), 0, "nothing sent along the wrong route");
 
-        MockLegacyOnlyRewardDiamond legacyDiamond = new MockLegacyOnlyRewardDiamond();
-        vm.prank(owner);
-        rewardBase.setDiamond(address(legacyDiamond));
-        vm.prank(address(messengerBase));
-        rewardBase.onCrossChainMessage(
-            MIRROR,
-            address(rewardMirror),
-            abi.encode(
-                REPORT, uint256(43), uint256(1 ether), uint256(1 ether), uint256(0), uint256(0), uint256(0), uint256(0), uint256(5)
-            ),
-            _empty()
-        , bytes32(0));
-        assertEq(legacyDiamond.reportCount(), 1, "a B4 report downgraded, not lost");
-        assertEq(legacyDiamond.lastReportDay(), 43);
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamRewardMessenger.ReportRouteMismatch.selector, uint256(10), BASE)
+        );
+        rewardMirror.quoteSendChainReport(10, _report(42));
     }
 
-    /// #1222 M3 B1 — Base keeps ACCEPTING the legacy four-word report shape
-    /// (a delayed CCIP delivery or a not-yet-upgraded mirror): recycled
-    /// fields decode as zero, everything else lands unchanged.
-    function test_Report_LegacyFourWordShape_StillAccepted() public {
-        vm.prank(address(messengerBase));
-        rewardBase.onCrossChainMessage(
-            MIRROR,
-            address(rewardMirror),
-            abi.encode(REPORT, uint256(42), uint256(1_000 ether), uint256(500 ether)),
-            _empty()
-        , bytes32(0));
-
-        assertEq(diamondBase.reportCount(), 1, "legacy report accepted");
-        assertEq(diamondBase.lastReportDay(), 42, "dayId");
-        assertEq(diamondBase.lastReportLender(), 1_000 ether, "lender numeraire");
-        assertEq(diamondBase.lastReportRecycledCum(), 0, "recycled cum defaults 0");
-        assertEq(diamondBase.lastReportRecycledForDay(), 0, "recycled for-day defaults 0");
+    /// #2621 — the canonical messenger holds no Base of its own: it never
+    /// sends a report.
+    function test_Report_RevertWhen_SentFromCanonical() public {
+        vm.prank(address(diamondBase));
+        vm.expectRevert(VaipakamRewardMessenger.BaseChainNotConfigured.selector);
+        rewardBase.sendChainReport{value: fee}(BASE, _report(42), payable(address(diamondBase)));
     }
 
     /// #1660 r7 — the kind-7 ack's classification word is validated on
@@ -512,88 +397,33 @@ contract VaipakamRewardFlowTest is Test {
         , bytes32(0));
     }
 
-    /// Codex #1413 r1 — the LEGACY four-argument sender overload stays
-    /// callable (a not-yet-upgraded mirror diamond on an upgraded
-    /// messenger) and emits the legacy four-word payload, which every Base
-    /// version accepts.
-    function test_Report_LegacySenderOverload_StillWorks() public {
-        vm.prank(address(diamondMirror));
-        rewardMirror.sendChainReport{value: fee}(
-            42, 1_000 ether, 500 ether, payable(address(diamondMirror))
-        );
-        assertEq(router.pendingCount(), 1, "legacy send captured");
-
-        router.deliver(0, SEL_MIRROR);
-
-        assertEq(diamondBase.reportCount(), 1, "Base accepted the legacy report");
-        assertEq(diamondBase.lastReportLender(), 1_000 ether, "lender numeraire");
-        assertEq(diamondBase.lastReportRecycledCum(), 0, "no recycled figures travel");
-        assertEq(diamondBase.lastReportRecycledForDay(), 0, "no recycled figures travel");
-    }
-
-    /// Codex #1413 r3 — a LEGACY wire report dispatches the LEGACY ingress
-    /// selector, so an upgraded messenger in front of a PRE-#1222 Base
-    /// diamond (which only exposes the four-argument ingress) keeps
-    /// delivering in-flight legacy reports through the rollout window.
-    function test_Report_LegacyWire_DispatchesLegacyIngressSelector() public {
-        // A diamond stub exposing ONLY the pre-#1222 four-argument ingress.
-        MockLegacyOnlyRewardDiamond legacyDiamond =
-            new MockLegacyOnlyRewardDiamond();
-        vm.prank(owner);
-        rewardBase.setDiamond(address(legacyDiamond));
-
-        vm.prank(address(messengerBase));
-        rewardBase.onCrossChainMessage(
-            MIRROR,
-            address(rewardMirror),
-            abi.encode(REPORT, uint256(7), uint256(11 ether), uint256(3 ether)),
-            _empty()
-        , bytes32(0));
-        assertEq(legacyDiamond.reportCount(), 1, "legacy diamond got the report");
-        assertEq(legacyDiamond.lastReportDay(), 7);
-
-        // Codex r4 — a SIX-word report against the legacy-only diamond
-        // downgrades to the legacy ingress selector (recycled figures
-        // dropped for the window) instead of failing toward a grace-zeroed
-        // day: the missing-selector revert is recognized, nothing else is.
-        vm.prank(address(messengerBase));
-        rewardBase.onCrossChainMessage(
-            MIRROR,
-            address(rewardMirror),
+    /// #2621 — the retired report shapes (four-word legacy, six-word B1,
+    /// nine-word B4) are refused before decode: there is one report shape,
+    /// and prelive rollout is a fresh deploy (no in-flight old reports).
+    function test_Report_RetiredShapes_Rejected() public {
+        bytes[3] memory retired = [
+            abi.encode(REPORT, uint256(42), uint256(1 ether), uint256(1 ether)),
+            abi.encode(REPORT, uint256(42), uint256(1 ether), uint256(1 ether), uint256(0), uint256(0)),
             abi.encode(
-                REPORT, uint256(8), uint256(1 ether), uint256(1 ether), uint256(9 ether), uint256(9 ether)
-            ),
-            _empty()
-        , bytes32(0));
-        assertEq(legacyDiamond.reportCount(), 2, "six-word report downgraded, not lost");
-        assertEq(legacyDiamond.lastReportDay(), 8);
+                REPORT, uint256(42), uint256(1 ether), uint256(1 ether), uint256(0), uint256(0), uint256(0), uint256(0), uint256(5)
+            )
+        ];
+        for (uint256 i; i < retired.length; ++i) {
+            vm.prank(address(messengerBase));
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    VaipakamRewardMessenger.PayloadSizeMismatch.selector,
+                    retired[i].length,
+                    uint256(10 * 32)
+                )
+            );
+            rewardBase.onCrossChainMessage(MIRROR, address(rewardMirror), retired[i], _empty(), bytes32(0));
+        }
+        assertEq(diamondBase.reportCount(), 0, "no retired shape reached the ingress");
     }
 
-    /// Codex #1413 r5 — an EMPTY ingress revert (the OOG-analog: the real
-    /// diamond's missing-selector path always carries FunctionDoesNotExist)
-    /// must NOT downgrade — the report stays failed/retryable.
-    function test_Report_EmptyRevertIngressDoesNotDowngrade() public {
-        MockEmptyRevertingRewardDiamond stub =
-            new MockEmptyRevertingRewardDiamond();
-        vm.prank(owner);
-        rewardBase.setDiamond(address(stub));
-
-        vm.prank(address(messengerBase));
-        vm.expectRevert();
-        rewardBase.onCrossChainMessage(
-            MIRROR,
-            address(rewardMirror),
-            abi.encode(
-                REPORT, uint256(9), uint256(1 ether), uint256(1 ether), uint256(0), uint256(0)
-            ),
-            _empty()
-        , bytes32(0));
-        assertEq(stub.legacyCalls(), 0, "no downgrade on an empty revert");
-    }
-
-    /// Codex #1413 r4 — a REASONED ingress failure must NOT downgrade: only
-    /// the missing-selector shape does. A reverting widened ingress with a
-    /// custom error bubbles unchanged.
+    /// Codex #1413 r4 — a REASONED ingress failure bubbles unchanged, so CCIP
+    /// records the message failed and re-executable.
     function test_Report_ReasonedIngressFailureBubbles() public {
         MockRevertingRewardDiamond revDiamond = new MockRevertingRewardDiamond();
         vm.prank(owner);
@@ -602,39 +432,8 @@ contract VaipakamRewardFlowTest is Test {
         vm.prank(address(messengerBase));
         vm.expectRevert(MockRevertingRewardDiamond.DuplicateReport.selector);
         rewardBase.onCrossChainMessage(
-            MIRROR,
-            address(rewardMirror),
-            abi.encode(
-                REPORT, uint256(9), uint256(1 ether), uint256(1 ether), uint256(0), uint256(0)
-            ),
-            _empty()
-        , bytes32(0));
-        assertEq(revDiamond.legacyCalls(), 0, "no downgrade on a reasoned failure");
-    }
-
-    /// #1222 M3 B1 — a five-word report is neither the legacy nor the current
-    /// shape: rejected as a padded/truncated packet.
-    function test_Report_FiveWordShape_Rejected() public {
-        // 5 words is now a VALID union length (#1434 P2-w3 claimed it for
-        // the comp quote), so a padded REPORT reaches its own per-kind
-        // check and is rejected there — the kind tag disambiguates, never
-        // the length.
-        bytes memory padded = abi.encode(
-            REPORT, uint256(42), uint256(1 ether), uint256(1 ether), uint256(1 ether)
+            MIRROR, address(rewardMirror), abi.encode(REPORT, _report(9)), _empty(), bytes32(0)
         );
-        vm.prank(address(messengerBase));
-        // The per-kind refusal names the widest report shape, B4 (#1566 PR C
-        // revision).
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VaipakamRewardMessenger.PayloadSizeMismatch.selector,
-                uint256(5 * 32),
-                uint256(9 * 32)
-            )
-        );
-        rewardBase.onCrossChainMessage(
-            MIRROR, address(rewardMirror), padded, _empty()
-        , bytes32(0));
     }
 
     // ─── BROADCAST: Base → mirror ───────────────────────────────────────────
@@ -1029,7 +828,7 @@ contract VaipakamRewardFlowTest is Test {
     function test_SendChainReport_RevertWhen_NotDiamond() public {
         vm.deal(address(this), 1 ether);
         vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
-        rewardMirror.sendChainReport{value: fee}(1, 0, 0, 0, 0, payable(owner));
+        rewardMirror.sendChainReport{value: fee}(BASE, _report(1), payable(owner));
     }
 
     /// @dev #1434 P2-w3 — the quote send is Diamond-only like every other
@@ -1105,7 +904,7 @@ contract VaipakamRewardFlowTest is Test {
         rewardBase.onCrossChainMessage(
             MIRROR,
             address(rewardMirror),
-            abi.encode(REPORT, uint256(1), uint256(0), uint256(0)),
+            abi.encode(REPORT, _report(1)),
             _empty()
         , bytes32(0));
     }
@@ -1117,7 +916,7 @@ contract VaipakamRewardFlowTest is Test {
         rewardMirror.onCrossChainMessage(
             BASE,
             address(rewardBase),
-            abi.encode(REPORT, uint256(1), uint256(0), uint256(0)),
+            abi.encode(REPORT, _report(1)),
             _empty()
         , bytes32(0));
     }
@@ -1152,7 +951,7 @@ contract VaipakamRewardFlowTest is Test {
             abi.encodeWithSelector(
                 VaipakamRewardMessenger.PayloadSizeMismatch.selector,
                 short.length,
-                uint256(192)
+                uint256(10 * 32)
             )
         );
         rewardBase.onCrossChainMessage(
@@ -1188,16 +987,11 @@ contract VaipakamRewardFlowTest is Test {
 
     function test_Quotes() public view {
         assertEq(
-            rewardMirror.quoteSendChainReport(1, 0, 0, 0, 0), fee, "report quote"
+            rewardMirror.quoteSendChainReport(BASE, _report(1)), fee, "report quote"
         );
         // #1434 P2-w3 — the compensation-quote dispatch fee.
         assertEq(
             rewardMirror.quoteSendCompQuote(1, 0, 0), fee, "comp-quote fee"
-        );
-        // Codex #1413 r2 — the legacy three-argument quote overload stays
-        // callable for old-ABI callers during the rollout window.
-        assertEq(
-            rewardMirror.quoteSendChainReport(1, 0, 0), fee, "legacy report quote"
         );
         // One broadcast destination → one fee.
         assertEq(
@@ -1213,7 +1007,7 @@ contract VaipakamRewardFlowTest is Test {
         vm.prank(address(diamondMirror));
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         rewardMirror.sendChainReport{value: fee}(
-            1, 0, 0, 0, 0, payable(address(diamondMirror))
+            BASE, _report(1), payable(address(diamondMirror))
         );
     }
 
@@ -1232,7 +1026,7 @@ contract VaipakamRewardFlowTest is Test {
         rewardBase.onCrossChainMessage(
             bigChain,
             address(rewardMirror),
-            abi.encode(REPORT, uint256(1), uint256(0), uint256(0)),
+            abi.encode(REPORT, _report(1)),
             _empty()
         , bytes32(0));
     }
@@ -1258,7 +1052,7 @@ contract VaipakamRewardFlowTest is Test {
         rewardBase.onCrossChainMessage(
             MIRROR,
             address(rewardMirror),
-            abi.encode(REPORT, uint256(1), uint256(0), uint256(0)),
+            abi.encode(REPORT, _report(1)),
             toks
         , bytes32(0));
     }

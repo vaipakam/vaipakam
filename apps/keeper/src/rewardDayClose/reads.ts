@@ -9,7 +9,7 @@
 
 import type { Abi, Address, PublicClient } from 'viem';
 import { boundedRead, PastRunDeadline } from '../batchRead';
-import { ABI, B4_REPORTER_SELECTOR, CLOSE_DAY_SELECTOR, LOUPE_ABI, MESSENGER_ABI, NO_SELECTOR, READ_CHUNK, REASON_FINALIZED } from './constants';
+import { ABI, MESSENGER_ABI, NO_SELECTOR, READ_CHUNK, REASON_FINALIZED } from './constants';
 import type { ChainRun, PeerReader } from './deps';
 import { classify, revertName, shortErr } from './errors';
 import { known, unknown, type Fact, type PerDay } from './fact';
@@ -86,14 +86,13 @@ export async function readReported(c: ChainRun, days: readonly number[], expecte
 }
 
 /** What a mirror reads of one day on Base: whether Base has finalized it,
- *  whether Base could finalize it now, whether it holds this chain's report,
+ *  whether it holds this chain's report,
  *  and whether it included that report in the finalized day (#2626). `included`
  *  is `null` only on a Base that answered it keeps no such record (built
  *  before #2626); a failed read of it is unknown, like every other. Each read
  *  stands alone: a failed one must not hide another. */
 export interface BaseDay {
   finalized: Fact<boolean>;
-  ready: Fact<boolean>;
   counted: Fact<boolean>;
   included: Fact<boolean> | null;
 }
@@ -118,7 +117,6 @@ export async function readBaseDays(base: PeerReader, days: readonly number[], se
     const r = ready?.status === 'success' ? (ready.result as readonly [boolean, number]) : null;
     out.set(d, {
       finalized: r === null ? unknown('readiness on Base unread') : known(Number(r[1]) === REASON_FINALIZED),
-      ready: r === null ? unknown('readiness on Base unread') : known(r[0] === true),
       counted: counted?.status === 'success' ? known(counted.result === true) : unknown("Base's record of this chain's report unread"),
       included: routedOrAbsent<boolean>(included, "Base's record of whether it included this chain's report"),
     });
@@ -195,55 +193,34 @@ export async function destinationStates(c: ChainRun, destinations: readonly numb
   return out;
 }
 
-/** Whether this Diamond's `closeDay` sends the B4 report when its messenger
- *  takes it. The messenger accepts every shape, so its quote says only what it
- *  can take; which shape goes out is the reporter facet's, and a Diamond whose
- *  reporter predates B4 sends B3 to a B4 messenger. Read from the Diamond's
- *  own routing: `closeDay` is hosted by a facet that also hosts
- *  `getInterestFrontiers`, which the reporter gained in the change that gave
- *  it the B4 send. A facet without it predates B4; should a later split move
- *  that view elsewhere, this reads false and the older-shape holds apply,
- *  which fail closed and are said. */
-export async function diamondSendsB4(c: ChainRun): Promise<Fact<boolean>> {
-  const host = (sel: `0x${string}`, what: string) => readOne<Address>(c.deps.client, c.diamond, LOUPE_ABI, 'facetAddress', [sel], `${c.where}: the facet routed for ${what}`);
-  const close = await host(CLOSE_DAY_SELECTOR, 'closeDay');
-  if (!close.known) return unknown(`the facet this Diamond routes closeDay to (${close.why})`);
-  const frontiers = await host(B4_REPORTER_SELECTOR, 'getInterestFrontiers');
-  if (!frontiers.known) return unknown(`the facet this Diamond routes getInterestFrontiers to (${frontiers.why})`);
-  return known(BigInt(close.value) !== 0n && close.value.toLowerCase() === frontiers.value.toLowerCase());
-}
-
-/** The messenger's fee for the report `closeDay` sends. The Diamond sends the
- *  newest report shape the messenger has (B4, then B3, B1 and the legacy one,
- *  each downgrade on a selector the messenger lacks), and the quote walks the
- *  same ladder, stopping at a refusal the messenger names. The payload is
- *  fixed-width, so zero figures price it exactly. `b4` says whether the shape
- *  that quoted is the B4 report. A quote that does not match the shape sent
- *  cannot overpay silently: the `closeDay` simulation is the judge, and
- *  refuses an underpaid send. */
-export async function reportFee(client: PublicClient, messenger: Address, day: number): Promise<{ fee: bigint; b4: boolean } | 'refused' | 'unread'> {
-  const z = 0n;
-  const d = BigInt(day);
-  const ladder: readonly (readonly unknown[])[] = [
-    [d, z, z, z, z, z, z, 0n], // B4: + custody era
-    [d, z, z, z, z, z, z], // B3
-    [d, z, z, z, z], // B1
-    [d, z, z], // legacy
-  ];
-  for (const [i, args] of ladder.entries()) {
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      const fee = (await client.readContract({ address: messenger, abi: MESSENGER_ABI, functionName: 'quoteSendChainReport', args })) as bigint;
-      return { fee, b4: i === 0 };
-    } catch (err) {
-      if (err instanceof PastRunDeadline) throw err;
-      if ('unread' in classify(err)) return 'unread';
-      // A named refusal is the messenger's answer; an unnamed one is a shape
-      // it does not have, so the next one is tried.
-      if (revertName(err) !== undefined) return 'refused';
-    }
+/** The messenger's fee for the report `closeDay` sends: the one report shape
+ *  (#2621), sent to the chain this Diamond names as Base, which is the route
+ *  `closeDay` asks the messenger for. The payload is fixed-width, so zero
+ *  figures price it exactly. A refusal the messenger names is returned by name
+ *  (a messenger routed to another Base refuses with `ReportRouteMismatch`, and
+ *  so would the close); an unnamed one is a messenger without this report
+ *  shape. */
+export async function reportFee(client: PublicClient, messenger: Address, baseChainId: number, day: number): Promise<{ fee: bigint } | { refused: string } | 'unread'> {
+  const report = {
+    dayId: BigInt(day),
+    lenderNumeraire18: 0n,
+    borrowerNumeraire18: 0n,
+    recycledCumulative18: 0n,
+    recycledForDay18: 0n,
+    commitRetiredCumulative18: 0n,
+    commitReleasedCumulative18: 0n,
+    custodyEra: 0n,
+    rewardLaunchTimestamp: 0n,
+  };
+  try {
+    const fee = (await client.readContract({ address: messenger, abi: MESSENGER_ABI, functionName: 'quoteSendChainReport', args: [BigInt(baseChainId), report] })) as bigint;
+    return { fee };
+  } catch (err) {
+    if (err instanceof PastRunDeadline) throw err;
+    if ('unread' in classify(err)) return 'unread';
+    const name = revertName(err);
+    return { refused: name === undefined ? 'the messenger has no quote for the report closeDay sends (it predates the one report shape)' : `the messenger would not quote the report fee (${name})` };
   }
-  return 'refused';
 }
 
 export type Quote = { fee: bigint } | { refused: string } | { unread: string };

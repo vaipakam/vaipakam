@@ -2343,7 +2343,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](39);
+        selectors = new bytes4[](36);
         // #1434 P2-w1 — the V3 broadcast heal (single-destination). The
         // lapse-schedule setter + day-clock reads live on
         // RewardCommitmentFacet (EIP-170 headroom).
@@ -2366,13 +2366,8 @@ contract HelperTest {
             RewardAggregatorFacet.getChainSurplusPosition.selector;
         selectors[5] =
             RewardAggregatorFacet.setRecycleSurplusMultiple.selector;
-        // #1222 M3 B3 — the eight-word report ingress (a THIRD overload, so
-        // pinned by signature) + the commitment-retirement reads.
-        selectors[6] = bytes4(
-            keccak256(
-                "onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256,uint256,uint256)"
-            )
-        );
+        // #2621 — the ONE day-report ingress + the commitment-retirement reads.
+        selectors[6] = RewardAggregatorFacet.onChainReportReceived.selector;
         selectors[7] =
             RewardAggregatorFacet.getChainRecycledCommitRetirement.selector;
         selectors[8] =
@@ -2385,16 +2380,9 @@ contract HelperTest {
         // #1222 M3 B2-b — per-side D1 ceilings + mirror funding counter +
         // the payload-accurate broadcast quote (Codex #1417 r1).
         selectors[11] = RewardAggregatorFacet.getDayUserSideCaps.selector;
-        // #1222 M3 B1 — the ingress is OVERLOADED (six-word shape + the
-        // legacy four-word rollout shim): pin both signatures explicitly.
-        selectors[12] = bytes4(
-            keccak256(
-                "onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256)"
-            )
-        );
-        selectors[13] = bytes4(
-            keccak256("onChainReportReceived(uint32,uint256,uint256,uint256)")
-        );
+        // #2626 / #2619 — what a finalized day counted, as it counted it.
+        selectors[12] = RewardAggregatorFacet.isChainIncluded.selector;
+        selectors[13] = RewardAggregatorFacet.getDayZeroedChains.selector;
         selectors[14] = RewardAggregatorFacet.finalizeDay.selector;
         selectors[15] = RewardAggregatorFacet.forceFinalizeDay.selector;
         selectors[16] = RewardAggregatorFacet.setExpectedSourceChainIds.selector;
@@ -2421,14 +2409,10 @@ contract HelperTest {
             RewardAggregatorFacet.getChainKeeperAllocateBps.selector;
         selectors[31] =
             RewardAggregatorFacet.getChainKeeperDraw.selector;
-        selectors[32] = bytes4(keccak256("onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint64)")); // #1566 PR C revision — the B4 report
+        selectors[32] = RewardAggregatorFacet.getChainAttributionBacklog.selector;
         selectors[33] = RewardAggregatorFacet.getChainCustodyEraReported.selector;
         selectors[34] = RewardAggregatorFacet.setChainDailyAttributionCap.selector;
         selectors[35] = RewardAggregatorFacet.getChainDailyAttributionCap.selector;
-        selectors[36] = RewardAggregatorFacet.getChainAttributionBacklog.selector;
-        // #2626 / #2619 — what a finalized day counted, as it counted it.
-        selectors[37] = RewardAggregatorFacet.isChainIncluded.selector;
-        selectors[38] = RewardAggregatorFacet.getDayZeroedChains.selector;
         return selectors;
     }
 

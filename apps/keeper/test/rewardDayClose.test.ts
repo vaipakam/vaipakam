@@ -206,8 +206,8 @@ class FakeDiamond {
   deliverTo: FakeDiamond | null = null;
   /** `fn:day` → error name a simulation reverts with. */
   refuse = new Map<string, string>();
-  /** `quoteSendChainReport` arities the messenger has (the rest are unknown selectors). */
-  quoteShapes = new Set([8, 7, 5, 3]);
+  /** The messenger predates the one report shape (#2621): its quote is an unknown selector. */
+  quotePredatesReport = false;
   /** Single-destination quotes refuse with this, when set. */
   refuseTo: string | null = null;
   /** Single-destination quotes refuse with this error, by destination. */
@@ -257,9 +257,6 @@ class FakeDiamond {
   /** Days finalized before an upgrade added the record: routed, but unwritten. */
   unrecordedDays = new Set<number>();
   included = new Map<number, Set<number>>();
-  /** Where the loupe says `getInterestFrontiers` is routed: with `closeDay`
-   *  (a B4 reporter), elsewhere (a reporter that predates B4), or unread. */
-  reporterHost: 'b4' | 'preB4' | 'unread' = 'b4';
   /** Governance changes the expected-source list to this right after the
    *  run first reads it (null = no change). */
   expectedChangeTo: number[] | null = null;
@@ -326,8 +323,11 @@ class FakeDiamond {
         return functionName === 'messenger' ? TRANSPORT_OF[this.chainId] : functionName === 'isCanonical' ? this.role === ROLE_CANONICAL : this.diamond;
       }
       if (functionName === 'quoteSendChainReport') {
-        // A shape the messenger lacks: the contract answers with an unnamed revert.
-        if (!this.quoteShapes.has(args?.length ?? 0)) throw new ContractFunctionRevertedError({ abi: ERRORS_ABI, functionName: 'quoteSendChainReport' });
+        // A messenger without the report shape: the contract answers with an unnamed revert.
+        if (this.quotePredatesReport) throw new ContractFunctionRevertedError({ abi: ERRORS_ABI, functionName: 'quoteSendChainReport' });
+        // The route the caller names must be the messenger's own Base (#2621).
+        const route = this.routeTo === 'unread' || this.routeTo === null ? BASE : this.routeTo;
+        if (Number(args![0]) !== route) throw revert('ReportRouteMismatch', [args![0], BigInt(route)]);
         return LANE_FEE;
       }
       if (functionName === 'baseChainId') {
@@ -346,9 +346,6 @@ class FakeDiamond {
       throw new Error(`unexpected messenger read ${functionName}`);
     }
     switch (functionName) {
-      case 'facetAddress':
-        if (this.reporterHost === 'unread') throw new Error('fetch failed');
-        return args![0] === toFunctionSelector('getInterestFrontiers()') && this.reporterHost === 'preB4' ? ZERO : '0x00000000000000000000000000000000000000f1';
       case 'getRewardRole':
         if (this.roleUnread) throw new Error('rpc down');
         return this.role;
@@ -1551,45 +1548,6 @@ describe('a run', () => {
     expect(alerts(/chain 421614 \(day 0 starts .*\) run\(s\) a reward clock different from Base's/)).toHaveLength(1);
   });
 
-  it('a mirror sends no pre-B4 report for a day Base has finalized, since Base would refuse it', async () => {
-    base.finalized.add(1);
-    mirror.sentAt.set(0, NOW - 86_400);
-    mirror.sentAt.set(2, NOW - 86_400);
-    mirror.quoteShapes = new Set([7, 5, 3]);
-    await run(mirror);
-    expect(mirror.sent, 'nothing sent for the finalized day').toEqual([]);
-    expect(alerts(/closing the day \(closeDay\) for reward day 1 is refused \(Base has finalized this day or can finalize it now, and this chain sends an older report than B4.*\(its messenger cannot quote the B4 report\)/)).toHaveLength(1);
-  });
-
-  it("a mirror sends no report for a day Base has finalized when its Diamond's reporter predates B4, whatever its messenger quotes", async () => {
-    base.finalized.add(1);
-    mirror.sentAt.set(0, NOW - 86_400);
-    mirror.sentAt.set(2, NOW - 86_400);
-    mirror.reporterHost = 'preB4'; // a B4 messenger also takes the B3 report an older reporter sends
-    await run(mirror);
-    expect(mirror.sent, 'nothing sent for the finalized day').toEqual([]);
-    expect(alerts(/reward day 1 is refused \(Base has finalized this day or can finalize it now, and this chain sends an older report than B4.*\(its Diamond's reporter facet predates the B4 send/)).toHaveLength(1);
-  });
-
-  it("holds a close Base may finalize first while whether the Diamond sends B4 is unread, and closes a day Base cannot finalize yet", async () => {
-    base.finalized.add(1);
-    mirror.sentAt.set(0, NOW - 86_400);
-    mirror.reporterHost = 'unread';
-    await run(mirror);
-    expect(mirror.sent.map((s) => s.day), 'day 2 is not finalized and cannot be yet: any shape is safe').toEqual([2]);
-    expect(alerts(/for day 1 \(whether this Diamond sends the B4 report: the facet this Diamond routes closeDay to/)).toHaveLength(1);
-  });
-
-  it('a mirror sends no pre-B4 report for a day Base can finalize now, though it has not', async () => {
-    base.reported.set(0, new Set([BASE]));
-    base.firstAt.set(0, NOW - GRACE); // grace has elapsed: anyone may finalize it before a report lands
-    mirror.today = 1;
-    mirror.quoteShapes = new Set([7, 5, 3]);
-    await run(mirror);
-    expect(mirror.sent).toEqual([]);
-    expect(alerts(/reward day 0 is refused \(Base has finalized this day or can finalize it now/)).toHaveLength(1);
-  });
-
   it('keeps a reward clock mismatch it has seen while the mirror cannot be read', async () => {
     base.today = 1;
     base.reported.set(0, new Set([BASE, MIRROR]));
@@ -1612,31 +1570,21 @@ describe('a run', () => {
     expect(alerts(/as last read; this run could not read it/)).toHaveLength(1);
   });
 
-  it('a pre-B4 mirror does not close a day whose finalization on Base is unread, whatever else read', async () => {
-    base.finalized.add(0);
-    base.unreadable.add(MIRROR); // Base's record of this chain's report fails to read; its finalization reads
-    mirror.today = 1;
-    mirror.quoteShapes = new Set([7, 5, 3]);
+  it('a mirror closes a day Base has finalized: the report\'s chain-wide figures still apply there', async () => {
+    base.finalized.add(1);
+    mirror.sentAt.set(0, NOW - 86_400);
+    mirror.sentAt.set(2, NOW - 86_400);
     await run(mirror);
-    expect(mirror.sent, 'Base finalized it, and that read stands on its own').toEqual([]);
-
-    base.unreadable.clear();
-    base.finalized.clear();
-    await dayCloseOnce(env, mirror.chainId, mirror.diamond, {
-      client: mirror.client(),
-      readClient: mirror.client(),
-      context: () => mirror.ctx(),
-      peer: () => null, // this keeper does not serve Base
-      sendDeadline: Number.POSITIVE_INFINITY,
-      feeCeiling: DEFAULT_CAP,
-      runDeadline: Number.POSITIVE_INFINITY,
-    });
-    expect(mirror.sent, 'unknown is not "not finalized"').toEqual([]);
-    // Unserved, the mirror's work toward Base is a tenure of its own, which has
-    // never read Base's clock, so that is the first hold it names.
-    expect(alerts(/closes no reward day while the reward clock of chain\(s\) 84532 is not known/), 'a keeper that does not serve Base closes no day at all').toHaveLength(1);
+    expect(mirror.sent.map((s) => [s.fn, s.day])).toEqual([['closeDay', 1]]);
+    expect(alerts(/refused/)).toEqual([]);
   });
 
+  it('a mirror whose messenger predates the one report shape closes no day, and says why', async () => {
+    mirror.quotePredatesReport = true;
+    await run(mirror);
+    expect(mirror.sent).toEqual([]);
+    expect(alerts(/is refused \(the messenger has no quote for the report closeDay sends \(it predates the one report shape\)\)/).length).toBeGreaterThan(0);
+  });
   it('holds a day whose broadcast landed for one destination while another it is owed was refused', async () => {
     finalizedDayZero();
     await run(base); // the day goes to the mirror
@@ -2003,8 +1951,7 @@ describe('a run', () => {
     expect(alerts(/Base finalized reward day 0 without this chain's report/)).toHaveLength(1);
   });
 
-  it('prices the report on the newest shape the messenger has', async () => {
-    mirror.quoteShapes = new Set([5, 3]); // a B1 messenger
+  it('prices the report along the route closeDay names: the Diamond\'s Base', async () => {
     await run(mirror);
     expect(mirror.sent.map((s) => [s.fn, s.value])).toEqual([
       ['closeDay', LANE_FEE],

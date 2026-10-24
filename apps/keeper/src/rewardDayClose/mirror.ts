@@ -17,7 +17,7 @@
 // Any of them unknown holds every close, and the alerts say which and why. A day's
 // report is still sent when this chain is off Base's expected-source list
 // (Base refuses it, and the run says so) and when Base has finalized the day
-// (the B4 report's chain-wide figures still apply).
+// (the report's chain-wide figures still apply).
 //
 // For every window day, sent or not, a day Base finalized without this
 // chain's report is stated as such, once. Base's outcome for a day is final
@@ -28,15 +28,19 @@
 import type { Address } from 'viem';
 import { clockHold, mirrorClock, peerClock } from './clock';
 import { ROLE_CANONICAL } from './constants';
-import { closeDays, type BaseDays } from './close';
+import { closeDays } from './close';
 import type { ChainRun } from './deps';
 import { known, unknown, type Fact, type PerDay } from './fact';
 import type { MirrorFindings } from './findings';
-import { expectedSources, readBaseDays } from './reads';
+import { expectedSources, readBaseDays, type BaseDay } from './reads';
 import type { Sender } from './sender';
 import type { ClockFacts } from './clock';
 import type { DayStore } from './store';
 import { reportWire } from './wire';
+
+/** What a mirror knows of Base: each window day's state there, or that this
+ *  keeper does not serve Base. */
+type BaseDays = Map<number, BaseDay> | 'unserved';
 
 export interface MirrorInput {
   window: readonly number[];
@@ -68,7 +72,7 @@ export async function runMirror(c: ChainRun, store: DayStore, sender: Sender, x:
     roleHold ??
     (!wire.known ? `the report channel to Base could not be read whole: ${wire.why}` : wire.value.length > 0 ? 'the report channel to Base is not wired to accept a report' : null);
 
-  const run = closeHold === null ? await closeDays(c, store, sender, x.unclosed, { messenger: x.messenger, baseDays }) : { closed: [], dispatched: new Map() };
+  const run = closeHold === null ? await closeDays(c, store, sender, x.unclosed, { messenger: x.messenger, baseChainId: x.baseChainId }) : { closed: [], dispatched: new Map() };
   // This run's unchecked dispatches, and the earlier ones still recorded.
   const dispatched = new Map([...(await store.dispatches(x.window)), ...run.dispatched]);
 

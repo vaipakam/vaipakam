@@ -13,14 +13,14 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
-import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
+import {RewardBroadcastV2, ChainDayReport} from "../src/interfaces/IRewardMessenger.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibRewardDayReport} from "../src/libraries/LibRewardDayReport.sol";
 
-/// @notice Codex #1413 r3 — a stand-in for a PRE-#1222 mirror messenger:
-///         only the legacy four-argument send surface exists. Proves the
-///         upgraded reporter's `closeDay` falls back to it instead of
-///         reverting through the diamond-first rollout window.
+/// @notice A messenger without the one report send (#2621) — what a mirror
+///         Diamond meets if its messenger is rotated to an older build between
+///         a caller's checks and its `closeDay`. Only an older send surface
+///         exists, so the close must revert rather than fall back to it.
 contract LegacyOnlyRewardMessenger {
     uint256 public lastSendDay;
     uint256 public lastSendLenderNumeraire18;
@@ -369,7 +369,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _configureCanonical();
         vm.prank(alice);
         vm.expectRevert(NotAuthorizedRewardMessenger.selector);
-        _agg().onChainReportReceived(CHAIN_ARB, 1, 10e18, 5e18, 0, 0);
+        ChainDayReport memory r;
+        r.dayId = 1;
+        _agg().onChainReportReceived(CHAIN_ARB, r);
     }
 
     function testOnChainReportRevertsOnNonCanonical() public {
@@ -1382,30 +1384,58 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertEq(credit, 0);
     }
 
-    /// Codex #1413 r2 — the LEGACY four-argument ingress overload stays
-    /// live (an already-deployed messenger delivering in-flight legacy
-    /// reports through Base's upgraded diamond) and forwards zero recycled
-    /// figures. Same trust gate as the six-argument shape.
-    function testLegacyIngressOverloadAcceptsAndAdvancesNothing() public {
+    /// #2620 — a report from a chain whose reward clock is not Base's: its day
+    /// figures never count (its day 1 is a different stretch of time), while
+    /// what it says about the chain still applies, and the day is not marked
+    /// reported, so it finalizes with that chain zeroed.
+    function testClockMismatchDropsDayFiguresKeepsChainWide() public {
         _configureCanonical();
-
-        vm.prank(address(messenger));
-        RewardAggregatorFacet(address(diamond)).onChainReportReceived(
-            CHAIN_ARB, 1, 25e18, 15e18
+        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
+            block.timestamp
         );
+        uint256 baseLaunch = block.timestamp;
+        ChainDayReport memory r = ChainDayReport({
+            dayId: 1,
+            lenderNumeraire18: 25e18,
+            borrowerNumeraire18: 15e18,
+            recycledCumulative18: 40e18,
+            recycledForDay18: 4e18,
+            commitRetiredCumulative18: 0,
+            commitReleasedCumulative18: 0,
+            custodyEra: 3,
+            rewardLaunchTimestamp: baseLaunch + 1 hours
+        });
 
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit RewardAggregatorFacet.ChainReportClockMismatch(
+            CHAIN_ARB, 1, baseLaunch + 1 hours, baseLaunch
+        );
+        messenger.deliverChainDayReport(CHAIN_ARB, r);
+
+        assertFalse(_agg().isChainReported(1, CHAIN_ARB), "day figures not taken");
+        assertEq(_agg().getChainDailyReportCount(1), 0, "no report counted toward the day");
+        (uint256 reported, , , ) = _agg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 40e18, "the chain-wide cumulative applies");
+        assertEq(_agg().getChainCustodyEraReported(CHAIN_ARB), 3, "the era applies");
+
+        // The same chain on Base's clock is taken whole: the dropped report
+        // left nothing behind that refuses it.
+        r.rewardLaunchTimestamp = baseLaunch;
+        messenger.deliverChainDayReport(CHAIN_ARB, r);
+        assertTrue(_agg().isChainReported(1, CHAIN_ARB), "a matching clock counts");
+    }
+
+    /// #2620 — a report on Base's clock is taken exactly as before.
+    function testMatchingClockCountsDayFigures() public {
+        _configureCanonical();
+        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
+            block.timestamp
+        );
+        messenger.deliverChainReport(CHAIN_ARB, 1, 25e18, 15e18);
         assertTrue(_agg().isChainReported(1, CHAIN_ARB), "interest recorded");
-        (uint256 reported, , , uint256 attributed) =
-            _agg().getChainRecycledLedger(CHAIN_ARB);
-        assertEq(reported, 0, "no recycled figures travel on the legacy shape");
-        assertEq(attributed, 0);
-
-        // Same auth gate as the six-argument shape.
-        vm.prank(alice);
-        vm.expectRevert(NotAuthorizedRewardMessenger.selector);
-        RewardAggregatorFacet(address(diamond)).onChainReportReceived(
-            CHAIN_OP, 1, 1e18, 1e18
-        );
+        (uint256 lender, uint256 borrower) = _agg().getChainReport(1, CHAIN_ARB);
+        assertEq(lender, 25e18);
+        assertEq(borrower, 15e18);
     }
 
     /// Codex #1413 r5 — a diamond refreshed in place over live pre-#1222
@@ -1463,11 +1493,12 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertEq(messenger.lastSendRecycledForDay18(), 7e18, "closing day's bucket rides the report");
     }
 
-    /// Codex #1413 r3 — an upgraded mirror diamond in front of a
-    /// NOT-yet-upgraded messenger (legacy four-argument surface only) falls
-    /// back to the legacy send instead of reverting the permissionless
-    /// day-close through the rollout window.
-    function testCloseDayMirrorFallsBackToLegacyMessenger() public {
+    /// #2621 — a messenger without the one report send (an older build,
+    /// rotated in between a caller's checks and its close) makes `closeDay`
+    /// revert, and the day stays unsent: no fallback to an older shape, and no
+    /// stamp that would keep the day from being sent once the messenger is
+    /// right.
+    function testCloseDayRevertsOnAMessengerWithoutTheReportSend() public {
         _configureMirror(CHAIN_ARB);
         LegacyOnlyRewardMessenger legacyMessenger =
             new LegacyOnlyRewardMessenger();
@@ -1477,23 +1508,23 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         );
         _mut().setDailyLenderInterest(1, alice, 25e18, 25e18);
         _mut().setKnownGlobalSet(1, false);
-        _mut().setRecycleCreditedCumulativeRaw(123e18);
         vm.warp(block.timestamp + 2 days + 1);
 
         vm.deal(alice, 1 ether);
         vm.prank(alice);
+        vm.expectRevert();
         _rep().closeDay{value: 0.3 ether}(1);
+        assertEq(legacyMessenger.sendCount(), 0, "no older shape was sent");
 
-        assertEq(legacyMessenger.sendCount(), 1, "fell back to the legacy send");
-        assertEq(legacyMessenger.lastSendDay(), 1);
-        assertEq(legacyMessenger.lastSendLenderNumeraire18(), 25e18);
-        assertEq(legacyMessenger.lastSendRefund(), alice, "refund beneficiary kept");
+        // The right messenger then sends the same day.
+        _rep().setRewardMessenger(address(messenger));
+        vm.prank(alice);
+        _rep().closeDay{value: 0.3 ether}(1);
+        assertEq(messenger.sendCount(), 1, "the day was still sendable");
+        assertEq(messenger.lastSendDest(), CHAIN_BASE, "to this Diamond's Base");
     }
 
-    /// Codex #1413 r4 — a REASONED six-argument send failure (fee shortfall,
-    /// pause) bubbles unchanged; only the missing-selector (empty-revert)
-    /// shape downgrades to the legacy send. Downgrading a real failure would
-    /// permanently strip the day's recycled fields.
+    /// A REASONED send failure (fee shortfall, pause) bubbles unchanged.
     function testCloseDayMirrorReasonedSendFailureBubbles() public {
         _configureMirror(CHAIN_ARB);
         InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
