@@ -1,17 +1,23 @@
 /**
  * #2422 r7 — parsing a review receipt against its en.json templates. The
  * strings are the ones the deployed app rendered for loan 22 → request #45
- * on 2026-10-05, so a parser regression shows up against real output.
+ * on 2026-10-05, so a parser regression shows up against real output —
+ * with every AMOUNT re-rendered by the app's own `formatTokenAmountExact`,
+ * because #2537 made every receipt amount exact (the 2026-10-05 build still
+ * rounded them). Rendering them through the app's formatter keeps the
+ * fixtures from drifting from what the page prints.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
+import { formatTokenAmountExact } from '../../src/lib/format';
 import { refinancePayoffAt } from './refinanceExpected.mjs';
 import {
   amountMatches,
   compareBorrowerReceipt,
+  exactUnits,
   compareLenderReceipt,
   matchTemplate,
   parseAmount,
@@ -55,16 +61,26 @@ describe('reviewTerms — templates', () => {
   });
 });
 
-describe('reviewTerms — values at display precision', () => {
-  it('matches amounts the way formatTokenAmount rounds them', () => {
-    expect(parseAmount('0.005 WETH')).toEqual({ num: 0.005, symbol: 'WETH' });
-    expect(amountMatches(0.005, 5_000_000_000_000_000n, 18)).toBe(true);
-    // 0.005 WETH × 12% × 30d / 365 = 0.0000493150… → "0.00004932"
-    expect(amountMatches(0.00004932, 49_315_068_493_150n, 18)).toBe(true);
-    expect(amountMatches(0.00004931, 49_315_068_493_150n, 18)).toBe(false);
-    expect(amountMatches(100, 100n * 10n ** 18n, 18)).toBe(true);
-    expect(amountMatches(10, 100n * 10n ** 18n, 18)).toBe(false);
-    expect(parseAmount('1,234.5 USDC')).toEqual({ num: 1234.5, symbol: 'USDC' });
+const WETH = (raw) => `${formatTokenAmountExact(raw, 18)} WETH`;
+
+describe('reviewTerms — values, exactly', () => {
+  it('matches an amount only when it IS the on-chain amount, in base units', () => {
+    expect(parseAmount('0.005 WETH')).toEqual({ text: '0.005', symbol: 'WETH' });
+    expect(amountMatches('0.005', 5_000_000_000_000_000n, 18)).toBe(true);
+    // 0.005 WETH × 12% × 30d / 365 = 49,315,068,493,150 wei, rendered whole.
+    expect(amountMatches(parseAmount(WETH(49_315_068_493_150n)).text, 49_315_068_493_150n, 18)).toBe(true);
+    // A rounded figure is a DIFFERENT amount now (#2537 renders exact ones).
+    expect(amountMatches('0.00004932', 49_315_068_493_150n, 18)).toBe(false);
+    expect(amountMatches('1.00004', 10n ** 18n, 18)).toBe(false);
+    expect(amountMatches('1', 10n ** 18n + 1n, 18)).toBe(false);
+    expect(amountMatches('1.000000000000000001', 10n ** 18n + 1n, 18)).toBe(true);
+    expect(amountMatches('100', 100n * 10n ** 18n, 18)).toBe(true);
+    expect(amountMatches('10', 100n * 10n ** 18n, 18)).toBe(false);
+    // More decimals than the token has cannot be any on-chain amount.
+    expect(exactUnits('0.1234567', 6)).toBeNull();
+    expect(parseAmount('1,234.5 USDC')).toEqual({ text: '1234.5', symbol: 'USDC' });
+    expect(parseAmount('12,34.5 USDC')).toBeNull();
+    expect(parseAmount('~0.005 WETH')).toBeNull();
     expect(parseAmount('lots of WETH')).toBeNull();
   });
 
@@ -109,9 +125,9 @@ describe('reviewTerms — values at display precision', () => {
 });
 
 // The receipts the deployed app rendered for loan 22 → request #45 on
-// 2026-10-05, row by row, exactly as captured.
+// 2026-10-05, row by row — amounts re-rendered exactly (see the header).
 const LENDER_ROWS = [
-  ['You receive', 'Up to ~0.00004932 WETH interest if the borrower repays on time, plus your 0.005 WETH back. Interest is full-term: the whole term’s interest applies even if the loan is repaid early.'],
+  ['You receive', `Up to ~${WETH(49_315_068_493_150n)} interest if the borrower repays on time, plus your 0.005 WETH back. Interest is full-term: the whole term’s interest applies even if the loan is repaid early.`],
   ['You lock', '0.005 WETH lent to the borrower, now.'],
   ['You may owe', 'Nothing — the borrower owes you.'],
   ['You can lose', 'If the borrower defaults, your recovery depends on their collateral. They lock 100 tCOL. One side of this deal isn’t priced by the protocol — it has no usable market price or deep-enough trading market right now. If it ends in default, the entire collateral transfers directly to the lender — nobody sells it for a fair market price first, and there is no automatic price-based liquidation. Only proceed if you accept that.'],
@@ -137,22 +153,24 @@ const LOAN22 = {
 };
 const REVIEW_AT = 1_791_190_250n; // chain time of the 2026-10-05 review
 const GRACE_END = 1_793_470_120n + 86_400n; // loan end + 1-day grace
+const PAYOFF_NOW = refinancePayoffAt(LOAN22, REVIEW_AT);
+const HEADROOM = refinancePayoffAt(LOAN22, GRACE_END) - PAYOFF_NOW;
+const TOP_UP = PAYOFF_NOW - LOAN22.principal + 10_000_000_000_000n;
 const BORROWER_ROWS = [
   ['You receive', EN.refinance.receiptReceive],
   ['You lock', EN.refinance.receiptLock],
-  ['You may owe', '~0.00504 WETH to pay off this loan, pulled automatically when a lender accepts. The old loan’s payoff is always the loan amount plus the full remaining term’s interest — even if interest on the loan normally builds up day by day. That is the exiting lender’s fixed entitlement on an early exit. If a lender accepts after the loan’s due date, the payoff grows — the late fee for being late plus interest that keeps building up — by up to ~0.00007637 WETH more for this request. The approval you grant covers that too, so a late acceptance can’t fail on it. The payoff is pulled from your wallet automatically at the moment a lender accepts. The new loan’s money arrives in the same transaction, so keep about 0.00004973 WETH spare in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.'],
+  ['You may owe', `~${WETH(PAYOFF_NOW)} to pay off this loan, pulled automatically when a lender accepts. The old loan’s payoff is always the loan amount plus the full remaining term’s interest — even if interest on the loan normally builds up day by day. That is the exiting lender’s fixed entitlement on an early exit. If a lender accepts after the loan’s due date, the payoff grows — the late fee for being late plus interest that keeps building up — by up to ~${WETH(HEADROOM)} more for this request. The approval you grant covers that too, so a late acceptance can’t fail on it. The payoff is pulled from your wallet automatically at the moment a lender accepts. The new loan’s money arrives in the same transaction, so keep about ${WETH(TOP_UP)} spare in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.`],
   ['You can lose', EN.refinance.shortIsSafe],
   ['Fees', 'Vaipakam charges a 0.2% loan initiation fee on the borrowed amount. The protocol’s 2% cut of the payoff interest settles inside the payoff.'],
   ['When this ends', `When a lender accepts your request, when you cancel it, or when it expires with this loan’s grace window (Nov 1, 2026) — a refinance request can’t outlive the loan it replaces. ${EN.refinance.guardrailNote}`],
 ].map(([label, value]) => ({ label, value }));
 function borrowerCtx(over = {}) {
-  const payoffNow = refinancePayoffAt(LOAN22, REVIEW_AT);
   return {
     en: EN,
     principal: { decimals: 18, symbol: 'WETH' },
-    payoffNow,
-    headroom: refinancePayoffAt(LOAN22, GRACE_END) - payoffNow,
-    topUp: payoffNow - LOAN22.principal + 10_000_000_000_000n,
+    payoffNow: PAYOFF_NOW,
+    headroom: HEADROOM,
+    topUp: TOP_UP,
     lifBps: 20,
     treasuryFeeBps: 200n,
     clamped: true,
