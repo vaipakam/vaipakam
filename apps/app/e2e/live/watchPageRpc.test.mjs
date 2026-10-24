@@ -38,6 +38,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { watchPageRpc } from './driver.mjs';
+import { blockFrom } from './sourceBlock.mjs';
 import { FakePage, FakeWebSocket } from './fakePage.mjs';
 
 // A page request carrying a JSON-RPC body (one call, id 1, by default) —
@@ -410,17 +411,14 @@ describe('drives that attach watchPageRpc', () => {
 // `launch()`, which needs a real browser, so the order is pinned by text.
 describe('the shared closes drain the watchers first', () => {
   const src = fs.readFileSync(fileURLToPath(new URL('./driver.mjs', import.meta.url)), 'utf8');
-  const body = (start) => src.slice(src.indexOf(start), src.indexOf('\n    },\n', src.indexOf(start)));
-
   it('done() drains before it closes the context', () => {
-    const done = body('    done: async () => {');
+    const done = blockFrom(src, 'done: async () => {');
     expect(done.indexOf('await drainWatchers()')).toBeGreaterThan(-1);
     expect(done.indexOf('await drainWatchers()')).toBeLessThan(done.indexOf('await ctx.close()'));
   });
 
   it('blocked() drains before it closes the browser', () => {
-    const start = src.indexOf('export async function blocked(');
-    const blk = src.slice(start, src.indexOf('\n}\n', start));
+    const blk = blockFrom(src, 'export async function blocked(why, err, cleanup) {');
     expect(blk.indexOf('await drainWatchers()')).toBeGreaterThan(-1);
     expect(blk.indexOf('await drainWatchers()')).toBeLessThan(blk.indexOf('LIVE_BROWSER?.close()'));
   });
