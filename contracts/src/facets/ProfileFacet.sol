@@ -497,8 +497,9 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
      *         Deliberately NOT `whenNotPaused`: withdrawing consent to be
      *         charged must stay possible at every moment, and granting it
      *         while paused moves nothing (billing is itself paused). Not a
-     *         sanctions-screened entry for the same reason: it authorizes a
-     *         debit and moves no funds, and the debit path screens the payer.
+     *         sanctions-screened entry either: it moves no funds, and a
+     *         flagged wallet must still be able to revoke. The bill itself
+     *         does not screen the payer; this record does not change that.
      *
      *         Reverts {LibNotificationFee.NotificationFeeConsentAboveCeiling}
      *         above `MAX_NOTIFICATION_FEE_CEIL`; consent to the ceiling itself
