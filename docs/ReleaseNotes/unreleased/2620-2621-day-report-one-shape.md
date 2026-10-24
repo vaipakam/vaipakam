@@ -1,4 +1,4 @@
-## Rewards — the day-close safety rules move into the contract (PR #TBD)
+## Rewards — the day-close safety rules move into the contract (PR #2790)
 
 Closing a reward day and finalizing it are both open to anyone. Until now, three of the rules that make those calls safe were enforced only by the platform's own keeper, so anyone else could still make an unsafe call. They are now enforced by the contracts for every caller.
 
