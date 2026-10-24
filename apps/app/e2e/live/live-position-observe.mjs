@@ -110,9 +110,15 @@ import {
   refinancePostureVerdict,
 } from './refinancePosture.mjs';
 import { redactUrl } from './redact.mjs';
-import { isDetailPath, visitProblemKinds, visitVerdict } from './visitVerdict.mjs';
+import {
+  firstNavigationBlocker,
+  isDetailPath,
+  visitProblemKinds,
+  visitVerdict,
+} from './visitVerdict.mjs';
 import { walkOrderFor } from './walkOrder.mjs';
 import { withVisibility } from './visibility.mjs';
+import { createInFlight } from './inFlight.mjs';
 import { createPageHeadTracker } from './pageHead.mjs';
 import {
   EXECUTION_REVERTED,
@@ -2061,6 +2067,60 @@ function watchWebSockets(page) {
  */
 const routeFailures = [];
 /**
+ * How long this process waits for a page request it is proxying (#1633
+ * item 6).
+ *
+ * The proxied fetch had no deadline, so a dependency that STALLED (as
+ * opposed to failing) was recorded nowhere: the page waited, the 45s
+ * chooser wait expired, and the run reported "chooser MISSING" on an
+ * eligible loan, which is a product FAIL for an infrastructure fault.
+ * With a deadline the stall ends as an abort, the abort is filed in
+ * `routeFailures`, and the route gate reports the run BLOCKED.
+ *
+ * It is also what bounds the two waits that read the outcome: a visit
+ * whose chooser wait runs out waits for its own page's requests, and the
+ * report waits for every request (`routeInFlight`). Without a deadline
+ * neither wait could end. The chain probe in this file already had one
+ * of its own (`CHAIN_PROBE_TIMEOUT_MS`).
+ */
+const ROUTE_FETCH_TIMEOUT_MS = 30_000;
+/**
+ * Route handlers still running, so the report can wait for them (#1633
+ * item 6). See `inFlight.mjs`: the report is read only after every one
+ * has recorded its outcome, bounded by the fetch deadline, and a handler
+ * that still has not finished is filed as a route failure rather than
+ * left out of the verdict.
+ */
+const routeInFlight = createInFlight();
+// Called only once the router is installed, after `routeHandler` exists.
+// Keyed by the issuing page's cohort, so a visit waits for its own page's
+// requests and not for another page's.
+const trackedRouteHandler = routeInFlight.track(
+  (route) => routeHandler(route),
+  (route) => cohortOfRequest(route.request()),
+);
+/** The same wait, for ONE page's requests — see the chooser wait in `visit`. */
+async function drainPageRequests(page, label) {
+  const stuck = await routeInFlight.drain(ROUTE_FETCH_TIMEOUT_MS + 5_000, cohortOfPage(page));
+  if (stuck > 0) {
+    routeFailures.push({
+      url: label,
+      why: `${stuck} page request(s) still unanswered after the chooser wait`,
+    });
+  }
+}
+async function drainRouteHandlers() {
+  // A margin over the fetch deadline, so a handler whose fetch timed out
+  // has time to file its own failure before this files it again.
+  const stuck = await routeInFlight.drain(ROUTE_FETCH_TIMEOUT_MS + 5_000);
+  if (stuck > 0) {
+    routeFailures.push({
+      url: '(page requests)',
+      why: `${stuck} proxied request(s) were still unfinished when the run ended`,
+    });
+  }
+}
+/**
  * Requests the PAGE sent that a reachable provider rejected as malformed.
  *
  * The opposite verdict to `routeFailures` despite arriving down the same
@@ -2234,6 +2294,9 @@ const routeHandler = async (route) => {
       ),
       body: req.postDataBuffer() ?? undefined,
       redirect: 'follow',
+      // Covers the body read below as well as the headers: a stall at
+      // either point ends as an abort that the catch files (#1633 item 6).
+      signal: AbortSignal.timeout(ROUTE_FETCH_TIMEOUT_MS),
     });
     const buf = Buffer.from(await resp.arrayBuffer());
     const headers = {};
@@ -2438,7 +2501,7 @@ const initScript = () => {
 // the wrapping is a one-line change per site rather than a re-indent of
 // three large bodies — the behaviour of each handler is untouched.
 await discovery('installing the request router', () =>
-  ctx.route('**/*', routeHandler),
+  ctx.route('**/*', trackedRouteHandler),
 );
 await discovery('exposing the wallet binding', () =>
   ctx.exposeBinding('__watchRequest', watchRequestHandler),
@@ -2637,12 +2700,22 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
       // wait for the assertion's own subject. A timeout here is NOT an
       // error to propagate — absence is a legitimate observation, and
       // the reporting below is what decides whether it is a failure.
-      await page
-        .locator('section.card')
-        .filter({ hasText: CHOOSER.title })
-        .first()
+      const chooserCard = page.locator('section.card').filter({ hasText: CHOOSER.title }).first();
+      const shown = await chooserCard
         .waitFor({ state: 'visible', timeout: 45_000 })
-        .catch(() => {});
+        .then(() => true, () => false);
+      // #1633 item 6 — THE WAIT RAN OUT, BUT DID THE PAGE'S DEPENDENCIES?
+      //
+      // A request the page was still waiting on when the 45s ran out made
+      // the absence a statement about that dependency, not about the app,
+      // and nothing recorded it: the run reported "chooser MISSING". So the
+      // requests THIS page has in flight now are waited for, each bounded
+      // by the proxy deadline. One that answers lets the page finish
+      // rendering before the scrape below; one that times out files its
+      // own route failure; one that outlives even this bound is filed here.
+      // Either filing blocks the run at the route gate. Requests begun
+      // during the wait are not waited for, so polling cannot hold it open.
+      if (!shown) await drainPageRequests(page, path);
     }
     // Short settle regardless: lets the cards below the chooser (the
     // hold card among them) finish their own reads before we scrape.
@@ -7709,6 +7782,11 @@ async function anchorAudit(page, card) {
 const visited = [];
 const racedOut = [];
 visited.push(await visit('/positions'));
+// #1633 item 4 — the first navigation is this drive's reachability check.
+// When the site itself was not served, no position page is walked (each
+// would be judged against the same error body) and the run is reported
+// BLOCKED at the route gate below rather than as a FAIL row.
+const siteUnreachable = firstNavigationBlocker(visited[0]);
 // Walk candidates until MAX_POSITIONS pages have actually been OBSERVED,
 // not merely attempted. A pre-slice let a raced-out candidate consume the
 // quota, so the drive silently verified fewer pages than asked for — and
@@ -7794,7 +7872,7 @@ if (REFI_POSTURE) {
   );
 }
 for (const l of readyFirst) {
-  if (observedDetails >= MAX_POSITIONS) break;
+  if (siteUnreachable !== null || observedDetails >= MAX_POSITIONS) break;
   const changed = await stillEligible(l);
   if (changed) {
     racedOut.push(`${l.id} (${changed})`);
@@ -7804,6 +7882,8 @@ for (const l of readyFirst) {
   observedDetails += 1;
 }
 await browser.close();
+// Before anything below reads `routeFailures` or the ledger (#1633 item 6).
+await drainRouteHandlers();
 
 if (racedOut.length) {
   console.log(
@@ -7830,8 +7910,11 @@ for (const v of visited) {
   // outranks `blocked` at the exit below, and the module deliberately
   // returns both for every visit rather than choosing between them.
   const { problems } = visitVerdict(v, ROLE);
-  const verdict = problems.length ? 'FAIL' : 'ok';
-  if (problems.length) failures++;
+  // The unreachable first page is not a product finding (#1633 item 4):
+  // its row says so, and it is not counted toward `failures`.
+  const unreachable = v === visited[0] && siteUnreachable !== null;
+  const verdict = unreachable ? 'BLOCK' : problems.length ? 'FAIL' : 'ok';
+  if (problems.length && !unreachable) failures++;
   console.log(`${verdict.padEnd(5)} ${v.path.padEnd(16)} http=${v.http ?? '-'} connected=${v.connected ?? '-'}`);
   if (detail && !v.nav) {
     console.log(
@@ -8109,7 +8192,11 @@ if (ROLE === 'borrower') {
   );
 }
 
-console.log(`\n${visited.length - failures}/${visited.length} routes clean`);
+console.log(
+  siteUnreachable !== null
+    ? `\nno route reviewed: the site was not served`
+    : `\n${visited.length - failures}/${visited.length} routes clean`,
+);
 
 // A page-initiated write attempt is a regression in the app; a
 // too-narrow allowlist means this run simply cannot be trusted. Neither
@@ -8263,6 +8350,17 @@ if (routeFailures.length) {
   console.log(
     `  → the site, the RPC endpoint or the egress proxy was unreachable.` +
       ` Nothing observed here can be trusted; re-run.`,
+  );
+  process.exit(2);
+}
+// #1633 item 4 — the site itself was not served, which no other gate
+// sees: an HTTP error page is a fetch that SUCCEEDED, so it is not in
+// `routeFailures`. Same class as the gate above and placed with it, ahead
+// of `failures`, so an outage is not reported as a broken product.
+if (siteUnreachable !== null) {
+  console.log(`\nBLOCKED: the site was not served — ${siteUnreachable}.`);
+  console.log(
+    `  → no position page was walked. Check SITE_URL and the deployment, then re-run.`,
   );
   process.exit(2);
 }
