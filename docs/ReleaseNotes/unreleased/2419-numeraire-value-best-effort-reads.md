@@ -21,7 +21,11 @@ blocks the settlement it records: an entry too large for its field is stored
 at the field's maximum, and the running total stops at its maximum rather than
 overflowing.
 
-Entries already in the fee log are not revalued; a Diamond refreshed in place
-keeps its earlier entries as recorded. The reward-accounting valuations and the
+The fee log is a new ledger written only on this valuation, so every entry it
+holds and its running total share one scale. A Diamond refreshed in place
+starts that ledger empty: its fee totals and revenue windows count only fees
+recorded after the refresh, and the earlier log is no longer read. The
+per-asset daily revenue figures, which are kept in each token's own amounts,
+are unaffected. The reward-accounting valuations and the
 Full fee-entitlement tariff quote (whose tariff funds the recycling bucket)
 belong to the rewards and recycling work and are not part of this change. Closes #2419.

@@ -59,9 +59,9 @@ contract MetricsRevenueByAssetTest is SetupTest {
     }
 
     /// @dev Pre-deploy days are NOT backfilled (D5). Empty buckets
-    ///      across the whole window stay zero, the lifetime aggregate
-    ///      `getRevenueStats(uint256)` (legacy, scans feeEventsLog) is
-    ///      where pre-deploy revenue still surfaces.
+    ///      across the whole window stay zero; the cross-asset aggregate
+    ///      `getRevenueStats(uint256)` scans `feeLedger` instead, which
+    ///      itself counts only fees recorded since that ledger began.
     function testNoBackfill_preDeployStaysZero() public view {
         (uint256 total,) = rev.getRevenueStats(mockERC20, 30);
         assertEq(total, 0);

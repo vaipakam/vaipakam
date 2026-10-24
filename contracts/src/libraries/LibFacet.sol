@@ -119,14 +119,14 @@ library LibFacet {
         // value that does not fit
         // forge-lint: disable-next-line(unsafe-typecast)
         uint192 logged = numeraireValue > type(uint192).max ? type(uint192).max : uint192(numeraireValue);
-        s.feeEventsLog.push(
+        s.feeLedger.push(
             LibVaipakam.FeeEvent({
                 timestamp: uint64(block.timestamp),
                 numeraireValue: logged
             })
         );
-        uint256 cumulative = s.cumulativeFeesNumeraire;
-        s.cumulativeFeesNumeraire = numeraireValue > type(uint256).max - cumulative
+        uint256 cumulative = s.feeLedgerTotal;
+        s.feeLedgerTotal = numeraireValue > type(uint256).max - cumulative
             ? type(uint256).max
             : cumulative + numeraireValue;
     }

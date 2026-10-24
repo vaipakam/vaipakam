@@ -585,7 +585,7 @@ library LibVaipakam {
 
     uint256 constant KYC_TIER0_THRESHOLD_NUMERAIRE = 1_000 * 1e18; // Tier0 max
     uint256 constant KYC_TIER1_THRESHOLD_NUMERAIRE = 10_000 * 1e18; // Tier1 max
-    uint256 constant MAX_FEE_EVENTS_ITER = 10_000; // Max feeEventsLog entries scanned per window query in MetricsFacet
+    uint256 constant MAX_FEE_EVENTS_ITER = 10_000; // Max feeLedger entries scanned per window query in MetricsFacet
     uint256 constant SEQUENCER_GRACE_PERIOD = 3600; // 1h post-recovery grace on L2s before prices are trusted again
 
     // ─── T-044 — duration-tiered loan-default grace bounds ───────────────
@@ -2578,7 +2578,7 @@ library LibVaipakam {
      *      treasury is the Diamond itself; external-treasury deployments
      *      push the tokens straight to the multisig, so `treasuryBalances`
      *      stays at zero for those fee paths (the fee still lives on-chain
-     *      in the event log and `cumulativeFeesNumeraire`).
+     *      in `feeLedger` and `feeLedgerTotal`).
      */
     struct FeeEvent {
         uint64 timestamp;
@@ -2907,7 +2907,7 @@ library LibVaipakam {
      *          {LibFacet.recordTreasuryAccrual} only when `treasury ==
      *          address(this)`; external-treasury deployments leave this
      *          ledger at zero because the fees are pushed out synchronously
-     *          (see `feeEventsLog` / `cumulativeFeesNumeraire` for the analytics
+     *          (see `feeLedger` / `feeLedgerTotal` for the analytics
      *          of record). Monotone non-decreasing between accruals;
      *          reset to zero by `TreasuryFacet.claimTreasuryFees`. Any
      *          interest/late-fee split that debits lender/borrower MUST
@@ -3113,7 +3113,7 @@ library LibVaipakam {
         // `LibFacet.recordTreasuryAccrual` call; read by
         // `MetricsFacet.getRevenueStats(address asset, uint16 windowDays)`
         // to produce O(windowDays) sums for rolling-window cards
-        // without scanning the full feeEventsLog. Pre-deploy windows
+        // without scanning the full feeLedger. Pre-deploy windows
         // start empty (no backfill — D5).
         mapping(address => mapping(uint256 => uint256)) treasuryAccrualByDay;
         // AnalyticalGettersDesign §3.4 — per-asset, per-UTC-day price
@@ -3179,16 +3179,12 @@ library LibVaipakam {
         // `ProfileFacet.setLoanKeeperEnabled`.
         mapping(uint256 => mapping(address => bool)) loanKeeperEnabled;
         mapping(uint256 => mapping(address => bool)) offerKeeperEnabled;
-        // README §13 analytics surface: timestamped log of every treasury-fee
-        // accrual, priced in the active numeraire at accrual time. Appended
-        // by LibFacet.recordTreasuryAccrual. Consumed by MetricsFacet for the
-        // 24h/7d revenue windows and getRevenueStats(days_). Capped per query
-        // by MAX_FEE_EVENTS_ITER on read.
+        // RETIRED by #2419 — no longer written or read. The treasury fee
+        // ledger lives in `feeLedger` / `feeLedgerTotal` (appended at the
+        // tail of this struct). Kept only because a Diamond's storage cannot
+        // drop a field.
         FeeEvent[] feeEventsLog;
-        // Monotone cumulative sum of numeraireValue across feeEventsLog
-        // entries — tracked separately so
-        // MetricsFacet.getTreasuryMetrics.totalFeesCollectedNumeraire is an
-        // O(1) read. Never decreases.
+        // RETIRED by #2419 with `feeEventsLog`; see `feeLedgerTotal`.
         uint256 cumulativeFeesNumeraire;
         // README §16 Phase 1 KYC pass-through flag. When FALSE (the default
         // at Phase 1 launch), every `meetsKYCRequirement` / `isKYCVerified`
@@ -8205,6 +8201,24 @@ library LibVaipakam {
         ///      billing role could debit any loan party; the opt-in lived only
         ///      off-chain. Appended — append-only.
         mapping(address => uint256) notificationFeeConsentCap;
+        /// @dev #2419 — the treasury fee ledger (README §13 analytics): one
+        ///      timestamped entry per treasury-fee accrual, valued in the
+        ///      active numeraire at accrual time by the one shared rule
+        ///      (1e18-scaled, rounded down; 0 when the rule cannot value the
+        ///      fee). Appended only by `LibFacet.recordTreasuryAccrual`;
+        ///      read by MetricsFacet for the 24h/7d revenue windows and
+        ///      `getRevenueStats(days_)`, capped per query by
+        ///      MAX_FEE_EVENTS_ITER. A ledger holds one unit throughout, so it
+        ///      replaces the retired `feeEventsLog` rather than continuing it:
+        ///      a Diamond refreshed in place across #2419 starts this ledger
+        ///      empty, and its totals count only fees accrued since.
+        ///      Appended — append-only.
+        FeeEvent[] feeLedger;
+        /// @dev #2419 — running total of `feeLedger`'s values, so
+        ///      `MetricsFacet.getTreasuryMetrics().totalFeesCollectedNumeraire`
+        ///      is an O(1) read. Never decreases; stops at the uint256 maximum
+        ///      rather than overflowing. Appended — append-only.
+        uint256 feeLedgerTotal;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

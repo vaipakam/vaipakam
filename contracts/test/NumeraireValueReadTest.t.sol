@@ -31,19 +31,19 @@ contract NumeraireValueReadProbeFacet {
     }
 
     function probeFeeLogLength() external view returns (uint256) {
-        return LibVaipakam.storageSlot().feeEventsLog.length;
+        return LibVaipakam.storageSlot().feeLedger.length;
     }
 
     function probeFeeLogValue(uint256 i) external view returns (uint192) {
-        return LibVaipakam.storageSlot().feeEventsLog[i].numeraireValue;
+        return LibVaipakam.storageSlot().feeLedger[i].numeraireValue;
     }
 
     function probeCumulativeFees() external view returns (uint256) {
-        return LibVaipakam.storageSlot().cumulativeFeesNumeraire;
+        return LibVaipakam.storageSlot().feeLedgerTotal;
     }
 
     function probeSetCumulativeFees(uint256 v) external {
-        LibVaipakam.storageSlot().cumulativeFeesNumeraire = v;
+        LibVaipakam.storageSlot().feeLedgerTotal = v;
     }
 }
 
