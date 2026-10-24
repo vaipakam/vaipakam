@@ -115,12 +115,14 @@ library LibFacet {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 numeraireValue = LibNumeraireValueRead.valueOrZero(asset, amount);
+        // casting to 'uint192' is safe because the comparison takes every
+        // value that does not fit
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint192 logged = numeraireValue > type(uint192).max ? type(uint192).max : uint192(numeraireValue);
         s.feeEventsLog.push(
             LibVaipakam.FeeEvent({
                 timestamp: uint64(block.timestamp),
-                numeraireValue: numeraireValue > type(uint192).max
-                    ? type(uint192).max
-                    : uint192(numeraireValue)
+                numeraireValue: logged
             })
         );
         uint256 cumulative = s.cumulativeFeesNumeraire;
