@@ -2570,8 +2570,10 @@ library LibVaipakam {
      *      scaled to 1e18 up to ~6.28e39 — vastly beyond any single fee. The
      *      protocol is currency-agnostic: amounts are quoted in whatever
      *      numeraire governance has configured (USD by post-deploy default).
-     *      `numeraireValue` is 0 when the priced asset lacks a Chainlink feed
-     *      at the time of accrual. The underlying asset-denominated accrual
+     *      `numeraireValue` is the shared valuation rule's (#2419, rounded
+     *      down); it is 0 when the rule cannot value the asset at the time of
+     *      accrual (no or untrusted price, unreadable decimals), and a value
+     *      beyond the field's width is stored at its maximum. The underlying asset-denominated accrual
      *      is reflected in `treasuryBalances[asset]` only when the configured
      *      treasury is the Diamond itself; external-treasury deployments
      *      push the tokens straight to the multisig, so `treasuryBalances`
