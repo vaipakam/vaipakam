@@ -23,9 +23,10 @@
 # peak memory is bounded by the largest chunk, not the whole corpus. What
 # did NOT fit was TIME: run as one job, the chunks are sequential and each
 # re-compiles the deploy script and facets (#2718), and a single
-# `ubuntu-latest` job was still running past three and a half hours on
-# 2026-10-24 (run 40055515200) against a 45-minute limit nobody had
-# measured. So the regression is SHARDED across a matrix of runners: each
+# `ubuntu-latest` job took 4 h 16 min end to end on 2026-10-24 (run
+# 40055515200, measured with no timeout): 17 min of build and guards, then
+# 25 chunks taking 238 min in total (6-17 min each), at a peak of 12.5 GB,
+# against a 45-minute limit nobody had measured. So the regression is SHARDED across a matrix of runners: each
 # runs the whole preflight with the regression cut to every Nth chunk
 # (`--shard i/N`), and `mainnet-gate-full` verifies the shards' manifests
 # cover every chunk once (`--verify-shards`). Memory per runner is
@@ -94,7 +95,10 @@ jobs:
   regression-shard:
     name: mainnet-gate shard ${{ matrix.shard }}/${{ strategy.job-total }}
     runs-on: ubuntu-latest
-    # Set from the measured per-chunk times (#2714); see the PR that set it.
+    # From run 40055515200's per-chunk times (#2714): four shards come to
+    # about 61-67 min of chunks each, plus about 20 min of build, guards and
+    # setup, so a shard needs about 85 min. 120 leaves a third in hand. Add a
+    # matrix entry before raising this.
     timeout-minutes: 120
     strategy:
       # Every shard runs to completion even when one fails, so one red run
