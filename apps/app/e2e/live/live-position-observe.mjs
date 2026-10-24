@@ -110,9 +110,21 @@ import {
   refinancePostureVerdict,
 } from './refinancePosture.mjs';
 import { redactUrl } from './redact.mjs';
-import { isDetailPath, visitProblemKinds, visitVerdict } from './visitVerdict.mjs';
+import {
+  firstNavigationBlocker,
+  isDetailPath,
+  visitProblemKinds,
+  visitVerdict,
+} from './visitVerdict.mjs';
 import { walkOrderFor } from './walkOrder.mjs';
 import { withVisibility } from './visibility.mjs';
+import {
+  EXCLUSION_WORDS,
+  chooserExclusion,
+  graceSecondsFromBuckets,
+  setAsideByDerivedGate,
+} from './chooserEligibility.mjs';
+import { createInFlight } from './inFlight.mjs';
 import { createPageHeadTracker } from './pageHead.mjs';
 import {
   EXECUTION_REVERTED,
@@ -972,25 +984,11 @@ const LOCK_EARLY_WITHDRAWAL_SALE = 2;
  * an EMPTY bucket set today. A first draft returned zero grace there,
  * which made every matured loan read as past-grace and skipped all eight
  * loans on the chain — the drive reported BLOCKED while the pages it
- * would have checked were rendering perfectly well. Mirror the app's
- * `readGraceSecondsLive` branch for branch; do not simplify it.
+ * would have checked were rendering perfectly well. The walk now lives in
+ * `chooserEligibility.mjs`, checked against the app's
+ * `graceSecondsFromBuckets` by its parity test (#1557), so it cannot be
+ * simplified here without CI noticing.
  */
-/** Mirrors `lib/grace.defaultGraceSeconds`, which in turn mirrors
- *  LibVaipakam.gracePeriod's compile-time schedule. Used when the chain
- *  publishes NO buckets — which is the case on Base Sepolia today, so
- *  this is the live path, not a corner. Treating an empty set as zero
- *  grace makes every matured loan look past-grace the instant it
- *  matures, which is how a first draft of this drive managed to skip
- *  every loan on the chain. */
-function defaultGraceSeconds(durationDays) {
-  if (durationDays < 7n) return 3_600n;
-  if (durationDays < 30n) return 86_400n;
-  if (durationDays < 90n) return 3n * 86_400n;
-  if (durationDays < 180n) return 7n * 86_400n;
-  if (durationDays < 365n) return 14n * 86_400n;
-  return 30n * 86_400n;
-}
-
 let graceBucketsCache;
 /** Drop the memo so the next {@link graceSecondsFor} re-reads the chain.
  *
@@ -1013,16 +1011,8 @@ async function graceSecondsFor(durationDays) {
       functionName: 'getGraceBuckets',
     }),
   );
-  const buckets = graceBucketsCache;
-  if (buckets.length > 0) {
-    for (const b of buckets) {
-      if (b.maxDurationDays === 0n) return b.graceSeconds; // catch-all
-      if (durationDays < b.maxDurationDays) return b.graceSeconds;
-    }
-    // Malformed set — the contract falls back to the last entry.
-    return buckets[buckets.length - 1].graceSeconds;
-  }
-  return defaultGraceSeconds(durationDays);
+  // The walk is the app's, mirrored and parity-tested (#1557).
+  return graceSecondsFromBuckets(graceBucketsCache, durationDays);
 }
 
 /**
@@ -1506,24 +1496,69 @@ for (const id of ids) {
  * report BLOCKED on a chain where the lender card is rendering perfectly
  * well on loans it had discarded.
  */
+/**
+ * The borrower facts, as the PAGE's rule takes them (#1557). The rule
+ * itself is `chooserExclusion`, the parity-tested mirror of the app's
+ * `earlyRepayChooserExclusion`, so no clause is written out here.
+ *
+ * `viewerIsBorrower` is "the borrower token resolves to a holder": the
+ * drive connects AS that holder, so a readable token is what makes the
+ * page's viewer the borrower. Nothing is closed in a watch-only session.
+ * The offset and grace facts are read only for an Active ERC-20 loan
+ * (above); for any other the rule has already returned on an earlier
+ * clause, so their `undefined` is never consulted.
+ */
+const borrowerFacts = (l) => ({
+  viewerIsBorrower: l.authority !== null,
+  active: l.status === STATUS_ACTIVE,
+  rental: l.assetType !== ASSET_ERC20,
+  offsetPending: l.offsetLocked === true,
+  graceVerifiablyOver: l.graceOver === true,
+  closedThisSession: false,
+});
 const eligible = loans.filter((l) =>
   ROLE === 'lender'
     ? lenderStatusOk(l.status) &&
       l.assetType === ASSET_ERC20 &&
       l.authority !== null &&
       l.authoritySanctioned === false
-    : l.status === STATUS_ACTIVE &&
-      l.assetType === ASSET_ERC20 &&
-      l.authority !== null &&
-      l.offsetLocked === false &&
-      l.graceOver === false,
+    : chooserExclusion(borrowerFacts(l)) === null,
 );
+/**
+ * #1557 direction 2 — AN EMPTY POOL MADE OF THE DRIVE'S OWN DERIVATIONS IS
+ * NAMED, not reported as an empty chain.
+ *
+ * Still BLOCKED: a chain whose loans have all aged past grace is a real
+ * state on a testnet, and exiting 1 there would leave the drive red for a
+ * reason that is nobody's defect. But the BLOCKED line used to read as
+ * "nothing to look at" in exactly the case #1529 hit, where a grace read
+ * that treated an empty bucket set as zero grace skipped all eight loans
+ * while their pages rendered the chooser. Saying which loans only the
+ * drive's own reading set aside is what lets a reader tell the two apart.
+ * Borrower runs only: the lender pool derives nothing (#1557 is about this
+ * chooser).
+ */
+function noteDerivedSetAside(pool) {
+  if (ROLE !== 'borrower') return;
+  const setAside = setAsideByDerivedGate(pool, borrowerFacts);
+  if (setAside.length === 0) return;
+  console.log(
+    `  but ${setAside.length} Active ERC-20 loan(s) with a live borrower were set aside` +
+      ` ONLY by this drive's own reading of the grace or offset gate:` +
+      ` ${setAside.map((l) => `${l.id} (${EXCLUSION_WORDS[chooserExclusion(borrowerFacts(l))]})`).join(', ')}` +
+      `\n  → that is the shape a drifted predicate takes (#1557). Open one of those pages:` +
+      ` if it shows the chooser, the drive is wrong, not the chain.`,
+  );
+}
 const dropped = loans.length - eligible.length;
 if (dropped > 0) {
   // Never silently narrow the candidate set — say what was set aside, and
   // why, so a shrinking pool is legible rather than mysterious.
+  // A borrower run names the reason the PAGE's rule gives (#1557).
   const why = (l) =>
-    (ROLE === 'lender' ? !lenderStatusOk(l.status) : l.status !== STATUS_ACTIVE)
+    ROLE === 'borrower'
+      ? EXCLUSION_WORDS[chooserExclusion(borrowerFacts(l))]
+      : !lenderStatusOk(l.status)
       ? 'not active'
       : l.assetType !== ASSET_ERC20
         ? 'NFT rental'
@@ -1802,6 +1837,7 @@ if (!observed) {
     console.log(
       `\nBLOCKED: no ${ROLE}-eligible loans on chain — nothing verified.`,
     );
+    noteDerivedSetAside(loans);
     process.exit(2);
   }
   observed = best[1][0].authority;
@@ -1824,6 +1860,9 @@ for (const l of mine) {
 if (mine.length === 0) {
   console.error(
     `\nBLOCKED: ${observed} holds no eligible ${ROLE} position — nothing verified.`,
+  );
+  noteDerivedSetAside(
+    loans.filter((l) => l.authority !== null && l.authority.toLowerCase() === observed.toLowerCase()),
   );
   process.exit(2);
 }
@@ -2061,6 +2100,60 @@ function watchWebSockets(page) {
  */
 const routeFailures = [];
 /**
+ * How long this process waits for a page request it is proxying (#1633
+ * item 6).
+ *
+ * The proxied fetch had no deadline, so a dependency that STALLED (as
+ * opposed to failing) was recorded nowhere: the page waited, the 45s
+ * chooser wait expired, and the run reported "chooser MISSING" on an
+ * eligible loan, which is a product FAIL for an infrastructure fault.
+ * With a deadline the stall ends as an abort, the abort is filed in
+ * `routeFailures`, and the route gate reports the run BLOCKED.
+ *
+ * It is also what bounds the two waits that read the outcome: a visit
+ * whose chooser wait runs out waits for its own page's requests, and the
+ * report waits for every request (`routeInFlight`). Without a deadline
+ * neither wait could end. The chain probe in this file already had one
+ * of its own (`CHAIN_PROBE_TIMEOUT_MS`).
+ */
+const ROUTE_FETCH_TIMEOUT_MS = 30_000;
+/**
+ * Route handlers still running, so the report can wait for them (#1633
+ * item 6). See `inFlight.mjs`: the report is read only after every one
+ * has recorded its outcome, bounded by the fetch deadline, and a handler
+ * that still has not finished is filed as a route failure rather than
+ * left out of the verdict.
+ */
+const routeInFlight = createInFlight();
+// Called only once the router is installed, after `routeHandler` exists.
+// Keyed by the issuing page's cohort, so a visit waits for its own page's
+// requests and not for another page's.
+const trackedRouteHandler = routeInFlight.track(
+  (route) => routeHandler(route),
+  (route) => cohortOfRequest(route.request()),
+);
+/** The same wait, for ONE page's requests — see the chooser wait in `visit`. */
+async function drainPageRequests(page, label) {
+  const stuck = await routeInFlight.drain(ROUTE_FETCH_TIMEOUT_MS + 5_000, cohortOfPage(page));
+  if (stuck > 0) {
+    routeFailures.push({
+      url: label,
+      why: `${stuck} page request(s) still unanswered after the chooser wait`,
+    });
+  }
+}
+async function drainRouteHandlers() {
+  // A margin over the fetch deadline, so a handler whose fetch timed out
+  // has time to file its own failure before this files it again.
+  const stuck = await routeInFlight.drain(ROUTE_FETCH_TIMEOUT_MS + 5_000);
+  if (stuck > 0) {
+    routeFailures.push({
+      url: '(page requests)',
+      why: `${stuck} proxied request(s) were still unfinished when the run ended`,
+    });
+  }
+}
+/**
  * Requests the PAGE sent that a reachable provider rejected as malformed.
  *
  * The opposite verdict to `routeFailures` despite arriving down the same
@@ -2234,6 +2327,9 @@ const routeHandler = async (route) => {
       ),
       body: req.postDataBuffer() ?? undefined,
       redirect: 'follow',
+      // Covers the body read below as well as the headers: a stall at
+      // either point ends as an abort that the catch files (#1633 item 6).
+      signal: AbortSignal.timeout(ROUTE_FETCH_TIMEOUT_MS),
     });
     const buf = Buffer.from(await resp.arrayBuffer());
     const headers = {};
@@ -2438,7 +2534,7 @@ const initScript = () => {
 // the wrapping is a one-line change per site rather than a re-indent of
 // three large bodies — the behaviour of each handler is untouched.
 await discovery('installing the request router', () =>
-  ctx.route('**/*', routeHandler),
+  ctx.route('**/*', trackedRouteHandler),
 );
 await discovery('exposing the wallet binding', () =>
   ctx.exposeBinding('__watchRequest', watchRequestHandler),
@@ -2637,12 +2733,22 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
       // wait for the assertion's own subject. A timeout here is NOT an
       // error to propagate — absence is a legitimate observation, and
       // the reporting below is what decides whether it is a failure.
-      await page
-        .locator('section.card')
-        .filter({ hasText: CHOOSER.title })
-        .first()
+      const chooserCard = page.locator('section.card').filter({ hasText: CHOOSER.title }).first();
+      const shown = await chooserCard
         .waitFor({ state: 'visible', timeout: 45_000 })
-        .catch(() => {});
+        .then(() => true, () => false);
+      // #1633 item 6 — THE WAIT RAN OUT, BUT DID THE PAGE'S DEPENDENCIES?
+      //
+      // A request the page was still waiting on when the 45s ran out made
+      // the absence a statement about that dependency, not about the app,
+      // and nothing recorded it: the run reported "chooser MISSING". So the
+      // requests THIS page has in flight now are waited for, each bounded
+      // by the proxy deadline. One that answers lets the page finish
+      // rendering before the scrape below; one that times out files its
+      // own route failure; one that outlives even this bound is filed here.
+      // Either filing blocks the run at the route gate. Requests begun
+      // during the wait are not waited for, so polling cannot hold it open.
+      if (!shown) await drainPageRequests(page, path);
     }
     // Short settle regardless: lets the cards below the chooser (the
     // hold card among them) finish their own reads before we scrape.
@@ -3022,11 +3128,6 @@ async function stillEligible(loan) {
   // happened here.
   loan.status = Number(live.status);
   loan.authority = authorityNow;
-  if (lockedNow) return 'offset started since discovery';
-  if (authorityNow === null) return `${ROLE} token burned since discovery`;
-  if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
-    return 'position transferred since discovery';
-  }
   // The grace re-check below is a BORROWER gate. Applying it to a lender
   // run would skip a page whose card is correctly still rendering — and,
   // if it were the only candidate, report BLOCKED on a working surface.
@@ -3035,6 +3136,10 @@ async function stillEligible(loan) {
   // either direction between discovery and the visit, and a flag that
   // landed in that window correctly suppresses the card.
   if (ROLE === 'lender') {
+    if (authorityNow === null) return 'lender token burned since discovery';
+    if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
+      return 'position transferred since discovery';
+    }
     // UNCACHED, deliberately (Codex #1853 r8). The discovery cache is
     // keyed per authority for the whole sweep, so calling the cached
     // helper here returns the fulfilled promise from discovery and this
@@ -3062,10 +3167,30 @@ async function stillEligible(loan) {
   // duration — and the SCHEDULE is re-read here as well, not just the
   // term. A memo from discovery is exactly the stale input this function
   // exists to rule out.
+  // The LIVE term, not the discovered one. `extendLoanInPlace` rewrites
+  // startTime and durationDays while the loan stays Active, so a stale
+  // term would judge an extended loan against its old deadline and skip a
+  // page that is correctly still chooser-eligible — and, if it was the
+  // only candidate, report BLOCKED (#1529 review round 10). The grace
+  // bucket follows the live duration too, since the bucket is chosen BY
+  // duration — and the SCHEDULE is re-read here as well, not just the
+  // term. A memo from discovery is exactly the stale input this function
+  // exists to rule out.
   invalidateGraceBuckets();
   const grace = await graceSecondsFor(live.durationDays);
-  if (now > live.startTime + live.durationDays * 86_400n + grace) {
-    return 'crossed its grace deadline since discovery';
+  // #1557 — the PAGE's rule over the re-read facts, not a clause list of
+  // this function's own (see `borrowerFacts`). Rental and closed-this-
+  // session cannot change between discovery and the visit.
+  const reason = chooserExclusion({
+    ...borrowerFacts(loan),
+    viewerIsBorrower: authorityNow !== null,
+    active: Number(live.status) === STATUS_ACTIVE,
+    offsetPending: lockedNow,
+    graceVerifiablyOver: now > live.startTime + live.durationDays * 86_400n + grace,
+  });
+  if (reason !== null) return `${EXCLUSION_WORDS[reason]} since discovery`;
+  if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
+    return 'position transferred since discovery';
   }
   return null;
 }
@@ -7709,6 +7834,11 @@ async function anchorAudit(page, card) {
 const visited = [];
 const racedOut = [];
 visited.push(await visit('/positions'));
+// #1633 item 4 — the first navigation is this drive's reachability check.
+// When the site itself was not served, no position page is walked (each
+// would be judged against the same error body) and the run is reported
+// BLOCKED at the route gate below rather than as a FAIL row.
+const siteUnreachable = firstNavigationBlocker(visited[0]);
 // Walk candidates until MAX_POSITIONS pages have actually been OBSERVED,
 // not merely attempted. A pre-slice let a raced-out candidate consume the
 // quota, so the drive silently verified fewer pages than asked for — and
@@ -7794,7 +7924,7 @@ if (REFI_POSTURE) {
   );
 }
 for (const l of readyFirst) {
-  if (observedDetails >= MAX_POSITIONS) break;
+  if (siteUnreachable !== null || observedDetails >= MAX_POSITIONS) break;
   const changed = await stillEligible(l);
   if (changed) {
     racedOut.push(`${l.id} (${changed})`);
@@ -7804,6 +7934,8 @@ for (const l of readyFirst) {
   observedDetails += 1;
 }
 await browser.close();
+// Before anything below reads `routeFailures` or the ledger (#1633 item 6).
+await drainRouteHandlers();
 
 if (racedOut.length) {
   console.log(
@@ -7830,8 +7962,11 @@ for (const v of visited) {
   // outranks `blocked` at the exit below, and the module deliberately
   // returns both for every visit rather than choosing between them.
   const { problems } = visitVerdict(v, ROLE);
-  const verdict = problems.length ? 'FAIL' : 'ok';
-  if (problems.length) failures++;
+  // The unreachable first page is not a product finding (#1633 item 4):
+  // its row says so, and it is not counted toward `failures`.
+  const unreachable = v === visited[0] && siteUnreachable !== null;
+  const verdict = unreachable ? 'BLOCK' : problems.length ? 'FAIL' : 'ok';
+  if (problems.length && !unreachable) failures++;
   console.log(`${verdict.padEnd(5)} ${v.path.padEnd(16)} http=${v.http ?? '-'} connected=${v.connected ?? '-'}`);
   if (detail && !v.nav) {
     console.log(
@@ -8109,7 +8244,11 @@ if (ROLE === 'borrower') {
   );
 }
 
-console.log(`\n${visited.length - failures}/${visited.length} routes clean`);
+console.log(
+  siteUnreachable !== null
+    ? `\nno route reviewed: the site was not served`
+    : `\n${visited.length - failures}/${visited.length} routes clean`,
+);
 
 // A page-initiated write attempt is a regression in the app; a
 // too-narrow allowlist means this run simply cannot be trusted. Neither
@@ -8263,6 +8402,17 @@ if (routeFailures.length) {
   console.log(
     `  → the site, the RPC endpoint or the egress proxy was unreachable.` +
       ` Nothing observed here can be trusted; re-run.`,
+  );
+  process.exit(2);
+}
+// #1633 item 4 — the site itself was not served, which no other gate
+// sees: an HTTP error page is a fetch that SUCCEEDED, so it is not in
+// `routeFailures`. Same class as the gate above and placed with it, ahead
+// of `failures`, so an outage is not reported as a broken product.
+if (siteUnreachable !== null) {
+  console.log(`\nBLOCKED: the site was not served — ${siteUnreachable}.`);
+  console.log(
+    `  → no position page was walked. Check SITE_URL and the deployment, then re-run.`,
   );
   process.exit(2);
 }

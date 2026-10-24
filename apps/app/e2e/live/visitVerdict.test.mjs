@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  firstNavigationBlocker,
   preRaced,
   visitBlockedReason,
   visitProblemKinds,
@@ -641,5 +642,37 @@ describe('the refinance posture banner (#2355)', () => {
     ]) {
       expect(visitProblems(borrower({ refinancePostureVerdict }), 'borrower')).toEqual([]);
     }
+  });
+});
+
+describe('firstNavigationBlocker (#1633 item 4)', () => {
+  it('blocks on an HTTP error page, which page.goto does not throw for', () => {
+    for (const http of [400, 404, 500, 502, 503]) {
+      expect(firstNavigationBlocker({ path: '/positions', http })).toBe(
+        `/positions answered HTTP ${http}`,
+      );
+    }
+  });
+
+  it('blocks on a thrown navigation', () => {
+    expect(
+      firstNavigationBlocker({ path: '/positions', nav: 'TimeoutError: 60000ms exceeded' }),
+    ).toBe('opening /positions failed: TimeoutError: 60000ms exceeded');
+  });
+
+  it('blocks when the first navigation never ran', () => {
+    expect(firstNavigationBlocker(undefined)).toBe('the first navigation never ran');
+  });
+
+  it('does not block a page that was served', () => {
+    for (const http of [200, 204, 304]) {
+      expect(firstNavigationBlocker({ path: '/positions', http })).toBeNull();
+    }
+  });
+
+  it('leaves a missing status to visitProblems, as the shared helper does', () => {
+    const v = { path: '/positions', http: null, pageErrors: [], consoleErrors: [] };
+    expect(firstNavigationBlocker(v)).toBeNull();
+    expect(visitProblems(v, 'borrower')).toContain('navigation returned no response');
   });
 });
