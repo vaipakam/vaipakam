@@ -174,8 +174,30 @@ function check(label, ok, observed) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${observed !== undefined ? ` — ${observed}` : ''}`);
   return Boolean(ok);
 }
+/** BLOCKED before the browser opened: only reads have run. */
 function blocked(why) {
-  console.log(`\nBLOCKED: ${why}\nNothing was written (the wallet is read-only).`);
+  console.log(`\nBLOCKED: ${why}\nNothing was written (no browser was opened).`);
+  process.exit(2);
+}
+/**
+ * BLOCKED after the browser opened (#2695 r2): the wallet is read-only, but
+ * "nothing was written" is a claim about the wallets, which only the nonce
+ * reconciliation makes — so it is read here, and when it cannot be
+ * established the report says that instead of the claim.
+ */
+async function blockedAfterLaunch(why) {
+  await session?.done().catch(() => {});
+  const lines = [];
+  for (const [who, address] of [['viewer', VIEWER], ['borrower', pre.borrower]]) {
+    const r = await reconcileNonce(pub, address, pre.nonces[who]);
+    if (r.kind !== 'unchanged') lines.push(`${who}: ${r.kind === 'sent' ? `nonce moved ${r.from} → ${r.to}` : r.why}`);
+  }
+  console.log(
+    `\nBLOCKED: ${why}\n` +
+      (lines.length === 0
+        ? 'Nothing was written: the wallet was read-only and both nonces are where the preflight read them.'
+        : `Whether anything was written could NOT be established: ${lines.join('; ')}`),
+  );
   process.exit(2);
 }
 async function pollUntil(fn, { timeoutMs, everyMs = 1_000 }) {
@@ -278,7 +300,7 @@ let session;
 try {
   session = await launch({ role: VIEWER_ROLE, readOnly: true, onSetupFailure: 'throw', startChainId: CHAIN_ID });
 } catch (err) {
-  blocked(`setting up the read-only browser session failed: ${String(err?.message ?? err).slice(0, 300)}`);
+  await blockedAfterLaunch(`setting up the read-only browser session failed: ${String(err?.message ?? err).slice(0, 300)}`);
 }
 const { page, ctx } = session;
 try {
@@ -308,8 +330,7 @@ try {
   await ensureConnected(page);
   const lang = await pollUntil(async () => (await page.evaluate(() => document.documentElement.lang || '')) || null, { timeoutMs: 30_000 });
   if (!/^en(-|$)/i.test(lang ?? '')) {
-    await session.done();
-    blocked(`the page renders <html lang="${lang}">, not English — every check is matched against en.json`);
+    await blockedAfterLaunch(`the page renders <html lang="${lang}">, not English — every check is matched against en.json`);
   }
   const fundingLine = page.getByText(new RegExp(`funding borrow request #${REQUEST_ID}\\b`, 'i'));
   if (!(await fundingLine.first().waitFor({ state: 'visible', timeout: 90_000 }).then(() => true, () => false))) {
@@ -339,8 +360,7 @@ try {
       }),
     });
     if (result.state !== 'stable') {
-      await session.done().catch(() => {});
-      blocked(
+      await blockedAfterLaunch(
         result.state === 'race'
           ? `what the review is judged against moved around the observation (${result.changes.join('; ')}) — a state race, not a product defect; rerun once it is stable`
           : `what the review is judged against could not be read around the observation (${result.error})`,
@@ -427,6 +447,9 @@ if (failed.length) {
   console.log('\nOUTCOME: FAIL');
   process.exit(1);
 }
-if (nonceEvidence) blocked(`every review check passed, but the no-write evidence could not be read (${nonceEvidence})`);
+if (nonceEvidence) {
+  console.log(`\nBLOCKED: every review check passed, but whether anything was written could NOT be established (${nonceEvidence})`);
+  process.exit(2);
+}
 console.log('\nOUTCOME: PASS');
 process.exit(0);

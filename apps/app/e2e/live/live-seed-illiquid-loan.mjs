@@ -346,13 +346,39 @@ const note = (s) => {
   console.log(`note  ${s}`);
 };
 
-/** Exit BLOCKED — only legal while the plan has allowed nothing. */
+/** Exit BLOCKED BEFORE any browser was opened — only reads have run, so
+ *  nothing could have been written. Once a session exists, use
+ *  `blockedAfterLaunch`, which has to earn that claim. */
 function blockedNow(why) {
-  if (PLAN && PLAN.steps().some((s) => s.status === 'consumed')) {
-    throw new Error(`internal: BLOCKED requested after a write was allowed (${why})`);
-  }
-  console.log(`\nBLOCKED: ${why}\nNothing was written.`);
+  if (BROWSERS_OPENED) throw new Error(`internal: blockedNow after a browser was opened (${why})`);
+  console.log(`\nBLOCKED: ${why}\nNothing was written (no browser was opened).`);
   process.exit(2);
+}
+let BROWSERS_OPENED = false;
+/**
+ * Stop with nothing PLANNED written, after a browser was opened (#2695 r2).
+ * "Nothing was written" is a claim about the wallets, which only the
+ * independent nonce reconciliation can make — the plan's own record cannot
+ * see a send it never judged. Unchanged nonces: BLOCKED. Otherwise:
+ * UNDETERMINED, with what the nonces read.
+ */
+async function blockedAfterLaunch(why) {
+  if (anyAllowed()) throw new Error(`internal: BLOCKED requested after a write was allowed (${why})`);
+  await closeSession('borrower');
+  await closeSession('lender');
+  const lines = [];
+  for (const [role, who] of [['borrower', BORROWER], ['lender', LENDER]]) {
+    const r = await reconcileNonce(pub, who, pre.nonces[role]);
+    if (r.kind !== 'unchanged') lines.push(`${role}: ${r.kind === 'sent' ? `nonce moved ${r.from} → ${r.to}` : r.why}`);
+  }
+  if (lines.length === 0) {
+    console.log(`\nBLOCKED: ${why}\nNothing was written: the plan allowed no send and both wallet nonces are where the preflight read them.`);
+    process.exit(2);
+  }
+  console.log(
+    `\nOUTCOME: UNDETERMINED — ${why}\nThe plan allowed no send, but whether anything was written could NOT be established: ${lines.join('; ')}`,
+  );
+  process.exit(3);
 }
 
 // =====================================================================
@@ -628,6 +654,7 @@ async function closeSession(role) {
     /* best effort */
   }
 }
+BROWSERS_OPENED = true;
 for (const [role, walletRole] of [['borrower', 'borrower'], ['lender', LENDER_ROLE]]) {
   try {
     sessions[role] = await launch({
@@ -643,9 +670,7 @@ for (const [role, walletRole] of [['borrower', 'borrower'], ['lender', LENDER_RO
     const lang = await pollUntil('<html lang>', async () => (await sessions[role].page.evaluate(() => document.documentElement.lang || '')) || null, { timeoutMs: 30_000, everyMs: 1_000 });
     if (!/^en(-|$)/i.test(lang ?? '')) throw new Error(`the ${role} page renders <html lang="${lang}">, not English`);
   } catch (err) {
-    await closeSession('borrower');
-    await closeSession('lender');
-    blockedNow(`setting up the ${role} browser session failed: ${String(err?.message ?? err).slice(0, 300)}`);
+    await blockedAfterLaunch(`setting up the ${role} browser session failed: ${String(err?.message ?? err).slice(0, 300)}`);
   }
 }
 
@@ -660,21 +685,13 @@ async function armedClick(role, page, button, done, label) {
     now = await readConfig();
   } catch (err) {
     const why = `the governance snapshot could not be re-read before ${label} (${String(err?.shortMessage ?? err?.message).slice(0, 120)})`;
-    if (!anyAllowed()) {
-      await closeSession('borrower');
-      await closeSession('lender');
-      blockedNow(why);
-    }
+    if (!anyAllowed()) await blockedAfterLaunch(why);
     stop(why);
   }
   const moved = configChanges(pre.watched, now);
   if (moved.length) {
     const why = `the chain config moved since the preflight (${moved.join('; ')}) — a state race, not a product defect`;
-    if (!anyAllowed()) {
-      await closeSession('borrower');
-      await closeSession('lender');
-      blockedNow(`${why}; rerun once it is stable`);
-    }
+    if (!anyAllowed()) await blockedAfterLaunch(`${why}; rerun once it is stable`);
     stop(`not ${label}: ${why}`);
   }
   PLAN.arm(role);
@@ -957,7 +974,24 @@ if (passing) {
   process.exit(0);
 }
 if (!wrote) {
-  console.log(`\nOUTCOME: FAIL before any write — ${HALT ?? 'see the failed checks above'}\nNothing was written.`);
+  // The plan allowed nothing — but "nothing was written" is a claim about
+  // the WALLETS, and only the independent nonce reconciliation above can
+  // make it. When that could not be established, the report says so
+  // instead: a failure the page showed is still a FAIL; with none, the run
+  // is UNDETERMINED (#2695 r2).
+  const failure = failed.length > 0 || refusals.length > 0 || walletRefusals().length > 0;
+  const writes = nonceUnknown
+    ? 'Whether anything was written could NOT be established: the plan allowed no send, but the wallet nonces did not reconcile (see the nonce lines above).'
+    : 'Nothing was written: the plan allowed no send and both wallet nonces are where the preflight read them.';
+  if (failure) {
+    console.log(`\nOUTCOME: FAIL before any planned write — ${HALT ?? 'see the failed checks above'}\n${writes}`);
+    process.exit(1);
+  }
+  if (nonceUnknown) {
+    console.log(`\nOUTCOME: UNDETERMINED — the drive stopped before any planned write (${HALT ?? 'see above'}).\n${writes}`);
+    process.exit(3);
+  }
+  console.log(`\nOUTCOME: FAIL before any write — ${HALT ?? 'the drive stopped'}\n${writes}`);
   process.exit(1);
 }
 if (LOAN_ID !== null && failed.length > 0) {
