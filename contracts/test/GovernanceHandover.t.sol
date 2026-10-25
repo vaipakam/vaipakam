@@ -23,6 +23,7 @@ import {
     ChainlinkStyleOwnable2StepHarness,
     TokenAdminRegistryStub
 } from "./mocks/GovernanceHarnesses.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title GovernanceHandoverTest
@@ -524,13 +525,13 @@ contract GovernanceHandoverTest is Test {
     // ─── Helpers ────────────────────────────────────────────────────────────
 
     function _deployMinDiamond() internal returns (VaipakamDiamond d) {
-        DiamondCutFacet cutFacet = new DiamondCutFacet();
+        DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         d = new VaipakamDiamond(deployer, address(cutFacet));
 
         HelperTest h = new HelperTest();
-        OwnershipFacet ownershipFacet = new OwnershipFacet();
-        AccessControlFacet acFacet = new AccessControlFacet();
-        AdminFacet adminFacet = new AdminFacet();
+        OwnershipFacet ownershipFacet = OwnershipFacet(ArtifactDeploy.deploy(type(OwnershipFacet).name));
+        AccessControlFacet acFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
+        AdminFacet adminFacet = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);
         cuts[0] = IDiamondCut.FacetCut({

@@ -17,6 +17,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title DepthTieredLtv
@@ -79,7 +80,7 @@ contract DepthTieredLtv is Test {
         assetTok = new ERC20Mock("Asset", "AST", 18);
         mockAsset = address(assetTok);
 
-        DiamondCutFacet cutFacet = new DiamondCutFacet();
+        DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cutFacet));
         HelperTest helper = new HelperTest();
 
@@ -94,27 +95,27 @@ contract DepthTieredLtv is Test {
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](5);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(new OracleFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OracleFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getOracleFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
-            facetAddress: address(new AdminFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(AdminFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getAdminFacetSelectors()
         });
         cuts[2] = IDiamondCut.FacetCut({
-            facetAddress: address(new AccessControlFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(AccessControlFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getAccessControlFacetSelectors()
         });
         cuts[3] = IDiamondCut.FacetCut({
-            facetAddress: address(new OracleAdminFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OracleAdminFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: oracleAdminSelectors
         });
         cuts[4] = IDiamondCut.FacetCut({
-            facetAddress: address(new ConfigFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(ConfigFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getConfigFacetSelectors()
         });

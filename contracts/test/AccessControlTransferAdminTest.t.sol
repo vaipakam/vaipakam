@@ -10,6 +10,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title AccessControlTransferAdminTest
@@ -40,18 +41,18 @@ contract AccessControlTransferAdminTest is Test {
 
     function setUp() public {
         caller = address(this);
-        DiamondCutFacet cutFacet = new DiamondCutFacet();
+        DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(caller, address(cutFacet));
         helper = new HelperTest();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(new AccessControlFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(AccessControlFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getAccessControlFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
-            facetAddress: address(new OwnershipFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OwnershipFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getOwnershipFacetSelectors()
         });

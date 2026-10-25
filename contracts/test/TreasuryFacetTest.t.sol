@@ -15,6 +15,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title TreasuryFacetTest
@@ -38,11 +39,11 @@ contract TreasuryFacetTest is Test {
 
         mockERC20 = address(new ERC20Mock("Token", "TKN", 18));
 
-        cutFacet = new DiamondCutFacet();
+        cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cutFacet));
-        treasuryFacet = new TreasuryFacet();
-        adminFacet = new AdminFacet();
-        accessControlFacet = new AccessControlFacet();
+        treasuryFacet = TreasuryFacet(ArtifactDeploy.deploy(type(TreasuryFacet).name));
+        adminFacet = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
+        accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 

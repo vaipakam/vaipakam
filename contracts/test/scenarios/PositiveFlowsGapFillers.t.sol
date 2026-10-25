@@ -33,6 +33,7 @@ import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
+import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title PositiveFlowsGapFillers
@@ -98,7 +99,7 @@ contract PositiveFlowsGapFillers is Test {
         ERC20Mock(mockWeth).mint(lender, 100_000 ether);
         ERC20Mock(mockWeth).mint(borrower, 100_000 ether);
 
-        DiamondCutFacet cutFacet = new DiamondCutFacet();
+        DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cutFacet));
 
         helperTest = new HelperTest();
@@ -371,21 +372,21 @@ contract PositiveFlowsGapFillers is Test {
     }
 
     function _cutCoreFacets() internal {
-        OfferCreateFacet offerCreateFacet = new OfferCreateFacet();
-        OfferAcceptFacet offerAcceptFacet = new OfferAcceptFacet();
-        OfferCancelFacet offerCancelFacet = new OfferCancelFacet();
-        ProfileFacet profileFacet = new ProfileFacet();
-        OracleFacet oracleFacet = new OracleFacet();
-        VaipakamNFTFacet nftFacet = new VaipakamNFTFacet();
-        VaultFactoryFacet vaultFacet = new VaultFactoryFacet();
-        LoanFacet loanFacet = new LoanFacet();
-        RiskFacet riskFacet = new RiskFacet();
-        RepayFacet repayFacet = new RepayFacet();
-        DefaultedFacet defaultFacet = new DefaultedFacet();
-        AdminFacet adminFacet = new AdminFacet();
-        ClaimFacet claimFacet = new ClaimFacet();
-        AddCollateralFacet addCollateralFacet = new AddCollateralFacet();
-        AccessControlFacet accessControlFacet = new AccessControlFacet();
+        OfferCreateFacet offerCreateFacet = OfferCreateFacet(ArtifactDeploy.deploy(type(OfferCreateFacet).name));
+        OfferAcceptFacet offerAcceptFacet = OfferAcceptFacet(ArtifactDeploy.deploy(type(OfferAcceptFacet).name));
+        OfferCancelFacet offerCancelFacet = OfferCancelFacet(ArtifactDeploy.deploy(type(OfferCancelFacet).name));
+        ProfileFacet profileFacet = ProfileFacet(ArtifactDeploy.deploy(type(ProfileFacet).name));
+        OracleFacet oracleFacet = OracleFacet(ArtifactDeploy.deploy(type(OracleFacet).name));
+        VaipakamNFTFacet nftFacet = VaipakamNFTFacet(ArtifactDeploy.deploy(type(VaipakamNFTFacet).name));
+        VaultFactoryFacet vaultFacet = VaultFactoryFacet(ArtifactDeploy.deploy(type(VaultFactoryFacet).name));
+        LoanFacet loanFacet = LoanFacet(ArtifactDeploy.deploy(type(LoanFacet).name));
+        RiskFacet riskFacet = RiskFacet(ArtifactDeploy.deploy(type(RiskFacet).name));
+        RepayFacet repayFacet = RepayFacet(ArtifactDeploy.deploy(type(RepayFacet).name));
+        DefaultedFacet defaultFacet = DefaultedFacet(ArtifactDeploy.deploy(type(DefaultedFacet).name));
+        AdminFacet adminFacet = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
+        ClaimFacet claimFacet = ClaimFacet(ArtifactDeploy.deploy(type(ClaimFacet).name));
+        AddCollateralFacet addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
+        AccessControlFacet accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
         cuts[0] = IDiamondCut.FacetCut({
@@ -403,7 +404,7 @@ contract PositiveFlowsGapFillers is Test {
         // cut it or every ERC-20 accept reverts FunctionDoesNotExist at the
         // self-call, with the accept facet itself looking perfectly fine.
         cuts[17] = IDiamondCut.FacetCut({
-            facetAddress: address(new OfferAcceptFeeFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OfferAcceptFeeFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferAcceptFeeFacetSelectors()
         });
@@ -468,12 +469,12 @@ contract PositiveFlowsGapFillers is Test {
             functionSelectors: helperTest.getAccessControlFacetSelectors()
         });
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
-        cuts[14] = IDiamondCut.FacetCut({facetAddress: address(new RiskMatchLiquidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
+        cuts[14] = IDiamondCut.FacetCut({facetAddress: ArtifactDeploy.deploy(type(RiskMatchLiquidationFacet).name), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
         // #407 PR 4 (T-407-B, 2026-06-12) — encumbrance mutate facet,
         // required so the loan-lifecycle terminals' cross-facet
         // release call (e.g. {RepayFacet.repayLoan}) resolves
         // in this scenario's minimal diamond cut.
-        EncumbranceMutateFacet encumbranceMutateFacet = new EncumbranceMutateFacet();
+        EncumbranceMutateFacet encumbranceMutateFacet = EncumbranceMutateFacet(ArtifactDeploy.deploy(type(EncumbranceMutateFacet).name));
         cuts[16] = IDiamondCut.FacetCut({
             facetAddress: address(encumbranceMutateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -487,7 +488,7 @@ contract PositiveFlowsGapFillers is Test {
         // cut this host too, or a failed-swap liquidation or default and the
         // fallback claim revert FunctionDoesNotExist at that self-call.
         cuts[18] = IDiamondCut.FacetCut({
-            facetAddress: address(new FallbackCustodyFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(FallbackCustodyFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
         });
@@ -497,7 +498,7 @@ contract PositiveFlowsGapFillers is Test {
         // of them must cut this host too, or every attempt is refused
         // SwapAttemptHostMissing.
         cuts[19] = IDiamondCut.FacetCut({
-            facetAddress: address(new SwapAttemptFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(SwapAttemptFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSwapAttemptFacetSelectors()
         });
@@ -507,7 +508,7 @@ contract PositiveFlowsGapFillers is Test {
         // hand-built Diamond that cuts any of them must cut this host too, or
         // the fee reverts FunctionDoesNotExist at that self-call.
         cuts[20] = IDiamondCut.FacetCut({
-            facetAddress: address(new TreasuryFeeFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(TreasuryFeeFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
         });
@@ -515,7 +516,7 @@ contract PositiveFlowsGapFillers is Test {
         // through NumeraireValueFacet by self-call, so a hand-built Diamond
         // that cuts any of them must cut this host too.
         cuts[21] = IDiamondCut.FacetCut({
-            facetAddress: address(new NumeraireValueFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
         });

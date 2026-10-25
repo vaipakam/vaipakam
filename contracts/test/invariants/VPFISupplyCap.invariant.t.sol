@@ -13,6 +13,7 @@ import {TreasuryFacet} from "../../src/facets/TreasuryFacet.sol";
 import {VPFIToken} from "../../src/token/VPFIToken.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title VPFISupplyCapInvariant
@@ -49,13 +50,13 @@ contract VPFISupplyCapInvariant is Test {
         address owner = address(this);
 
         // ── Minimal diamond ──────────────────────────────────────────────
-        DiamondCutFacet cut = new DiamondCutFacet();
+        DiamondCutFacet cut = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cut));
 
-        AccessControlFacet ac = new AccessControlFacet();
-        AdminFacet admin = new AdminFacet();
-        VPFITokenFacet vpfiFacet = new VPFITokenFacet();
-        TreasuryFacet treasury = new TreasuryFacet();
+        AccessControlFacet ac = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
+        AdminFacet admin = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
+        VPFITokenFacet vpfiFacet = VPFITokenFacet(ArtifactDeploy.deploy(type(VPFITokenFacet).name));
+        TreasuryFacet treasury = TreasuryFacet(ArtifactDeploy.deploy(type(TreasuryFacet).name));
         HelperTest helper = new HelperTest();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);

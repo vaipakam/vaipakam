@@ -42,6 +42,7 @@ import {HelperTest} from "./HelperTest.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MeshBusMessenger} from "./mocks/MeshBusMessenger.sol";
 import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title  MeshThreeChainE2ETest
@@ -147,43 +148,43 @@ contract MeshThreeChainE2ETest is Test {
     {
         cuts = new IDiamondCut.FacetCut[](27);
         cuts[0] = _cut(
-            address(new AccessControlFacet()),
+            ArtifactDeploy.deploy(type(AccessControlFacet).name),
             helper.getAccessControlFacetSelectors()
         );
         cuts[1] =
-            _cut(address(new AdminFacet()), helper.getAdminFacetSelectors());
+            _cut(ArtifactDeploy.deploy(type(AdminFacet).name), helper.getAdminFacetSelectors());
         cuts[2] = _cut(
-            address(new VPFITokenFacet()), helper.getVPFITokenFacetSelectors()
+            ArtifactDeploy.deploy(type(VPFITokenFacet).name), helper.getVPFITokenFacetSelectors()
         );
         cuts[3] = _cut(
-            address(new InteractionRewardsFacet()),
+            ArtifactDeploy.deploy(type(InteractionRewardsFacet).name),
             helper.getInteractionRewardsFacetSelectors()
         );
         cuts[4] = _cut(
-            address(new InteractionRewardsLensFacet()),
+            ArtifactDeploy.deploy(type(InteractionRewardsLensFacet).name),
             helper.getInteractionRewardsLensFacetSelectors()
         );
         cuts[5] = _cut(
-            address(new RewardClaimFacet()),
+            ArtifactDeploy.deploy(type(RewardClaimFacet).name),
             helper.getRewardClaimFacetSelectors()
         );
         // #1434 — claim-horizon sweep on its own facet (EIP-170).
         cuts[10] = _cut(
-            address(new RewardHorizonSweepFacet()),
+            ArtifactDeploy.deploy(type(RewardHorizonSweepFacet).name),
             helper.getRewardHorizonSweepFacetSelectors()
         );
         cuts[6] = _cut(
-            address(new RewardReporterFacet()),
+            ArtifactDeploy.deploy(type(RewardReporterFacet).name),
             helper.getRewardReporterFacetSelectors()
         );
         cuts[7] = _cut(
-            address(new RewardAggregatorFacet()),
+            ArtifactDeploy.deploy(type(RewardAggregatorFacet).name),
             helper.getRewardAggregatorFacetSelectors()
         );
         // #1569 — the broadcast cluster is its own facet now; this harness
         // builds its own cut list, so it has to carry it too.
         cuts[11] = _cut(
-            address(new RewardBroadcastFacet()),
+            ArtifactDeploy.deploy(type(RewardBroadcastFacet).name),
             helper.getRewardBroadcastFacetSelectors()
         );
         cuts[8] = _cut(
@@ -196,7 +197,7 @@ contract MeshThreeChainE2ETest is Test {
         // bit — neither of which moves if a regression silently re-admits the
         // chain. Pinning the post-heal flag needs to read it.
         cuts[9] = _cut(
-            address(new RewardCommitmentFacet()),
+            ArtifactDeploy.deploy(type(RewardCommitmentFacet).name),
             helper.getRewardCommitmentFacetSelectors()
         );
         // The REST OF THE REWARD FAMILY, carried whole rather than facet by
@@ -210,66 +211,66 @@ contract MeshThreeChainE2ETest is Test {
         // already routes together) ends the class rather than the instance;
         // routing a selector changes no behaviour, which still follows storage.
         cuts[12] = _cut(
-            address(new RewardClaimWalkFacet()),
+            ArtifactDeploy.deploy(type(RewardClaimWalkFacet).name),
             helper.getRewardClaimWalkFacetSelectors()
         );
         cuts[13] = _cut(
-            address(new RewardSweepWalkFacet()),
+            ArtifactDeploy.deploy(type(RewardSweepWalkFacet).name),
             helper.getRewardSweepWalkFacetSelectors()
         );
         cuts[14] = _cut(
-            address(new RewardForfeitWalkFacet()),
+            ArtifactDeploy.deploy(type(RewardForfeitWalkFacet).name),
             helper.getRewardForfeitWalkFacetSelectors()
         );
         cuts[15] = _cut(
-            address(new RewardStagingFacet()),
+            ArtifactDeploy.deploy(type(RewardStagingFacet).name),
             helper.getRewardStagingFacetSelectors()
         );
         cuts[16] = _cut(
-            address(new RewardStagingSettleFacet()),
+            ArtifactDeploy.deploy(type(RewardStagingSettleFacet).name),
             helper.getRewardStagingSettleFacetSelectors()
         );
         cuts[17] = _cut(
-            address(new RewardCompensationDispatchFacet()),
+            ArtifactDeploy.deploy(type(RewardCompensationDispatchFacet).name),
             helper.getRewardCompensationDispatchFacetSelectors()
         );
         cuts[18] = _cut(
-            address(new RewardCustodyFacet()),
+            ArtifactDeploy.deploy(type(RewardCustodyFacet).name),
             helper.getRewardCustodyFacetSelectors()
         );
         cuts[19] = _cut(
-            address(new RewardEpochFacet()),
+            ArtifactDeploy.deploy(type(RewardEpochFacet).name),
             helper.getRewardEpochFacetSelectors()
         );
         cuts[20] = _cut(
-            address(new RewardEpochViewFacet()),
+            ArtifactDeploy.deploy(type(RewardEpochViewFacet).name),
             helper.getRewardEpochViewFacetSelectors()
         );
         cuts[21] = _cut(
-            address(new RewardIngressFacet()),
+            ArtifactDeploy.deploy(type(RewardIngressFacet).name),
             helper.getRewardIngressFacetSelectors()
         );
         cuts[22] = _cut(
-            address(new RewardReconciliationFacet()),
+            ArtifactDeploy.deploy(type(RewardReconciliationFacet).name),
             helper.getRewardReconciliationFacetSelectors()
         );
         cuts[23] = _cut(
-            address(new RewardRemittanceFacet()),
+            ArtifactDeploy.deploy(type(RewardRemittanceFacet).name),
             helper.getRewardRemittanceFacetSelectors()
         );
         cuts[24] = _cut(
-            address(new RewardRemittanceLensFacet()),
+            ArtifactDeploy.deploy(type(RewardRemittanceLensFacet).name),
             helper.getRewardRemittanceLensFacetSelectors()
         );
         // 3b-ii-A2-ii / 3b-ii-B — the claim walk reaches the legacy slice's hosted
         // gate on the domain facet by self-call, and the closure proof reads the
         // same Diamond: carried here for the same reason as the hosts above.
         cuts[25] = _cut(
-            address(new RewardStagingDomainFacet()),
+            ArtifactDeploy.deploy(type(RewardStagingDomainFacet).name),
             helper.getRewardStagingDomainFacetSelectors()
         );
         cuts[26] = _cut(
-            address(new RewardClosureFacet()),
+            ArtifactDeploy.deploy(type(RewardClosureFacet).name),
             helper.getRewardClosureFacetSelectors()
         );
     }
@@ -294,7 +295,7 @@ contract MeshThreeChainE2ETest is Test {
         returns (address d)
     {
         vm.chainId(chainId);
-        d = address(new VaipakamDiamond(address(this), address(new DiamondCutFacet())));
+        d = address(new VaipakamDiamond(address(this), ArtifactDeploy.deploy(type(DiamondCutFacet).name)));
         IDiamondCut(d).diamondCut(cuts, address(0), "");
 
         AccessControlFacet(d).initializeAccessControl();

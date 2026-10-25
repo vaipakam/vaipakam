@@ -67,15 +67,15 @@ contract VaipakamNFTFacetTest is Test {
         owner = address(this);
         user = makeAddr("user");
 
-        cutFacet = new DiamondCutFacet();
+        cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cutFacet));
-        nftFacet = new VaipakamNFTFacet();
-        accessControlFacet = new AccessControlFacet();
+        nftFacet = VaipakamNFTFacet(ArtifactDeploy.deploy(type(VaipakamNFTFacet).name));
+        accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         // tokenURI cross-facet-calls MetricsFacet.getNFTPositionSummary
         // for the live position read (Range Orders Phase 1 follow-up).
         // Cut MetricsFacet so tokenURI tests can resolve that selector.
-        metricsFacet = new MetricsFacet();
-        profileFacet = new ProfileFacet();
+        metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
+        profileFacet = ProfileFacet(ArtifactDeploy.deploy(type(ProfileFacet).name));
         helperTest = new HelperTest();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);
@@ -491,6 +491,7 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
 import {IERC721Metadata} from "@openzeppelin/contracts/token/ERC721/extensions/IERC721Metadata.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /// @dev Simple ERC721 receiver for safe transfer tests
 contract ERC721Receiver is IERC721Receiver {

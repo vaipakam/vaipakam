@@ -15,6 +15,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibNumeraireValue} from "../src/libraries/LibNumeraireValue.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title OracleFacetTest
@@ -72,12 +73,12 @@ contract OracleFacetTest is Test {
         mockFactory     = makeAddr("factory");
         mockDenom       = makeAddr("denom");
 
-        cutFacet            = new DiamondCutFacet();
+        cutFacet            = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond             = new VaipakamDiamond(owner, address(cutFacet));
-        oracleFacet         = new OracleFacet();
-        oracleAdminFacet    = new OracleAdminFacet();
-        adminFacet          = new AdminFacet();
-        accessControlFacet  = new AccessControlFacet();
+        oracleFacet         = OracleFacet(ArtifactDeploy.deploy(type(OracleFacet).name));
+        oracleAdminFacet    = OracleAdminFacet(ArtifactDeploy.deploy(type(OracleAdminFacet).name));
+        adminFacet          = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
+        accessControlFacet  = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         helperTest          = new HelperTest();
 
         bytes4[] memory oracleAdminSelectors = new bytes4[](7);

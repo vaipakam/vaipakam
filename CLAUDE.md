@@ -448,10 +448,14 @@ path or a guardrail:
 the Diamond build and refresh scripts create (`DeployDiamond`,
 `RefreshAllFacetsInPlace`, `RedeployFacets`, `ReplaceStaleFacets`,
 `UpgradeOracleFacet`, `MigrateRiskTermsCommitReveal`,
-`SlippageCensusPreDeploy`). A `new` compiles the facet's whole creation code
-into the script, and so into every deploy-sanity test and probe that
-constructs or inherits it, where viaIR optimizes it again per contract; one
-suite and its probe cost 470 s of solc on a warm cache. Pass `type(X).name`,
+`SlippageCensusPreDeploy`), and for every facet a TEST deploys —
+`SetupTest`, `InvariantBase` and the suites (#2789). A `new` compiles the
+facet's whole creation code into the contract that says it, and so into
+every test contract that constructs or inherits it, where viaIR optimizes it
+again per contract; one suite and its probe cost 470 s of solc on a warm
+cache. The deliberate exception is `RefreshChangedFacetsTest`, which compares
+refreshed code against a fresh `new` as an independent check that the
+artifact is this tree's build. Pass `type(X).name`,
 never a string literal: it forces the import, and the import is what makes
 Foundry rebuild X's artifact before the run. The deployed code, sender and
 address are the ones `new` would have produced.

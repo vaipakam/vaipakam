@@ -11,6 +11,7 @@ import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {OracleAdminFacet} from "../../src/facets/OracleAdminFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {HelperTest} from "../HelperTest.sol";
+import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 
 /// @title LiquidationMainnetForkTest
 /// @notice Fork-based integration test for the oracle + liquidity inputs
@@ -69,15 +70,15 @@ contract LiquidationMainnetForkTest is Test {
     // ─────────────────────────────────────────────────────────────────
 
     function _deployMinimalDiamond() internal {
-        DiamondCutFacet cutFacet = new DiamondCutFacet();
+        DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(address(this), address(cutFacet));
         HelperTest helper = new HelperTest();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);
-        cuts[0] = _cut(address(new AccessControlFacet()), helper.getAccessControlFacetSelectors());
-        cuts[1] = _cut(address(new AdminFacet()),         helper.getAdminFacetSelectors());
-        cuts[2] = _cut(address(new OracleFacet()),        helper.getOracleFacetSelectors());
-        cuts[3] = _cut(address(new OracleAdminFacet()),   _oracleAdminSelectors());
+        cuts[0] = _cut(ArtifactDeploy.deploy(type(AccessControlFacet).name), helper.getAccessControlFacetSelectors());
+        cuts[1] = _cut(ArtifactDeploy.deploy(type(AdminFacet).name),         helper.getAdminFacetSelectors());
+        cuts[2] = _cut(ArtifactDeploy.deploy(type(OracleFacet).name),        helper.getOracleFacetSelectors());
+        cuts[3] = _cut(ArtifactDeploy.deploy(type(OracleAdminFacet).name),   _oracleAdminSelectors());
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();

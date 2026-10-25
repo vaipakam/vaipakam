@@ -12,6 +12,7 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /// @title ConfigFacetTest
 /// @notice Exercises the admin-configurable protocol parameter surface:
@@ -41,10 +42,10 @@ contract ConfigFacetTest is Test {
         owner = address(this);
         attacker = makeAddr("attacker");
 
-        cutFacet = new DiamondCutFacet();
+        cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cutFacet));
-        accessControlFacet = new AccessControlFacet();
-        configFacet = new ConfigFacet();
+        accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
+        configFacet = ConfigFacet(ArtifactDeploy.deploy(type(ConfigFacet).name));
         helperTest = new HelperTest();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
