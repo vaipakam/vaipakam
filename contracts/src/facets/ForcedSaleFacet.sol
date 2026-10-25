@@ -600,8 +600,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
 
         // #821 — through the receive-side exemption so a flagged stored lender
         // never blocks the close-out; the claim names what the vault received
-        // (#2440). The fail-closed claimant markers are recorded at the
-        // terminal transition the caller makes (#1132).
+        // (#2440).
         lenderNet = LibSanctionedLock.depositLocked(s, loan.lender, loanId, loan.principalAsset, lenderNet);
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
@@ -611,6 +610,12 @@ contract ForcedSaleFacet is IVaipakamErrors {
             quantity: 0,
             claimed: false
         });
+        // #1132 (S10) — the row's writer registers its holder: the current
+        // lender-position holder's fail-closed claimant marker lands with the
+        // claim itself, whichever entry reached this host. The caller's
+        // terminal transition records both holders again; the marker is
+        // idempotent (first-write-wins for a still-flagged party).
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
         // #592 — reserve VPFI lender proceeds against the unstake path until
         // the current holder claims; ClaimFacet releases.
         if (loan.principalAsset == s.vpfiToken) {
@@ -649,6 +654,9 @@ contract ForcedSaleFacet is IVaipakamErrors {
             quantity: 0,
             claimed: unsold == 0
         });
+        // #1132 (S10) — the borrower-side marker lands with its row, as the
+        // lender's does in {_bookTerminal}.
+        LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
         loan.collateralAmount = unsold + sold;
     }
 
