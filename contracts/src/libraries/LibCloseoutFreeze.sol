@@ -144,10 +144,10 @@ library LibCloseoutFreeze {
             s, loan.borrower, loanId, loan.principalAsset, surplus
         );
         // #998 S10 (#1006) — the surplus is frozen precisely because
-        // `currentHolder` is flagged (we are past the clean-holder early return),
-        // so record that address as the frozen claimant for a fail-closed release.
-        LibSanctionedLock.recordFrozenClaimant(s, loanId, false, currentHolder);
-        addBorrowerSurplus(s, loanId, loan.principalAsset, surplus);
+        // `currentHolder` is flagged (we are past the clean-holder early return);
+        // the row writer records that address as the frozen claimant for a
+        // fail-closed release.
+        addBorrowerSurplus(s, loanId, currentHolder, loan.principalAsset, surplus);
         LibEncumbrance.encumberBorrowerProceeds(
             loanId, loan.borrower, loan.principalAsset, surplus
         );
@@ -164,14 +164,25 @@ library LibCloseoutFreeze {
      *         in the loan's principal asset, so it never mixes assets. Nothing
      *         writes it after the claim: the claim runs on a terminal loan and
      *         marks the row claimed in the same call.
+     *
+     *         The row's writer is also its sanctions register: every addition
+     *         records `holder` (the current borrower-position holder it is
+     *         owed to) through {LibSanctionedLock.recordFrozenClaimant}, which
+     *         marks the claim fail-closed when `holder` is flagged (or was
+     *         confirmed flagged and the oracle is down) and self-heals a stale
+     *         marker when `holder` reads clean. So no caller can grow the row
+     *         without the register.
+     * @param holder The current borrower-position holder the addition is owed to.
      */
     function addBorrowerSurplus(
         LibVaipakam.Storage storage s,
         uint256 loanId,
+        address holder,
         address asset,
         uint256 amount
     ) internal {
         if (amount == 0) return;
+        LibSanctionedLock.recordFrozenClaimant(s, loanId, false, holder);
         LibVaipakam.ClaimInfo storage row = s.borrowerSurplusClaims[loanId];
         assert(!row.claimed);
         if (row.amount == 0) {
@@ -190,9 +201,9 @@ library LibCloseoutFreeze {
      *         ({LibSanctionedLock.mustFreezeParty}), or the wallet payment was
      *         refused. The tokens are on the Diamond.
      * @dev    Credited into the STORED borrower's vault (it always exists),
-     *         added to the surplus row, reserved against the stored borrower's
-     *         spend paths, and — for a flagged holder — the fail-closed
-     *         claimant recorded. Paid with the claim at loan end. While the
+     *         added to the surplus row (whose writer records a flagged holder
+     *         as the fail-closed claimant), and reserved against the stored
+     *         borrower's spend paths. Paid with the claim at loan end. While the
      *         loan stays open the row follows the borrower position:
      *         consolidation moves it with the collateral
      *         ({LibConsolidation}), and an obligation handover pays it to the
@@ -206,15 +217,13 @@ library LibCloseoutFreeze {
         uint256 loanId,
         LibVaipakam.Loan storage loan,
         address holder,
-        bool frozen,
         address asset,
         uint256 amount
     ) internal returns (uint256 credited) {
         credited = LibSanctionedLock.depositLocked(s, loan.borrower, loanId, asset, amount);
         if (credited == 0) return 0;
-        addBorrowerSurplus(s, loanId, asset, credited);
+        addBorrowerSurplus(s, loanId, holder, asset, credited);
         LibEncumbrance.encumberBorrowerProceeds(loanId, loan.borrower, asset, credited);
-        if (frozen) LibSanctionedLock.recordFrozenClaimant(s, loanId, false, holder);
     }
 
     /// @notice #2795 — a borrower extra held on an open loan was paid out

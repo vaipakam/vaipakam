@@ -382,7 +382,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
             if (paid) return (false, extra);
         }
         amount = LibCloseoutFreeze.parkActiveBorrowerExtra(
-            s, loanId, loan, holder, frozen, loan.principalAsset, extra
+            s, loanId, loan, holder, loan.principalAsset, extra
         );
         held = true;
     }

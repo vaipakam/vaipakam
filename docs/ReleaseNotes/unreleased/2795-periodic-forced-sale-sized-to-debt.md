@@ -1,4 +1,4 @@
-## Thread — periodic auto-liquidation sells only what the missed interest needs (PR #2795)
+## Thread — periodic auto-liquidation sells only what the missed interest needs (PR #2811)
 
 When a periodic-interest payment is missed and the protocol sells collateral
 to cover it, the sale is now sized to what is owed: the missed interest plus

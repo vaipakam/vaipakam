@@ -77,6 +77,8 @@ const ALLOWLIST = {
     '#2440 failed-retry restore came back short; resizes BOTH FallbackPending claim rows to their shrunken snapshot slices (no new payout). The rows were registered at fallback ENTRY (enterFallback terminalizes), and its only path (retryFallbackSwap) is reached solely via ClaimFacet._retryFallbackSwap, whose two callers register both holders in the same tx (_claimViaBackstopImpl terminalizes; _claimAsLenderImpl records both + terminalizes)',
   'RiskMatchLiquidationFacet.sol::_retainInternalMatchResidual':
     'internal-match over-collateralized residual helper — its only caller (_settleFallbackOrTransitionPostMatch Active-full branch) terminalizes Active→InternalMatched (registers both holders) BEFORE this borrowerClaims write in the same tx',
+  'LibConsolidation.sol::_moveBorrowerHeld':
+    '#2795 open-loan held borrower extra following its position to the new holder: the write only LOWERS the borrowerSurplusClaims row to what the new holder\'s vault actually received (no new payout). Every addition to that row registers its holder (LibCloseoutFreeze.addBorrowerSurplus calls recordFrozenClaimant), and consolidation only reaches this move for a holder its own sanctions check passed (Tier-1 reverts, Tier-2 skips a flagged holder)',
 };
 
 const CLAIM_LANES = ['lenderClaims', 'borrowerClaims', 'borrowerSurplusClaims'];
