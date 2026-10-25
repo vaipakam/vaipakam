@@ -13,6 +13,11 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LoanClockProbeFacet} from "./mocks/LoanClockProbeFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -38,9 +43,12 @@ contract GlobalPauseLoanClockTest is SetupTest {
     function setUp() public {
         setupHelper();
         admin = AdminFacet(address(diamond));
-        // A test-only read of the late fee, so it is measured on its own.
-        bytes4[] memory sels = new bytes4[](1);
+        // Test-only reads of the late fee and the interest term, so each is
+        // measured on its own.
+        bytes4[] memory sels = new bytes4[](3);
         sels[0] = LoanClockProbeFacet.probeLateFee.selector;
+        sels[1] = LoanClockProbeFacet.probeInterestTermEnd.selector;
+        sels[2] = LoanClockProbeFacet.probeRemainingInterestSeconds.selector;
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(new LoanClockProbeFacet()),
@@ -468,6 +476,178 @@ contract GlobalPauseLoanClockTest is SetupTest {
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
             loanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
         );
+    }
+
+    /// @dev #2809 r2 — the interest term a sale or an early close prices a
+    ///      rate shortfall over runs to the moved maturity: past the original
+    ///      one, nine days are left, not none.
+    function test_clock_interestTermRunsToTheMovedMaturity() public {
+        uint256 loanId = _pausedTenDaysThenAt(DURATION_DAYS + 1);
+        (, , uint256 maturity, ) = _deadlines(loanId);
+        LoanClockProbeFacet probe = LoanClockProbeFacet(address(diamond));
+        assertEq(probe.probeInterestTermEnd(loanId), maturity, "the term ends at the moved maturity");
+        assertEq(probe.probeRemainingInterestSeconds(loanId), 9 days, "nine days of term are left");
+    }
+
+    /// @dev A partial repay after a pause consumes no paused day from the
+    ///      interest term, so the term still ends at the moved maturity.
+    function test_clock_partialRepayAfterAPauseKeepsTheMovedTerm() public {
+        uint256 loanId = _pausedTenDaysThenAt(20);
+        vm.startPrank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
+        RepayFacet(address(diamond)).repayPartial(loanId, PRINCIPAL / 2);
+        vm.stopPrank();
+        (, , uint256 maturity, ) = _deadlines(loanId);
+        assertEq(
+            LoanClockProbeFacet(address(diamond)).probeInterestTermEnd(loanId),
+            maturity,
+            "the re-stamped term still ends at the moved maturity"
+        );
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).interestRemainingDays,
+            20,
+            "ten unpaused days consumed, not twenty"
+        );
+    }
+
+    /// @dev The paid-through mark (`lenderInterestDeliveredThroughAt`) has no
+    ///      getter: slot 480 of the Diamond's namespace, per
+    ///      `storage-layout/layout.golden.json`. Proved by writing a known
+    ///      value through the mutator before it is read.
+    function _paidThrough(uint256 loanId) internal view returns (uint256) {
+        bytes32 slot = keccak256(abi.encode(loanId, uint256(LibVaipakam.VANGKI_STORAGE_POSITION) + 480));
+        return uint256(vm.load(address(diamond), slot));
+    }
+
+    /// @dev #2809 r2 P1 — a periodic settlement after a pause pays one
+    ///      interval of interest, so it marks the lender paid through the
+    ///      UNMOVED period end; the paused stretch stays unpaid. The deadline
+    ///      the settlement was due by is the moved one.
+    function test_clock_periodicSettlementMarksPaidThroughTheUnmovedPeriodEnd() public {
+        vm.prank(owner);
+        NumeraireConfigFacet(address(diamond)).setPeriodicInterestEnabled(true);
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setMaxOfferDurationDays(2 * 365);
+        mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
+        mockOraclePrice(mockCollateralERC20, 1_000 * 1e8, 8);
+        vm.prank(lender);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 1200,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: 5 * PRINCIPAL,
+                durationDays: 90,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: true,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 1200,
+                collateralAmountMax: 5 * PRINCIPAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.Monthly,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+        uint256 start = LoanFacet(address(diamond)).getLoanDetails(loanId).startTime;
+
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(loanId, 7);
+        assertEq(_paidThrough(loanId), 7, "fixture: the slot is the paid-through mark");
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(loanId, 0);
+
+        vm.warp(start + 5 days);
+        admin.pause();
+        vm.warp(vm.getBlockTimestamp() + 60 days);
+        admin.unpause();
+        vm.warp(start + 30 days + 60 days + 5 days); // past the moved period end and its grace
+
+        vm.prank(makeAddr("settler"));
+        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, defaultAdapterCalls());
+
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).lastPeriodicInterestSettledAt,
+            start + 30 days,
+            "fixture-live: the first period settled"
+        );
+        assertEq(_paidThrough(loanId), start + 30 days, "paid through the unmoved period end");
+    }
+
+    /// @dev #2809 r2 — rent is charged by elapsed day, pause included, so a
+    ///      rental's paid use ends on its original schedule: the renter's
+    ///      expiry is the ORIGINAL maturity after a pause, and the prepaid
+    ///      days run out (and the rental closes) before the moved maturity.
+    ///      The pause moved only the late-fee and default deadlines.
+    function test_clock_rentalUseEndsWithThePrepaidDays() public {
+        uint256 rentalDays = 7;
+        uint256 dailyFee = 10 ether;
+        uint256 rent = dailyFee * rentalDays;
+        uint256 totalPrepay = rent + (rent * 500) / 10_000;
+        vm.prank(lender);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockNft721,
+                amount: dailyFee,
+                interestRateBps: 0,
+                collateralAsset: mockERC20,
+                collateralAmount: totalPrepay,
+                durationDays: rentalDays,
+                assetType: LibVaipakam.AssetType.ERC721,
+                tokenId: 1,
+                quantity: 1,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: dailyFee,
+                interestRateBpsMax: 0,
+                collateralAmountMax: totalPrepay,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+        uint256 start = LoanFacet(address(diamond)).getLoanDetails(loanId).startTime;
+
+        vm.warp(start + 2 days);
+        admin.pause();
+        vm.warp(vm.getBlockTimestamp() + 5 days);
+        admin.unpause();
+        (uint256 original, uint256 credit, uint256 maturity, ) = _deadlines(loanId);
+        assertEq(credit, 5 days, "fixture-live: the pause is credited");
+
+        vm.warp(start + rentalDays * 1 days);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(loanId);
+        assertEq(
+            MockRentableNFT721(mockNft721).userExpires(1),
+            original,
+            "the renter's use ends at the original maturity"
+        );
+        for (uint256 i = 1; i < rentalDays; i++) {
+            RepayPeriodicFacet(address(diamond)).autoDeductDaily(loanId);
+        }
+        assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Repaid), "closed with the prepaid days");
+        assertLt(vm.getBlockTimestamp(), maturity, "before the moved maturity");
     }
 
     // ─── 4. Disclosure ───────────────────────────────────────────────────────

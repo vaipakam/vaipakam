@@ -426,11 +426,9 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // mirroring `RepayFacet.repayPartial`. Seed the clock from the term for
         // any loan that predates the fields before reading elapsed.
         LibVaipakam.seedInterestClockIfUnset(loan);
-        uint256 elapsedSinceSegmentStart;
-        unchecked {
-            elapsedSinceSegmentStart =
-                (block.timestamp - loan.interestAccrualStart) / LibVaipakam.ONE_DAY;
-        }
+        // #668 / #935 — a paused day is not consumed: the pause moved the
+        // term's end by that day ({LibLoanClock.interestTermEnd}).
+        uint256 elapsedSinceSegmentStart = LibLoanClock.unpausedDaysSinceInterestStart(loan);
         if (elapsedSinceSegmentStart >= loan.interestRemainingDays) {
             loan.interestRemainingDays = 0;
         } else {

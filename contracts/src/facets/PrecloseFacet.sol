@@ -822,8 +822,8 @@ contract PrecloseFacet is
         // per-day rent for the same window.
         bool isErc20 = loan.assetType == LibVaipakam.AssetType.ERC20;
         uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
-        uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
-        uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
+        // #668 / #935 — the remaining term runs to the pause-moved end.
+        uint256 remainingSecs = LibLoanClock.remainingInterestSeconds(loan, block.timestamp);
         uint256 newSecs = offer.durationDays * 1 days;
         uint256 accruedInterest = isErc20
             ? LibEntitlement.proRataInterestSeconds(loan.principal, loan.interestRateBps, elapsed)
@@ -1581,8 +1581,8 @@ contract PrecloseFacet is
     {
         // #641 — read the interest clock, not the immutable term tuple.
         uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
-        uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
-        uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
+        // #668 / #935 — the remaining term runs to the pause-moved end.
+        uint256 remainingSecs = LibLoanClock.remainingInterestSeconds(loan, block.timestamp);
         uint256 accruedInterest = LibEntitlement.proRataInterestSeconds(
             loan.principal, loan.interestRateBps, elapsed
         );

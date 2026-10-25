@@ -17,8 +17,13 @@ import {LibPausable} from "./LibPausable.sol";
  *         the loan's whole schedule, so a pause during the grace period
  *         extends the grace period, and a pause after the loan became
  *         defaultable puts it back inside its grace window for as long as
- *         the pause lasted. Interest is NOT moved: it accrues by elapsed
- *         time, and repay stays open during a pause. A loan whose
+ *         the pause lasted. Interest ACCRUAL is NOT moved: it accrues by
+ *         elapsed time, and repay stays open during a pause. The interest
+ *         TERM is: the remaining term a sale or an early close prices a rate
+ *         shortfall over ends at the moved maturity ({interestTermEnd}). Nor
+ *         is a rental's paid use: rent, like interest, is charged by elapsed
+ *         day, so the renter's use ends when the prepaid days do, and the
+ *         credit moves only the late-fee and default deadlines. A loan whose
  *         `startTime` is reset (an in-place extension, an obligation
  *         handover) is credited only the pauses after its new start. See
  *         docs/DesignsAndPlans/GlobalPauseD2Design.md.
@@ -47,6 +52,51 @@ library LibLoanClock {
         uint256 m = maturity(loan);
         if (block.timestamp >= m) return 0;
         return (m - block.timestamp + 1 days - 1) / 1 days;
+    }
+
+    /// @notice The end of the loan's interest term as of `at`: the interest
+    ///         clock's start plus its remaining days (#641), moved by the
+    ///         paused time since that start. The term a rate shortfall at a
+    ///         sale or an early close is priced over.
+    /// @dev    The interest clock counts only unpaused days (a partial that
+    ///         re-stamps it consumes no paused day, see
+    ///         {unpausedDaysSinceInterestStart}), so the pause credit is added
+    ///         here from the clock's own start, not from the loan's. On a loan
+    ///         that has never been re-stamped the two starts coincide and this
+    ///         is {maturity}.
+    function interestTermEnd(LibVaipakam.Loan storage loan, uint256 at)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 start = LibVaipakam.interestAccrualStartOf(loan);
+        return start + LibVaipakam.interestRemainingDaysOf(loan) * 1 days
+            + LibPausable.pausedSecondsBetween(start, at);
+    }
+
+    /// @notice Seconds of interest term left at `at`; zero past the end.
+    function remainingInterestSeconds(LibVaipakam.Loan storage loan, uint256 at)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 end = interestTermEnd(loan, at);
+        return end > at ? end - at : 0;
+    }
+
+    /// @notice Whole unpaused days since the interest clock's start: the
+    ///         days a partial that re-stamps the clock consumes from its
+    ///         remaining term. A paused day is not consumed, because the
+    ///         pause moved the term's end by that day.
+    function unpausedDaysSinceInterestStart(LibVaipakam.Loan storage loan)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 start = LibVaipakam.interestAccrualStartOf(loan);
+        if (block.timestamp <= start) return 0;
+        return (block.timestamp - start - LibPausable.pausedSecondsBetween(start, block.timestamp))
+            / 1 days;
     }
 
     /// @notice The loan's effective grace end: past it the loan may be

@@ -77,7 +77,32 @@ whoever triggers the default fastest after an unpause.
 
 Interest is unchanged: it accrues by elapsed time, pause included. Repay
 stays open during a pause, so a borrower who does not want that interest
-can repay. A loan's `startTime` is reset when the loan is extended in
+can repay.
+
+Three readings follow from that, and each has one helper:
+
+- **The interest term moves; the accrual does not.** A rate shortfall at a
+  sale or an early close (preclose, offset) is priced over the remaining
+  term, and that term ends at the moved maturity. `interestTermEnd(loan,
+  at)` is the interest clock's start plus its remaining days plus the
+  paused time since that start; `remainingInterestSeconds` reads it. A
+  partial that re-stamps the clock consumes only unpaused days
+  (`unpausedDaysSinceInterestStart`), so the clock never loses the moved
+  days. A partial liquidation re-stamps against `maturity`, which already
+  carries the credit.
+- **A periodic settlement pays one interval.** The period's deadline
+  (`periodEndAt`) moves with the credit, but its expected interest is one
+  interval's worth, which covers one interval of elapsed time. The
+  lender's paid-through mark is therefore the unmoved period end
+  (`deliveredThroughAt`), so the paused stretch stays unpaid and a later
+  sale still forfeits it.
+- **A rental's paid use does not move.** Rent, like interest, is charged
+  by elapsed day, pause included, so the prepaid days run out on the
+  original schedule. The renter's ERC-4907 expiry is the original maturity
+  and the daily deduction closes the rental when the prepaid days are
+  used. The credit moves only the rental's late-fee and default
+  deadlines, so a renter is never charged a late fee or defaulted because
+  of a pause. A loan's `startTime` is reset when the loan is extended in
 place or its obligation is handed over (Preclose). The credit then counts
 only pauses after the new start, which matches the new term.
 
@@ -122,9 +147,8 @@ prove the path end to end.
 - Offer, intent, sale-listing and Seaport order expiries are not loan
   deadlines and are not moved. Such an order can expire during a pause,
   and the user posts it again.
-- A rental's ERC-4907 user expiry is written at origination and again on
-  each daily deduction. It is re-read from `maturity(loan)` on the first
-  deduction after the unpause.
+- A rental's ERC-4907 user expiry, as above: the prepaid use ends on the
+  original schedule.
 - HF liquidation needs no credit. It is paused while the protocol is
   paused and resumes after the unpause.
 - A parallel-sale listing's price floor is set before the loan exists and

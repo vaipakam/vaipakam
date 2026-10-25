@@ -249,10 +249,12 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // Update renter expires. #893 join: with `durationDays` now immutable
         // this is the origination maturity, so the renter holds the NFT for
         // the full agreed term instead of an earlier-shrinking expiry. It is
-        // the EFFECTIVE maturity ({LibLoanClock}), so the first deduction
-        // after a pause carries the pause credit onto the renter's expiry
-        // (#668 / #935).
-        uint64 newExpires = uint64(LibLoanClock.maturity(loan));
+        // the ORIGINAL maturity, not the pause-moved one (#668 / #935, Codex
+        // #2809 r2): rent, like interest, is charged by elapsed day, pause
+        // included, so the prepaid days are used up on the original
+        // schedule and the deduction below closes the rental then. The pause
+        // credit moves only the late-fee and default deadlines.
+        uint64 newExpires = uint64(LibLoanClock.originalMaturity(loan));
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultSetRentalUser.selector,
@@ -723,7 +725,15 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
                     // below, which deliberately credits only what arrived), so the
                     // window stays open over it and the seller forfeits it — the
                     // conservative direction, and the honest one.
-                    lenderProceeds >= shortfall ? boundary : 0
+                    //
+                    // #668 / #935 (Codex #2809 r2 P1) — the paid-through point is
+                    // the UNMOVED period end ({LibPeriodicInterest.deliveredThroughAt}),
+                    // not `boundary`: `boundary` carries the pause credit and is
+                    // the payment deadline, while the shortfall covered here is
+                    // one interval of interest, so a paused stretch stays unpaid.
+                    lenderProceeds >= shortfall
+                        ? LibPeriodicInterest.deliveredThroughAt(loan)
+                        : 0
                 ),
                 bytes4(0)
             ), (uint256));

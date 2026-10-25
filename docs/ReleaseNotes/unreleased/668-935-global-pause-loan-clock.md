@@ -33,6 +33,17 @@ can therefore be refused as short. The borrower can still repay, or post
 the listing again. Whether a loan may still be listed for sale, and the
 remaining term the listing carries, follow the moved due date.
 
+The remaining term a sale or an early close prices a rate difference over
+also runs to the moved due date, so a buyer who takes on the days a pause
+added is compensated for them, and a partial repayment after a pause no
+longer counts the paused days against that term. A periodic settlement
+after a pause pays one period's interest, so it marks the lender paid only
+through the unmoved end of that period: the interest for the paused
+stretch is still owed, and a later sale still accounts for it. A rental's
+use is not extended: rent is charged by the day, pause included, so the
+renter's use ends when the prepaid days do, on the original schedule. The
+pause only protects the renter from a late fee or a default.
+
 A chain upgraded in place while paused, or during an auto-pause window,
 counts that pause from the upgrade on, before anyone lifts it, rather
 than only once it ends, so repayment stays open against the moved

@@ -679,10 +679,10 @@ contract EarlyWithdrawalDirectFacet is
         // is symmetric across the two sides of the net settlement.
         // #641 — accrued/remaining split reads the interest clock (post-partial
         // origin + remaining term), not the immutable term tuple.
+        // #668 / #935 — the remaining term runs to the pause-moved end
+        // ({LibLoanClock.interestTermEnd}), as on the listed route.
         uint256 accrualStart = LibVaipakam.interestAccrualStartOf(loan);
-        uint256 elapsed = block.timestamp - accrualStart;
-        uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
-        uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
+        uint256 remainingSecs = LibLoanClock.remainingInterestSeconds(loan, block.timestamp);
 
         // #1503 item 28 — the FORFEITURE clock starts at the point this lender
         // has already been PAID through, falling back to the accrual origin only

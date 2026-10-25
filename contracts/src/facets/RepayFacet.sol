@@ -908,11 +908,9 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             // predates the fields, so the elapsed math below doesn't compute
             // from timestamp 0 and zero out the remaining term.
             LibVaipakam.seedInterestClockIfUnset(loan);
-            uint256 elapsedSinceSegmentStart;
-            unchecked {
-                elapsedSinceSegmentStart =
-                    (block.timestamp - loan.interestAccrualStart) / LibVaipakam.ONE_DAY;
-            }
+            // #668 / #935 — a paused day is not consumed: the pause moved the
+            // term's end by that day ({LibLoanClock.interestTermEnd}).
+            uint256 elapsedSinceSegmentStart = LibLoanClock.unpausedDaysSinceInterestStart(loan);
             if (elapsedSinceSegmentStart >= loan.interestRemainingDays) {
                 loan.interestRemainingDays = 0;
             } else {
@@ -1072,9 +1070,11 @@ contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
             }
 
             // Update renter expires. With `durationDays` immutable this is the
-            // origination maturity (no longer shrinks) — the #893 join — plus
-            // any pause credit ({LibLoanClock}, #668 / #935).
-            uint64 newExpires = uint64(LibLoanClock.maturity(loan));
+            // origination maturity (no longer shrinks) — the #893 join. Not
+            // moved by a pause (#668 / #935): rent is charged by elapsed day,
+            // so the prepaid use ends on the original schedule
+            // ({RepayPeriodicFacet.autoDeductDaily}).
+            uint64 newExpires = uint64(LibLoanClock.originalMaturity(loan));
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultSetRentalUser.selector,

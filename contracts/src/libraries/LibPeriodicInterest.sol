@@ -48,6 +48,24 @@ library LibPeriodicInterest {
             + LibLoanClock.pauseCredit(loan);
     }
 
+    /// @dev The point a full settlement of the current period pays the
+    ///      lender through: `lastPeriodicInterestSettledAt + intervalDays`,
+    ///      NOT moved by the pause credit. A period's expected interest is
+    ///      one interval's worth ({expectedInterestForPeriod}) and interest
+    ///      accrues by elapsed time, pause included (#668 / #935), so one
+    ///      interval of interest covers one interval of elapsed time. The
+    ///      moved {periodEndAt} is the payment DEADLINE; this is what was
+    ///      PAID. Stamping the deadline as paid-through would mark the
+    ///      paused stretch paid when nobody paid it. Returns 0 when cadence
+    ///      is None.
+    function deliveredThroughAt(
+        LibVaipakam.Loan storage loan
+    ) internal view returns (uint256) {
+        uint256 days_ = LibVaipakam.intervalDays(loan.periodicInterestCadence);
+        if (days_ == 0) return 0;
+        return uint256(loan.lastPeriodicInterestSettledAt) + days_ * LibVaipakam.ONE_DAY;
+    }
+
     /// @dev Earliest timestamp at which a permissionless settler call is
     ///      allowed — period boundary + duration-tiered grace. Returns 0
     ///      when cadence is None. Reuses the existing T-044 grace
