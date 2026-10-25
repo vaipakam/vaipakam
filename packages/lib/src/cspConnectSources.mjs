@@ -30,14 +30,15 @@ import path from 'node:path';
 export const CONNECT_SOURCES_PLACEHOLDER = '__CONNECT_SOURCES__';
 
 const SCHEMES = new Set(['https:', 'wss:']);
+const HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*$/;
 
 /**
  * The CSP source for one configured endpoint: its origin (`scheme://host`,
  * with a port only when it is not the default), from any URL on it.
  *
  * Throws for anything a browser would not reach as that plain origin: a
- * scheme other than `https:` or `wss:`, credentials, a wildcard, or text
- * that is not a URL. A path is dropped on purpose: the policy names the
+ * scheme other than `https:` or `wss:`, credentials, a wildcard, a host a
+ * CSP host-source cannot carry, or text that is not a URL. A path is dropped on purpose: the policy names the
  * host the page may reach, and a host-source with a path would make a
  * fetch to a sibling route on the same host fail.
  *
@@ -59,6 +60,13 @@ export function connectSource(url) {
   }
   if (u.hostname.includes('*')) {
     throw new Error(`[csp] connect-src: ${JSON.stringify(url)} is a wildcard, not an origin`);
+  }
+  // The URL parser keeps characters a CSP host-source cannot carry (`;`
+  // among them, which would end the directive and start another), so the
+  // host is held to the host-source grammar: dot-separated labels of
+  // letters, digits and hyphens (an IDN is already punycode here).
+  if (!HOST.test(u.hostname)) {
+    throw new Error(`[csp] connect-src: ${JSON.stringify(url)} has a host a CSP source cannot name`);
   }
   return u.origin;
 }

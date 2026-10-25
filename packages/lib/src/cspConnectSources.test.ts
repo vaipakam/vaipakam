@@ -25,6 +25,8 @@ describe('connectSource', () => {
     expect(connectSource('https://indexer.vaipakam.com/')).toBe('https://indexer.vaipakam.com');
     expect(connectSource('https://preview.example.dev/config/84532')).toBe('https://preview.example.dev');
     expect(connectSource('wss://indexer.vaipakam.com/ws/chain/84532')).toBe('wss://indexer.vaipakam.com');
+    expect(connectSource('https://Indexer.Vaipakam.com')).toBe('https://indexer.vaipakam.com');
+    expect(connectSource('https://bücher.example')).toBe('https://xn--bcher-kva.example');
   });
 
   it('keeps a port only when it is not the default', () => {
@@ -38,6 +40,12 @@ describe('connectSource', () => {
     expect(() => connectSource('https://*.example.com')).toThrow(/wildcard/);
     expect(() => connectSource('indexer.vaipakam.com')).toThrow(/not a URL/);
     expect(() => connectSource('')).toThrow(/not a URL/);
+    // A host the URL parser keeps but a policy cannot carry: `;` would end
+    // connect-src and start a directive of the configuration's choosing.
+    expect(() => connectSource('https://a.example;script-src')).toThrow(/host a CSP source cannot name/);
+    expect(() => connectSource("https://a'b.example")).toThrow(/host a CSP source cannot name/);
+    expect(() => connectSource('https://a,b.example')).toThrow(/host a CSP source cannot name/);
+    expect(() => connectSource('https://[::1]')).toThrow(/host a CSP source cannot name/);
   });
 });
 
