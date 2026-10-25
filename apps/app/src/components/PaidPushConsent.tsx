@@ -24,7 +24,11 @@
  *    vault's free VPFI is below the fee; the bill itself stays authoritative.
  *
  * The consent is per network (each network's Diamond keeps its own record),
- * so every line names the network it describes.
+ * so every line names the network it describes. It is also per wallet, so the
+ * card's own state (a confirmation, an error, a pending write) belongs to the
+ * wallet and network it was produced for: the card is remounted whenever
+ * either changes, and a write that completes after a switch reports into the
+ * discarded instance, never into the new wallet's card.
  */
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -35,6 +39,7 @@ import { useDiamondWrite } from '../contracts/diamond';
 import type { PushBillingState } from '../data/alerts';
 import {
   notificationFeeConsentKey,
+  paidPushConsentScope,
   paidPushConsentView,
   useNotificationFeeConsent,
   type NotificationFeeConsent,
@@ -45,7 +50,16 @@ import { formatTokenAmountExact } from '../lib/format';
 
 const vpfi = (raw: bigint) => formatTokenAmountExact(raw, VPFI_DECIMALS);
 
-export function PaidPushConsent({ billing }: { billing: PushBillingState | undefined }) {
+interface PaidPushConsentProps {
+  billing: PushBillingState | undefined;
+}
+
+export function PaidPushConsent(props: PaidPushConsentProps) {
+  const { readChain, address } = useActiveChain();
+  return <PaidPushConsentFor key={paidPushConsentScope(readChain.chainId, address)} {...props} />;
+}
+
+function PaidPushConsentFor({ billing }: PaidPushConsentProps) {
   const { readChain, address, onSupportedChain } = useActiveChain();
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();

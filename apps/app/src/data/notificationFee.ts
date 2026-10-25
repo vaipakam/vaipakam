@@ -73,6 +73,16 @@ export function useNotificationFeeConsent() {
   });
 }
 
+/**
+ * The identity a consent card's own state belongs to: one wallet on one
+ * network. The card is keyed on it, so a confirmation or error produced for
+ * one wallet is never shown for another, even when the write completes after
+ * the switch.
+ */
+export function paidPushConsentScope(chainId: number, address: string | undefined): string {
+  return `${chainId}:${address?.toLowerCase() ?? ''}`;
+}
+
 /** Whether the alert service charges the fee on this chain, as it says. */
 export type PaidPushBilled = 'billed' | 'not-billed' | 'unknown';
 

@@ -5,7 +5,12 @@
  * renders a decision it did not make.
  */
 import { describe, expect, it } from 'vitest';
-import { paidPushBilledOn, paidPushConsentView, type NotificationFeeConsent } from './notificationFee';
+import {
+  paidPushBilledOn,
+  paidPushConsentScope,
+  paidPushConsentView,
+  type NotificationFeeConsent,
+} from './notificationFee';
 import type { PushBillingState } from './alerts';
 
 const FEE = 5n * 10n ** 17n; // 0.5 VPFI
@@ -25,6 +30,17 @@ const view = (
   freeVpfi: bigint | undefined = 10n ** 18n,
   stale = false,
 ) => paidPushConsentView({ billing, chainId: BASE_SEPOLIA, consent: c, freeVpfi, stale });
+
+describe('paidPushConsentScope', () => {
+  it('is one wallet on one network, case-insensitive on the address', () => {
+    const a = '0xAbC0000000000000000000000000000000000001';
+    const b = '0xabc0000000000000000000000000000000000002';
+    expect(paidPushConsentScope(BASE_SEPOLIA, a)).toBe(paidPushConsentScope(BASE_SEPOLIA, a.toLowerCase()));
+    expect(paidPushConsentScope(BASE_SEPOLIA, a)).not.toBe(paidPushConsentScope(BASE_SEPOLIA, b));
+    expect(paidPushConsentScope(BASE_SEPOLIA, a)).not.toBe(paidPushConsentScope(421614, a));
+    expect(paidPushConsentScope(BASE_SEPOLIA, a)).not.toBe(paidPushConsentScope(BASE_SEPOLIA, undefined));
+  });
+});
 
 describe('paidPushBilledOn', () => {
   it('is the service’s answer for THIS network, and unknown when it gave none', () => {

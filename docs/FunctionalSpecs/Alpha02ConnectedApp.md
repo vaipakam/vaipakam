@@ -2700,6 +2700,10 @@ is the borrower's own money.
   service says about billing, whether or not an alert service is configured,
   whatever the Terms state, and while the protocol is paused. A fee already
   charged for a loan is not refunded, and the card says so.
+- A confirmation or error from agreeing or withdrawing belongs to the wallet
+  and network it was sent for. After a switch of wallet or network it is no
+  longer shown, including when the write completes after the switch, so one
+  wallet's withdrawal is never presented as covering another wallet.
 - Where a covering consent stands on a billed network and the vault's free
   VPFI appears to be below the fee, the card warns that a paid alert cannot be
   charged until VPFI is added; the charge itself remains the authority.
