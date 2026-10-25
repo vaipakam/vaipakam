@@ -37,12 +37,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { formatEther } from 'viem';
 import { runRewardSanctionsHold } from '../../src/rewardSanctionsHold';
 import { listOpenSanctionsChains, listSanctionsWatch } from '../../src/db';
-import { OVERLAY_ABI, openScenario, type ScenarioChain } from '../harness/chain';
+import { OVERLAY_ABI, openScenario, type KeeperChain } from '../harness/chain';
 import { keeperEnvFor, tickNow, type KeeperHarness } from '../harness/keeperEnv';
 import type { Env } from '../../src/env';
 import { opsBotSink, type OpsBotSink } from '../harness/opsAlerts';
-import { openLoan, repayInFull } from '../harness/lending';
-import { finalizeThrough } from '../harness/rewardDays';
+import { openLoan, repayInFull } from '@vaipakam/anvil-harness/lending';
+import { finalizeThrough } from '@vaipakam/anvil-harness/rewardDays';
 import { openRecycleWindow, type RecycleReconciliation } from '../harness/recycle';
 
 const DAY = 86_400;
@@ -55,7 +55,7 @@ const CONFIRMED = 2;
 /** `LibVpfiRecycle.RecycleSource.ForfeitedReward`. */
 const FORFEITED_REWARD = 0;
 
-let sc: ScenarioChain;
+let sc: KeeperChain;
 let k: KeeperHarness;
 /** The operators' chat, stood in: what they were actually posted. */
 let sink: OpsBotSink;

@@ -17,3 +17,20 @@ export {
   type FixtureDeployment,
 } from './fixture';
 export { CcipRelay, compileLocalLane, deployLocalLane, type LaneEnd, type LocalLane, type RelayedMessage } from './ccipLane';
+export { ANVIL_DEV_KEYS } from './devKeys';
+export { ScenarioChain, TOKEN_ABI, type ChainFixture, type ClockPin, type DecodedEvent, type Party, type ScenarioChainOptions } from './scenarioChain';
+export { openLoan, repayInFull, WETH, type LoanTerms, type OpenedLoan } from './lending';
+export { finalizeThrough } from './rewardDays';
+export {
+  BASE_ID,
+  LANE_NATIVE_FEE,
+  MESH_REWARD_POOL_FUND,
+  MESH_SCRIPTS,
+  MeshFixtureStore,
+  MIRROR_ID,
+  type MeshChainFixture,
+  type MeshFixture,
+  type MeshFixtureStoreOptions,
+  type MeshSeed,
+} from './mesh';
+export { openMeshScenario, type MeshChain, type MeshScenario, type OpenMeshScenarioOptions } from './meshScenario';

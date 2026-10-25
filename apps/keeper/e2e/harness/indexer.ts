@@ -27,7 +27,8 @@ import { runChainIndexerForChain } from '../../../indexer/src/chainIndexer';
 import type { Env as IndexerEnv } from '../../../indexer/src/env';
 import { INDEXER_MIGRATIONS_DIR } from '../../test/helpers/schemas';
 import type { SqliteD1 } from '../../test/helpers/sqliteD1';
-import { SETTLED_DEPTH, type AnyScenarioChain } from './chain';
+import type { ScenarioChain } from '@vaipakam/anvil-harness/scenarioChain';
+import { SETTLED_DEPTH } from './chain';
 
 /** Record every indexer migration as applied, the way wrangler does. */
 export function recordAppliedMigrations(shared: SqliteD1): void {
@@ -73,7 +74,7 @@ export function bindingFor(chainId: number): { rpcKey: 'RPC_BASE_SEPOLIA' | 'RPC
 
 /** One chain's indexer. A scenario spanning two chains runs one per chain,
  *  all writing the SAME shared database — as the deployed indexer does. */
-export function scenarioIndexer(sc: AnyScenarioChain, shared: SqliteD1): ScenarioIndexer {
+export function scenarioIndexer(sc: ScenarioChain, shared: SqliteD1): ScenarioIndexer {
   recordAppliedMigrations(shared);
   const binding = bindingFor(sc.chain.id);
   const env = {

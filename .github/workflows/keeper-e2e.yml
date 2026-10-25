@@ -108,7 +108,7 @@ jobs:
         run: |
           forge build script/e2e/DeployE2ELocalCcip.s.sol
           forge build script/e2e/E2EOperatorScripts.s.sol
-          forge build script/e2e/ConfigureKeeperMeshFixture.s.sol
+          forge build script/e2e/ConfigureMeshRewardsFixture.s.sol
 
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4

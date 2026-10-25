@@ -26,11 +26,12 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runRewardHorizonHeartbeat } from '../../src/rewardHorizonHeartbeat';
-import { openScenario, type DecodedEvent, type ScenarioChain } from '../harness/chain';
+import type { DecodedEvent } from '@vaipakam/anvil-harness/scenarioChain';
+import { openScenario, type KeeperChain } from '../harness/chain';
 import { keeperEnvFor, tickNow, type KeeperHarness } from '../harness/keeperEnv';
 import { collectOpsAlerts, type OpsAlertLog } from '../harness/opsAlerts';
-import { openLoan, repayInFull } from '../harness/lending';
-import { finalizeThrough } from '../harness/rewardDays';
+import { openLoan, repayInFull } from '@vaipakam/anvil-harness/lending';
+import { finalizeThrough } from '@vaipakam/anvil-harness/rewardDays';
 import { openRecycleWindow } from '../harness/recycle';
 
 const DAY = 86_400;
@@ -41,7 +42,7 @@ const STEP_SEC = 6 * DAY;
 /** `LibVpfiRecycle.RecycleSource.ExpiredReward`. */
 const EXPIRED_REWARD = 8;
 
-let sc: ScenarioChain;
+let sc: KeeperChain;
 let k: KeeperHarness;
 let alerts: OpsAlertLog;
 
