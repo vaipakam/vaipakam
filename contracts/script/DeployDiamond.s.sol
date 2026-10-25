@@ -1402,7 +1402,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](52);
+        s = new bytes4[](55);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -1469,6 +1469,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #668 / #935 — the pause-interval log the loan clock reads.
         s[50] = AdminFacet.pausedSecondsAt.selector;
         s[51] = AdminFacet.getPauseIntervals.selector;
+        // #2744 — the cooldown between auto-pause windows.
+        s[52] = AdminFacet.autoPauseCooldownSeconds.selector;
+        s[53] = AdminFacet.autoPauseAvailableAt.selector;
+        s[54] = AdminFacet.setAutoPauseCooldownSeconds.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
