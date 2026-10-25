@@ -3,7 +3,7 @@
  *
  * Settles the overdue period of a periodic-interest loan by submitting the
  * permissionless `RepayPeriodicFacet.settlePeriodicInterest(loanId,
- * adapterCalls)` once the period's grace is over, so a lender on a cadence
+ * sellAmount, adapterCalls)` once the period's grace is over, so a lender on a cadence
  * loan is paid the period's interest even when nobody else calls it. The
  * contract's previews are the rule; nothing here re-derives grace, the
  * shortfall or the sale size.
@@ -12,16 +12,19 @@
  *
  *   - **Stamp** — the borrower already paid the period's interest
  *     (shortfall zero). The call only moves the checkpoint forward and
- *     resets the period's paid counter, with an empty try-list. It pays the
+ *     resets the period's paid counter, with a zero sale size and an empty
+ *     try-list. It pays the
  *     keeper nothing; it is sent so the period accounting does not fall
  *     behind the calendar.
  *   - **Sale** — a positive shortfall. The sale is sized by the contract to
  *     need (`ForcedSaleFacet.previewForcedSale(loanId, PeriodicSettlement)`,
  *     #2795): the least collateral whose worst-case proceeds cover the
- *     shortfall plus the largest charges. The route is quoted for EXACTLY
- *     that `sell`: aggregator calldata encodes the sell amount, so a quote
- *     for any other amount fails every route. A preview with nothing to sell
- *     is not sent.
+ *     shortfall plus the largest charges. The contract accepts a sale size
+ *     anywhere from that `sell` to the plan's `maxSell` (#2796); the route
+ *     is quoted for the middle of that range (`forcedSaleQuoteAmount`, the
+ *     rule the app and the other keeper passes share), and that amount is
+ *     sent as the call's `sellAmount`. A preview with nothing to sell is not
+ *     sent.
  *
  * Per run, bounded like the grace-default pass (one chain by turns, one
  * pinned window of its active list, one attempt):
@@ -36,8 +39,10 @@
  *      two passes deciding about one loan race two transactions. This pass
  *      leaves both alone, at the early read and again at the gate.
  *   4. The final gate, at ONE fresh block: the owner rule again, the plan
- *      again (a different `sell` means the quote is for the wrong amount),
- *      and a simulation of the exact call. The simulation is the authority:
+ *      again (a quote that has left the accepted range would revert
+ *      `ForcedSaleQuoteOutOfRange`, and a period that turned from stamp to
+ *      sale or back needs a different call), and a simulation of the exact
+ *      call. The simulation is the authority:
  *      a settlement whose every route fails REVERTS (`PeriodicSettleSwapFailed`)
  *      rather than falling back, so a successful simulation is a sale that
  *      takes at that block.
@@ -45,9 +50,11 @@
  *      the next run's preview says whether it landed.
  *
  * What stays uncovered is the gap between the gate and inclusion: the
- * contract sizes the sale again at inclusion, and a price that moved enough
- * to change `sell` makes every route fail and the call revert, costing the
- * keeper the gas and moving nothing. No read from off-chain closes it.
+ * contract sizes the range again at inclusion. Quoting the middle of the
+ * range leaves room either side for accrual and a small price move, but a
+ * move large enough to take the quote out of the range makes the call
+ * revert, costing the keeper the gas and moving nothing. No read from
+ * off-chain closes it.
  *
  * Gated by KEEPER_ENABLED + PERIODIC_SETTLE_ENABLED. The pass sells a
  * borrower's collateral, so it gets its own flag and is dark until an owner
@@ -66,11 +73,17 @@ import {
 import {
   DefaultedFacetABI,
   DIAMOND_ABI_VIEM,
-  ForcedSaleFacetABI,
   NumeraireConfigFacetABI,
   RepayPeriodicFacetABI,
 } from '@vaipakam/contracts/abis';
 import { isRevert, revertErrorName } from '@vaipakam/lib/contractRevert';
+import {
+  FORCED_SALE_KIND,
+  forcedSaleQuoteAccepted,
+  forcedSaleQuoteAmount,
+  readForcedSalePlan,
+  type ForcedSalePlan,
+} from '@vaipakam/lib/routeBuilder';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import type { AdapterCall } from '@vaipakam/lib/swapRoutes';
 import type { ChainConfig, Env } from './env';
@@ -86,7 +99,6 @@ import { attemptErrorReason, keeperTxPending, sendInSubmissionSlot } from './kee
 import { pickBatch } from './rotate';
 
 const PERIODIC_ABI: Abi = RepayPeriodicFacetABI as Abi;
-const FORCED_SALE_ABI: Abi = ForcedSaleFacetABI as Abi;
 const DEFAULTED_ABI: Abi = DefaultedFacetABI as Abi;
 const NUMERAIRE_CONFIG_ABI: Abi = NumeraireConfigFacetABI as Abi;
 
@@ -111,7 +123,7 @@ export const PASS_CADENCE_SEC = 15 * 60;
 const ROTATION_STEP_MS = PASS_CADENCE_SEC * 1000;
 
 /** `ForcedSaleFacet.ForcedSaleKind.PeriodicSettlement`. */
-export const FORCED_SALE_KIND_PERIODIC = 0;
+export const FORCED_SALE_KIND_PERIODIC = FORCED_SALE_KIND.PeriodicSettlement;
 
 /** LibVaipakam.AssetType.ERC20. */
 const ASSET_TYPE_ERC20 = 0;
@@ -121,14 +133,7 @@ export const LEFT_TO_GRACE_DEFAULT_PASS = 'loan-defaultable (left to the grace-d
 /** The skip reason for a run the subrequest cap cut short. */
 export const BUDGET_SPENT = `subrequest-budget-spent (cap ${SUBREQUEST_BUDGET}; tried again on a later visit)`;
 
-/** `ForcedSaleFacet.ForcedSalePlan`. */
-export interface ForcedSalePlan {
-  debt: bigint;
-  need: bigint;
-  sell: bigint;
-  floor: bigint;
-  covered: boolean;
-}
+export type { ForcedSalePlan };
 
 /** What happened to one candidate — the log line, and what tests assert. */
 export type PeriodicSettleOutcome =
@@ -145,7 +150,7 @@ export interface PeriodicSettleDeps {
   chainId: number;
   /** The run deadline (#2572), enforced at the send's turn. */
   notAfterMs: number;
-  /** Builds the try-list for a sale of exactly `sell` of the collateral. */
+  /** Builds the try-list for a sale of `sell` of the collateral. */
   buildRoute: (loan: GraceLoan, sell: bigint) => Promise<ServerOrchestrationResult>;
 }
 
@@ -342,18 +347,22 @@ export async function attemptPeriodicSettle(
 
   let calls: readonly AdapterCall[] = [];
   let routeNote = '';
+  // A stamp sells nothing; a sale sells the middle of the accepted range.
+  let sell = 0n;
   if (plan.debt > 0n) {
-    if (plan.sell === 0n) return { kind: 'skipped', reason: 'plan-sells-nothing' };
+    const quoted = forcedSaleQuoteAmount(plan);
+    if (quoted === null) return { kind: 'skipped', reason: 'plan-sells-nothing' };
+    sell = quoted;
     if (loan.collateralAssetType !== ASSET_TYPE_ERC20 || loan.assetType !== ASSET_TYPE_ERC20) {
       // The contract demands a try-list on a positive shortfall, and a swap
       // exists only between two ERC-20s.
       return { kind: 'skipped', reason: 'not-swappable (shortfall needs an ERC-20 to ERC-20 sale)' };
     }
-    const route = await deps.buildRoute(loan, plan.sell);
+    const route = await deps.buildRoute(loan, sell);
     calls = route.calls;
     if (route.failed.length > 0) routeNote = ` (failed: ${route.failed.join(',')})`;
     if (calls.length === 0) {
-      return { kind: 'skipped', reason: `no-route sell=${plan.sell}${routeNote}` };
+      return { kind: 'skipped', reason: `no-route sell=${sell}${routeNote}` };
     }
   }
   const path: 'stamp' | 'sale' = plan.debt > 0n ? 'sale' : 'stamp';
@@ -365,11 +374,16 @@ export async function attemptPeriodicSettle(
     readPlan(client, diamond, loanId, gateBlock),
   ]);
   if (lateOwner !== null) return { kind: 'skipped', reason: `gate:${lateOwner}` };
-  if (latePlan.debt !== plan.debt || latePlan.sell !== plan.sell) {
-    // The quote encodes the sell amount; any other amount fails every route.
+  if ((latePlan.debt > 0n) !== (path === 'sale')) {
+    // A stamp became a sale or a sale a stamp: the call built is the wrong one.
+    return { kind: 'skipped', reason: `gate:plan-changed (debt ${plan.debt}->${latePlan.debt})` };
+  }
+  if (path === 'sale' && !forcedSaleQuoteAccepted(latePlan, sell)) {
+    // The range moves with accrual and price; a quote that has left it
+    // would revert `ForcedSaleQuoteOutOfRange`, so it is quoted again next run.
     return {
       kind: 'skipped',
-      reason: `gate:plan-changed (debt ${plan.debt}->${latePlan.debt}, sell ${plan.sell}->${latePlan.sell})`,
+      reason: `gate:quote-out-of-range quoted=${sell} range=[${latePlan.sell},${latePlan.maxSell}]`,
     };
   }
   try {
@@ -377,7 +391,7 @@ export async function attemptPeriodicSettle(
       address: diamond,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'settlePeriodicInterest',
-      args: [loanId, calls],
+      args: [loanId, sell, calls],
       account: keeper,
       blockNumber: gateBlock,
     });
@@ -392,11 +406,11 @@ export async function attemptPeriodicSettle(
     deps.chainId,
     deps.notAfterMs,
     diamond,
-    encodeFunctionData({ abi: PERIODIC_ABI, functionName: 'settlePeriodicInterest', args: [loanId, calls] }),
+    encodeFunctionData({ abi: PERIODIC_ABI, functionName: 'settlePeriodicInterest', args: [loanId, sell, calls] }),
   );
   return sent.kind === 'submitted'
-    ? { kind: 'submitted', tx: sent.tx, path, sell: plan.sell, calls: calls.length }
-    : { kind: 'unconfirmed', tx: sent.tx, path, sell: plan.sell, calls: calls.length, reason: sent.reason };
+    ? { kind: 'submitted', tx: sent.tx, path, sell, calls: calls.length }
+    : { kind: 'unconfirmed', tx: sent.tx, path, sell, calls: calls.length, reason: sent.reason };
 }
 
 /** Null when the loan is this pass's to settle; otherwise whose it is. */
@@ -435,19 +449,13 @@ async function readDefaultable(
   }
 }
 
-/** The contract's sale size for this period; all zero when no sale is due.
- *  A missing price makes it revert, as the sale itself would. */
+/** The contract's sale range for this period; all zero when no sale is
+ *  due. A missing price makes it revert, as the sale itself would. */
 export async function readPlan(
   client: PublicClient,
   diamond: Address,
   loanId: bigint,
   blockNumber?: bigint,
 ): Promise<ForcedSalePlan> {
-  return (await client.readContract({
-    address: diamond,
-    abi: FORCED_SALE_ABI,
-    functionName: 'previewForcedSale',
-    args: [loanId, FORCED_SALE_KIND_PERIODIC],
-    blockNumber,
-  })) as ForcedSalePlan;
+  return readForcedSalePlan({ client, diamond, loanId, kind: FORCED_SALE_KIND_PERIODIC, blockNumber });
 }
