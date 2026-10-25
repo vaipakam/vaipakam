@@ -22,8 +22,9 @@
 // The list is REBUILT from Base, per the runbook's reconstruction rule:
 // the reservation's day list (every day the remit closed, a superset) filtered
 // to the days actually funded for this chain, chunked and rooted with the
-// wire's own rules (`d6Wire.ts`) and checked against BOTH the reservation's and
-// the packet's root before any proof is sent. Every write is simulated first.
+// wire's own rules (`@vaipakam/lib/d6Wire`) and checked against BOTH the
+// reservation's and the packet's root before any proof is sent. Every write is
+// simulated first.
 //
 // ALERTS (#2516) go to the OPS channel, per mirror, each raised and cleared on a
 // measurement, never on what a send is assumed to have done: a delivery still
@@ -64,7 +65,7 @@ import { reportSendError } from './submissionQueue';
 import { deploymentFloor, discoverBudgetDeliveries, finishWork, listOpenWorkPage, listOpsAlertKeys, openWorkAmong, touchOpenWork, type BudgetDeliveryRow } from './db';
 import { discoverWork } from './workQueue';
 import type { PassTick } from './passSchedule';
-import { d6Chunk, d6Leaves, d6Proof, d6Root } from './d6Wire';
+import { d6Chunk, d6Leaves, d6Proof, d6Root, fundedDaysFromBits } from '@vaipakam/lib/d6Wire';
 import { hintsForDays, type DayOrderReader, type OrderPage } from './transportHints';
 
 const ABI = [
@@ -649,23 +650,6 @@ export async function actionsFor(
   const rootedDays = await rebuildRootedList(sourceClient, packet.remitter, chainId, packet.remitId, packet.dayListRoot);
   if (!rootedDays) return { actions: [], complete: false };
   return { actions: planDelivery({ packetHash, packet, rootedDays }), complete: false };
-}
-
-/**
- * The funded days of a reservation from its own immutable record
- * (`fundedDayBits`, Codex #2489 r2): bit `i` set means `dayIds[i]` was funded
- * — on the wire, in order. Null when the reservation predates the record
- * (an empty bitmap over a non-empty day list), so the caller falls back.
- * Pure; pinned by the tests.
- */
-export function fundedDaysFromBits(dayIds: readonly bigint[], bits: readonly bigint[]): bigint[] | null {
-  if (dayIds.length > 0 && bits.length === 0) return null;
-  const out: bigint[] = [];
-  for (let i = 0; i < dayIds.length; i++) {
-    const word = bits[i >> 8] ?? 0n;
-    if ((word >> BigInt(i & 255)) & 1n) out.push(dayIds[i]);
-  }
-  return out;
 }
 
 /**
