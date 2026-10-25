@@ -3,11 +3,16 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl} from "../libraries/LibAccessControl.sol";
+import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
+import {DiamondPausable} from "../libraries/LibPausable.sol";
 
 /// @dev Outbound surface on `VaipakamRewardMessenger` for the per-user
-///      tier push. Sub 2.B's external + quote pair.
+///      tier push, one broadcast lane at a time (#898 / #911).
 interface IVaipakamRewardMessengerOutbound {
-    function quoteSendTierUpdate(
+    function getBroadcastDestinations() external view returns (uint256[] memory);
+
+    function quoteSendTierUpdateTo(
+        uint256 destChainId,
         address user,
         uint8 effectiveTier,
         uint16 effectiveBps,
@@ -17,7 +22,8 @@ interface IVaipakamRewardMessengerOutbound {
         uint16 tierTableVersion
     ) external view returns (uint256 nativeFee);
 
-    function sendTierUpdate(
+    function sendTierUpdateTo(
+        uint256 destChainId,
         address user,
         uint8 effectiveTier,
         uint16 effectiveBps,
@@ -26,7 +32,7 @@ interface IVaipakamRewardMessengerOutbound {
         uint40 tierExpirySec,
         uint16 tierTableVersion,
         address payable refundAddress
-    ) external payable;
+    ) external payable returns (bytes32 messageId);
 }
 
 /// @dev Internal cross-facet hook to the accumulator's effective-tier
@@ -39,47 +45,113 @@ interface IVPFIDiscountAccumulatorInternal {
 }
 
 /**
- * @title ProtocolBroadcastFacet — T-087 Sub 2.D
+ * @title ProtocolBroadcastFacet — the cross-chain tier push (T-087 Sub 2.D,
+ *        reworked by #898 / #911)
  *
- * Orchestrates the protocol-funded cross-chain tier push that Sub 2.B
- * (outbound messenger surface) + Sub 2.C (mirror inbound receiver) made
- * possible. The single producer-facing entry is
- * `protocolBroadcastTierUpdate(user)`, called from
- * `VPFIDiscountAccumulatorFacet.rollupUserDiscount` after the cache is
- * advanced; everything mirror-side ripples from there.
+ * Base resolves a user's effective tier; mirrors cache it. This facet
+ * carries the tier from one to the other, one broadcast lane at a time, and
+ * NEVER makes the user's action fail (`TierPushDeliveryDesign.md`):
  *
- * Trust + behaviour:
- *   - Producer call gated to `msg.sender == address(this)` (internal
- *     cross-facet only). EOAs can never invoke directly.
- *   - Silent skip when `rewardMessenger == address(0)`. Lets the deploy
- *     land + be activated by a later admin call without breaking every
- *     stake / withdraw on the way (this is the local / testnet /
- *     pre-CCIP-wiring stance). Once a messenger is set, the rollup-time
- *     broadcast WILL fire; an empty-destinations configuration bubbles
- *     `NoBroadcastDestinations` from the messenger up to the caller
- *     (round-3 P1 #2 fold — no Diamond-side duplicate of the count to
- *     drift fail-OPEN).
- *   - FAIL-CLOSED on budget exhaustion ONCE configured. Reverts
- *     `ProtocolBudgetExhausted(required, available)`. Operator must top
- *     up before downgrade-bearing mutations can land — the design's
- *     round-5 P1 #3 + round-6 P1 #2 ratification.
- *   - Anyone can `topUpBroadcastBudget()`; admin can `withdrawBudget()`.
+ *   - COMMIT. Each broadcasting rollup calls `protocolBroadcastTierUpdate`.
+ *     When the resolved `(tier, bps, expiry, version)` differs from the
+ *     user's latest committed push, a new push is committed: the user's
+ *     push nonce goes up and the tuple is recorded (`lastEffectiveTier` and
+ *     siblings). Consent off forces `(0, 0)`.
+ *   - OWED. Every broadcast lane whose delivered nonce (`tierLanePush`) is
+ *     below the committed nonce is owed that push. A lane whose delivered
+ *     tuple already has the same effect (both tier 0, or identical) is
+ *     settled without a message.
+ *   - DELIVER. Each owed lane is quoted and sent on its own; a lane that
+ *     cannot be quoted or sent stays owed and emits {TierPushDeferred} with
+ *     the reason, without touching any other lane. A caller's `msg.value`
+ *     (only through {deliverTierPush}) pays first, unrate-limited. The
+ *     protocol budget pays a push that lowers the lane's tier or bps at
+ *     once, and any other push at most once per spacing window per lane,
+ *     which bounds what tier churn can drain.
+ *   - GAS. A quote or send that failed because the call ran out of gas
+ *     reverts the whole transaction: starving the call can fail the user's
+ *     action, never skip its push.
+ *   - FUNDS. A budget-paid send debits exactly what left the Diamond (the
+ *     fee less any refund the messenger returned); a caller-paid send never
+ *     touches the budget, and the caller's unspent value is returned.
+ *
+ *   Producer call gated to `msg.sender == address(this)`. Mirrors and
+ *   unconfigured chains skip silently, as before.
  */
-contract ProtocolBroadcastFacet {
+contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
+    /// @notice Why an owed lane was left owed.
+    enum TierPushDeferral {
+        Spacing, // the push does not lower the lane and its window has not elapsed
+        Budget, // the protocol budget cannot cover the lane's fee
+        Quote, // the lane's quote reverted
+        Send, // the lane's send reverted
+        Destinations, // the messenger's destination list could not be read
+        NoDestinations // no broadcast lane is configured
+    }
+
+    /// @notice One lane as {getTierPushStatus} reports it.
+    struct TierLaneStatus {
+        uint256 destChainId;
+        LibVaipakam.TierLanePush delivered;
+        bool owed;
+        /// @dev When the protocol budget may next pay this lane's owed push
+        ///      (0 when nothing is owed; the current time or earlier when it
+        ///      may pay now, budget permitting).
+        uint40 budgetEligibleAt;
+    }
+
+    /// @dev The committed push one delivery pass carries.
+    struct Push {
+        address user;
+        uint64 nonce;
+        uint8 tier;
+        uint16 bps;
+        uint40 expiry;
+        uint16 version;
+    }
+
     // ─── Events ─────────────────────────────────────────────────────────
 
     /// @custom:event-category state-change/broadcast-budget
     event BroadcastBudgetToppedUp(address indexed funder, uint256 amount, uint256 newBalance);
     /// @custom:event-category state-change/broadcast-budget
     event BroadcastBudgetWithdrawn(address indexed to, uint256 amount, uint256 newBalance);
+    /// @custom:event-category state-change/broadcast-budget
+    event TierPushSpacingSet(uint32 previous, uint32 current);
 
     /// @custom:event-category informational/tier-transport
+    /// @notice A new push was committed for `user`; every broadcast lane is
+    ///         owed it until delivered.
+    event TierPushCommitted(
+        address indexed user,
+        uint64 nonce,
+        uint8 effectiveTier,
+        uint16 effectiveBps,
+        uint40 tierExpirySec,
+        uint16 tierTableVersion
+    );
+    /// @custom:event-category informational/tier-transport
+    /// @notice The push `nonce` went out on lane `destChainId`. `feePaid` is
+    ///         what left the Diamond for it; `callerFunded` says whether the
+    ///         caller's value or the protocol budget paid.
     event ProtocolTierBroadcastSent(
         address indexed user,
+        uint256 indexed destChainId,
         uint8 effectiveTier,
         uint16 effectiveBps,
         uint64 nonce,
-        uint256 feePaid
+        uint256 feePaid,
+        bool callerFunded
+    );
+    /// @custom:event-category informational/tier-transport
+    /// @notice Lane `destChainId` already held a tuple with the same effect
+    ///         as push `nonce`, so it was settled without a message.
+    event TierPushLaneSettled(address indexed user, uint256 indexed destChainId, uint64 nonce);
+    /// @custom:event-category informational/tier-transport
+    /// @notice Lane `destChainId` (0 when no lane could be named) is still
+    ///         owed push `nonce`. Anyone may deliver it with {deliverTierPush}.
+    event TierPushDeferred(
+        address indexed user, uint256 indexed destChainId, uint64 nonce, TierPushDeferral reason
     );
     /// @custom:event-category informational/tier-transport
     event ProtocolTierBroadcastSkipped(address indexed user, string reason);
@@ -88,9 +160,17 @@ contract ProtocolBroadcastFacet {
 
     /// @notice External invocation by a non-self caller.
     error OnlyInternal(address caller);
-    /// @notice Insufficient protocol broadcast budget for the quoted CCIP
-    ///         fee — operator must top up before mutations can land.
-    error ProtocolBudgetExhausted(uint256 required, uint256 available);
+    /// @notice A quote or send failed with too little gas left to tell a
+    ///         failed lane from a starved call; the whole action reverts so a
+    ///         push can never be skipped by withholding gas.
+    error TierPushOutOfGas();
+    /// @notice {deliverTierPush} on a chain that does not originate pushes
+    ///         (not canonical, or no messenger configured).
+    error TierPushNotConfigured();
+    /// @notice The caller's unspent value could not be returned.
+    error TierPushRefundFailed();
+    /// @notice {setTierPushSpacingSec} outside its bounds.
+    error TierPushSpacingOutOfRange(uint32 value, uint32 min, uint32 max);
     /// @notice `withdrawBudget` would underflow the live balance.
     error WithdrawExceedsBudget(uint256 requested, uint256 available);
     /// @notice The treasury / `to` transfer reverted on withdraw.
@@ -112,21 +192,15 @@ contract ProtocolBroadcastFacet {
 
     /// @notice Called by `VPFIDiscountAccumulatorFacet.rollupUserDiscount`
     ///         via the diamond fallback after the ring-buffer + expiry
-    ///         writes land. Bumps the user's push nonce + fans out a
-    ///         single CCIP message to every configured destination.
-    /// @dev    Returns silently when CCIP isn't wired (pre-mainnet local
-    ///         / fork tests). Reverts ONCE wired if the budget can't
-    ///         cover the quoted fee.
+    ///         writes land. Commits a new push when the user's resolved
+    ///         tuple changed, then delivers every owed lane it can.
+    /// @dev    Never reverts on a lane, the budget or the destination list;
+    ///         only {TierPushOutOfGas} (a starved call) escapes.
     function protocolBroadcastTierUpdate(address user) external {
         if (msg.sender != address(this)) revert OnlyInternal(msg.sender);
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-
         // Base-only — mirrors and unconfigured chains skip silently.
-        // The broadcast originates from the chain that ACTUALLY runs
-        // the accumulator; mirrors only consume pushes, never originate
-        // them. The runtime canonical flag is the same gate Sub 1.C
-        // uses to dispatch the read path.
         if (!s.isCanonicalVpfiChain) {
             emit ProtocolTierBroadcastSkipped(user, "not-canonical-chain");
             return;
@@ -136,141 +210,210 @@ contract ProtocolBroadcastFacet {
             emit ProtocolTierBroadcastSkipped(user, "messenger-not-configured");
             return;
         }
-        // Codex Sub 2.D round-3 P1 #2 — the previous diamond-side
-        // `broadcastDestinationCount` slot was a duplicate of the
-        // messenger's `broadcastDestinationChainIds.length` and
-        // gated the broadcast at the Diamond level. If the operator
-        // synced the messenger's list but forgot the Diamond knob
-        // (or it drifted back to 0), every rollup silently returned
-        // even though `rewardMessenger` was configured. Fail-OPEN —
-        // exactly what the fail-CLOSED budget gate was meant to
-        // prevent.
-        //
-        // Removed the duplicate count + the check. The messenger
-        // itself reverts `NoBroadcastDestinations` when its list is
-        // empty (see `VaipakamRewardMessenger.sendTierUpdate`);
-        // that revert now bubbles through the accumulator to the
-        // caller, naturally failing CLOSED on a half-finished
-        // configuration. The messenger is the single source of
-        // truth for the destination set — no drift surface.
 
-        // Resolve the current EFFECTIVE_TIER + BPS via the accumulator's
-        // existing internal surface. The accumulator is `onlyInternal`
-        // gated; calling via the diamond fallback satisfies the check
-        // (`msg.sender == address(this)`).
+        bool committed = _commit(s, user);
+        if (s.userTierPushNonce[user] == 0) return; // nothing ever committed
+        _deliver(s, msgr, _committedPush(s, user), 0, committed);
+    }
+
+    /**
+     * @notice Deliver every lane still owed `user`'s latest committed tier
+     *         push. Open to anyone: `msg.value` pays owed lanes first, in
+     *         destination-list order and without the spacing limit; a lane
+     *         it does not cover is paid by the protocol budget under the
+     *         usual rule (a lowered tier at once, anything else once per
+     *         spacing window). The unspent value is returned to the caller.
+     * @dev    Sends the committed push only; it never re-resolves the tier
+     *         (the user's own `pokeMyTier` does that). Each lane that stays
+     *         owed emits {TierPushDeferred}.
+     */
+    function deliverTierPush(address user) external payable nonReentrant whenNotPaused {
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address msgr = s.rewardMessenger;
+        if (!s.isCanonicalVpfiChain || msgr == address(0)) revert TierPushNotConfigured();
+
+        uint256 unspent = msg.value;
+        if (s.userTierPushNonce[user] != 0) {
+            unspent = _deliver(s, msgr, _committedPush(s, user), msg.value, true);
+        }
+        if (unspent != 0) {
+            (bool ok,) = payable(msg.sender).call{value: unspent}("");
+            if (!ok) revert TierPushRefundFailed();
+        }
+    }
+
+    // ─── Internals ──────────────────────────────────────────────────────
+
+    /// @dev Resolve `user`'s tuple and commit it when it differs from the
+    ///      latest committed push. Returns whether a push was committed.
+    function _commit(LibVaipakam.Storage storage s, address user) private returns (bool) {
         (uint8 effTier, uint16 effBps) =
-            IVPFIDiscountAccumulatorInternal(address(this))
-                .effectiveTierAndBps(user);
-
-        // T-087 Sub 4 round-3 P2 #2 — respect the consent gate at
-        // broadcast time too. Without this, a user who DISABLES
-        // consent on canonical keeps a stale non-zero cached tier
-        // on mirrors and can keep claiming discounts there (mirror
-        // settlement checks only its own local consent flag + the
-        // cached tier — neither flips when canonical consent does).
-        // Forcing (0, 0) when consent is off:
-        //  - Mirrors see tier 0, can no longer apply discount.
-        //  - The de-dup gate downstream still suppresses repeat
-        //    pushes of an already-(0, 0) cache, so this stays cheap.
-        //  - Toggling consent back on triggers a fresh broadcast
-        //    via the existing rollup/poke path that pushes the
-        //    user's actual tier again.
+            IVPFIDiscountAccumulatorInternal(address(this)).effectiveTierAndBps(user);
+        // Consent is applied at commit time: a consent-off user's mirrors
+        // must stop applying a discount (T-087 Sub 4 round-3 P2 #2).
         if (!s.vpfiDiscountConsent[user]) {
             effTier = 0;
             effBps = 0;
         }
-
-        // Resolve the payload values BEFORE the de-dup gate so the
-        // gate has the full (tier, bps, expiry, version) tuple to
-        // compare against the last-pushed cache.
         uint40 expiry = s.tierExpirySec[user];
-        // Sub 2.A getter semantics — sentinel for never-rolled-up reads.
-        if (expiry == 0) expiry = type(uint40).max;
-        // Codex Sub 2.D round-1 P1 #2 — read the CANONICAL Base
-        // version (`s.tierTableVersion`, which `ConfigFacet` bumps on
-        // threshold / BPS change), NOT the mirror-side
-        // `currentTierTableVersion`.
+        if (expiry == 0) expiry = type(uint40).max; // never-rolled-up sentinel
         uint16 version = s.tierTableVersion;
 
-        // Codex Sub 2.D round-2 P1 #3 — a brand-new user whose first
-        // rollup resolves to (0, 0) would otherwise burn protocol
-        // budget pushing what mirrors already treat as the empty-
-        // cache default. Silent-skip when both current AND last
-        // pushed are zero — a tier-changing mutation (zero→positive
-        // or positive→zero) still fires the broadcast because the
-        // last-pushed snapshot disagrees with the current resolution.
-        if (
-            effTier == 0
-                && effBps == 0
-                && s.lastEffectiveTier[user] == 0
-                && s.lastEffectiveBps[user] == 0
-        ) {
-            emit ProtocolTierBroadcastSkipped(user, "zero-tier-no-change");
-            return;
+        // Tier 0 against a committed tier 0 is no news to any mirror,
+        // whatever the version (a mirror reads tier 0 as no discount).
+        if (effTier == 0 && effBps == 0 && s.lastEffectiveTier[user] == 0 && s.lastEffectiveBps[user] == 0) {
+            return false;
         }
-
-        // Codex Sub 2.D round-1 P2 #1 + round-2 P1 #1 — skip the
-        // broadcast when the FULL push tuple is identical to the
-        // last pushed. The tuple is (effTier, effBps, expiry,
-        // version) — not just (tier, bps), because same-tier
-        // mutations that change projected expiry or a governance
-        // table bump that keeps tier still need to propagate. The
-        // `lastEffectiveTier` / `lastEffectiveBps` /
-        // `lastTierExpirySec` / `lastTierTableVersion` slots exist
-        // for exactly this de-dup. Read-compare-skip; stamp AFTER
-        // the successful send below.
         if (
-            effTier == s.lastEffectiveTier[user]
-                && effBps == s.lastEffectiveBps[user]
-                && expiry == s.lastTierExpirySec[user]
+            s.userTierPushNonce[user] != 0 && effTier == s.lastEffectiveTier[user]
+                && effBps == s.lastEffectiveBps[user] && expiry == s.lastTierExpirySec[user]
                 && version == s.lastTierTableVersion[user]
-                && s.userTierPushNonce[user] != 0
         ) {
-            emit ProtocolTierBroadcastSkipped(user, "tuple-unchanged");
-            return;
+            return false;
         }
 
-        // Bump the per-user push nonce (monotonic on Base; mirrors
-        // enforce strictly-greater via the Sub 2.C check).
         uint64 nonce = ++s.userTierPushNonce[user];
-        uint40 computedAt = uint40(block.timestamp);
-
-        IVaipakamRewardMessengerOutbound m =
-            IVaipakamRewardMessengerOutbound(msgr);
-        uint256 fee = m.quoteSendTierUpdate(
-            user, effTier, effBps, computedAt, nonce, expiry, version
-        );
-
-        // FAIL-CLOSED — operator must top up before mutations land.
-        uint256 budget = s.protocolBroadcastBudget;
-        if (budget < fee) {
-            revert ProtocolBudgetExhausted(fee, budget);
-        }
-        s.protocolBroadcastBudget = budget - fee;
-
-        // The messenger's `sendTierUpdate` is `nonReentrant`; refund of
-        // surplus comes back to this diamond on the same call.
-        m.sendTierUpdate{value: fee}(
-            user,
-            effTier,
-            effBps,
-            computedAt,
-            nonce,
-            expiry,
-            version,
-            payable(address(this))
-        );
-
-        // Stamp the "last pushed" tuple so the next rollup can de-dup
-        // (round-1 P2 #1 + round-2 P1 #1 folds). Done AFTER the send
-        // so a revert from inside the messenger leaves the stamps at
-        // the prior values and the next rollup retries.
         s.lastEffectiveTier[user] = effTier;
         s.lastEffectiveBps[user] = effBps;
         s.lastTierExpirySec[user] = expiry;
         s.lastTierTableVersion[user] = version;
+        emit TierPushCommitted(user, nonce, effTier, effBps, expiry, version);
+        return true;
+    }
 
-        emit ProtocolTierBroadcastSent(user, effTier, effBps, nonce, fee);
+    /// @dev The user's latest committed push.
+    function _committedPush(LibVaipakam.Storage storage s, address user) private view returns (Push memory p) {
+        p.user = user;
+        p.nonce = s.userTierPushNonce[user];
+        p.tier = s.lastEffectiveTier[user];
+        p.bps = s.lastEffectiveBps[user];
+        p.expiry = s.lastTierExpirySec[user];
+        p.version = s.lastTierTableVersion[user];
+    }
+
+    /// @dev Deliver `p` to every owed lane. `callerFunds` is value the
+    ///      caller attached (0 on the rollup path); returns what is left of
+    ///      it. `announce` emits a deferral when no lane can be named.
+    function _deliver(
+        LibVaipakam.Storage storage s,
+        address msgr,
+        Push memory p,
+        uint256 callerFunds,
+        bool announce
+    ) private returns (uint256) {
+        uint256[] memory dsts;
+        uint256 g = gasleft();
+        try IVaipakamRewardMessengerOutbound(msgr).getBroadcastDestinations() returns (uint256[] memory d) {
+            dsts = d;
+        } catch {
+            _requireNotStarved(g);
+            if (announce) emit TierPushDeferred(p.user, 0, p.nonce, TierPushDeferral.Destinations);
+            return callerFunds;
+        }
+        if (dsts.length == 0) {
+            if (announce) emit TierPushDeferred(p.user, 0, p.nonce, TierPushDeferral.NoDestinations);
+            return callerFunds;
+        }
+        for (uint256 i; i < dsts.length; ++i) {
+            callerFunds = _deliverLane(s, IVaipakamRewardMessengerOutbound(msgr), p, dsts[i], callerFunds);
+        }
+        return callerFunds;
+    }
+
+    /// @dev Deliver `p` to lane `dst` if it is owed; returns what is left
+    ///      of `callerFunds`.
+    function _deliverLane(
+        LibVaipakam.Storage storage s,
+        IVaipakamRewardMessengerOutbound m,
+        Push memory p,
+        uint256 dst,
+        uint256 callerFunds
+    ) private returns (uint256) {
+        LibVaipakam.TierLanePush storage lane = s.tierLanePush[p.user][dst];
+        if (lane.nonce >= p.nonce) return callerFunds;
+
+        if (_sameEffect(lane, p)) {
+            lane.nonce = p.nonce;
+            emit TierPushLaneSettled(p.user, dst, p.nonce);
+            return callerFunds;
+        }
+
+        uint40 computedAt = uint40(block.timestamp);
+        uint256 fee;
+        uint256 g = gasleft();
+        try m.quoteSendTierUpdateTo(dst, p.user, p.tier, p.bps, computedAt, p.nonce, p.expiry, p.version)
+        returns (uint256 q) {
+            fee = q;
+        } catch {
+            _requireNotStarved(g);
+            emit TierPushDeferred(p.user, dst, p.nonce, TierPushDeferral.Quote);
+            return callerFunds;
+        }
+
+        bool callerPays = callerFunds >= fee;
+        if (!callerPays) {
+            if (block.timestamp < _budgetEligibleAt(lane, p)) {
+                emit TierPushDeferred(p.user, dst, p.nonce, TierPushDeferral.Spacing);
+                return callerFunds;
+            }
+            if (s.protocolBroadcastBudget < fee) {
+                emit TierPushDeferred(p.user, dst, p.nonce, TierPushDeferral.Budget);
+                return callerFunds;
+            }
+        }
+
+        uint256 before = address(this).balance;
+        g = gasleft();
+        try m.sendTierUpdateTo{value: fee}(
+            dst, p.user, p.tier, p.bps, computedAt, p.nonce, p.expiry, p.version, payable(address(this))
+        ) {
+            // What actually left the Diamond: the fee less any refund the
+            // messenger returned in the same call.
+            uint256 cost = before - address(this).balance;
+            if (callerPays) callerFunds -= cost;
+            else s.protocolBroadcastBudget -= cost;
+            lane.nonce = p.nonce;
+            lane.tier = p.tier;
+            lane.bps = p.bps;
+            lane.tierExpirySec = p.expiry;
+            lane.tierTableVersion = p.version;
+            lane.sentAt = computedAt;
+            emit ProtocolTierBroadcastSent(p.user, dst, p.tier, p.bps, p.nonce, cost, callerPays);
+        } catch {
+            _requireNotStarved(g);
+            emit TierPushDeferred(p.user, dst, p.nonce, TierPushDeferral.Send);
+        }
+        return callerFunds;
+    }
+
+    /// @dev Whether the lane already holds a tuple with the same effect as
+    ///      `p`: both tier 0 (a mirror reads tier 0 as no discount, whatever
+    ///      the version), or the identical tuple.
+    function _sameEffect(LibVaipakam.TierLanePush storage lane, Push memory p) private view returns (bool) {
+        if (p.tier == 0 && p.bps == 0 && lane.tier == 0 && lane.bps == 0) return true;
+        return lane.tier == p.tier && lane.bps == p.bps && lane.tierExpirySec == p.expiry
+            && lane.tierTableVersion == p.version;
+    }
+
+    /// @dev When the protocol budget may pay `p` on `lane`: at once for a
+    ///      push that lowers the lane's tier or bps (and for a lane that has
+    ///      never carried a message, `sentAt == 0`), otherwise one spacing
+    ///      window after the lane's last send.
+    function _budgetEligibleAt(LibVaipakam.TierLanePush storage lane, Push memory p)
+        private
+        view
+        returns (uint256)
+    {
+        if (p.tier < lane.tier || p.bps < lane.bps) return 0;
+        return uint256(lane.sentAt) + LibVaipakam.cfgTierPushSpacingSecEffective();
+    }
+
+    /// @dev After a caught failure: a call left with under 1/63 of the gas
+    ///      it started with ran out of gas (the 63/64 rule), not a lane
+    ///      failure, so the whole transaction reverts.
+    function _requireNotStarved(uint256 gasAtCall) private view {
+        if (gasleft() < gasAtCall / 63) revert TierPushOutOfGas();
     }
 
     // ─── Budget admin ──────────────────────────────────────────────────
@@ -312,5 +455,69 @@ contract ProtocolBroadcastFacet {
 
     function getUserTierPushNonce(address user) external view returns (uint64) {
         return LibVaipakam.storageSlot().userTierPushNonce[user];
+    }
+
+    /**
+     * @notice `user`'s latest committed tier push and every broadcast
+     *         lane's delivery state: what it last received, whether it is
+     *         still owed, and when the protocol budget may next pay it.
+     *         `lanes` is empty when this chain does not originate pushes or
+     *         the messenger's destination list cannot be read.
+     */
+    function getTierPushStatus(address user)
+        external
+        view
+        returns (
+            uint64 nonce,
+            uint8 effectiveTier,
+            uint16 effectiveBps,
+            uint40 tierExpirySec,
+            uint16 tierTableVersion,
+            TierLaneStatus[] memory lanes
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        Push memory p = _committedPush(s, user);
+        nonce = p.nonce;
+        effectiveTier = p.tier;
+        effectiveBps = p.bps;
+        tierExpirySec = p.expiry;
+        tierTableVersion = p.version;
+        address msgr = s.rewardMessenger;
+        if (!s.isCanonicalVpfiChain || msgr == address(0)) return (nonce, effectiveTier, effectiveBps, tierExpirySec, tierTableVersion, lanes);
+        uint256[] memory dsts;
+        try IVaipakamRewardMessengerOutbound(msgr).getBroadcastDestinations() returns (uint256[] memory d) {
+            dsts = d;
+        } catch {
+            return (nonce, effectiveTier, effectiveBps, tierExpirySec, tierTableVersion, lanes);
+        }
+        lanes = new TierLaneStatus[](dsts.length);
+        for (uint256 i; i < dsts.length; ++i) {
+            LibVaipakam.TierLanePush storage lane = s.tierLanePush[user][dsts[i]];
+            lanes[i].destChainId = dsts[i];
+            lanes[i].delivered = lane;
+            lanes[i].owed = lane.nonce < p.nonce && !_sameEffect(lane, p);
+            if (lanes[i].owed) lanes[i].budgetEligibleAt = uint40(_budgetEligibleAt(lane, p));
+        }
+    }
+
+    /// @notice The protocol budget's per-lane spacing for a tier push that
+    ///         does not lower the lane's tier.
+    function getTierPushSpacingSec() external view returns (uint32) {
+        return LibVaipakam.cfgTierPushSpacingSecEffective();
+    }
+
+    /// @notice Set the per-lane spacing, within [1 hour, 7 days]. ADMIN_ROLE.
+    function setTierPushSpacingSec(uint32 value) external {
+        LibAccessControl.checkRole(LibAccessControl.ADMIN_ROLE, msg.sender);
+        if (value < LibVaipakam.MIN_TIER_PUSH_SPACING_SEC || value > LibVaipakam.MAX_TIER_PUSH_SPACING_SEC) {
+            revert TierPushSpacingOutOfRange(
+                value, LibVaipakam.MIN_TIER_PUSH_SPACING_SEC, LibVaipakam.MAX_TIER_PUSH_SPACING_SEC
+            );
+        }
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint32 previous = LibVaipakam.cfgTierPushSpacingSecEffective();
+        s.cfgTierPushSpacingSec = value;
+        emit TierPushSpacingSet(previous, value);
     }
 }

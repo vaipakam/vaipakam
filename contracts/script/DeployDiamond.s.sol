@@ -2905,12 +2905,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](5);
+        s = new bytes4[](9);
         s[0] = ProtocolBroadcastFacet.protocolBroadcastTierUpdate.selector;
         s[1] = ProtocolBroadcastFacet.topUpBroadcastBudget.selector;
         s[2] = ProtocolBroadcastFacet.withdrawBudget.selector;
         s[3] = ProtocolBroadcastFacet.getProtocolBroadcastBudget.selector;
         s[4] = ProtocolBroadcastFacet.getUserTierPushNonce.selector;
+        s[5] = ProtocolBroadcastFacet.deliverTierPush.selector;
+        s[6] = ProtocolBroadcastFacet.getTierPushStatus.selector;
+        s[7] = ProtocolBroadcastFacet.getTierPushSpacingSec.selector;
+        s[8] = ProtocolBroadcastFacet.setTierPushSpacingSec.selector;
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
