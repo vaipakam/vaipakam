@@ -69,6 +69,14 @@ describe('PROTOCOL_KNOB_GETTERS', () => {
     }
     expect(PROTOCOL_KNOB_SETTER_EVENTS.has('MinIntentFillNumeraireSet')).toBe(true);
   });
+
+  it('refreshes the auto-pause cooldown and the time it ends on every event that moves them (#2843)', () => {
+    const events = (key: string) => [...(PROTOCOL_KNOB_GETTERS.find((k) => k.key === key)?.setterEvents ?? [])].sort();
+    expect(events('autoPauseCooldownSeconds')).toEqual(['AutoPauseCooldownSet']);
+    // A recorded time, not a setting: the window that freezes a live
+    // protocol records it, and a new cooldown applies to the one running.
+    expect(events('autoPauseAvailableAt')).toEqual(['AutoPauseCooldownSet', 'AutoPaused']);
+  });
 });
 
 describe('readProtocolKnobGetters', () => {

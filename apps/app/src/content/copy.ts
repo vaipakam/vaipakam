@@ -6442,6 +6442,18 @@ const copySource = {
       'On a layer-2 chain, holds prices back while the sequencer is down and for one hour after it comes back. Not set means there is no such guard.',
     limitsHeading: 'Limits and timing',
     autoPause: 'Auto-pause duration',
+    /* #2843 — the cooldown between auto-pause windows (#2744), and when the
+       one running ends. The hint says what it does NOT cover: a window
+       opened under the manual pause neither waits nor starts a cooldown. */
+    autoPauseCooldown: 'Auto-pause cooldown',
+    autoPauseCooldownHint:
+      'After an automatic pause that stopped the protocol ends, how long the incident monitor must wait before it may pause it automatically again. An automatic pause that starts while the protocol is already paused by hand neither waits for this nor starts it.',
+    autoPauseAvailableAt: 'Next automatic pause allowed',
+    autoPauseAvailableAtHint:
+      'The earliest time the incident monitor may pause the protocol automatically again: when the last automatic pause that stopped it ended, plus the cooldown above. Changing the cooldown moves this time at once.',
+    autoPauseNeverFroze: 'no automatic pause has stopped the protocol yet, so there is no cooldown to wait out',
+    availableNow: tmpl('now (the cooldown ended {{when}})', ['when']),
+    availableFrom: tmpl('not before {{when}}, in {{span}}', ['when', 'span']),
     maxOfferDuration: 'Max offer duration',
     flagsHeading: 'Feature flags',
     partialFill: 'Order matching (partial fill)',

@@ -140,8 +140,19 @@ including people who never will.
   build catches, so the console cannot silently fall behind the reference.
   Within that, the fees, the risk and price-oracle limits, the periodic
   interest and reference-currency settings, the automation switches and
-  the keeper pause, the cross-chain reporting window and the treasury
-  address are shown.
+  the keeper pause, the automatic pause's length and cooldown, the
+  cross-chain reporting window and the treasury address are shown.
+- Beside the automatic pause's cooldown, the console states when the next
+  automatic pause that stops the protocol may start (#2843): the time the
+  protocol recorded, and whether that time has passed or how long remains,
+  judged against the reader's clock. When no automatic pause has ever
+  stopped the protocol, it says so in words, never as a date. It also says
+  what the cooldown does not cover: an automatic pause that starts while the
+  protocol is already paused by hand neither waits for it nor starts it, and
+  a change to the cooldown moves the time at once. That time is a fact the
+  protocol records rather than a setting, so the indexer's snapshot
+  refreshes it on every event that moves it: an automatic pause, and a
+  change to the cooldown.
 - A setting that is unset is reported as unset, never as a figure or a
   blank. Where an unset setting means the protocol falls back to a
   documented default, the console names that default and marks it as the

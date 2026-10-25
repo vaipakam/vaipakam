@@ -38,7 +38,11 @@ export type RowFormat =
   /** An 18-decimal ratio (a health factor). */
   | 'wad'
   /** An 18-decimal amount in the protocol's numeraire. */
-  | 'numeraireAmount';
+  | 'numeraireAmount'
+  /** A unix time from which something may happen (#2843): said as now
+   *  once it has passed, as the time and how long until it otherwise. Zero
+   *  means the row's own `zeroMeans`. */
+  | 'notBefore';
 
 export type ConsoleValueKey = Exclude<keyof ProtocolKnobValues, 'tierThresholds' | 'tierDiscountBps'>;
 
@@ -50,6 +54,8 @@ export interface ConsoleRow {
   /** For `secondsOrDefault`: the documented default that applies while the
    *  setting is unset, in seconds. */
   documentedDefaultSeconds?: number;
+  /** For `notBefore`: what a zero time means on this row, in words. */
+  zeroMeans?: ConsoleCopyKey;
 }
 
 export interface ConsoleSection {
@@ -114,6 +120,16 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
     heading: 'limitsHeading',
     rows: [
       { key: 'autoPauseDurationSeconds', label: 'autoPause', format: 'seconds' },
+      // #2843 — the cooldown between windows (#2744) and when the one
+      // running ends, beside the window's own length.
+      { key: 'autoPauseCooldownSeconds', label: 'autoPauseCooldown', hint: 'autoPauseCooldownHint', format: 'seconds' },
+      {
+        key: 'autoPauseAvailableAt',
+        label: 'autoPauseAvailableAt',
+        hint: 'autoPauseAvailableAtHint',
+        format: 'notBefore',
+        zeroMeans: 'autoPauseNeverFroze',
+      },
       { key: 'maxOfferDurationDays', label: 'maxOfferDuration', format: 'days' },
     ],
   },
@@ -178,3 +194,27 @@ export const RENDERED_KEYS: ReadonlySet<keyof ProtocolKnobValues> = new Set<keyo
   'tierThresholds',
   'tierDiscountBps',
 ]);
+
+/**
+ * #2843 — a `notBefore` value against the reader's clock. The time is what
+ * the source recorded; only whether it has passed is judged here, so the
+ * page always shows the time beside the verdict and the verdict can be
+ * checked. `unreadable` is a value that is not a whole number of seconds a
+ * date can carry, which the page shows raw rather than as a date.
+ */
+export type NotBeforeReading =
+  | { kind: 'none' }
+  | { kind: 'passed'; at: number }
+  | { kind: 'ahead'; at: number; inSec: number }
+  | { kind: 'unreadable' };
+
+/** Far enough for any timestamp a `Date` can represent (8.64e15 ms). */
+const MAX_DATE_SEC = 8_640_000_000_000;
+
+export function readNotBefore(value: string, nowSec: number): NotBeforeReading {
+  if (!/^\d+$/.test(value)) return { kind: 'unreadable' };
+  const at = Number(value);
+  if (!Number.isSafeInteger(at) || at > MAX_DATE_SEC) return { kind: 'unreadable' };
+  if (at === 0) return { kind: 'none' };
+  return at <= nowSec ? { kind: 'passed', at } : { kind: 'ahead', at, inSec: at - nowSec };
+}

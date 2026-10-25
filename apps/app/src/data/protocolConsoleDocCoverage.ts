@@ -63,7 +63,8 @@ export const DOC_COVERAGE: Readonly<Record<string, DocCoverage>> = {
   'Notification fee (per loan-side)': { notShown: 'not-yet' },
   'Max offer duration days': { shown: ['maxOfferDurationDays'] },
   'Auto-pause duration seconds': { shown: ['autoPauseDurationSeconds'] },
-  'Auto-pause cooldown seconds': { notShown: 'not-yet' },
+  // #2843 — the heading also documents `autoPauseAvailableAt()`.
+  'Auto-pause cooldown seconds': { shown: ['autoPauseCooldownSeconds', 'autoPauseAvailableAt'] },
   'Secondary-oracle max deviation BPS': { shown: ['secondaryOracleMaxDeviationBps'] },
   'Secondary-oracle max staleness seconds': { shown: ['secondaryOracleMaxStalenessSeconds'] },
   'Pyth oracle address': { shown: ['pythOracle'] },

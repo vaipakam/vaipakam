@@ -964,7 +964,14 @@ describe('configSnapshot', () => {
     it('refreshes on every setter event a published setting declares (Codex #2815 r1)', () => {
       expect(PROTOCOL_KNOB_SETTER_EVENTS.size).toBeGreaterThan(0);
       for (const name of PROTOCOL_KNOB_SETTER_EVENTS) expect(isConfigEventName(name), name).toBe(true);
-      for (const name of ['MinHealthFactorSet', 'MinIntentFillNumeraireSet', 'RewardReporterConfigUpdated']) {
+      for (const name of [
+        'MinHealthFactorSet',
+        'MinIntentFillNumeraireSet',
+        'RewardReporterConfigUpdated',
+        // #2843 — the auto-pause cooldown and the time it ends.
+        'AutoPauseCooldownSet',
+        'AutoPaused',
+      ]) {
         expect(isConfigEventName(name), name).toBe(true);
       }
     });
