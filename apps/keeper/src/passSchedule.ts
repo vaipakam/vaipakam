@@ -44,6 +44,7 @@ import { PASS_CADENCE_SEC as HORIZON_HEARTBEAT_CADENCE_SEC, runRewardHorizonHear
 import { runCommitmentReport } from './commitmentReport';
 import { runRemitAck } from './remitAck';
 import { runGraceDefault } from './graceDefault';
+import { PASS_CADENCE_SEC as PERIODIC_SETTLE_CADENCE_SEC, runPeriodicSettle } from './periodicSettle';
 import { PASS_CADENCE_SEC as DAY_CLOSE_CADENCE_SEC, runRewardDayClose } from './rewardDayClose';
 
 /** The UTC hour `dailyOracleSnapshot` acts in, and how long it stays
@@ -182,6 +183,20 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     offsetMinutes: 3,
     why: 'acts on loans already days past grace; each attempt costs quotes and a simulation',
     run: runGraceDefault,
+  },
+  {
+    name: 'periodicSettle',
+    // Settles a periodic-interest period already past its grace window,
+    // which is measured in days. Same bounds as graceDefault: one chain, one
+    // scan window and one attempt per run, each costing a quote round, a
+    // simulation and a send. :05/:20/:35/:50 — clear of every staggered
+    // pass (the 5-minute ones sit on :01–:03 modulo 5, the :04-modulo-5
+    // minutes are preGraceWatcher's, rewardSanctionsHold's and the
+    // heartbeat's, and rewardDayClose has :10/:25/:40/:55).
+    cadenceMinutes: PERIODIC_SETTLE_CADENCE_SEC / 60,
+    offsetMinutes: 5,
+    why: 'acts on periods already days past grace; each attempt costs quotes and a simulation',
+    run: runPeriodicSettle,
   },
   {
     name: 'rewardBudgetRemit',

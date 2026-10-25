@@ -170,6 +170,12 @@ interface BaseEnv {
    *  submits `triggerDefault`, which sells a defaulted borrower's collateral. */
   GRACE_DEFAULT_ENABLED?: string;
 
+  // Periodic-interest settler pass. `secret_text` like the flags above.
+  /** 'true' arms the periodic-interest settler (in addition to
+   *  KEEPER_ENABLED). It submits `settlePeriodicInterest`, which sells part
+   *  of a borrower's collateral when a period's interest is overdue. */
+  PERIODIC_SETTLE_ENABLED?: string;
+
   // Depth-tiered-LTV liquidity-confidence relay knobs
   // (`liquidityConfidence.ts`, §4.4 step 5). Both default
   // conservatively when unset; demotion is always immediate.
@@ -327,6 +333,7 @@ export const PLAIN_VAR_KEYS = [
   'TG_OPS_CHAT_ID',
   'REWARD_COMMIT_LOOKBACK_DAYS',
   'GRACE_DEFAULT_ENABLED',
+  'PERIODIC_SETTLE_ENABLED',
   'LIQ_CONFIDENCE_MIN_CHECKS',
   'LIQ_CONFIDENCE_MIN_WINDOW_DAYS',
   'LIQ_TIER3_MIN_TVL_USD',
@@ -495,6 +502,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     TG_OPS_CHAT_ID: raw.TG_OPS_CHAT_ID,
     REWARD_COMMIT_LOOKBACK_DAYS: raw.REWARD_COMMIT_LOOKBACK_DAYS,
     GRACE_DEFAULT_ENABLED: raw.GRACE_DEFAULT_ENABLED,
+    PERIODIC_SETTLE_ENABLED: raw.PERIODIC_SETTLE_ENABLED,
     LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,
     LIQ_CONFIDENCE_MIN_WINDOW_DAYS: raw.LIQ_CONFIDENCE_MIN_WINDOW_DAYS,
     LIQ_TIER3_MIN_TVL_USD: raw.LIQ_TIER3_MIN_TVL_USD,

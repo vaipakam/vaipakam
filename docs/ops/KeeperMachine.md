@@ -394,7 +394,8 @@ journalctl -u vaipakam-keeper -f
    cycle. A pass's `done in Nms` line does not prove it acted: a pass that is
    not armed returns at once, and its log line names the flag that held it.
 3. **Per-pass flags** are each the owner's decision: `GRACE_DEFAULT_ENABLED`
-   (`graceDefault`), `REWARD_REMIT_ENABLED` (`rewardBudgetRemit` and
+   (`graceDefault`), `PERIODIC_SETTLE_ENABLED` (`periodicSettle`, every 15
+   minutes from :05), `REWARD_REMIT_ENABLED` (`rewardBudgetRemit` and
    `remitAck`), `REWARD_COMMIT_ENABLED` (`commitmentReport`),
    `REWARD_DELIVERY_PROOF_ENABLED` (`deliveryProof`),
    `REWARD_SANCTIONS_KEEPER_ENABLED` (`rewardSanctionsHold`, hourly) and
