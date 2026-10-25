@@ -47,6 +47,10 @@ const MIGRATION_0074 = readFileSync(
   new URL('../migrations/0074_protocol_config_bundle_unread.sql', import.meta.url),
   'utf8',
 );
+const MIGRATION_0075 = readFileSync(
+  new URL('../migrations/0075_protocol_config_drop_master_flags.sql', import.meta.url),
+  'utf8',
+);
 
 /** The bundle's outputs as this build compiles them (#2812). */
 const BUNDLE_OUTPUTS = (
@@ -94,6 +98,7 @@ function refreshHarness(opts?: {
     MIGRATION_0070,
     MIGRATION_0072,
     MIGRATION_0074,
+    MIGRATION_0075,
   ]);
   const reads: string[] = [];
   const client = {
@@ -220,8 +225,8 @@ describe('configSnapshot', () => {
     const h = refreshHarness();
     h.db
       .prepare(
-        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
-         VALUES (84532, '[]', '[]', 50, ?)`,
+        `INSERT INTO protocol_config (chain_id, bundle_json, source_block, updated_at)
+         VALUES (84532, '[]', 50, ?)`,
       )
       .run(Math.floor(Date.now() / 1000));
     await maybeRefreshProtocolConfig({
@@ -241,8 +246,8 @@ describe('configSnapshot', () => {
     const h = refreshHarness();
     h.db
       .prepare(
-        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
-         VALUES (84532, '[]', '[]', 50, ?)`,
+        `INSERT INTO protocol_config (chain_id, bundle_json, source_block, updated_at)
+         VALUES (84532, '[]', 50, ?)`,
       )
       .run(Math.floor(Date.now() / 1000));
     const staleAt = () =>
@@ -317,8 +322,8 @@ describe('configSnapshot', () => {
     const freshAt = Math.floor(Date.now() / 1000);
     h.db
       .prepare(
-        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
-         VALUES (84532, '["newer"]', '[]', 200, ?)`,
+        `INSERT INTO protocol_config (chain_id, bundle_json, source_block, updated_at)
+         VALUES (84532, '["newer"]', 200, ?)`,
       )
       .run(freshAt);
     // Older scan, near head, saw a config event → reads happen, but the
@@ -366,11 +371,21 @@ describe('configSnapshot', () => {
     expect(JSON.parse(h.row()!.bj)).toEqual(SAMPLE_SERIALIZED);
     // #2073 — the names this build decoded with are written beside the tuples.
     const names = h.db
-      .prepare('SELECT bundle_names_json AS b, master_flags_names_json AS f FROM protocol_config WHERE chain_id = 84532')
-      .get() as { b: string | null; f: string | null };
+      .prepare('SELECT bundle_names_json AS b FROM protocol_config WHERE chain_id = 84532')
+      .get() as { b: string | null };
     expect(JSON.parse(names.b!)).toEqual(abiOutputNames('getProtocolConfigBundle'));
-    // The retired `getMasterFlags` tuple is no longer read (#2812).
-    expect(names.f).toBeNull();
+  });
+
+  // #2840 — the retired `getMasterFlags` tuple's two columns are gone from
+  // the schema the harness migrates, so the happy path above is the refresh
+  // writing a row without them.
+  it('migrates to a schema without the retired master-flags columns', () => {
+    const h = refreshHarness();
+    const columns = (h.db.prepare('PRAGMA table_info(protocol_config)').all() as { name: string }[]).map(
+      (c) => c.name,
+    );
+    expect(columns).not.toContain('master_flags_json');
+    expect(columns).not.toContain('master_flags_names_json');
   });
 
   // #2812 — an answer of another length is other code behind the getter.
@@ -442,9 +457,9 @@ describe('configSnapshot', () => {
       // The figures are still captured; only their names are withheld.
       expect(JSON.parse(h.row()!.bj)).toEqual(SAMPLE_SERIALIZED);
       const names = h.db
-        .prepare('SELECT bundle_names_json AS b, master_flags_names_json AS f FROM protocol_config WHERE chain_id = 84532')
-        .get() as { b: string | null; f: string | null };
-      expect(names).toEqual({ b: null, f: null });
+        .prepare('SELECT bundle_names_json AS b FROM protocol_config WHERE chain_id = 84532')
+        .get() as { b: string | null };
+      expect(names).toEqual({ b: null });
     });
   }
 
@@ -483,8 +498,8 @@ describe('configSnapshot', () => {
     });
     h.db
       .prepare(
-        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at)
-         VALUES (84532, '[]', '[]', '[{"maxDurationDays":"0","graceSeconds":"3888000"}]', 50, 0)`,
+        `INSERT INTO protocol_config (chain_id, bundle_json, grace_buckets_json, source_block, updated_at)
+         VALUES (84532, '[]', '[{"maxDurationDays":"0","graceSeconds":"3888000"}]', 50, 0)`,
       )
       .run();
     await maybeRefreshProtocolConfig({
@@ -516,8 +531,8 @@ describe('configSnapshot', () => {
     });
     h.db
       .prepare(
-        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at)
-         VALUES (84532, '[]', '[]', '[{"maxDurationDays":"0","graceSeconds":"3888000"}]', 50, 0)`,
+        `INSERT INTO protocol_config (chain_id, bundle_json, grace_buckets_json, source_block, updated_at)
+         VALUES (84532, '[]', '[{"maxDurationDays":"0","graceSeconds":"3888000"}]', 50, 0)`,
       )
       .run();
     await maybeRefreshProtocolConfig({
@@ -541,8 +556,8 @@ describe('configSnapshot', () => {
     const h = refreshHarness();
     h.db
       .prepare(
-        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at)
-         VALUES (84532, '[]', '[]', '[{"maxDurationDays":"0","graceSeconds":"3888000"}]', 50, ?)`,
+        `INSERT INTO protocol_config (chain_id, bundle_json, grace_buckets_json, source_block, updated_at)
+         VALUES (84532, '[]', '[{"maxDurationDays":"0","graceSeconds":"3888000"}]', 50, ?)`,
       )
       .run(Math.floor(Date.now() / 1000));
     await maybeRefreshProtocolConfig({
@@ -577,8 +592,8 @@ describe('configSnapshot', () => {
     // gates would skip — the NULL grace column alone must trigger.
     h.db
       .prepare(
-        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
-         VALUES (84532, '[]', '[]', 50, ?)`,
+        `INSERT INTO protocol_config (chain_id, bundle_json, source_block, updated_at)
+         VALUES (84532, '[]', 50, ?)`,
       )
       .run(Math.floor(Date.now() / 1000));
     await maybeRefreshProtocolConfig({
@@ -607,9 +622,9 @@ describe('configSnapshot', () => {
       h.db
         .prepare(
           `INSERT INTO protocol_config
-             (chain_id, bundle_json, master_flags_json, grace_buckets_json, pause_intervals_json,
+             (chain_id, bundle_json, grace_buckets_json, pause_intervals_json,
               source_block, updated_at)
-           VALUES (84532, '[]', '[]', '[]', ?, 50, ?)`,
+           VALUES (84532, '[]', '[]', ?, 50, ?)`,
         )
         .run(pl, ua);
     const refresh = (h: ReturnType<typeof refreshHarness>, events: string[], head = 110n) =>
@@ -788,20 +803,17 @@ describe('configSnapshot', () => {
       bundle: readonly unknown[],
       names: { bundle: readonly string[] | null } = { bundle: BUNDLE_NAMES },
     ) {
-      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067]);
+      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067, MIGRATION_0075]);
       db.prepare(
         `INSERT INTO protocol_config
-           (chain_id, bundle_json, master_flags_json, source_block, updated_at,
-            bundle_names_json, master_flags_names_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (chain_id, bundle_json, source_block, updated_at, bundle_names_json)
+         VALUES (?, ?, ?, ?, ?)`,
       ).run(
         84532,
         serializeTuple(bundle),
-        JSON.stringify([true, true, false]),
         1,
         2,
         names.bundle === null ? null : JSON.stringify(names.bundle),
-        null,
       );
       return { env: { DB: d1, RPC_BASE_SEPOLIA: SERVED_RPC } as unknown as Env };
     }
@@ -847,12 +859,12 @@ describe('configSnapshot', () => {
       // governance event the row predates. The site rejects that via its
       // own freshness window; an external reader following llms.txt had
       // only a magic timestamp to infer it from (Codex #1821 r1 P2).
-      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067]);
+      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067, MIGRATION_0075]);
       db.prepare(
         `INSERT INTO protocol_config
-           (chain_id, bundle_json, master_flags_json, source_block, updated_at, bundle_names_json)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      ).run(84532, serializeTuple(FULL_BUNDLE), JSON.stringify([true, true, false]), 1, 0, JSON.stringify(BUNDLE_NAMES));
+           (chain_id, bundle_json, source_block, updated_at, bundle_names_json)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(84532, serializeTuple(FULL_BUNDLE), 1, 0, JSON.stringify(BUNDLE_NAMES));
       const body = (await (
         await handleConfigSnapshot(84532, { DB: d1, RPC_BASE_SEPOLIA: SERVED_RPC } as unknown as Env)
       ).json()) as { stale?: boolean; values?: Record<string, unknown> };
@@ -907,17 +919,19 @@ describe('configSnapshot', () => {
     });
 
     it('refuses a chain this Worker no longer indexes, even with a stored row (Codex #2653 r1)', async () => {
-      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067]);
+      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067, MIGRATION_0075]);
       db.prepare(
-        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      ).run(84532, serializeTuple(FULL_BUNDLE), JSON.stringify([true, true, false]), 1, 2);
+        `INSERT INTO protocol_config (chain_id, bundle_json, source_block, updated_at)
+         VALUES (?, ?, ?, ?)`,
+      ).run(84532, serializeTuple(FULL_BUNDLE), 1, 2);
       const res = await handleConfigSnapshot(84532, { DB: d1 } as unknown as Env);
       expect(res.status).toBe(503);
       expect(await res.json()).toEqual({ error: 'chain-not-configured' });
     });
 
     it('still answers on a database migration 0067 has not reached, with no labels', async () => {
+      // A schema from before 0067, so it still has 0035's NOT NULL
+      // `master_flags_json`, which 0075 later drops (#2840).
       const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039]);
       db.prepare(
         `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
@@ -1006,16 +1020,15 @@ describe('configSnapshot', () => {
       true, '100', '1800', '365',
     ];
     async function serve(knobs: string | null, bundleNames: readonly string[] | null = BUNDLE_NAMES) {
-      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067, MIGRATION_0070]);
+      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067, MIGRATION_0070, MIGRATION_0075]);
       db.prepare(
         `INSERT INTO protocol_config
-           (chain_id, bundle_json, master_flags_json, source_block, updated_at,
+           (chain_id, bundle_json, source_block, updated_at,
             bundle_names_json, knob_values_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?)`,
       ).run(
         84532,
         serializeTuple(FULL_BUNDLE),
-        JSON.stringify([true, true, false]),
         1,
         2,
         bundleNames === null ? null : JSON.stringify(bundleNames),
