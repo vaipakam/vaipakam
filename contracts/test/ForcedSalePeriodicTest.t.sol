@@ -167,7 +167,7 @@ contract ForcedSalePeriodicTest is SetupTest {
     }
 
     function test_plan_perAssetBonusCeilingLowersTheNeed() public {
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 100, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 100);
         _toPeriodEnd(1);
         ForcedSaleFacet.ForcedSalePlan memory p = _plan();
         uint256 fee = Math.mulDiv(p.debt, 200, 10_000, Math.Rounding.Ceil);
@@ -266,7 +266,7 @@ contract ForcedSalePeriodicTest is SetupTest {
     }
 
     function test_perAssetBonusCeiling_appliesToTheBonusPaid() public {
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 100, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 100);
         _toPeriodEnd(1);
         ForcedSaleFacet.ForcedSalePlan memory p = _plan();
         uint256 settler0 = _bal(settler);
