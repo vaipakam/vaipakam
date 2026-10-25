@@ -55,6 +55,7 @@ import {
   RiskPreviewFacetABI,
   AdminFacetABI,
   LenderIntentFacetABI,
+  ClaimFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import type { PassTick } from './passSchedule';
@@ -68,6 +69,8 @@ import {
   type KeeperContext,
 } from './keeper';
 import { reportSendError } from './submissionQueue';
+import { summarizeFailure } from '@vaipakam/lib/errorDescription';
+import { ROLL_MIN_VALUE_TO_GAS, estimateRollFeeWei, judgeRollValue, rollUnpricedReason } from './rollGasFloor';
 
 // `getActiveOffersCount` / `getActiveOffersPaginated` live on
 // MetricsFacet; `getOffer` on OfferCancelFacet post the EIP-170 facet
@@ -260,8 +263,88 @@ const INTENT_ERR_INTENT_TERMINAL = new Set<number>([
  *  cannot work; the search probes the predicate directly. */
 const MATCH_ERR_COLLATERAL_BELOW = 6;
 
-/** Max `previewIntent` probes for the collateral size-down binary search. */
-const INTENT_SIZE_DOWN_MAX_PROBES = 6;
+/** Max `previewIntent` probes for the collateral size-down binary search,
+ *  after the probe at the smallest legal fill. */
+export const INTENT_SIZE_DOWN_MAX_PROBES = 6;
+
+/** The refusals a probe can meet only because its fill is too SMALL (#2760).
+ *  The search starts from a larger fill `hi` that passed every gate the preview
+ *  runs before the match core, so at a smaller fill these name a low-end limit:
+ *  `IntentError.BelowMinFill` (9, the intent's minimum fill),
+ *  `CollateralUnresolvable` (14, which past `hi` can only be the required
+ *  collateral rounding to zero), `SliceCollateralBelowFloor` (18, the
+ *  create-time collateral floor) and `MatchError.AmountNoOverlap` (4, below the
+ *  borrower's minimum amount, since `hi` overlapped). Every OTHER refusal is
+ *  read as too big: the gates `hi` never reached (the risk gate, the accept
+ *  gate's KYC tier, the solver's capacity) refuse larger fills, never only
+ *  smaller ones. */
+const INTENT_ERR_LOW_END = new Set<number>([9, 14, 18]);
+const MATCH_ERR_AMOUNT_NO_OVERLAP = 4;
+
+/** What one `previewIntent` probe says about the fill size it was sent (#2760).
+ *
+ *  - `ok`: the fill is viable.
+ *  - `belowWindow`: refused only because the fill is too small (see
+ *    {@link INTENT_ERR_LOW_END}); the search moves up.
+ *  - `tooBig`: refused for any other reason, and the search moves down. A
+ *    collateral refusal is monotone in the fill (the collateral the slice
+ *    requires never falls as the fill grows, while what the borrower can post is
+ *    fixed), and so are the later gates `hi` never reached. A refusal that is in
+ *    fact size-independent drives the search down to `lo`, where it ends.
+ *  - `unread`: the preview read itself failed. It says nothing about the size,
+ *    so the search stops with what it has. */
+export type IntentProbeVerdict = 'ok' | 'tooBig' | 'belowWindow' | 'unread';
+
+export function intentProbeVerdict(
+  p: Pick<IntentPreview, 'ok' | 'intentError' | 'matchError'> | null,
+): IntentProbeVerdict {
+  if (!p) return 'unread';
+  if (p.ok) return 'ok';
+  if (INTENT_ERR_LOW_END.has(p.intentError)) return 'belowWindow';
+  if (p.intentError === 0 && p.matchError === MATCH_ERR_AMOUNT_NO_OVERLAP) return 'belowWindow';
+  return 'tooBig';
+}
+
+/** The largest viable fill in `[lo, hi)`, given that `hi` was refused for
+ *  collateral (#2760, Codex #748 r4–r6). It probes `lo` first: when the viable
+ *  fill is a small fraction of `hi`, a search that starts in the middle could
+ *  spend every probe above it. A `lo` refused as too big proves no fill in the
+ *  range is viable (see {@link IntentProbeVerdict}). A `lo` refused as too
+ *  small does NOT: a dust fill can fail on rounding where a larger one passes,
+ *  so the search goes on above it. Then a bisection keeps the largest
+ *  viable fill seen, moving down on `tooBig` and up on `ok` or `belowWindow`.
+ *
+ *  `probe` returns null once the caller's preview budget is spent; the search
+ *  stops there. At most `1 + maxProbes` probes are sent. Pure apart from
+ *  `probe`. */
+export async function searchIntentFill<P>(
+  lo: bigint,
+  hi: bigint,
+  probe: (fill: bigint) => Promise<{ verdict: IntentProbeVerdict; preview: P } | null>,
+  maxProbes = INTENT_SIZE_DOWN_MAX_PROBES,
+): Promise<{ fill: bigint; preview: P } | null> {
+  if (lo >= hi) return null;
+  let best: { fill: bigint; preview: P } | null = null;
+  const first = await probe(lo);
+  if (!first) return null;
+  if (first.verdict === 'ok') best = { fill: lo, preview: first.preview };
+  else if (first.verdict !== 'belowWindow') return null;
+  let searchLo = lo + 1n;
+  let searchHi = hi - 1n;
+  for (let probes = 0; searchLo <= searchHi && probes < maxProbes; probes++) {
+    const mid = (searchLo + searchHi) / 2n;
+    // eslint-disable-next-line no-await-in-loop
+    const r = await probe(mid);
+    if (!r || r.verdict === 'unread') break;
+    if (r.verdict === 'tooBig') {
+      searchHi = mid - 1n;
+      continue;
+    }
+    if (r.verdict === 'ok') best = { fill: mid, preview: r.preview };
+    searchLo = mid + 1n;
+  }
+  return best;
+}
 
 /** One row of `MetricsFacet.getActiveLenderIntents` (`LenderIntentSummary`). */
 interface LenderIntentSummary {
@@ -366,7 +449,7 @@ export async function listActiveOffers(
     })) as bigint;
   } catch (err) {
     console.error(
-      `[matcher] chain=${ctx.chainId} getActiveOffersCount failed: ${String(err).slice(0, 200)}`,
+      `[matcher] chain=${ctx.chainId} getActiveOffersCount failed: ${summarizeFailure(err, 200)}`,
     );
     return { offers: [], listed: 0 };
   }
@@ -374,6 +457,12 @@ export async function listActiveOffers(
 
   const offers: OfferLite[] = [];
   let listed = 0;
+  // An offer id is listed once per run (#2760). The active set is read page by
+  // page while it can change underneath (a removal moves another id into the
+  // freed slot), so a later page can repeat an id an earlier one returned.
+  // Dropping repeats here is what lets the match pass visit each lender ×
+  // borrower pair at most once without keeping a set of the pairs it tried.
+  const seen = new Set<bigint>();
   for (const { cursor: offset, limit } of pagedWalk(total, SCAN_PAGE, run)) {
     if (stop()) break;
     let page: readonly bigint[];
@@ -387,16 +476,18 @@ export async function listActiveOffers(
       })) as readonly bigint[];
     } catch (err) {
       console.error(
-        `[matcher] chain=${ctx.chainId} getActiveOffersPaginated offset=${Number(offset)} failed: ${String(err).slice(0, 200)}`,
+        `[matcher] chain=${ctx.chainId} getActiveOffersPaginated offset=${Number(offset)} failed: ${summarizeFailure(err, 200)}`,
       );
       break;
     }
     listed += page.length;
+    const fresh = page.filter((id) => !seen.has(id));
+    for (const id of fresh) seen.add(id);
     // The page is hydrated whole even if the cutoff passes meanwhile: it is a
     // bounded read, and stopping inside it would leave ids with nothing to
     // match, which is the stall this order exists to prevent.
     // eslint-disable-next-line no-await-in-loop
-    offers.push(...(await hydrateOffers(ctx, page)));
+    offers.push(...(await hydrateOffers(ctx, fresh)));
   }
   return { offers, listed };
 }
@@ -435,6 +526,28 @@ async function hydrateOffers(
     }
   }
   return out;
+}
+
+/** A bucket's borrower offers grouped by creator, in the order each creator
+ *  first appears (#2760). The match pass walks a lender's counterparties group
+ *  by group and passes over the lender's own group in one step, so a creator on
+ *  both sides of a bucket costs one comparison per lender rather than one per
+ *  borrower offer they hold. Every other group it enters costs a preview per
+ *  offer, so the walk's work is bounded by the preview budget plus one group
+ *  check per lender. Creators are compared lower-cased: `getOffer` returns
+ *  checksummed addresses, and the raw bytes are what the contract compares. */
+export function groupByCreator(list: readonly OfferLite[]): Map<string, OfferLite[]> {
+  const groups = new Map<string, OfferLite[]>();
+  for (const o of list) {
+    const creator = o.creator.toLowerCase();
+    let group = groups.get(creator);
+    if (!group) {
+      group = [];
+      groups.set(creator, group);
+    }
+    group.push(o);
+  }
+  return groups;
 }
 
 function partitionByBucket(offers: readonly OfferLite[]): {
@@ -570,7 +683,7 @@ async function submitMatch(
       reportSendError(
         `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)}`,
         err,
-        `broadcast failed: ${errStr.slice(0, 200)}`,
+        `broadcast failed: ${summarizeFailure(err)}`,
         console.log,
       );
     }
@@ -612,7 +725,7 @@ async function submitMatch(
     // Timeout (tx dropped from mempool or RPC slow) — assume in-flight
     // and back off this lender for the tick.
     console.log(
-      `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)} receipt wait failed tx=${hash}: ${String(err).slice(0, 200)}`,
+      `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)} receipt wait failed tx=${hash}: ${summarizeFailure(err, 200)}`,
     );
     return false;
   }
@@ -688,7 +801,7 @@ async function walkRegistry<T>(
       return total;
     } catch (err) {
       console.error(
-        `[matcher] chain=${ctx.chainId} ${functionName} offset=${Number(offset)} failed: ${String(err).slice(0, 200)}`,
+        `[matcher] chain=${ctx.chainId} ${functionName} offset=${Number(offset)} failed: ${summarizeFailure(err, 200)}`,
       );
       return null;
     }
@@ -769,7 +882,7 @@ async function submitIntentFill(
       reportSendError(
         `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)}`,
         err,
-        `broadcast failed: ${errStr.slice(0, 200)}`,
+        `broadcast failed: ${summarizeFailure(err)}`,
         console.log,
       );
     }
@@ -790,7 +903,7 @@ async function submitIntentFill(
     creditSpent = receiptSpentPriorityCredit(receipt.logs ?? [], ctx.diamond);
   } catch (err) {
     console.log(
-      `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)} receipt wait failed tx=${hash}: ${String(err).slice(0, 200)}`,
+      `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)} receipt wait failed tx=${hash}: ${summarizeFailure(err, 200)}`,
     );
     return null;
   }
@@ -857,7 +970,7 @@ export async function priorityState(
         priorityGetterMissingLogged.set(ctx.chainId, true);
       }
     } else {
-      console.log(`[matcher] chain=${ctx.chainId} priority read for intent ${intent.owner} unread, skipped this tick: ${msg.slice(0, 160)}`);
+      console.log(`[matcher] chain=${ctx.chainId} priority read for intent ${intent.owner} unread, skipped this tick: ${summarizeFailure(err, 160)}`);
     }
     return 'blocked';
   }
@@ -1056,45 +1169,18 @@ export async function runIntentFillPass(
       ) {
         const lo =
           intent.minFillAmount > b.amount ? intent.minFillAmount : b.amount;
-        const originalFill = fillAmount; // the `hi` that just failed
-        if (lo < originalFill) {
-          // Probe the SMALLEST legal fill FIRST (Codex #748 r6): when the
-          // collateral-supported amount is a tiny fraction of `hi`, a pure
-          // midpoint search can spend every probe still above the viable
-          // threshold and miss a fillable `lo`. Probing `lo` guarantees we find
-          // a viable fill when one exists; if even `lo` fails the borrower is
-          // unfillable for this intent.
+        const found = await searchIntentFill(lo, fillAmount, async (fill) => {
+          if (previews >= MAX_PREVIEW_CALLS_PER_TICK) return null;
           previews += 1;
-          const loProbe = await previewIntent(ctx, solver, intent, b.id, lo);
-          if (loProbe && loProbe.ok) {
-            fillAmount = lo;
-            preview = loProbe;
-            // Binary-search (lo, hi) for the LARGEST viable fill, on the now
-            // known-viable floor.
-            let searchLo = lo + 1n;
-            let searchHi = originalFill - 1n;
-            let probes = 0;
-            while (
-              searchLo <= searchHi &&
-              probes < INTENT_SIZE_DOWN_MAX_PROBES &&
-              previews < MAX_PREVIEW_CALLS_PER_TICK
-            ) {
-              const mid = (searchLo + searchHi) / 2n;
-              previews += 1;
-              probes += 1;
-              const probe = await previewIntent(ctx, solver, intent, b.id, mid);
-              if (probe && probe.ok) {
-                fillAmount = mid;
-                preview = probe;
-                searchLo = mid + 1n;
-              } else {
-                searchHi = mid - 1n;
-              }
-            }
-          }
-          // else: even `lo` failed — `preview` stays the original CBR failure
-          // and the handler below continues to the next borrower.
+          const p = await previewIntent(ctx, solver, intent, b.id, fill);
+          return { verdict: intentProbeVerdict(p), preview: p };
+        });
+        if (found && found.preview) {
+          fillAmount = found.fill;
+          preview = found.preview;
         }
+        // else: no viable fill was found: `preview` stays the original CBR
+        // failure and the handler below continues to the next borrower.
       }
       // `ok` already folds intentError == Ok && matchError == Ok && riskBlock == 0.
       if (!preview.ok) {
@@ -1234,7 +1320,7 @@ async function submitRoll(
       reportSendError(
         `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)}`,
         err,
-        `broadcast failed: ${errStr.slice(0, 200)}`,
+        `broadcast failed: ${summarizeFailure(err)}`,
         console.log,
       );
     }
@@ -1253,7 +1339,7 @@ async function submitRoll(
     }
   } catch (err) {
     console.log(
-      `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)} receipt wait failed tx=${hash}: ${String(err).slice(0, 200)}`,
+      `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)} receipt wait failed tx=${hash}: ${summarizeFailure(err, 200)}`,
     );
     return { ok: false, unauthorized: false };
   }
@@ -1268,7 +1354,9 @@ async function submitRoll(
  * `rollIntentLoan`. Shares the per-tick submit budget (`submitsUsed`) + wall-time
  * budget with the match/fill passes, and self-gates on `keepersPaused` (re-read
  * before each submit). A loan whose owner the keeper isn't AUTO_ROLL-delegated
- * for reverts; every later loan with that owner is then skipped.
+ * for reverts; every later loan with that owner is then skipped. A loan worth
+ * less than {@link ROLL_MIN_VALUE_TO_GAS} times its gas is left for its owner
+ * (#2760 item 3, rollGasFloor.ts).
  */
 async function runIntentRollPass(
   ctx: KeeperContext,
@@ -1285,9 +1373,19 @@ async function runIntentRollPass(
 
   const rollable = await listRollableLoans(ctx, overBudget, run);
   if (rollable.length === 0) return;
+  // #2760 item 3 — a chain whose fee the keeper cannot value gets no rolls at
+  // all: say it once and leave the loans to their owners.
+  const unpriced = rollUnpricedReason(ctx.chainId);
+  if (unpriced) {
+    console.log(
+      `[matcher] chain=${ctx.chainId} roll pass: not rolling, ${unpriced}; owners can roll or claim their loans themselves`,
+    );
+    return;
+  }
 
   let submits = submitsUsed;
   let rolled = 0;
+  let declinedDust = 0;
   const unauthorizedOwners = new Set<string>();
   for (const loan of rollable) {
     if (submits >= MAX_SUBMITS_PER_TICK || overBudget()) break;
@@ -1299,6 +1397,72 @@ async function runIntentRollPass(
       logKeepersPausedOnce(ctx);
       return;
     }
+    // #2760 item 3 — the keeper pays this roll's whole fee and earns nothing
+    // back, so it rolls only when the amount is worth that fee (see
+    // rollGasFloor.ts). The estimate is also where an undelegated owner first
+    // shows: it reverts `KeeperAccessRequired` before anything is signed.
+    let feeWei: bigint;
+    try {
+      feeWei = await estimateRollFeeWei(ctx.client, ctx.chainId, {
+        address: ctx.diamond,
+        abi: MATCHER_ABI,
+        functionName: 'rollIntentLoan',
+        args: [loan.loanId],
+        account: ctx.wallet.account,
+      });
+    } catch (err) {
+      if (String(err).includes('KeeperAccessRequired')) {
+        unauthorizedOwners.add(loan.owner.toLowerCase());
+      } else {
+        console.log(
+          `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: fee estimate failed: ${summarizeFailure(err, 200)}`,
+        );
+      }
+      continue;
+    }
+    // The roll re-lends the lender's recorded claim (principal plus interest),
+    // not the original fill the registry row reports, so that is what is valued.
+    let rolledAmount: bigint;
+    try {
+      const [, amount, claimed] = (await ctx.client.readContract({
+        address: ctx.diamond,
+        abi: ClaimFacetABI as Abi,
+        functionName: 'getClaimableAmount',
+        args: [loan.loanId, true],
+      })) as readonly [Address, bigint, boolean];
+      if (claimed) continue; // already paid out: nothing left to roll
+      rolledAmount = amount;
+    } catch (err) {
+      console.log(
+        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: claim read failed: ${summarizeFailure(err, 200)}`,
+      );
+      continue;
+    }
+    const verdict = await judgeRollValue(
+      ctx.client,
+      ctx.diamond,
+      ctx.chainId,
+      loan.lendingAsset,
+      rolledAmount,
+      feeWei,
+    );
+    if (verdict.kind === 'gasUnpriced') {
+      // The same for every loan on this chain this run: say it once and stop.
+      console.log(
+        `[matcher] chain=${ctx.chainId} roll pass: not rolling, ${verdict.reason}; owners can roll or claim their loans themselves`,
+      );
+      break;
+    }
+    if (verdict.kind === 'assetUnpriced') {
+      console.log(
+        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: ${verdict.reason}`,
+      );
+      continue;
+    }
+    if (verdict.kind === 'dust') {
+      declinedDust += 1;
+      continue;
+    }
     submits += 1;
     const res = await submitRoll(ctx, loan.loanId);
     if (res.ok) {
@@ -1307,9 +1471,9 @@ async function runIntentRollPass(
       unauthorizedOwners.add(loan.owner.toLowerCase());
     }
   }
-  if (rolled > 0) {
+  if (rolled > 0 || declinedDust > 0) {
     console.log(
-      `[matcher] chain=${ctx.chainId} roll pass: ${rolled} loan(s) rolled (${rollable.length} repaid candidate(s))`,
+      `[matcher] chain=${ctx.chainId} roll pass: ${rolled} loan(s) rolled, ${declinedDust} worth less than ${ROLL_MIN_VALUE_TO_GAS}x their gas left for their owners (${rollable.length} repaid candidate(s))`,
     );
   }
 }
@@ -1340,7 +1504,6 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run = 0): Promise
 
   let previewCalls = 0;
   let submits = 0;
-  const attempted = new Set<string>();
   // Codex #748 r3 — borrowers left in-flight by an UNCERTAIN matchOffers submit
   // (broadcast fail / receipt timeout). Shared with the intent-fill pass so it
   // doesn't queue a `matchIntent` for the same borrower while the offer-match
@@ -1353,108 +1516,105 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext, run = 0): Promise
     if (overBudget()) break;
     const borrowerList = borrowers.get(key);
     if (!borrowerList || borrowerList.length === 0) continue;
+    const borrowerGroups = groupByCreator(borrowerList);
 
     for (const L of lenderList) {
       if (submits >= MAX_SUBMITS_PER_TICK || capacitySpent) break;
       if (overBudget()) break;
-      for (const B of borrowerList) {
-        if (previewCalls >= MAX_PREVIEW_CALLS_PER_TICK) break;
-        if (submits >= MAX_SUBMITS_PER_TICK) break;
-        if (overBudget()) break;
-        const pairKey = `${L.id}:${B.id}`;
-        if (attempted.has(pairKey)) continue;
-        attempted.add(pairKey);
-
-        // #235 — self-trade short-circuit. Same-creator pairs can
+      const lenderCreator = L.creator.toLowerCase();
+      // Each (L, B) pair is visited once: the listing holds each offer id once
+      // (#2760), and each lender walks its bucket's borrowers once.
+      borrowerScan: for (const [creator, group] of borrowerGroups) {
+        // #235 / #2760 — self-trade short-circuit. Same-creator pairs can
         // never produce a valid loan (the contract reverts
-        // `SelfTradeForbidden(party)` in `_acceptOffer`), and
-        // `previewMatch` returns `MatchError.SelfTrade`. Skipping
-        // them before the RPC roundtrip saves one `eth_call` per
-        // colluding-creator pair per tick. Lower-cased comparison
-        // because `getOffer` returns checksummed addresses but the
-        // raw bytes are what matter.
-        if (L.creator.toLowerCase() === B.creator.toLowerCase()) {
-          continue;
-        }
+        // `SelfTradeForbidden(party)` in `_acceptOffer`, and `previewMatch`
+        // returns `MatchError.SelfTrade`). The lender's own group is passed
+        // over whole, before any per-pair work, so a creator holding offers on
+        // both sides costs one comparison per lender, not one per pair.
+        if (creator === lenderCreator) continue;
+        for (const B of group) {
+          if (previewCalls >= MAX_PREVIEW_CALLS_PER_TICK) break borrowerScan;
+          if (submits >= MAX_SUBMITS_PER_TICK) break borrowerScan;
+          if (overBudget()) break borrowerScan;
 
-        previewCalls += 1;
-        const p = await previewMatch(ctx, L.id, B.id);
-        if (p && p.errorCode === MATCH_ERR_CAPACITY_EXHAUSTED) {
-          console.log(
-            `[matcher] chain=${ctx.chainId} match pass: this keeper's fill capacity is spent; waiting for it to refill`,
-          );
-          capacitySpent = true;
-          break;
-        }
-        if (!p || p.errorCode !== MATCH_ERR_OK) {
-          // Defence-in-depth: the client-side self-trade pre-filter
-          // above should catch every same-creator pair, but log here
-          // anyway in case `getOffer` ever races against an in-flight
-          // ownership transfer or the OfferLite struct loses the
-          // `creator` field in a future refactor. Other typed errors
-          // are too noisy to log per-pair on a busy book; the
-          // observability story for those lives in the per-tick
-          // submits / previewCalls metric.
-          if (p && p.errorCode === MATCH_ERR_SELF_TRADE) {
+          previewCalls += 1;
+          const p = await previewMatch(ctx, L.id, B.id);
+          if (p && p.errorCode === MATCH_ERR_CAPACITY_EXHAUSTED) {
             console.log(
-              `[matcher] chain=${ctx.chainId} self-trade pair slipped pre-filter — L=${L.id} B=${B.id} creator=${L.creator}`,
+              `[matcher] chain=${ctx.chainId} match pass: this keeper's fill capacity is spent; waiting for it to refill`,
             );
+            capacitySpent = true;
+            break borrowerScan;
           }
-          continue;
-        }
+          if (!p || p.errorCode !== MATCH_ERR_OK) {
+            // Defence-in-depth: the client-side self-trade pre-filter
+            // above should catch every same-creator pair, but log here
+            // anyway in case `getOffer` ever races against an in-flight
+            // ownership transfer or the OfferLite struct loses the
+            // `creator` field in a future refactor. Other typed errors
+            // are too noisy to log per-pair on a busy book; the
+            // observability story for those lives in the per-tick
+            // submits / previewCalls metric.
+            if (p && p.errorCode === MATCH_ERR_SELF_TRADE) {
+              console.log(
+                `[matcher] chain=${ctx.chainId} self-trade pair slipped pre-filter — L=${L.id} B=${B.id} creator=${L.creator}`,
+              );
+            }
+            continue;
+          }
 
-        const ok = await submitMatch(ctx, L.id, B.id, p);
-        if (ok) {
-          submits += 1;
-          // Keep B's in-memory snapshot live so the later #625 intent-fill pass
-          // sizes against B's true residual capacity, not its tick-start value
-          // (Codex #748 r1).
-          B.amountFilled += p.matchAmount;
-          // Issue #172 / #102 — post-borrower-partial-fill, borrower
-          // offers are NOT single-fill anymore. Don't break the inner
-          // loop on success: the same lender may have remaining capacity
-          // to fan-out across additional borrowers in this tick, and the
-          // same borrower (post-this match) may still have capacity that
-          // a DIFFERENT lender in `lenderList` could fill.
-          //
-          // The `attempted` set already prevents re-trying the exact
-          // (L,B) pair within a tick. After a successful submit, both
-          // L's and B's `amountFilled` have grown on-chain; the next
-          // `previewMatch` call within this tick reads the updated state
-          // and returns the right overlap (or `AmountNoOverlap` /
-          // dust-close, which the `if (!p || p.errorCode !== Ok)`
-          // continue above handles cleanly).
-          //
-          // Early-exit only when the preview reports the lender is now
-          // FULLY filled (`lenderRemainingPostMatch == 0n`). Anything
-          // smaller — where the lender still has some capacity that
-          // might not meet the per-match minimum — is left to the
-          // contract's `previewMatch` to filter on the next iteration;
-          // the extra preview call per exhausted lender per tick is
-          // cheap relative to fan-out wins on healthy ones.
-          if (p.lenderRemainingPostMatch === 0n) {
-            break;
+          const ok = await submitMatch(ctx, L.id, B.id, p);
+          if (ok) {
+            submits += 1;
+            // Keep B's in-memory snapshot live so the later #625 intent-fill pass
+            // sizes against B's true residual capacity, not its tick-start value
+            // (Codex #748 r1).
+            B.amountFilled += p.matchAmount;
+            // Issue #172 / #102 — post-borrower-partial-fill, borrower
+            // offers are NOT single-fill anymore. Don't break the inner
+            // loop on success: the same lender may have remaining capacity
+            // to fan-out across additional borrowers in this tick, and the
+            // same borrower (post-this match) may still have capacity that
+            // a DIFFERENT lender in `lenderList` could fill.
+            //
+            // Each (L,B) pair is visited once per tick (see the walk
+            // above). After a successful submit, both
+            // L's and B's `amountFilled` have grown on-chain; the next
+            // `previewMatch` call within this tick reads the updated state
+            // and returns the right overlap (or `AmountNoOverlap` /
+            // dust-close, which the `if (!p || p.errorCode !== Ok)`
+            // continue above handles cleanly).
+            //
+            // Early-exit only when the preview reports the lender is now
+            // FULLY filled (`lenderRemainingPostMatch == 0n`). Anything
+            // smaller — where the lender still has some capacity that
+            // might not meet the per-match minimum — is left to the
+            // contract's `previewMatch` to filter on the next iteration;
+            // the extra preview call per exhausted lender per tick is
+            // cheap relative to fan-out wins on healthy ones.
+            if (p.lenderRemainingPostMatch === 0n) {
+              break borrowerScan;
+            }
+            // Otherwise fall through to the next borrower for this lender.
+            continue;
           }
-          // Otherwise fall through to the next borrower for this lender.
-          continue;
+          // Codex #176 round-2 P1 — `submitMatch` returned false. The
+          // three causes (broadcast failure, on-chain revert,
+          // `waitForTransactionReceipt` timeout) all leave L's state
+          // uncertain — the tx may still be in flight, or another keeper
+          // / a borrower-cancel raced us. Trying L against B2/B3 in the
+          // same tick would re-evaluate against possibly-stale state
+          // and either queue duplicate matches (the race the #176
+          // round-1 fix existed to prevent) or burn preview calls on
+          // doomed pairs. Back off this lender for the tick: the explicit
+          // `break` skips the rest of its borrowers.
+          //
+          // #748 r3 — also mark B uncertain so the intent-fill pass below won't
+          // queue a `matchIntent` for the same borrower while this offer-match tx
+          // may still be in flight (it would revert once the offer-match mines).
+          uncertainBorrowers.add(B.id.toString());
+          break borrowerScan;
         }
-        // Codex #176 round-2 P1 — `submitMatch` returned false. The
-        // three causes (broadcast failure, on-chain revert,
-        // `waitForTransactionReceipt` timeout) all leave L's state
-        // uncertain — the tx may still be in flight, or another keeper
-        // / a borrower-cancel raced us. Trying L against B2/B3 in the
-        // same tick would re-evaluate against possibly-stale state
-        // and either queue duplicate matches (the race the #176
-        // round-1 fix existed to prevent) or burn preview calls on
-        // doomed pairs. Back off this lender for the tick — `attempted`
-        // already prevents (L,B1) retry, but we need an explicit
-        // `break` to skip the rest of the borrower list too.
-        //
-        // #748 r3 — also mark B uncertain so the intent-fill pass below won't
-        // queue a `matchIntent` for the same borrower while this offer-match tx
-        // may still be in flight (it would revert once the offer-match mines).
-        uncertainBorrowers.add(B.id.toString());
-        break;
       }
     }
   }
@@ -1526,7 +1686,7 @@ export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
         await runOfferMatcherTickForChain(ctx, run);
       } catch (err) {
         console.error(
-          `[matcher] chain=${chain.id} (${chain.name}) tick failed: ${String(err).slice(0, 250)}`,
+          `[matcher] chain=${chain.id} (${chain.name}) tick failed: ${summarizeFailure(err, 250)}`,
         );
       }
     }),
