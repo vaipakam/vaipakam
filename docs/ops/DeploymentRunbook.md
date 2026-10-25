@@ -1699,6 +1699,7 @@ whether the Diamond was configured before.**
 Then, once per chain:
 
 7. `InteractionRewardsFacet.setInteractionLaunchTimestamp(<unix ts of launch day 00:00 UTC>)` — `SetInteractionLaunch.s.sol`, same value on every chain
+   — **Base first.** Base refuses a mirror's day report while its own clock is unset (#2620), and a refused delivery has to be re-executed by hand in CCIP once Base's clock runs. Base also counts a report's day figures only when the mirror's value equals its own: a mirror launched on another value has every day zeroed on Base, permanently, since the value is one-shot.
 
 **Post-step verification.** The script sanity-checks the messenger candidate
 before it broadcasts, but reads none of the configuration back afterwards, and

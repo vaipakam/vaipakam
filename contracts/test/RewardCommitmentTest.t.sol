@@ -66,6 +66,7 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
 
     function _configureCanonical() internal {
         vm.chainId(CHAIN_BASE);
+        _ensureRewardClockLaunched();
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(true);
         _rep().setRewardMessenger(address(messenger));
@@ -186,6 +187,7 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
     function test_singleChain_finalizeUnaffected() public {
         // Single-chain mesh (Base only): armed finalize closes normally.
         vm.chainId(CHAIN_BASE);
+        _ensureRewardClockLaunched();
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(true);
         _rep().setRewardMessenger(address(messenger));

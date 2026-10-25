@@ -10,7 +10,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
-import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
+import {IRewardMessenger, ChainDayReport} from "../interfaces/IRewardMessenger.sol";
 
 /**
  * @title RewardAggregatorFacet
@@ -50,10 +50,10 @@ import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
  *           fees can be replayed if a cross-chain leg fails.
  *
  *      Late reports (same `D`, landing after finalization) never change the
- *      day: the B4 report's day figures are dropped while what it says about
- *      the chain still applies, and an older report shape is rejected with
- *      `ReportAfterFinalization`, so downstream claim math cannot shift
- *      under finalized consumers. Governance may credit the
+ *      day: their day figures are dropped while what they say about the chain
+ *      still applies, so downstream claim math cannot shift under finalized
+ *      consumers. A report from a chain whose reward clock is not Base's is
+ *      treated the same way, whenever it lands (#2620). Governance may credit the
  *      missed chain out of the Insurance pool but must not reopen `D`.
  */
 contract RewardAggregatorFacet is
@@ -195,164 +195,123 @@ contract RewardAggregatorFacet is
 
     // ─── Trusted ingress: mirror → Base ─────────────────────────────────────
 
-    /**
-     * @notice Record a mirror's day-`D` `(lender, borrower)` USD-18 pair
-     *         under `sourceChainId`.
-     * @dev Only callable by `rewardMessenger`. Rejects duplicates via
-     *      `chainDailyReported[dayId][sourceChainId]`. Rejects late reports
-     *      once `dailyGlobalFinalized[dayId] == true`. Rejects unknown
-     *      source chainIds not in `expectedSourceChainIds`.
-     *
-     *      Also serves as Base's own write path when {RewardReporterFacet.closeDay}
-     *      runs on the canonical chain — that facet writes directly via
-     *      shared storage, so it does NOT go through this method.
-     * @param sourceChainId      chainId of the reporting mirror.
-     * @param dayId          Day being reported.
-     * @param lenderNumeraire18    Mirror's local lender USD-18 for `dayId`.
-     * @param borrowerNumeraire18  Mirror's local borrower USD-18 for `dayId`.
-     * @param recycledCumulative18 Mirror's monotonic cumulative recycle-bucket
-     *                             credits (#1222 B1 availability ledger; zero
-     *                             on a legacy four-word report).
-     * @param recycledForDay18     Mirror's claimed recycle credit total for
-     *                             `dayId` (#1222 B1 `Ā` attribution; clamped
-     *                             against the cumulative increase on write).
-     */
-    function onChainReportReceived(
-        uint32 sourceChainId,
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18
-    ) external onlyRewardMessenger onlyCanonical {
-        _ingestChainReport(
-            sourceChainId,
-            dayId,
-            lenderNumeraire18,
-            borrowerNumeraire18,
-            recycledCumulative18,
-            recycledForDay18,
-            0,
-            0
-        );
-    }
-
-    /**
-     * @notice #1222 M3 B3 — the CURRENT ingress: the B1 figures plus the
-     *         reporting chain's commitment-RETIREMENT cumulatives.
-     * @dev Messenger-authenticated + canonical-only, like every other
-     *      overload. The two additions close the loop the B2-d3 books left
-     *      open — Base could instruct a mirror to fund a slice locally but
-     *      had no authenticated view of what the mirror then did with the
-     *      reservation, so `chainOutstandingRecycledCommit[c]` only ever grew
-     *      and a commitment RELEASED un-spent (forfeit / RL-3 expiry, tokens
-     *      never left that chain's bucket) was lost from Base's availability
-     *      model permanently.
-     *
-     *      Both figures are monotonic cumulatives and are CLAMPED on ingest
-     *      against Base's own instruction ledger, so a mirror is trusted for
-     *      timing only, never for magnitude (see
-     *      {LibVpfiRecycle-recordChainCommitRetirement}).
-     * @param commitRetiredCumulative18  Σ of every actual decrement of that
-     *        chain's outstanding recycled commitments (claims + releases).
-     * @param commitReleasedCumulative18 The release-only subset — the half
-     *        that restores availability.
-     */
-    function onChainReportReceived(
-        uint32 sourceChainId,
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18,
-        uint256 commitRetiredCumulative18,
-        uint256 commitReleasedCumulative18
-    ) external onlyRewardMessenger onlyCanonical {
-        _ingestChainReport(
-            sourceChainId,
-            dayId,
-            lenderNumeraire18,
-            borrowerNumeraire18,
-            recycledCumulative18,
-            recycledForDay18,
-            commitRetiredCumulative18,
-            commitReleasedCumulative18
-        );
-    }
-
-    /// @notice #1566 PR C revision — the B4 ingress: the B3 figures plus the
-    ///         reporting chain's live custody era, recorded (highest wins) before
-    ///         the report itself is ingested, so a rooted remittance to that
-    ///         chain is stamped with the era it will land in.
+    /// @notice #1566 PR C revision — a reporting chain's live custody era,
+    ///         recorded (highest wins) before anything else in its report, so
+    ///         a rooted remittance to that chain is stamped with the era it
+    ///         will land in.
     /// @custom:event-category state-change/reward-custody
     event ChainCustodyEraReported(uint32 indexed chainId, uint64 era);
 
-    /// @notice #2459 r1 — a B4 day report reached the canonical chain after
+    /// @notice #2459 r1 — a day report reached the canonical chain after
     ///         `dayId` had FINALIZED: its DAY's figures were NOT applied (the day
     ///         closed without them); its custody era `custodyEra` was observed and
     ///         its chain-wide cumulative ratchets applied (#2459 r6).
     /// @custom:event-category informational/reward-transport
     event ChainReportArrivedAfterFinalization(uint32 indexed sourceChainId, uint256 indexed dayId, uint64 custodyEra);
 
+    /// @notice #2620 — a day report from a chain whose reward clock is not
+    ///         Base's: its day `dayId` counts from `reporterLaunchTimestamp`,
+    ///         Base's from `baseLaunchTimestamp`, so the two days cover
+    ///         different hours. Its DAY's figures were NOT applied, and never
+    ///         will be while the clocks differ; its custody era and chain-wide
+    ///         cumulative ratchets were, as for a late report. The day
+    ///         finalizes with that chain zeroed, and the finalization records
+    ///         it as such ({getDayZeroedChains}).
+    /// @custom:event-category informational/reward-transport
+    event ChainReportClockMismatch(
+        uint32 indexed sourceChainId,
+        uint256 indexed dayId,
+        uint256 reporterLaunchTimestamp,
+        uint256 baseLaunchTimestamp
+    );
+
+    /// @notice #2620 review — a day report reached Base before Base's own
+    ///         reward clock was set. Not a clock MISMATCH: there is nothing
+    ///         to compare against yet, and dropping the report's day figures
+    ///         would zero that chain's day for good (its close is stamped sent
+    ///         and is never re-sent). Refused instead, so the transport records
+    ///         the delivery failed and it can be re-executed once Base's
+    ///         clock is set.
+    error RewardClockNotLaunchedOnBase(uint32 sourceChainId, uint256 dayId);
+
+    /**
+     * @notice Record a mirror's closed-day {ChainDayReport} under
+     *         `sourceChainId` — the ONE report ingress (#2621).
+     * @dev Only callable by `rewardMessenger`, on the canonical chain.
+     *
+     *      One rule decides what a report contributes. Its CHAIN-WIDE figures
+     *      — the custody era, the recycled availability cumulative, and the
+     *      commitment retirement and release cumulatives — describe the chain,
+     *      not the day: they are monotonic, clamped where they are folded, and
+     *      apply whenever the messenger authenticated the report. Its DAY
+     *      figures (interest and the recycled day credit) count toward Base's
+     *      day `dayId` only when that day is the same hours on both chains and
+     *      is still open:
+     *        - the reporter's reward clock must be Base's (#2620), or its day
+     *          `dayId` is a different stretch of time, and summing it would mix
+     *          unrelated interest into one global total;
+     *        - the day must not have finalized (#2459), or the denominator
+     *          claims are priced against has already been fixed.
+     *      Either failure is named by its own event, and neither reverts: a
+     *      revert would take the chain-wide figures back with it and leave a
+     *      message no retry could deliver.
+     *
+     *      The one refusal is a Base whose own reward clock is not yet set:
+     *      there is no clock to compare against, and the condition passes, so
+     *      the report reverts {RewardClockNotLaunchedOnBase} and stays
+     *      re-executable rather than being dropped as a mismatch.
+     *
+     *      Membership of `expectedSourceChainIds` gates nothing here (#2618):
+     *      the list decides only whose day figures a finalization sums.
+     *      Rejects a second report of the same `(dayId, sourceChainId)`.
+     *
+     *      Base's own day figures do not come through here:
+     *      {RewardReporterFacet.closeDay} writes them through shared storage.
+     * @param sourceChainId chainId of the reporting mirror.
+     * @param r             The report, as the mirror's `closeDay` built it.
+     */
     function onChainReportReceived(
         uint32 sourceChainId,
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18,
-        uint256 commitRetiredCumulative18,
-        uint256 commitReleasedCumulative18,
-        uint64 custodyEra
+        ChainDayReport calldata r
     ) external onlyRewardMessenger onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // #2618 — every report the messenger authenticated speaks for its own
-        // chain, listed or not: the expected-source list decides only whose
-        // DAY figures a finalization sums (`LibRewardDayReport`), so it gates
-        // nothing here. A detached chain's last report therefore still lands
-        // its era and its ratchets, on time or late.
-        if (custodyEra > s.chainCustodyEraReported[sourceChainId]) {
-            s.chainCustodyEraReported[sourceChainId] = custodyEra;
-            emit ChainCustodyEraReported(sourceChainId, custodyEra);
+        uint256 baseLaunch = s.interactionLaunchTimestamp;
+        if (baseLaunch == 0) revert RewardClockNotLaunchedOnBase(sourceChainId, r.dayId);
+        if (r.custodyEra > s.chainCustodyEraReported[sourceChainId]) {
+            s.chainCustodyEraReported[sourceChainId] = r.custodyEra;
+            emit ChainCustodyEraReported(sourceChainId, r.custodyEra);
         }
-        // #2459 r1 — the era observation stands on its own. A report reaching
-        // Base after its day FINALIZED cannot add its DAY's figures (the day
-        // closed without them); reverting would take the observation back with
-        // it and leave a message no retry could ever deliver, so remittances
-        // would keep the destination's retired era until a later day's report
-        // landed. The day's figures (interest, the recycled day attribution)
-        // are dropped, named by the event; the era stands.
-        // #2459 r6 — and so do the report's CHAIN-WIDE cumulatives: the recycled
-        // availability and the commitment retirement/release ratchets describe
-        // the chain, not the day, are monotonic and clamped where they are
-        // folded, and are applied through the same two writers the on-time
-        // ingest uses. Dropping them left retired commitments outstanding (and
-        // released availability withheld) until a later report — never, if the
-        // chain detached.
-        if (s.dailyGlobalFinalized[dayId]) {
-            LibVpfiRecycle.recordChainRecycledCumulative(s, sourceChainId, recycledCumulative18);
-            // The availability figure's one event, as the on-time ingest emits
-            // it — the cumulative with NO day credit accepted — so a reader of
-            // the cumulative (the indexer's recycle series) sees every advance
-            // (#2459 r7); the retirement writer emits its own.
-            emit LibVpfiRecycle.ChainRecycledReported(
-                sourceChainId, dayId, recycledCumulative18, recycledForDay18, 0
-            );
-            LibVpfiRecycle.recordChainCommitRetirement(
-                s, sourceChainId, commitRetiredCumulative18, commitReleasedCumulative18
-            );
-            emit ChainReportArrivedAfterFinalization(sourceChainId, dayId, custodyEra);
+
+        if (r.rewardLaunchTimestamp != baseLaunch) {
+            _applyChainWideFigures(s, sourceChainId, r);
+            emit ChainReportClockMismatch(sourceChainId, r.dayId, r.rewardLaunchTimestamp, baseLaunch);
             return;
         }
-        _ingestChainReport(
-            sourceChainId,
-            dayId,
-            lenderNumeraire18,
-            borrowerNumeraire18,
-            recycledCumulative18,
-            recycledForDay18,
-            commitRetiredCumulative18,
-            commitReleasedCumulative18
+        if (s.dailyGlobalFinalized[r.dayId]) {
+            _applyChainWideFigures(s, sourceChainId, r);
+            emit ChainReportArrivedAfterFinalization(sourceChainId, r.dayId, r.custodyEra);
+            return;
+        }
+        _ingestChainReport(s, sourceChainId, r);
+    }
+
+    /// @dev A report's chain-wide cumulatives, applied without its day figures,
+    ///      through the same two writers the on-time ingest uses. The
+    ///      availability figure's event carries the cumulative with NO day
+    ///      credit accepted, as the on-time ingest emits it, so a reader of the
+    ///      cumulative (the indexer's recycle series) sees every advance
+    ///      (#2459 r7); the retirement writer emits its own.
+    function _applyChainWideFigures(
+        LibVaipakam.Storage storage s,
+        uint32 sourceChainId,
+        ChainDayReport calldata r
+    ) private {
+        LibVpfiRecycle.recordChainRecycledCumulative(s, sourceChainId, r.recycledCumulative18);
+        emit LibVpfiRecycle.ChainRecycledReported(
+            sourceChainId, r.dayId, r.recycledCumulative18, r.recycledForDay18, 0
+        );
+        LibVpfiRecycle.recordChainCommitRetirement(
+            s, sourceChainId, r.commitRetiredCumulative18, r.commitReleasedCumulative18
         );
     }
 
@@ -360,32 +319,6 @@ contract RewardAggregatorFacet is
     ///         canonical chain stamps its rooted remittances to that chain with.
     function getChainCustodyEraReported(uint32 chainId) external view returns (uint64) {
         return LibVaipakam.storageSlot().chainCustodyEraReported[chainId];
-    }
-
-    /// @notice LEGACY ingress overload (pre-#1222 four-argument shape),
-    ///         kept so Base's diamond cut and its messenger's proxy upgrade
-    ///         need not land in one atomic batch (Codex #1413 r2): an
-    ///         already-deployed messenger delivering in-flight legacy
-    ///         reports keeps hitting a live selector through the rollout
-    ///         window instead of reverting — a reverted delivery could let
-    ///         the grace clock finalize that chain's day as zero. Forwards
-    ///         zero recycled figures, which advance nothing in the ledger.
-    function onChainReportReceived(
-        uint32 sourceChainId,
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18
-    ) external onlyRewardMessenger onlyCanonical {
-        _ingestChainReport(
-            sourceChainId,
-            dayId,
-            lenderNumeraire18,
-            borrowerNumeraire18,
-            0,
-            0,
-            0,
-            0
-        );
     }
 
     /// @notice #1222 M3 B2-d1 — accept a mirror's day-`D` commitment REPORT
@@ -399,8 +332,8 @@ contract RewardAggregatorFacet is
     ///      caps + funding stamp, which that finalize computes and
     ///      {broadcastGlobal} delivers — so there is deliberately no
     ///      finalization-ordering guard here (contrast
-    ///      {_ingestChainReport}'s `ReportAfterFinalization`, whose interest
-    ///      figures feed the denominator that finalize fixes). A report for a
+    ///      {onChainReportReceived}, which drops a late day report's interest
+    ///      figures because they feed the denominator that finalize fixes). A report for a
     ///      day whose interest contribution was zeroed is also accepted and
     ///      stored — though note it prices at that chain's deliberately-zero
     ///      funding stamp, so the operator reconciliation for a zeroed chain
@@ -440,36 +373,27 @@ contract RewardAggregatorFacet is
         );
     }
 
-    /// @dev Shared body of the three ingress overloads — gates run in the
-    ///      external wrappers, the write path is identical. Older generations
-    ///      forward zeros for the figures their wire shape cannot carry, and
-    ///      every ledger below treats a zero as "nothing to advance".
+    /// @dev The on-time write: a report whose day is open and on Base's clock.
     function _ingestChainReport(
+        LibVaipakam.Storage storage s,
         uint32 sourceChainId,
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18,
-        uint256 commitRetiredCumulative18,
-        uint256 commitReleasedCumulative18
+        ChainDayReport calldata r
     ) private {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 dayId = r.dayId;
 
         // #2618 — no membership check: an off-list chain's day figures are
         // stored and counted only if it is listed when the day finalizes.
-        if (s.dailyGlobalFinalized[dayId]) revert ReportAfterFinalization();
         if (s.chainDailyReported[dayId][sourceChainId]) {
             revert ChainDayAlreadyReported();
         }
 
-        s.chainDailyLenderInterestNumeraire18[dayId][sourceChainId] = lenderNumeraire18;
-        s.chainDailyBorrowerInterestNumeraire18[dayId][sourceChainId] = borrowerNumeraire18;
+        s.chainDailyLenderInterestNumeraire18[dayId][sourceChainId] = r.lenderNumeraire18;
+        s.chainDailyBorrowerInterestNumeraire18[dayId][sourceChainId] = r.borrowerNumeraire18;
         // #1222 M3 B1 — advance Base's per-chain recycled ledger from the
         // mirror's report: the availability cumulative now, the day credit
         // held until finalization attributes it to a chain it counts (#2645).
         LibVpfiRecycle.recordChainRecycled(
-            s, sourceChainId, dayId, recycledCumulative18, recycledForDay18
+            s, sourceChainId, dayId, r.recycledCumulative18, r.recycledForDay18
         );
         // #1222 M3 B3 — and the retirement half of the same report: retire
         // this chain's reservation ledger by what it has actually spent or
@@ -479,16 +403,16 @@ contract RewardAggregatorFacet is
         LibVpfiRecycle.recordChainCommitRetirement(
             s,
             sourceChainId,
-            commitRetiredCumulative18,
-            commitReleasedCumulative18
+            r.commitRetiredCumulative18,
+            r.commitReleasedCumulative18
         );
         uint32 count = LibRewardDayReport.markReported(s, dayId, sourceChainId);
 
         emit ChainReportAggregated(
             dayId,
             sourceChainId,
-            lenderNumeraire18,
-            borrowerNumeraire18,
+            r.lenderNumeraire18,
+            r.borrowerNumeraire18,
             count
         );
     }

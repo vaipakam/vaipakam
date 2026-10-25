@@ -109,7 +109,7 @@ Required within 72h. Template:
 ## 2. Partial finalization — reconciling users on a zeroed chain
 
 ### Context
-Once `finalizeDay` has been called for `dayId`, **late reports are rejected on-chain** (`ReportAfterFinalization`). Users on the zeroed chain have no way to claim that day's share from the contract. Reconciliation happens off-chain via the Insurance pool.
+Once `finalizeDay` has been called for `dayId`, **a late report's day figures do not count** (#2621): Base applies what the report says about the chain (custody era, recycled and commitment cumulatives), emits `ChainReportArrivedAfterFinalization`, and leaves the day as finalized. A report from a chain on a different reward clock is handled the same way before finalization (`ChainReportClockMismatch`, #2620), so that chain zeroes for the day (a closed day is never re-sent). Users on the zeroed chain have no way to claim that day's share from the contract. Reconciliation happens off-chain via the Insurance pool.
 
 ### SOP
 1. **Collect the chain's actual interest for `dayId`** from the subgraph (`ChainInterestReported` event for the zeroed chain — it may have been *attempted* but rejected; the reporter facet's local `dailyLenderInterestUSD18[dayId]` is still the truth).

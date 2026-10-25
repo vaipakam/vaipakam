@@ -92,6 +92,8 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator = TestMutatorFacet(address(diamond));
 
         vm.chainId(CHAIN_BASE);
+        _ensureRewardClockLaunched();
+
         RewardReporterFacet rep = RewardReporterFacet(address(diamond));
         rep.setBaseChainId(CHAIN_BASE);
         rep.setIsCanonicalRewardChain(true);

@@ -3137,7 +3137,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](39);
+        s = new bytes4[](36);
         // The lapse-schedule setter + day-clock reads live on
         // RewardCommitmentFacet for EIP-170 reasons. #1569 then split the
         // broadcast cluster out entirely (this facet had reached 32 bytes of
@@ -3159,14 +3159,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // which has ~557B of EIP-170 headroom.
         s[4] = RewardAggregatorFacet.getChainSurplusPosition.selector;
         s[5] = RewardAggregatorFacet.setRecycleSurplusMultiple.selector;
-        // #1222 M3 B3 — the eight-word report ingress (a THIRD overload of
-        // `onChainReportReceived`, so it too must be pinned by signature) and
-        // the commitment-retirement transparency reads.
-        s[6] = bytes4(
-            keccak256(
-                "onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256,uint256,uint256)"
-            )
-        );
+        // #2621 — the ONE day-report ingress, and the
+        // commitment-retirement transparency reads.
+        s[6] = RewardAggregatorFacet.onChainReportReceived.selector;
         s[7] =
             RewardAggregatorFacet.getChainRecycledCommitRetirement.selector;
         s[8] =
@@ -3177,17 +3172,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1222 M3 B2-b — per-side D1 ceilings + mirror funding counter +
         // the payload-accurate broadcast quote (Codex #1417 r1).
         s[11] = RewardAggregatorFacet.getDayUserSideCaps.selector;
-        // #1222 M3 B1 — the ingress is OVERLOADED (six-word shape + the
-        // legacy four-word rollout shim), so `.selector` on the bare name
-        // is ambiguous; pin both signatures explicitly.
-        s[12] = bytes4(
-            keccak256(
-                "onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256)"
-            )
-        );
-        s[13] = bytes4(
-            keccak256("onChainReportReceived(uint32,uint256,uint256,uint256)")
-        );
+        // #2626 / #2619 — what a finalized day counted, as it counted it.
+        s[12] = RewardAggregatorFacet.isChainIncluded.selector;
+        s[13] = RewardAggregatorFacet.getDayZeroedChains.selector;
         s[14] = RewardAggregatorFacet.finalizeDay.selector;
         s[15] = RewardAggregatorFacet.forceFinalizeDay.selector;
         s[16] = RewardAggregatorFacet.setExpectedSourceChainIds.selector;
@@ -3214,18 +3201,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
             RewardAggregatorFacet.getChainKeeperAllocateBps.selector;
         s[31] =
             RewardAggregatorFacet.getChainKeeperDraw.selector;
-        // #1566 PR C revision — the B4 report ingress (pinned by signature: it
-        // overloads `onChainReportReceived`) and the reported-era read.
-        s[32] = bytes4(keccak256("onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint64)"));
+        // #2047 — the per-day attribution ceiling's backlog read (its setter
+        // and getter are s[34] / s[35]).
+        s[32] = RewardAggregatorFacet.getChainAttributionBacklog.selector;
+        // #1566 PR C revision — the reported-era read.
         s[33] = RewardAggregatorFacet.getChainCustodyEraReported.selector;
 
         // #2047 — the per-day attribution ceiling the earmark is armed behind.
         s[34] = RewardAggregatorFacet.setChainDailyAttributionCap.selector;
         s[35] = RewardAggregatorFacet.getChainDailyAttributionCap.selector;
-        s[36] = RewardAggregatorFacet.getChainAttributionBacklog.selector;
-        // #2626 / #2619 — what a finalized day counted, as it counted it.
-        s[37] = RewardAggregatorFacet.isChainIncluded.selector;
-        s[38] = RewardAggregatorFacet.getDayZeroedChains.selector;
     }
 
     function _getRewardRemittanceSelectors()

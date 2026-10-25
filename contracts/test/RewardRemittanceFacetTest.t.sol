@@ -72,6 +72,8 @@ contract RewardRemittanceFacetTest is SetupTest {
         rlens = RewardRemittanceLensFacet(address(diamond));
 
         vm.chainId(CHAIN_BASE);
+        _ensureRewardClockLaunched();
+
         RewardReporterFacet rep = RewardReporterFacet(address(diamond));
         rep.setBaseChainId(CHAIN_BASE);
         rep.setIsCanonicalRewardChain(true);

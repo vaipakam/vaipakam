@@ -4,7 +4,8 @@ pragma solidity ^0.8.29;
 import {
     IRewardMessenger,
     RewardBroadcastV2,
-    RewardBroadcastV3
+    RewardBroadcastV3,
+    ChainDayReport
 } from "../../src/interfaces/IRewardMessenger.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
@@ -72,12 +73,12 @@ contract MeshBusMessenger is IRewardMessenger {
         uint256 recycledForDay18;
         uint256 commitRetiredCumulative18;
         uint256 commitReleasedCumulative18;
-        /// @dev Which `sendChainReport` generation the sending diamond
-        ///      reached (9 = current B4, 8 = B3, 6 = B1, 4 = legacy) — lets a
-        ///      test assert the reporter's fallback shim took the expected branch.
-        uint256 arity;
-        /// @dev #1566 PR C revision — the reporting chain's custody era (B4).
+        /// @dev #1566 PR C revision — the reporting chain's custody era.
         uint64 custodyEra;
+        /// @dev #2620 — the reporting chain's reward clock.
+        uint256 rewardLaunchTimestamp;
+        /// @dev #2621 — the Base the sending diamond named.
+        uint256 destChainId;
     }
 
     QueuedReport[] internal reports;
@@ -161,86 +162,27 @@ contract MeshBusMessenger is IRewardMessenger {
 
     // ─── Send side (called by a diamond) ───────────────────────────────────
 
-    /// @dev The CURRENT eight-word report. `msg.sender` identifies the
+    /// @dev The one report shape (#2621). `msg.sender` identifies the
     ///      sending chain — the bus never takes a caller's word for its own
     ///      identity, exactly like a real lane.
     function sendChainReport(
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18,
-        uint256 commitRetiredCumulative18,
-        uint256 commitReleasedCumulative18,
+        uint256 destChainId,
+        ChainDayReport calldata r,
         address payable
     ) external payable override {
         reports.push(
             QueuedReport({
                 srcChainId: _senderChainId(),
-                dayId: dayId,
-                lenderNumeraire18: lenderNumeraire18,
-                borrowerNumeraire18: borrowerNumeraire18,
-                recycledCumulative18: recycledCumulative18,
-                recycledForDay18: recycledForDay18,
-                commitRetiredCumulative18: commitRetiredCumulative18,
-                commitReleasedCumulative18: commitReleasedCumulative18,
-                arity: 8,
-                custodyEra: 0
-            })
-        );
-    }
-
-    /// @dev #1566 PR C revision — the B4 shape: the B3 words plus the
-    ///      reporting chain's custody era.
-    function sendChainReport(
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18,
-        uint256 commitRetiredCumulative18,
-        uint256 commitReleasedCumulative18,
-        uint64 custodyEra,
-        address payable
-    ) external payable override {
-        reports.push(
-            QueuedReport({
-                srcChainId: _senderChainId(),
-                dayId: dayId,
-                lenderNumeraire18: lenderNumeraire18,
-                borrowerNumeraire18: borrowerNumeraire18,
-                recycledCumulative18: recycledCumulative18,
-                recycledForDay18: recycledForDay18,
-                commitRetiredCumulative18: commitRetiredCumulative18,
-                commitReleasedCumulative18: commitReleasedCumulative18,
-                arity: 9,
-                custodyEra: custodyEra
-            })
-        );
-    }
-
-    /// @dev The B1 six-word shape (kept live so the reporter's fallback shim
-    ///      has somewhere to land if a test drives it).
-    function sendChainReport(
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18,
-        address payable
-    ) external payable override {
-        reports.push(
-            QueuedReport({
-                srcChainId: _senderChainId(),
-                dayId: dayId,
-                lenderNumeraire18: lenderNumeraire18,
-                borrowerNumeraire18: borrowerNumeraire18,
-                recycledCumulative18: recycledCumulative18,
-                recycledForDay18: recycledForDay18,
-                commitRetiredCumulative18: 0,
-                commitReleasedCumulative18: 0,
-                arity: 6,
-                custodyEra: 0
+                dayId: r.dayId,
+                lenderNumeraire18: r.lenderNumeraire18,
+                borrowerNumeraire18: r.borrowerNumeraire18,
+                recycledCumulative18: r.recycledCumulative18,
+                recycledForDay18: r.recycledForDay18,
+                commitRetiredCumulative18: r.commitRetiredCumulative18,
+                commitReleasedCumulative18: r.commitReleasedCumulative18,
+                custodyEra: r.custodyEra,
+                rewardLaunchTimestamp: r.rewardLaunchTimestamp,
+                destChainId: destChainId
             })
         );
     }
@@ -279,29 +221,19 @@ contract MeshBusMessenger is IRewardMessenger {
     function deliverReport(uint256 i) external {
         QueuedReport memory r = reports[i];
         reportDeliveries[i] += 1;
-        if (r.arity == 9) {
-            RewardAggregatorFacet(baseDiamond).onChainReportReceived(
-                uint32(r.srcChainId),
-                r.dayId,
-                r.lenderNumeraire18,
-                r.borrowerNumeraire18,
-                r.recycledCumulative18,
-                r.recycledForDay18,
-                r.commitRetiredCumulative18,
-                r.commitReleasedCumulative18,
-                r.custodyEra
-            );
-            return;
-        }
         RewardAggregatorFacet(baseDiamond).onChainReportReceived(
             uint32(r.srcChainId),
-            r.dayId,
-            r.lenderNumeraire18,
-            r.borrowerNumeraire18,
-            r.recycledCumulative18,
-            r.recycledForDay18,
-            r.commitRetiredCumulative18,
-            r.commitReleasedCumulative18
+            ChainDayReport({
+                dayId: r.dayId,
+                lenderNumeraire18: r.lenderNumeraire18,
+                borrowerNumeraire18: r.borrowerNumeraire18,
+                recycledCumulative18: r.recycledCumulative18,
+                recycledForDay18: r.recycledForDay18,
+                commitRetiredCumulative18: r.commitRetiredCumulative18,
+                commitReleasedCumulative18: r.commitReleasedCumulative18,
+                custodyEra: r.custodyEra,
+                rewardLaunchTimestamp: r.rewardLaunchTimestamp
+            })
         );
     }
 
@@ -491,37 +423,12 @@ contract MeshBusMessenger is IRewardMessenger {
     // need no `msg.value`. The remaining sends are not part of the B4-b
     // cycle and are inert rather than absent, so this stays concrete.
 
-    function quoteSendChainReport(uint256, uint256, uint256, uint256, uint256)
+    function quoteSendChainReport(uint256, ChainDayReport calldata)
         external
         pure
         override
         returns (uint256)
     {
-        return 0;
-    }
-
-    function quoteSendChainReport(
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256
-    ) external pure override returns (uint256) {
-        return 0;
-    }
-
-    function quoteSendChainReport(
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint256,
-        uint64
-    ) external pure override returns (uint256) {
         return 0;
     }
 
