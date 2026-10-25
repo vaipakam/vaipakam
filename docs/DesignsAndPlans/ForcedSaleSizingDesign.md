@@ -166,15 +166,40 @@ Owner decision (A):
   frozen claimant is recorded. It is paid at loan end through
   `claimAsBorrower`, like a terminal surplus.
 
+**The held amount follows the borrower position while the loan is open.**
+A periodic settlement leaves the loan Active, so a held extra sits in the
+stored borrower's vault on a running loan, which no borrower-side row does
+today. It therefore gets the treatment the lender side's held funds
+(`heldForLender`) already get:
+
+- **Consolidation.** When the borrower position is consolidated onto its
+  current holder, the held extra moves vault to vault with the collateral
+  and its reservation is re-keyed to the holder, as `_moveLenderHeld` and
+  the active-held migration do for the lender side. The row records what
+  the holder's vault received.
+- **Obligation handover.** `transferObligationViaOffer` pays the held extra
+  out to the exiting holder together with their released collateral, before
+  the loan is rewritten to the new borrower. The new borrower never inherits
+  it.
+- **Fee tier.** A held VPFI extra owed to a transferred holder is kept out
+  of the stored borrower's tier exactly as the lender side's is.
+- **Frozen claimant.** A flagged holder's extra keeps its fail-closed
+  claimant marker until the claim, as today's surplus freeze does.
+
+Paying the extra against the principal instead was considered and dropped:
+it would return principal early on loans whose lender never agreed to
+partial repayment.
+
 **One held row per loan.** `borrowerSurplusClaims[loanId]` becomes a running
 total: every writer ADDS to it (the periodic held route, the terminal
 surplus, the existing swap-to-repay surplus freeze). Today's single writer
 (`LibCloseoutFreeze.freezeOrPayBorrowerSurplus`) overwrites; that is safe only
 because it runs once at a terminal. Making it additive is what lets several
 periodic settlements and a terminal surplus share the row the claim already
-pays. **No new Storage field is needed** (an earlier sketch of decision (A)
-assumed a borrower twin of `heldForLender`; the existing row does that job
-once it accumulates). The asset is always the loan's lending asset, so the
+pays. **No new Storage field is needed**: the existing row, made additive, carries
+the amount, and the existing borrower-proceeds reservation (already additive
+and asset-pinned) carries the encumbrance. What is new is the code above that
+moves both with the position. The asset is always the loan's lending asset, so the
 row never mixes assets.
 
 ### 4.3 Interest bookkeeping on the periodic path
@@ -290,7 +315,11 @@ name stops saying "swap-to-repay"). The two swap-to-repay routes pass
 `ForcedSaleFacet` + `RiskFacet` + `RiskSplitLiquidationFacet` + `DefaultedFacet`
 + `RepayPeriodicFacet` + `ClaimFacet` (additive surplus row). A caller
 refreshed without the host reverts `FunctionDoesNotExist` on every forced
-sale (a hard revert, never a silent old waterfall). Fresh deploy only
+sale (a hard revert, never a silent old waterfall). The held periodic extra
+(§4.2) adds `PrecloseFacet` (obligation handover) and every facet that
+inlines the borrower-side consolidation; if the move is hosted behind a
+self-call to keep those facets' size down, the host joins the family
+instead. Fresh deploy only
 (prelive). All facet-registration sites of CLAUDE.md "When you add a facet"
 apply.
 
