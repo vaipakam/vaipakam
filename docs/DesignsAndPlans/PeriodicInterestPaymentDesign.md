@@ -309,6 +309,17 @@ loan.interestPaidSinceLastPeriod = 0;
 emit PeriodicInterestSettled(loanId, periodIndex, /*shortfall*/ 0, settler);
 ```
 
+> **Superseded for sizing and the split (owner decision 2026-10-25).**
+> The sale sizing and the proceeds split sketched below (a flat 2% of
+> proceeds to treasury, the bonus on proceeds, the lender taking the rest)
+> are replaced by the shared forced-sale rule in
+> [`ForcedSaleSizingDesign.md`](ForcedSaleSizingDesign.md): the sale sells
+> the least collateral whose worst-case proceeds cover the shortfall plus
+> the largest charges, the charges are on the shortfall with the handling
+> charge subordinated to the lender, the lender is credited at most the
+> shortfall, and the extra goes back to the borrower. The rest of this
+> section (validation, the just-stamp path, one period per call) stands.
+
 **Auto-liquidate path (`shortfall > 0`)** — settler earns bonus
 from collateral swap. **Reuses the existing liquidation split**
 defined in `docs/FunctionalSpecs/ProjectDetailsREADME.md`
