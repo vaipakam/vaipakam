@@ -83,7 +83,8 @@ const ARMED_BACKSCAN_DAYS = 90;
  *
  * Days beyond the cap are DEFERRED, not dropped — they are counted into the
  * same `deferred` total the lane cap's overflow feeds, so the coverage signal
- * reports the mirror as not settled and the next tick takes the next 32.
+ * reports the mirror as not settled and the next tick takes the next ones.
+ * The pass itself sends fewer: see {@link REMIT_FUNDED_DAYS_PER_SEND}.
  *
  * It bounds FUNDED days only (Codex #2232 r5). The send and its quote trim the
  * payload to the days that actually carry VPFI and apply the bound to that
@@ -99,6 +100,32 @@ const ARMED_BACKSCAN_DAYS = 90;
 const TRANSPORT_DAY_FANOUT_CAP = 32;
 
 /**
+ * #2821 — how many FUNDED days one send may carry: ONE.
+ *
+ * A send funding several days lands on the mirror as one transport epoch
+ * listing all of them. The mirror withholds that epoch from every draw as
+ * contested while more than one of its arrived days is still open, and a day
+ * closes only when every entry covering it has claimed past it. An entry that
+ * spans two of the epoch's days therefore needs the epoch to claim the first
+ * and needs the first claimed to free the epoch: it can never be paid there.
+ * Any loan open across a batch has such an entry, so after a backlog (a late
+ * commitment report, a paused keeper, the delivery gate opening) a greedy
+ * multi-day batch strands the rewards it carries.
+ *
+ * One funded day per send leaves every epoch with a single day, which the
+ * contest cannot reach. A backlog drains one day per tick per mirror instead
+ * of up to {@link TRANSPORT_DAY_FANOUT_CAP}, at one CCIP fee per day, which is
+ * also the steady-state cost. Close-only days still ride along: they move no
+ * VPFI and never reach the destination's day list.
+ *
+ * This is the keeper's half. Whether the protocol should also refuse or split
+ * a multi-day batch is the contract-side question #2821 puts to the owner;
+ * until a chain carries that answer, this bound is what keeps the keeper from
+ * building the batch.
+ */
+export const REMIT_FUNDED_DAYS_PER_SEND = 1;
+
+/**
  * The batch a tick sends, and what it leaves behind.
  *
  * EXPORTED AND PURE (Codex #2232 r4). It was an inline loop inside the pass,
@@ -111,6 +138,9 @@ const TRANSPORT_DAY_FANOUT_CAP = 32;
  * @param closeable Whether a zero-slice day can still be closed.
  * @param laneCap   The per-send VPFI ceiling.
  * @param deferredIn Days already known to be owed (dropped while replanning).
+ * @param maxFundedDays Funded days one send may carry; defaults to
+ *                  {@link REMIT_FUNDED_DAYS_PER_SEND} (#2821), and never
+ *                  exceeds {@link TRANSPORT_DAY_FANOUT_CAP}.
  */
 export function planRemitBatch(
   window: readonly bigint[],
@@ -118,7 +148,10 @@ export function planRemitBatch(
   closeable: readonly boolean[],
   laneCap: bigint,
   deferredIn = 0,
+  maxFundedDays: number = REMIT_FUNDED_DAYS_PER_SEND,
 ): { batch: bigint[]; total: bigint; deferred: number } {
+  // The destination's fan-out cap is the ceiling whatever the caller asks for.
+  const fundedBound = Math.min(Math.max(1, Math.floor(maxFundedDays)), TRANSPORT_DAY_FANOUT_CAP);
   // Greedily batch the un-remitted days, keeping the total under the lane
   // cap. Close-only days (closeable, zero amount) ride along for free.
   const batch: bigint[] = [];
@@ -164,9 +197,9 @@ export function planRemitBatch(
       deferred += 1; // appeared oversized on the final pass
       continue;
     }
-    if (fundedInBatch >= TRANSPORT_DAY_FANOUT_CAP || total + slice > laneCap) {
-      // A cap is reached — the destination's day fan-out, or the lane's VPFI
-      // ceiling. Either way this day and EVERY later actionable one wait for a
+    if (fundedInBatch >= fundedBound || total + slice > laneCap) {
+      // A cap is reached — the funded-days bound (one per send, #2821, never
+      // above the destination's day fan-out), or the lane's VPFI ceiling. Either way this day and EVERY later actionable one wait for a
       // later tick. Counting only this one would under-report (r20).
       //
       // Reached only on a FUNDED day, so `deferred` is always at least one
