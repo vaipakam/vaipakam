@@ -38,6 +38,7 @@ Coverage labels:
 | `frontend/indexer` | Needs app, worker, indexer, or browser-level coverage. |
 | `gap` | No clear positive coverage found; add test first, then script if scriptable. |
 | `not scriptable` | Positive behavior depends on time travel, fork infra, external venue state, or off-chain services; keep in tests or purpose-built harnesses. |
+| `anvil e2e` | Covered end to end by a scenario on two local Anvil chains (`packages/protocol-e2e`, see its `COVERAGE.md`), for flows that need two chains, a message lane and moving time. |
 
 Audience labels:
 
@@ -63,8 +64,9 @@ Existing positive script coverage:
 | `contracts/script/positive-flows/PositiveFlowsLenderIntent.s.sol` | A standing lender intent registered, funded, filled by a solver, paused with capital reserved, withdrawn, and a repaid intent loan rolled back into capital; each step checked against the owner view and the keeper feed. | No keeper-authorised (`requiresKeeperAuth`) intent, and no roll by a delegated keeper. |
 | `contracts/script/positive-flows/PositiveFlowsSwapToRepay.s.sol` | Full and partial swap-to-repay through a fixed-rate adapter the scenario registers and removes, with the proceeds split checked unit for unit. | No failover across several adapters, and no aggregator route quoted off-chain. |
 | `contracts/script/positive-flows/PositiveFlowsTimed.s.sol` | The flows whose second step must wait: offer cancel after the cancel cooldown (PF-045, PF-046), and a due Monthly periodic-interest checkpoint covered by a collateral sale, with the lender, settler and treasury shares checked unit for unit (PF-116). Run in stages: `open()`, then `settle()` once the wait is over, then the read-only `finish()`, which removes the open-run record only once the chain shows nothing it names is still open. `settle()` acts only on what the chain shows is still open, so it resumes after a broadcast that stopped part-way. `script/positive-flows/run-timed.sh` runs all three on a local Anvil and steps its clock. | In the one-pass runner these SKIP wherever the wait applies (always for PF-116; for the cancels, while partial fills are on), and say to use the staged run. Off Anvil the operator runs the stages by hand and waits out the real time, a month for PF-116. PF-117 (settle-first before refinance or default) is not scripted. |
-| `contracts/script/PositiveFlows.s.sol` | Runner: every module above, in order; `ONLY_SCENARIO=<id>` runs one scenario. | Smoke suite, not full catalog (the header says so). The timed flows SKIP here and name their staged run. No cross-chain module exists yet. Every module refuses any chain but a local Anvil unless `POSITIVE_FLOWS_ALLOW_CHAIN_ID` names it, because the fixture re-points the Diamond's oracle and sanctions oracle at its own mocks. Runs green on Anvil 31337 (#848) only with `--disable-block-gas-limit` (a script's whole run is one simulated frame) and from a freshly mined block; both are stated in its header. |
+| `contracts/script/PositiveFlows.s.sol` | Runner: every module above, in order; `ONLY_SCENARIO=<id>` runs one scenario. | Smoke suite, not full catalog (the header says so). The timed flows SKIP here and name their staged run. The cross-chain flows are not a module here: a forge script runs on one chain, so `packages/protocol-e2e` drives them. Every module refuses any chain but a local Anvil unless `POSITIVE_FLOWS_ALLOW_CHAIN_ID` names it, because the fixture re-points the Diamond's oracle and sanctions oracle at its own mocks. Runs green on Anvil 31337 (#848) only with `--disable-block-gas-limit` (a script's whole run is one simulated frame) and from a freshly mined block; both are stated in its header. |
 | `contracts/script/PartialFlows.s.sol` | UI-testable midpoint states. | Important for app QA, but not terminal positive coverage. |
+| `packages/protocol-e2e` (not a forge script) | The cross-chain flows, on a canonical Base and a mirror built from the current contracts: a reward day reported, finalized and broadcast; the reward claim on Base and on the mirror after its budget is remitted and indexed; VPFI out and back over the real pools; the tier push; the guardian pause (PF-120, PF-257, PF-259, PF-260, PF-261, PF-333). | Runs on Anvil only. Remits one day per send, because a multi-day remittance never pays a claim spanning its days on the mirror (#2821). No mirror settlement priced by the cached tier (PF-258), and no refusal of an unapproved peer (PF-333). |
 
 ## Script Module Map
 
@@ -210,7 +212,7 @@ walked the same flow as PF-230 and is not carried twice.
 | PF-117 | Advanced | Periodic interest settle-first protection before refinance/default. | Overdue checkpoint is settled or blocks unsafe path according to spec. | unit/integration | not ordinary script. |
 | PF-118 | Advanced | Borrower full swap-to-repay. | Collateral swaps to principal and loan closes atomically. | scripted | Keep. Only the sized collateral is sold; the lender's and treasury's shares equal the debt, the surplus reaches the borrower, and the unsold collateral is the borrower's claim. |
 | PF-119 | Advanced | Borrower partial swap-to-repay. | Principal reduces, collateral/settlement waterfall reconciles. | scripted | Keep. Lender, treasury and borrower shares add up to the proceeds; the run's interest share is 0 because no whole day has accrued on a fresh Anvil loan. |
-| PF-120 | Basic | Interaction reward accrues from lending/borrowing and is claimed. | Pending reward decreases; claimed VPFI transfers locally. | unit/integration | Add positive script; current wrapper does not terminally cover current reward flow. |
+| PF-120 | Basic | Interaction reward accrues from lending/borrowing and is claimed. | Pending reward decreases; claimed VPFI transfers locally. | anvil e2e | Covered on Base and on a mirror by `packages/protocol-e2e`; no forge-script scenario. |
 | PF-121 | Basic | Claim Center handles zero-reward state. | No revert path exposed; action disabled/empty state. | frontend/indexer | app E2E. |
 
 ### NFT Rental
@@ -289,11 +291,11 @@ walked the same flow as PF-230 and is not carried twice.
 | PF-254 | Basic | Borrower pays full VPFI LIF upfront and receives rebate on proper close. | Rebate claim line appears; treasury share accrues. | scripted | Keep; update terminology. |
 | PF-255 | Basic | Borrower defaults / is liquidated and loses VPFI LIF rebate. | Full held VPFI goes to treasury. | unit/integration | Add script if not time-dependent. |
 | PF-256 | Advanced | Min-history gate: deposit qualifies raw tier, effective tier activates later. | Tier remains 0 until gate; poke can refresh after aging. | unit/integration | not broadcast-script friendly. |
-| PF-257 | Advanced | `pokeMyTier` broadcasts/pushes tier when eligible. | Mirror cache receives fresh tier or budget-handled result. | unit/integration | Add harness script if CCIP/messenger mocks deployed. |
-| PF-258 | Advanced | Mirror-chain fee discount uses authenticated Base-resolved cache. | Mirror settlement reads cache, not local balance. | unit/integration | Add cross-chain script/harness. |
-| PF-259 | Basic | Interaction rewards claim on active chain. | User receives VPFI; pending reward clears. | unit/integration | Add script; replace old staking-reward assumptions. |
-| PF-260 | Operator | Reward reporter sends per-chain denominator/funding messages. | Canonical denominator finalized and mirrored. | unit/integration | Add cross-chain rehearsal script. |
-| PF-261 | Advanced | CCIP VPFI transfer from canonical to mirror and back. | Lock/release or mint/burn accounting preserves total supply. | unit/integration | Add dedicated cross-chain positive script. |
+| PF-257 | Advanced | `pokeMyTier` broadcasts/pushes tier when eligible. | Mirror cache receives fresh tier or budget-handled result. | anvil e2e | Covered: the mirror's cache and discount read match Base's after consent there. |
+| PF-258 | Advanced | Mirror-chain fee discount uses authenticated Base-resolved cache. | Mirror settlement reads cache, not local balance. | unit/integration | The Anvil suite proves the cached discount read, not a mirror settlement priced by it; add that scenario. |
+| PF-259 | Basic | Interaction rewards claim on active chain. | User receives VPFI; pending reward clears. | anvil e2e | Covered on Base and on a mirror, each claim checked against its own simulation. A multi-day remittance never pays on the mirror (#2821). |
+| PF-260 | Operator | Reward reporter sends per-chain denominator/funding messages. | Canonical denominator finalized and mirrored. | anvil e2e | Covered: both reports land, Base finalizes their sum, the mirror receives the same pair, and the budget remits over the pools. |
+| PF-261 | Advanced | CCIP VPFI transfer from canonical to mirror and back. | Lock/release or mint/burn accounting preserves total supply. | anvil e2e | Covered: mirror supply equals Base's locked balance at every step. |
 | PF-262 | Operator | Protocol broadcast budget top-up and tier-push budget consumption. | Budget increases and decreases only through documented paths. | unit/integration | Optional operator script. |
 | PF-263 | Operator | VPFI token rotation runbook drains old exposure then rotates. | Old-token exposure is zero before new token becomes active. | ops docs only | Runbook rehearsal, not normal positive script. |
 
@@ -336,7 +338,7 @@ walked the same flow as PF-230 and is not carried twice.
 | PF-330 | Operator | Treasury recycling routes active reward/keeper budgets; dormant buyback has no staking overflow. | Budgets update; no removed staking sink is credited. | unit/integration | Add treasury positive tests before script. |
 | PF-331 | Operator | Buyback intent validation / remittance positive path where enabled. | Validated buyback remittance handled under dormant policy. | unit/integration | keep out of user script. |
 | PF-332 | Operator | Founder/team vesting deployment and release. | Vesting wallets release only according to schedule. | script/unit unknown | Add test if absent. |
-| PF-333 | Operator | Cross-chain deploy/configure CCIP lane, token pool, messenger, guardian pause. | Lane sends/receives only approved peers and can be paused. | unit/integration + scripts | Add rehearsal script coverage. |
+| PF-333 | Operator | Cross-chain deploy/configure CCIP lane, token pool, messenger, guardian pause. | Lane sends/receives only approved peers and can be paused. | anvil e2e (pause) + unit/integration | The Anvil suite builds the lanes with the operator scripts and proves the guardian pause; the refusal of an unapproved peer is unit-tested only. |
 | PF-334 | Operator | Active-chain allow-list export excludes stale deployments. | Frontend/indexer only see active chains. | ops/frontend | Add deploy-script test. |
 | PF-335 | Operator | ABI exports for frontend, keeper, worker, subgraph, Tenderly. | Consumer bundles carry current ABI provenance. | scripts | Add CI/deploy assertion. |
 
@@ -410,24 +412,29 @@ counterpart.
    swap-to-repay (PF-118, PF-119), with a fixed-rate adapter, and for a due
    periodic checkpoint (PF-116) through `PositiveFlowsTimed`'s staged run.**
 6. Add interaction-reward claim script coverage that replaces the old staking
-   reward mental model. (PF-120 / PF-259, with the cross-chain rehearsal in item
-   8, sit with the VPFI rewards work, not with #848.)
+   reward mental model. **Done (#848 Phase 2) as two-chain Anvil scenarios in
+   `packages/protocol-e2e` (PF-120, PF-259), not as a forge script: the claim
+   needs reports from both chains and days to pass. A multi-day remittance
+   never pays on the mirror; that is #2821.**
 7. Add worker/indexer positive tests for current-owner rows, paginated positions,
    child-loan offer details, webhook acceleration, and WebSocket invalidation.
 8. Add cross-chain positive rehearsal for CCIP VPFI transfer, tier propagation,
-   reward denominator/funding messages, and guardian pause.
+   reward denominator/funding messages, and guardian pause. **Done (#848 Phase
+   2) in `packages/protocol-e2e` on two local Anvil chains joined by real CCIP
+   contracts. Not covered there: a mirror settlement priced by the cached tier
+   (PF-258) and the refusal of an unapproved peer (PF-333).**
 9. Make `PositiveFlows.s.sol` a thin runner over versioned modules, not a single
    claim of complete coverage. **Done (#848 Phases 1 and 2): nine modules,
    including `PositiveFlowsPositionHolder`, `PositiveFlowsLenderIntent`,
-   `PositiveFlowsSwapToRepay` and `PositiveFlowsTimed`; no cross-chain module
-   exists yet (item 8).**
+   `PositiveFlowsSwapToRepay` and `PositiveFlowsTimed`. The cross-chain flows
+   are a two-chain Anvil suite instead of a module (item 8).**
    Suggested modules:
    - `PositiveFlowsBasicLifecycle`
    - `PositiveFlowsAdvancedCredit`
    - `PositiveFlowsVaultAndVpfi`
    - `PositiveFlowsKeeperAutomation`
    - `PositiveFlowsOperatorAdmin`
-   - `PositiveFlowsCrossChain`
+   - `PositiveFlowsCrossChain` (not written: `packages/protocol-e2e`, item 8)
 10. Update `docs/TestScopes/AdvancedUserGuideTestMatrix.md` or mark it legacy;
     it still references retired Buy VPFI / staking-reward surfaces.
 

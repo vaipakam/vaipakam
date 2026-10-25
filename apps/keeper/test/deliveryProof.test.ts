@@ -15,14 +15,13 @@ import type { Hex } from 'viem';
 import {
   actionsFor,
   canonicalChainOf,
-  fundedDaysFromBits,
   isWalkExceeded,
   packetMayNeedWork,
   planDelivery,
   type PacketState,
 } from '../src/deliveryProof';
 import { BaseError } from 'viem';
-import { d6Leaf, d6Leaves, d6Root, d6VerifyProof } from '../src/d6Wire';
+import { d6Leaf, d6Leaves, d6Root, d6VerifyProof } from '@vaipakam/lib/d6Wire';
 import { listBudgetDeliveries } from '../src/db';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
@@ -247,23 +246,6 @@ describe('the pass wiring', () => {
     const full256 = (1n << 256n) - 1n;
     expect(packetMayNeedWork({ ...base, chunkCount: 256, chunksIndexed: full256 }), 'all 256 landed').toBe(false);
     expect(packetMayNeedWork({ ...base, chunkCount: 256, chunksIndexed: full256 >> 1n }), 'chunk 255 missing').toBe(true);
-  });
-});
-
-describe('fundedDaysFromBits — the rooted list from the reservation record itself (Codex #2489 r2)', () => {
-  it('takes exactly the days whose bit is set, in order, across word boundaries', () => {
-    const dayIds = Array.from({ length: 300 }, (_, i) => BigInt(1000 + i));
-    const bits = [(1n << 0n) | (1n << 255n), 1n << 43n]; // indexes 0, 255, 256 + 43
-    expect(fundedDaysFromBits(dayIds, bits)).toEqual([1000n, 1255n, 1299n]);
-  });
-
-  it('a closed day the reservation did not fund is left out', () => {
-    expect(fundedDaysFromBits([4n, 5n, 6n], [0b101n])).toEqual([4n, 6n]);
-  });
-
-  it('a reservation that predates the record reads as null (the caller falls back), never as "nothing funded"', () => {
-    expect(fundedDaysFromBits([4n, 5n], [])).toBeNull();
-    expect(fundedDaysFromBits([], []), 'no closed day: an empty list').toEqual([]);
   });
 });
 

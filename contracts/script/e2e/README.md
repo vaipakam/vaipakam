@@ -5,7 +5,9 @@ against the repository's **current** contracts, deployed from source onto a
 bare local Anvil for every run (#2334). It no longer forks live Base Sepolia.
 The keeper's Anvil scenarios (`apps/keeper/e2e/`, the `keeper anvil
 scenarios` CI job, #2496) start from the same deploy and then configure it as
-a canonical reward chain.
+a canonical reward chain. The protocol's two-chain scenarios
+(`packages/protocol-e2e/`, the `protocol anvil scenarios` CI job, #848) build
+the same two-chain mesh under their own state directory and ports.
 
 | File | What it is |
 | --- | --- |
