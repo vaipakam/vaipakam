@@ -1526,9 +1526,7 @@ contract OfferCreateFacet is
             && offer.offerType == LibVaipakam.OfferType.Borrower) {
             uint8 effTier = OracleFacet(address(this))
                                 .getEffectiveLiquidityTier(offer.collateralAsset);
-            uint256 maxLtv  = LibVaipakam.storageSlot()
-                                .assetRiskParams[offer.collateralAsset]
-                                .loanInitMaxLtvBps;
+            uint256 maxLtv  = LibVaipakam.assetInitLtvCeilingBps(offer.collateralAsset);
             uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
             uint256 cap     = maxLtv < tierCap ? maxLtv : tierCap;
             uint256 borrowerCollMax = offer.collateralAmountMax == 0

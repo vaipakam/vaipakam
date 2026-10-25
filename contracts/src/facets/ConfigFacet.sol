@@ -2102,18 +2102,27 @@ contract ConfigFacet is DiamondAccessControl {
     }
 
     /**
-     * @notice #956 (#921 item 5) — read the full per-asset {RiskParams} (max
-     *         init LTV, liquidation-bonus ceiling, reserve factor, and the
-     *         min-partial floor). Previously none of these were exposed via a
+     * @notice #956 (#921 item 5) — read the per-asset risk settings: the
+     *         init-LTV ceiling, the liquidation-bonus ceiling and the
+     *         min-partial floor. Previously none of these were exposed via a
      *         view, so the enforced `minPartialBps` was unreadable on-chain.
+     * @dev Returns {LibVaipakam.AssetRiskParamsView}, not the storage row: the
+     *      retired reserve factor (#2696) is left out rather than reported as
+     *      a setting. Values are raw; the struct's doc states what each zero
+     *      means (an unset init-LTV ceiling is NO extra ceiling, not 0%).
      * @param asset The asset whose risk params to read.
      */
     function getAssetRiskParams(address asset)
         external
         view
-        returns (LibVaipakam.RiskParams memory)
+        returns (LibVaipakam.AssetRiskParamsView memory)
     {
-        return LibVaipakam.storageSlot().assetRiskParams[asset];
+        LibVaipakam.RiskParams storage p = LibVaipakam.storageSlot().assetRiskParams[asset];
+        return LibVaipakam.AssetRiskParamsView({
+            loanInitMaxLtvBps: p.loanInitMaxLtvBps,
+            liqBonusBps: p.liqBonusBps,
+            minPartialBps: p.minPartialBps
+        });
     }
 
     /// ─── Getters (effective values: override OR default) ────────────

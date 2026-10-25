@@ -181,26 +181,23 @@ library LibOfferBounds {
     /// @dev True when the collateral admits NO new borrow at loan-init, so an
     ///      offer against it can never become a loan and must be rejected
     ///      fail-fast at create/mutate. Mirrors `LoanFacet._checkInitialLtvAndHf`,
-    ///      whose effective cap is `min(per-asset loanInitMaxLtvBps, tier cap)`:
-    ///        • per-asset `loanInitMaxLtvBps == 0` (unconfigured / explicit
-    ///          no-borrow) rejects any positive LTV in BOTH modes (non-tiered
-    ///          `ltv > 0` reverts `LTVExceeded`; tiered `min(0, tierCap) == 0`);
-    ///        • in the depth-tiered regime an effective tier-0 collateral
-    ///          (`effectiveTierMaxInitLtvBps == 0`) likewise admits no borrow.
+    ///      whose effective cap is `min(per-asset ceiling, tier cap)` in the
+    ///      depth-tiered regime: an effective tier-0 collateral
+    ///      (`effectiveTierMaxInitLtvBps == 0`) admits no borrow there.
     ///      `LibRiskMath`'s LTV clamp skips a `capBps == 0` and returns a finite
     ///      HF-derived bound, so without this guard create/mutate would admit
     ///      offers acceptance always rejects (Codex #1101 P2).
+    ///      An asset with no per-asset ceiling is NOT a no-borrow collateral
+    ///      (#2696): an unset row means no extra ceiling
+    ///      ({LibVaipakam.assetInitLtvCeilingBps}), and the per-asset setter
+    ///      cannot write a zero ceiling, so the per-asset row never yields a
+    ///      no-borrow cap.
     /// @dev `internal` (not `private`) so the non-reverting intent preview
     ///      (`LibOfferMatch.previewIntent`) can mirror the SAME no-borrow guard
     ///      in its lean slice check — closing the preview-vs-materialize
     ///      divergence for tier-0 collateral (#1104). Enabled by the
     ///      RiskAccessFacet→RiskPreviewFacet split's freed EIP-170 headroom.
     function noBorrowCollateral(address collateralAsset) internal view returns (bool) {
-        if (
-            LibVaipakam.storageSlot().assetRiskParams[collateralAsset].loanInitMaxLtvBps == 0
-        ) {
-            return true;
-        }
         if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
             uint8 tier = OracleFacet(address(this)).getEffectiveLiquidityTier(
                 collateralAsset

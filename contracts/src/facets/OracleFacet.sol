@@ -1332,6 +1332,19 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      *         liquidation LTV via the tier returned by
      *         `getEffectiveLiquidityTier(asset)` + the
      *         `getTierLiquidationLtvBps()` view on `ConfigFacet`.
+     *
+     *         #2696: both per-asset values are optional tightenings, so the
+     *         tuple says whether each was set rather than reporting an unset
+     *         row as a number. `loanInitLtvCeilingBps` is the ceiling the LTV
+     *         gates apply — `BASIS_POINTS` (no per-asset ceiling) when
+     *         `ltvCeilingSet` is false; the tier cap or the admission
+     *         health-factor floor then binds. `liqBonusBps == 0` means no
+     *         per-asset cap on the dynamic liquidator incentive.
+     * @return isSupported   True when the asset is liquid on this chain.
+     * @return status        The live liquidity classification.
+     * @return ltvCeilingSet Whether governance set a per-asset init-LTV ceiling.
+     * @return loanInitLtvCeilingBps The per-asset init-LTV ceiling in effect.
+     * @return liqBonusBps   Per-asset liquidator-incentive cap (`0` = none).
      */
     function getAssetRiskProfile(address token)
         external
@@ -1339,17 +1352,17 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         returns (
             bool isSupported,
             LibVaipakam.LiquidityStatus status,
-            uint256 loanInitMaxLtvBps,
+            bool ltvCeilingSet,
+            uint256 loanInitLtvCeilingBps,
             uint256 liqBonusBps
         )
     {
         if (token == address(0)) {
-            return (false, LibVaipakam.LiquidityStatus.Illiquid, 0, 0);
+            return (false, LibVaipakam.LiquidityStatus.Illiquid, false, 0, 0);
         }
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.RiskParams storage rp = s.assetRiskParams[token];
-        loanInitMaxLtvBps = rp.loanInitMaxLtvBps;
-        liqBonusBps = rp.liqBonusBps;
+        ltvCeilingSet = LibVaipakam.assetInitLtvCeilingSet(token);
+        loanInitLtvCeilingBps = LibVaipakam.assetInitLtvCeilingBps(token);
+        liqBonusBps = LibVaipakam.storageSlot().assetRiskParams[token].liqBonusBps;
         status = _checkLiquidity(token);
         isSupported = status == LibVaipakam.LiquidityStatus.Liquid;
     }

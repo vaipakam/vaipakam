@@ -516,7 +516,7 @@ contract ConfigFacetTest is Test {
         ConfigFacet(address(diamond)).setAssetMinPartialBps(asset, 250);
 
         // The new view exposes the previously-unreadable enforced floor.
-        LibVaipakam.RiskParams memory p =
+        LibVaipakam.AssetRiskParamsView memory p =
             ConfigFacet(address(diamond)).getAssetRiskParams(asset);
         assertEq(p.minPartialBps, 250, "floor set + readable via getAssetRiskParams");
     }
@@ -566,7 +566,7 @@ contract ConfigFacetTest is Test {
             asset,
             LibVaipakam.BASIS_POINTS - 1
         );
-        LibVaipakam.RiskParams memory p =
+        LibVaipakam.AssetRiskParamsView memory p =
             ConfigFacet(address(diamond)).getAssetRiskParams(asset);
         assertEq(p.minPartialBps, LibVaipakam.BASIS_POINTS - 1, "just-below-100% floor accepted");
     }

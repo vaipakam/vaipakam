@@ -280,7 +280,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
         );
 
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300);
 
         lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
         borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);

@@ -565,10 +565,10 @@ contract DeployTestnetMocks is Script {
         // asset) so both orientations of any liquid pair are admissible
         // — a zero `loanInitMaxLtvBps` on the collateral side rejects
         // loan admission outright (Codex #982 round-6).
-        RiskFacet(diamond).updateRiskParams(liquidToken, 8000, 300, 1000);
-        RiskFacet(diamond).updateRiskParams(liquidToken2, 8000, 300, 1000);
-        RiskFacet(diamond).updateRiskParams(mWeth, 8000, 300, 1000);
-        RiskFacet(diamond).updateRiskParams(weth, 8000, 300, 1000);
+        RiskFacet(diamond).updateRiskParams(liquidToken, 8000, 300);
+        RiskFacet(diamond).updateRiskParams(liquidToken2, 8000, 300);
+        RiskFacet(diamond).updateRiskParams(mWeth, 8000, 300);
+        RiskFacet(diamond).updateRiskParams(weth, 8000, 300);
 
         // Tier 2 — legacy proxy pointers (kept for completeness; the
         // Phase-7a path ignores them).

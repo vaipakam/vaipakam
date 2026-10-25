@@ -563,11 +563,10 @@ contract RiskFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(
             mockERC20,
             8000,
-            300,
-            1000
+            300
         );
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300
         );
 
         // PR2 of internal-match work (2026-05-14) — per-tier
@@ -898,8 +897,8 @@ contract RiskFacetTest is Test {
     function testUpdateAssetRiskParamsSuccess() public {
         vm.prank(owner);
         vm.expectEmit(true, true, false, true);
-        emit RiskFacet.RiskParamsUpdated(mockERC20, 7000, 250, 1500);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 7000, 250, 1500);
+        emit RiskFacet.RiskParamsUpdated(mockERC20, 7000, 250);
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 7000, 250);
         // Note: LibVaipakam.storageSlot() accesses the test contract's storage, not the diamond's.
         // Verification is done via the emitted event (RiskParamsUpdated) above.
         // The parameters are applied when createAndAcceptOffer uses the updated risk params.
@@ -925,8 +924,7 @@ contract RiskFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(
             mockERC20,
             8000,
-            300,
-            1000
+            300
         );
     }
 
@@ -1708,8 +1706,7 @@ contract RiskFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(
             address(0),
             8000,
-            300,
-            1000
+            300
         );
     }
 
@@ -2212,7 +2209,7 @@ contract RiskFacetTest is Test {
                 LibVaipakam.BASIS_POINTS
             )
         );
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 0, 300, 1000
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 0, 300
         );
     }
 
@@ -2228,7 +2225,7 @@ contract RiskFacetTest is Test {
                 LibVaipakam.BASIS_POINTS
             )
         );
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 10001, 300, 1000
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 10001, 300
         );
     }
 
@@ -2238,32 +2235,7 @@ contract RiskFacetTest is Test {
     function testUpdateRiskParamsRevertsLiqBonusExceedsBasis() public {
         vm.prank(owner);
         vm.expectRevert(IVaipakamErrors.UpdateNotAllowed.selector);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 301, 1000);
-    }
-
-    /// @dev Test O: updateRiskParams reverts when reserveFactorBps is
-    ///      above the hard ceiling (T-033 setter range audit: ceiling is
-    ///      `RISK_PARAMS_RESERVE_FACTOR_BPS_MAX = 5000`; previously
-    ///      only `≤ BASIS_POINTS` which allowed `100% reserveFactor` =
-    ///      lender receives 0% interest, defeats the lending product).
-    function testUpdateRiskParamsRevertsReserveFactorExceedsBasis() public {
-        vm.prank(owner);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.ParameterOutOfRange.selector,
-                // forge-lint: disable-next-line(unsafe-typecast)
-                bytes32("reserveFactorBps"),
-                uint256(10001),
-                uint256(0),
-                uint256(LibVaipakam.RISK_PARAMS_RESERVE_FACTOR_BPS_MAX)
-            )
-        );
-        RiskFacet(address(diamond)).updateRiskParams(
-            mockERC20,
-            8000,
-            300,
-            10001
-        );
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 301);
     }
 
     /// @dev Test P: the hard-coded 3% incentive cap (README §3) blocks any
@@ -2273,7 +2245,7 @@ contract RiskFacetTest is Test {
     function testUpdateRiskParamsRespectsIncentiveCap() public {
         vm.prank(owner);
         vm.expectRevert(IVaipakamErrors.UpdateNotAllowed.selector);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 301, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 301);
     }
 
     /// @dev Test Q: triggerLiquidation where afterBonus < totalDebt (undercollateralized).
@@ -2746,8 +2718,7 @@ contract RiskFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(
             collateralToken,
             8000,
-            300,
-            1000
+            300
         );
 
         vm.prank(lender);
@@ -2864,8 +2835,7 @@ contract RiskFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(
             mockERC20,
             8000,
-            0, // liqBonusBps = 0
-            1000
+            0
         );
 
         uint256 loanId = createAndAcceptOffer();

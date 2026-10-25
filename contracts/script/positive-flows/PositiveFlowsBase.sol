@@ -351,8 +351,8 @@ abstract contract PositiveFlowsBase is Script {
         paa[0] = address(weth);
         ConfigFacet(diamond).setPaaAssets(paa);
 
-        RiskFacet(diamond).updateRiskParams(address(usdc), 8000, 300, 1000);
-        RiskFacet(diamond).updateRiskParams(address(weth), 8000, 300, 1000);
+        RiskFacet(diamond).updateRiskParams(address(usdc), 8000, 300);
+        RiskFacet(diamond).updateRiskParams(address(weth), 8000, 300);
 
         // KYC enforcement is off on retail; the tiers and the trade pair are
         // set defensively so the drive also runs on a deploy that has it on.

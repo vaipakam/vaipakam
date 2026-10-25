@@ -193,10 +193,7 @@ library LibRiskMath {
         // the clamp is skipped — the floor stays at the HF-derived value, which
         // is still finite and positive (tighter than the old `return 0`); the
         // runtime init-LTV gate blocks the tier-0 borrow itself.
-        uint256 capBps = LibVaipakam
-            .storageSlot()
-            .assetRiskParams[collateralAsset]
-            .loanInitMaxLtvBps;
+        uint256 capBps = LibVaipakam.assetInitLtvCeilingBps(collateralAsset);
         if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
             uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(tier));
             if (tierCap < capBps) capBps = tierCap;
@@ -343,10 +340,7 @@ library LibRiskMath {
         // the LTV clamp is skipped, leaving the finite HF-derived ceiling (still
         // far tighter than the old `return type(uint256).max`); the runtime gate
         // blocks the tier-0 borrow itself.
-        uint256 capBps = LibVaipakam
-            .storageSlot()
-            .assetRiskParams[collateralAsset]
-            .loanInitMaxLtvBps;
+        uint256 capBps = LibVaipakam.assetInitLtvCeilingBps(collateralAsset);
         if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
             uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(tier));
             if (tierCap < capBps) capBps = tierCap;

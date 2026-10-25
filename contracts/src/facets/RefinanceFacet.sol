@@ -1034,7 +1034,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // close into — exactly the race the HF gate below also closes.
         uint256 cap = LibVaipakam.effectiveLoanInitLtvCapBps(
             newLoan.initLtvCapBpsAtInit,
-            LibVaipakam.storageSlot().assetRiskParams[oldCollateralAsset].loanInitMaxLtvBps
+            LibVaipakam.assetInitLtvCeilingBps(oldCollateralAsset)
         );
         if (newLtv > cap) {
             // Preserve the regime-specific error (cosmetic; the cap value is the
