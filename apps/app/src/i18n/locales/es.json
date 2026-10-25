@@ -2873,6 +2873,8 @@
       "autoLendHint": "Si los prestamistas pueden activar de nuevo el préstamo automático. Desactivado solo rechaza nuevas activaciones: el consentimiento existente se mantiene y las ofertas permanentes ya publicadas siguen en el libro hasta que se cancelen o se emparejen.",
       "lenderIntentFills": "Ejecución de intenciones permanentes",
       "lenderIntentFillsHint": "Si las intenciones de préstamo registradas pueden ejecutarse. Desactivado detiene su ejecución; los prestamistas aún pueden registrar intenciones.",
+      "minIntentFill": "Ejecución mínima de intención",
+      "minIntentFillHint": "Lo mínimo que debe valer la ejecución más pequeña de una intención permanente al registrarla. Sus dos activos también deben tener precio. Una intención registrada antes de un cambio conserva sus términos hasta que se vuelva a configurar.",
       "autoRefinanceHint": "Desactivado impide que los keepers y el emparejador de órdenes completen refinanciaciones. Un prestatario que refinancia su propio préstamo, o un prestamista que acepta directamente una solicitud de refinanciación, sigue adelante.",
       "autoExtendHint": "Desactivado bloquea toda extensión de préstamo en el sitio, incluida la que pide directamente el prestatario.",
       "numeraireFeed": "Feed de precio de ETH en la moneda de referencia",

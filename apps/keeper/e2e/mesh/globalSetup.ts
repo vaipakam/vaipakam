@@ -8,12 +8,10 @@
  * after its nodes have exited and every state dump exists, so reuse never
  * starts from a half-built fixture.
  */
-import fs from 'node:fs';
-import path from 'node:path';
-import { MESH_STATE_DIR, prepareMeshFixture } from './fixture';
+import { meshStore, prepareMeshFixture } from './fixture';
 
 export default async function setup(): Promise<void> {
-  if (process.env.KEEPER_E2E_REUSE_FIXTURE === '1' && fs.existsSync(path.join(MESH_STATE_DIR, 'fixture.json'))) {
+  if (process.env.KEEPER_E2E_REUSE_FIXTURE === '1' && meshStore.isBuilt()) {
     console.log('[keeper-e2e mesh] reusing the fixture under .state/mesh/ (KEEPER_E2E_REUSE_FIXTURE=1)');
     return;
   }

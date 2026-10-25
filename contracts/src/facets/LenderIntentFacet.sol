@@ -16,6 +16,7 @@ import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
+import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
@@ -155,6 +156,15 @@ contract LenderIntentFacet is
     /// @notice The loan's lender claim is missing, already consumed, or not the
     ///         intent's plain ERC-20 lending asset — nothing to roll.
     error LenderIntentNothingToRoll();
+    /// @notice #2760 — the intent's smallest fill is worth less than the
+    ///         governance floor. `value` is `minFillAmount` valued in the active
+    ///         numeraire (1e18, rounded down); `minimum` is the floor.
+    error LenderIntentFillBelowMinimum(uint256 value, uint256 minimum);
+
+    /// @notice #2760 — governance set the floor on a standing intent's smallest
+    ///         fill (1e18 numeraire). `minimum` is the effective floor after the
+    ///         write; a write of zero restores the default.
+    event MinIntentFillNumeraireSet(uint256 minimum);
 
     /// @notice Register or overwrite the caller's standing lending intent for an
     ///         ERC-20 asset-pair.
@@ -240,6 +250,7 @@ contract LenderIntentFacet is
         ) {
             revert LenderIntentInvalidBounds();
         }
+        _assertIntentAdmissible(lendingAsset, collateralAsset, minFillAmount);
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.lenderIntent[msg.sender][lendingAsset][collateralAsset] = LibVaipakam
@@ -503,6 +514,72 @@ contract LenderIntentFacet is
             amount,
             s.lenderIntentCapital[msg.sender][lendingAsset][collateralAsset]
         );
+    }
+
+    /// @dev #2760 — the admission rule for a standing intent, applied when it is
+    ///      set (the only write of its pair and of `minFillAmount`):
+    ///      - BOTH legs must be priced by the one shared value rule. Every fill
+    ///        is sized from the lender's loan-to-value ceiling, which needs both
+    ///        prices, so an intent on an unpriced leg could never fill; it is
+    ///        refused here, with the oracle's own reason, instead of sitting in
+    ///        the keeper feed. The collateral leg is valued at one base unit
+    ///        only to run the rule's refusals (no feed, stale, zero price,
+    ///        unreadable decimals); its value is not used.
+    ///      - The smallest fill must be worth at least
+    ///        {LibVaipakam.cfgMinIntentFillNumeraire}, rounded down. The keeper
+    ///        feed lists an intent only once its funded capital covers one
+    ///        smallest fill, so this floor is also the least capital each listed
+    ///        intent locks: junk intents carrying one unit can no longer enter
+    ///        it.
+    ///      Valued at registration. A later price move does not evict an
+    ///      admitted intent, and re-setting it re-applies the rule.
+    function _assertIntentAdmissible(
+        address lendingAsset,
+        address collateralAsset,
+        uint256 minFillAmount
+    ) private view {
+        NumeraireValueFacet values = NumeraireValueFacet(address(this));
+        values.getNumeraireValue(collateralAsset, 1, false);
+        uint256 value = values.getNumeraireValue(lendingAsset, minFillAmount, false);
+        uint256 minimum = LibVaipakam.cfgMinIntentFillNumeraire();
+        if (value < minimum) revert LenderIntentFillBelowMinimum(value, minimum);
+    }
+
+    /// @notice #2760 — set the floor on a standing intent's smallest fill, in
+    ///         the active numeraire (1e18-scaled). Zero restores the default
+    ///         ({LibVaipakam.MIN_INTENT_FILL_NUMERAIRE_DEFAULT}).
+    /// @dev    ADMIN_ROLE-only (the Timelock after handover). A non-zero value
+    ///         must lie in [{LibVaipakam.MIN_INTENT_FILL_NUMERAIRE_FLOOR},
+    ///         {LibVaipakam.MIN_INTENT_FILL_NUMERAIRE_CEIL}]. Applies to intents
+    ///         set from now on; admitted intents are not re-checked.
+    function setMinIntentFillNumeraire(uint256 minimum)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            minimum != 0
+                && (
+                    minimum < LibVaipakam.MIN_INTENT_FILL_NUMERAIRE_FLOOR
+                        || minimum > LibVaipakam.MIN_INTENT_FILL_NUMERAIRE_CEIL
+                )
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                // forge-lint: disable-next-line(unsafe-typecast)
+                bytes32("minIntentFillNumeraire"),
+                minimum,
+                LibVaipakam.MIN_INTENT_FILL_NUMERAIRE_FLOOR,
+                LibVaipakam.MIN_INTENT_FILL_NUMERAIRE_CEIL
+            );
+        }
+        LibVaipakam.storageSlot().minIntentFillNumeraire = minimum;
+        emit MinIntentFillNumeraireSet(LibVaipakam.cfgMinIntentFillNumeraire());
+    }
+
+    /// @notice #2760 — the effective floor on a standing intent's smallest fill
+    ///         (1e18 numeraire): the governance value, or the default while
+    ///         unset.
+    function getMinIntentFillNumeraire() external view returns (uint256) {
+        return LibVaipakam.cfgMinIntentFillNumeraire();
     }
 
     /// @notice Master kill-switch for the standing-intent fill path

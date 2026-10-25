@@ -1,7 +1,7 @@
 /**
- * The scenarios' parties' keys, in a module of their own so the global setup
- * (which runs outside any test, where `vitest`'s `vi` is unavailable) can
- * name the keeper's address without importing `chain.ts`.
+ * The scenario parties' keys, in a module of their own so a suite's global
+ * setup (which runs outside any test) can name a party's address without
+ * importing the chain client.
  */
 import type { Hex } from 'viem';
 
@@ -11,6 +11,11 @@ import type { Hex } from 'viem';
  * genesis — no secret, and meaningless on any real chain. Index 0 is left
  * alone: nothing here needs it, and leaving it out keeps the scenarios clear
  * of whatever else a developer's local tooling does with it.
+ *
+ * `keeper` is index 3's role in the keeper's suite: its signing key. A
+ * protocol scenario that runs no keeper may use it as one more party (the
+ * canonical chain's authorized reward remitter, say); the name is the
+ * keeper suite's, the key is just a funded account.
  */
 export const ANVIL_DEV_KEYS = {
   lender: '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',

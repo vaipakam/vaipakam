@@ -9,6 +9,7 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   EVENTLESS_PROTOCOL_KNOBS,
   PROTOCOL_KNOB_GETTERS,
+  PROTOCOL_KNOB_SETTER_EVENTS,
   abiDescribesGetterAt,
   abiOutputNames,
   readProtocolKnobGetters,
@@ -48,10 +49,25 @@ describe('PROTOCOL_KNOB_GETTERS', () => {
     for (const k of PROTOCOL_KNOB_GETTERS) expect(bundle).not.toContain(k.key);
   });
 
-  it('marks exactly the settings whose setter emits no event (Codex #2683 r3, #2685)', () => {
-    // When #2685 adds the event, this list empties and the console's
-    // disclosure goes with it.
-    expect([...EVENTLESS_PROTOCOL_KNOBS]).toEqual(['sequencerUptimeFeed']);
+  it('marks exactly the settings that can change without an event (Codex #2683 r3, #2685, #2815 r1)', () => {
+    // `sequencerUptimeFeed`: its only setter emits nothing. `ethNumeraireFeed`:
+    // `setNumeraire` announces it, `setEthUsdFeed` writes the same slot
+    // silently. When #2685 adds the events, this list empties and the
+    // console's disclosure goes with it.
+    expect([...EVENTLESS_PROTOCOL_KNOBS].sort()).toEqual(['ethNumeraireFeed', 'sequencerUptimeFeed']);
+  });
+
+  it('names a setter event for every setting that is not eventless, each one an event the Diamond declares (Codex #2815 r1)', () => {
+    const events = new Set(
+      (DIAMOND_ABI_VIEM as readonly { type: string; name?: string }[])
+        .filter((e) => e.type === 'event')
+        .map((e) => e.name),
+    );
+    for (const k of PROTOCOL_KNOB_GETTERS) {
+      if (!('eventless' in k)) expect(k.setterEvents.length, k.key).toBeGreaterThan(0);
+      for (const name of k.setterEvents) expect(events.has(name), `${k.key}: ${name}`).toBe(true);
+    }
+    expect(PROTOCOL_KNOB_SETTER_EVENTS.has('MinIntentFillNumeraireSet')).toBe(true);
   });
 });
 

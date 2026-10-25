@@ -22,7 +22,7 @@
  * consume, and would then have to be accounted for by name.
  */
 import type { Hex } from 'viem';
-import type { DecodedEvent, ScenarioChain } from './chain';
+import type { DecodedEvent, ScenarioChain } from '@vaipakam/anvil-harness/scenarioChain';
 
 /** The chain operations the reconciliation needs. */
 type RecycleChain = Pick<ScenarioChain, 'read' | 'diamondEvents' | 'blockNumber'>;

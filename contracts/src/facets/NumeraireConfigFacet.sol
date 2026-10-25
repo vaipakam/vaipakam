@@ -78,6 +78,13 @@ contract NumeraireConfigFacet is DiamondAccessControl {
         uint256 dustFloorNumeraire
     );
 
+    /// @notice #2760 — the standing-intent fill floor changed. Byte-identical
+    ///         to `LenderIntentFacet.MinIntentFillNumeraireSet`, emitted here
+    ///         when a rotation resets the floor to its default. `minimum` is
+    ///         the effective floor after the write.
+    /// @custom:event-category informational/config
+    event MinIntentFillNumeraireSet(uint256 minimum);
+
     /// @notice T-034 Numeraire generalization (b1) — atomic numeraire rotation.
     ///         The struct carries ALL state that defines the protocol's
     ///         reference currency at once. By construction, governance
@@ -234,6 +241,12 @@ contract NumeraireConfigFacet is DiamondAccessControl {
                 s.partialLiqDeepUnderwaterHfBps,
                 0
             );
+        }
+        // #2760 — so was the standing-intent fill floor; it returns to its
+        // default until governance sets one in the new unit.
+        if (s.minIntentFillNumeraire != 0) {
+            s.minIntentFillNumeraire = 0;
+            emit MinIntentFillNumeraireSet(LibVaipakam.cfgMinIntentFillNumeraire());
         }
     }
 

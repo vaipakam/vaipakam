@@ -1053,6 +1053,7 @@ export interface ProtocolKnobValues {
   autoExtendEnabled?: boolean;
   keepersPaused?: boolean;
   lenderIntentEnabled?: boolean;
+  minIntentFillNumeraire?: string;
   treasury?: string;
 }
 

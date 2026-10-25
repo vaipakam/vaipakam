@@ -2873,6 +2873,8 @@
       "autoLendHint": "Si les prêteurs peuvent nouvellement activer le prêt automatique. Désactivé refuse seulement les nouvelles activations : le consentement existant demeure, et les offres permanentes déjà publiées restent au carnet jusqu’à leur annulation ou leur appariement.",
       "lenderIntentFills": "Exécution des intentions permanentes",
       "lenderIntentFillsHint": "Si les intentions de prêt enregistrées peuvent être exécutées. Désactivé arrête leur exécution ; les prêteurs peuvent toujours enregistrer des intentions.",
+      "minIntentFill": "Plus petite exécution d’intention",
+      "minIntentFillHint": "Le minimum que doit valoir la plus petite exécution d’une intention permanente lors de son enregistrement. Ses deux actifs doivent aussi avoir un prix. Une intention enregistrée avant un changement garde ses conditions jusqu’à ce qu’elle soit redéfinie.",
       "autoRefinanceHint": "Désactivé empêche les keepers et l’apparieur d’ordres de finaliser des refinancements. Un emprunteur qui refinance son propre prêt, ou un prêteur qui accepte directement une demande de refinancement, passe toujours.",
       "autoExtendHint": "Désactivé bloque toute prolongation de prêt sur place, y compris celle que l’emprunteur demande directement.",
       "numeraireFeed": "Flux de prix ETH dans la devise de référence",

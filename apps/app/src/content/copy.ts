@@ -6368,6 +6368,9 @@ const copySource = {
     lenderIntentFills: 'Standing-intent fills',
     lenderIntentFillsHint:
       'Whether registered lending intents can be filled. Off stops intent fills; lenders can still register intents.',
+    minIntentFill: 'Smallest intent fill',
+    minIntentFillHint:
+      'The least a standing intent’s smallest fill must be worth when it is registered. Both of its assets must also be priced. An intent registered before a change keeps its terms until it is set again.',
     autoRefinance: 'Auto-refinance',
     autoRefinanceHint:
       'Off stops keepers and the order matcher from completing refinances. A borrower refinancing their own loan, or a lender accepting a refinance request directly, still goes through.',
