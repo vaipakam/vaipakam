@@ -72,6 +72,9 @@ export async function readRemitDayStatuses(
   diamond: Address,
   mirrorId: number,
   days: readonly bigint[],
+  /** The block the batch was planned at, so the status is that plan's own
+   *  verdict; omitted, the latest head. */
+  blockNumber?: bigint,
 ): Promise<RemitStatusRead> {
   let raw: readonly unknown[];
   try {
@@ -80,6 +83,7 @@ export async function readRemitDayStatuses(
       abi: REMIT_ABI,
       functionName: 'quoteRemitDayStatuses',
       args: [mirrorId, days],
+      blockNumber,
     })) as readonly unknown[];
   } catch (err) {
     return remitStatusReadFailure(err);

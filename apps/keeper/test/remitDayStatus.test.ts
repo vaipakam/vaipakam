@@ -11,6 +11,7 @@ import {
   remitDayStatusName,
   remitStatusReadFailure,
 } from '../src/remitDayStatus';
+import { remitToMirror } from '../src/rewardBudgetRemit';
 
 const FACET_SRC = new URL('../../../contracts/src/facets/RewardRemittanceFacet.sol', import.meta.url);
 
@@ -61,5 +62,42 @@ describe('#2760 remit day statuses', () => {
     expect(remitStatusReadFailure({ revert: { name: 'FunctionDoesNotExist' } }).kind).toBe('unrouted');
     expect(remitStatusReadFailure({ data: '0xa9ad62f8' }).kind).toBe('unrouted');
     expect(remitStatusReadFailure(new Error('fetch failed')).kind).toBe('unread');
+  });
+});
+
+describe('#2760 the plan and the statuses are one block (Codex #2826 r3)', () => {
+  /** A chain whose commitment report lands right after block 100: at 100 the
+   *  day is awaiting it (plan: zero, not closeable); at any later head its
+   *  status reads closeable. An unpinned plan read comes first and sees the
+   *  old state, so only a read pinned to block 100 keeps the two agreeing. */
+  function fakeChain() {
+    const blocks: (bigint | undefined)[] = [];
+    const client = {
+      getBlockNumber: async () => 100n,
+      readContract: async (req: { functionName: string; blockNumber?: bigint }) => {
+        blocks.push(req.blockNumber);
+        const pinned = req.blockNumber === 100n;
+        if (req.functionName === 'quoteRemitDayPlans') return [[0n], [false]];
+        if (req.functionName === 'quoteRemitDayStatuses') return [pinned ? 6 : 8]; // AwaitingCommitment : Closeable
+        throw new Error(`unexpected read ${req.functionName}`);
+      },
+    };
+    return { client, blocks };
+  }
+
+  it('a day closeable only at a later head is still owed, not settled', async () => {
+    const { client, blocks } = fakeChain();
+    const settled = await remitToMirror(
+      client as never,
+      {} as never,
+      '0x0000000000000000000000000000000000000001',
+      421614,
+      5n,
+      1,
+      10n ** 24n,
+      0n,
+    );
+    expect(settled).toBe(false);
+    expect(blocks).toEqual([100n, 100n]);
   });
 });

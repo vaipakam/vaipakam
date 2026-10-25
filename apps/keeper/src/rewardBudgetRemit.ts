@@ -346,7 +346,8 @@ async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: numb
   );
 }
 
-async function remitToMirror(
+/** @internal Exported for the planning tests; the pass is the only caller. */
+export async function remitToMirror(
   publicClient: PublicClient,
   ctx: KeeperContext,
   diamond: Address,
@@ -409,6 +410,16 @@ async function remitToMirror(
   // backing allocation still includes an excluded day — an unstabilized
   // batch would starve affordable later days every tick.
   const MAX_REPLAN_PASSES = 24;
+  // Every planning read (each re-plan, the per-day statuses, the closure
+  // probe) is taken at ONE block. Read at successive heads, a commitment
+  // report landing between the plan and the status read made a day
+  // `Closeable` by its status but absent from the batch, and the empty
+  // batch then read as settled while that day was still owed (Codex #2826
+  // r3). At one block the status is the plan's own verdict for every day.
+  // The send itself runs later and re-plans on chain, so pinning the plan
+  // costs nothing but a day that became closeable after this block, which
+  // the next tick picks up.
+  const planBlock = await publicClient.getBlockNumber({ cacheTime: 0 });
   let droppedInReplan = 0;
   let stabilized = false;
   for (let pass = 0; pass < MAX_REPLAN_PASSES; pass++) {
@@ -425,6 +436,7 @@ async function remitToMirror(
       abi: REMIT_ABI,
       functionName: 'quoteRemitDayPlans',
       args: [mirrorId, planWindow],
+      blockNumber: planBlock,
     })) as readonly [readonly bigint[], readonly boolean[]];
     const oversized: bigint[] = [];
     for (let i = 0; i < planWindow.length; i++) {
@@ -470,7 +482,7 @@ async function remitToMirror(
   // day that owed this mirror nothing is not reported at all. A Diamond
   // without the view keeps the earlier closure probe and its warning.
   let blockedOwed = 0;
-  const statusRead = await readRemitDayStatuses(publicClient, diamond, mirrorId, planWindow);
+  const statusRead = await readRemitDayStatuses(publicClient, diamond, mirrorId, planWindow, planBlock);
   if (statusRead.kind === 'read') {
     const blocked = owedButBlocked(planWindow, statusRead.statuses);
     blockedOwed = blocked.length;
@@ -483,7 +495,7 @@ async function remitToMirror(
     if (statusRead.kind === 'unread') {
       console.warn(`[keeper] rewardBudgetRemit Base->${mirrorId} day status read failed: ${statusRead.error}; using the closure probe`);
     }
-    await reportUnclosedDays(publicClient, diamond, mirrorId, planWindow, perDay, closeable);
+    await reportUnclosedDays(publicClient, diamond, mirrorId, planWindow, perDay, closeable, planBlock);
   }
 
   if (batch.length === 0) {
@@ -606,6 +618,7 @@ async function reportUnclosedDays(
   planWindow: readonly bigint[],
   perDay: readonly bigint[],
   closeable: readonly boolean[],
+  planBlock: bigint,
 ): Promise<void> {
   // A zero-amount, non-closeable day is AMBIGUOUS: `quoteRemitDayPlans`
   // returns exactly that both for a day already remitted AND for one that is
@@ -638,6 +651,7 @@ async function reportUnclosedDays(
           args: [mirrorId, dayId],
         })),
         multicallAddress: MULTICALL3_ADDRESS,
+        blockNumber: planBlock,
         allowFailure: true,
         // Same size-split disable as the liquidator (#1965 r2): viem's default
         // is 1024 BYTES, so a probe list long enough to exceed it silently
