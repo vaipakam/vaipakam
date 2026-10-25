@@ -771,15 +771,20 @@ The app uses chain reads and indexed reads for different jobs.
   record's examination cannot be read, the record counts as not examined.
 - **Each pass is dated and numbered by its own record, kept per chain, never
   by what it has examined.** The service records which pass is in progress
-  and when it began, in the same step as that pass's first examinations, and
-  changes that record only when the next pass begins. A record examined in a
-  pass leaves the list once its deadline passes, so what is left in the list
-  says neither how long ago the pass began nor which pass it is. Read from
-  there, a long pass would keep looking recent and never be reported, and a
-  pass whose examined records had all left would fall back to the number
-  before it. Where the record is missing or cannot be read, the next pass
-  begins, numbered above every examination the list still carries, so none
-  of those can count in it.
+  and when it began, in the same step as that pass's first examinations. A
+  record examined in a pass leaves the list once its deadline passes, so what
+  is left in the list says neither how long ago the pass began nor which pass
+  it is. Read from there, a long pass would keep looking recent and never be
+  reported, and a pass whose examined records had all left would fall back to
+  the number before it.
+- **A pass is recorded as finished when nothing in the list is left
+  unexamined in it**: in the same step as its last examinations, or on a run
+  that finds no record awaiting a reminder at all. A record that appears after
+  that begins the next pass, so a pass that ended days ago is not taken for
+  one still running and its age is not reported as a backlog. Where the record
+  is missing or cannot be read, the next pass begins, numbered above every
+  examination the list still carries, so none of those can count in it; a
+  record that cannot be read is reported, not taken silently for none.
 - **THE RESTART PROPERTY, stated once and not restated elsewhere.** Every
   surface that describes records being examined again because what a pass
   examined was lost — missing, unreadable, malformed, or deliberately cleared

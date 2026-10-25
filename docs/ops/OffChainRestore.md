@@ -1590,7 +1590,8 @@ configuration the keeper may no longer have.
 What the pre-notify lane has examined in its current pass (#2230) lives on
 the `loans` rows themselves, in the `prenotify_examined_*` columns, so
 clearing `loans` clears it too. The pass in progress and when it began are
-recorded per chain in `prenotify_pass`, cleared above with the rest. The
+recorded per chain in `prenotify_pass` (with whether it has finished),
+cleared above with the rest. The
 replay rebuilds every row unexamined, and with no pass record the lane
 begins a new pass that looks at every loan again. That prefers duplicated
 work to stepping over a loan, which is the direction this failure must take.

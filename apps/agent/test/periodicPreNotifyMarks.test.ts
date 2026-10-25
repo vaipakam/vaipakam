@@ -15,8 +15,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import {
   BEGIN_PASS_SQL,
+  COMPLETE_PASS_SQL,
+  DROP_PASS_SQL,
   MARK_EXAMINED_SQL,
   PRENOTIFY_CANDIDATES_SQL,
+  PRENOTIFY_PASS_SQL,
+  readPassRecord,
 } from '../src/periodicPreNotify';
 
 const MIGRATIONS = new URL('../../indexer/migrations/', import.meta.url);
@@ -114,54 +118,44 @@ describe('the examination-mark statement (#2230)', () => {
   });
 });
 
-type Candidate = {
-  loan_id: number;
-  prenotify_examined_lap: number;
-  pass_lap: number | null;
-  pass_started_at: number | null;
-};
+type PassRow = { lap: unknown; started_at: unknown; completed_at: unknown };
 
-function candidates(db: DatabaseSync, chainId: number): Candidate[] {
-  return db.prepare(PRENOTIFY_CANDIDATES_SQL).all(chainId) as Candidate[];
+function passOf(db: DatabaseSync, chainId: number): PassRow | undefined {
+  return db.prepare(PRENOTIFY_PASS_SQL).get(chainId) as PassRow | undefined;
 }
 
-describe('the pass record (#2230, Codex #2845 r1)', () => {
-  it('rides on every candidate row, NULL while the chain has no pass', () => {
+describe('the candidate query (#2230)', () => {
+  it('returns each active periodic loan with its examination mark', () => {
     const db = database();
     for (const id of [1, 2]) loan(db, 84532, id);
-    const rows = candidates(db, 84532);
-    expect(rows).toHaveLength(2);
-    for (const r of rows) {
-      expect(r.pass_lap).toBeNull();
-      expect(r.pass_started_at).toBeNull();
-    }
+    db.prepare(MARK_EXAMINED_SQL).run(5, 84532, JSON.stringify([[1, 9]]));
+    const rows = db.prepare(PRENOTIFY_CANDIDATES_SQL).all(84532) as {
+      loan_id: number;
+      prenotify_examined_lap: number;
+    }[];
+    expect(rows.map((r) => [Number(r.loan_id), Number(r.prenotify_examined_lap)])).toEqual([
+      [1, 5],
+      [2, 0],
+    ]);
+  });
+});
+
+describe('the pass record (#2230, Codex #2845 r1 and r2)', () => {
+  it('is absent until a pass begins, which reads as no pass', () => {
+    const db = database();
+    expect(passOf(db, 84532)).toBeUndefined();
+    expect(readPassRecord(passOf(db, 84532))).toEqual({ state: 'none' });
   });
 
-  it('is written when a pass begins, and read back on each row of that chain only', () => {
+  it('opens when a pass begins, for that chain only', () => {
     const db = database();
-    loan(db, 84532, 1);
-    loan(db, 421614, 1);
     db.prepare(BEGIN_PASS_SQL).run(84532, 3, 1_790_000_000);
-    expect(candidates(db, 84532)[0]).toMatchObject({
-      pass_lap: 3,
-      pass_started_at: 1_790_000_000,
+    expect(readPassRecord(passOf(db, 84532))).toEqual({
+      state: 'open',
+      lap: 3,
+      startedAt: 1_790_000_000,
     });
-    expect(candidates(db, 421614)[0].pass_lap).toBeNull();
-  });
-
-  it('is replaced, not added to, when the next pass begins', () => {
-    // One row per chain: beginning pass 4 moves both the number and the start,
-    // which is what dates the new pass from its own first tick.
-    const db = database();
-    loan(db, 84532, 1);
-    db.prepare(BEGIN_PASS_SQL).run(84532, 3, 1_790_000_000);
-    db.prepare(BEGIN_PASS_SQL).run(84532, 4, 1_790_086_400);
-    expect(candidates(db, 84532)[0]).toMatchObject({
-      pass_lap: 4,
-      pass_started_at: 1_790_086_400,
-    });
-    const count = db.prepare('SELECT COUNT(*) AS n FROM prenotify_pass').get() as { n: number };
-    expect(Number(count.n)).toBe(1);
+    expect(passOf(db, 421614)).toBeUndefined();
   });
 
   it('keeps its start while the pass marks loans, however many', () => {
@@ -171,9 +165,63 @@ describe('the pass record (#2230, Codex #2845 r1)', () => {
     for (const id of [1, 2]) loan(db, 84532, id);
     db.prepare(BEGIN_PASS_SQL).run(84532, 5, 1_790_000_000);
     db.prepare(MARK_EXAMINED_SQL).run(5, 84532, JSON.stringify([[1, 9], [2, 9]]));
-    for (const r of candidates(db, 84532)) {
-      expect(r.prenotify_examined_lap).toBe(5);
-      expect(r.pass_started_at).toBe(1_790_000_000);
-    }
+    expect(readPassRecord(passOf(db, 84532))).toEqual({
+      state: 'open',
+      lap: 5,
+      startedAt: 1_790_000_000,
+    });
+  });
+
+  it('closes once, and only the pass it names', () => {
+    // THE DEFECT r2 FOUND: a finished pass was never closed, so a loan
+    // arriving days later joined it. Closing names the pass, so a late close
+    // can never end the pass that began after it.
+    const db = database();
+    db.prepare(BEGIN_PASS_SQL).run(84532, 5, 1_790_000_000);
+    db.prepare(COMPLETE_PASS_SQL).run(84532, 4, 1_790_000_500);
+    expect(readPassRecord(passOf(db, 84532)).state).toBe('open');
+    db.prepare(COMPLETE_PASS_SQL).run(84532, 5, 1_790_000_600);
+    db.prepare(COMPLETE_PASS_SQL).run(84532, 5, 1_790_009_999);
+    expect(passOf(db, 84532)?.completed_at).toBe(1_790_000_600);
+    expect(readPassRecord(passOf(db, 84532))).toEqual({
+      state: 'closed',
+      lap: 5,
+      startedAt: 1_790_000_000,
+    });
+  });
+
+  it('is replaced, not added to, when the next pass begins, which reopens it', () => {
+    const db = database();
+    db.prepare(BEGIN_PASS_SQL).run(84532, 3, 1_790_000_000);
+    db.prepare(COMPLETE_PASS_SQL).run(84532, 3, 1_790_000_100);
+    db.prepare(BEGIN_PASS_SQL).run(84532, 4, 1_790_086_400);
+    expect(readPassRecord(passOf(db, 84532))).toEqual({
+      state: 'open',
+      lap: 4,
+      startedAt: 1_790_086_400,
+    });
+    const count = db.prepare('SELECT COUNT(*) AS n FROM prenotify_pass').get() as { n: number };
+    expect(Number(count.n)).toBe(1);
+  });
+
+  it('cannot hold a figure that is not a whole number: the table is STRICT', () => {
+    const db = database();
+    expect(() =>
+      db.prepare('INSERT INTO prenotify_pass (chain_id, lap, started_at) VALUES (?, ?, ?)').run(
+        84532,
+        'six',
+        1,
+      ),
+    ).toThrow(/cannot store TEXT value in INTEGER column/);
+  });
+
+  it('reads a stored figure it cannot use as unreadable, and is removed by the drop', () => {
+    // STRICT keeps text out; a negative number or a pass of 0 still gets in
+    // by hand, and is reported rather than mistaken for no pass.
+    const db = database();
+    db.prepare('INSERT INTO prenotify_pass (chain_id, lap, started_at) VALUES (?, ?, ?)').run(84532, 0, 1);
+    expect(readPassRecord(passOf(db, 84532))).toEqual({ state: 'unreadable' });
+    db.prepare(DROP_PASS_SQL).run(84532);
+    expect(passOf(db, 84532)).toBeUndefined();
   });
 });

@@ -243,15 +243,26 @@ interface LoanRow {
    */
   prenotify_examined_checkpoint: number;
   prenotify_examined_lap: number;
-  /**
-   * The chain's pass record (`prenotify_pass`, #2230), read with the
-   * candidates in the same statement so a tick spends no request of its own
-   * on it: the pass in progress and when it began. Null on every row until
-   * the chain's first pass begins. The same on every row of one read.
-   */
-  pass_lap: number | null;
-  pass_started_at: number | null;
 }
+
+/**
+ * The chain's pass record as stored (`prenotify_pass`, #2230): the latest
+ * pass, when it began, and when it was seen to finish (null while it is in
+ * progress). Read in the same batch as the candidates, so a tick spends no
+ * request of its own on it. See `readPassRecord` for what it means.
+ */
+interface PassRow {
+  lap: unknown;
+  started_at: unknown;
+  completed_at: unknown;
+}
+
+/** The chain's pass record, read: what `examinationPass` decides from. */
+export type PassRecord =
+  | { state: 'none' }
+  | { state: 'unreadable' }
+  | { state: 'open'; lap: number; startedAt: number }
+  | { state: 'closed'; lap: number; startedAt: number };
 
 interface UserPushRow {
   wallet: string;
@@ -691,16 +702,33 @@ async function preNotifyChain(
   // afford to send. The query itself is ONE call however many rows it
   // returns, and it is charged as one below.
   //
-  // The examination marks and the chain's pass record (#2230) come with the
-  // rows, so knowing what this pass has already looked at, and when it began,
-  // costs no request of its own.
-  budget.remaining -= 1; // the candidate query — D1 is a subrequest
-  const rows = await env.DB.prepare(PRENOTIFY_CANDIDATES_SQL)
-    .bind(chain.id)
-    .all<LoanRow>();
+  // The examination marks come with the rows, and the chain's pass record
+  // (#2230) is read in the same batch, so knowing what this pass has already
+  // looked at, and when it began, costs no request of its own.
+  budget.remaining -= 1; // the candidates and the pass record, one batch — D1 is a subrequest
+  const [rows, passRows] = (await env.DB.batch([
+    env.DB.prepare(PRENOTIFY_CANDIDATES_SQL).bind(chain.id),
+    env.DB.prepare(PRENOTIFY_PASS_SQL).bind(chain.id),
+  ])) as [D1Result<LoanRow>, D1Result<PassRow>];
+  const record = readPassRecord(passRows.results?.[0]);
 
   const due = candidatesInWindow(rows.results ?? [], now, windowSec, pauseLog);
-  if (due.length === 0) return;
+  if (due.length === 0) {
+    // AN EMPTY WINDOW ENDS THE PASS IN PROGRESS (Codex #2845 r2). Nothing in
+    // the window is left unexamined in it, which is what finishing a pass
+    // means. Left open, a loan arriving days later would join a pass that
+    // ended long before, and the pass's age would report a backlog that never
+    // existed. Written once: a closed pass is not closed again.
+    if (record.state === 'open') {
+      reportPassLength(chain, record, now, windowSec);
+      await closePassRecord(env, chain, record.lap, now, budget);
+    } else if (record.state === 'unreadable') {
+      // Reported, then removed, so it is not reported on every idle tick: a
+      // record that cannot be read counts as none either way.
+      await dropPassRecord(env, chain, budget);
+    }
+    return;
+  }
 
   // TWO LIMITS, NOT ONE (#2213 r6 `4012464544`). Round 5 took a single slice
   // of `budget.remaining` candidates and both read and messaged within it,
@@ -726,7 +754,7 @@ async function preNotifyChain(
   // pass to wrap. The stored positions this replaces (a list index, then a
   // deadline, #2219) could give only one of those two: a place in the order
   // has nothing in front of it to come back to.
-  const pass = examinationPass(due, now);
+  const pass = examinationPass(due, now, record);
   const toExamine = pass.pending;
   // A PASS THIS TICK BEGINS IS RECORDED WITH ITS FIRST MARKS, in the same
   // write, so no mark can name a pass the record does not and the record costs
@@ -804,9 +832,16 @@ async function preNotifyChain(
     // the ones it left unexamined when the allowance ran out mid-batch are
     // not, so they stay at the front of the next tick.
     if (outcome.consumed > 0) {
+      // THE BATCH THAT EXAMINES THE LAST OF THE PASS CLOSES IT, in the same
+      // write (Codex #2845 r2), so a loan arriving later begins the next pass
+      // rather than joining this one. Only when every earlier batch's marks
+      // landed: a loan whose mark failed is still unexamined in this pass.
+      const completes =
+        cursor + outcome.consumed >= toExamine.length && unmarkedBatches === 0;
       const marked = await markExamined(
         env, chain, batch.slice(0, outcome.consumed), pass.lap,
-        passRecorded ? null : now, budget,
+        { beginsAt: passRecorded ? null : now, completesAt: completes ? now : null },
+        budget,
       );
       if (marked) passRecorded = true;
       else unmarkedBatches += 1;
@@ -826,6 +861,11 @@ async function preNotifyChain(
     (pass.malformedMarks > 0
       ? `, ${pass.malformedMarks} with an unreadable examination mark (treated ` +
         `as not examined, so they are looked at again rather than skipped)`
+      : '') +
+    (pass.unreadableRecord
+      ? `; the chain's pass record could not be read, so it counts as none and ` +
+        `this pass begins above every mark in the window, looking at every loan ` +
+        `again rather than skipping one`
       : '');
   const unmarkedText =
     unmarkedBatches > 0
@@ -872,7 +912,8 @@ async function preNotifyChain(
   } else if (
     noRoute + unreached + failedRails + refusedRails + transientRails + rejected +
       checkpointLag + staleCheckpoint + unreadable + unmarkedBatches + pass.malformedMarks >
-    0
+      0 ||
+    pass.unreadableRecord
   ) {
     // A COMPLETED SCAN REPORTS TOO, when it has something to report (#2213
     // r19 `4014677438`). The summary above only fires on an early stop, on the
@@ -897,24 +938,7 @@ async function preNotifyChain(
     );
   }
 
-  // WHEN A PASS STOPS FITTING INSIDE THE WINDOW, SAY SO (#2230). A loan this
-  // pass examined without stamping — nobody reached, a deferred rail, an
-  // unreadable slot, the indexer behind — is looked at again only in the next
-  // pass. While a pass takes less than the window that is a later chance
-  // before the deadline; once a pass takes longer, it may not be. That is a
-  // provisioning fact about this lane (its allowance and its cadence), not
-  // something any order fixes, so it is stated rather than absorbed.
-  if (now - pass.timed.startedAt > windowSec) {
-    const hours = Math.floor((now - pass.timed.startedAt) / 3600);
-    console.warn(
-      `[periodicPreNotify] chain=${chain.name}: pass ${pass.timed.lap} over the ` +
-        `notification window began ${hours}h ago, longer than the ` +
-        `${windowSec / SECONDS_PER_DAY}-day window itself. A loan this pass ` +
-        `examined without stamping is not reconsidered until the next pass, ` +
-        `so it can now reach its deadline first. This lane needs a larger ` +
-        `allowance or a shorter cadence on this chain.`,
-    );
-  }
+  reportPassLength(chain, pass.timed, now, windowSec);
 
   // THE DEPLOYMENT'S OWN CONFIGURATION, SAID OUT LOUD (#2213 r19
   // `4014677438`). Once per chain per tick with a count, never per loan: this
@@ -1402,24 +1426,32 @@ async function saveRotationStart(env: Env, next: number, budget: TickBudget): Pr
  *  - a candidate marked with the current pass is skipped, so a run of loans
  *    that are examined but never stamped (nobody to tell, opted out, rejected
  *    by the chain) is looked at once per pass, not once per tick;
- *  - when no candidate is left unexamined, or the chain has no pass yet, the
- *    next pass begins: every candidate is pending again, under a number above
- *    every mark the candidates carry, so no old mark can count in it.
+ *  - when no candidate is left unexamined, when the last pass was seen to
+ *    finish, or when the chain has no pass yet, the next pass begins: every
+ *    candidate is pending again, under a number above the record's and every
+ *    mark the candidates carry, so no old mark can count in it.
  *
  * THE RECORD IS WHAT DATES A PASS, not the marks (Codex #2845 r1). A marked
  * loan leaves the window once its deadline passes, so the earliest mark still
  * in the window kept moving forward and a pass that had run longer than the
  * window could never be seen to; and a pass whose marks had all left fell back
  * to the number before it. The record has neither failure: it changes only
- * when a pass begins.
+ * when a pass begins and when it is seen to finish.
+ *
+ * AND THE RECORD SAYS WHEN A PASS FINISHED (Codex #2845 r2): the batch that
+ * examines the last of a pass closes it, and so does a tick that finds the
+ * window empty. A loan arriving later begins the next pass instead of joining
+ * one that ended days before and reporting its age as a backlog.
  *
  * A MARK OR A RECORD THAT CANNOT BE READ counts as none. That fails toward
- * examining a loan again rather than skipping it, and the summary counts
- * unreadable marks so the repeat is visible.
+ * examining a loan again rather than skipping it, and the summary says so,
+ * counting unreadable marks and naming an unreadable record, so the repeat
+ * is visible.
  */
 export function examinationPass(
   due: readonly DueLoan[],
   now: number,
+  record: PassRecord,
 ): {
   /** The pass these examinations belong to — what `markExamined` writes. */
   lap: number;
@@ -1431,13 +1463,14 @@ export function examinationPass(
   alreadyExamined: number;
   /**
    * The pass whose length this tick judges, from the chain's record: the one
-   * in progress, or the one this tick finishes by beginning the next, so a
-   * pass that ran over the window is reported even on the tick that ends it.
-   * A pass this tick begins with no readable record before it is dated `now`.
+   * in progress, which this tick continues or finishes. A pass this tick
+   * begins after a closed one, or with no readable record, is dated `now`.
    */
   timed: { lap: number; startedAt: number };
   /** Candidates whose stored mark is not a whole, non-negative number. */
   malformedMarks: number;
+  /** Whether the chain's pass record exists but could not be read. */
+  unreadableRecord: boolean;
 } {
   let malformedMarks = 0;
   const lapOf = (d: DueLoan): number => {
@@ -1450,44 +1483,165 @@ export function examinationPass(
     return checkpoint === d.nextCheckpoint ? lap : 0;
   };
   const laps = due.map(lapOf);
-  const head = due[0]?.row;
-  const recordLap = head ? Number(head.pass_lap) : NaN;
-  const recordStart = head ? Number(head.pass_started_at) : NaN;
-  const record =
-    head && head.pass_lap !== null && isMarkNumber(recordLap) && recordLap > 0 &&
-    head.pass_started_at !== null && isMarkNumber(recordStart)
-      ? { lap: recordLap, startedAt: recordStart }
-      : null;
-  const pending = record ? due.filter((_, i) => laps[i] !== record.lap) : [];
-  if (record === null || pending.length === 0) {
-    const highest = laps.reduce((m, l) => (l > m ? l : m), record?.lap ?? 0);
+  const unreadableRecord = record.state === 'unreadable';
+  const open = record.state === 'open' ? record : null;
+  const pending = open ? due.filter((_, i) => laps[i] !== open.lap) : [];
+  if (open === null || pending.length === 0) {
+    const recordLap = record.state === 'open' || record.state === 'closed' ? record.lap : 0;
+    const lap = laps.reduce((m, l) => (l > m ? l : m), recordLap) + 1;
     return {
-      lap: highest + 1,
+      lap,
       begins: true,
       pending: [...due],
       alreadyExamined: 0,
-      timed: record ?? { lap: highest + 1, startedAt: now },
+      timed: open ?? { lap, startedAt: now },
       malformedMarks,
+      unreadableRecord,
     };
   }
   return {
-    lap: record.lap,
+    lap: open.lap,
     begins: false,
     pending,
     alreadyExamined: due.length - pending.length,
-    timed: record,
+    timed: open,
     malformedMarks,
+    unreadableRecord,
   };
 }
 
 /**
- * The pass record's write: `?1` chain, `?2` pass, `?3` when it began. Run only
- * with the first marks of the pass it names, in the same batch. Exported so a
- * test runs it against SQLite.
+ * The chain's pass record, read (#2230). No row is no pass yet; a row with a
+ * completion time is a pass seen to finish, so the next candidate begins a
+ * new one; a row without is the pass in progress.
+ *
+ * A row whose figures are not whole, non-negative numbers (or a pass number
+ * of 0) is UNREADABLE, and is reported as such rather than mistaken for no
+ * pass at all: the table is STRICT, so this takes a hand-run statement or a
+ * bad restore, and the repeat it causes should be visible.
  */
-export const BEGIN_PASS_SQL = `INSERT INTO prenotify_pass (chain_id, lap, started_at)
-VALUES (?1, ?2, ?3)
-ON CONFLICT (chain_id) DO UPDATE SET lap = excluded.lap, started_at = excluded.started_at`;
+export function readPassRecord(row: PassRow | undefined): PassRecord {
+  if (row === undefined) return { state: 'none' };
+  const lap = Number(row.lap);
+  const startedAt = Number(row.started_at);
+  const completedAt = row.completed_at === null ? null : Number(row.completed_at);
+  if (
+    row.lap === null || row.started_at === null ||
+    !isMarkNumber(lap) || lap === 0 || !isMarkNumber(startedAt) ||
+    (completedAt !== null && !isMarkNumber(completedAt))
+  ) {
+    return { state: 'unreadable' };
+  }
+  return completedAt === null
+    ? { state: 'open', lap, startedAt }
+    : { state: 'closed', lap, startedAt };
+}
+
+/**
+ * WHEN A PASS STOPS FITTING INSIDE THE WINDOW, SAY SO (#2230). A loan a pass
+ * examined without stamping — nobody reached, a deferred rail, an unreadable
+ * slot, the indexer behind — is looked at again only in the next pass. While
+ * a pass takes less than the window that is a later chance before the
+ * deadline; once a pass takes longer, it may not be. That is a provisioning
+ * fact about this lane (its allowance and its cadence), not something any
+ * order fixes, so it is stated rather than absorbed. Judged on the pass in
+ * progress, including on the tick that finishes it.
+ */
+function reportPassLength(
+  chain: { name: string },
+  timed: { lap: number; startedAt: number },
+  now: number,
+  windowSec: number,
+): void {
+  if (now - timed.startedAt <= windowSec) return;
+  const hours = Math.floor((now - timed.startedAt) / 3600);
+  console.warn(
+    `[periodicPreNotify] chain=${chain.name}: pass ${timed.lap} over the ` +
+      `notification window began ${hours}h ago, longer than the ` +
+      `${windowSec / SECONDS_PER_DAY}-day window itself. A loan this pass ` +
+      `examined without stamping is not reconsidered until the next pass, ` +
+      `so it can now reach its deadline first. This lane needs a larger ` +
+      `allowance or a shorter cadence on this chain.`,
+  );
+}
+
+/**
+ * Record that pass `lap` finished at `now`, for a tick whose window is empty
+ * (#2230). A failure is reported and costs nothing else: the next idle tick
+ * closes it, and a candidate arriving first joins the open pass, as it would
+ * have before the pass was closed.
+ */
+async function closePassRecord(
+  env: Env,
+  chain: { id: number; name: string },
+  lap: number,
+  now: number,
+  budget: TickBudget,
+): Promise<void> {
+  if (budget.remaining < 1) return;
+  budget.remaining -= 1; // D1 is a subrequest
+  try {
+    await env.DB.prepare(COMPLETE_PASS_SQL).bind(chain.id, lap, now).run();
+  } catch (err) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: could not record that pass ` +
+        `${lap} finished with the window empty (${describeFailure(err)}). A ` +
+        `later tick records it; until then a loan entering the window joins ` +
+        `that pass.`,
+    );
+  }
+}
+
+/** Remove a pass record that cannot be read, reporting it (#2230). */
+async function dropPassRecord(
+  env: Env,
+  chain: { id: number; name: string },
+  budget: TickBudget,
+): Promise<void> {
+  console.warn(
+    `[periodicPreNotify] chain=${chain.name}: the chain's pass record could ` +
+      `not be read; it counts as none, so the next pass begins above every ` +
+      `examination mark and looks at every loan again. Removing it.`,
+  );
+  if (budget.remaining < 1) return;
+  budget.remaining -= 1; // D1 is a subrequest
+  try {
+    await env.DB.prepare(DROP_PASS_SQL).bind(chain.id).run();
+  } catch (err) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: could not remove the ` +
+        `unreadable pass record (${describeFailure(err)}).`,
+    );
+  }
+}
+
+/**
+ * The pass record's writes. Exported so a test runs them against SQLite.
+ *
+ * BEGIN: `?1` chain, `?2` pass, `?3` when it began. Run only with the first
+ * marks of the pass it names, in the same batch; it replaces the previous
+ * pass, closed or not, and opens this one.
+ */
+export const BEGIN_PASS_SQL = `INSERT INTO prenotify_pass (chain_id, lap, started_at, completed_at)
+VALUES (?1, ?2, ?3, NULL)
+ON CONFLICT (chain_id) DO UPDATE SET lap = excluded.lap, started_at = excluded.started_at,
+  completed_at = NULL`;
+
+/**
+ * COMPLETE: `?1` chain, `?2` pass, `?3` when it was seen to finish. Run with
+ * the marks of the batch that examines the last of the pass, or alone on a
+ * tick whose window is empty. Names the pass, so it can never close a later
+ * one, and closes it once.
+ */
+export const COMPLETE_PASS_SQL = `UPDATE prenotify_pass SET completed_at = ?3
+ WHERE chain_id = ?1 AND lap = ?2 AND completed_at IS NULL`;
+
+/** DROP: `?1` chain. Only for a record that cannot be read. */
+export const DROP_PASS_SQL = `DELETE FROM prenotify_pass WHERE chain_id = ?1`;
+
+/** The pass record's read: `?1` chain. Batched with the candidate query. */
+export const PRENOTIFY_PASS_SQL = `SELECT lap, started_at, completed_at
+  FROM prenotify_pass WHERE chain_id = ?1`;
 
 /**
  * One rule for every half of a mark: `Number.isSafeInteger` covers whole,
@@ -1523,17 +1677,14 @@ export const MARK_EXAMINED_SQL = `UPDATE loans
 
 /**
  * The candidate query: every active periodic loan on the chain (`?1`), with
- * its examination mark and the chain's pass record on each row (#2230). The
- * record rides along as two scalar subselects, NULL when the chain has none,
- * so reading it costs no request of its own. Exported so a test runs it
- * against SQLite itself.
+ * its examination mark (#2230). Batched with `PRENOTIFY_PASS_SQL`, so the
+ * chain's pass record costs no request of its own. Exported so a test runs
+ * it against SQLite itself.
  */
 export const PRENOTIFY_CANDIDATES_SQL = `SELECT loan_id, chain_id, lender, borrower, start_time,
        periodic_interest_cadence, last_period_settled_at,
        period_pre_notified_at,
-       prenotify_examined_checkpoint, prenotify_examined_lap,
-       (SELECT lap FROM prenotify_pass WHERE chain_id = ?1) AS pass_lap,
-       (SELECT started_at FROM prenotify_pass WHERE chain_id = ?1) AS pass_started_at
+       prenotify_examined_checkpoint, prenotify_examined_lap
   FROM loans
  WHERE chain_id = ?1
    AND status = 'active'
@@ -1541,9 +1692,9 @@ export const PRENOTIFY_CANDIDATES_SQL = `SELECT loan_id, chain_id, lender, borro
    AND last_period_settled_at > 0`;
 
 /**
- * Mark what a batch examined as this pass's (#2230), and, when `beginsAt` is
- * given, record in the same batch that this pass is the chain's pass in
- * progress and began then.
+ * Mark what a batch examined as this pass's (#2230), and record in the same
+ * batch, when given, that this pass began (`beginsAt`) or finished
+ * (`completesAt`).
  *
  * @returns whether the marks landed — the summary depends on it. A failure is
  * REPORTED, because its consequence is the starvation the marks exist to
@@ -1556,21 +1707,27 @@ async function markExamined(
   chain: { id: number; name: string },
   examined: readonly DueLoan[],
   lap: number,
-  beginsAt: number | null,
+  record: { beginsAt: number | null; completesAt: number | null },
   budget: TickBudget,
 ): Promise<boolean> {
   budget.remaining -= 1; // D1 is a subrequest (#2213 r27 `4016129218`)
   const marks = JSON.stringify(examined.map((d) => [d.row.loan_id, d.nextCheckpoint]));
   const mark = env.DB.prepare(MARK_EXAMINED_SQL).bind(lap, chain.id, marks);
   try {
-    if (beginsAt === null) {
+    if (record.beginsAt === null && record.completesAt === null) {
       await mark.run();
     } else {
       // ONE BATCH IS ONE REQUEST, applied whole or not at all: the pass is
-      // recorded exactly when its first marks are.
+      // recorded as begun exactly when its first marks are, and as finished
+      // exactly when its last are.
       await env.DB.batch([
-        env.DB.prepare(BEGIN_PASS_SQL).bind(chain.id, lap, beginsAt),
+        ...(record.beginsAt === null
+          ? []
+          : [env.DB.prepare(BEGIN_PASS_SQL).bind(chain.id, lap, record.beginsAt)]),
         mark,
+        ...(record.completesAt === null
+          ? []
+          : [env.DB.prepare(COMPLETE_PASS_SQL).bind(chain.id, lap, record.completesAt)]),
       ]);
     }
     return true;

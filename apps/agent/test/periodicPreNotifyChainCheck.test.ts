@@ -286,19 +286,26 @@ const marks = new Map<string, { lap: number; checkpoint: number }>();
  * surviving across ticks like the table does. The candidate query returns it
  * on every row, as its two scalar subselects do.
  */
-const passes = new Map<number, { lap: unknown; startedAt: unknown }>();
+const passes = new Map<
+  number,
+  { lap: unknown; startedAt: unknown; completedAt: unknown }
+>();
 /** When set, the mark write fails — the examinations are not recorded. */
 let markThrows = false;
 /** When set, the pass-record write fails — the pass cannot begin. */
 let passThrows = false;
-/** The size of each D1 batch the lane sent, in order. */
-const d1Batches: number[] = [];
+/**
+ * Each D1 batch the lane sent that WRITES, in order, as the kinds of its
+ * statements: `begin`, `mark`, `complete`. The read batch every tick sends
+ * (candidates and the pass record) is not listed.
+ */
+const d1Batches: string[][] = [];
 /**
  * Mark loans examined in a pass, as a pass the lane ran earlier would have,
  * and record that pass as the chain's pass in progress, begun at `startedAt`.
  */
 function markAs(lap: number, ids: number[], startedAt = NOW - 3600) {
-  passes.set(84532, { lap, startedAt });
+  passes.set(84532, { lap, startedAt, completedAt: null });
   for (const id of ids) {
     const settledAt = settledAtOf.get(id);
     if (settledAt === undefined) throw new Error(`no fixture loan ${id}`);
@@ -485,12 +492,9 @@ function env(extra: Record<string, unknown> = {}) {
         const rows = loanRowsByChain?.[chainId] ?? (loanRowsByChain ? [] : loanRows);
         return rows.map((r) => {
           const m = marks.get(`${chainId}:${Number(r.loan_id)}`);
-          const p = passes.get(chainId);
           return {
             prenotify_examined_lap: m?.lap ?? 0,
             prenotify_examined_checkpoint: m?.checkpoint ?? 0,
-            pass_lap: p?.lap ?? null,
-            pass_started_at: p?.startedAt ?? null,
             ...r,
           };
         });
@@ -508,8 +512,24 @@ function env(extra: Record<string, unknown> = {}) {
       // periodicPreNotifyMarks.test.ts; this fake only has to keep the state.
       const isMarkWrite = sql.includes('prenotify_examined_lap = ?1');
       const isPassWrite = sql.includes('INSERT INTO prenotify_pass');
+      const isPassComplete = sql.includes('UPDATE prenotify_pass');
+      const isPassDrop = sql.includes('DELETE FROM prenotify_pass');
+      const isPassRead = sql.includes('FROM prenotify_pass') && sql.trim().startsWith('SELECT');
+      const kind = isPassWrite ? 'begin' : isMarkWrite ? 'mark' : isPassComplete ? 'complete' : 'other';
       const leaf = (params: unknown[]) => ({
-        all: async () => ({ results: rowsFor(params) }),
+        sql,
+        kind,
+        all: async () => {
+          if (isPassRead) {
+            const p = passes.get(Number(params[0]));
+            return {
+              results: p
+                ? [{ lap: p.lap, started_at: p.startedAt, completed_at: p.completedAt }]
+                : [],
+            };
+          }
+          return { results: rowsFor(params) };
+        },
         first: async () => {
           if (isIndexerCursor) {
             const kind = String(params[1] ?? '');
@@ -540,7 +560,20 @@ function env(extra: Record<string, unknown> = {}) {
           if (isPassWrite) {
             if (passThrows) throw new Error('D1_ERROR: pass write failed');
             const [chainId, lap, startedAt] = params as [number, number, number];
-            passes.set(chainId, { lap, startedAt });
+            passes.set(chainId, { lap, startedAt, completedAt: null });
+            record(params);
+            return { meta: { changes: 0 } };
+          }
+          if (isPassComplete) {
+            if (passThrows) throw new Error('D1_ERROR: pass write failed');
+            const [chainId, lap, at] = params as [number, number, number];
+            const p = passes.get(chainId);
+            if (p && p.lap === lap && p.completedAt === null) passes.set(chainId, { ...p, completedAt: at });
+            record(params);
+            return { meta: { changes: 0 } };
+          }
+          if (isPassDrop) {
+            passes.delete(Number(params[0]));
             record(params);
             return { meta: { changes: 0 } };
           }
@@ -558,13 +591,18 @@ function env(extra: Record<string, unknown> = {}) {
     },
     // D1's batch: one request, applied whole or not at all. The fake keeps
     // the all-or-nothing half by restoring the lane's state on a failure.
-    async batch(stmts: { run: () => Promise<unknown> }[]) {
+    async batch(
+      stmts: { sql: string; kind: string; run: () => Promise<unknown>; all: () => Promise<unknown> }[],
+    ) {
       const savedMarks = new Map(marks);
       const savedPasses = new Map(passes);
-      d1Batches.push(stmts.length);
+      const reads = stmts.every((st) => st.sql.trim().startsWith('SELECT'));
+      if (!reads) d1Batches.push(stmts.map((st) => st.kind));
       try {
         const out = [];
-        for (const st of stmts) out.push(await st.run());
+        for (const st of stmts) {
+          out.push(st.sql.trim().startsWith('SELECT') ? await st.all() : await st.run());
+        }
         return out;
       } catch (err) {
         marks.clear();
@@ -1656,7 +1694,7 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // neither failure: here pass 4 began four days ago and none of the loans
     // now in the window carries its mark.
     loanRows = tenLoans();
-    passes.set(84532, { lap: 4, startedAt: NOW - 4 * DAY });
+    passes.set(84532, { lap: 4, startedAt: NOW - 4 * DAY, completedAt: null });
     const { said, stamped } = await run();
     expect(said).toContain('pass 4 over the notification window began 96h ago');
     expect(said).not.toContain('pass 5');
@@ -1664,7 +1702,8 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(stamped).toEqual(Array.from({ length: LOANS_PER_TICK }, (_, k) => 100 - k));
     expect(marks.get('84532:100')?.lap).toBe(4);
     // And its record is not rewritten: it began when it began.
-    expect(passes.get(84532)).toEqual({ lap: 4, startedAt: NOW - 4 * DAY });
+    expect(passes.get(84532)).toEqual({ lap: 4, startedAt: NOW - 4 * DAY, completedAt: null });
+    // Its marks went out alone: nothing begun, nothing closed.
     expect(d1Batches).toEqual([]);
   });
 
@@ -1683,7 +1722,7 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // not at all, so no mark names a pass the record does not.
     loanRows = tenLoans();
     await run();
-    expect(d1Batches).toEqual([2]);
+    expect(d1Batches).toEqual([['begin', 'mark']]);
     const record = passes.get(84532);
     expect(record?.lap).toBe(1);
     expect(Math.abs(Number(record?.startedAt) - NOW)).toBeLessThan(600);
@@ -1709,11 +1748,70 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // above every mark in the window, so no old mark can count in it.
     loanRows = tenLoans();
     markAs(6, [100, 99]);
-    passes.set(84532, { lap: 'six', startedAt: NOW - 3600 });
-    const { stamped } = await run();
+    passes.set(84532, { lap: 'six', startedAt: NOW - 3600, completedAt: null });
+    const { stamped, said } = await run();
     expect(stamped[0]).toBe(100);
+    // Said, not silent: the repeat it causes has a reason an operator can see.
+    expect(said).toContain("the chain's pass record could not be read");
     expect(passes.get(84532)?.lap).toBe(7);
     expect(marks.get('84532:100')?.lap).toBe(7);
+  });
+
+  it('closes a pass in the write that examines the last of it', async () => {
+    // Codex #2845 r2. On a quiet chain one tick can examine every candidate.
+    // Its last batch closes the pass, in the same write as its marks, so a
+    // loan arriving later begins the next pass.
+    loanRows = [dueLoan];
+    const { stamped } = await run();
+    expect(stamped).toEqual([7]);
+    expect(d1Batches).toEqual([['begin', 'mark', 'complete']]);
+    expect(passes.get(84532)?.lap).toBe(1);
+    expect(passes.get(84532)?.completedAt).not.toBeNull();
+  });
+
+  it('begins a new pass for a loan arriving after the last one finished, with no backlog reported', async () => {
+    // THE DEFECT r2 FOUND: the finished pass stayed open, so a loan arriving
+    // days later joined it and its age read as a pass that had run longer
+    // than the window, with advice to add allowance the lane did not need.
+    loanRows = [dueLoan];
+    passes.set(84532, { lap: 1, startedAt: NOW - 4 * DAY, completedAt: NOW - 4 * DAY + 60 });
+    const { said, stamped } = await run();
+    expect(stamped).toEqual([7]);
+    expect(said).not.toContain('longer than the');
+    expect(passes.get(84532)?.lap).toBe(2);
+  });
+
+  it('closes the pass in progress when it finds the window empty', async () => {
+    // Nothing in the window is left unexamined, which is what finishing a
+    // pass means, so the record says so once; the next idle tick writes
+    // nothing.
+    loanRows = [];
+    passes.set(84532, { lap: 3, startedAt: NOW - 3600, completedAt: null });
+    const first = await run();
+    expect(passes.get(84532)?.completedAt).not.toBeNull();
+    expect(first.said).not.toContain('longer than the');
+    const writesBefore = d1Batches.length;
+    await run();
+    expect(passes.get(84532)?.lap).toBe(3);
+    expect(d1Batches.length).toBe(writesBefore);
+  });
+
+  it('reports a pass that ran over when the window empties under it', async () => {
+    // Its unexamined loans left the window without being examined. If that
+    // took longer than the window, it is the provisioning fact the warning
+    // states, and the tick that closes the pass is the last chance to say it.
+    loanRows = [];
+    passes.set(84532, { lap: 3, startedAt: NOW - 4 * DAY, completedAt: null });
+    const { said } = await run();
+    expect(said).toContain('pass 3 over the notification window began 96h ago');
+  });
+
+  it('reports and removes an unreadable pass record when the window is empty', async () => {
+    loanRows = [];
+    passes.set(84532, { lap: -1, startedAt: NOW, completedAt: null });
+    const { said } = await run();
+    expect(said).toContain("the chain's pass record could not be read");
+    expect(passes.has(84532)).toBe(false);
   });
 
   it('says nothing about pass length while a pass fits inside the window', async () => {

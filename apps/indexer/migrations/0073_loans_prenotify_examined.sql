@@ -20,13 +20,23 @@
 --                                   was for. A mark for any other period than
 --                                   the one now due counts as no mark.
 --
--- And it records, per chain, the pass in progress and when it began
--- (`prenotify_pass`). The record, not the marks, dates a pass: a marked loan
--- leaves the window once its deadline passes, so a start read from the marks
--- still in the window keeps moving forward, and a pass running longer than the
--- window could never be seen to. The row changes only when a pass begins,
--- which is also the only moment the lane writes it, before it marks anything
--- under the new number.
+-- And it records, per chain, the latest pass (`prenotify_pass`):
+--
+--   lap          — its number.
+--   started_at   — unix seconds when it began. The record, not the marks,
+--                  dates a pass: a marked loan leaves the window once its
+--                  deadline passes, so a start read from the marks still in
+--                  the window keeps moving forward, and a pass running longer
+--                  than the window could never be seen to.
+--   completed_at — unix seconds when it was seen to finish (nothing left
+--                  unexamined in the window); NULL while it is in progress. A
+--                  loan arriving after that begins the next pass rather than
+--                  joining one that ended days before.
+--
+-- The row is written in the same batch as the marks that begin or finish the
+-- pass, so no mark names a pass the record does not, and alone only when a
+-- tick finds the window empty. STRICT, as `prenotify_scan_cursor` is, so a
+-- figure that is not a whole number cannot be stored in it.
 --
 -- These belong to apps/agent's pre-notify lane, beside
 -- `period_pre_notified_at` (migration 0007), its reminder stamp. They live in
@@ -45,7 +55,8 @@ ALTER TABLE loans ADD COLUMN prenotify_examined_lap INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE loans ADD COLUMN prenotify_examined_checkpoint INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS prenotify_pass (
-  chain_id   INTEGER PRIMARY KEY,
-  lap        INTEGER NOT NULL,
-  started_at INTEGER NOT NULL
-);
+  chain_id     INTEGER PRIMARY KEY,
+  lap          INTEGER NOT NULL,
+  started_at   INTEGER NOT NULL,
+  completed_at INTEGER
+) STRICT;
