@@ -32,6 +32,35 @@ export interface NotificationFeeConsent {
   /** The contract's own answer: would a bill at the current fee pass the
    *  consent check (the loan must still be active as well). */
   coversCurrentFee: boolean;
+  /** The block all three figures were read at, so a later write can tell
+   *  whether this read already includes it. */
+  atBlock: bigint;
+}
+
+/** A consent write this card saw mined: the cap it recorded, and where. */
+export interface MinedConsentWrite {
+  capVpfi: bigint;
+  block: bigint;
+}
+
+/**
+ * The record the card shows: the chain's read, unless this card's own mined
+ * write is newer than that read, in which case the write's cap stands (a
+ * lagging RPC must not make the click look undone) and coverage is the
+ * contract's rule — a non-zero cap at or above the fee — applied to the fee
+ * as last read. The fee itself, and whether that read is current, always
+ * stay the read's: a write establishes the cap, nothing else.
+ */
+export function effectiveConsent(
+  read: NotificationFeeConsent,
+  written: MinedConsentWrite | null,
+): NotificationFeeConsent {
+  if (!written || read.atBlock >= written.block) return read;
+  return {
+    ...read,
+    capVpfi: written.capVpfi,
+    coversCurrentFee: written.capVpfi !== 0n && read.feeVpfi <= written.capVpfi,
+  };
 }
 
 export function notificationFeeConsentKey(chainId: number, address: string | undefined) {
@@ -49,26 +78,34 @@ export function useNotificationFeeConsent() {
   return useQuery({
     queryKey: notificationFeeConsentKey(readChain.chainId, address),
     enabled: Boolean(publicClient) && Boolean(address),
-    // Own-wallet state, patched from the mined write; the net reconciles a
-    // fee retune by governance.
+    // Own-wallet state. The cache is only ever written by this read, never
+    // patched from a write, so its error state stays the truth about whether
+    // the figures are current; the card overlays its own mined write with
+    // `effectiveConsent` instead. The poll reconciles a fee retune.
     refetchInterval: signalAware(60_000),
     queryFn: async (): Promise<NotificationFeeConsent> => {
       if (!publicClient || !address) throw new Error('unreachable');
       const diamond = readChain.diamondAddress;
+      // Both views at ONE block, so the fee, the cap and the contract's
+      // coverage answer describe the same state, and the block says whether
+      // a write the card saw mined is already in it.
+      const atBlock = await publicClient.getBlockNumber();
       const [config, consent] = await Promise.all([
         publicClient.readContract({
           address: diamond,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'getNotificationFeeConfig',
+          blockNumber: atBlock,
         }) as Promise<readonly [bigint, bigint]>,
         publicClient.readContract({
           address: diamond,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'getNotificationFeeConsent',
           args: [address],
+          blockNumber: atBlock,
         }) as Promise<readonly [bigint, boolean]>,
       ]);
-      return { feeVpfi: config[0], capVpfi: consent[0], coversCurrentFee: consent[1] };
+      return { feeVpfi: config[0], capVpfi: consent[0], coversCurrentFee: consent[1], atBlock };
     },
   });
 }

@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  effectiveConsent,
   paidPushBilledOn,
   paidPushConsentScope,
   paidPushConsentView,
@@ -23,6 +24,7 @@ const consent = (capVpfi: bigint, coversCurrentFee: boolean): NotificationFeeCon
   feeVpfi: FEE,
   capVpfi,
   coversCurrentFee,
+  atBlock: 100n,
 });
 const view = (
   billing: PushBillingState | undefined,
@@ -30,6 +32,29 @@ const view = (
   freeVpfi: bigint | undefined = 10n ** 18n,
   stale = false,
 ) => paidPushConsentView({ billing, chainId: BASE_SEPOLIA, consent: c, freeVpfi, stale });
+
+describe('effectiveConsent', () => {
+  it('is the read when no write was seen, or the read already includes it', () => {
+    const read = consent(FEE, true);
+    expect(effectiveConsent(read, null)).toBe(read);
+    expect(effectiveConsent(read, { capVpfi: 0n, block: 100n })).toBe(read);
+    expect(effectiveConsent(read, { capVpfi: 0n, block: 99n })).toBe(read);
+  });
+
+  it('shows a newer mined write’s cap, and keeps the read’s fee', () => {
+    const read = consent(FEE, true);
+    expect(effectiveConsent(read, { capVpfi: 0n, block: 101n })).toEqual({
+      feeVpfi: FEE,
+      capVpfi: 0n,
+      coversCurrentFee: false,
+      atBlock: 100n,
+    });
+    const agreed = effectiveConsent(consent(0n, false), { capVpfi: FEE, block: 101n });
+    expect(agreed.capVpfi).toBe(FEE);
+    expect(agreed.coversCurrentFee).toBe(true);
+    expect(effectiveConsent(consent(0n, false), { capVpfi: FEE - 1n, block: 101n }).coversCurrentFee).toBe(false);
+  });
+});
 
 describe('paidPushConsentScope', () => {
   it('is one wallet on one network, case-insensitive on the address', () => {

@@ -38,11 +38,12 @@ import { copy } from '../content/copy';
 import { useDiamondWrite } from '../contracts/diamond';
 import type { PushBillingState } from '../data/alerts';
 import {
+  effectiveConsent,
   notificationFeeConsentKey,
   paidPushConsentScope,
   paidPushConsentView,
   useNotificationFeeConsent,
-  type NotificationFeeConsent,
+  type MinedConsentWrite,
 } from '../data/notificationFee';
 import { useVpfi, VPFI_DECIMALS } from '../data/vpfi';
 import { captureTxError } from '../lib/errors';
@@ -68,6 +69,9 @@ function PaidPushConsentFor({ billing }: PaidPushConsentProps) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // This card's last mined write. Scoped with the card to one wallet on one
+  // network, so it can never stand in another wallet's record.
+  const [written, setWritten] = useState<MinedConsentWrite | null>(null);
 
   const chainId = readChain.chainId;
   const chainName = chainDisplayName(chainId) ?? String(chainId);
@@ -82,19 +86,14 @@ function PaidPushConsentFor({ billing }: PaidPushConsentProps) {
     setError(null);
     setNotice(null);
     try {
-      await write('setNotificationFeeConsent', [next]);
-      // The write is MINED, so `next` is the chain's record now. Patch the
-      // cache rather than refetching at once: a lagging public RPC would
-      // serve the old record and make the click look like it did nothing.
-      // `coversCurrentFee` is the contract's own rule (a non-zero cap at or
-      // above the fee); the periodic read reconciles it with the chain.
-      queryClient.setQueryData(
-        notificationFeeConsentKey(forChain, address),
-        (old: NotificationFeeConsent | undefined) =>
-          old
-            ? { ...old, capVpfi: next, coversCurrentFee: next !== 0n && old.feeVpfi <= next }
-            : old,
-      );
+      const { receipt } = await write('setNotificationFeeConsent', [next]);
+      // The write is MINED, so `next` is the chain's record from its block
+      // on. It is held beside the read rather than patched into it: a patch
+      // would mark the cached fee as freshly read when only the cap was
+      // established. A refetch is asked for; until a read at or after this
+      // block arrives, the card shows this cap over the last read.
+      setWritten({ capVpfi: next, block: receipt.blockNumber });
+      void queryClient.invalidateQueries({ queryKey: notificationFeeConsentKey(forChain, address) });
       setNotice(
         next === 0n ? copy.alerts.paidWithdrawn(forName) : copy.alerts.paidAgreed(vpfi(next), forName),
       );
@@ -118,7 +117,7 @@ function PaidPushConsentFor({ billing }: PaidPushConsentProps) {
       </p>
     ) : null;
   } else {
-    const consent = consentQuery.data;
+    const consent = effectiveConsent(consentQuery.data, written);
     const stale = consentQuery.isError;
     // The free balance is only compared while its own read is current.
     const snapshot = vpfiSnapshot.isError ? undefined : vpfiSnapshot.data;

@@ -2690,7 +2690,9 @@ is the borrower's own money.
   never as zero. When a later refresh fails, the figures last read stay on
   screen labelled as the last successful read that may be out of date, never
   as the network's current record; agreeing is held until a read succeeds,
-  and withdrawing stays offered.
+  and withdrawing stays offered. A mined agreement or withdrawal is shown as
+  the recorded cap straight away, but it establishes only the cap: it never
+  marks the fee, or the rest of a failed read, as current.
 - Whether paid Push is billed on a network is the alert service's own answer,
   never inferred from the fee being configured. Agreeing to pay is offered
   only on a network the service says it bills on, and at the current fee;
