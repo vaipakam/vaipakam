@@ -8,7 +8,6 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
-import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
@@ -40,7 +39,7 @@ import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
  *      although slice-2 producers left it in the vault; this code refuses a Diamond-held
  *      row by name (`FallbackCustodyNotVaultHeld`).
  */
-contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
+contract AddCollateralFacet is DiamondReentrancyGuard, IVaipakamErrors {
     // ─── Events ───────────────────────────────────────────────────────────────
 
     /// @notice Emitted when a FallbackPending loan is cured by a collateral
@@ -94,13 +93,17 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
      *      Does not enforce a minimum HF check (adding collateral always improves position).
      *      Reverts if loan is not active, caller is not the borrower-NFT owner,
      *      amount is zero, or collateral is illiquid.
+     *      Open during a global pause (#668 / #935, owner decision D2): a
+     *      borrower can always lower their risk, so this route carries no
+     *      `whenNotPaused`. Per-asset pause rules, the reentrancy guard and
+     *      the sanctions rule still apply.
      * @param loanId The ID of the active loan to top up.
      * @param amount The additional collateral amount (in the collateral asset's native decimals).
      */
     function addCollateral(
         uint256 loanId,
         uint256 amount
-    ) external nonReentrant whenNotPaused {
+    ) external nonReentrant {
         // T-090 v1.1 (#389) §5.8 — top-ups mutate
         // `loan.collateralAmount` mid-auction; the v1.1 commit's
         // `custodialCollateral` / makerAmount would drift from the

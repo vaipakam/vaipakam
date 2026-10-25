@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -21,7 +22,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
-import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
@@ -55,9 +55,11 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *      For ERC-20 loans the settlement math is computed atomically by
  *      {LibSettlement.computeRepayment}.
  *
- *      Grace-period enforcement: repay is allowed up to `endTime +
- *      gracePeriod(durationDays)`; after that, {DefaultedFacet} is the
- *      only resolution path.
+ *      Grace-period enforcement: repay is allowed up to the loan's
+ *      effective grace end ({LibLoanClock.graceEnd}: maturity plus
+ *      `gracePeriod(durationDays)`, both moved by any global pause since
+ *      the loan started); after that, {DefaultedFacet} is the only
+ *      resolution path.
  *
  *      FallbackPending cure: {repayLoan} accepts the FallbackPending
  *      status and transitions to Repaid. #1566 slice 2 — the fallback
@@ -72,7 +74,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *      cured row out of the Diamond's own balance although slice-2 producers
  *      left it in the vault.
  */
-contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
+contract RepayFacet is DiamondReentrancyGuard, IVaipakamErrors {
     using SafeERC20 for IERC20;
 
     /// @notice Emitted when a loan is successfully repaid.
@@ -220,9 +222,14 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
      *      {LenderCannotRepayOwnLoan} in that case. Collateral claim rights
      *      remain tied to the borrower's Vaipakam NFT.
      *      Emits LoanRepaid.
+     *      Open during a global pause (#668 / #935, owner decision D2):
+     *      a borrower can always lower their risk, so this route carries no
+     *      `whenNotPaused`. Per-asset pause rules, the reentrancy guard and
+     *      the sanctions rule still apply, and the grace deadline it checks
+     *      is the effective one ({LibLoanClock}), which the pause extends.
      * @param loanId The loan ID to repay.
      */
-    function repayLoan(uint256 loanId) external nonReentrant whenNotPaused {
+    function repayLoan(uint256 loanId) external nonReentrant {
         // T-090 v1.1 (#389) §5.8 — block voluntary close while an
         // intent-based swap-to-repay commit is live: its lot is promised
         // to a live LOP order that may still fill, so closing the loan
@@ -291,9 +298,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             ) revert LenderCannotRepayOwnLoan();
         }
 
-        uint256 endTime = loan.startTime +
-            loan.durationDays *
-            LibVaipakam.ONE_DAY;
+        uint256 endTime = LibLoanClock.maturity(loan);
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
         // #1000 (S2) — the grace gate blocks an ORDINARY (Active) repayment past
         // graceEnd (that loan must go through DefaultedFacet). But a
@@ -307,7 +312,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         }
 
         uint256 interest; // Or rental fee
-        uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
+        uint256 lateFee = LibVaipakam.calculateLateFee(loanId);
 
         // #569 Codex #572 round-4 P2 — the collateral-lien release is NO
         // LONGER done here. On the ERC20-loan path the borrower's
@@ -490,7 +495,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // buffer bps), NOT the one-day `loan.principal` base that the shared
             // `calculateLateFee` (computed at the top of this fn for the ERC-20
             // path) uses. Override it here for the rental branch.
-            lateFee = LibVaipakam.calculateRentalLateFee(loanId, endTime);
+            lateFee = LibVaipakam.calculateRentalLateFee(loanId);
 
             // The late fee is funded from the pre-funded 5% `bufferAmount`
             // (swept at resolution), not from `prepayAmount`. A full-term late
@@ -701,13 +706,18 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
      *      Checks post-HF >= min. Reverts if insufficient or past grace.
      *      Emits PartialRepaid.
      *      Callable only by borrower.
+     *      Open during a global pause (#668 / #935, owner decision D2):
+     *      a borrower can always lower their risk, so this route carries no
+     *      `whenNotPaused`. Per-asset pause rules, the reentrancy guard and
+     *      the sanctions rule still apply, and the grace deadline it checks
+     *      is the effective one ({LibLoanClock}), which the pause extends.
      * @param loanId The loan ID.
      * @param partialAmount The partial principal (ERC20) or days (NFT) to repay.
      */
     function repayPartial(
         uint256 loanId,
         uint256 partialAmount
-    ) external nonReentrant whenNotPaused {
+    ) external nonReentrant {
         // T-090 v1.1 (#389) §5.8 — partial repay still pulls from
         // `loan.borrower`'s vault; block while a v1.1 commit is live.
         LibVaipakam.assertNoLiveIntentCommit(loanId);
@@ -747,9 +757,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             if (partialAmount < minPartial) revert InsufficientPartialAmount();
         }
 
-        uint256 endTime = loan.startTime +
-            loan.durationDays *
-            LibVaipakam.ONE_DAY;
+        uint256 endTime = LibLoanClock.maturity(loan);
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
@@ -1064,10 +1072,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             }
 
             // Update renter expires. With `durationDays` immutable this is the
-            // FIXED origination maturity (no longer shrinks) — the #893 join.
-            uint64 newExpires = uint64(
-                loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY
-            );
+            // origination maturity (no longer shrinks) — the #893 join — plus
+            // any pause credit ({LibLoanClock}, #668 / #935).
+            uint64 newExpires = uint64(LibLoanClock.maturity(loan));
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultSetRentalUser.selector,
@@ -1141,9 +1148,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             loan.status != LibVaipakam.LoanStatus.FallbackPending
         ) return 0;
 
-        uint256 endTime = loan.startTime +
-            loan.durationDays *
-            LibVaipakam.ONE_DAY;
+        uint256 endTime = LibLoanClock.maturity(loan);
 
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
             // #408 / #410 / #413 (2026-06-12) — route through the
@@ -1173,8 +1178,8 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 lateFee = 0;
         if (block.timestamp > endTime) {
             lateFee = loan.assetType == LibVaipakam.AssetType.ERC20
-                ? LibVaipakam.calculateLateFee(loanId, endTime)
-                : LibVaipakam.calculateRentalLateFee(loanId, endTime);
+                ? LibVaipakam.calculateLateFee(loanId)
+                : LibVaipakam.calculateRentalLateFee(loanId);
         }
 
         totalDue += lateFee;

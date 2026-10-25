@@ -30,7 +30,9 @@ import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 /**
  * @title PauseGatingTest
  * @notice Asserts that every loan-mutating external entry point reverts
- *         `LibPausable.EnforcedPause` when the diamond is paused.
+ *         `LibPausable.EnforcedPause` when the diamond is paused, except
+ *         repay and add-collateral, which owner decision D2 (#668 / #935)
+ *         keeps open so a borrower can always lower their risk.
  * @dev Regression guard: if a future facet adds a mutating external without
  *      the `whenNotPaused` modifier, one of these tests will fail. The pause
  *      modifier fires before any role / validation / downstream logic, so we
@@ -95,14 +97,18 @@ contract PauseGatingTest is SetupTest {
 
     // ── RepayFacet ──────────────────────────────────────────────────────────
 
-    function test_pause_repayLoan() public {
-        vm.expectRevert(LibPausable.EnforcedPause.selector);
-        RepayFacet(address(diamond)).repayLoan(0);
+    // #668 / #935 (owner decision D2) — repay stays OPEN under a global
+    // pause, so a borrower can always lower their risk. The zero-arg call
+    // still reverts (there is no loan 0), but on its own validation, never
+    // on the pause. The end-to-end repay under a pause is proven in
+    // GlobalPauseLoanClockTest.
+
+    function test_pause_repayLoan_staysOpen() public {
+        _assertNotPauseGated(abi.encodeCall(RepayFacet.repayLoan, (0)));
     }
 
-    function test_pause_repayPartial() public {
-        vm.expectRevert(LibPausable.EnforcedPause.selector);
-        RepayFacet(address(diamond)).repayPartial(0, 0);
+    function test_pause_repayPartial_staysOpen() public {
+        _assertNotPauseGated(abi.encodeCall(RepayFacet.repayPartial, (0, 0)));
     }
 
     function test_pause_autoDeductDaily() public {
@@ -167,9 +173,18 @@ contract PauseGatingTest is SetupTest {
 
     // ── AddCollateralFacet ──────────────────────────────────────────────────
 
-    function test_pause_addCollateral() public {
-        vm.expectRevert(LibPausable.EnforcedPause.selector);
-        AddCollateralFacet(address(diamond)).addCollateral(0, 0);
+    /// @dev #668 / #935 (owner decision D2) — open under a global pause.
+    function test_pause_addCollateral_staysOpen() public {
+        _assertNotPauseGated(abi.encodeCall(AddCollateralFacet.addCollateral, (0, 0)));
+    }
+
+    /// @dev The call reverts (zero args name no loan) but NOT with
+    ///      `EnforcedPause`: the global pause does not gate it.
+    function _assertNotPauseGated(bytes memory data) internal {
+        (bool ok, bytes memory ret) = address(diamond).call(data);
+        assertFalse(ok, "zero-arg call reverts on its own validation");
+        assertTrue(ret.length >= 4, "reverts with a selector");
+        assertTrue(bytes4(ret) != LibPausable.EnforcedPause.selector, "not gated by the global pause");
     }
 
     // ── ClaimFacet ──────────────────────────────────────────────────────────

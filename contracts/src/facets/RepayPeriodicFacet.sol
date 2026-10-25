@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
@@ -246,11 +247,12 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         }
 
         // Update renter expires. #893 join: with `durationDays` now immutable
-        // this is the FIXED origination maturity, so the renter holds the NFT
-        // for the full agreed term instead of an earlier-shrinking expiry.
-        uint64 newExpires = uint64(
-            loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY
-        );
+        // this is the origination maturity, so the renter holds the NFT for
+        // the full agreed term instead of an earlier-shrinking expiry. It is
+        // the EFFECTIVE maturity ({LibLoanClock}), so the first deduction
+        // after a pause carries the pause credit onto the renter's expiry
+        // (#668 / #935).
+        uint64 newExpires = uint64(LibLoanClock.maturity(loan));
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultSetRentalUser.selector,

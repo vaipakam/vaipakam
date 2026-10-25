@@ -263,6 +263,21 @@ runs half of it on old code:
   operator's manual pause, already in force
   (`PerRentalRowsCrossingNeedsManualPause` otherwise).
 
+- **Every facet that reads a loan deadline (#668 / #935, owner decision
+  D2).** A loan's due date and grace end are read only through
+  `LibLoanClock`, which adds the paused time since the loan started (from the
+  pause-interval log in `LibPausable`). The readers are the repay, default,
+  liquidation, preclose, refinance, early-withdrawal, swap-to-repay, prepay
+  listing, auto-lifecycle and offer facets, and every library that prices a
+  late fee; find them again with a grep for `LibLoanClock`, not from this
+  list. A subset refreshed alone would run some paths on the old clock, so a
+  loan could be defaultable on one facet while repayable without a late fee
+  on another (a silent divergence, not a revert). Cross it by fresh deploy or
+  `RefreshAllFacetsInPlace`; `RedeployFacets` and `ReplaceStaleFacets` refuse
+  a Diamond that does not already route `LoanFacet.getLoanDeadlines`
+  (`PredatesLoanClock`). Never compute `startTime + durationDays * 1 days` as
+  a deadline in new code; read `LibLoanClock`.
+
 How the #1566 slices reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place
 across this boundary and no pre-slice row is migrated; slices 2–3 make a

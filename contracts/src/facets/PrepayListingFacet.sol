@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -137,7 +138,7 @@ contract PrepayListingFacet is
         // Grace boundary = startTime + durationDays + gracePeriod(durationDays).
         // The duration-tiered grace bucket is governance-tunable via
         // `ConfigFacet.setGraceBuckets`; we honor the live config.
-        uint256 endTime = uint256(loan.startTime) + (loan.durationDays * 1 days);
+        uint256 endTime = LibLoanClock.maturity(loan);
         ctx.graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
 
         // Current position-NFT holders. Reads the diamond's own NFT
@@ -461,9 +462,7 @@ contract PrepayListingFacet is
         // valid terminal is default → NFT to lender; routing through
         // the split path would let a borrower's stale-priced listing
         // pre-empt a default that's already overdue.
-        uint256 graceEnd = uint256(loan.startTime)
-            + (uint256(loan.durationDays) * 1 days)
-            + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = LibLoanClock.graceEnd(loan);
         if (block.timestamp > graceEnd) {
             revert ParallelSaleFillPastGrace(offerId, block.timestamp, graceEnd);
         }

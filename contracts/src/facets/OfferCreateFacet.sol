@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {IRateModel} from "../interfaces/IRateModel.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -923,9 +924,7 @@ contract OfferCreateFacet is
             {
                 LibVaipakam.Loan storage tgt =
                     s.loans[params.refinanceTargetLoanId];
-                uint256 tgtGraceEnd = uint256(tgt.startTime) +
-                    uint256(tgt.durationDays) * LibVaipakam.ONE_DAY +
-                    LibVaipakam.gracePeriod(tgt.durationDays);
+                uint256 tgtGraceEnd = LibLoanClock.graceEnd(tgt);
                 // Deadline is EXCLUSIVE: `LibVaipakam.isOfferExpired` treats
                 // `now >= expiresAt` as expired, while the grace boundary itself
                 // (`now == graceEnd`) is still fillable (validate rejects only

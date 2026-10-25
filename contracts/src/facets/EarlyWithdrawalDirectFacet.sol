@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
@@ -597,8 +598,7 @@ contract EarlyWithdrawalDirectFacet is
             // authored is the better position and stays sellable. Measured off
             // the maturity TIMESTAMP, not floored whole days, so a fill cannot
             // slip up to ~24h past the buyer's authored window.
-            uint256 maturity =
-                uint256(loan.startTime) + uint256(loan.durationDays) * 1 days;
+            uint256 maturity = LibLoanClock.maturity(loan);
             // #1923 (Codex #1929 r1 P1) — refuse a sale at or past maturity.
             // The one-directional check below floors remaining exposure at 0, so
             // without this an overdue-but-still-Active loan (throughout grace, or
@@ -1076,7 +1076,7 @@ contract EarlyWithdrawalDirectFacet is
             loan.lenderTokenId,
             loan.interestRateBps,
             loan.durationDays,
-            uint64(loan.startTime + loan.durationDays * 1 days)
+            uint64(LibLoanClock.maturity(loan))
         );
     }
 

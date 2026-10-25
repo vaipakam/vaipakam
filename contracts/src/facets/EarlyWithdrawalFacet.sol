@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -565,8 +566,7 @@ contract EarlyWithdrawalFacet is
             listingSeconds < LibVaipakam.MIN_SALE_LISTING_SECONDS ||
             listingSeconds > LibVaipakam.MAX_SALE_LISTING_SECONDS
         ) revert SaleListingWindowInvalid();
-        uint256 maturity = uint256(loan.startTime) +
-            uint256(loan.durationDays) * 1 days;
+        uint256 maturity = LibLoanClock.maturity(loan);
         uint256 requested = block.timestamp + uint256(listingSeconds);
         uint256 bounded = requested < maturity ? requested : maturity;
         if (bounded < block.timestamp + LibVaipakam.MIN_SALE_LISTING_SECONDS)
