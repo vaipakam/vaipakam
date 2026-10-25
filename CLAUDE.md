@@ -143,7 +143,7 @@ runs half of it on old code:
   fresh deploy.
 
 - **SwapAttemptFacet + every facet that sells through the swap failover
-  (#2472).** RiskFacet, DefaultedFacet, RepayPeriodicFacet, TreasuryFacet,
+  (#2472).** RiskFacet, DefaultedFacet, ForcedSaleFacet, TreasuryFacet,
   SwapToRepayFacet, SwapToRepayPartialFacet and FallbackCustodyFacet run each
   adapter attempt through a self-call to `swapAttempt`, so an attempt that sells
   less than it was offered (or delivers less than it reported) unwinds alone and
@@ -165,7 +165,7 @@ runs half of it on old code:
   directly or through an inlined library: AutoLifecycleFacet, ClaimFacet,
   DefaultedFacet, EarlyWithdrawalFacet, EarlyWithdrawalDirectFacet,
   IntentDispatchFacet (the intent settlement), OfferAcceptFeeFacet,
-  PrecloseFacet, PrepayListingFacet, RefinanceFacet, RepayFacet,
+  ForcedSaleFacet, PrecloseFacet, PrepayListingFacet, RefinanceFacet, RepayFacet,
   RepayPeriodicFacet, RiskFacet, RiskMatchLiquidationFacet and
   RiskSplitLiquidationFacet (the VPFI LIF settle or forfeit), SwapToRepayFacet
   and SwapToRepayPartialFacet. Find it again with a grep for those three
@@ -177,6 +177,19 @@ runs half of it on old code:
   returns to the treasury are measured in `BackstopVaultImplementation`, its
   own UUPS contract: they reach a chain only through `upgradeBackstopVault`,
   not through any facet refresh.
+
+- **ForcedSaleFacet + every facet that sells through it (#2795).** The
+  periodic-interest settlement (RepayPeriodicFacet) reads the sale plan
+  (`previewForcedSale`) and settles the sale (`settlePeriodicSale`) by
+  self-call. The extra a sale holds for the borrower follows the borrower
+  position: consolidation moves it (every facet inlining `LibConsolidation`)
+  and an obligation handover pays it to the exiting holder (PrecloseFacet,
+  through `EncumbranceMutateFacet.payHeldBorrowerExtra`). RepayPeriodicFacet
+  refreshed without the host reverts `FunctionDoesNotExist` on every periodic
+  settlement that sells (a hard revert, never the old waterfall).
+  `RefreshAllFacetsInPlace` and `RedeployFacets` both carry the host. The
+  Health-Factor routes and the time-based default join this family when they
+  move onto the host (#2796).
 
 - **VaultFactoryFacet + every facet that withdraws from a vault (#2440).**
   `vaultWithdrawERC20` now returns what the recipient received, and every

@@ -27,6 +27,7 @@ import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
+import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -237,7 +238,7 @@ contract RedeployFacets is Script {
         // from before vault-held fallback custody never reaches this point:
         // `runWith` refuses it first (`_requireVaultHeldFallbackCustody`).
         FallbackCustodyFacet fallbackCustodyFacet = FallbackCustodyFacet(ArtifactDeploy.deploy(type(FallbackCustodyFacet).name));
-        // #2472 - the swap-attempt host. Risk, Defaulted, RepayPeriodic and
+        // #2472 - the swap-attempt host. Risk, Defaulted, ForcedSale and
         // FallbackCustody run every failover attempt by self-calling it, so it
         // rides the same cut as those callers. On a pre-#2472 Diamond its one
         // selector is unrouted and partitions to an Add below.
@@ -263,6 +264,12 @@ contract RedeployFacets is Script {
         // on that old code. Already-routed selectors partition to a Replace
         // that moves them here; unrouted ones to an Add.
         NotificationFeeFacet notificationFeeFacet = NotificationFeeFacet(ArtifactDeploy.deploy(type(NotificationFeeFacet).name));
+        // #2795 - the forced-sale host. RepayPeriodicFacet reads the sale plan
+        // and settles every periodic sale by self-calling it, so it rides the
+        // same cut: refreshing RepayPeriodicFacet alone would revert
+        // `FunctionDoesNotExist` on every periodic settlement that sells. On a
+        // pre-#2795 Diamond its selectors are unrouted and partition to an Add.
+        ForcedSaleFacet forcedSaleFacet = ForcedSaleFacet(ArtifactDeploy.deploy(type(ForcedSaleFacet).name));
 
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("RiskSplitLiquidation: ", address(riskSplitLiquidationFacet));
@@ -285,6 +292,7 @@ contract RedeployFacets is Script {
         console.log("TreasuryFeeFacet:     ", address(treasuryFeeFacet));
         console.log("NumeraireValueFacet:  ", address(numeraireValueFacet));
         console.log("NotificationFeeFacet: ", address(notificationFeeFacet));
+        console.log("ForcedSaleFacet:      ", address(forcedSaleFacet));
 
         // #394 (Codex #647 rounds 5+7) — the runtime HF-floor knob selectors
         // need an Add on a PRE-#394 diamond (not yet routed → Replace reverts on
@@ -425,6 +433,9 @@ contract RedeployFacets is Script {
         // #2769 - the paid-notification fee host, from the one list the deploy cuts.
         (bytes4[] memory nfToAdd, bytes4[] memory nfToReplace) =
             _partitionByRouting(diamond, FacetSelectors.notificationFee());
+        // #2795 - the forced-sale host, from the one list the deploy cuts.
+        (bytes4[] memory fsToAdd, bytes4[] memory fsToReplace) =
+            _partitionByRouting(diamond, FacetSelectors.forcedSale());
 
         uint256 nExtra =
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
@@ -447,7 +458,8 @@ contract RedeployFacets is Script {
             (saToAdd.length > 0 ? 1 : 0) + (saToReplace.length > 0 ? 1 : 0) +
             (tfToAdd.length > 0 ? 1 : 0) + (tfToReplace.length > 0 ? 1 : 0) +
             (nvToAdd.length > 0 ? 1 : 0) + (nvToReplace.length > 0 ? 1 : 0) +
-            (nfToAdd.length > 0 ? 1 : 0) + (nfToReplace.length > 0 ? 1 : 0);
+            (nfToAdd.length > 0 ? 1 : 0) + (nfToReplace.length > 0 ? 1 : 0) +
+            (fsToAdd.length > 0 ? 1 : 0) + (fsToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](9 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
@@ -634,6 +646,13 @@ contract RedeployFacets is Script {
         if (nfToAdd.length > 0) {
             cuts[idx++] = _add(address(notificationFeeFacet), nfToAdd);
         }
+        // #2795 - and the forced-sale host, in the same cut as RepayPeriodicFacet.
+        if (fsToReplace.length > 0) {
+            cuts[idx++] = _replace(address(forcedSaleFacet), fsToReplace);
+        }
+        if (fsToAdd.length > 0) {
+            cuts[idx++] = _add(address(forcedSaleFacet), fsToAdd);
+        }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
@@ -669,6 +688,8 @@ contract RedeployFacets is Script {
         console.log("  NumeraireValue selectors repl.:  ", nvToReplace.length);
         console.log("  NotificationFee selectors added: ", nfToAdd.length);
         console.log("  NotificationFee selectors repl.: ", nfToReplace.length);
+        console.log("  ForcedSale selectors added:      ", fsToAdd.length);
+        console.log("  ForcedSale selectors repl.:      ", fsToReplace.length);
     }
 
     /// @dev #1566 S2b - the fallback-custody boundary. From S2b the fallback

@@ -24,7 +24,7 @@ import {IOrderMixin} from "@1inch/limit-order-protocol/contracts/interfaces/IOrd
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
-import {LibSwapToRepaySizing} from "../libraries/LibSwapToRepaySizing.sol";
+import {LibSaleSizing} from "../libraries/LibSaleSizing.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibLopDomain} from "../libraries/LibLopDomain.sol";
 
@@ -530,7 +530,7 @@ contract SwapToRepayIntentFacet is
 
         // ── §5.1 step 7b: size the auction lot to the debt (#2322) ──
         // The spec's full-close rule, shared with `swapToRepayFull`
-        // through {LibSwapToRepaySizing}: collateral the repayment does
+        // through {LibSaleSizing}: collateral the repayment does
         // not need stays pledged. The lot is the least collateral whose
         // slippage-capped oracle value covers `minOut` — the debt floor
         // plus the auction buffer — bounded by the loan's whole
@@ -1029,7 +1029,7 @@ contract SwapToRepayIntentFacet is
     /// @notice #2322 — the auction lot {commitSwapToRepayIntent} would put
     ///         up right now, and the least `takerAmount` it would accept.
     /// @dev    Shares the commit's computation ({_commitMinOut} +
-    ///         {_sizeCommitLot} → {LibSwapToRepaySizing.sizeSale}), so the
+    ///         {_sizeCommitLot} → {LibSaleSizing.sizeSale}), so the
     ///         borrower can see the lot before committing. The lot is the
     ///         collateral the debt needs at the worst case; the rest stays in
     ///         the vault, pledged, and is released by the borrower's claim
@@ -1103,11 +1103,12 @@ contract SwapToRepayIntentFacet is
         returns (uint256 lot, uint256 minTaker)
     {
         bool covers;
-        (covers, lot, minTaker) = LibSwapToRepaySizing.sizeSale(
+        (covers, lot, minTaker) = LibSaleSizing.sizeSale(
             loan.collateralAsset,
             loan.principalAsset,
             minOut,
-            loan.collateralAmount
+            loan.collateralAmount,
+            LibVaipakam.cfgMaxSwapToRepaySlippageBps()
         );
         if (!covers) revert IntentCollateralCannotCoverDebtFloor(minOut);
     }

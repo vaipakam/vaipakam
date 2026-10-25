@@ -28,7 +28,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {LibSwapToRepaySizing} from "../libraries/LibSwapToRepaySizing.sol";
+import {LibSaleSizing} from "../libraries/LibSaleSizing.sol";
 
 /**
  * @title SwapToRepayFacet
@@ -621,7 +621,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     }
 
     /// @dev #2317 — size the sale to the debt through the shared rule
-    ///      {LibSwapToRepaySizing.sizeSale} (the intent path sizes through the
+    ///      {LibSaleSizing.sizeSale} (the intent path sizes through the
     ///      same rule, #2322), refusing with `SwapBoundsInsufficient` when even
     ///      `maxIn` cannot cover `required` at the slippage floor.
     function _sizeFullSale(
@@ -631,7 +631,9 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 maxIn
     ) private view returns (uint256 sell, uint256 floor) {
         bool covers;
-        (covers, sell, floor) = LibSwapToRepaySizing.sizeSale(collateralAsset, principalAsset, required, maxIn);
+        (covers, sell, floor) = LibSaleSizing.sizeSale(
+            collateralAsset, principalAsset, required, maxIn, LibVaipakam.cfgMaxSwapToRepaySlippageBps()
+        );
         if (!covers) revert SwapBoundsInsufficient();
     }
 

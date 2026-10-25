@@ -1110,6 +1110,18 @@ contract PrecloseFacet is
             );
         }
 
+        // #2795 — a borrower extra held on this open loan (a periodic forced
+        // sale's extra that could not reach the holder's wallet) came from the
+        // exiting holder's collateral, so it leaves with them too. Paid from
+        // the STORED borrower's vault, before the rewrite below.
+        LibFacet.crossFacetCall(
+            abi.encodeCall(
+                EncumbranceMutateFacet.payHeldBorrowerExtra,
+                (loanId, exitingBorrowerHolder)
+            ),
+            bytes4(0)
+        );
+
         // ── 4. ben's collateral already locked in his vault at offer creation
 
         // ── 5. Update loan to reflect ben as borrower ───────────────────────

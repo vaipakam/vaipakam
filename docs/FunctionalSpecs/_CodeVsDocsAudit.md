@@ -1322,12 +1322,17 @@ design record is `docs/DesignsAndPlans/ForcedSaleSizingDesign.md`.
 **What the code does until the implementation lands.** The Health-Factor
 liquidation (single and split route) and the liquid branch of the time-based
 default sell the whole collateral and take both charges as shares of the
-proceeds. The periodic auto-liquidation sizes its sale with a fixed buffer
-and credits the lender with everything above the charges, the shortfall
-included. Partial liquidation takes its charges as shares of the proceeds
+proceeds. Partial liquidation takes its charges as shares of the proceeds
 alongside the repayment. Each of those is now a divergence from the stated
 intent, not a defect in the spec.
 
-**Status:** open. Implementation in order: the shared host with the
-periodic settlement (#2795), then the Health-Factor routes, then the
-time-based default and the partial-liquidation charge rule (#2796).
+**The periodic auto-liquidation follows the rule (#2795).** It sells through
+the shared forced-sale host: the sale is sized to the missed interest plus
+the two charges on it, the lender is paid at most what was owed, and the
+borrower's extra goes to the position holder's wallet, or is held in the
+borrower's vault for the claim when the holder is flagged or the wallet
+payment fails. The fixed buffer and the slippage notice that went with it are
+gone.
+
+**Status:** open for the remaining routes. Next: the Health-Factor routes,
+then the time-based default and the partial-liquidation charge rule (#2796).

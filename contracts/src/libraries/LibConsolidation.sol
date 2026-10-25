@@ -145,6 +145,7 @@ library LibConsolidation {
         (address movedAsset, uint256 movedAmount) = isLenderSide
             ? _moveLenderHeld(s, loan, loanId, stored, current, toProxy)
             : _moveBorrowerCollateral(s, loan, loanId, stored, current, toProxy);
+        if (!isLenderSide) _moveBorrowerHeld(s, loanId, stored, current, toProxy);
         s.consolidationMoveFromUser = address(0);
 
         // 7. Mutate the anchor + append-only index (dup-protected) + metrics.
@@ -339,6 +340,30 @@ library LibConsolidation {
                 toProxy,
                 false
             );
+        }
+    }
+
+    /// @dev #2795 — move a borrower extra held on this OPEN loan (a periodic
+    ///      forced sale's extra, in the principal asset) `stored` → `current`
+    ///      with the rest of the borrower side, so the claim at loan end, which
+    ///      pays from `loan.borrower`'s vault, finds it. Its reservation was
+    ///      already migrated in step 5. Outcome 3 of {LibDelivery}: the side's
+    ///      own held funds following its position; the row and the reservation
+    ///      shrink to what the holder's vault received.
+    function _moveBorrowerHeld(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        address stored,
+        address current,
+        address toProxy
+    ) private {
+        LibVaipakam.ClaimInfo storage row = s.borrowerSurplusClaims[loanId];
+        uint256 amount = row.claimed ? 0 : row.amount;
+        if (amount == 0) return;
+        uint256 credited = _moveERC20(stored, current, row.asset, amount, toProxy);
+        if (credited < amount) {
+            row.amount = credited;
+            LibEncumbrance.capBorrowerHeldReservation(loanId, current, credited);
         }
     }
 

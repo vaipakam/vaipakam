@@ -329,7 +329,7 @@ Phase 1 surface — three external entry points:
      **#2322 — this `required` is now the input to the lot, not the
      final gate.** The lot (`makerAmount`) is exactly the least
      collateral whose slippage-capped oracle value covers `required`
-     (`LibSwapToRepaySizing.sizeSale`, shared with the direct close),
+     (`LibSaleSizing.sizeSale` (renamed from `LibSwapToRepaySizing` in #2795), shared with the direct close),
      and the gate is `params.takerAmount >= floor(lot)` — the lot's OWN
      slippage-capped value, which is always `>= required` and exceeds it
      when collateral granularity makes the smallest covering lot worth

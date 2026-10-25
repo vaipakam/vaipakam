@@ -147,17 +147,129 @@ library LibCloseoutFreeze {
         // `currentHolder` is flagged (we are past the clean-holder early return),
         // so record that address as the frozen claimant for a fail-closed release.
         LibSanctionedLock.recordFrozenClaimant(s, loanId, false, currentHolder);
-        s.borrowerSurplusClaims[loanId] = LibVaipakam.ClaimInfo({
-            asset: loan.principalAsset,
-            amount: surplus,
-            assetType: LibVaipakam.AssetType.ERC20,
-            tokenId: 0,
-            quantity: 0,
-            claimed: false
-        });
+        addBorrowerSurplus(s, loanId, loan.principalAsset, surplus);
         LibEncumbrance.encumberBorrowerProceeds(
             loanId, loan.borrower, loan.principalAsset, surplus
         );
+    }
+
+    /**
+     * @notice Add `amount` of `asset` to the loan's borrower surplus row — the
+     *         ONE held row `ClaimFacet.claimAsBorrower` pays as its second lane.
+     * @dev    #2795 — a running total, not a single write. A periodic forced
+     *         sale on an open loan can hold an extra for the borrower several
+     *         times over the loan's life (when the position holder is flagged
+     *         or a wallet payment cannot complete), and a terminal surplus can
+     *         follow on the same loan, so every writer ADDS. The row is always
+     *         in the loan's principal asset, so it never mixes assets. Nothing
+     *         writes it after the claim: the claim runs on a terminal loan and
+     *         marks the row claimed in the same call.
+     */
+    function addBorrowerSurplus(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        LibVaipakam.ClaimInfo storage row = s.borrowerSurplusClaims[loanId];
+        assert(!row.claimed);
+        if (row.amount == 0) {
+            row.asset = asset;
+            row.assetType = LibVaipakam.AssetType.ERC20;
+        } else {
+            assert(row.asset == asset);
+        }
+        row.amount += amount;
+    }
+
+    /**
+     * @notice #2795 — hold a borrower's extra from a forced sale on an OPEN
+     *         loan (the periodic-interest settlement), when it cannot be paid
+     *         to the holder's wallet: the holder is flagged
+     *         ({LibSanctionedLock.mustFreezeParty}), or the wallet payment was
+     *         refused. The tokens are on the Diamond.
+     * @dev    Credited into the STORED borrower's vault (it always exists),
+     *         added to the surplus row, reserved against the stored borrower's
+     *         spend paths, and — for a flagged holder — the fail-closed
+     *         claimant recorded. Paid with the claim at loan end. While the
+     *         loan stays open the row follows the borrower position:
+     *         consolidation moves it with the collateral
+     *         ({LibConsolidation}), and an obligation handover pays it to the
+     *         exiting holder (`PrecloseFacet.transferObligationViaOffer`).
+     *         A forced flow acts on what arrived, so the row and the
+     *         reservation name what the vault received.
+     * @return credited What the stored borrower's vault received.
+     */
+    function parkActiveBorrowerExtra(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.Loan storage loan,
+        address holder,
+        bool frozen,
+        address asset,
+        uint256 amount
+    ) internal returns (uint256 credited) {
+        credited = LibSanctionedLock.depositLocked(s, loan.borrower, loanId, asset, amount);
+        if (credited == 0) return 0;
+        addBorrowerSurplus(s, loanId, asset, credited);
+        LibEncumbrance.encumberBorrowerProceeds(loanId, loan.borrower, asset, credited);
+        if (frozen) LibSanctionedLock.recordFrozenClaimant(s, loanId, false, holder);
+    }
+
+    /// @notice #2795 — a borrower extra held on an open loan was paid out
+    ///         before the loan ended, because the borrower position was handed
+    ///         over to a replacement borrower.
+    /// @param loanId The loan whose held extra was paid.
+    /// @param to The exiting borrower-position holder it was paid to.
+    /// @param asset The asset paid (the loan's principal asset).
+    /// @param amount What `to` received.
+    /// @custom:event-category informational/settlement
+    event BorrowerHeldExtraPaid(
+        uint256 indexed loanId,
+        address indexed to,
+        address asset,
+        uint256 amount
+    );
+
+    /**
+     * @notice #2795 — pay the borrower extra held on an OPEN loan to the
+     *         exiting borrower-position holder when the obligation is handed
+     *         over (`PrecloseFacet.transferObligationViaOffer`). The extra came
+     *         from that holder's collateral, so it leaves with them, like the
+     *         collateral itself; the replacement borrower never sees it.
+     * @dev    Runs while `loan.borrower` is still the stored exiting borrower,
+     *         whose vault holds the extra. Clears the reservation first so the
+     *         withdraw guard sees the tokens as free, zeroes the row (the loan
+     *         stays open, so the row is NOT marked claimed: a later surplus on
+     *         this loan adds to it as usual), and pays through the move-out
+     *         exemption. A row held because the holder was flagged carries the
+     *         fail-closed claimant marker; that party must read clean under
+     *         the fail-closed screen first, exactly as at the claim. No-op when
+     *         nothing is held.
+     * @return paid What `to` received.
+     */
+    function payHeldBorrowerExtra(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.Loan storage loan,
+        address to
+    ) internal returns (uint256 paid) {
+        LibVaipakam.ClaimInfo storage row = s.borrowerSurplusClaims[loanId];
+        uint256 amount = row.amount;
+        if (amount == 0) return 0;
+        assert(!row.claimed);
+        address frozen = LibSanctionedLock.frozenClaimant(s, loanId, false);
+        if (frozen != address(0)) {
+            LibVaipakam.assertNotSanctionedFailClosed(frozen);
+            LibSanctionedLock.clearConfirmedFlag(s, frozen);
+            LibSanctionedLock.clearFrozenClaimant(s, loanId, false);
+        }
+        address asset = row.asset;
+        LibEncumbrance.releaseBorrowerProceeds(loanId, loan.borrower);
+        row.amount = 0;
+        paid = LibSanctionedLock.vaultWithdrawERC20MoveOut(s, loan.borrower, asset, to, amount);
+        emit BorrowerHeldExtraPaid(loanId, to, asset, paid);
     }
 
     // ─── #998 S10 (#1006) Class B — ACTIVE-loan inline lender-share freeze ─────

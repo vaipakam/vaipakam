@@ -29,7 +29,6 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {LibSwapToRepaySizing} from "../libraries/LibSwapToRepaySizing.sol";
 
 /**
  * @title SwapToRepayPartialFacet
