@@ -9,6 +9,10 @@ import { describe, expect, it } from 'vitest';
 import {
   lateFeeAt,
   loanEndTimeOf,
+  offsetCompletionBoundOf,
+  originalLoanEndTimeOf,
+  pauseCreditOf,
+  remainingInterestSecondsOf,
   refinanceApprovalOf,
   refinancePayoffOf,
   SellerQuoteUnavailableError,
@@ -26,6 +30,9 @@ const live = {
   durationDays: 30n,
   interestAccrualStart: 0n,
   interestRemainingDays: 0,
+  readAtTimestamp: 1_000n,
+  // Never paused: every deadline is the original one.
+  pauseLog: [] as LoanLive['pauseLog'],
 } as LoanLive;
 
 const endTime = loanEndTimeOf(live); // 1000 + 30d
@@ -139,6 +146,7 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     // The seller clock lives on the SNAPSHOT since #1801 r9 — callers cannot
     // supply their own, so the fixture carries the block it was read at.
     readAtTimestamp: 1_000n + 10n * DAY,
+    pauseLog: [] as LoanLive['pauseLog'],
   } as LoanLive;
 
   const now = 1_000n + 10n * DAY; // ten days in
@@ -225,5 +233,55 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     const paid = sellerEconomics({ ...saleLive, lenderForfeitFrom: now - 6n * DAY }, 2_000n);
     expect(paid.shortfall).toBe(bare.shortfall);
     expect(paid.shortfallBinding).toBe(true);
+  });
+});
+
+describe('the loan clock (#2808, D2 #668 / #935)', () => {
+  /** A two-day pause on day 5 of the fixture loan, long over. */
+  const paused = {
+    ...live,
+    interestAccrualStart: 1_000n,
+    interestRemainingDays: 30,
+    readAtTimestamp: 1_000n + 10n * DAY,
+    pauseLog: [{ start: 1_000n + 5n * DAY, end: 1_000n + 7n * DAY, pausedBefore: 0n }],
+  } as LoanLive;
+
+  it('moves the due date by the paused time since the start', () => {
+    expect(originalLoanEndTimeOf(paused)).toBe(1_000n + 30n * DAY);
+    expect(pauseCreditOf(paused)).toBe(2n * DAY);
+    expect(loanEndTimeOf(paused)).toBe(1_000n + 32n * DAY);
+  });
+
+  it('charges no late fee for paused time', () => {
+    // A day past the ORIGINAL due date is still inside the moved one.
+    expect(lateFeeAt(paused, 1_000n + 31n * DAY)).toBe(0n);
+    expect(lateFeeAt(paused, 1_000n + 32n * DAY + 1n)).toBe(
+      (paused.principal * 100n) / 10_000n,
+    );
+  });
+
+  it('counts a pause still in force up to the moment asked about', () => {
+    const open = {
+      ...paused,
+      pauseLog: [{ start: 1_000n + 5n * DAY, end: 2n ** 64n - 1n, pausedBefore: 0n }],
+    } as LoanLive;
+    expect(loanEndTimeOf(open, 1_000n + 6n * DAY)).toBe(1_000n + 31n * DAY);
+    expect(loanEndTimeOf(open, 1_000n + 9n * DAY)).toBe(1_000n + 34n * DAY);
+  });
+
+  it('runs the remaining interest term to the pause-moved end', () => {
+    // Ten days in, two of them paused: 30 - 10 + 2 = 22 days left.
+    expect(remainingInterestSecondsOf(paused, paused.readAtTimestamp)).toBe(22n * DAY);
+    expect(remainingInterestSecondsOf(live, 1_000n)).toBe(30n * DAY);
+  });
+
+  it('widens the offset completion bound by the paused time', () => {
+    const rate = (secs: bigint) =>
+      (paused.principal * paused.interestRateBps * secs) / (365n * DAY * 10_000n);
+    expect(offsetCompletionBoundOf(paused)).toBe(paused.principal + rate(32n * DAY));
+    // Never paused: the committed term exactly, as before.
+    expect(offsetCompletionBoundOf({ ...paused, pauseLog: [] } as LoanLive)).toBe(
+      paused.principal + rate(30n * DAY),
+    );
   });
 });

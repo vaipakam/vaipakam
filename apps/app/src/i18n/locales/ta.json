@@ -1348,7 +1348,8 @@
           "terms": "விதிமுறைகள்",
           "health": "ஆரோக்கியம்",
           "whatNext": "அடுத்து என்ன நடக்கும்",
-          "ifNothing": "எதுவும் நடக்காவிட்டால்"
+          "ifNothing": "எதுவும் நடக்காவிட்டால்",
+          "dueMoved": "செலுத்த வேண்டிய தேதி தள்ளிப்போனது"
         },
         "done": {
           "rentalClosed": "வாடகை மூடப்பட்டது. திரும்பப்பெறத்தக்க இடையகம் தயார் — அதை Claim Center-லிருந்து கோரவும்.",
@@ -1467,7 +1468,10 @@
         "positionBorrowedAmountUnknown": "உங்கள் கடன் பெறும் நிலை · இந்தக் கடன் தொடங்கியபோது பெறப்பட்ட தொகை இப்போது கிடைக்கவில்லை",
         "positionLentAmountUnknown": "உங்கள் கடனளிக்கும் நிலை · இந்தக் கடன் தொடங்கியபோது அளிக்கப்பட்ட தொகை இப்போது கிடைக்கவில்லை",
         "collateralSettledClosed": "இந்தக் கடன் முடிந்துவிட்டது — அதன் பிணையம் கோரிக்கைகள் மூலம் தீர்க்கப்படுகிறது, கடனுக்காகப் பூட்டப்படவில்லை.",
-        "collateralSettledInternalMatch": "உள் பொருத்தம் கடன் பெற்றவரின் பிணையத்தை, இது பொருத்தப்பட்ட கடனின் கடனளிப்பவருக்குச் செலுத்தியது. மீதமுள்ள தொகை ஏதேனும் இருந்தால் அது கடன் பெற்றவரின் கோரிக்கை மூலம் அவருக்குத் திரும்பும்."
+        "collateralSettledInternalMatch": "உள் பொருத்தம் கடன் பெற்றவரின் பிணையத்தை, இது பொருத்தப்பட்ட கடனின் கடனளிப்பவருக்குச் செலுத்தியது. மீதமுள்ள தொகை ஏதேனும் இருந்தால் அது கடன் பெற்றவரின் கோரிக்கை மூலம் அவருக்குத் திரும்பும்.",
+        "dueDatePaused": "திட்டமிட்டதை விடத் தாமதமாக (நெறிமுறை இடைநிறுத்தப்பட்டுள்ளதால் தேதி இன்னும் தள்ளிப்போகிறது)",
+        "dueDateUnknown": "தேதி இப்போது தெரியவில்லை",
+        "dueMovedByPause": "முதலில் செலுத்த வேண்டிய தேதி {{date}}. இந்தக் கடன் திறந்திருந்தபோது நெறிமுறை அவ்வளவு நேரம் இடைநிறுத்தப்பட்டிருந்ததால் {{credit}} தள்ளிப்போனது."
       },
       "loading": "உங்கள் நிலைகளை ஏற்றுகிறது…",
       "openOffers": "திறந்த சலுகைகள்",
@@ -2277,7 +2281,20 @@
       "timeJustNow": "இப்போதுதான்",
       "timeMinutesAgo": "{{count}}நி முன்",
       "timeHoursAgo": "{{count}}ம முன்",
-      "timeDaysAgo": "{{count}}நா முன்"
+      "timeDaysAgo": "{{count}}நா முன்",
+      "durationHour_zero": "{{count, number}} மணிநேரம்",
+      "durationHour_one": "1 மணிநேரம்",
+      "durationHour_two": "{{count, number}} மணிநேரம்",
+      "durationHour_few": "{{count, number}} மணிநேரம்",
+      "durationHour_many": "{{count, number}} மணிநேரம்",
+      "durationHour_other": "{{count, number}} மணிநேரம்",
+      "durationMinute_zero": "{{count, number}} நிமிடங்கள்",
+      "durationMinute_one": "1 நிமிடம்",
+      "durationMinute_two": "{{count, number}} நிமிடங்கள்",
+      "durationMinute_few": "{{count, number}} நிமிடங்கள்",
+      "durationMinute_many": "{{count, number}} நிமிடங்கள்",
+      "durationMinute_other": "{{count, number}} நிமிடங்கள்",
+      "durationUnderMinute": "ஒரு நிமிடத்திற்கும் குறைவு"
     },
     "vault": {
       "unreadableCount_zero": "{{count}} சொத்துகள்",
@@ -2333,7 +2350,9 @@
       "dueInDays_few": "{{count}} நாட்களில் நிலுவை",
       "dueInDays_many": "{{count}} நாட்களில் நிலுவை",
       "dueInDays_other": "{{count}} நாட்களில் நிலுவை",
-      "pastGrace": "சலுகைக் காலம் முடிந்தது"
+      "pastGrace": "சலுகைக் காலம் முடிந்தது",
+      "duePaused": "இடைநிறுத்தப்பட்டது — செலுத்த வேண்டிய தேதி தள்ளிப்போகிறது",
+      "dueUnknown": "செலுத்த வேண்டிய தேதி தெரியவில்லை"
     },
     "activity": {
       "loading": "உங்கள் செயல்பாடு ஏற்றப்படுகிறது…",

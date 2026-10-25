@@ -190,7 +190,7 @@ export function RefinanceFlow({
   // the grace boundary (graceEnd + 1) — when that clamp binds, the
   // honest reviewed lifetime is the grace end, not "30 days after
   // posting" (Codex #1256 r3).
-  const graceEndTs = loanEndTimeOf(live) + graceSec;
+  const graceEndTs = loanEndTimeOf(live, chainNow) + graceSec;
   const expiryGraceClamped =
     graceReady && graceEndTs + 1n < chainNow + REQUEST_WINDOW_DAYS * 86_400n;
 
@@ -229,8 +229,8 @@ export function RefinanceFlow({
   // strictly past it. While the grace bucket is still loading,
   // degrade to the pre-grace boundary (conservative — the form
   // appears once the bucket lands; submit re-reads it live).
-  const pastDue = chainNow > loanEndTimeOf(live);
-  const pastGrace = chainNow > loanEndTimeOf(live) + graceSec;
+  const pastDue = chainNow > loanEndTimeOf(live, chainNow);
+  const pastGrace = chainNow > loanEndTimeOf(live, chainNow) + graceSec;
 
   async function submit() {
     // Page-supplied settlement gate (Codex #1511 r5 P1) — a LIVE
@@ -352,7 +352,9 @@ export function RefinanceFlow({
         diamondAddress: walletChain.diamondAddress,
         durationDays: Number(liveLoan.durationDays),
       });
-      const endTime = liveLoan.startTime + liveLoan.durationDays * 86_400n;
+      // The EFFECTIVE due date (#668 / #935), as LibAutoRefinanceCheck
+      // reads it through LibLoanClock.graceEnd.
+      const endTime = loanEndTimeOf(liveLoan, latestBlock.timestamp);
       if (latestBlock.timestamp > endTime + graceSecLive) {
         setError(copy.errors.refinancePastGrace);
         return;

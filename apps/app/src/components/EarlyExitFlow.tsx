@@ -101,12 +101,12 @@ export function EarlyExitFlow({
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
-  // #1923 — the loan's live remaining exposure to its FIXED maturity, in
-  // seconds. A direct sale is refused at/after maturity, and an offer's
+  // #1923 — the loan's live remaining exposure to its EFFECTIVE maturity
+  // (the pause credit included, #668 / #935), in seconds. A direct sale is refused at/after maturity, and an offer's
   // authored duration must COVER this (it is a ceiling on the buyer's lock,
   // not the loan's term) — mirrors the facet's SaleLoanPastMaturity +
   // SaleExposureExceedsAuthoredDuration guards, seconds-precise.
-  const remainingExposureSecs = loanEndTimeOf(live) - chainNow;
+  const remainingExposureSecs = loanEndTimeOf(live, chainNow) - chainNow;
 
   // Every seller figure prices at the SNAPSHOT's block. Since #1801 r9 that is
   // not something this component arranges — `sellerEconomics` reads
@@ -324,7 +324,7 @@ export function EarlyExitFlow({
       // #1923 — the coverage bound moves with chain time, so re-check it live
       // (the picker judged it against a ≤60s-old clock): the loan must not be
       // past maturity, and the offer's authored duration must still cover the
-      // remaining exposure. Seconds-precise, off the fixed maturity.
+      // remaining exposure. Seconds-precise, off the effective maturity.
       {
         const liveRemainingSecs =
           loanEndTimeOf(liveLoan) - liveLoan.readAtTimestamp;

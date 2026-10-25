@@ -74,6 +74,8 @@ interface Setup {
   allowance?: bigint;
   balance?: bigint;
   intent?: "none" | "live" | "fail";
+  /** The Diamond's pause log (#2808); empty when never paused. */
+  pauses?: { start: bigint; end: bigint; pausedBefore: bigint }[];
 }
 
 /** A fake client that records which address each ERC-20 read asked about. */
@@ -97,6 +99,8 @@ function client(setup: Setup, asked: string[] = []): PublicClient {
           };
         case "getLoanDetails":
           return loanDetails(setup.loan);
+        case "getPauseIntervals":
+          return [setup.pauses ?? [], BigInt(setup.pauses?.length ?? 0)];
         case "sellerForfeitureWindow":
           return [START, 0n];
         case "ownerOf":
@@ -170,6 +174,20 @@ describe("readOffsetReviewLive", () => {
     ).toBeNull();
     expect(
       offsetReviewBlock(await read({ offer: { durationDays: 21n } })),
+    ).toBe("term-passed");
+  });
+
+  it("counts paused time into the term the offset must fit (#2808)", async () => {
+    // A two-day pause while the loan was open moved its maturity two days
+    // later, so 22 days now fit where 21 did not on the original schedule.
+    const pauses = [
+      { start: START + DAY, end: START + 3n * DAY, pausedBefore: 0n },
+    ];
+    expect(
+      offsetReviewBlock(await read({ pauses, offer: { durationDays: 22n } })),
+    ).toBeNull();
+    expect(
+      offsetReviewBlock(await read({ pauses, offer: { durationDays: 23n } })),
     ).toBe("term-passed");
   });
 

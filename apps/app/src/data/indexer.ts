@@ -324,7 +324,34 @@ export interface IndexedLoan {
   terminalBlock: number | null;
   terminalAt: number | null;
   updatedAt: number;
+  /** #2808 — an Active loan's deadlines on the D2 loan clock (#668 / #935),
+   *  as the indexer computed them at `asOf`: the original due date, the pause
+   *  credit, and the due date and grace end it moved them to. Absent on a row
+   *  that is not Active, that did not come from the indexer's loan routes (a
+   *  live-chain fallback row) or that an older Worker served — and absent is
+   *  read as UNKNOWN, never as "use the original date". Read it through
+   *  `rowDeadline` (`lib/loanDeadline`). */
+  deadlines?: IndexedLoanDeadlines;
 }
+
+/** See {@link IndexedLoan.deadlines}. Seconds since the epoch throughout. */
+export type IndexedLoanDeadlines =
+  | {
+      available: true;
+      originalMaturity: number;
+      pauseCredit: number;
+      maturity: number;
+      graceEnd: number;
+      /** A pause was in force at `asOf`: every deadline is still moving. */
+      pauseInForce: boolean;
+      asOf: number;
+    }
+  | {
+      available: false;
+      /** Why the indexer could not compute them (its pause record is missing,
+       *  unread, damaged, or the loan is not fully indexed yet). */
+      reason: string;
+    };
 
 export interface ParticipantLoansPage {
   chainId: number;

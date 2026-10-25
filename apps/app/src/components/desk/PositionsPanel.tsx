@@ -16,6 +16,7 @@ import { ListChecks, LoaderCircle } from 'lucide-react';
 import { copy } from '../../content/copy';
 import { useActiveChain } from '../../chain/useActiveChain';
 import { useMyLoansFull, type PositionLoan } from '../../data/hooks';
+import { rowDeadline } from '../../lib/loanDeadline';
 import { healthView, useLoanRisk } from '../../data/risk';
 import { useTokenMeta } from '../../contracts/erc20';
 import { EmptyState, UnavailableState } from '../EmptyState';
@@ -74,7 +75,18 @@ function PositionRow({ loan }: { loan: PositionLoan }) {
       : amount === null
         ? copy.positions.rowLentAmountUnknown
         : copy.positions.rowLent(amount);
-  const remaining = daysRemaining(loan.startTime, loan.durationDays);
+  // The EFFECTIVE due date (#2808); a pause in force or an undated row is
+  // said as such, never filled in with the original date.
+  const deadline = rowDeadline(loan);
+  const due =
+    deadline.kind === 'paused'
+      ? copy.loanState.duePaused
+      : deadline.kind === 'unknown'
+        ? copy.loanState.dueUnknown
+        : (() => {
+            const remaining = daysRemaining(deadline.maturity);
+            return remaining >= 0 ? text.daysLeft(remaining) : text.daysOverdue(-remaining);
+          })();
   return (
     <div className="item-row">
       <span className="row-main">
@@ -88,7 +100,7 @@ function PositionRow({ loan }: { loan: PositionLoan }) {
         <br />
         <span className="row-sub">
           {copy.activity.loanRef(loan.loanId)} ·{' '}
-          {remaining >= 0 ? text.daysLeft(remaining) : text.daysOverdue(-remaining)}
+          {due}
           {loan.allowsPartialRepay ? text.partialRepayOk : ''}
         </span>
       </span>

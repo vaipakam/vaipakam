@@ -1348,7 +1348,8 @@
           "terms": "Bedingungen",
           "health": "Gesundheit",
           "whatNext": "Was als Nächstes passiert",
-          "ifNothing": "Wenn nichts passiert"
+          "ifNothing": "Wenn nichts passiert",
+          "dueMoved": "Fälligkeit verschoben"
         },
         "done": {
           "rentalClosed": "Vermietung geschlossen. Jeder erstattbare Puffer ist bereit — beanspruchen Sie ihn im Anspruchszentrum.",
@@ -1467,7 +1468,10 @@
         "positionBorrowedAmountUnknown": "Ihre Kreditnehmerposition · der beim Start dieses Kredits geliehene Betrag ist gerade nicht verfügbar",
         "positionLentAmountUnknown": "Ihre Kreditgeberposition · der beim Start dieses Kredits verliehene Betrag ist gerade nicht verfügbar",
         "collateralSettledClosed": "Dieser Kredit ist abgeschlossen — seine Sicherheit wird über die Claims abgewickelt und ist nicht mehr für den Kredit gesperrt.",
-        "collateralSettledInternalMatch": "Das interne Matching hat die Sicherheit des Kreditnehmers an den Kreditgeber des Kredits ausgezahlt, mit dem dieser Kredit gematcht wurde. Ein etwaiger Überschuss geht über seinen Claim an den Kreditnehmer zurück."
+        "collateralSettledInternalMatch": "Das interne Matching hat die Sicherheit des Kreditnehmers an den Kreditgeber des Kredits ausgezahlt, mit dem dieser Kredit gematcht wurde. Ein etwaiger Überschuss geht über seinen Claim an den Kreditnehmer zurück.",
+        "dueDatePaused": "später als geplant (das Protokoll ist pausiert, daher verschiebt sich das Datum weiter)",
+        "dueDateUnknown": "Datum derzeit unbekannt",
+        "dueMovedByPause": "Ursprünglich fällig am {{date}}. Um {{credit}} verschoben, weil das Protokoll so lange pausiert war, während dieses Darlehen offen war."
       },
       "loading": "Ihre Positionen werden geladen…",
       "openOffers": "Offene Angebote",
@@ -2277,7 +2281,20 @@
       "timeJustNow": "gerade eben",
       "timeMinutesAgo": "vor {{count}} Min.",
       "timeHoursAgo": "vor {{count}} Std.",
-      "timeDaysAgo": "vor {{count}} T."
+      "timeDaysAgo": "vor {{count}} T.",
+      "durationHour_zero": "{{count, number}} Stunden",
+      "durationHour_one": "1 Stunde",
+      "durationHour_two": "{{count, number}} Stunden",
+      "durationHour_few": "{{count, number}} Stunden",
+      "durationHour_many": "{{count, number}} Stunden",
+      "durationHour_other": "{{count, number}} Stunden",
+      "durationMinute_zero": "{{count, number}} Minuten",
+      "durationMinute_one": "1 Minute",
+      "durationMinute_two": "{{count, number}} Minuten",
+      "durationMinute_few": "{{count, number}} Minuten",
+      "durationMinute_many": "{{count, number}} Minuten",
+      "durationMinute_other": "{{count, number}} Minuten",
+      "durationUnderMinute": "weniger als eine Minute"
     },
     "vault": {
       "unreadableCount_zero": "{{count}} Assets",
@@ -2333,7 +2350,9 @@
       "dueInDays_few": "Fällig in {{count}} Tagen",
       "dueInDays_many": "Fällig in {{count}} Tagen",
       "dueInDays_other": "Fällig in {{count}} Tagen",
-      "pastGrace": "Nachfrist abgelaufen"
+      "pastGrace": "Nachfrist abgelaufen",
+      "duePaused": "Pausiert — Fälligkeit verschiebt sich",
+      "dueUnknown": "Fälligkeit unbekannt"
     },
     "activity": {
       "loading": "Ihre Aktivität wird geladen…",

@@ -1348,7 +1348,8 @@
           "terms": "Conditions",
           "health": "Santé",
           "whatNext": "Ce qui se passe ensuite",
-          "ifNothing": "Si rien ne se passe"
+          "ifNothing": "Si rien ne se passe",
+          "dueMoved": "Échéance reportée"
         },
         "done": {
           "rentalClosed": "Location clôturée. Tout buffer remboursable est prêt — réclamez-le depuis le centre de retraits.",
@@ -1467,7 +1468,10 @@
         "positionBorrowedAmountUnknown": "Votre position d’emprunteur · le montant emprunté au démarrage de ce prêt est indisponible pour le moment",
         "positionLentAmountUnknown": "Votre position de prêteur · le montant prêté au démarrage de ce prêt est indisponible pour le moment",
         "collateralSettledClosed": "Ce prêt est clôturé — son collatéral est réglé via les réclamations, il n’est plus bloqué pour le prêt.",
-        "collateralSettledInternalMatch": "L’appariement interne a versé le collatéral de l’emprunteur au prêteur du prêt avec lequel il a été apparié. Tout excédent revient à l’emprunteur via sa réclamation."
+        "collateralSettledInternalMatch": "L’appariement interne a versé le collatéral de l’emprunteur au prêteur du prêt avec lequel il a été apparié. Tout excédent revient à l’emprunteur via sa réclamation.",
+        "dueDatePaused": "plus tard que prévu (le protocole est en pause, la date continue donc de reculer)",
+        "dueDateUnknown": "date inconnue pour le moment",
+        "dueMovedByPause": "Échéance initiale : {{date}}. Reportée de {{credit}}, car le protocole a été en pause pendant cette durée alors que ce prêt était ouvert."
       },
       "loading": "Chargement de vos positions…",
       "openOffers": "Offres ouvertes",
@@ -2277,7 +2281,20 @@
       "timeJustNow": "à l’instant",
       "timeMinutesAgo": "il y a {{count}} min",
       "timeHoursAgo": "il y a {{count}} h",
-      "timeDaysAgo": "il y a {{count}} j"
+      "timeDaysAgo": "il y a {{count}} j",
+      "durationHour_zero": "{{count, number}} heures",
+      "durationHour_one": "1 heure",
+      "durationHour_two": "{{count, number}} heures",
+      "durationHour_few": "{{count, number}} heures",
+      "durationHour_many": "{{count, number}} heures",
+      "durationHour_other": "{{count, number}} heures",
+      "durationMinute_zero": "{{count, number}} minutes",
+      "durationMinute_one": "1 minute",
+      "durationMinute_two": "{{count, number}} minutes",
+      "durationMinute_few": "{{count, number}} minutes",
+      "durationMinute_many": "{{count, number}} minutes",
+      "durationMinute_other": "{{count, number}} minutes",
+      "durationUnderMinute": "moins d’une minute"
     },
     "vault": {
       "unreadableCount_zero": "{{count}} actifs",
@@ -2333,7 +2350,9 @@
       "dueInDays_few": "Échéance dans {{count}} jours",
       "dueInDays_many": "Échéance dans {{count}} jours",
       "dueInDays_other": "Échéance dans {{count}} jours",
-      "pastGrace": "Délai de grâce écoulé"
+      "pastGrace": "Délai de grâce écoulé",
+      "duePaused": "En pause — l’échéance recule",
+      "dueUnknown": "Échéance inconnue"
     },
     "activity": {
       "loading": "Chargement de votre activité…",

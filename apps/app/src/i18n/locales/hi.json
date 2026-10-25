@@ -1348,7 +1348,8 @@
           "terms": "Terms",
           "health": "Health",
           "whatNext": "आगे क्या होगा",
-          "ifNothing": "अगर कुछ नहीं होता"
+          "ifNothing": "अगर कुछ नहीं होता",
+          "dueMoved": "नियत तारीख आगे बढ़ी"
         },
         "done": {
           "rentalClosed": "Rental closed. कोई refundable buffer ready है — Claim Center से claim करें।",
@@ -1467,7 +1468,10 @@
         "positionBorrowedAmountUnknown": "आपकी borrowing position · इस loan की शुरुआत में borrow किया गया amount अभी उपलब्ध नहीं है",
         "positionLentAmountUnknown": "आपकी lending position · इस loan की शुरुआत में lend किया गया amount अभी उपलब्ध नहीं है",
         "collateralSettledClosed": "यह loan बंद हो चुका है — इसका collateral claims के ज़रिए settle होता है, loan के लिए locked नहीं रहता।",
-        "collateralSettledInternalMatch": "Internal matching ने borrower का collateral उस loan के lender को दे दिया जिससे यह match हुआ था। कोई भी बचा हुआ हिस्सा borrower के claim से borrower को वापस मिलता है।"
+        "collateralSettledInternalMatch": "Internal matching ने borrower का collateral उस loan के lender को दे दिया जिससे यह match हुआ था। कोई भी बचा हुआ हिस्सा borrower के claim से borrower को वापस मिलता है।",
+        "dueDatePaused": "योजना से बाद में (प्रोटोकॉल रुका हुआ है, इसलिए तारीख अभी भी आगे खिसक रही है)",
+        "dueDateUnknown": "तारीख अभी अज्ञात है",
+        "dueMovedByPause": "मूल नियत तारीख {{date}} थी। यह ऋण खुला रहते हुए प्रोटोकॉल इतने समय तक रुका रहा, इसलिए तारीख {{credit}} आगे खिसक गई।"
       },
       "loading": "आपकी positions लोड हो रही हैं…",
       "openOffers": "Open offers",
@@ -2277,7 +2281,20 @@
       "timeJustNow": "अभी",
       "timeMinutesAgo": "{{count}} मिनट पहले",
       "timeHoursAgo": "{{count}} घंटे पहले",
-      "timeDaysAgo": "{{count}} दिन पहले"
+      "timeDaysAgo": "{{count}} दिन पहले",
+      "durationHour_zero": "{{count, number}} घंटे",
+      "durationHour_one": "1 घंटा",
+      "durationHour_two": "{{count, number}} घंटे",
+      "durationHour_few": "{{count, number}} घंटे",
+      "durationHour_many": "{{count, number}} घंटे",
+      "durationHour_other": "{{count, number}} घंटे",
+      "durationMinute_zero": "{{count, number}} मिनट",
+      "durationMinute_one": "1 मिनट",
+      "durationMinute_two": "{{count, number}} मिनट",
+      "durationMinute_few": "{{count, number}} मिनट",
+      "durationMinute_many": "{{count, number}} मिनट",
+      "durationMinute_other": "{{count, number}} मिनट",
+      "durationUnderMinute": "एक मिनट से कम"
     },
     "vault": {
       "unreadableCount_zero": "{{count}} assets",
@@ -2333,7 +2350,9 @@
       "dueInDays_few": "{{count}} days में due",
       "dueInDays_many": "{{count}} days में due",
       "dueInDays_other": "{{count}} days में due",
-      "pastGrace": "ग्रेस अवधि समाप्त"
+      "pastGrace": "ग्रेस अवधि समाप्त",
+      "duePaused": "रुका हुआ — नियत तारीख आगे खिसक रही है",
+      "dueUnknown": "नियत तारीख अज्ञात"
     },
     "activity": {
       "loading": "आपकी गतिविधि लोड हो रही है…",
