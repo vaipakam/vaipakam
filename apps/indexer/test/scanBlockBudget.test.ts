@@ -24,6 +24,7 @@ import {
   runChainIndexerForChain,
 } from '../src/chainIndexer';
 import { createBudget } from '../src/subrequestBudget';
+import { invalidationKeysFromResult } from '../src/chainIngestDO';
 import type { ChainConfig, Env } from '../src/env';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
@@ -262,6 +263,7 @@ describe('the scan core finishes whole blocks within the allowance (#2221)', () 
 
     const r = await pass(h);
     expect(r.scannedFrom).toBe(BigInt(EVENT_BLOCKS[1]));
+    expect(r.unfinishedBlock).toBeUndefined();
     expect(cursorOf(h)).toBe(HEAD);
     expect(recordedBlocks(h)).toEqual(EVENT_BLOCKS);
   });
@@ -280,7 +282,7 @@ describe('a heavy block left unfinished (Codex #2836 r1)', () => {
     const HEAVY = EVENT_BLOCKS[1]!;
     eventsInBlock = { [HEAVY]: 20 };
     const h = chainDb();
-    await pass(h);
+    const stopped = await pass(h);
     // The tier's own allowance runs out inside the heavy block: the cursor
     // stops just below it, and part of it is already written. This is the
     // state Codex reproduced, and it is stated rather than prevented.
@@ -288,6 +290,12 @@ describe('a heavy block left unfinished (Codex #2836 r1)', () => {
     const partial = recordedIn(h, HEAVY);
     expect(partial).toBeGreaterThan(0);
     expect(partial).toBeLessThan(20);
+    // That pass is the only one that can announce what the block already
+    // wrote (Codex #2836 r3): it says which block it left, its hints claim no
+    // completeness, and every key goes out on it.
+    expect(stopped.unfinishedBlock).toBe(BigInt(HEAVY));
+    expect(stopped.hints?.truncated).toBe(true);
+    expect(invalidationKeysFromResult(stopped)).toHaveLength(7);
     // The next pass processes the block again in full: every event once,
     // none twice, and the cursor moves past it.
     let passes = 0;

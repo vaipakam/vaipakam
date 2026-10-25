@@ -355,6 +355,12 @@ export function invalidationKeysFromResult(
   // Clients then refetch rather than keep presenting the retired deployment's
   // cached positions until their slow poll.
   if (result.epochReset) return [...ALL_INVALIDATION_KEYS];
+  // A pass that stopped inside a block (#2221) committed some of that
+  // block's writes without counting them, and the replay that finishes the
+  // block counts only rows it changes itself, which excludes those. What
+  // the block changed is unknown, so every key goes out, on THIS pass, the
+  // one whose writes the clients have not yet been told about.
+  if (result.unfinishedBlock !== undefined) return [...ALL_INVALIDATION_KEYS];
   const keys: InvalidationKey[] = [];
   if (result.newOffers > 0) keys.push('offer.created');
   // `signedOfferUpdates` rides the coarse offer.changed key (Codex #1145

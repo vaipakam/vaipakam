@@ -3044,7 +3044,12 @@ General design requirements:
   hold the index in place. Where a scan stops early, it says so in its log:
   where it stopped, how many blocks it finished and why. Steps that act on what
   the scan found rather than on the stored records, such as notifications and
-  live-update hints, act only on the blocks the pass finished.
+  live-update hints, act only on the blocks the pass finished. The one
+  exception is the live-update signal itself: a pass that stopped inside a
+  block cannot say what that block had already written, and the pass that
+  finishes it will not see those records change, so the stopping pass tells
+  connected clients to refresh everything rather than a list it cannot
+  complete.
 - Same-block lifecycle ordering should be resolved from authoritative chain
   state rather than inferred from balances alone. For example, if an internal
   match and a repay / swap-repay settle the same loan in one block, the indexed

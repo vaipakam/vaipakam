@@ -534,6 +534,16 @@ export interface ChainIndexerResult {
    *  were deleted before it scanned (deploymentEpoch.ts). The DO broadcasts
    *  the full recovery set on it, since the counters cannot say so. */
   epochReset?: boolean;
+  /** #2221 — the block this pass stopped in, having begun it: the budget
+   *  refused part-way through, and the cursor records the block below. What
+   *  that block had already written is committed and is NOT in any counter
+   *  above, and the replay that finishes it cannot count it either, because
+   *  a write that already landed changes no row the second time (a
+   *  cancellation's `WHERE status = 'active'` matches nothing). So the DO
+   *  broadcasts every key on it, and the hints are marked truncated: no
+   *  count or id list here can say what the unfinished block changed.
+   *  Absent when the pass finished its window. */
+  unfinishedBlock?: bigint;
 }
 
 /**
@@ -3025,8 +3035,12 @@ async function runChainPass(
     // reason: the scan cannot enumerate who is affected.
     // A ledger-settled loan is old for the same reason a repaired one is
     // (#2476 r4): merged in, and the set truncated.
+    // A pass that stopped inside a block (#2221) cannot list what that
+    // block's committed writes touched either, so its set is truncated too.
+    ...(stoppedAt === null ? {} : { unfinishedBlock: stoppedAt }),
     hints: mergeHintLoanIds(
-      detailRefreshes > 0 ||
+      stoppedAt !== null ||
+        detailRefreshes > 0 ||
         loanDetailRefreshes > 0 ||
         reconciledLoanIds.length > 0 ||
         ledgerSettledLoanIds.length > 0
