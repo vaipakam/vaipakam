@@ -133,8 +133,9 @@ export function renderedRows(rows) {
 }
 
 /**
- * Compare the rendered rows with the expected ones. Every list but
- * `undetermined` is a finding:
+ * Compare the rendered rows with the expected ones. `admittedShown` and
+ * `exclusionsHeld` are what the comparison could confirm; every other list
+ * but `undetermined` is a finding:
  *   - `undetermined`: rendered transactions only a loan outside the visible
  *     loan set could admit (see `expectedRows`) — not judged either way;
  *   - `unexpected`: rendered transactions no event admits, and no loan
@@ -151,12 +152,23 @@ export function compareRendered(expected, rendered) {
   const undetermined = notAdmitted.filter((tx) => expected.outsideLoans.has(tx));
   const unexpected = notAdmitted.filter((tx) => !expected.outsideLoans.has(tx));
   const namedShown = unexpected.filter((tx) => expected.namedOnly.has(tx));
+  // What the run can claim, not only what it can fault: the admitted rows
+  // the page rendered, and the named-only transactions it left out. A
+  // named-only transaction tied to a loan outside the visible set is no
+  // witness either way (the page may admit it by its chain read), so it
+  // never counts as an exclusion that held.
+  const admittedShown = [...rendered.tx].filter((tx) => expected.admitted.has(tx));
+  const exclusionsHeld = [...expected.namedOnly.keys()].filter(
+    (tx) => !rendered.tx.has(tx) && !expected.outsideLoans.has(tx),
+  );
   const missing = [...expected.admitted.keys()].filter((tx) => !rendered.tx.has(tx));
   const withoutTxMismatch =
     rendered.withoutTx === expected.admittedWithoutTx
       ? null
       : { rendered: rendered.withoutTx, expected: expected.admittedWithoutTx };
   return {
+    admittedShown,
+    exclusionsHeld,
     undetermined,
     unexpected,
     namedShown,

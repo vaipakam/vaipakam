@@ -498,8 +498,8 @@ for (const t of plan) await observe(t.chainId, t.address, t.picked);
 
 // ── Verdict ─────────────────────────────────────────────────────────────
 const judged = observations.filter((o) => o.compare);
-const admittedShown = judged.reduce((n, o) => n + (o.renderedTx - o.compare.unexpected.length), 0);
-const exclusionsHeld = judged.reduce((n, o) => n + o.namedOnly - o.compare.namedShown.length, 0);
+const admittedShown = judged.reduce((n, o) => n + o.compare.admittedShown.length, 0);
+const exclusionsHeld = judged.reduce((n, o) => n + o.compare.exclusionsHeld.length, 0);
 const report = {
   site: SITE,
   indexer: INDEXER,

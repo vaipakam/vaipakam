@@ -159,6 +159,17 @@ describe('loans the oracle cannot see', () => {
     expect(r.outsideLoans.size).toBe(0);
     expect(compareRendered(r, renderedRows([])).missing).toEqual([TX(3)]);
   });
+  it('never counts a left-out named-only row tied to an unseen loan as an exclusion that held', () => {
+    const permittedOnLoan = ev(
+      'LoanKeeperEnabled',
+      { loanId: '9', keeper: KEEPER, enabled: true },
+      { tx: 6, loanId: 9 },
+    );
+    const r = expectedRows({ events: [permittedOnLoan, roleGranted], me: KEEPER, loanIds: new Set(), participants });
+    const cmp = compareRendered(r, renderedRows([]));
+    expect(cmp.exclusionsHeld).toEqual([TX(4)]);
+    expect(cmp.admittedShown).toEqual([]);
+  });
   it('a rendered named-only row with no loan is still the #2703 regression', () => {
     const r = expectedRows({ events: [roleGranted], me: KEEPER, loanIds: new Set(), participants });
     const cmp = compareRendered(r, renderedRows([{ observation: false, href: `${explorer}/tx/${TX(4)}` }]));
