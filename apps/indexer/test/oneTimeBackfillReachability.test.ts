@@ -30,6 +30,9 @@ import { describe, expect, it } from 'vitest';
 const ONE_TIME_BACKFILLS = [
   'ensureRewardLoopBackfill',
   'ensureRecycleSeriesBackfill',
+  // Codex #2836 r1: reachable only through `applyRecycleDaySeries` until
+  // then, which neither the caught-up return nor an event-free window calls.
+  'ensureReportedCumulativeProjection',
 ];
 
 const SOURCE = readFileSync(

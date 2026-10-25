@@ -134,9 +134,12 @@ import {HandoverPlan} from "./lib/HandoverPlan.sol";
  *                                   the slug from CHAIN_SLUG env if
  *                                   ADDRESSES_JSON_PATH is unset.
  *
- *      Reads `diamond` and `timelock` from addresses.json, and the
- *      two-step-owned targets through `HandoverPlan.read` — the same
- *      list `HandoverGate` verifies, so the two cannot drift.
+ *      Reads `diamond` and `timelock` from addresses.json, and the owned
+ *      targets through `HandoverPlan.targets` — the listed CCIP/VPFI
+ *      contracts plus every other contract the artifact or the Diamond
+ *      names that answers `owner()` (the swap adapters, the sanctions
+ *      contracts, #2743). The same list `HandoverGate` verifies, so the two
+ *      cannot drift.
  */
 contract Handover is Script {
     /// @notice Everything one handover acts on, resolved before the first
@@ -192,7 +195,7 @@ contract Handover is Script {
         string memory addrJson = vm.readFile(addressesPath);
         c.diamond = _readAddrOrRevert(addrJson, "diamond", addressesPath);
         c.timelock = _readAddrOrRevert(addrJson, "timelock", addressesPath);
-        c.targets = HandoverPlan.read(addrJson);
+        c.targets = HandoverPlan.targets(addrJson, c.diamond, c.timelock);
         c.vpfiToken = HandoverPlan.vpfiToken(addrJson);
         c.cctRegistry = vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0));
     }
@@ -202,14 +205,20 @@ contract Handover is Script {
         _preflight(c);
         _rotateDiamond(c);
 
-        // ── CCIP cross-chain ownership → Timelock ───────────────────────
+        // ── Owned contracts → Timelock ──────────────────────────────────
         // The whole CCIP stack is ADMIN-owned two-step: `DeployCrosschain`
         // initializes every proxy with ADMIN and `ConfigureCcip` accepts the
         // pool's ownership as ADMIN, so every transfer broadcasts as ADMIN.
         // On canonical Base the VPFI token (#853) is in the list too; on a
-        // mirror the local ERC-20 is `vpfiMirror`. `transferOwnership` is the
-        // first leg; the Timelock accepts later. A target not owned by ADMIN
-        // is skipped with a notice — the gate then refuses until it is moved.
+        // mirror the local ERC-20 is `vpfiMirror`. The found contracts follow
+        // (#2743): the swap adapters `DeploySwapAdapters` gave the Diamond's
+        // owner, the sanctions contracts, and anything else the admin owns.
+        // `transferOwnership` is the first leg of a two-step transfer and the
+        // Timelock accepts later; for a one-step `Ownable` it is the whole
+        // transfer. A target already owned by the Timelock is left alone. A
+        // target owned by anyone else is refused in `_preflight` on a
+        // production chain; on a testnet it is skipped with a notice and the
+        // gate refuses until it is moved.
         for (uint256 i; i < c.targets.length; ++i) {
             if (c.targets[i].addr == address(0)) continue; // warned in _preflight
             _transferCrossChainOwnership(c.adminKey, c.targets[i].addr, c.targets[i].label, c.timelock);
@@ -287,6 +296,26 @@ contract Handover is Script {
                 revert(string.concat("addresses.json has no ", c.targets[i].label, " - every production chain must hand it over"));
             }
             console.log(string.concat("WARNING: addresses.json has no ", c.targets[i].label, "; nothing to hand over for it"));
+        }
+
+        // ── Every owned target can actually be moved ─────────────────────
+        // The admin can only hand over what it owns. A target owned by a
+        // third key (a deployer EOA, an operator's hot key) would survive the
+        // handover and fail the gate after the admin has already given the
+        // Diamond up, so on a production chain it is refused here, before
+        // anything moves (#2743). One already owned by the Timelock (a re-run
+        // after a partial handover) is fine.
+        for (uint256 i; i < c.targets.length; ++i) {
+            if (c.targets[i].addr == address(0)) continue;
+            (bool readable, address owner_) = HandoverPlan.ownerOf(c.targets[i].addr);
+            if (readable && (owner_ == c.admin || owner_ == c.timelock)) continue;
+            string memory why = readable
+                ? string.concat(c.targets[i].label, " is owned by ", vm.toString(owner_), ", not ADMIN_ADDRESS or the Timelock")
+                : string.concat(c.targets[i].label, " has no readable owner()");
+            if (Deployments.requiresProductionGovernance()) {
+                revert(string.concat(why, " - move it to ADMIN_ADDRESS before the handover"));
+            }
+            console.log(string.concat("WARNING: ", why, "; the handover cannot move it"));
         }
 
         // The Timelock's independent veto (#938) must be the Pauser Safe
@@ -415,6 +444,9 @@ contract Handover is Script {
         );
         for (uint256 i; i < c.targets.length; ++i) {
             if (c.targets[i].addr == address(0)) continue;
+            // A one-step `Ownable` is the Timelock's already; nothing to accept.
+            (bool readable, address owner_) = HandoverPlan.ownerOf(c.targets[i].addr);
+            if (readable && owner_ == c.timelock) continue;
             console.log(string.concat("    target: ", c.targets[i].label, " @"), c.targets[i].addr);
         }
         if (cctRotated) {

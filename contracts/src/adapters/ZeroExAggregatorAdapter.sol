@@ -32,14 +32,17 @@ import {AggregatorAdapterBase} from "./AggregatorAdapterBase.sol";
  * compromised.
  */
 contract ZeroExAggregatorAdapter is AggregatorAdapterBase {
+    /// @param initialOwner      Owner of the Settler allowlist (see
+    ///                          {AggregatorAdapterBase}).
     /// @param allowanceHolder_  The 0x AllowanceHolder for this chain.
     /// @param initialSettlers   Seed allowlist of legal Settler
     ///                          targets. Operator updates as 0x ships
     ///                          new Settler deploys.
     constructor(
+        address initialOwner,
         address allowanceHolder_,
         address[] memory initialSettlers
-    ) AggregatorAdapterBase(allowanceHolder_, initialSettlers) {}
+    ) AggregatorAdapterBase(initialOwner, allowanceHolder_, initialSettlers) {}
 
     function adapterName() external pure override returns (string memory) {
         return "ZeroEx";

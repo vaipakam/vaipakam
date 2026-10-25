@@ -25,12 +25,14 @@ import {AggregatorAdapterBase} from "./AggregatorAdapterBase.sol";
  * address; that same address is also pinned as `allowanceTarget`.
  */
 contract OneInchAggregatorAdapter is AggregatorAdapterBase {
+    /// @param initialOwner        Owner of the swap-target allowlist
+    ///                            (see {AggregatorAdapterBase}).
     /// @param aggregationRouter_  The 1inch AggregationRouterV6 for
     ///                            this chain. Used as both the
     ///                            allowance target AND the seed entry
     ///                            in the swap-target allowlist.
-    constructor(address aggregationRouter_)
-        AggregatorAdapterBase(aggregationRouter_, _toSingleton(aggregationRouter_))
+    constructor(address initialOwner, address aggregationRouter_)
+        AggregatorAdapterBase(initialOwner, aggregationRouter_, _toSingleton(aggregationRouter_))
     {}
 
     function adapterName() external pure override returns (string memory) {

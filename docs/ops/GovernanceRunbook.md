@@ -399,7 +399,11 @@ config — for the lifetime of the protocol.
 
 **Why governance and not direct-EOA**: each adapter inherits OpenZeppelin
 `Ownable2Step`; its owner is the per-chain `<CHAIN>_TIMELOCK_ADDRESS`
-established by §2–4 of this runbook. Rotation calls therefore go through
+established by §2–4 of this runbook. `DeploySwapAdapters` creates each
+adapter owned by the Diamond's owner (never the deploying key), and the
+handover moves it to the Timelock with every other owned contract; the
+handover gate fails while any registered adapter is owned by anyone else
+(#2743). Rotation calls therefore go through
 the same propose-schedule-execute flow as every other privileged
 diamond mutation, not via an operator hot key.
 
@@ -414,8 +418,9 @@ diamond mutation, not via an operator hot key.
    Balancer V2). The protocol stays live; only the 0x leg is
    degraded.
 2. **Propose.** Schedule a Timelock call against the affected
-   adapter (the address logged in the deploy artifact under the
-   `swapAdapter[0]` field of `addresses.json`). The call is the
+   adapter (slot 0 of the Diamond's `getSwapAdapters()`, which is the
+   record of the registered adapters; `addresses.json` does not carry
+   them). The call is the
    adapter's own `addSwapTarget(<newSettler>)`, NOT a diamond
    selector.
 3. **Wait the 48h delay**, then execute.
