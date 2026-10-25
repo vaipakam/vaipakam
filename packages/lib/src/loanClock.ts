@@ -164,6 +164,19 @@ export function loanDeadlines(
   return { originalMaturity, pauseCredit, maturity, graceEnd: maturity + graceSeconds };
 }
 
+/**
+ * A loan's effective due date as of `at` — `LibLoanClock.maturity` alone,
+ * for a caller that needs no grace end (the keeper's in-term test, its
+ * pre-grace warning). The same rule as {@link loanDeadlines}, which it reads.
+ */
+export function loanMaturity(
+  loan: { startTime: bigint; durationDays: bigint },
+  log: PauseLog,
+  at: bigint,
+): bigint {
+  return loanDeadlines(loan, 0n, log, at).maturity;
+}
+
 /** A periodic-interest period, as the contract tracks it. */
 export interface PeriodicPeriod {
   /** The period's unmoved end, `lastPeriodicInterestSettledAt + interval`:

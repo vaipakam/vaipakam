@@ -6,6 +6,7 @@ import {
   graceSecondsFromBuckets,
   interestTermEnd,
   loanDeadlines,
+  loanMaturity,
   pauseInForceAt,
   pauseLogFromJson,
   pauseLogToJson,
@@ -74,6 +75,11 @@ describe('loanDeadlines', () => {
     const d = loanDeadlines(loan, DAY, [], 9_000_000n);
     expect(d.maturity).toBe(d.originalMaturity);
     expect(d.pauseCredit).toBe(0n);
+  });
+  it('gives the same due date through loanMaturity', () => {
+    expect(loanMaturity(loan, LOG, 2_500_000n)).toBe(
+      loanDeadlines(loan, 3n * DAY, LOG, 2_500_000n).maturity,
+    );
   });
 });
 

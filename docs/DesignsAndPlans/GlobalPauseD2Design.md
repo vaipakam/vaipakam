@@ -186,9 +186,17 @@ deadline, and the credit stated in words. No Worker or app computes
   extra read costs every chain one more request per tick, so a tick reaches
   one loan fewer before its allowance runs out; the reminder window is days
   wide, so a deferred loan is reached on a later tick.
-- **The keeper and the app** follow in their own changes: the keeper's
-  pre-grace and default checks, and the app's loan pages, which state the
-  original date, the credit and the reason.
+- **The keeper** reads the log through one helper. Its liquidation pass
+  decides whether a partial is still allowed against the effective
+  maturity, which is what the contract's `PartialAfterMaturity` guard reads;
+  a log that does not read skips the loan for the tick, with the reason
+  logged. Its auto-refinance pre-grace warning reads the log once per chain
+  and measures its window to the effective maturity; it skips the chain when
+  the log does not read and holds every warning while a pause is in force.
+  Its grace-default pass already asks the contract (`isLoanDefaultable`),
+  which applies the credit itself.
+- **The app** follows in its own change: its loan pages state the original
+  date, the credit and the reason.
 
 ### 5. What the credit does not cover
 

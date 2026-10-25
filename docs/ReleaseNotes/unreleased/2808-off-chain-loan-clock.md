@@ -23,5 +23,13 @@ chains (the current testnets until their next refresh) nothing changes.
 The periodic-interest reminders now spend one more request per chain per
 run, so a run reaches one loan fewer before its allowance runs out. The
 reminder window is days wide, so a loan left for a later run is still
-reached in time. The keeper's deadline checks and the app's loan pages follow
-in their own changes. Refs #2808.
+reached in time.
+
+The keeper works from the moved due date too. Its liquidation pass decides
+whether a partial liquidation is still allowed against the moved date, which
+is what the contract checks, so a loan a pause kept in term is no longer sent
+straight to a full liquidation. Its auto-refinance warning before grace counts
+the time left to the moved date, and is held while a pause is in force. When
+the keeper cannot read the pause record it skips the loan, or the chain's
+warnings, for that run and says why, rather than acting on the original date.
+The app's loan pages follow in their own change. Refs #2808.
