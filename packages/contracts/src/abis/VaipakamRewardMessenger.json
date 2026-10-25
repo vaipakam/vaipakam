@@ -1370,8 +1370,13 @@
   },
   {
     "type": "function",
-    "name": "quoteSendTierUpdate",
+    "name": "quoteSendTierUpdateTo",
     "inputs": [
+      {
+        "name": "destChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "user",
         "type": "address",
@@ -1685,8 +1690,13 @@
   },
   {
     "type": "function",
-    "name": "sendTierUpdate",
+    "name": "sendTierUpdateTo",
     "inputs": [
+      {
+        "name": "destChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "user",
         "type": "address",
@@ -1728,7 +1738,13 @@
         "internalType": "address payable"
       }
     ],
-    "outputs": [],
+    "outputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
     "stateMutability": "payable"
   },
   {
@@ -2872,6 +2888,17 @@
     "type": "error",
     "name": "NoBroadcastDestinations",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotBroadcastDestination",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

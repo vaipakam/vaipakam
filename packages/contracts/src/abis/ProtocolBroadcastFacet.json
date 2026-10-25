@@ -1,6 +1,19 @@
 [
   {
     "type": "function",
+    "name": "deliverTierPush",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
     "name": "getProtocolBroadcastBudget",
     "inputs": [],
     "outputs": [
@@ -8,6 +21,117 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTierPushSpacingSec",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTierPushStatus",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "nonce",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "effectiveTier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "effectiveBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tierExpirySec",
+        "type": "uint40",
+        "internalType": "uint40"
+      },
+      {
+        "name": "tierTableVersion",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "lanes",
+        "type": "tuple[]",
+        "internalType": "struct ProtocolBroadcastFacet.TierLaneStatus[]",
+        "components": [
+          {
+            "name": "destChainId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "delivered",
+            "type": "tuple",
+            "internalType": "struct LibVaipakam.TierLanePush",
+            "components": [
+              {
+                "name": "nonce",
+                "type": "uint64",
+                "internalType": "uint64"
+              },
+              {
+                "name": "tier",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "bps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "tierExpirySec",
+                "type": "uint40",
+                "internalType": "uint40"
+              },
+              {
+                "name": "tierTableVersion",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "sentAt",
+                "type": "uint40",
+                "internalType": "uint40"
+              }
+            ]
+          },
+          {
+            "name": "owed",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "budgetEligibleAt",
+            "type": "uint40",
+            "internalType": "uint40"
+          }
+        ]
       }
     ],
     "stateMutability": "view"
@@ -39,6 +163,19 @@
         "name": "user",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTierPushSpacingSec",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [],
@@ -130,6 +267,12 @@
         "internalType": "address"
       },
       {
+        "name": "destChainId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
         "name": "effectiveTier",
         "type": "uint8",
         "indexed": false,
@@ -152,6 +295,12 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "callerFunded",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
       }
     ],
     "anonymous": false
@@ -176,6 +325,124 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "TierPushCommitted",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "nonce",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "effectiveTier",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "effectiveBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "tierExpirySec",
+        "type": "uint40",
+        "indexed": false,
+        "internalType": "uint40"
+      },
+      {
+        "name": "tierTableVersion",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TierPushDeferred",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "destChainId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "nonce",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum ProtocolBroadcastFacet.TierPushDeferral"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TierPushLaneSettled",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "destChainId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "nonce",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TierPushSpacingSet",
+    "inputs": [
+      {
+        "name": "previous",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "current",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AccessControlUnauthorizedAccount",
     "inputs": [
@@ -193,6 +460,11 @@
   },
   {
     "type": "error",
+    "name": "EnforcedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "OnlyInternal",
     "inputs": [
       {
@@ -204,17 +476,53 @@
   },
   {
     "type": "error",
-    "name": "ProtocolBudgetExhausted",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SanctionedAddress",
     "inputs": [
       {
-        "name": "required",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TierPushNotConfigured",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TierPushOutOfGas",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TierPushRefundFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TierPushSpacingOutOfRange",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint32",
+        "internalType": "uint32"
       },
       {
-        "name": "available",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "min",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "max",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ]
   },

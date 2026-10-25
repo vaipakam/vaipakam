@@ -4702,9 +4702,10 @@ library LibVaipakam {
         // gating the rollup-time broadcast at the Diamond level;
         // Codex caught it as a fail-OPEN drift surface (operator
         // syncs the messenger's list but forgets the Diamond knob
-        // → every rollup silently returns). Replaced by the
-        // messenger's own `NoBroadcastDestinations` revert
-        // bubbling up through the accumulator. Slot retained as
+        // → every rollup silently returns). Replaced by reading
+        // the messenger's own list; since #898 / #911 an empty list
+        // is announced as a `TierPushDeferred(NoDestinations)`
+        // rather than reverting the user's action. Slot retained as
         // `__reservedSub2D1` so any future slot append doesn't
         // shift mainnet storage offsets.
         uint8 __reservedSub2D1;

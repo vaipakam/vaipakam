@@ -379,6 +379,9 @@ const EXEMPT: ReadonlyMap<string, ExemptGroup> = new Map<string, ExemptGroup>([
       'StagingPaid',
       'StagingRecordOpened',
       'TierPoked',
+      'TierPushCommitted',
+      'TierPushDeferred',
+      'TierPushLaneSettled',
     ] as const
   ).map((k) => [k, 'rewardInternal'] as const),
 ]);

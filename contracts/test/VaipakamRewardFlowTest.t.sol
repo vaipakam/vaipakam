@@ -1064,10 +1064,11 @@ contract VaipakamRewardFlowTest is Test {
 
     function test_SendTierUpdate_HappyPath() public {
         address user = makeAddr("user");
-        // `sendTierUpdate` is a Base → mirror push, so the Diamond-paired
-        // instance is `rewardBase`.
+        // `sendTierUpdateTo` is a Base → mirror push, one lane at a time,
+        // so the Diamond-paired instance is `rewardBase`.
         vm.prank(address(diamondBase));
-        rewardBase.sendTierUpdate{value: fee}(
+        rewardBase.sendTierUpdateTo{value: fee}(
+            MIRROR,
             user,
             uint8(2),     // effective tier
             uint16(1500), // effective bps
@@ -1112,8 +1113,21 @@ contract VaipakamRewardFlowTest is Test {
     function test_SendTierUpdate_RevertWhen_NotDiamond() public {
         vm.deal(address(this), 1 ether);
         vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
-        rewardBase.sendTierUpdate{value: fee}(
-            address(this), 1, 1000, 0, 1, 0, 1, payable(owner)
+        rewardBase.sendTierUpdateTo{value: fee}(
+            MIRROR, address(this), 1, 1000, 0, 1, 0, 1, payable(owner)
+        );
+    }
+
+    /// @dev #911 — a single-lane tier push refuses a chain the owner did not
+    ///      put on the broadcast list.
+    function test_SendTierUpdateTo_RevertWhen_NotBroadcastDestination() public {
+        vm.deal(address(diamondBase), 1 ether);
+        vm.prank(address(diamondBase));
+        vm.expectRevert(
+            abi.encodeWithSelector(VaipakamRewardMessenger.NotBroadcastDestination.selector, uint256(999))
+        );
+        rewardBase.sendTierUpdateTo{value: fee}(
+            999, address(this), 1, 1000, 0, 1, 0, 1, payable(owner)
         );
     }
 
@@ -1202,11 +1216,11 @@ contract VaipakamRewardFlowTest is Test {
         , bytes32(0));
     }
 
-    function test_QuoteSendTierUpdate_ReturnsNonZero() public view {
-        uint256 quoted = rewardBase.quoteSendTierUpdate(
-            address(0xbeef), 1, 1000, 0, 1, 0, 1
+    function test_QuoteSendTierUpdateTo_ReturnsNonZero() public view {
+        uint256 quoted = rewardBase.quoteSendTierUpdateTo(
+            MIRROR, address(0xbeef), 1, 1000, 0, 1, 0, 1
         );
-        assertEq(quoted, fee, "quote covers the single configured destination");
+        assertEq(quoted, fee, "quote covers the one lane");
     }
 
     function test_QuoteSendVersionBumped_ReturnsNonZero() public view {

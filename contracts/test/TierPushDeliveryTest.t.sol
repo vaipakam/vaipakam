@@ -284,9 +284,11 @@ contract TierPushDeliveryTest is SetupTest {
         _reachTierOne();
         GasBurningTierMessenger burner = new GasBurningTierMessenger();
         RewardReporterFacet(address(diamond)).setRewardMessenger(address(burner));
+        // A bounded gas budget keeps the burner's loop short; the burner
+        // takes 63/64 of whatever reaches it either way.
         vm.prank(user);
         vm.expectRevert(ProtocolBroadcastFacet.TierPushOutOfGas.selector);
-        VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault(STAKE + 1);
+        VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault{gas: 5_000_000}(STAKE + 1);
     }
 
     // ─── Admin ──────────────────────────────────────────────────────────

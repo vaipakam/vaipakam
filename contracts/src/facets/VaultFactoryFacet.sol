@@ -578,10 +578,10 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
      *         before the caller's fallback pays.
      *
      *         Tier rollup uses the broadcast-FREE
-     *         {LibVPFIDiscount.rollupUserDiscountLocal} — a protocol payout
-     *         must never inherit the CCIP tier-push failure modes
-     *         (`ProtocolBudgetExhausted`); the next broadcasting mutation
-     *         carries the push. Sanctions posture is the CALLER's concern
+     *         {LibVPFIDiscount.rollupUserDiscountLocal}, introduced when the
+     *         CCIP tier push could revert a payout. Since #898 / #911 the
+     *         push defers instead of reverting; #2849 tracks retiring the
+     *         local variant. The next broadcasting mutation commits the push. Sanctions posture is the CALLER's concern
      *         (the claim entry point Tier-1-gates `msg.sender` already);
      *         onlyDiamondInternal keeps external parties out.
      *

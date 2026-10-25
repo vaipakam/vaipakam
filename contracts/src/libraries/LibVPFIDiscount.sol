@@ -289,10 +289,11 @@ library LibVPFIDiscount {
      *         never attempts the CCIP tier push.
      *
      * @dev Used by the Diamond-funded vault credit primitive on the reward
-     *      claim-to-vault path, where inheriting the broadcast path's
-     *      failure modes (`ProtocolBudgetExhausted`, messenger misconfig)
-     *      would regress claim availability. The deferred push is carried
-     *      by the user's next broadcasting rollup.
+     *      claim-to-vault path. It was introduced because the broadcast
+     *      push could revert (an empty budget, a misconfigured messenger);
+     *      since #898 / #911 the push only defers on those, and #2849
+     *      tracks retiring this variant. The push is committed by the
+     *      user's next broadcasting rollup.
      *
      *      Silent-fallback rule is SIMPLER than {rollupUserDiscount}'s: the
      *      local entry never reaches the broadcast facet, so a returned
@@ -1124,11 +1125,11 @@ library LibVPFIDiscount {
         // A settlement credit must never be able to REFUSE the close, and
         // three separate paths could:
         //
-        //   * the BROADCASTING rollup bubbles anything the CCIP tier push
-        //     raises, `ProtocolBudgetExhausted` included, on any deployment
-        //     with a messenger configured. That primitive restamps with the
-        //     broadcast-free local variant instead; the next broadcasting
-        //     mutation carries the push.
+        //   * the BROADCASTING rollup used to bubble anything the CCIP tier
+        //     push raised. Since #898 / #911 the push defers instead, but
+        //     that primitive still restamps with the broadcast-free local
+        //     variant (#2849 tracks retiring it); the next broadcasting
+        //     mutation commits the push.
         //   * a pending MANDATORY VAULT UPGRADE reverts vault resolution. There
         //     it is a fallback trigger rather than a hard failure.
         //   * resolving a vault that does not exist would MINT one as a side
