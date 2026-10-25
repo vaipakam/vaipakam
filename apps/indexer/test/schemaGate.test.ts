@@ -156,5 +156,12 @@ describe('schema gate — the ingest DO stops its loop on a declined pass (#2409
     expect(alarmNextStep({ ...base, scannedTo: 10n, target: 500n })).toBe('rearm');
     expect(alarmNextStep({ ...base, retryableFailure: true, scannedTo: 10n, target: 0n })).toBe('rearm');
     expect(alarmNextStep({ ...base, scannedTo: 10n, target: 0n, headBlock: 10_000_000n })).toBe('slow-lane');
+    // #2221 (Codex #2836 r4) — a pass the request allowance stopped inside a
+    // block drives the next pass itself, however close to the head it is,
+    // and whether or not a webhook target is still ahead of it; the schema
+    // gate still wins.
+    expect(alarmNextStep({ ...base, scannedTo: 10n, target: 0n, headBlock: 12n, unfinishedBlock: 11n })).toBe('slow-lane');
+    expect(alarmNextStep({ ...base, scannedTo: 10n, target: 500n, headBlock: 600n, unfinishedBlock: 11n })).toBe('slow-lane');
+    expect(alarmNextStep({ ...base, schemaDeclined: true, scannedTo: 10n, target: 0n, unfinishedBlock: 11n })).toBe('finish');
   });
 });

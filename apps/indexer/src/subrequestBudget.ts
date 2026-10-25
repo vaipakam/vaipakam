@@ -148,6 +148,15 @@ export interface TickBudget {
   readonly internal: Meter;
   /** SQL statements submitted to D1, batched or not. */
   readonly d1Queries: Meter;
+  /**
+   * What must still be left when a held-back stretch of work stops — or
+   * `null` when nothing is held back. Set and cleared only by
+   * {@link holdBack} / {@link release}; see there.
+   */
+  floor: Cost | null;
+  /** Set the moment a request is refused under {@link floor}, and kept until
+   *  {@link release}: every later request is refused too. */
+  refused: boolean;
 }
 
 /**
@@ -189,6 +198,8 @@ export function createBudget(
     external: meter('external subrequest', limits.external ?? MAX_EXTERNAL_SUBREQUESTS_PER_INVOCATION),
     internal: meter('internal-service request', limits.internal ?? MAX_INTERNAL_SUBREQUESTS_PER_INVOCATION),
     d1Queries: meter('D1 query', limits.d1Queries ?? MAX_D1_QUERIES_PER_INVOCATION),
+    floor: null,
+    refused: false,
   };
 }
 
@@ -234,11 +245,16 @@ export function plus(a: Cost, b: Cost): Cost {
 /**
  * Spend requests on one meter, and say whether they were affordable.
  *
- * DELIBERATELY NOT A THROW. This lane's callers are a scan, a reconciliation
- * pass and a reminder sweep, and an exception in any of them unwinds past the
- * cursor write — the frozen chain again, arrived at by the mechanism meant to
- * prevent it. The counter goes negative, the fact is reported, and the caller
- * decides.
+ * NOT A THROW, outside a held-back stretch. This lane's callers are a scan, a
+ * reconciliation pass and a reminder sweep, and an exception in any of them
+ * unwinds past the cursor write — the frozen chain again, arrived at by the
+ * mechanism meant to prevent it. The counter goes negative, the fact is
+ * reported, and the caller decides.
+ *
+ * The one exception is {@link holdBack}: while a floor is held, a request that
+ * would cross it throws {@link BudgetRefusal} BEFORE it is issued. Only the
+ * scan core holds a floor, and it catches the refusal at a block boundary,
+ * above the cursor write, so the reason for the rule above does not arise.
  */
 export function spendExternal(budget: TickBudget, cost = 1): boolean {
   return draw(budget, budget.external, cost);
@@ -265,6 +281,7 @@ export function spendD1Queries(budget: TickBudget, count: number): boolean {
  * this Worker is guaranteed to execute.
  */
 function draw(budget: TickBudget, meter: Meter, cost: number): boolean {
+  refuseUnderFloor(budget, meter, cost);
   meter.remaining -= cost;
   if (meter.remaining < 0 && !meter.announced) {
     meter.announced = true;
@@ -278,6 +295,69 @@ function draw(budget: TickBudget, meter: Meter, cost: number): boolean {
     );
   }
   return meter.remaining >= 0;
+}
+
+// ── Holding back what the end of a pass needs (#2221) ─────────────────────
+//
+// The repair lanes ask `affords` before each unit because each unit's cost is
+// small and statable. The scan core cannot: what one block of logs costs
+// depends on which events it carries and on how often the provider makes viem
+// retry, and a per-event table of worst cases would be the hand-kept
+// enumeration this module exists to retire.
+//
+// So the scan core does not predict. It HOLDS BACK what must still be possible
+// when it stops — the cursor write and the steps that run once per scan — and
+// every request that would eat into that is refused before it is sent. The
+// refusal is STICKY: once one request is refused, every later one is too, so a
+// block whose read was refused can never go on to write what the missing read
+// would have corrected (a handler's fallback write is refused like the read).
+// The scan catches the refusal at the block it happened in, records its cursor
+// below that block, and the next invocation, with a fresh allowance, starts
+// there. That block's earlier writes are replayed then, which every handler
+// already supports: a scan that fails mid-window today replays the whole
+// window the same way.
+
+/** A request refused because it would have taken a meter below the floor a
+ *  held-back stretch set (see {@link holdBack}). Never sent. */
+export class BudgetRefusal extends Error {
+  constructor(label: string, what: string) {
+    super(`[subrequests] ${label}: ${what} refused — the allowance held back for the end of this pass`);
+    this.name = 'BudgetRefusal';
+  }
+}
+
+/**
+ * From here until {@link release}, refuse any request that would leave less
+ * than `reserve` on the external or the query meter. The internal meter has no
+ * floor of its own (see {@link Cost}); its requests are refused only once the
+ * stretch has refused something else.
+ */
+export function holdBack(budget: TickBudget, reserve: Cost): void {
+  budget.floor = reserve;
+  budget.refused = false;
+}
+
+/** End a held-back stretch. Says whether anything in it was refused. */
+export function release(budget: TickBudget): { refused: boolean } {
+  const refused = budget.refused;
+  budget.floor = null;
+  budget.refused = false;
+  return { refused };
+}
+
+/** Has the current held-back stretch refused a request? */
+export function isRefusing(budget: TickBudget): boolean {
+  return budget.refused;
+}
+
+function refuseUnderFloor(budget: TickBudget, meter: Meter, cost: number): void {
+  const floor = budget.floor;
+  if (floor === null) return;
+  const keep =
+    meter === budget.external ? floor.external : meter === budget.d1Queries ? floor.d1Queries : 0;
+  if (!budget.refused && meter.remaining - cost >= keep) return;
+  budget.refused = true;
+  throw new BudgetRefusal(budget.label, meter.what);
 }
 
 /** Has this invocation exceeded ANY ceiling? */
@@ -373,6 +453,20 @@ function alreadyMetered(target: object): boolean {
 }
 
 /**
+ * Charge, then send — or, if the charge is refused under a held-back floor,
+ * send nothing and fail the way the D1 call itself would: with a rejected
+ * promise, not a synchronous throw a caller's `.catch` would never see.
+ */
+function charged(charge: () => void, send: () => unknown): unknown {
+  try {
+    charge();
+  } catch (err) {
+    return Promise.reject(err);
+  }
+  return send();
+}
+
+/**
  * Wrap one prepared statement so its terminals are charged and `bind()` is not.
  *
  * `bind()` returns a NEW statement object in the D1 API, so the wrapper has to
@@ -397,9 +491,14 @@ function wrapStatement<T extends object>(stmt: T, budget: TickBudget): T {
       if (TERMINALS.includes(prop as Terminal)) {
         return (...args: unknown[]) => {
           // One statement, sent on its own: one internal request AND one query.
-          spendInternal(budget);
-          spendD1Queries(budget, 1);
-          return (value as (...a: unknown[]) => unknown).apply(target, args);
+          // The query first: under a held-back floor it is the one that can
+          // be refused, and a refused request must leave no meter charged.
+          // A refusal is returned as a rejection, the way the terminal it
+          // stands in for fails, so a caller's `.catch` sees it.
+          return charged(() => {
+            spendD1Queries(budget, 1);
+            spendInternal(budget);
+          }, () => (value as (...a: unknown[]) => unknown).apply(target, args));
         };
       }
 
@@ -440,10 +539,11 @@ export function meterD1<T extends object>(db: T, budget: TickBudget): T {
       // the length to BOTH would refuse work that fits.
       if (prop === 'batch') {
         return (...args: unknown[]) => {
-          spendInternal(budget);
           const statements = args[0];
-          spendD1Queries(budget, Array.isArray(statements) ? statements.length : 1);
-          return (value as (...a: unknown[]) => unknown).apply(target, args);
+          return charged(() => {
+            spendD1Queries(budget, Array.isArray(statements) ? statements.length : 1);
+            spendInternal(budget);
+          }, () => (value as (...a: unknown[]) => unknown).apply(target, args));
         };
       }
 
@@ -452,9 +552,10 @@ export function meterD1<T extends object>(db: T, budget: TickBudget): T {
       // actually submitted rather than assumed to be one.
       if (prop === 'exec') {
         return (...args: unknown[]) => {
-          spendInternal(budget);
-          spendD1Queries(budget, countExecStatements(args[0]));
-          return (value as (...a: unknown[]) => unknown).apply(target, args);
+          return charged(() => {
+            spendD1Queries(budget, countExecStatements(args[0]));
+            spendInternal(budget);
+          }, () => (value as (...a: unknown[]) => unknown).apply(target, args));
         };
       }
 

@@ -86,21 +86,33 @@ export function scenarioIndexer(sc: ScenarioChain, shared: SqliteD1): ScenarioIn
   return {
     async index() {
       // A first pass on an empty database adopts the Diamond (reporting an
-      // epoch reset); the passes after it scan, each up to its own range
-      // bound, until the cursor reaches the head. Bounded either way.
+      // epoch reset); the passes after it scan until the cursor reaches the
+      // head, as the ingest Durable Object rearms while a pass falls short.
       // A live chain has moved well past the settled depth by the time the
       // indexer's next run comes round; this node has to be told to.
       await sc.mineBlocks(SETTLED_DEPTH + 8);
+      // How far one pass gets is the invocation's request allowance, not a
+      // block count (#2221): a pass finishes blocks in chain order and stops
+      // before the one it cannot afford, so on a node where every block
+      // carries a transaction it may finish only a few. What the indexer does
+      // promise is that every scanning pass finishes at least one block. So
+      // the loop is bounded by progress, not by a pass count: a pass that
+      // moves the cursor nowhere is the failure, and the epoch reset may
+      // happen once.
       let last = '';
-      for (let i = 0; i < 20; i++) {
+      let reached = -1n;
+      let resets = 0;
+      for (;;) {
         const r = await runChainIndexerForChain(env, chain);
         last = r.skipped ?? `scanned ${r.scannedFrom}-${r.scannedTo}`;
-        if (r.skipped === 'epoch-reset') continue;
+        if (r.skipped === 'epoch-reset' && resets++ === 0) continue;
         if (r.skipped === 'caught-up') return last;
         if (r.skipped) throw new Error(`keeper-e2e: the indexer pass declined: ${r.skipped}`);
         if (r.scannedTo >= (await sc.blockNumber())) return last;
+        if (BigInt(r.scannedTo) <= reached) break;
+        reached = BigInt(r.scannedTo);
       }
-      throw new Error(`keeper-e2e: the indexer pass did not reach the head: ${last}`);
+      throw new Error(`keeper-e2e: an indexer pass made no progress toward the head: ${last}`);
     },
   };
 }

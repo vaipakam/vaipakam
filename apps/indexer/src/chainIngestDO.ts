@@ -233,9 +233,18 @@ export function alarmNextStep(p: {
    *  EXPLICITLY — on the cron path the target is 0, which the comparison
    *  below would read as already met (Codex #2545 r6 P2). */
   epochReset?: boolean;
+  /** The pass stopped inside a block for want of request allowance (#2221):
+   *  it made progress and left the rest of its window unscanned, however
+   *  close to the head that is. It drives the next pass itself, on the
+   *  slow lane, and spends no retry attempt: it was progress, not failure,
+   *  and a chain busier than one pass's allowance would otherwise exhaust
+   *  the retry budget on passes that were all moving forward (Codex #2836
+   *  r4 P1). Every such pass finishes at least one block, so the lane ends. */
+  unfinishedBlock?: bigint;
 }): 'finish' | 'slow-lane' | 'rearm' {
   if (p.schemaDeclined) return 'finish';
   if (p.epochReset) return 'rearm';
+  if (!p.retryableFailure && p.unfinishedBlock !== undefined) return 'slow-lane';
   if (!p.retryableFailure && p.scannedTo !== null && p.scannedTo >= p.target) {
     return shouldRearmForBacklog(p.headBlock, p.scannedTo, p.retryableFailure)
       ? 'slow-lane'
@@ -355,6 +364,12 @@ export function invalidationKeysFromResult(
   // Clients then refetch rather than keep presenting the retired deployment's
   // cached positions until their slow poll.
   if (result.epochReset) return [...ALL_INVALIDATION_KEYS];
+  // A pass that stopped inside a block (#2221) committed some of that
+  // block's writes without counting them, and the replay that finishes the
+  // block counts only rows it changes itself, which excludes those. What
+  // the block changed is unknown, so every key goes out, on THIS pass, the
+  // one whose writes the clients have not yet been told about.
+  if (result.unfinishedBlock !== undefined) return [...ALL_INVALIDATION_KEYS];
   const keys: InvalidationKey[] = [];
   if (result.newOffers > 0) keys.push('offer.created');
   // `signedOfferUpdates` rides the coarse offer.changed key (Codex #1145
@@ -632,6 +647,7 @@ export class ChainIngestDO {
       let retryableFailure = false;
       let schemaDeclined = false;
       let epochReset = false;
+      let unfinishedBlock: bigint | undefined;
       let recoverPending = false;
       try {
         // The Secrets Store reads at the top of the alarm are counted too —
@@ -673,6 +689,8 @@ export class ChainIngestDO {
         // A pass that began a deployment epoch returned without scanning; the
         // fresh pass it promises is rearmed explicitly (Codex #2545 r6 P2).
         epochReset = result.epochReset === true;
+        // A budget-stopped pass keeps the loop going itself (#2221).
+        unfinishedBlock = result.unfinishedBlock;
         // A soft RPC/log-fetch failure returns `skipped: 'rpc-error'` with
         // `scannedTo` rewound to the previous cursor instead of throwing
         // (Codex #764 round 5). Treat it as retryable so the caught-up check
@@ -709,7 +727,15 @@ export class ChainIngestDO {
       const target = BigInt(
         (await this.state.storage.get<string>('pendingTarget')) ?? '0',
       );
-      const step = alarmNextStep({ schemaDeclined, retryableFailure, scannedTo, target, headBlock, epochReset });
+      const step = alarmNextStep({
+        schemaDeclined,
+        retryableFailure,
+        scannedTo,
+        target,
+        headBlock,
+        epochReset,
+        unfinishedBlock,
+      });
       if (step === 'slow-lane') {
         // #1416 — truncated backlog pass: the cron target (0 for a
         // plain tick) is met, but the safe head is still more than a

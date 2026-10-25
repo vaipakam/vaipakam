@@ -3028,6 +3028,38 @@ General design requirements:
   read from the chain at the event's own block; if that historical read fails,
   the row should be left untouched for a later healing scan rather than written
   with a guessed fallback.
+- **A Scan Finishes Whole Blocks Within One Invocation (#2221):** A busy stretch
+  of chain must never stop the index from advancing. When a scan's window holds
+  more events than one invocation's request allowance can process, the scan
+  finishes as many whole blocks as it can, in chain order. It holds back what the
+  end of the pass needs to record its position and finish its once-per-pass
+  steps, and it records its position just below the first block it did not
+  finish. The next invocation resumes from there and processes that block again
+  in full. A scan that stopped this way starts that next invocation itself,
+  without waiting for the regular schedule, however close to the chain's head
+  it stopped; it made progress, so it is not treated as a failed attempt. The scan's recorded position never claims a block it did not finish.
+  The records an unfinished block had already written are visible until the
+  next pass completes them, exactly as any pass's writes are visible while the
+  pass is still running. Those records are what the chain recorded, and
+  processing the block again changes nothing that was already right. Records
+  that may be written only by the pass that first records an event, such as a
+  new loan's starting lender and borrower, are written together with that
+  event's record or not at all, so a stop can never leave one without the
+  other. A pass
+  always finishes at least its first block with events, so no single block can
+  hold the index in place. Where a scan stops early, it says so in its log:
+  where it stopped, how many blocks it finished and why. Steps that act on what
+  the scan found rather than on the stored records, such as notifications and
+  live-update hints, act only on the blocks the pass finished. Steps that
+  re-read the chain at the recorded position to complete stored records do
+  not run after such a stop at all, because the unfinished block has stored
+  records newer than that position; the next pass that finishes its window
+  runs them. The one
+  exception is the live-update signal itself: a pass that stopped inside a
+  block cannot say what that block had already written, and the pass that
+  finishes it will not see those records change, so the stopping pass tells
+  connected clients to refresh everything rather than a list it cannot
+  complete.
 - Same-block lifecycle ordering should be resolved from authoritative chain
   state rather than inferred from balances alone. For example, if an internal
   match and a repay / swap-repay settle the same loan in one block, the indexed

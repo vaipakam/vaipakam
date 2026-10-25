@@ -103,6 +103,16 @@ describe('invalidationKeysFromResult', () => {
     expect(invalidationKeysFromResult(result({ epochReset: false }))).toEqual([]);
   });
 
+  it('a pass that stopped inside a block fans out every key, whatever it counted (#2221)', () => {
+    // The unfinished block's committed writes are in no counter, and the
+    // replay that finishes it changes no row they already changed, so this
+    // pass is the only one that can announce them.
+    expect(invalidationKeysFromResult(result({ unfinishedBlock: 348n })).sort()).toEqual(
+      ['activity.appended', 'loan.created', 'loan.updated', 'notification.created', 'offer.changed', 'offer.created', 'ownership.changed'],
+    );
+    expect(invalidationKeysFromResult(result({ unfinishedBlock: undefined }))).toEqual([]);
+  });
+
   it('treats absent optional counts as zero (older result shapes)', () => {
     // The two PR 0 counts are optional on ChainIndexerResult so the early
     // return paths stay untouched — absence must read as "no key", not a
