@@ -69,7 +69,11 @@ import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
  *         periodic-interest switch is off, PF-116 turns it on, and it stays on
  *         until `settle()` turns it off again. The finer-cadence principal
  *         threshold is lowered for the loan's creation only and restored
- *         within the first stage. Fixture, runner and ids: {PositiveFlowsBase}.
+ *         within the first stage. The record carries every position the first
+ *         stage creates (PF-116's funding offer as well as its loan) and every
+ *         setting it changes, with the value it found, so a first stage that
+ *         stops part-way leaves nothing `settle()` cannot close or restore and
+ *         `finish()` cannot check. Fixture, runner and ids: {PositiveFlowsBase}.
  */
 contract PositiveFlowsTimed is PositiveFlowsBase {
     /// @dev PF-116's principal: twice the fixture's loan, so its value sits
@@ -83,13 +87,22 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
     uint256 private constant PERIODIC_DURATION_DAYS = 60;
 
     string private constant STATE_FILE = "positive-flows-timed.json";
-    uint256 private constant STATE_VERSION = 1;
+    uint256 private constant STATE_VERSION = 2;
 
     // ── What the first stage opened (0 = not opened) ─────────────────────
     uint256 private lenderOfferId;
     uint256 private borrowerOfferId;
+    /// @dev PF-116's funding offer, recorded beside its loan: an open that
+    ///      stops after the offer lands and before the accept leaves this
+    ///      offer funded and no loan.
+    uint256 private periodicOfferId;
     uint256 private periodicLoanId;
     bool private periodicSwitchWasOn;
+    /// @dev The finer-cadence threshold PF-116 found, and whether it lowered
+    ///      it. The open restores it once the loan carries its cadence; an
+    ///      open that stops in between leaves it lowered.
+    uint256 private finerCadenceThresholdWas;
+    bool private finerCadenceThresholdLowered;
     /// @dev The earliest timestamp at which every opened scenario can settle.
     uint256 private settleAfter;
 
@@ -168,6 +181,10 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
             _setPeriodicSwitch(false);
             console.log("Periodic-interest switch restored to off");
         }
+        if (_finerCadenceThresholdStillChanged()) {
+            _restoreFinerCadenceThreshold();
+            console.log("Finer-cadence principal threshold restored to", finerCadenceThresholdWas);
+        }
         console.log("The record is kept until finish() confirms the chain:", path);
     }
 
@@ -211,8 +228,9 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
             _cancelBorrowerOffer();
         } else if (index == 2) {
             if (periodicLoanId == 0) return _skip("not opened by the open stage");
-            if (!_periodicLoanStillOpen()) return _skip(NOT_OPEN_ON_CHAIN);
-            _settlePeriodicLoan();
+            if (_periodicLoanStillOpen()) return _settlePeriodicLoan();
+            if (!_offerStillOpen(periodicOfferId, lender)) return _skip(NOT_OPEN_ON_CHAIN);
+            _cancelPeriodicOffer();
         } else {
             revert("PositiveFlowsTimed: no scenario at index");
         }
@@ -233,8 +251,14 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         if (periodicLoanId != 0 && _periodicLoanStillOpen()) {
             open = _listed(open, string.concat("PF-116's loan ", vm.toString(periodicLoanId), " not settled"));
         }
+        if (periodicOfferId != 0 && _offerStillOpen(periodicOfferId, lender)) {
+            open = _listed(open, string.concat("PF-116's funding offer ", vm.toString(periodicOfferId), " open"));
+        }
         if (_periodicSwitchStillChanged()) {
             open = _listed(open, "the periodic-interest switch still on");
+        }
+        if (_finerCadenceThresholdStillChanged()) {
+            open = _listed(open, "the finer-cadence principal threshold still lowered");
         }
     }
 
@@ -260,6 +284,23 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
     function _periodicSwitchStillChanged() internal view returns (bool) {
         return periodicLoanId != 0 && !periodicSwitchWasOn
             && NumeraireConfigFacet(diamond).getPeriodicInterestEnabled();
+    }
+
+    /// @dev The first stage lowered the threshold, and it is not back.
+    function _finerCadenceThresholdStillChanged() internal view returns (bool) {
+        return finerCadenceThresholdLowered
+            && NumeraireConfigFacet(diamond).getMinPrincipalForFinerCadence() != finerCadenceThresholdWas;
+    }
+
+    /// @dev Puts back the threshold PF-116 found. The getter reports the
+    ///      effective value, so a threshold left at the library default is
+    ///      written back as 0, which is how the setter says "use the default".
+    function _restoreFinerCadenceThreshold() internal {
+        _setFinerCadenceThreshold(
+            finerCadenceThresholdWas == LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT
+                ? 0
+                : finerCadenceThresholdWas
+        );
     }
 
     // ─── PF-045 / PF-046 ──────────────────────────────────────────────────
@@ -349,12 +390,12 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         }
         // A finer cadence than None needs the principal's value at or above
         // the threshold. Lower it for this loan's creation only, and put it
-        // back once the loan carries its cadence. A threshold left at the
-        // library default is restored as 0, which is how the setter writes
-        // "use the default".
-        uint256 threshold = NumeraireConfigFacet(diamond).getMinPrincipalForFinerCadence();
-        bool lowered = threshold > PERIODIC_PRINCIPAL_NUMERAIRE;
-        if (lowered) _setFinerCadenceThreshold(LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR);
+        // back once the loan carries its cadence ({_restoreFinerCadenceThreshold}).
+        finerCadenceThresholdWas = NumeraireConfigFacet(diamond).getMinPrincipalForFinerCadence();
+        finerCadenceThresholdLowered = finerCadenceThresholdWas > PERIODIC_PRINCIPAL_NUMERAIRE;
+        if (finerCadenceThresholdLowered) {
+            _setFinerCadenceThreshold(LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR);
+        }
 
         LibVaipakam.CreateOfferParams memory offer = _lenderOfferStandard();
         offer.amount = PERIODIC_PRINCIPAL;
@@ -365,14 +406,10 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         offer.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Monthly;
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, PERIODIC_PRINCIPAL);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(offer);
+        periodicOfferId = OfferCreateFacet(diamond).createOffer(offer);
         vm.stopBroadcast();
-        periodicLoanId = _acceptAs(borrowerKey, offerId, address(weth), PERIODIC_COLLATERAL);
-        if (lowered) {
-            _setFinerCadenceThreshold(
-                threshold == LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT ? 0 : threshold
-            );
-        }
+        periodicLoanId = _acceptAs(borrowerKey, periodicOfferId, address(weth), PERIODIC_COLLATERAL);
+        if (finerCadenceThresholdLowered) _restoreFinerCadenceThreshold();
         console.log("Monthly-cadence loan initiated:", periodicLoanId);
 
         (uint8 cadence, uint256 periodEndAt, uint256 graceEndsAt,,,, bool canSettleNow) =
@@ -412,6 +449,20 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         _skip(settledEarlier
             ? "the checkpoint was settled, and its accounting checked, by an earlier settle run; this run closed the loan out"
             : "the loan was repaid before any settle run settled its checkpoint; this run closed it out");
+    }
+
+    /// @dev The open stopped after PF-116's funding offer landed and before
+    ///      the borrower's accept did, so there is an offer and no loan. The
+    ///      lender's principal is returned, and the scenario reports a SKIP:
+    ///      the checkpoint it exists for was never reached.
+    function _cancelPeriodicOffer() internal {
+        uint256 before = usdc.balanceOf(lender);
+        vm.startBroadcast(lenderKey);
+        OfferCancelFacet(diamond).cancelOffer(periodicOfferId);
+        vm.stopBroadcast();
+        require(usdc.balanceOf(lender) - before == PERIODIC_PRINCIPAL,
+            "PF-116: the cancel should return exactly the funding offer's principal");
+        _skip("the open stopped before its loan began; its funding offer was cancelled and the principal returned");
     }
 
     /// @dev Every unit of the sale is accounted for: the settler's bonus,
@@ -566,8 +617,11 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         vm.serializeUint(k, "settleAfter", settleAfter);
         vm.serializeUint(k, "lenderOfferId", lenderOfferId);
         vm.serializeUint(k, "borrowerOfferId", borrowerOfferId);
+        vm.serializeUint(k, "periodicOfferId", periodicOfferId);
         vm.serializeUint(k, "periodicLoanId", periodicLoanId);
         vm.serializeBool(k, "periodicSwitchWasOn", periodicSwitchWasOn);
+        vm.serializeUint(k, "finerCadenceThresholdWas", finerCadenceThresholdWas);
+        vm.serializeBool(k, "finerCadenceThresholdLowered", finerCadenceThresholdLowered);
         vm.serializeAddress(k, "usdc", f.usdc);
         vm.serializeAddress(k, "weth", f.weth);
         vm.serializeAddress(k, "illiquidToken", f.illiquidToken);
@@ -597,8 +651,11 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         settleAfter = vm.parseJsonUint(json, ".settleAfter");
         lenderOfferId = vm.parseJsonUint(json, ".lenderOfferId");
         borrowerOfferId = vm.parseJsonUint(json, ".borrowerOfferId");
+        periodicOfferId = vm.parseJsonUint(json, ".periodicOfferId");
         periodicLoanId = vm.parseJsonUint(json, ".periodicLoanId");
         periodicSwitchWasOn = vm.parseJsonBool(json, ".periodicSwitchWasOn");
+        finerCadenceThresholdWas = vm.parseJsonUint(json, ".finerCadenceThresholdWas");
+        finerCadenceThresholdLowered = vm.parseJsonBool(json, ".finerCadenceThresholdLowered");
         f = FixtureAddresses({
             usdc: vm.parseJsonAddress(json, ".usdc"),
             weth: vm.parseJsonAddress(json, ".weth"),
