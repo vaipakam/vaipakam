@@ -383,24 +383,4 @@ contract PositiveFlowsBasicLifecycle is PositiveFlowsBase {
         vm.stopBroadcast();
         _claimBoth(lenderKey, borrowerKey, loanId);
     }
-
-    // ─── Helpers ──────────────────────────────────────────────────────────
-
-    function _createLenderOffer(uint256 key) internal returns (uint256 offerId) {
-        vm.startBroadcast(key);
-        usdc.approve(diamond, LOAN_AMOUNT);
-        offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
-        vm.stopBroadcast();
-        console.log("Lender offer created:", offerId);
-    }
-
-    /// @dev `key` repays the whole USDC debt of `loanId`.
-    function _repayInFull(uint256 key, uint256 loanId) internal {
-        vm.startBroadcast(key);
-        uint256 repayAmt = RepayFacet(diamond).calculateRepaymentAmount(loanId);
-        usdc.approve(diamond, repayAmt);
-        RepayFacet(diamond).repayLoan(loanId);
-        vm.stopBroadcast();
-        console.log("Loan repaid:", repayAmt);
-    }
 }

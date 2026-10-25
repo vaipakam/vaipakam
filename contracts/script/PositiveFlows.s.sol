@@ -10,6 +10,7 @@ import {PositiveFlowsAdvancedCredit} from "./positive-flows/PositiveFlowsAdvance
 import {PositiveFlowsVaultAndVpfi} from "./positive-flows/PositiveFlowsVaultAndVpfi.s.sol";
 import {PositiveFlowsKeeperAutomation} from "./positive-flows/PositiveFlowsKeeperAutomation.s.sol";
 import {PositiveFlowsOperatorAdmin} from "./positive-flows/PositiveFlowsOperatorAdmin.s.sol";
+import {PositiveFlowsPositionHolder} from "./positive-flows/PositiveFlowsPositionHolder.s.sol";
 
 /**
  * @title PositiveFlows
@@ -31,8 +32,11 @@ import {PositiveFlowsOperatorAdmin} from "./positive-flows/PositiveFlowsOperator
  *             sanctioned-source ban, disown, VPFI deposit and withdraw.
  *           - PositiveFlowsKeeperAutomation: keeper approval and execution.
  *           - PositiveFlowsOperatorAdmin: sanctions Tier-1 vs Tier-2, pauses,
- *             treasury surface, master-flag dormancy.
- *         The catalog's sixth module, cross-chain, is not written: no module
+ *             treasury accrual and withdrawal, an admin fee knob inside its bounds.
+ *           - PositiveFlowsPositionHolder: a transferred position NFT moves
+ *             its side's authority and proceeds to the new holder (#848
+ *             Phase 2).
+ *         The catalog's cross-chain module is not written: no module
  *         rehearses CCIP, and this runner does not claim to.
  *
  *         Selection: `ONLY_SCENARIO=<id>` (a flow id such as `PF-230-floor`)
@@ -77,12 +81,13 @@ contract PositiveFlows is Script {
     function run() external {
         string memory only = vm.envOr("ONLY_SCENARIO", string(""));
 
-        PositiveFlowsBase[] memory modules = new PositiveFlowsBase[](5);
+        PositiveFlowsBase[] memory modules = new PositiveFlowsBase[](6);
         modules[0] = new PositiveFlowsBasicLifecycle();
         modules[1] = new PositiveFlowsAdvancedCredit();
         modules[2] = new PositiveFlowsVaultAndVpfi();
         modules[3] = new PositiveFlowsKeeperAutomation();
         modules[4] = new PositiveFlowsOperatorAdmin();
+        modules[5] = new PositiveFlowsPositionHolder();
 
         if (bytes(only).length != 0) {
             bool known;
