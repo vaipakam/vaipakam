@@ -325,7 +325,7 @@
       "paidConsentNone": "Vous n’avez pas accepté de payer ces frais sur {{chain}}, ils ne peuvent donc pas vous être facturés.",
       "paidConsentCovers": "Vous avez accepté de payer jusqu’à {{cap}} VPFI par côté de prêt sur {{chain}}. Cela couvre les frais actuels.",
       "paidConsentBelow": "Vous avez accepté de payer jusqu’à {{cap}} VPFI par côté de prêt sur {{chain}}. C’est moins que les frais actuels, ils ne peuvent donc pas vous être facturés à moins que vous n’acceptiez les nouveaux frais.",
-      "paidRaiseNote": "Si les frais augmentent plus tard, ils ne pourront pas vous être facturés tant que vous n’aurez pas accepté le nouveau montant.",
+      "paidRaiseNote": "Vous ne pouvez pas être facturé plus que le maximum que vous avez accepté de payer. Si les frais dépassent ce montant, ils ne pourront pas vous être facturés tant que vous n’aurez pas accepté les nouveaux frais.",
       "paidAgree": "Accepter de payer jusqu’à {{fee}} VPFI par côté de prêt",
       "paidWithdraw": "Retirer mon accord",
       "paidWithdrawNote": "Vous pouvez le retirer à tout moment, même lorsque le protocole est en pause. Des frais déjà prélevés pour un prêt ne sont pas remboursés.",

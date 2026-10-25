@@ -325,7 +325,7 @@
       "paidConsentNone": "你尚未同意在 {{chain}} 上支付这笔费用，因此不会向你收取。",
       "paidConsentCovers": "你已同意在 {{chain}} 上每个贷款方最多支付 {{cap}} VPFI。这足以覆盖当前费用。",
       "paidConsentBelow": "你已同意在 {{chain}} 上每个贷款方最多支付 {{cap}} VPFI。这低于当前费用，因此除非你同意新的费用，否则不会向你收取。",
-      "paidRaiseNote": "如果以后费用上涨，在你同意新的金额之前不会向你收取。",
+      "paidRaiseNote": "向你收取的费用不会超过你同意支付的上限。如果费用高于该金额，在你同意新的费用之前不会向你收取。",
       "paidAgree": "同意每个贷款方最多支付 {{fee}} VPFI",
       "paidWithdraw": "撤回我的同意",
       "paidWithdrawNote": "你可以随时撤回，即使协议处于暂停状态也可以。已为某笔贷款收取的费用不予退还。",

@@ -2683,8 +2683,10 @@ is the borrower's own money.
   on the first paid Push alert about it, and that Telegram alerts are free. It
   states the most the wallet has agreed to pay and whether that covers the
   current fee, as the contract judges it; a cap below the current fee is said
-  to be below it, and the card says a later rise in the fee cannot be charged
-  without a new agreement. Figures it could not read are stated as unread,
+  to be below it. The card says what the agreement protects against in terms
+  of the agreed cap, never the fee of the day: nothing above the cap can be
+  charged, so a rise in the fee is charged without a new agreement while it
+  stays within the cap, and only a fee above the cap needs one. Figures it could not read are stated as unread,
   never as zero.
 - Whether paid Push is billed on a network is the alert service's own answer,
   never inferred from the fee being configured. Agreeing to pay is offered

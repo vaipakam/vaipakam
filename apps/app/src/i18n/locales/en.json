@@ -342,7 +342,7 @@
       "paidConsentNone": "You haven’t agreed to pay this fee on {{chain}}, so it can’t be charged to you.",
       "paidConsentCovers": "You’ve agreed to pay up to {{cap}} VPFI per loan side on {{chain}}. That covers the current fee.",
       "paidConsentBelow": "You’ve agreed to pay up to {{cap}} VPFI per loan side on {{chain}}. That’s less than the current fee, so it can’t be charged to you unless you agree to the new fee.",
-      "paidRaiseNote": "If the fee goes up later, it can’t be charged to you until you agree to the new amount.",
+      "paidRaiseNote": "You can’t be charged more than the most you agreed to pay. If the fee rises above that amount, it can’t be charged to you until you agree to the new fee.",
       "paidAgree": "Agree to pay up to {{fee}} VPFI per loan side",
       "paidWithdraw": "Withdraw my agreement",
       "paidWithdrawNote": "You can withdraw it at any time, even while the protocol is paused. A fee already charged for a loan isn’t refunded.",

@@ -325,7 +325,7 @@
       "paidConsentNone": "No has aceptado pagar esta tarifa en {{chain}}, así que no se te puede cobrar.",
       "paidConsentCovers": "Has aceptado pagar hasta {{cap}} VPFI por lado del préstamo en {{chain}}. Eso cubre la tarifa actual.",
       "paidConsentBelow": "Has aceptado pagar hasta {{cap}} VPFI por lado del préstamo en {{chain}}. Es menos que la tarifa actual, así que no se te puede cobrar salvo que aceptes la nueva tarifa.",
-      "paidRaiseNote": "Si la tarifa sube más adelante, no se te podrá cobrar hasta que aceptes el nuevo importe.",
+      "paidRaiseNote": "No se te puede cobrar más del máximo que aceptaste pagar. Si la tarifa supera ese importe, no se te podrá cobrar hasta que aceptes la nueva tarifa.",
       "paidAgree": "Aceptar pagar hasta {{fee}} VPFI por lado del préstamo",
       "paidWithdraw": "Retirar mi aceptación",
       "paidWithdrawNote": "Puedes retirarla en cualquier momento, incluso mientras el protocolo está en pausa. Una tarifa ya cobrada por un préstamo no se reembolsa.",

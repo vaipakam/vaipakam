@@ -325,7 +325,7 @@
       "paidConsentNone": "Du hast der Zahlung dieser Gebühr auf {{chain}} nicht zugestimmt, daher kann sie dir nicht berechnet werden.",
       "paidConsentCovers": "Du hast zugestimmt, bis zu {{cap}} VPFI pro Kreditseite auf {{chain}} zu zahlen. Das deckt die aktuelle Gebühr.",
       "paidConsentBelow": "Du hast zugestimmt, bis zu {{cap}} VPFI pro Kreditseite auf {{chain}} zu zahlen. Das ist weniger als die aktuelle Gebühr, daher kann sie dir nur berechnet werden, wenn du der neuen Gebühr zustimmst.",
-      "paidRaiseNote": "Steigt die Gebühr später, kann sie dir erst berechnet werden, wenn du dem neuen Betrag zustimmst.",
+      "paidRaiseNote": "Dir kann nicht mehr berechnet werden als der Höchstbetrag, dem du zugestimmt hast. Steigt die Gebühr darüber, kann sie dir erst berechnet werden, wenn du der neuen Gebühr zustimmst.",
       "paidAgree": "Zustimmen, bis zu {{fee}} VPFI pro Kreditseite zu zahlen",
       "paidWithdraw": "Meine Zustimmung zurückziehen",
       "paidWithdrawNote": "Du kannst sie jederzeit zurückziehen, auch während das Protokoll pausiert ist. Eine bereits für einen Kredit berechnete Gebühr wird nicht erstattet.",

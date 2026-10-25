@@ -784,7 +784,7 @@ const copySource = {
       ['cap', 'chain'],
     ),
     paidRaiseNote:
-      'If the fee goes up later, it can’t be charged to you until you agree to the new amount.',
+      'You can’t be charged more than the most you agreed to pay. If the fee rises above that amount, it can’t be charged to you until you agree to the new fee.',
     paidAgree: tmpl('Agree to pay up to {{fee}} VPFI per loan side', ['fee']),
     paidWithdraw: 'Withdraw my agreement',
     paidWithdrawNote:
