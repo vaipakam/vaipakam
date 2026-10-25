@@ -21,10 +21,10 @@
  *     gate consults `effectiveTier = min(getLiquidityTier, keeperTier)`,
  *     so a compromised KEEPER_ROLE key can only lower a tier);
  *   - additionally requires, for a *Tier-3* promotion, the
- *     "battle-tested elsewhere" advisory — the asset is listed as
- *     collateral with meaningful TVL on ≥ 1 of {Aave v3, Compound v3,
- *     Morpho-curated} on this chain (an off-chain heuristic, NOT a
- *     parameter source; while unwired the relay caps at Tier 2).
+ *     "battle-tested elsewhere" advisory — the asset is enabled as
+ *     collateral with meaningful TVL on Aave v3 or Compound v3 on this
+ *     chain, backed by CoinGecko market cap or volume (an off-chain
+ *     heuristic, NOT a parameter source; see `battleTestedElsewhere`).
  *
  * Gating:
  *   - Submits `setKeeperTier` only when `KEEPER_ENABLED == 'true'` AND
@@ -539,25 +539,29 @@ async function aggregatorConfirmedTier(
 }
 
 /**
- * Tier-3 "battle-tested elsewhere" advisory — a **2-of-3 ensemble** of
- * independent off-chain signals. The relay promotes an asset to Tier 3
- * only when at least two of the three pass; one source down (or one
- * wrong answer) can never single-handedly gate Tier 3, and a pure-
- * popularity token without any DeFi-collateral footprint fails because
- * the DeFi-listing signal alone can't carry it. Fails closed on every
- * fetch error / unsupported chain / missing field.
+ * Tier-3 "battle-tested elsewhere" advisory. The relay promotes an asset to
+ * Tier 3 only when signal ① passes AND at least one of ② / ③ does (#2746).
+ * Fails closed on every fetch error / unsupported chain / missing field.
  *
- *   ① DeFi-collateral listing + TVL — DeFiLlama `/pools` filtered to
- *      {Aave v3, Compound v3, Morpho-blue} on this chain, TVL ≥
- *      `LIQ_TIER3_MIN_TVL_USD` (default $10M). Reads their *listing
- *      decision*, NOT their LTV numbers (those stay theirs). Operator-
- *      disable-able via `LIQ_TIER3_DISABLE_DEFI_LISTING=1` for
- *      operators who want zero competitor-data dependence — when
- *      disabled the ensemble becomes 2-of-2 (both CG signals must
- *      pass), stricter not looser, safe.
- *      ─ Note: `morpho-aave-v3` was dropped from the slug set because
- *         it's a thin Aave-v3 mirror on Morpho — counting it separately
- *         double-counts the same underlying listing decision.
+ *   ① Collateral listing — REQUIRED. The asset is enabled as COLLATERAL on a
+ *      curated lending venue on this chain: a DeFiLlama `/pools` row for
+ *      {Aave v3, Compound v3} carrying the asset, with TVL ≥
+ *      `LIQ_TIER3_MIN_TVL_USD` (default $10M), whose `/lendBorrow` row (joined
+ *      on the pool id) has a loan-to-value above zero. Reads the venue's
+ *      *listing decision*, NOT its LTV number (that stays theirs).
+ *      ─ A supply-only pool is not a collateral listing: on Aave v3 an asset
+ *        can be suppliable with LTV 0, and every Compound v3 BASE asset is
+ *        (a Comet base cannot be collateral). Both read LTV 0 here and fail.
+ *        Aave's LTV 0 is ambiguous (not collateral, frozen, or e-mode only;
+ *        the feed carries no e-mode data), and it fails closed.
+ *      ─ Morpho Blue is NOT accepted: anyone can create a market for any
+ *        collateral, so its LLTV is above zero by construction and says
+ *        nothing about a curator's decision. `morpho-aave-v3` is omitted as a
+ *        thin Aave v3 mirror (double-counting the same listing decision).
+ *      ─ `LIQ_TIER3_DISABLE_DEFI_LISTING=1` turns ① off for an operator who
+ *        wants no competitor-data dependence. With the required signal off,
+ *        nothing reaches Tier 3: market presence cannot stand in for
+ *        collateral evidence.
  *
  *   ② Circulating market cap — CoinGecko `/coins/{platform}/contract/
  *      {address}` (free public endpoint, no auth). Reads
@@ -566,39 +570,43 @@ async function aggregatorConfirmedTier(
  *      `LIQ_TIER3_MIN_MCAP_USD` (default $1B).
  *
  *   ③ Trading volume — 24h aggregate from the same CoinGecko response
- *      (`market_data.total_volume.usd`). 24h is noisier than a 30d
- *      average but it's one call instead of two, with a tighter
- *      threshold `LIQ_TIER3_MIN_VOL_USD` (default $50M/day) to
- *      compensate. Surfaces "the asset is actually traded broadly",
+ *      (`market_data.total_volume.usd`), threshold `LIQ_TIER3_MIN_VOL_USD`
+ *      (default $50M/day). Surfaces "the asset is actually traded broadly",
  *      not just held.
  *
- * Why an ensemble vs a single source: CoinGecko / CMC measure *general
- * market presence* (popularity, liquidity), not *collateral
- * suitability* — a high-mcap volatile token (SHIB-like) can pass ②③
- * while no serious lender lists it as collateral. The DeFi-listing
- * signal carries information ②③ miss. Conversely, ② and ③ filter out
- * stable-but-thinly-traded edge cases (e.g. an obscure stablecoin
- * listed on one Morpho market). 2-of-3 catches the broad collateral-
- * suitable mid-cap-and-up set without admitting either failure mode.
+ * Why ① is required and ②③ only add confidence: CoinGecko measures *general
+ * market presence*, not *collateral suitability* — a high-mcap volatile token
+ * (SHIB-like) passes ②③ while no serious lender lists it as collateral. Under
+ * the earlier 2-of-3 rule the two CoinGecko signals, one endpoint, passed it on
+ * their own. ②③ still filter the opposite failure: a thinly traded asset that
+ * one venue happens to list.
  */
 
-// ─── Signal ① state — DeFi-listing via DeFiLlama ────────────────────
+// ─── Signal ① state — collateral listing via DeFiLlama ──────────────
 
-interface LlamaPool {
+/** One curated-venue pool, as signal ① needs it: the `/pools` row joined to its
+ *  `/lendBorrow` row on the pool id. */
+export interface CollateralPool {
   project: string;
   chain: string;
-  tvlUsd?: number;
-  underlyingTokens?: string[]; // lowercased 0x addresses
+  tvlUsd: number;
+  /** Lowercased 0x addresses. */
+  underlyingTokens: string[];
+  /** The venue's loan-to-value for this pool, as a fraction; 0 = not usable
+   *  as collateral. */
+  ltv: number;
 }
 
 /** Shared 1h TTL for both off-chain advisory caches — listing /
  *  market-cap / volume decisions move on days, not minutes. */
 const ADVISORY_TTL_MS = 60 * 60 * 1000;
-let llamaPoolsCache: { pools: LlamaPool[]; fetchedAt: number } | null = null;
+/** Only the joined rows signal ① can use are kept (the two responses run to
+ *  tens of MB and the keeper machine has under 1 GB). */
+let collateralPoolsCache: { pools: CollateralPool[]; fetchedAt: number } | null = null;
 
 /** DeFiLlama uses display chain names; map every keeper-supported
- *  mainnet here. Testnets / unmapped chains ⇒ signal ① returns false
- *  (the ensemble still has ②+③ to fall back on). Verify additions
+ *  mainnet here. Testnets / unmapped chains ⇒ signal ① returns false,
+ *  so no asset there reaches Tier 3 through this advisory. Verify additions
  *  against the canonical list at https://api.llama.fi/chains. */
 const LLAMA_CHAIN_NAMES: Record<number, string> = {
   1: 'Ethereum',
@@ -609,53 +617,103 @@ const LLAMA_CHAIN_NAMES: Record<number, string> = {
   42161: 'Arbitrum',
 };
 
-/** Lending-protocol slugs the advisory accepts as "battle-tested
- *  collateral elsewhere". `morpho-aave-v3` deliberately omitted: it's
- *  a thin Aave-v3 mirror on Morpho ⇒ double-counts the same listing
- *  decision against `aave-v3`. */
-const TIER3_BATTLETESTED_PROJECTS: ReadonlySet<string> = new Set([
-  'aave-v3',
-  'compound-v3',
-  'morpho-blue',
-]);
+/** Curated lending venues whose collateral listing counts as "battle-tested
+ *  collateral elsewhere" (see the advisory's doc for why Morpho Blue and
+ *  `morpho-aave-v3` are not here). */
+const TIER3_COLLATERAL_VENUES: ReadonlySet<string> = new Set(['aave-v3', 'compound-v3']);
 
-async function fetchLlamaPoolsCached(): Promise<LlamaPool[]> {
-  const now = Date.now();
-  if (llamaPoolsCache && now - llamaPoolsCache.fetchedAt < ADVISORY_TTL_MS) {
-    return llamaPoolsCache.pools;
+/** Join DeFiLlama's `/pools` and `/lendBorrow` responses into the curated-venue
+ *  rows signal ① reads. A row is kept only when every field it needs is
+ *  present and well-typed; a pool with no lendBorrow row has no stated LTV and
+ *  is dropped (fail closed). */
+export function joinCollateralPools(poolsBody: unknown, lendBorrowBody: unknown): CollateralPool[] {
+  const ltvByPool = new Map<string, number>();
+  if (Array.isArray(lendBorrowBody)) {
+    for (const r of lendBorrowBody as Record<string, unknown>[]) {
+      if (typeof r?.pool === 'string' && typeof r.ltv === 'number' && Number.isFinite(r.ltv)) {
+        ltvByPool.set(r.pool, r.ltv);
+      }
+    }
   }
-  const res = await fetch('https://yields.llama.fi/pools');
-  if (!res.ok) throw new Error(`llama ${res.status}`);
-  const body = (await res.json()) as { data?: LlamaPool[] };
-  const pools = body.data ?? [];
-  llamaPoolsCache = { pools, fetchedAt: now };
+  const chains = new Set(Object.values(LLAMA_CHAIN_NAMES));
+  const data = (poolsBody as { data?: unknown } | null)?.data;
+  const out: CollateralPool[] = [];
+  if (!Array.isArray(data)) return out;
+  for (const r of data as Record<string, unknown>[]) {
+    if (typeof r?.project !== 'string' || !TIER3_COLLATERAL_VENUES.has(r.project)) continue;
+    if (typeof r.chain !== 'string' || !chains.has(r.chain)) continue;
+    if (typeof r.pool !== 'string' || typeof r.tvlUsd !== 'number') continue;
+    if (!Array.isArray(r.underlyingTokens)) continue;
+    const ltv = ltvByPool.get(r.pool);
+    if (ltv === undefined) continue;
+    out.push({
+      project: r.project,
+      chain: r.chain,
+      tvlUsd: r.tvlUsd,
+      underlyingTokens: (r.underlyingTokens as unknown[])
+        .filter((t): t is string => typeof t === 'string')
+        .map((t) => t.toLowerCase()),
+      ltv,
+    });
+  }
+  return out;
+}
+
+/** Signal ①'s rule over joined rows: a curated venue on this chain lists the
+ *  asset with enough TVL AND enables it as collateral. */
+export function collateralListed(
+  pools: readonly CollateralPool[],
+  chainName: string,
+  asset: string,
+  minTvlUsd: number,
+): boolean {
+  const target = asset.toLowerCase();
+  return pools.some(
+    (p) =>
+      TIER3_COLLATERAL_VENUES.has(p.project) &&
+      p.chain === chainName &&
+      p.tvlUsd >= minTvlUsd &&
+      p.ltv > 0 &&
+      p.underlyingTokens.includes(target),
+  );
+}
+
+/** The advisory's verdict: the collateral listing is required, and one of the
+ *  two market-presence signals must back it. */
+export function tier3Verdict(collateralListing: boolean, marketCapOk: boolean, volumeOk: boolean): boolean {
+  return collateralListing && (marketCapOk || volumeOk);
+}
+
+async function fetchCollateralPoolsCached(): Promise<CollateralPool[]> {
+  const now = Date.now();
+  if (collateralPoolsCache && now - collateralPoolsCache.fetchedAt < ADVISORY_TTL_MS) {
+    return collateralPoolsCache.pools;
+  }
+  const [poolsRes, lbRes] = await Promise.all([
+    fetch('https://yields.llama.fi/pools'),
+    fetch('https://yields.llama.fi/lendBorrow'),
+  ]);
+  if (!poolsRes.ok) throw new Error(`llama pools ${poolsRes.status}`);
+  if (!lbRes.ok) throw new Error(`llama lendBorrow ${lbRes.status}`);
+  const pools = joinCollateralPools(await poolsRes.json(), await lbRes.json());
+  collateralPoolsCache = { pools, fetchedAt: now };
   return pools;
 }
 
-async function signalDefiListing(env: Env, chainId: number, asset: Address): Promise<boolean> {
+async function signalCollateralListing(env: Env, chainId: number, asset: Address): Promise<boolean> {
   const disabled = env.LIQ_TIER3_DISABLE_DEFI_LISTING === 'true' || env.LIQ_TIER3_DISABLE_DEFI_LISTING === '1';
   if (disabled) return false;
   const chainName = LLAMA_CHAIN_NAMES[chainId];
   if (!chainName) return false;
   const minTvl = parsePosIntEnv(env.LIQ_TIER3_MIN_TVL_USD, 10_000_000);
-  let pools: LlamaPool[];
+  let pools: CollateralPool[];
   try {
-    pools = await fetchLlamaPoolsCached();
+    pools = await fetchCollateralPoolsCached();
   } catch (err) {
     console.log(`[keeper] tier3 ① DeFiLlama fetch failed: ${String(err).slice(0, 200)}`);
     return false;
   }
-  const target = asset.toLowerCase();
-  for (const p of pools) {
-    if (!TIER3_BATTLETESTED_PROJECTS.has(p.project)) continue;
-    if (p.chain !== chainName) continue;
-    if ((p.tvlUsd ?? 0) < minTvl) continue;
-    if (!p.underlyingTokens) continue;
-    for (const t of p.underlyingTokens) {
-      if (typeof t === 'string' && t.toLowerCase() === target) return true;
-    }
-  }
-  return false;
+  return collateralListed(pools, chainName, asset, minTvl);
 }
 
 // ─── Signals ②③ state — CoinGecko market cap + 24h volume ───────────
@@ -740,18 +798,14 @@ async function battleTestedElsewhere(
   chainId: number,
   asset: Address,
 ): Promise<boolean> {
-  // Signal ① — DeFi-collateral listing + TVL (disable-able).
-  const signal1 = await signalDefiListing(env, chainId, asset);
+  // Signal ① — collateral listing on a curated venue. Required, so the
+  // CoinGecko read is skipped when it fails.
+  if (!(await signalCollateralListing(env, chainId, asset))) return false;
   // Signals ②③ — single CoinGecko fetch carries both readings.
   const cg = await fetchCoinGeckoMarketCached(chainId, asset);
   const minMcap = parsePosIntEnv(env.LIQ_TIER3_MIN_MCAP_USD, 1_000_000_000); // $1B default
   const minVol = parsePosIntEnv(env.LIQ_TIER3_MIN_VOL_USD, 50_000_000); // $50M default
-  const signal2 = cg !== null && cg.marketCapUsd >= minMcap;
-  const signal3 = cg !== null && cg.totalVolume24hUsd >= minVol;
-  // 2-of-3 majority. With signal ① operator-disabled the ensemble
-  // collapses to 2-of-2 (both CG signals required) — stricter, safe.
-  const passCount = (signal1 ? 1 : 0) + (signal2 ? 1 : 0) + (signal3 ? 1 : 0);
-  return passCount >= 2;
+  return tier3Verdict(true, cg !== null && cg.marketCapUsd >= minMcap, cg !== null && cg.totalVolume24hUsd >= minVol);
 }
 
 /** Apply the promote/demote state machine to one D1 row + return the
