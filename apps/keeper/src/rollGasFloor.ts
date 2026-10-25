@@ -25,6 +25,7 @@
  */
 import { NumeraireValueFacetABI } from '@vaipakam/contracts/abis';
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { summarizeFailure } from '@vaipakam/lib/errorDescription';
 import type { Abi, Account, Address, PublicClient } from 'viem';
 import { estimateContractTotalFee } from 'viem/op-stack';
 
@@ -149,13 +150,13 @@ export async function judgeRollValue(
   try {
     gasValue = await value(gasToken, feeWei, true);
   } catch (err) {
-    return { kind: 'gasUnpriced', reason: `the fee could not be valued: ${String(err).slice(0, 120)}` };
+    return { kind: 'gasUnpriced', reason: `the fee could not be valued: ${summarizeFailure(err, 120)}` };
   }
   let rolledValue: bigint;
   try {
     rolledValue = await value(lendingAsset, amount, false);
   } catch (err) {
-    return { kind: 'assetUnpriced', reason: `the Diamond could not value ${lendingAsset}: ${String(err).slice(0, 120)}` };
+    return { kind: 'assetUnpriced', reason: `the Diamond could not value ${lendingAsset}: ${summarizeFailure(err, 120)}` };
   }
   return rollWorthItsGas(rolledValue, gasValue)
     ? { kind: 'worth', rolledValue, gasValue }

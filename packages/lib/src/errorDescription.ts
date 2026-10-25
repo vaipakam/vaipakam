@@ -90,3 +90,24 @@ export function describeFailure(err: unknown): string {
   if (status !== undefined) parts.push(`HTTP ${status}`);
   return parts.join(', ');
 }
+
+/**
+ * A one-line summary of a failure, safe to print, that keeps a contract's
+ * revert reason (#2760).
+ *
+ * {@link describeFailure} prints class names and numbers only, so a revert
+ * reads as `ContractFunctionExecutionError ← ContractFunctionRevertedError`
+ * and the reason an operator needs (`KeeperAccessRequired`, say) is lost. viem
+ * puts that reason in `shortMessage`, which, unlike `message`, carries no
+ * request URL. It is still a value from a dependency, so anything URL-shaped
+ * in it is stripped as {@link redactAndBound} does; without a `shortMessage`
+ * the bounded description stands in. Never the raw message.
+ */
+export function summarizeFailure(err: unknown, max = 200): string {
+  const short = (err as { shortMessage?: unknown } | null)?.shortMessage;
+  const text =
+    typeof short === 'string' && short.length > 0
+      ? short.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, '<redacted url>')
+      : describeFailure(err);
+  return text.slice(0, max);
+}

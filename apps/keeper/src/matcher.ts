@@ -69,6 +69,7 @@ import {
   type KeeperContext,
 } from './keeper';
 import { reportSendError } from './submissionQueue';
+import { summarizeFailure } from '@vaipakam/lib/errorDescription';
 import { ROLL_MIN_VALUE_TO_GAS, estimateRollFeeWei, judgeRollValue, rollUnpricedReason } from './rollGasFloor';
 
 // `getActiveOffersCount` / `getActiveOffersPaginated` live on
@@ -448,7 +449,7 @@ export async function listActiveOffers(
     })) as bigint;
   } catch (err) {
     console.error(
-      `[matcher] chain=${ctx.chainId} getActiveOffersCount failed: ${String(err).slice(0, 200)}`,
+      `[matcher] chain=${ctx.chainId} getActiveOffersCount failed: ${summarizeFailure(err, 200)}`,
     );
     return { offers: [], listed: 0 };
   }
@@ -475,7 +476,7 @@ export async function listActiveOffers(
       })) as readonly bigint[];
     } catch (err) {
       console.error(
-        `[matcher] chain=${ctx.chainId} getActiveOffersPaginated offset=${Number(offset)} failed: ${String(err).slice(0, 200)}`,
+        `[matcher] chain=${ctx.chainId} getActiveOffersPaginated offset=${Number(offset)} failed: ${summarizeFailure(err, 200)}`,
       );
       break;
     }
@@ -682,7 +683,7 @@ async function submitMatch(
       reportSendError(
         `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)}`,
         err,
-        `broadcast failed: ${errStr.slice(0, 200)}`,
+        `broadcast failed: ${summarizeFailure(err)}`,
         console.log,
       );
     }
@@ -724,7 +725,7 @@ async function submitMatch(
     // Timeout (tx dropped from mempool or RPC slow) — assume in-flight
     // and back off this lender for the tick.
     console.log(
-      `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)} receipt wait failed tx=${hash}: ${String(err).slice(0, 200)}`,
+      `[matcher] chain=${ctx.chainId} matchOffers lender=${Number(lenderId)} borrower=${Number(borrowerId)} receipt wait failed tx=${hash}: ${summarizeFailure(err, 200)}`,
     );
     return false;
   }
@@ -800,7 +801,7 @@ async function walkRegistry<T>(
       return total;
     } catch (err) {
       console.error(
-        `[matcher] chain=${ctx.chainId} ${functionName} offset=${Number(offset)} failed: ${String(err).slice(0, 200)}`,
+        `[matcher] chain=${ctx.chainId} ${functionName} offset=${Number(offset)} failed: ${summarizeFailure(err, 200)}`,
       );
       return null;
     }
@@ -881,7 +882,7 @@ async function submitIntentFill(
       reportSendError(
         `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)}`,
         err,
-        `broadcast failed: ${errStr.slice(0, 200)}`,
+        `broadcast failed: ${summarizeFailure(err)}`,
         console.log,
       );
     }
@@ -902,7 +903,7 @@ async function submitIntentFill(
     creditSpent = receiptSpentPriorityCredit(receipt.logs ?? [], ctx.diamond);
   } catch (err) {
     console.log(
-      `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)} receipt wait failed tx=${hash}: ${String(err).slice(0, 200)}`,
+      `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)} receipt wait failed tx=${hash}: ${summarizeFailure(err, 200)}`,
     );
     return null;
   }
@@ -969,7 +970,7 @@ export async function priorityState(
         priorityGetterMissingLogged.set(ctx.chainId, true);
       }
     } else {
-      console.log(`[matcher] chain=${ctx.chainId} priority read for intent ${intent.owner} unread, skipped this tick: ${msg.slice(0, 160)}`);
+      console.log(`[matcher] chain=${ctx.chainId} priority read for intent ${intent.owner} unread, skipped this tick: ${summarizeFailure(err, 160)}`);
     }
     return 'blocked';
   }
@@ -1319,7 +1320,7 @@ async function submitRoll(
       reportSendError(
         `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)}`,
         err,
-        `broadcast failed: ${errStr.slice(0, 200)}`,
+        `broadcast failed: ${summarizeFailure(err)}`,
         console.log,
       );
     }
@@ -1338,7 +1339,7 @@ async function submitRoll(
     }
   } catch (err) {
     console.log(
-      `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)} receipt wait failed tx=${hash}: ${String(err).slice(0, 200)}`,
+      `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)} receipt wait failed tx=${hash}: ${summarizeFailure(err, 200)}`,
     );
     return { ok: false, unauthorized: false };
   }
@@ -1414,7 +1415,7 @@ async function runIntentRollPass(
         unauthorizedOwners.add(loan.owner.toLowerCase());
       } else {
         console.log(
-          `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: fee estimate failed: ${String(err).slice(0, 200)}`,
+          `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: fee estimate failed: ${summarizeFailure(err, 200)}`,
         );
       }
       continue;
@@ -1433,7 +1434,7 @@ async function runIntentRollPass(
       rolledAmount = amount;
     } catch (err) {
       console.log(
-        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: claim read failed: ${String(err).slice(0, 200)}`,
+        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: claim read failed: ${summarizeFailure(err, 200)}`,
       );
       continue;
     }
@@ -1685,7 +1686,7 @@ export async function runMatcher(env: Env, tick: PassTick): Promise<void> {
         await runOfferMatcherTickForChain(ctx, run);
       } catch (err) {
         console.error(
-          `[matcher] chain=${chain.id} (${chain.name}) tick failed: ${String(err).slice(0, 250)}`,
+          `[matcher] chain=${chain.id} (${chain.name}) tick failed: ${summarizeFailure(err, 250)}`,
         );
       }
     }),

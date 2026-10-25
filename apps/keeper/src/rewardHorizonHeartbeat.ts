@@ -63,7 +63,7 @@
 
 import { BaseError, ContractFunctionRevertedError, createPublicClient, http, type Abi, type Address, type Hex, type PublicClient } from 'viem';
 import { AdminFacetABI, ConfigFacetABI, InteractionRewardsLensFacetABI, RewardHorizonSweepFacetABI } from '@vaipakam/contracts/abis';
-import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { summarizeFailure } from '@vaipakam/lib/errorDescription';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
@@ -269,7 +269,7 @@ export async function runRewardHorizonHeartbeat(env: Env, tick: PassTick): Promi
         try {
           await heartbeatChain(env, chain, sendDeadline, tick.deadlineMs);
         } catch (err) {
-          console.error(`[keeper] rewardHorizonHeartbeat chain=${chain.id} failed: ${shortErr(err)}`);
+          console.error(`[keeper] rewardHorizonHeartbeat chain=${chain.id} failed: ${summarizeFailure(err)}`);
         }
       }),
   );
@@ -383,7 +383,7 @@ async function discover(env: Env, chainId: number, client: PublicClient, diamond
         args: [next, DISCOVER_PAGE],
       })) as readonly RewardEntryView[];
     } catch (err) {
-      if (!(err instanceof PastRunDeadline)) console.error(`[keeper] rewardHorizonHeartbeat chain=${chainId} discovery read failed at id ${next}: ${shortErr(err)}`);
+      if (!(err instanceof PastRunDeadline)) console.error(`[keeper] rewardHorizonHeartbeat chain=${chainId} discovery read failed at id ${next}: ${summarizeFailure(err)}`);
       break;
     }
     const live: number[] = [];
@@ -509,7 +509,7 @@ async function simulate(ctx: KeeperContext, ids: readonly number[]): Promise<str
     return 'ok';
   } catch (err) {
     if (err instanceof PastRunDeadline) return 'deadline';
-    return revertName(err) ?? shortErr(err);
+    return revertName(err) ?? summarizeFailure(err);
   }
 }
 
@@ -532,7 +532,7 @@ async function send(ctx: KeeperContext, ids: readonly number[]): Promise<SendRes
   } catch (err) {
     // A deadline refusal is a deferral (nothing was sent); anything else is a
     // failed send. Either way the run sends no more: the next run re-reads.
-    reportSendError(label, err, `send failed: ${shortErr(err)}`);
+    reportSendError(label, err, `send failed: ${summarizeFailure(err)}`);
     return { kind: 'stop' };
   }
   console.log(`${label} tx=${hash}`);
@@ -545,7 +545,7 @@ async function send(ctx: KeeperContext, ids: readonly number[]): Promise<SendRes
     }
     return { kind: 'landed' };
   } catch (err) {
-    console.error(`${label} receipt not seen in time: ${shortErr(err)}`);
+    console.error(`${label} receipt not seen in time: ${summarizeFailure(err)}`);
     return { kind: 'stop' };
   }
 }
@@ -574,7 +574,7 @@ export async function raiseHeartbeatAlerts(env: Env, chainId: number, diamond: s
   try {
     open = new Set(await listOpsAlertKeys(env.KEEPER_DB, 'horizon-', chainId));
   } catch (err) {
-    console.error(`[keeper] rewardHorizonHeartbeat chain=${chainId}: open alerts unread, alerts left for the next run: ${shortErr(err)}`);
+    console.error(`[keeper] rewardHorizonHeartbeat chain=${chainId}: open alerts unread, alerts left for the next run: ${summarizeFailure(err)}`);
     return;
   }
   const toggle = async (key: string, on: boolean, text: () => string, repeat = ALERT_REPEAT_SEC): Promise<void> => {
@@ -615,7 +615,7 @@ export async function raiseHeartbeatAlerts(env: Env, chainId: number, diamond: s
     try {
       overdue = await listOverdueHorizonEntries(env.KEEPER_DB, chainId, diamond, m.nowSec - OVERDUE_AFTER_SEC, ALERT_NAMES);
     } catch (err) {
-      console.error(`[keeper] rewardHorizonHeartbeat chain=${chainId}: overdue count unread: ${shortErr(err)}`);
+      console.error(`[keeper] rewardHorizonHeartbeat chain=${chainId}: overdue count unread: ${summarizeFailure(err)}`);
       return;
     }
     await toggle(`horizon-overdue:${chainId}:all`, overdue.total > 0, () =>
@@ -636,7 +636,7 @@ export async function raiseHeartbeatAlerts(env: Env, chainId: number, diamond: s
   try {
     paused = await listPausedHorizonEntries(env.KEEPER_DB, chainId, diamond, PAUSED_ALERT_RUNS, ALERT_NAMES);
   } catch (err) {
-    console.error(`[keeper] rewardHorizonHeartbeat chain=${chainId}: paused-clock count unread: ${shortErr(err)}`);
+    console.error(`[keeper] rewardHorizonHeartbeat chain=${chainId}: paused-clock count unread: ${summarizeFailure(err)}`);
     return;
   }
   await toggle(
@@ -677,10 +677,3 @@ function revertName(err: unknown): string | undefined {
   return r instanceof ContractFunctionRevertedError ? r.data?.errorName : undefined;
 }
 
-/** viem's one-line summary when there is one; otherwise a bounded description
- *  that never carries the raw message — a transport error's message includes
- *  the request URL, and the RPC URLs carry API keys. */
-function shortErr(err: unknown): string {
-  const short = (err as { shortMessage?: unknown } | null)?.shortMessage;
-  return (typeof short === 'string' && short.length > 0 ? short : describeFailure(err)).slice(0, 200);
-}

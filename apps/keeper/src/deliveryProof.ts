@@ -57,7 +57,7 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
-import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { summarizeFailure } from '@vaipakam/lib/errorDescription';
 import { digestText, resolveOpsAlert, sendOpsAlert, sendOpsAlertDigest } from './opsAlert';
 import { boundedRead, deadlineClient, PastRunDeadline } from './batchRead';
 import { reportSendError } from './submissionQueue';
@@ -323,7 +323,7 @@ async function proveOnMirror(
         // eslint-disable-next-line no-await-in-loop
         plan = await actionsFor(chain.id, row, packet, sources);
       } catch (err) {
-        console.error(`[keeper] deliveryProof packet=${row.packetHash} read failed: ${shortErr(err)}`);
+        console.error(`[keeper] deliveryProof packet=${row.packetHash} read failed: ${summarizeFailure(err)}`);
         continue;
       }
       if (plan.complete) {
@@ -509,7 +509,7 @@ export async function raiseDeliveryAlerts(env: Env, chainId: number, m: Delivery
   } catch (err) {
     // Nothing is cleared on an unread alert table, but this run's refusals are
     // still raised: the next run cannot measure them again.
-    console.error(`[keeper] deliveryProof chain=${chainId}: open alerts unread, nothing cleared this run: ${shortErr(err)}`);
+    console.error(`[keeper] deliveryProof chain=${chainId}: open alerts unread, nothing cleared this run: ${summarizeFailure(err)}`);
     open = new Set();
   }
   // What the next run can MEASURE again — a clear, the "not whole" state —
@@ -545,7 +545,7 @@ export async function raiseDeliveryAlerts(env: Env, chainId: number, m: Delivery
     try {
       stillOpen = await m.openWork(standing.filter((p) => !m.cleared.has(p)));
     } catch (err) {
-      console.error(`[keeper] deliveryProof chain=${chainId}: open work unread, only disproved revert alerts cleared: ${shortErr(err)}`);
+      console.error(`[keeper] deliveryProof chain=${chainId}: open work unread, only disproved revert alerts cleared: ${summarizeFailure(err)}`);
     }
     for (const packet of standing) {
       const gone = m.cleared.has(packet) || (stillOpen !== null && !stillOpen.has(packet));
@@ -600,7 +600,7 @@ async function measureWhole(
       if (packet) out.set(key, !packetMayNeedWork(packet));
     }
   } catch (err) {
-    console.warn(`[keeper] deliveryProof chain=${chain.id}: re-read after sends failed, left undetermined: ${shortErr(err)}`);
+    console.warn(`[keeper] deliveryProof chain=${chain.id}: re-read after sends failed, left undetermined: ${summarizeFailure(err)}`);
   }
   return out;
 }
@@ -853,7 +853,7 @@ type SendOutcome = { kind: 'ok' } | { kind: 'failed'; reason: string } | { kind:
 export function classifyRevert(err: unknown): { kind: 'done' } | { kind: 'failed'; reason: string } {
   const name = revertName(err);
   if (name !== undefined && ALREADY_DONE.has(name)) return { kind: 'done' };
-  return { kind: 'failed', reason: name ?? shortErr(err) };
+  return { kind: 'failed', reason: name ?? summarizeFailure(err) };
 }
 
 async function send(ctx: KeeperContext, budget: { writes: number }, a: ProofAction): Promise<SendOutcome> {
@@ -874,14 +874,14 @@ async function send(ctx: KeeperContext, budget: { writes: number }, a: ProofActi
     // on every tick and leaving the batch forever short of whole.
     const hinted = isWalkExceeded(err) ? await hintedCallFor(ctx, a).catch(() => null) : null;
     if (!hinted) {
-      console.log(`[keeper] deliveryProof ${call.functionName} skipped: ${shortErr(err)}`);
+      console.log(`[keeper] deliveryProof ${call.functionName} skipped: ${summarizeFailure(err)}`);
       return outcomeOf(err, call.functionName);
     }
     try {
       await simulate(hinted);
       call = hinted;
     } catch (err2) {
-      console.log(`[keeper] deliveryProof ${hinted.functionName} (hinted) skipped: ${shortErr(err2)}`);
+      console.log(`[keeper] deliveryProof ${hinted.functionName} (hinted) skipped: ${summarizeFailure(err2)}`);
       return outcomeOf(err2, hinted.functionName);
     }
   }
@@ -919,10 +919,10 @@ async function send(ctx: KeeperContext, budget: { writes: number }, a: ProofActi
     // stops this run's sends.
     const refused = refusedBeforeBroadcast(err, call.functionName);
     if (refused) {
-      console.log(`[keeper] deliveryProof ${call.functionName} refused before broadcast: ${shortErr(err)}`);
+      console.log(`[keeper] deliveryProof ${call.functionName} refused before broadcast: ${summarizeFailure(err)}`);
       return refused;
     }
-    reportSendError(`[keeper] deliveryProof ${call.functionName}`, err, `send failed: ${shortErr(err)}`);
+    reportSendError(`[keeper] deliveryProof ${call.functionName}`, err, `send failed: ${summarizeFailure(err)}`);
     budget.writes = 0;
     return { kind: 'stopped' };
   }
@@ -993,11 +993,4 @@ function revertName(err: unknown): string | undefined {
   return r instanceof ContractFunctionRevertedError ? r.data?.errorName : undefined;
 }
 
-/** viem's one-line summary when there is one; otherwise a bounded description
- *  that never carries the raw message — a transport error's message includes
- *  the request URL, and the RPC URLs carry API keys. */
-function shortErr(err: unknown): string {
-  const short = (err as { shortMessage?: unknown } | null)?.shortMessage;
-  return (typeof short === 'string' && short.length > 0 ? short : describeFailure(err)).slice(0, 200);
-}
 
