@@ -11,7 +11,7 @@ import { REMIT_FUNDED_DAYS_PER_SEND, planRemitBatch } from '../src/rewardBudgetR
  * QUOTE alike. The keeper builds those batches, and until Codex #2232 r4 it
  * bounded them only by VPFI: a keeper outage or a run of delayed commitment
  * reports leaves many owed days carrying small slices, which fits the monetary
- * cap comfortably and names far more than 32 days. The quote then reverted
+ * cap comfortably and names far more days than the bound. The quote then reverted
  * before anything was sent, and the next tick rebuilt the same batch — a
  * mirror unfunded indefinitely.
  *
@@ -37,9 +37,9 @@ import { REMIT_FUNDED_DAYS_PER_SEND, planRemitBatch } from '../src/rewardBudgetR
  *   3. THE BOUND ITSELF, driven through `planRemitBatch` — the function the
  *      pass itself calls, not a restatement of it.
  *
- * The pass asks for ONE funded day per send (#2821, its own suite below), so
- * these cases pass the fan-out cap explicitly: they pin the CEILING the planner
- * enforces whatever it is asked for.
+ * The chain's bound is ONE funded day per send since #2821 (its own suite
+ * below). These cases pass the cap explicitly and read it from the contract,
+ * so they pin the CEILING the planner enforces whatever it is asked for.
  */
 const REPO_ROOT = new URL('../../../', import.meta.url).pathname.replace(/\/$/, '');
 const KEEPER_SRC = join(REPO_ROOT, 'apps/keeper/src/rewardBudgetRemit.ts');
@@ -124,12 +124,12 @@ describe('reward-budget remittance fan-out cap', () => {
 
   it('lets close-only riders past the cap — they never reach the destination list', () => {
     const cap = solidityCap();
-    // More close-only days (zero amount, closeable) than the cap, then two
+    // More close-only days (zero amount, closeable) than the cap, then `cap`
     // funded ones. The riders are trimmed out of the destination payload on
     // chain, so they are outside the bound; counting them would refuse a batch
     // the chain accepts.
     const riders = cap + 5;
-    const window = days(riders + 2, 2000);
+    const window = days(riders + cap, 2000);
     const { batch, deferred } = planRemitBatch(
       window,
       window.map((_, i) => (i < riders ? 0n : ONE)),
@@ -138,7 +138,7 @@ describe('reward-budget remittance fan-out cap', () => {
       0,
       solidityCap(),
     );
-    expect(batch.length).toBe(riders + 2); // every rider, plus both funded days
+    expect(batch.length).toBe(riders + cap); // every rider, plus every funded day
     expect(deferred).toBe(0);
   });
 
@@ -198,27 +198,29 @@ describe('reward-budget remittance fan-out cap', () => {
   });
 
   it('carries days already dropped while replanning into the same total', () => {
-    const window = days(2, 5000);
+    const cap = solidityCap();
+    const window = days(cap, 5000);
     const { deferred } = planRemitBatch(
       window,
       window.map(() => ONE),
       window.map(() => false),
       LANE_CAP,
       3,
-      solidityCap(),
+      cap,
     );
     expect(deferred).toBe(3);
   });
 });
 
 /**
- * #2821 — one funded day per send. A multi-day send lands on the mirror as one
- * epoch that the contest withholds while more than one of its days is open, so
- * an entry spanning two of them is never paid there.
+ * #2821 — one funded day per send. A multi-day send would land on the mirror as
+ * one epoch shared by its days, which the mirror withholds for good, so the
+ * chain refuses it and the pass never builds it.
  */
 describe('reward-budget remittance: one funded day per send (#2821)', () => {
-  it('is the bound the pass uses', () => {
+  it('is the bound the pass uses, and the chain\'s own', () => {
     expect(REMIT_FUNDED_DAYS_PER_SEND).toBe(1);
+    expect(REMIT_FUNDED_DAYS_PER_SEND).toBe(solidityCap());
   });
 
   it('sends the oldest owed day of a backlog and defers the rest', () => {

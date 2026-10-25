@@ -13,6 +13,8 @@
  *     receive is exactly what running the claim in a reverting frame said it
  *     would pay, the static preview never quoted more, and nothing is left to
  *     claim afterwards (PF-120);
+ *   - Base refuses to remit all three owed days in one send, on the fee
+ *     quote and on the send alike, naming the one-funded-day bound (#2821);
  *   - Base remits the mirror's budget for those days over the real VPFI
  *     pools, one remittance per day: the VPFI the Base pool locks is the
  *     budget Base quoted, the mirror mints exactly that, and the mirror's
@@ -31,7 +33,7 @@ import { openMeshScenario, type MeshChain, type MeshScenario } from '@vaipakam/a
 import { TOKEN_ABI, type Party } from '@vaipakam/anvil-harness/scenarioChain';
 import { BASE_ID, MIRROR_ID } from '@vaipakam/anvil-harness/mesh';
 import { protocolMesh } from '../src/fixture';
-import { broadcastDays, closeDays, finalizeDays, indexDelivery, remitDays } from '../src/rewardMesh';
+import { broadcastDays, closeDays, finalizeDays, indexDelivery, remitDays, remitRefusals } from '../src/rewardMesh';
 
 const DAY = 86_400;
 const HOUR = 3_600;
@@ -40,12 +42,10 @@ const TO_WALLET = 1;
 /** The days the loans accrue over (accepted on day 0, repaid on day 3). */
 const DAYS = [0, 1, 2, 3];
 /**
- * Day 0 is never remitted: the remit window starts at day 1. Each day is
- * remitted on its own. One remittance listing several days lands as a single
- * epoch, which the mirror withholds as contested while more than one of its
- * days is open, and an entry covering those days keeps them open until its
- * own claim pays. So a multi-day batch never pays these loans' claims
- * (#2821). This suite proves the path that pays; #2821 records the other.
+ * Day 0 is never remitted: the remit window starts at day 1. Base funds one
+ * day per remittance (#2821): a remittance funding several days would land as
+ * one epoch shared by them, and an entry covering those days could never be
+ * paid from it, so Base refuses to build one and each day is sent on its own.
  */
 const REMITTED_DAYS = [1, 2, 3];
 const PARTIES: Party[] = ['lender', 'borrower'];
@@ -236,6 +236,19 @@ describe('interaction rewards on a canonical chain and a mirror', () => {
 
   it('pays lender and borrower on Base into their wallets, exactly what the claim simulation said', async () => {
     for (const who of PARTIES) await claimToWallet(m.base, m.fixture.vpfiToken, who);
+  });
+
+  it('refuses to fund all three owed days in one remittance (#2821)', async () => {
+    const [, perDay] = await m.base.read<readonly [bigint, readonly bigint[]]>('quoteRewardBudget', [MIRROR_ID, REMITTED_DAYS.map(BigInt)]);
+    expect(perDay.every((v) => v > 0n), 'every listed day owes the mirror a budget').toBe(true);
+    const expected = { name: 'TransportDayFanoutExceeded', args: [BigInt(REMITTED_DAYS.length), 1n] };
+    const refused = await remitRefusals(m, REMITTED_DAYS);
+    expect(refused.quote).toEqual(expected);
+    expect(refused.send).toEqual(expected);
+    // One day at a time is admitted by the bound.
+    const one = await remitRefusals(m, [REMITTED_DAYS[0]]);
+    expect(one.quote).toBeNull();
+    expect(one.send).toBeNull();
   });
 
   it('remits the mirror’s budget over the VPFI pools and pays its claims out of it', async () => {

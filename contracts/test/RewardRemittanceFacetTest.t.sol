@@ -535,7 +535,6 @@ contract RewardRemittanceFacetTest is SetupTest {
         list[3] = 3;
         (uint256 total, uint256[] memory perDay) = remit.quoteRewardBudget(CHAIN_ARB, list);
         (uint256[] memory amounts, bool[] memory closeable) = remit.quoteRemitDayPlans(CHAIN_ARB, list);
-        (, uint256 feeTotal) = remit.quoteRemittanceFee(CHAIN_ARB, list);
         assertEq(perDay[2], 0, "a repeated day reads once");
         assertFalse(closeable[2], "and is not closeable twice");
         uint256 sum;
@@ -545,13 +544,22 @@ contract RewardRemittanceFacetTest is SetupTest {
         }
         assertGt(total, 0, "the fixture funds something");
         assertEq(total, sum, "the budget quote's total is its per-day sum");
-        assertEq(feeTotal, total, "the fee quote's total is the same plan");
-
+        // The list funds three days, so the fee quote and the send refuse it
+        // alike (#2821), and the caller sends one funded day at a time.
+        bytes memory refusal = abi.encodeWithSelector(IVaipakamErrors.TransportDayFanoutExceeded.selector, 3, 1);
+        vm.expectRevert(refusal);
+        remit.quoteRemittanceFee(CHAIN_ARB, list);
+        vm.expectRevert(refusal);
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, list, CAP);
-        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), perDay[0], "day 1 funded exactly what was quoted");
-        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 2), perDay[1], "day 2 likewise");
-        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 3), perDay[3], "day 3 likewise");
-        assertEq(rlens.getRewardBudgetRemittedTotal(CHAIN_ARB), total, "and the send moved exactly the quoted total");
+
+        uint256[3] memory at = [uint256(0), 1, 3]; // each day's slot in `list`
+        for (uint256 d = 1; d <= 3; ++d) {
+            (, uint256 feeTotal) = remit.quoteRemittanceFee(CHAIN_ARB, _days(d));
+            assertEq(feeTotal, perDay[at[d - 1]], "the fee quote's total is the same plan, day by day");
+            remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(d), CAP);
+            assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, d), perDay[at[d - 1]], "each day funded exactly what was quoted");
+        }
+        assertEq(rlens.getRewardBudgetRemittedTotal(CHAIN_ARB), total, "and the sends moved exactly the quoted total");
     }
 
     /// An unfinalized day: the send and the fee quote refuse it by name, with
@@ -670,27 +678,6 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertEq(era, 0, "the pre-registry era");
         assertGt(sentTotal, 0, "non-zero total");
         assertEq(rlens.getRemitReservation(remitId).dayListRoot, root, "the reservation keeps the root it committed to");
-    }
-
-    /// @dev 3d-2 — a send wider than one chunk roots every funded day in
-    ///      chunk order, and the quote's total is the send's: the two are built
-    ///      by one rule.
-    function test_Remit_RootsTheFundedDays_InChunks_AndTheQuoteIsTheSend() public {
-        uint256 n = RemitWire.D6_CHUNK_DAYS + 1;
-        _finalizeDays(n);
-        uint256[] memory days_ = new uint256[](n);
-        for (uint256 i; i < n; ++i) days_[i] = i + 1;
-        (uint256 fee, uint256 quotedTotal) = remit.quoteRemittanceFee(CHAIN_ARB, days_);
-        assertGt(quotedTotal, 0, "the quote prices the batch");
-        remit.remitRewardBudget{value: fee}(CHAIN_ARB, days_, CAP);
-        (, bytes32 root, uint256 e, uint256 chunks, uint256 sentTotal, uint256 remitId, , , ) =
-            abi.decode(ccip.sentPayload(0), (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256));
-        assertEq(e, n, "every funded day is in the extent");
-        assertEq(chunks, 2, "two chunks");
-        assertEq(root, RemitWire.d6Root(RemitWire.d6Chunks(days_)), "rooted over the funded days in order");
-        assertEq(sentTotal, quotedTotal, "the quote's total is the send's");
-        assertEq(rlens.getRemitReservation(remitId).dayListRoot, root, "kept on the reservation");
-        assertEq(rlens.getRemitReservation(remitId).dayIds.length, n, "and the closed days are recorded as before");
     }
 
     // ─── mirror-side ingress: the rooted budget ingress (#776 PR2) ─────────

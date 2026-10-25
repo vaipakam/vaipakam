@@ -2602,7 +2602,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](21);
+        selectors = new bytes4[](20);
         selectors[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         selectors[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
         selectors[3] = RewardEpochFacet.getTransportBatch.selector;
@@ -2619,10 +2619,9 @@ contract HelperTest {
         selectors[15] = RewardEpochFacet.getTransportDayIndex.selector;
         selectors[16] = RewardEpochFacet.getTransportDayScanIds.selector;
         selectors[17] = RewardEpochFacet.getTransportBatchStaged.selector;
-        // 3c-1 — the two gates' views.
-        selectors[18] = RewardEpochFacet.getTransportTiersForDay.selector;
-        selectors[19] = RewardEpochFacet.getTransportBatchGates.selector;
-        selectors[20] = RewardEpochFacet.getTransportBatchDays.selector;
+        // The batch gates and the indexed day list.
+        selectors[18] = RewardEpochFacet.getTransportBatchGates.selector;
+        selectors[19] = RewardEpochFacet.getTransportBatchDays.selector;
         // 3d-1 — the rooted (d6) chunk index.
         selectors[0] = RewardEpochFacet.materializeTransportBatchChunk.selector;
         // #1944 consequence 1 — the delivery proofs for packets holding no batch.

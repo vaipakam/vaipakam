@@ -423,7 +423,10 @@ contract RewardRemittanceFacet is
      *         `msg.value` to the caller.
      * @param dstChainId      Mirror to fund.
      * @param dayIds          Finalized days to remit (any already-sent are
-     *                        skipped; every day must be finalized).
+     *                        skipped; every day must be finalized). At most
+     *                        ONE of them may carry VPFI (#2821, see
+     *                        {LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP});
+     *                        close-only days may ride along.
      * @param perRemittanceCap Caller-set ceiling on this batch's total, so the
      *                        operator/keeper keeps a single send under the live
      *                        VPFI CCIP lane bucket. Must be in (0, 69M].
@@ -688,7 +691,7 @@ contract RewardRemittanceFacet is
     ///         ({RemitWire.d6Chunks}, {RemitWire.d6Root}) and travel with the
     ///         extent, the typed split and the era. The funded list is bounded
     ///         by {LibRewardCustody.requireRemittableFanout} before this runs,
-    ///         so the hashing is at most a handful of leaves.
+    ///         so it holds one day (#2821) and the root is over one chunk.
     ///         The era word is the custody era the DESTINATION last reported
     ///         (its B4 day report; #1566 PR C revision) — eras are numbered per
     ///         chain, so the receiver compares like with like: a delivery the
@@ -1861,10 +1864,11 @@ contract RewardRemittanceFacet is
         // keeper scans a recent window every tick and relies on an
         // unfinalized, repeated or already-remitted day reading ZERO here, not
         // reverting. What it does NOT do is claim the send would accept the
-        // whole list: the send funds at most `TRANSPORT_DAY_FANOUT_CAP`
-        // days per remittance, and the number of days this list would fund is
-        // the count of NON-ZERO entries in `perDay`. A caller sizing a batch
-        // counts them and chunks at the cap; {quoteRemittanceFee} is the
+        // whole list: the send funds ONE day per remittance
+        // (`TRANSPORT_DAY_FANOUT_CAP`, #2821), and the number of days this
+        // list would fund is the count of NON-ZERO entries in `perDay`. A
+        // caller sizing a batch sends one of them per remittance, with any
+        // close-only days alongside; {quoteRemittanceFee} is the
         // strict dry run and refuses the same lists the send refuses.
         BatchPlan memory plan = _planBatch(LibVaipakam.storageSlot(), dstChainId, dayIds);
         return (plan.st.totalAll, plan.perDay);

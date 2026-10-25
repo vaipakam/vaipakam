@@ -342,7 +342,7 @@
         "internalType": "bool"
       },
       {
-        "name": "withheldContested",
+        "name": "withheldMultiDay",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -547,30 +547,6 @@
       },
       {
         "name": "debited",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getTransportTiersForDay",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "ordinary",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "necessity",
         "type": "uint256",
         "internalType": "uint256"
       }
