@@ -97,6 +97,11 @@ export const THREE_VERDICT_DRIVERS = new Set([
   // Exits 2 when Chromium cannot start or the site cannot be loaded at
   // all: nothing about the worker or the manifest was observed (#2687).
   'live-analytics-recycling.mjs',
+  // Watch-only, no wallet file. Exits 2 when the feed cannot be read, a page
+  // never settles on the scan it rendered, or the run did not exercise both
+  // halves of the rule (an admitted row rendered AND a named-only one left
+  // out): nothing the claim needs was compared (#2703).
+  'live-activity-participants.mjs',
   // Exits 2 when Chromium cannot start, the site cannot be loaded, the page
   // is not English, or the page's indexer requests got no answer: nothing
   // was compared (#1956).

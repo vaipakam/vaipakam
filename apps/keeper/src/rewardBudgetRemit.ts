@@ -35,6 +35,7 @@ import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import { reportSendError } from './submissionQueue';
 import { readCutoffMs, runIndex } from './runWindow';
 import { rotate } from './rotate';
+import { owedButBlocked, readRemitDayStatuses } from './remitDayStatus';
 
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;
 /** `getDayClosedByRemitId` lives on the read-only lens facet. */
@@ -332,7 +333,8 @@ async function remitFromCanonical(env: Env, chain: ChainConfig, deadlineMs: numb
   );
 }
 
-async function remitToMirror(
+/** @internal Exported for the planning tests; the pass is the only caller. */
+export async function remitToMirror(
   publicClient: PublicClient,
   ctx: KeeperContext,
   diamond: Address,
@@ -395,6 +397,16 @@ async function remitToMirror(
   // backing allocation still includes an excluded day — an unstabilized
   // batch would starve affordable later days every tick.
   const MAX_REPLAN_PASSES = 24;
+  // Every planning read (each re-plan, the per-day statuses, the closure
+  // probe) is taken at ONE block. Read at successive heads, a commitment
+  // report landing between the plan and the status read made a day
+  // `Closeable` by its status but absent from the batch, and the empty
+  // batch then read as settled while that day was still owed (Codex #2826
+  // r3). At one block the status is the plan's own verdict for every day.
+  // The send itself runs later and re-plans on chain, so pinning the plan
+  // costs nothing but a day that became closeable after this block, which
+  // the next tick picks up.
+  const planBlock = await publicClient.getBlockNumber({ cacheTime: 0 });
   let droppedInReplan = 0;
   let stabilized = false;
   for (let pass = 0; pass < MAX_REPLAN_PASSES; pass++) {
@@ -411,6 +423,7 @@ async function remitToMirror(
       abi: REMIT_ABI,
       functionName: 'quoteRemitDayPlans',
       args: [mirrorId, planWindow],
+      blockNumber: planBlock,
     })) as readonly [readonly bigint[], readonly boolean[]];
     const oversized: bigint[] = [];
     for (let i = 0; i < planWindow.length; i++) {
@@ -450,85 +463,31 @@ async function remitToMirror(
   }
 
   const { batch, total, deferred } = planRemitBatch(planWindow, perDay, closeable, laneCap, droppedInReplan);
-  // A zero-amount, non-closeable day is AMBIGUOUS: `quoteRemitDayPlans`
-  // returns exactly that both for a day already remitted AND for one that is
-  // still owed but gated — an armed day awaiting its commitment report, or a
-  // recycled day without backing (Codex #1924 r34). Treating them alike let
-  // the coverage marker report A/A while source funding was still owed.
-  //
-  // `getDayClosedByRemitId` is the discriminator: 0 means the day is still
-  // open. Only the ambiguous days are queried, so the cost is bounded by how
-  // many of them there are — and in the steady state, where every day really
-  // is closed, this is exactly the set that would otherwise have been silently
-  // counted as covered.
-  const ambiguous = planWindow.filter((_, i) => (perDay[i] ?? 0n) === 0n && !closeable[i]);
-  // ONE subrequest, not one per day (Codex #1924 r36). The default window is
-  // 45 days and in steady state EVERY already-closed day lands here, so the
-  // sequential loop this replaces issued up to 45 subrequests per mirror —
-  // against a 50-subrequest free-tier ceiling that the setup reads and the
-  // plan quote have already eaten into. A second mirror would simply not be
-  // processed. Adding an unbounded per-day loop to the Worker that #1896
-  // exists to bring back under its limits was the wrong instinct; multicall
-  // makes the whole probe one call.
-  const openDays: bigint[] = [];
-  if (ambiguous.length > 0) {
-    try {
-      const results = (await publicClient.multicall({
-        contracts: ambiguous.map((dayId) => ({
-          address: diamond,
-          abi: REMIT_LENS_ABI,
-          functionName: 'getDayClosedByRemitId',
-          args: [mirrorId, dayId],
-        })),
-        multicallAddress: MULTICALL3_ADDRESS,
-        allowFailure: true,
-        // Same size-split disable as the liquidator (#1965 r2): viem's default
-        // is 1024 BYTES, so a probe list long enough to exceed it silently
-        // becomes several `aggregate3` requests against the same
-        // per-invocation subrequest ceiling. This list is already bounded by
-        // the ambiguous-day set.
-        //
-        // The aggregate-rejection case needs no serial retry HERE, unlike the
-        // liquidator: `allowFailure` turns a rejected aggregate into per-call
-        // failures, and the loop below already treats any non-success as an
-        // OPEN/unknown day and reports it. The outcome is the same whether the
-        // rejection surfaces as results or as a throw.
-        batchSize: 0,
-      })) as { status: 'success' | 'failure'; result?: unknown }[];
-      ambiguous.forEach((dayId, i) => {
-        const r = results[i];
-        // A failed probe is UNKNOWN, and unknown is reported rather than
-        // assumed closed.
-        if (r?.status !== 'success' || r.result === 0n) openDays.push(dayId);
-      });
-    } catch (err) {
+  // #2760 — the send's own verdict for each day, so a day still owed but
+  // gated (awaiting its commitment report, short of recycled backing, or
+  // remit-ineligible) is named as owed and holds this mirror unsettled, while a
+  // day that owed this mirror nothing is not reported at all. A Diamond
+  // without the view keeps the earlier closure probe and its warning.
+  let blockedOwed = 0;
+  const statusRead = await readRemitDayStatuses(publicClient, diamond, mirrorId, planWindow, planBlock);
+  if (statusRead.kind === 'read') {
+    const blocked = owedButBlocked(planWindow, statusRead.statuses);
+    blockedOwed = blocked.length;
+    if (blocked.length > 0) {
       console.warn(
-        `[keeper] rewardBudgetRemit Base->${mirrorId} closure probe failed: ${(err as Error).message}`,
+        `[keeper] rewardBudgetRemit Base->${mirrorId} ${blocked.length} finalized day(s) still owed and not closeable this tick: ${blocked.map((b) => `${b.day} (${b.reason})`).join(', ')}`,
       );
-      openDays.push(...ambiguous);
     }
-  }
-  if (openDays.length > 0) {
-    // REPORTED, not folded into `deferred` (Codex #1924 r35). An open day here
-    // is one of two things and this pass cannot tell them apart: an obligation
-    // still gated (awaiting its commitment report, or unbacked), or a day that
-    // simply gave this mirror no slice — the latter is never closed by
-    // anything, so counting it as owed would hold coverage below A/A on every
-    // tick until it left the scan window, and the stand-down would never be
-    // reachable. That is the false-red the r34 fix introduced by treating both
-    // as owed.
-    //
-    // So the ambiguity is surfaced rather than guessed at: the operator has
-    // the day ids and can check whether any carries a real obligation. Same
-    // shape as the other signals here — report what is observable, do not
-    // infer what is not.
-    console.warn(
-      `[keeper] rewardBudgetRemit Base->${mirrorId} ${openDays.length} finalized day(s) neither remitted nor closed: ${openDays.join(',')} — gated obligation or zero budget for this mirror; verify before treating coverage as complete`,
-    );
+  } else {
+    if (statusRead.kind === 'unread') {
+      console.warn(`[keeper] rewardBudgetRemit Base->${mirrorId} day status read failed: ${statusRead.error}; using the closure probe`);
+    }
+    await reportUnclosedDays(publicClient, diamond, mirrorId, planWindow, perDay, closeable, planBlock);
   }
 
   if (batch.length === 0) {
-    if (deferred === 0) return true; // genuinely nothing actionable owed
+    if (deferred === 0 && blockedOwed === 0) return true; // genuinely nothing owed
+    if (deferred === 0) return false; // owed days named above, none closeable yet
     console.warn(
       `[keeper] rewardBudgetRemit Base->${mirrorId} no day fits laneCap=${laneCap} this tick — ${deferred} actionable day(s) still owed`,
     );
@@ -627,5 +586,102 @@ async function remitToMirror(
   // `true` here means "nothing left owed AT THE SOURCE". The stand-down
   // checklist owns the rest, and says so — mirror-side confirmation is a
   // separate check, not something the coverage counter can imply.
-  return true;
+  //
+  // #2760 — days still owed but gated are named above and keep the
+  // destination unsettled until they close.
+  return blockedOwed === 0;
+}
+
+/**
+ * The closure probe for a Diamond without `quoteRemitDayStatuses`: a
+ * zero-amount, non-closeable day is reported when `getDayClosedByRemitId`
+ * says it is still open. It cannot tell an owed, gated day from one that
+ * owed this mirror nothing, so it reports and decides nothing.
+ */
+async function reportUnclosedDays(
+  publicClient: PublicClient,
+  diamond: Address,
+  mirrorId: number,
+  planWindow: readonly bigint[],
+  perDay: readonly bigint[],
+  closeable: readonly boolean[],
+  planBlock: bigint,
+): Promise<void> {
+  // A zero-amount, non-closeable day is AMBIGUOUS: `quoteRemitDayPlans`
+  // returns exactly that both for a day already remitted AND for one that is
+  // still owed but gated — an armed day awaiting its commitment report, or a
+  // recycled day without backing (Codex #1924 r34). Treating them alike let
+  // the coverage marker report A/A while source funding was still owed.
+  //
+  // `getDayClosedByRemitId` is the discriminator: 0 means the day is still
+  // open. Only the ambiguous days are queried, so the cost is bounded by how
+  // many of them there are — and in the steady state, where every day really
+  // is closed, this is exactly the set that would otherwise have been silently
+  // counted as covered.
+  const ambiguous = planWindow.filter((_, i) => (perDay[i] ?? 0n) === 0n && !closeable[i]);
+  // ONE subrequest, not one per day (Codex #1924 r36). The default window is
+  // 45 days and in steady state EVERY already-closed day lands here, so the
+  // sequential loop this replaces issued up to 45 subrequests per mirror —
+  // against a 50-subrequest free-tier ceiling that the setup reads and the
+  // plan quote have already eaten into. A second mirror would simply not be
+  // processed. Adding an unbounded per-day loop to the Worker that #1896
+  // exists to bring back under its limits was the wrong instinct; multicall
+  // makes the whole probe one call.
+  const openDays: bigint[] = [];
+  if (ambiguous.length > 0) {
+    try {
+      const results = (await publicClient.multicall({
+        contracts: ambiguous.map((dayId) => ({
+          address: diamond,
+          abi: REMIT_LENS_ABI,
+          functionName: 'getDayClosedByRemitId',
+          args: [mirrorId, dayId],
+        })),
+        multicallAddress: MULTICALL3_ADDRESS,
+        blockNumber: planBlock,
+        allowFailure: true,
+        // Same size-split disable as the liquidator (#1965 r2): viem's default
+        // is 1024 BYTES, so a probe list long enough to exceed it silently
+        // becomes several `aggregate3` requests against the same
+        // per-invocation subrequest ceiling. This list is already bounded by
+        // the ambiguous-day set.
+        //
+        // The aggregate-rejection case needs no serial retry HERE, unlike the
+        // liquidator: `allowFailure` turns a rejected aggregate into per-call
+        // failures, and the loop below already treats any non-success as an
+        // OPEN/unknown day and reports it. The outcome is the same whether the
+        // rejection surfaces as results or as a throw.
+        batchSize: 0,
+      })) as { status: 'success' | 'failure'; result?: unknown }[];
+      ambiguous.forEach((dayId, i) => {
+        const r = results[i];
+        // A failed probe is UNKNOWN, and unknown is reported rather than
+        // assumed closed.
+        if (r?.status !== 'success' || r.result === 0n) openDays.push(dayId);
+      });
+    } catch (err) {
+      console.warn(
+        `[keeper] rewardBudgetRemit Base->${mirrorId} closure probe failed: ${(err as Error).message}`,
+      );
+      openDays.push(...ambiguous);
+    }
+  }
+  if (openDays.length > 0) {
+    // REPORTED, not folded into `deferred` (Codex #1924 r35). An open day here
+    // is one of two things and this pass cannot tell them apart: an obligation
+    // still gated (awaiting its commitment report, or unbacked), or a day that
+    // simply gave this mirror no slice — the latter is never closed by
+    // anything, so counting it as owed would hold coverage below A/A on every
+    // tick until it left the scan window, and the stand-down would never be
+    // reachable. That is the false-red the r34 fix introduced by treating both
+    // as owed.
+    //
+    // So the ambiguity is surfaced rather than guessed at: the operator has
+    // the day ids and can check whether any carries a real obligation. Same
+    // shape as the other signals here — report what is observable, do not
+    // infer what is not.
+    console.warn(
+      `[keeper] rewardBudgetRemit Base->${mirrorId} ${openDays.length} finalized day(s) neither remitted nor closed: ${openDays.join(',')} — gated obligation or zero budget for this mirror; verify before treating coverage as complete`,
+    );
+  }
 }
