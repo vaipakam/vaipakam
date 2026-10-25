@@ -1,0 +1,947 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.29;
+
+import {console} from "forge-std/console.sol";
+import {PositiveFlowsBase} from "./PositiveFlowsBase.sol";
+import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {LibAcceptTerms} from "../../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "../../test/helpers/LibAcceptTestSigner.sol";
+import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
+import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
+import {LoanFacet} from "../../src/facets/LoanFacet.sol";
+import {RepayFacet} from "../../src/facets/RepayFacet.sol";
+import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
+import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
+import {OfferMatchFacet} from "../../src/facets/OfferMatchFacet.sol";
+import {LibOfferMatch} from "../../src/libraries/LibOfferMatch.sol";
+import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
+import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
+import {OracleFacet} from "../../src/facets/OracleFacet.sol";
+import {RiskFacet} from "../../src/facets/RiskFacet.sol";
+import {EarlyWithdrawalFacet} from "../../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../../src/facets/EarlyWithdrawalDirectFacet.sol";
+import {LibSaleSolvency} from "../../src/libraries/LibSaleSolvency.sol";
+import {RevertProbe} from "../lib/RevertProbe.sol";
+import {Vm} from "forge-std/Vm.sol";
+
+/**
+ * @title PositiveFlowsAdvancedCredit
+ * @notice Advanced credit flows (#848 Phase 1): lender opt-in partial repay,
+ *         refinance, range orders with a third-party match and partial fills,
+ *         borrower preclose by obligation handover and by offset, and the lender
+ *         exits (direct sale into a buy offer, the sale solvency floor on that
+ *         route, and the same floor on the listing-accept route).
+ *
+ *         Moved from the retired `AnvilNewPositiveFlows` suite, whose `N`
+ *         labels the comments below still use in places; {PositiveFlowsBase}
+ *         maps them to the flow ids. Fixture, runner and ids: {PositiveFlowsBase}.
+ */
+contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
+    function moduleName() public pure override returns (string memory) {
+        return "PositiveFlowsAdvancedCredit";
+    }
+
+    function scenarios() public pure override returns (Scenario[] memory list) {
+        list = new Scenario[](8);
+        list[0] = Scenario("PF-114", "Partial repay on a lender-opted-in loan, then full close",
+            "PF-114");
+        list[1] = Scenario("PF-214", "Borrower refinances onto a new lender through a borrower offer",
+            "PF-213, PF-214");
+        list[2] = Scenario("PF-053", "Ranged lender offer matched by a third party, partial fill, then dust close",
+            "PF-053, PF-055, PF-056, PF-057");
+        list[3] = Scenario("PF-211", "Preclose option 2: obligation handed to a replacement borrower",
+            "PF-211");
+        list[4] = Scenario("PF-212", "Preclose option 3: offset with a new offer, completed by a third party",
+            "PF-212");
+        list[5] = Scenario("PF-230", "Lender sells the loan into a standing buy offer; buyer is paid at repay",
+            "PF-230");
+        list[6] = Scenario("PF-230-floor", "Direct sale refused under the solvency floor, then settles once the price recovers",
+            "PF-230");
+        list[7] = Scenario("PF-231", "Listing accept refused under the solvency floor, then settles once the price recovers",
+            "PF-231");
+    }
+
+    function _runScenario(uint256 index) internal override {
+        if (index == 0) _partialRepay();
+        else if (index == 1) _refinance();
+        else if (index == 2) _rangeMatchAndPartialFill();
+        else if (index == 3) _precloseOption2TransferObligation();
+        else if (index == 4) _precloseOption3Offset();
+        else if (index == 5) _sellLoanViaBuyOffer();
+        else if (index == 6) _saleSolvencyFloor();
+        else if (index == 7) _saleAdmissionOnAcceptBranch();
+        else revert("PositiveFlowsAdvancedCredit: no scenario at index");
+    }
+
+    // ─── PF-114: Partial Repay ────────────────────────────────────────────────
+
+    /// @dev Lender opts into partial repay via `allowsPartialRepay = true`;
+    ///      borrower accepts → loan active; borrower partial-repays
+    ///      30% mid-loan → loan.principal halves; borrower full-closes
+    ///      via repayLoan. Verifies the lender-controlled gate works
+    ///      end-to-end on chain.
+    function _partialRepay() internal {
+        // Lender posts an offer with partial-repay opt-in ON.
+        vm.startBroadcast(lenderKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferAllowsPartial());
+        vm.stopBroadcast();
+        console.log("Lender offer with allowsPartialRepay=true:", offerId);
+
+        // Borrower accepts.
+        LibAcceptTerms.AcceptTerms memory _t1 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId, true, 0);
+        bytes memory _sig1 = LibAcceptTestSigner.sign(diamond, _t1, borrowerKey);
+        vm.startBroadcast(borrowerKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t1, _sig1);
+        vm.stopBroadcast();
+        console.log("Loan initiated:", loanId);
+
+        // Snapshot principal pre-partial.
+        LibVaipakam.Loan memory loanBefore = LoanFacet(diamond).getLoanDetails(loanId);
+        require(loanBefore.principal == LOAN_AMOUNT, "PF-114: pre-principal mismatch");
+        require(loanBefore.allowsPartialRepay, "PF-114: opt-in not flagged on loan");
+
+        // Borrower partial-repays 30% of principal. Allowance covers
+        // partial principal + accrued interest (negligible at t≈0).
+        uint256 partialAmt = (LOAN_AMOUNT * 30) / 100;
+        vm.startBroadcast(borrowerKey);
+        usdc.approve(diamond, partialAmt + 100e6); // headroom for accrued
+        RepayFacet(diamond).repayPartial(loanId, partialAmt);
+        vm.stopBroadcast();
+        console.log("Partial repaid:", partialAmt);
+
+        // Verify principal reduced.
+        LibVaipakam.Loan memory loanMid = LoanFacet(diamond).getLoanDetails(loanId);
+        require(loanMid.principal == LOAN_AMOUNT - partialAmt, "PF-114: principal not reduced");
+        require(
+            loanMid.status == LibVaipakam.LoanStatus.Active,
+            "PF-114: should still be Active after partial"
+        );
+        console.log("Mid-loan principal:", loanMid.principal);
+
+        // Borrower closes the rest.
+        uint256 closeAmt = RepayFacet(diamond).calculateRepaymentAmount(loanId);
+        vm.startBroadcast(borrowerKey);
+        usdc.approve(diamond, closeAmt);
+        RepayFacet(diamond).repayLoan(loanId);
+        vm.stopBroadcast();
+
+        _claimBoth(lenderKey, borrowerKey, loanId);
+    }
+
+    // ─── PF-214: Refinance ────────────────────────────────────────────────────
+
+    /// @dev alice (borrower) takes loan l1 from Lender A. alice then
+    ///      creates a new Borrower offer at a lower interest rate;
+    ///      Lender B accepts the offer (creating loan l2). alice now
+    ///      holds Lender B's principal in hand. She calls
+    ///      `refinanceLoan(l1, newOfferId)` which uses that principal
+    ///      to repay Lender A and rolls the loan over to Lender B's
+    ///      terms. End state: l1 settled, l2 active, single collateral
+    ///      lock, no net principal movement to alice (she just swapped
+    ///      lenders).
+    ///
+    ///      Naming: `borrower` = alice (the borrower being refinanced),
+    ///              `lender` = Lender A (the original lender),
+    ///              `newLender` = Lender B (the refinancing lender).
+    function _refinance() internal {
+        // alice + Lender A create + accept an offer → loan l1.
+        vm.startBroadcast(lenderKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        uint256 offerL1 = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        vm.stopBroadcast();
+
+        LibAcceptTerms.AcceptTerms memory _t2 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerL1, true, 0);
+        bytes memory _sig2 = LibAcceptTestSigner.sign(diamond, _t2, borrowerKey);
+        vm.startBroadcast(borrowerKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        uint256 loanL1 = OfferAcceptFacet(diamond).acceptOffer(offerL1, _t2, _sig2);
+        vm.stopBroadcast();
+        console.log("L1 (original loan) initiated:", loanL1);
+
+        // alice creates a NEW borrower offer with a lower rate — same
+        // collateral asset / amount / duration so the asset-continuity
+        // check in refinanceLoan passes. Pulls collateral from her
+        // wallet again (she has 10 WETH per setup, plenty).
+        vm.startBroadcast(borrowerKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        uint256 refinanceOfferId = OfferCreateFacet(diamond).createOffer(_borrowerRefinanceOffer());
+        vm.stopBroadcast();
+        console.log("Alice's refinance borrower offer:", refinanceOfferId);
+
+        // Lender B accepts — creates loan l2. alice receives l2's
+        // principal in her wallet.
+        LibAcceptTerms.AcceptTerms memory _t3 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(newLenderKey), refinanceOfferId, true, 0);
+        bytes memory _sig3 = LibAcceptTestSigner.sign(diamond, _t3, newLenderKey);
+        vm.startBroadcast(newLenderKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        OfferAcceptFacet(diamond).acceptOffer(refinanceOfferId, _t3, _sig3);
+        vm.stopBroadcast();
+
+        // alice repays Lender A using l2's principal. refinanceLoan is
+        // a single-tx settle of l1 against the new offer — alice signs.
+        vm.startBroadcast(borrowerKey);
+        // Refinance pays the OLD lender principal + full-term interest.
+        // alice approves enough to cover both.
+        usdc.approve(diamond, LOAN_AMOUNT * 2);
+        RefinanceFacet(diamond).refinanceLoan(loanL1, refinanceOfferId);
+        vm.stopBroadcast();
+
+        // Verify l1 is no longer Active (it's been settled by refinance).
+        LibVaipakam.Loan memory l1After = LoanFacet(diamond).getLoanDetails(loanL1);
+        require(
+            l1After.status != LibVaipakam.LoanStatus.Active,
+            "PF-214: L1 should not be Active after refinance"
+        );
+        console.log("L1 status post-refinance:", uint8(l1After.status));
+
+    }
+
+    // ─── PF-053: Range Orders Match + Partial Fill ───────────────────────────
+
+    /// @dev Range Orders Phase 1 — bot-driven matching against a
+    ///      RANGED lender offer. Two phases:
+    ///        Phase A: Lender posts a ranged offer
+    ///                 amount=[2k, 5k], rate=[400, 600] bps, with
+    ///                 enough collateral floor to support the worst-
+    ///                 case (5k) — `previewMatch` does the synthetic
+    ///                 HF check using `LibRiskMath`.
+    ///        Phase B: Borrower #1 posts a single-point matchable offer
+    ///                 (2.5k @ 500 bps); a third-party "matcher"
+    ///                 (newBorrower in this script) calls
+    ///                 `matchOffers(L, b1)`. Loan opens, lender's
+    ///                 `amountFilled` = 2.5k (50% filled), 1% LIF
+    ///                 kickback to matcher.
+    ///        Phase C: Borrower #2 posts another offer (2k @ 500
+    ///                 bps). Matcher calls `matchOffers(L, b2)`.
+    ///                 Lender's remaining capacity drops below
+    ///                 `amountMin` (2k) → dust auto-close, residual
+    ///                 refund.
+    ///
+    ///      Verifies: rangeAmountEnabled / rangeRateEnabled /
+    ///      partialFillEnabled flags work end-to-end; midpoint
+    ///      computation; matcher kickback; dust close.
+    function _rangeMatchAndPartialFill() internal {
+        // Pre-flight: confirm the master flags are on (BootstrapAnvil
+        // flips them post-deploy). Skip the scenario gracefully if
+        // the operator forgot — this script can also run against a
+        // future testnet where the flags might be off.
+        (bool rangeAmt, bool rangeRate, bool partialFill) =
+            ConfigFacet(diamond).getMasterFlags();
+        if (!(rangeAmt && rangeRate && partialFill)) {
+            return _skip(string.concat(
+                "range/partial-fill master flags are not all on (rangeAmount=",
+                vm.toString(rangeAmt), ", rangeRate=", vm.toString(rangeRate),
+                ", partialFill=", vm.toString(partialFill), ")"
+            ));
+        }
+
+        // ── Phase A: Lender posts a ranged offer ─────────────────────
+        // Collateral chosen to clear the worst-case HF gate at the
+        // upper bound (5k principal). With WETH @ $2k each and USDC
+        // @ $1, 5 WETH = $10k > minimum collateral for HF≥1.5 at $5k
+        // principal × 1/0.85 liqThreshold ≈ $5882 collateral floor.
+        uint256 amountMin = 2_000e6;
+        uint256 amountMax = 5_000e6;
+        uint256 rateMin = 400;
+        uint256 rateMax = 600;
+        uint256 lenderCollateral = 5e18;
+
+        vm.startBroadcast(lenderKey);
+        usdc.approve(diamond, amountMax);
+        uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(
+            _rangedLenderOffer(amountMin, amountMax, rateMin, rateMax, lenderCollateral)
+        );
+        vm.stopBroadcast();
+        console.log("Ranged lender offer:", lenderOfferId);
+
+        // ── Phase B: Borrower 1 posts matchable single-point offer ───
+        // Single-point offers (amountMax==0 → auto-collapsed) are
+        // permitted on the borrower side regardless of partialFill
+        // (matchable amount/rate range is "[v, v]" — point overlap).
+        // amount = 2.5k, rate = 500 bps — sits inside lender's range.
+        // 3 WETH @ $2k = $6k, ceiling at HF≥1.5 ≈ $6k * 0.85 / 1.5 =
+        // $3400 — comfortably above the 2.5k principal target.
+        vm.startBroadcast(borrowerKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT * 3);
+        uint256 borrowerOffer1 = OfferCreateFacet(diamond).createOffer(
+            _matchableBorrowerOffer(2_500e6, 500, COLLATERAL_AMOUNT * 3)
+        );
+        vm.stopBroadcast();
+        console.log("Borrower offer 1 (matchable):", borrowerOffer1);
+
+        // Preview the match before submitting — real bot's flow.
+        LibOfferMatch.MatchResult memory preview =
+            OfferMatchFacet(diamond).previewMatch(lenderOfferId, borrowerOffer1, vm.addr(newBorrowerKey), vm.addr(newBorrowerKey));
+        console.log("previewMatch errorCode:", uint8(preview.errorCode));
+        require(
+            uint8(preview.errorCode) == 0, // MatchError.Ok
+            "PF-053: previewMatch did not return Ok"
+        );
+
+        // newBorrower acts as the matcher (the bot/searcher).
+        vm.startBroadcast(newBorrowerKey);
+        uint256 loanFromMatch1 =
+            OfferMatchFacet(diamond).matchOffers(lenderOfferId, borrowerOffer1);
+        vm.stopBroadcast();
+        console.log("Match 1 -> loanId:", loanFromMatch1);
+
+        // Inspect lender offer post-match. amountFilled should be 2500e6.
+        LibVaipakam.Offer memory lenderState1 = OfferCancelFacet(diamond).getOffer(lenderOfferId);
+        require(lenderState1.amountFilled == 2_500e6, "PF-053: amountFilled wrong post-match-1");
+        require(!lenderState1.accepted, "PF-053: lender offer should still be open after partial fill");
+        console.log("Lender amountFilled:", lenderState1.amountFilled);
+
+        // ── Phase C: Borrower 2 posts a smaller matchable offer ──────
+        // remaining = 5000 - 2500 = 2500. Borrower 2 wants 2000 → match
+        // succeeds, leaving 500 (< amountMin 2000) which triggers
+        // dust auto-close + refund of the residual to the lender.
+        // 2.5 WETH @ $2k = $5k, ceiling at HF≥1.5 ≈ $5k * 0.85 / 1.5 =
+        // $2833 — comfortably above the 2k principal target.
+        vm.startBroadcast(newBorrowerKey);
+        uint256 b2Collateral = (COLLATERAL_AMOUNT * 25) / 10; // 2.5 WETH
+        weth.approve(diamond, b2Collateral);
+        uint256 borrowerOffer2 = OfferCreateFacet(diamond).createOffer(
+            _matchableBorrowerOfferAs(newBorrower, 2_000e6, 500, b2Collateral)
+        );
+        // newBorrower also doubles as the matcher here — fine, the
+        // matcher just gets paid the LIF kickback regardless of
+        // identity overlap with the borrower (no self-deal guard
+        // needed: kickback comes from treasury share of LIF).
+        uint256 loanFromMatch2 =
+            OfferMatchFacet(diamond).matchOffers(lenderOfferId, borrowerOffer2);
+        vm.stopBroadcast();
+        console.log("Match 2 -> loanId:", loanFromMatch2);
+
+        LibVaipakam.Offer memory lenderState2 = OfferCancelFacet(diamond).getOffer(lenderOfferId);
+        // Either dust-closed (accepted == true, slot still here) OR
+        // fully filled. We expect dust-close because 5000 - 2500 -
+        // 2000 = 500 < amountMin (2000).
+        require(lenderState2.accepted, "PF-053: lender offer should be closed (dust) after match 2");
+        require(
+            lenderState2.amountFilled == 4_500e6,
+            "PF-053: amountFilled should be 4500 (2500 + 2000) at dust close"
+        );
+        console.log("Lender amountFilled (dust-closed):", lenderState2.amountFilled);
+    }
+
+    function _rangedLenderOffer(
+        uint256 amtMin,
+        uint256 amtMax,
+        uint256 rMin,
+        uint256 rMax,
+        uint256 collateralFloor
+    ) internal view returns (LibVaipakam.CreateOfferParams memory) {
+        return LibVaipakam.CreateOfferParams({
+            offerType: LibVaipakam.OfferType.Lender,
+            lendingAsset: address(usdc),
+            amount: amtMin,
+            interestRateBps: rMin,
+            collateralAsset: address(weth),
+            collateralAmount: collateralFloor,
+            durationDays: DURATION_DAYS,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: address(usdc),
+            collateralAssetType: LibVaipakam.AssetType.ERC20,
+            collateralTokenId: 0,
+            collateralQuantity: 0,
+            allowsPartialRepay: false,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: amtMax,
+            interestRateBpsMax: rMax,
+            collateralAmountMax: collateralFloor,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+        });
+    }
+
+    function _matchableBorrowerOffer(
+        uint256 amount,
+        uint256 rateBps,
+        uint256 collateralAmount
+    ) internal view returns (LibVaipakam.CreateOfferParams memory) {
+        return _matchableBorrowerOfferAs(borrower, amount, rateBps, collateralAmount);
+    }
+
+    function _matchableBorrowerOfferAs(
+        address /* who */,
+        uint256 amount,
+        uint256 rateBps,
+        uint256 collateralAmount
+    ) internal view returns (LibVaipakam.CreateOfferParams memory) {
+        return LibVaipakam.CreateOfferParams({
+            offerType: LibVaipakam.OfferType.Borrower,
+            lendingAsset: address(usdc),
+            amount: amount,
+            interestRateBps: rateBps,
+            collateralAsset: address(weth),
+            collateralAmount: collateralAmount,
+            durationDays: DURATION_DAYS,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: address(usdc),
+            collateralAssetType: LibVaipakam.AssetType.ERC20,
+            collateralTokenId: 0,
+            collateralQuantity: 0,
+            allowsPartialRepay: false,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: amount, // single-point amount
+            interestRateBpsMax: rateBps, // single-point rate
+            collateralAmountMax: collateralAmount, // #164 — single-point collateral
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+        });
+    }
+
+    // ─── PF-211: Preclose Option 2 — transferObligationViaOffer ──────────────
+
+    /// @dev alice (existing borrower of l1, lender = liam) wants to
+    ///      exit her loan early. ben (a new borrower) creates a
+    ///      Borrower offer with terms favoring liam (same asset,
+    ///      collateral >= original, duration <= remaining, principal
+    ///      matches l1.principal). alice calls
+    ///      `transferObligationViaOffer(l1, benOfferId)` — she pays
+    ///      accrued interest + any shortfall directly to liam, ben's
+    ///      collateral becomes the new collateral, ben becomes the
+    ///      new borrower of the SAME loan slot (l1). liam stays on as
+    ///      lender; the loan terms (rate, duration end) are preserved.
+    ///
+    ///      Roles in this scenario:
+    ///        liam      = `newLender` (the lender who stays)
+    ///        alice     = `lender`  (current borrower; we re-purpose
+    ///                              `lender` because the existing
+    ///                              `borrower` slot is consumed by
+    ///                              earlier scenarios, and alice's
+    ///                              role is "borrower being replaced".
+    ///                              Naming inversion is local to PF-211.)
+    ///        ben       = `borrower` (the new borrower)
+    function _precloseOption2TransferObligation() internal {
+        // liam (newLender) creates a lender offer. alice (lender slot)
+        // is the borrower of l1 — she'll be replaced by ben.
+        address liam = newLender;
+        address alice = lender;
+        address ben = borrower;
+        uint256 liamKey = newLenderKey;
+        uint256 aliceKey = lenderKey;
+        uint256 benKey = borrowerKey;
+
+        vm.startBroadcast(liamKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        vm.stopBroadcast();
+
+        LibAcceptTerms.AcceptTerms memory _t6 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(aliceKey), lenderOfferId, true, 0);
+        bytes memory _sig6 = LibAcceptTestSigner.sign(diamond, _t6, aliceKey);
+        vm.startBroadcast(aliceKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        uint256 loanL1 = OfferAcceptFacet(diamond).acceptOffer(lenderOfferId, _t6, _sig6);
+        vm.stopBroadcast();
+        console.log("L1 (Liam -> Alice) initiated:", loanL1);
+
+        // ben creates a Borrower offer with terms favoring liam:
+        // same lending asset, same collateral asset, principal == l1
+        // principal, a replacement that ends by l1's maturity
+        // (HANDOVER_DURATION_DAYS), collateralAmount >= l1.collateralAmount.
+        vm.startBroadcast(benKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        uint256 benOfferId = OfferCreateFacet(diamond).createOffer(_borrowerOfferTakeoverFor(ben));
+        vm.stopBroadcast();
+        console.log("Ben's takeover offer:", benOfferId);
+
+        // alice calls transferObligation, paying accrued + shortfall.
+        // Approve generous principal — at t≈0 accrued is tiny but
+        // shortfall could be a few cents to a few dollars depending on
+        // duration mismatch. We approve full LOAN_AMOUNT for headroom.
+        vm.startBroadcast(aliceKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        PrecloseFacet(diamond).transferObligationViaOffer(loanL1, benOfferId);
+        vm.stopBroadcast();
+
+        // Verify: l1 is still Active but borrower changed from alice
+        // to ben; lender unchanged.
+        LibVaipakam.Loan memory l1After = LoanFacet(diamond).getLoanDetails(loanL1);
+        require(
+            l1After.status == LibVaipakam.LoanStatus.Active,
+            "PF-211: L1 should still be Active (only obligation transferred)"
+        );
+        require(l1After.borrower == ben, "PF-211: borrower should be Ben");
+        require(l1After.lender == liam, "PF-211: lender should still be Liam");
+        console.log("L1 borrower (Alice -> Ben):", l1After.borrower);
+    }
+
+    function _borrowerOfferTakeoverFor(address /* who */)
+        internal view returns (LibVaipakam.CreateOfferParams memory)
+    {
+        return LibVaipakam.CreateOfferParams({
+            offerType: LibVaipakam.OfferType.Borrower,
+            lendingAsset: address(usdc),
+            amount: LOAN_AMOUNT,
+            interestRateBps: INTEREST_BPS,
+            collateralAsset: address(weth),
+            collateralAmount: COLLATERAL_AMOUNT,
+            durationDays: HANDOVER_DURATION_DAYS,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: address(usdc),
+            collateralAssetType: LibVaipakam.AssetType.ERC20,
+            collateralTokenId: 0,
+            collateralQuantity: 0,
+            allowsPartialRepay: false,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: LOAN_AMOUNT,
+            interestRateBpsMax: INTEREST_BPS,
+            collateralAmountMax: COLLATERAL_AMOUNT,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+        });
+    }
+
+    // ─── PF-212: Preclose Option 3 — offsetWithNewOffer + completeOffset ─────
+
+    /// @dev alice (borrower of l1, lender = liam) wants to exit AND
+    ///      become a lender herself (Option 3). She:
+    ///        1. Pays accrued interest + shortfall to liam.
+    ///        2. Creates a new Lender offer linked to l1 via the
+    ///           `offsetOfferToLoanId` mapping. The borrower NFT for
+    ///           l1 is natively-locked while the offset is in flight.
+    ///        3. charlie (new borrower) accepts the offset offer.
+    ///           Inside `_acceptOffer` the auto-link triggers
+    ///           `completeOffset(l1)` which:
+    ///             - Settles l1 (status -> Repaid)
+    ///             - Releases alice's collateral to her vault
+    ///             - charlie's loan against alice as lender goes Active
+    ///
+    ///      Roles:
+    ///        liam   = `newLender`  (original lender)
+    ///        alice  = `lender`     (borrower of l1 -> lender of L_new)
+    ///        charlie = `borrower`  (new borrower)
+    function _precloseOption3Offset() internal {
+        address liam = newLender;
+        address alice = lender;
+        address charlie = newBorrower;
+        uint256 liamKey = newLenderKey;
+        uint256 aliceKey = lenderKey;
+        uint256 charlieKey = newBorrowerKey;
+
+        // Setup loan l1: liam -> alice.
+        vm.startBroadcast(liamKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        vm.stopBroadcast();
+
+        LibAcceptTerms.AcceptTerms memory _t7 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(aliceKey), lenderOfferId, true, 0);
+        bytes memory _sig7 = LibAcceptTestSigner.sign(diamond, _t7, aliceKey);
+        vm.startBroadcast(aliceKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        uint256 loanL1 = OfferAcceptFacet(diamond).acceptOffer(lenderOfferId, _t7, _sig7);
+        vm.stopBroadcast();
+        console.log("L1 (Liam -> Alice) initiated:", loanL1);
+
+        // alice calls offsetWithNewOffer. She pays accrued + shortfall
+        // to liam (~0 at t≈0 with same rate/duration); deposits new
+        // principal into her vault; the diamond mints a Lender offer
+        // on her behalf and links it to l1.
+        vm.startBroadcast(aliceKey);
+        // Approve generously: offsetWithNewOffer pulls from alice's
+        // wallet THREE times — (1) treasuryFee on accrued, (2)
+        // principal+interest to old lender via vaultDepositERC20From,
+        // (3) new principal for the offer createOfferInternal pulls.
+        // Total ≈ 2 × LOAN_AMOUNT + small accrued; we approve 3× for
+        // headroom.
+        usdc.approve(diamond, LOAN_AMOUNT * 3);
+        uint256 offsetOfferId = PrecloseFacet(diamond).offsetWithNewOffer(
+            loanL1,
+            INTEREST_BPS,           // same rate as l1 — minimal shortfall
+            HANDOVER_DURATION_DAYS, // fits inside l1's remaining term
+            address(weth),
+            COLLATERAL_AMOUNT,
+            true,                   // creatorRiskAndTermsConsent
+            address(usdc)           // prepayAsset (unused on ERC20 path)
+        );
+        vm.stopBroadcast();
+        console.log("Alice's offset offer:", offsetOfferId);
+
+        // charlie accepts. The auto-link inside `_acceptOffer` fires
+        // `PrecloseFacet.completeOffset(l1)` which closes l1 and
+        // releases alice's collateral.
+        LibAcceptTerms.AcceptTerms memory _t8 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(charlieKey), offsetOfferId, true, loanL1);
+        bytes memory _sig8 = LibAcceptTestSigner.sign(diamond, _t8, charlieKey);
+        vm.startBroadcast(charlieKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        uint256 newLoanId = OfferAcceptFacet(diamond).acceptOffer(offsetOfferId, _t8, _sig8);
+        vm.stopBroadcast();
+        console.log("Charlie accepted -> new loanId:", newLoanId);
+
+        // Verify l1 is no longer Active.
+        LibVaipakam.Loan memory l1Settled = LoanFacet(diamond).getLoanDetails(loanL1);
+        require(
+            l1Settled.status != LibVaipakam.LoanStatus.Active,
+            "PF-212: L1 should be settled by completeOffset auto-fire"
+        );
+        console.log("L1 status post-offset:", uint8(l1Settled.status));
+
+        // Verify the new loan has alice as lender, charlie as borrower.
+        LibVaipakam.Loan memory newLoan = LoanFacet(diamond).getLoanDetails(newLoanId);
+        require(newLoan.lender == alice, "PF-212: new loan lender should be Alice");
+        require(newLoan.borrower == charlie, "PF-212: new loan borrower should be Charlie");
+        console.log("New loan (Alice -> Charlie) status:", uint8(newLoan.status));
+
+    }
+
+    // ─── PF-230: Lender Early Withdrawal via Buy Offer ─────────────────────
+
+    /// @dev Maps to Advanced Guide § Early Withdrawal (Lender) and the
+    ///      EarlyWithdrawalFacet `sellLoanViaBuyOffer` path. Roles:
+    ///        - Original lender (liam = `newLender`) holds an active loan.
+    ///        - Buyer (bob = `lender`) creates a Lender-type buy offer
+    ///          with the same shape as the loan (or no-worse terms).
+    ///        - liam calls `sellLoanViaBuyOffer(loanId, buyOfferId)` to
+    ///          flip lender on the existing loan to bob.
+    ///        - Borrower (`newBorrower`) then repays bob.
+    ///
+    ///      The auto-link counterpart (createLoanSaleOffer + buyer
+    ///      `acceptOffer` → `completeLoanSale` re-entry) needs the
+    ///      same `*Internal` cross-facet entry pattern as PF-212's
+    ///      `completeOffsetInternal`. That fix is deferred until a
+    ///      concrete user flow drives it; the simpler
+    ///      `sellLoanViaBuyOffer` path is already reentrancy-safe
+    ///      because it doesn't re-enter through the diamond fallback.
+    function _sellLoanViaBuyOffer() internal {
+        // Step 1: liam (newLender) lends to newBorrower → loan active.
+        vm.startBroadcast(newLenderKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        vm.stopBroadcast();
+        LibAcceptTerms.AcceptTerms memory _t11 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(newBorrowerKey), offerId, true, 0);
+        bytes memory _sig11 = LibAcceptTestSigner.sign(diamond, _t11, newBorrowerKey);
+        vm.startBroadcast(newBorrowerKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t11, _sig11);
+        vm.stopBroadcast();
+        console.log("l1 (newLender -> newBorrower) initiated:", loanId);
+
+        // Step 2: bob (`lender`) creates a Lender buy offer with the
+        // same shape — sellLoanViaBuyOffer requires asset/duration/
+        // collateral parity (or no-worse terms for borrower).
+        vm.startBroadcast(lenderKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        uint256 buyOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        vm.stopBroadcast();
+        console.log("bob's buy offer:", buyOfferId);
+
+        // Step 3: liam sells the position to bob.
+        vm.startBroadcast(newLenderKey);
+        EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(loanId, buyOfferId);
+        vm.stopBroadcast();
+        LibVaipakam.Loan memory loanAfterSale = LoanFacet(diamond).getLoanDetails(loanId);
+        require(
+            loanAfterSale.lender == lender,
+            "PF-230: loan.lender should flip to bob after sale"
+        );
+        console.log("Loan lender flipped to bob; loan.lender:", loanAfterSale.lender);
+
+        // Step 4: borrower (newBorrower) repays the loan; bob now owns
+        // the lender position.
+        vm.startBroadcast(newBorrowerKey);
+        uint256 repayAmt = RepayFacet(diamond).calculateRepaymentAmount(loanId);
+        usdc.approve(diamond, repayAmt + 100e6);
+        RepayFacet(diamond).repayLoan(loanId);
+        vm.stopBroadcast();
+        _claimBoth(lenderKey, newBorrowerKey, loanId);
+
+        LibVaipakam.Loan memory loanAfterRepay = LoanFacet(diamond).getLoanDetails(loanId);
+        require(
+            loanAfterRepay.status != LibVaipakam.LoanStatus.Active,
+            "PF-230: loan should be settled after repay"
+        );
+        console.log("Loan settled post-sale + repay");
+
+    }
+
+    /// @dev PF-230-floor (#1503 PR-E, design item 11) — the sale solvency admission
+    ///      floor, exercised against the REAL deployed Diamond rather than a
+    ///      bespoke test fixture: real facet routing, the real cross-facet
+    ///      RiskFacet hop, real oracle wiring, no `vm.mockCall` anywhere.
+    ///
+    ///      Drops the collateral feed so a live position falls below the
+    ///      floor its own admission required, proves the sale is refused with
+    ///      the exact error, then restores the feed and proves the very same
+    ///      sale goes through — so the refusal is attributable to solvency
+    ///      and not to some unrelated precondition.
+    function _saleSolvencyFloor() internal {
+        // A fresh loan: newLender lends to newBorrower, 1000 USDC against
+        // 1 WETH at $2000 → ~1.7 HF, comfortably admissible.
+        vm.startBroadcast(newLenderKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        vm.stopBroadcast();
+        LibAcceptTerms.AcceptTerms memory _t25 =
+            LibAcceptTestSigner.buildTerms(diamond, vm.addr(newBorrowerKey), offerId, true, 0);
+        bytes memory _sig25 = LibAcceptTestSigner.sign(diamond, _t25, newBorrowerKey);
+        vm.startBroadcast(newBorrowerKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t25, _sig25);
+        vm.stopBroadcast();
+
+        vm.startBroadcast(lenderKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        uint256 buyOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        vm.stopBroadcast();
+
+        uint256 hfHealthy = RiskFacet(diamond).calculateHealthFactor(loanId);
+        console.log("HF at $2000 collateral:", hfHealthy);
+        require(
+            hfHealthy >= LibVaipakam.MIN_HEALTH_FACTOR,
+            "PF-230-floor: fixture must start above the floor"
+        );
+
+        // Collateral falls. $1500 puts the position under the 1.5e18
+        // admission floor while leaving it ABOVE the 1e18 liquidation
+        // trigger — the case that proves the floor is the ADMISSION
+        // standard, not merely "not liquidatable yet".
+        // deployerKey, not adminKey: the mock feed is owner-gated to the
+        // account that deployed it in `_deployMocksAndConfigure`.
+        vm.startBroadcast(deployerKey);
+        _setWethPriceConsistently(1500e8);
+        vm.stopBroadcast();
+
+        // The depth guard can reclassify an asset when the feed moves away
+        // from the mock pool's spot. An Illiquid leg is now refused
+        // UNCONDITIONALLY (`SaleLegUnpriceable`, classifier code 6 — #1655), so
+        // if that happened the sale would still revert, but for a completely
+        // different reason and this scenario would prove nothing about the
+        // health floor. Assert the leg is still priced so the revert below can
+        // only be the floor — isolating the two refusals rather than, as this
+        // comment previously claimed, guarding against an admission.
+        require(
+            OracleFacet(diamond).checkLiquidity(address(weth)) ==
+                LibVaipakam.LiquidityStatus.Liquid,
+            "PF-230-floor: WETH must stay Liquid or the floor is not what is being tested"
+        );
+        uint256 hfSunk = RiskFacet(diamond).calculateHealthFactor(loanId);
+        console.log("HF at $1500 collateral:", hfSunk);
+        require(hfSunk < LibVaipakam.MIN_HEALTH_FACTOR, "PF-230-floor: must sit below the floor");
+        require(
+            hfSunk > LibVaipakam.HF_LIQUIDATION_THRESHOLD,
+            "PF-230-floor: and above the liquidation trigger"
+        );
+
+        // Probed in the simulation only (`RevertProbe`), so a deliberate
+        // revert neither aborts the broadcast nor spends a nonce the chain
+        // never sees — it still executes the real deployed bytecode against
+        // real chain state, which is the thing being verified.
+        (bool ok, bytes memory ret) = RevertProbe.call(
+            newLender,
+            diamond,
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector, loanId, buyOfferId
+            )
+        );
+        require(!ok, "PF-230-floor: a sub-floor position must NOT be sellable");
+        require(
+            bytes4(ret) == LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
+            "PF-230-floor: refused, but not for the solvency reason"
+        );
+        console.log("Sub-floor sale refused with SalePositionBelowSolvencyFloor");
+
+        // Restore the price and run the SAME sale for real: it must now
+        // settle, proving the refusal above was the floor and nothing else.
+        vm.startBroadcast(deployerKey);
+        _setWethPriceConsistently(2000e8);
+        vm.stopBroadcast();
+
+        vm.startBroadcast(newLenderKey);
+        EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(loanId, buyOfferId);
+        vm.stopBroadcast();
+        require(
+            LoanFacet(diamond).getLoanDetails(loanId).lender == lender,
+            "PF-230-floor: recovered position must sell"
+        );
+        console.log("Same sale settles once the position is back over its floor");
+
+    }
+
+    // ─── PF-231: Sale Admission Floor on the LISTING ACCEPT branch ─────────
+
+    /// @dev Codex #1635 r5. PF-230-floor drives the floor through
+    ///      `EarlyWithdrawalFacet.sellLoanViaBuyOffer` — the DIRECT sale. That
+    ///      leaves the other guarded path unexercised on chain: the sale-vehicle
+    ///      branch of `OfferAcceptFacet.acceptOffer`, which is where a resting
+    ///      listing's binding check lives.
+    ///
+    ///      This matters specifically for the upgrade rehearsal.
+    ///      `ReplaceStaleFacets` is the script that reinstalls
+    ///      `OfferAcceptFacet`, so rehearsing it against PF-230-floor proved the wrong
+    ///      thing: PF-230-floor's only `acceptOffer` call originates an ordinary loan and
+    ///      never reaches the sale branch, so breaking or dropping the refreshed
+    ///      sale guard would have left that rehearsal green. The rehearsal picks
+    ///      the scenario per script for this reason.
+    ///
+    ///      Same fixture logic as PF-230-floor — under the admission floor but above the
+    ///      liquidation trigger, so what is proved is the ADMISSION standard and
+    ///      not "not liquidatable yet" — driven through listing + accept:
+    ///        - newLender lends to newBorrower, then LISTS the position.
+    ///        - Collateral falls; bob's accept of the listing must be refused.
+    ///        - Price recovers; the same accept must settle, moving the lender.
+    function _saleAdmissionOnAcceptBranch() internal {
+        vm.startBroadcast(newLenderKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        vm.stopBroadcast();
+        LibAcceptTerms.AcceptTerms memory _t26 =
+            LibAcceptTestSigner.buildTerms(diamond, vm.addr(newBorrowerKey), offerId, true, 0);
+        bytes memory _sig26 = LibAcceptTestSigner.sign(diamond, _t26, newBorrowerKey);
+        vm.startBroadcast(newBorrowerKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t26, _sig26);
+        vm.stopBroadcast();
+        console.log("loan initiated:", loanId);
+
+        // The lender lists the position while it is healthy — the listing-rests
+        // -while-collateral-falls case the accept-time check exists for.
+        vm.recordLogs();
+        vm.startBroadcast(newLenderKey);
+        EarlyWithdrawalFacet(diamond).createLoanSaleOffer(loanId, 500, true, 7 days);
+        vm.stopBroadcast();
+        uint256 saleOfferId;
+        {
+            Vm.Log[] memory logs = vm.getRecordedLogs();
+            bytes32 linkedSig = keccak256("LoanSaleOfferLinked(uint256,uint256)");
+            for (uint256 i; i < logs.length; i++) {
+                if (logs[i].topics[0] == linkedSig) {
+                    saleOfferId = uint256(logs[i].topics[2]);
+                }
+            }
+        }
+        require(saleOfferId != 0, "PF-231: sale listing was not created");
+        console.log("sale listing:", saleOfferId);
+
+        uint256 hfHealthy = RiskFacet(diamond).calculateHealthFactor(loanId);
+        require(
+            hfHealthy >= LibVaipakam.MIN_HEALTH_FACTOR,
+            "PF-231: fixture must start above the floor"
+        );
+
+        // Buyer signs terms BEFORE the drift, which is the real sequence: the
+        // signature commits to the loan's shape, not to its health.
+        LibAcceptTerms.AcceptTerms memory _ts26 =
+            LibAcceptTestSigner.buildSaleTerms(diamond, vm.addr(lenderKey), saleOfferId, true, loanId);
+        bytes memory _ssig26 = LibAcceptTestSigner.sign(diamond, _ts26, lenderKey);
+
+        vm.startBroadcast(deployerKey);
+        _setWethPriceConsistently(1500e8);
+        vm.stopBroadcast();
+
+        // Same reasoning as PF-230-floor: an Illiquid leg is refused unconditionally for
+        // its OWN reason (`SaleLegUnpriceable`, code 6 — #1655), so if the depth
+        // guard had reclassified WETH when the feed moved off the mock pool's
+        // spot, the refusal below would still happen but would say nothing about
+        // the health floor this scenario exists to drive.
+        require(
+            OracleFacet(diamond).checkLiquidity(address(weth)) ==
+                LibVaipakam.LiquidityStatus.Liquid,
+            "PF-231: WETH must stay Liquid or the floor is not what is being tested"
+        );
+        uint256 hfSunk = RiskFacet(diamond).calculateHealthFactor(loanId);
+        console.log("HF at $1500 collateral:", hfSunk);
+        require(hfSunk < LibVaipakam.MIN_HEALTH_FACTOR, "PF-231: must sit below the floor");
+        require(
+            hfSunk > LibVaipakam.HF_LIQUIDATION_THRESHOLD,
+            "PF-231: and above the liquidation trigger"
+        );
+
+        vm.startBroadcast(lenderKey);
+        usdc.approve(diamond, LOAN_AMOUNT * 2);
+        vm.stopBroadcast();
+
+        // Probed in the simulation only (`RevertProbe`), as in PF-230-floor; still the
+        // real deployed bytecode against real chain state.
+        (bool ok, bytes memory ret) = RevertProbe.call(
+            vm.addr(lenderKey),
+            diamond,
+            abi.encodeWithSelector(
+                OfferAcceptFacet.acceptOffer.selector, saleOfferId, _ts26, _ssig26
+            )
+        );
+        require(!ok, "PF-231: a sub-floor listing must NOT be acceptable");
+        require(
+            bytes4(ret) == LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
+            "PF-231: refused, but not for the solvency reason"
+        );
+        console.log("Sub-floor listing accept refused with SalePositionBelowSolvencyFloor");
+
+        vm.startBroadcast(deployerKey);
+        _setWethPriceConsistently(2000e8);
+        vm.stopBroadcast();
+
+        vm.startBroadcast(lenderKey);
+        OfferAcceptFacet(diamond).acceptOffer(saleOfferId, _ts26, _ssig26);
+        vm.stopBroadcast();
+        require(
+            LoanFacet(diamond).getLoanDetails(loanId).lender == vm.addr(lenderKey),
+            "PF-231: recovered position must sell through the accept branch"
+        );
+        console.log("Same listing accept settles once the position is back over its floor");
+
+    }
+
+    function _lenderOfferAllowsPartial() internal view returns (LibVaipakam.CreateOfferParams memory) {
+        LibVaipakam.CreateOfferParams memory p = _lenderOfferStandard();
+        p.allowsPartialRepay = true;
+        return p;
+    }
+
+    function _borrowerRefinanceOffer() internal view returns (LibVaipakam.CreateOfferParams memory) {
+        return LibVaipakam.CreateOfferParams({
+            offerType: LibVaipakam.OfferType.Borrower,
+            lendingAsset: address(usdc),
+            amount: LOAN_AMOUNT,
+            // Lower rate than the original loan — alice is refinancing
+            // because she found a cheaper lender.
+            interestRateBps: INTEREST_BPS / 2,
+            collateralAsset: address(weth),
+            collateralAmount: COLLATERAL_AMOUNT,
+            durationDays: DURATION_DAYS,
+            assetType: LibVaipakam.AssetType.ERC20,
+            tokenId: 0,
+            quantity: 0,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: address(usdc),
+            collateralAssetType: LibVaipakam.AssetType.ERC20,
+            collateralTokenId: 0,
+            collateralQuantity: 0,
+            allowsPartialRepay: false,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: LOAN_AMOUNT,
+            interestRateBpsMax: INTEREST_BPS / 2,
+            collateralAmountMax: COLLATERAL_AMOUNT,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+        });
+    }
+}

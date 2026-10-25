@@ -5,14 +5,15 @@ intended to drive three follow-on artifacts:
 
 - focused Foundry positive tests for every intended happy path
 - user-facing E2E scenarios for Basic and Advanced mode
-- chain-agnostic `contracts/script/*PositiveFlows.s.sol` scripts for deploy
-  rehearsals and testnet smoke sweeps
+- chain-agnostic positive-flow script modules (`contracts/script/positive-flows/`)
+  for deploy rehearsals on a local Anvil or a Diamond deployed for the rehearsal
 
 `contracts/script/PositiveFlows.s.sol` is useful, but it is not a complete
-platform-flow inventory. It currently composes the older lifecycle script with
-`AnvilNewPositiveFlows.s.sol`; several current product flows are only covered by
-unit tests, partial-flow scripts, frontend/indexer tests, or not yet represented
-in a broadcast script. This catalog names those flows explicitly so gaps can be
+platform-flow inventory. It is a thin runner over the modules in
+`contracts/script/positive-flows/` (#848), each logging its scenarios under the
+`PF-###` ids below (see "Script module map"); several current product flows are
+only covered by unit tests, partial-flow scripts, frontend/indexer tests, or not
+yet represented in a broadcast script. This catalog names those flows explicitly so gaps can be
 closed deliberately.
 
 ## Scope And Rules
@@ -53,10 +54,58 @@ Existing positive script coverage:
 
 | Script | Current useful coverage | Known mismatch / caveat |
 | --- | --- | --- |
-| `contracts/script/SepoliaPositiveFlows.s.sol` | ERC-20 lender/borrower offers, third-party repay, add collateral, offer cancel, direct preclose, lender sale, illiquid collateral, ERC-721/1155 collateral, ERC-721/1155 rentals, illiquid lending combinations. | Name is legacy; still used by wrapper. Some paths skip when cancel cooldown is active. Its mock USDC/WETH pool is priced consistently with the mock feeds and the PAA quote set names the mock WETH (#848), so mUSDC classifies Liquid; before that every USDC loan here was silently an illiquid-principal loan and the lender sale refused it. |
-| `contracts/script/AnvilNewPositiveFlows.s.sol` | Partial repay, refinance, range match/partial fill, preclose options 2/3, stuck-token recovery, disown, sanctions wind-down, keeper authorization, VPFI discount deposit/withdraw, pause/unpause, treasury accrual, master-flag dormancy, lender sale. | Retired `staking` / `unstake` naming removed (#848); the remaining mentions name the removed staking yield as history. It does not cover all current VPFI, auto-lifecycle, intent, periodic, swap, indexer, or cross-chain flows. |
-| `contracts/script/PositiveFlows.s.sol` | Wrapper: Phase A + Phase B. | Smoke suite, not full catalog (the header now says so). Runs green on Anvil 31337 (#848) only with `--disable-block-gas-limit` (the whole composition is one ~215M-gas simulated frame) and from a freshly mined block; both are stated in its header. It re-points the target Diamond's oracle at its own mocks, so it is not for a shared testnet Diamond. |
+| `contracts/script/positive-flows/PositiveFlowsBasicLifecycle.s.sol` | ERC-20 lender/borrower offers, third-party repay, add collateral, offer cancel, direct preclose, illiquid collateral, ERC-721/1155 collateral, ERC-721/1155 rentals, illiquid lending combinations. | The two cancel scenarios (PF-045, PF-046) SKIP, and say so, wherever the 5-minute cancel cooldown applies, which includes every local Anvil: a broadcast run cannot step the chain clock. |
+| `contracts/script/positive-flows/PositiveFlowsAdvancedCredit.s.sol` | Partial repay, refinance, range match/partial fill, preclose options 2/3, lender sale via buy offer, the sale solvency floor on the direct and listing-accept routes. | No auto-lifecycle, intent, periodic-interest, or swap-to-repay flow yet. |
+| `contracts/script/positive-flows/PositiveFlowsVaultAndVpfi.s.sol` | Stuck-token recovery, sanctioned-source ban, disown, VPFI deposit + discount consent + HoldOnly loan + withdraw. | No interaction-reward claim; no reserved-balance withdraw case. |
+| `contracts/script/positive-flows/PositiveFlowsKeeperAutomation.s.sol` | Keeper master switch, per-action approval, keeper-executed action. | No edit/revoke, delegated-keeper pause, or current-holder case. |
+| `contracts/script/positive-flows/PositiveFlowsOperatorAdmin.s.sol` | Sanctions Tier-1 refusal with Tier-2 close-out, per-asset pause, global pause, treasury surface, master-flag dormancy. | Pauses are toggle-and-read smoke checks; the treasury VPFI read is a call-surface check only (no current flow accrues it). |
+| `contracts/script/PositiveFlows.s.sol` | Runner: every module above, in order; `ONLY_SCENARIO=<id>` runs one scenario. | Smoke suite, not full catalog (the header says so). No cross-chain module exists yet. Every module refuses any chain but a local Anvil unless `POSITIVE_FLOWS_ALLOW_CHAIN_ID` names it, because the fixture re-points the Diamond's oracle and sanctions oracle at its own mocks. Runs green on Anvil 31337 (#848) only with `--disable-block-gas-limit` (a script's whole run is one simulated frame) and from a freshly mined block; both are stated in its header. |
 | `contracts/script/PartialFlows.s.sol` | UI-testable midpoint states. | Important for app QA, but not terminal positive coverage. |
+
+## Script Module Map
+
+Each scenario logs `[<id>] <title>`, the catalog rows it walks, and `PASS` or
+`SKIP <reason>`. The id is the primary row's; a suffix marks a second scenario
+on the same row. The retired scripts' labels (`1`-`15`, `N1`-`N26`) are mapped
+to these ids in `contracts/script/positive-flows/PositiveFlowsBase.sol`.
+
+| Scenario id | Module | Catalog rows walked |
+| --- | --- | --- |
+| PF-090 | BasicLifecycle | PF-040, PF-090, PF-110, PF-112, PF-113 |
+| PF-111 | BasicLifecycle | PF-040, PF-090, PF-111, PF-112, PF-113 |
+| PF-091 | BasicLifecycle | PF-041, PF-091, PF-110, PF-112, PF-113 |
+| PF-160 | BasicLifecycle | PF-160, PF-110 |
+| PF-045 | BasicLifecycle | PF-040, PF-045 (skips under the cancel cooldown) |
+| PF-046 | BasicLifecycle | PF-041, PF-046 (skips under the cancel cooldown) |
+| PF-210 | BasicLifecycle | PF-210, PF-112, PF-113 |
+| PF-094 | BasicLifecycle | PF-094, PF-110, PF-112, PF-113 |
+| PF-092 | BasicLifecycle | PF-092, PF-110, PF-112, PF-113 |
+| PF-093 | BasicLifecycle | PF-093, PF-110, PF-112, PF-113 |
+| PF-140 | BasicLifecycle | PF-042, PF-140, PF-143 |
+| PF-141 | BasicLifecycle | PF-043, PF-141, PF-143 |
+| PF-096 | BasicLifecycle | PF-096, PF-110, PF-112, PF-113 |
+| PF-095 | BasicLifecycle | PF-095, PF-110, PF-112, PF-113 |
+| PF-114 | AdvancedCredit | PF-114 |
+| PF-214 | AdvancedCredit | PF-213, PF-214 |
+| PF-053 | AdvancedCredit | PF-053, PF-055, PF-056, PF-057 (skips if the range/partial-fill flags are off) |
+| PF-211 | AdvancedCredit | PF-211 |
+| PF-212 | AdvancedCredit | PF-212 |
+| PF-230 | AdvancedCredit | PF-230 |
+| PF-230-floor | AdvancedCredit | PF-230 (refused under the solvency floor, then settles) |
+| PF-231 | AdvancedCredit | PF-231 (listing accept refused under the floor, then settles) |
+| PF-280 | VaultAndVpfi | PF-280 |
+| PF-281 | VaultAndVpfi | PF-281 |
+| PF-282 | VaultAndVpfi | PF-282 |
+| PF-250 | VaultAndVpfi | PF-250, PF-252, PF-251 |
+| PF-300 | KeeperAutomation | PF-300, PF-303 |
+| PF-008 | OperatorAdmin | PF-008, PF-004 |
+| PF-323 | OperatorAdmin | PF-323 |
+| PF-322 | OperatorAdmin | PF-322 |
+| PF-329 | OperatorAdmin | PF-329 |
+| PF-324 | OperatorAdmin | PF-324 |
+
+The retired lifecycle suite's scenario 8 (a lender selling into a buy offer)
+walked the same flow as PF-230 and is not carried twice.
 
 ## Core Positive Flow Matrix
 
@@ -71,6 +120,7 @@ Existing positive script coverage:
 | PF-005 | Basic | Sanctions fail-open behavior when oracle is unavailable for ordinary retail actions. | Ordinary action uses documented fail-open posture. | unit/integration | not scriptable unless harness toggles oracle. |
 | PF-006 | Basic | KYC enforcement disabled on retail deploy; normal users can create, accept, repay, preclose, refinance, and claim. | No retail KYC blocker appears when enforcement is off. | unit/integration | Add one smoke script assertion. |
 | PF-007 | Advanced | KYC enforcement enabled in test harness; Tier 0/1/2 allowed bands pass. | Values inside each tier’s limit proceed. | unit/integration | not ordinary deploy script. |
+| PF-008 | Basic | A wallet the sanctions oracle flags is refused new Tier-1 positions while its Tier-2 close-out stays open, so the unflagged counterparty can be made whole. | The Diamond reads the flag; the flagged borrower's repay settles the loan; clearing the flag reads clear. | scripted partial + negative script | The script asserts the flag and the open close-out; the Tier-1 refusal itself is asserted by `AnvilNegativeFlows` NEG-S1. Add a simulation-only refusal probe to the positive script. |
 
 ### Public, Dashboard, And Read-Only Product Surfaces
 
@@ -346,7 +396,8 @@ counterpart.
 8. Add cross-chain positive rehearsal for CCIP VPFI transfer, tier propagation,
    reward denominator/funding messages, and guardian pause.
 9. Make `PositiveFlows.s.sol` a thin runner over versioned modules, not a single
-   claim of complete coverage. Suggested modules:
+   claim of complete coverage. **Done for the first five (#848 Phase 1); no
+   cross-chain module exists yet (item 8).** Suggested modules:
    - `PositiveFlowsBasicLifecycle`
    - `PositiveFlowsAdvancedCredit`
    - `PositiveFlowsVaultAndVpfi`
