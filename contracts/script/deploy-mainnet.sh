@@ -1248,7 +1248,7 @@ EOF
 
   # #855 — CCIP_GUARDIAN is REQUIRED for ccip-wire. ConfigureCcip._setGuardians
   # SKIPS silently when unset, leaving every GuardianPausable cross-chain
-  # contract (CcipMessenger / RewardMessenger / mirror VPFI) with NO guardian.
+  # contract (CcipMessenger / RewardMessenger / mirror VPFI / canonical VPFI, #937) with NO guardian.
   # Setting a guardian is owner-only, so once handover moves ownership to the
   # timelock the fast Pauser-Safe pause lever (pause-all-chains.sh) can no longer
   # freeze those contracts during an incident — it MUST be wired now, while ADMIN

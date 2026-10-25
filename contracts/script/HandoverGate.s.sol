@@ -323,8 +323,9 @@ contract HandoverGate is Script {
             // Every GuardianPausable contract's guardian is the Pauser Safe,
             // and an unreadable getter there is a failure, not a skip: the
             // artifact names the wrong contract or its implementation lost
-            // the fast pause. The rate governor, the CCIP pool and the
-            // canonical token carry no guardian; ownership above covers them.
+            // the fast pause. The rate governor and the CCIP pool carry no
+            // guardian; ownership above covers them. The canonical token
+            // carries one since #937.
             if (t.guardian) {
                 (ok, ret) = t.addr.staticcall(abi.encodeWithSignature("guardian()"));
                 if (!ok || ret.length < 32) {

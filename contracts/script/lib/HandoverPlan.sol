@@ -132,8 +132,8 @@ library HandoverPlan {
     ///      address). A contract recorded for the OTHER chain role is still
     ///      listed, not required, so it is handed over rather than ignored.
     ///      The guardian flags follow which contracts inherit
-    ///      `GuardianPausable`: the CCIP pool, the rate governor and the
-    ///      canonical token do not.
+    ///      `GuardianPausable`: the CCIP pool and the rate governor do not.
+    ///      The canonical token does since #937.
     function read(string memory json) internal view returns (Target[] memory targets) {
         bool canonical = isCanonical();
         Target[] memory all = new Target[](10);
@@ -178,7 +178,7 @@ library HandoverPlan {
         // Canonical VPFI only: on a mirror the local ERC-20 IS `vpfiMirror`,
         // already listed above.
         if (canonical) {
-            n = _slot(all, n, "vpfiToken", readOptional(json, "vpfiToken"), OwnableKind.OpenZeppelin, true, false);
+            n = _slot(all, n, "vpfiToken", readOptional(json, "vpfiToken"), OwnableKind.OpenZeppelin, true, true);
         }
         targets = new Target[](n);
         for (uint256 i; i < n; ++i) {

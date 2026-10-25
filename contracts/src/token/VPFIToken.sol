@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {ERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import {ERC20BurnableUpgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20BurnableUpgradeable.sol";
@@ -10,6 +11,7 @@ import {ERC20CappedUpgradeable} from "@openzeppelin/contracts-upgradeable/token/
 import {ERC20PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PausableUpgradeable.sol";
 import {IVPFIToken} from "../interfaces/IVPFIToken.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {GuardianPausable} from "../crosschain/GuardianPausable.sol";
 
 /**
  * @title VPFIToken
@@ -30,6 +32,16 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *      The cap is enforced natively by ERC20CappedUpgradeable's _update
  *      override (reverts with ERC20ExceededCap). Pausing freezes all
  *      transfers including mints, providing an emergency brake.
+ *
+ *      Emergency pause (#937): the token is `GuardianPausable`, like every
+ *      cross-chain contract. The guardian (the Pauser Safe, no timelock)
+ *      may pause; only the owner (the governance Timelock after handover)
+ *      may unpause. Before #937 pausing was owner-only, so once ownership
+ *      reached the Timelock a minter-key compromise or a mint bug could
+ *      not be frozen for the Timelock's 48h delay. The guardian lives in
+ *      the ERC-7201 namespace `vaipakam.crosschain.guardian`, so adding it
+ *      moves no existing slot; it is zero until `setGuardian` is called,
+ *      which `ConfigureCcip` does before the handover.
  *
  *      Cross-chain role in the Phase 1 mesh: this contract lives on the
  *      canonical chain only. The Chainlink CCIP `LockReleaseTokenPool`
@@ -57,6 +69,7 @@ contract VPFIToken is
     ERC20CappedUpgradeable,
     ERC20PausableUpgradeable,
     Ownable2StepUpgradeable,
+    GuardianPausable,
     UUPSUpgradeable,
     IVPFIToken,
     IVaipakamErrors
@@ -108,6 +121,7 @@ contract VPFIToken is
         __ERC20Pausable_init();
         __Ownable_init(owner_);
         __Ownable2Step_init();
+        _guardianPausableInit();
 
         minter = initialMinter;
         emit MinterUpdated(address(0), initialMinter);
@@ -140,13 +154,18 @@ contract VPFIToken is
     // ─── Pause Controls ──────────────────────────────────────────────────────
 
     /// @notice Pause all transfers (including mints and burns).
-    /// @dev Owner-only emergency brake. Transfers revert with EnforcedPause
-    ///      while paused.
-    function pause() external onlyOwner {
+    /// @dev Guardian or owner: the fast detect-to-freeze lever (#937).
+    ///      Transfers revert with EnforcedPause while paused, so every VPFI
+    ///      movement stops, including the CCIP pool's lock and release and
+    ///      the Diamond's own VPFI flows. Inbound CCIP releases then fail
+    ///      and stay manually re-executable once unpaused.
+    function pause() external onlyGuardianOrOwner {
         _pause();
     }
 
     /// @notice Lift the pause.
+    /// @dev Owner-only, so recovery travels the governance path: a
+    ///      compromised or impatient guardian cannot re-enable the token.
     function unpause() external onlyOwner {
         _unpause();
     }
@@ -175,5 +194,21 @@ contract VPFIToken is
         override(ERC20Upgradeable, ERC20CappedUpgradeable, ERC20PausableUpgradeable)
     {
         super._update(from, to, value);
+    }
+
+    /// @dev `transferOwnership` is defined by both {OwnableUpgradeable}
+    ///      (reached via {GuardianPausable}) and {Ownable2StepUpgradeable};
+    ///      resolve to the two-step variant.
+    function transferOwnership(
+        address newOwner
+    ) public override(OwnableUpgradeable, Ownable2StepUpgradeable) onlyOwner {
+        Ownable2StepUpgradeable.transferOwnership(newOwner);
+    }
+
+    /// @dev MRO resolution for the internal counterpart.
+    function _transferOwnership(
+        address newOwner
+    ) internal override(OwnableUpgradeable, Ownable2StepUpgradeable) {
+        Ownable2StepUpgradeable._transferOwnership(newOwner);
     }
 }

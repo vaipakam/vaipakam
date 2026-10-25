@@ -65,7 +65,10 @@ during a cross-chain incident, and the owner can re-set rates
 directly. Mirror chains also wire the guardian on
 `VPFIMirrorToken` via `ConfigureCcip._setGuardians` (post-#200);
 the canonical `VPFIToken` is OFT-shaped and paused via its own
-AccessControl path, not the cross-chain guardian. CCT admin = the
+AccessControl path, not the cross-chain guardian. *(Superseded by
+#937: the canonical `VPFIToken` now extends `GuardianPausable` too,
+and `ConfigureCcip._setGuardians` wires its guardian on the canonical
+chain.)* CCT admin = the
 project's multisig → timelock at mainnet.
 
 ## Consequences
