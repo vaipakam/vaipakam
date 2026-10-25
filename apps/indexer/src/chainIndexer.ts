@@ -123,6 +123,7 @@ import {
 import {
   applyRecycleDaySeries,
   ensureRecycleSeriesBackfill,
+  ensureReportedCumulativeProjection,
 } from './recycleDaySeries';
 import {
   sweepCalendarNotifications,
@@ -2172,8 +2173,16 @@ async function runChainPass(
   // sat inside a helper the quiet path never reached). The structural
   // guard in oneTimeBackfillReachability.test.ts pins this ordering.
   // Cheap after the first run — one flag SELECT each.
+  //
+  // The reported-cumulative projection is the third of them, and it was the
+  // same mistake a second time (Codex #2836 r1): it was reachable only from
+  // inside `applyRecycleDaySeries`, so the caught-up return never ran it, and
+  // once the scan went block by block (#2221) neither did a window with no
+  // events in it. A stale projection version then stayed stale, and the
+  // runway metric stayed unavailable, until an unrelated event arrived.
   await ensureRewardLoopBackfill(env, chainId);
   await ensureRecycleSeriesBackfill(env, chainId);
+  await ensureReportedCumulativeProjection(env, chainId);
 
   // WHAT IS BEING WITHHELD IS SAID BEFORE ANY RPC-DEPENDENT RETURN
   // (#2213 r3 `4011960607`). Quarantined rows go on suppressing reminders
@@ -2558,9 +2567,21 @@ async function runChainPass(
   // sent, and so is every request after it. The block in which that happens is
   // not finished. The cursor is recorded just below it, and the next invocation
   // — the ingest DO rearms at once while `scannedTo` is short of its target —
-  // starts there with a fresh allowance. Its earlier writes are replayed then,
-  // which every handler already supports (a pass that throws mid-window
+  // starts there with a fresh allowance and processes that block again in
+  // full, which every handler already supports (a pass that throws mid-window
   // replays the whole window today).
+  //
+  // WHAT AN UNFINISHED BLOCK ALREADY WROTE STAYS WRITTEN (Codex #2836 r1).
+  // Its writes are not staged: like every write a pass makes, each is visible
+  // as soon as it lands, so between this pass and the next a reader can see
+  // part of that block's effects, which the next pass completes. That is the
+  // state a reader sees during ANY pass, which writes one statement at a time
+  // across its window, so the block boundary adds no new kind of partial
+  // view; it only bounds how long one lasts. What the boundary does keep
+  // whole is everything that acts on the scan rather than reads the tables:
+  // the cursor, the notifications and the live-update hints count only
+  // finished blocks. Staging a block's writes would need every handler to
+  // give up reading its own earlier writes in the same block.
   //
   // THE FIRST BLOCK HAS NO FLOOR. A floor on it could only ever refuse the
   // one block a pass must finish to make progress, so a block heavier than a

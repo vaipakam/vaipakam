@@ -3034,14 +3034,17 @@ General design requirements:
   finishes as many whole blocks as it can, in chain order. It holds back what the
   end of the pass needs to record its position and finish its once-per-pass
   steps, and it records its position just below the first block it did not
-  finish. The next invocation resumes from there. A block is finished whole or
-  not at all: nothing the scan learned from an unfinished block is presented as
-  indexed, and the block is processed again in full by the next pass. A pass
+  finish. The next invocation resumes from there and processes that block again
+  in full. The scan's recorded position never claims a block it did not finish.
+  The records an unfinished block had already written are visible until the
+  next pass completes them, exactly as any pass's writes are visible while the
+  pass is still running. Those records are what the chain recorded, and
+  processing the block again changes nothing that was already right. A pass
   always finishes at least its first block with events, so no single block can
-  hold the index in place. Where a scan stops early, it says so in its log: where
-  it stopped, how many blocks it finished and why. Steps that run after the scan,
-  such as notifications and live-update hints, act only on the blocks the pass
-  finished.
+  hold the index in place. Where a scan stops early, it says so in its log:
+  where it stopped, how many blocks it finished and why. Steps that act on what
+  the scan found rather than on the stored records, such as notifications and
+  live-update hints, act only on the blocks the pass finished.
 - Same-block lifecycle ordering should be resolved from authoritative chain
   state rather than inferred from balances alone. For example, if an internal
   match and a repay / swap-repay settle the same loan in one block, the indexed

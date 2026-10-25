@@ -4,8 +4,11 @@
  *
  * Every block after the first runs under the held-back floor
  * (`SCAN_TAIL_RESERVE`). The pass stops at the block in which a request would
- * have eaten into it, records its cursor just below that block, and writes
- * nothing for it; the next pass, with a fresh allowance, resumes there.
+ * have eaten into it and records its cursor just below that block; the next
+ * pass, with a fresh allowance, processes that block again in full. What the
+ * unfinished block had already written stays written (Codex #2836 r1), so the
+ * property pinned here is the cursor's and the replay's, not that the block
+ * wrote nothing.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { encodeAbiParameters, encodeEventTopics, type Abi } from 'viem';
@@ -41,15 +44,17 @@ const bundle = getDeployment(BASE);
 if (!bundle) throw new Error('deployments.json carries no Base Sepolia (84532) entry');
 const CURSOR = bundle.deployBlock + 5;
 const HEAD = CURSOR + 100;
-/** The blocks the fixture's events sit in, one event each. */
+/** The blocks the fixture's events sit in, one event each by default. */
 const EVENT_BLOCKS = [CURSOR + 10, CURSOR + 20, CURSOR + 30];
+/** How many events a block carries, where it is not one. */
+let eventsInBlock: Record<number, number> = {};
 
 const hex = (n: bigint | number) => `0x${BigInt(n).toString(16)}`;
 const KEEPER = '0x00000000000000000000000000000000000000c1';
 
 /** A `LoanKeeperEnabled` log in `block`: an event the scan records in the
  *  activity feed and reads nothing on chain for. */
-function keeperLog(block: number, loanId: number) {
+function keeperLog(block: number, loanId: number, logIndex = 0) {
   const topics = encodeEventTopics({
     abi: DIAMOND_ABI_VIEM as Abi,
     eventName: 'LoanKeeperEnabled',
@@ -61,9 +66,9 @@ function keeperLog(block: number, loanId: number) {
     data: encodeAbiParameters([{ type: 'bool' }], [true]),
     blockNumber: hex(block),
     blockHash: `0x${block.toString(16).padStart(64, '0')}`,
-    transactionHash: `0x${(block * 7).toString(16).padStart(64, '0')}`,
-    transactionIndex: '0x0',
-    logIndex: '0x0',
+    transactionHash: `0x${(block * 7 + logIndex).toString(16).padStart(64, '0')}`,
+    transactionIndex: hex(logIndex),
+    logIndex: hex(logIndex),
     removed: false,
   };
 }
@@ -86,7 +91,9 @@ function rpc() {
     if (req.method === 'eth_getLogs') {
       const { fromBlock, toBlock } = (req.params?.[0] ?? {}) as { fromBlock: string; toBlock: string };
       return ok(
-        EVENT_BLOCKS.filter((b) => b >= Number(fromBlock) && b <= Number(toBlock)).map((b, i) => keeperLog(b, 70 + i)),
+        EVENT_BLOCKS.filter((b) => b >= Number(fromBlock) && b <= Number(toBlock)).flatMap((b) =>
+          Array.from({ length: eventsInBlock[b] ?? 1 }, (_, k) => keeperLog(b, b * 100 + k, k)),
+        ),
       );
     }
     if (req.method === 'eth_getBlockByNumber') {
@@ -143,10 +150,18 @@ function cursorOf(h: ReturnType<typeof chainDb>): number {
 
 function recordedBlocks(h: ReturnType<typeof chainDb>): number[] {
   return (
-    h.db.prepare('SELECT block_number FROM activity_events WHERE chain_id = ? ORDER BY block_number').all(BASE) as {
+    h.db.prepare('SELECT DISTINCT block_number FROM activity_events WHERE chain_id = ? ORDER BY block_number').all(BASE) as {
       block_number: number;
     }[]
   ).map((r) => r.block_number);
+}
+
+function recordedIn(h: ReturnType<typeof chainDb>, block: number): number {
+  return (
+    h.db.prepare('SELECT COUNT(*) AS n FROM activity_events WHERE chain_id = ? AND block_number = ?').get(BASE, block) as {
+      n: number;
+    }
+  ).n;
 }
 
 /** One pass over the fixture under the given allowance (the tier's own by default). */
@@ -162,6 +177,7 @@ describe('the scan core finishes whole blocks within the allowance (#2221)', () 
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    eventsInBlock = {};
   });
 
   it('with room to spare, scans the whole window and records every event', async () => {
@@ -180,7 +196,7 @@ describe('the scan core finishes whole blocks within the allowance (#2221)', () 
     ...Array.from({ length: 14 }, (_, i) => ({ d1Queries: 20 + 3 * i })),
   ];
 
-  it('at every allowance: the cursor sits just below an unfinished event block, which wrote nothing', { timeout: 180_000 }, async () => {
+  it('at every allowance: the cursor sits just below an unfinished event block', { timeout: 180_000 }, async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const stops = { external: new Set<number>(), d1Queries: new Set<number>() };
@@ -192,9 +208,10 @@ describe('the scan core finishes whole blocks within the allowance (#2221)', () 
         // Too little to reach the scan at all is a failed pass, not a scan.
       }
       const cursor = cursorOf(h);
-      // Every recorded event is at or below the cursor, and every event block
-      // at or below the cursor is recorded: nothing written past the record,
-      // nothing skipped below it.
+      // Every event block at or below the cursor is recorded: nothing skipped
+      // below the record. With one event per block, an unfinished block has
+      // nothing it could have written before its refusal, so nothing past the
+      // record is written either (a heavier block is the next case).
       expect(recordedBlocks(h)).toEqual(EVENT_BLOCKS.filter((b) => b <= cursor));
       if (cursor !== CURSOR && cursor !== HEAD) {
         // A partial pass stops just below an event block.
@@ -247,6 +264,36 @@ describe('the scan core finishes whole blocks within the allowance (#2221)', () 
     expect(r.scannedFrom).toBe(BigInt(EVENT_BLOCKS[1]));
     expect(cursorOf(h)).toBe(HEAD);
     expect(recordedBlocks(h)).toEqual(EVENT_BLOCKS);
+  });
+});
+
+describe('a heavy block left unfinished (Codex #2836 r1)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    eventsInBlock = {};
+  });
+
+  it('keeps what it wrote, and the next pass finishes it whole without repeating it', { timeout: 120_000 }, async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const HEAVY = EVENT_BLOCKS[1]!;
+    eventsInBlock = { [HEAVY]: 20 };
+    const h = chainDb();
+    await pass(h);
+    // The tier's own allowance runs out inside the heavy block: the cursor
+    // stops just below it, and part of it is already written. This is the
+    // state Codex reproduced, and it is stated rather than prevented.
+    expect(cursorOf(h)).toBe(HEAVY - 1);
+    const partial = recordedIn(h, HEAVY);
+    expect(partial).toBeGreaterThan(0);
+    expect(partial).toBeLessThan(20);
+    // The next pass processes the block again in full: every event once,
+    // none twice, and the cursor moves past it.
+    let passes = 0;
+    while (cursorOf(h) < HEAVY && passes++ < 5) await pass(h);
+    expect(cursorOf(h)).toBeGreaterThanOrEqual(HEAVY);
+    expect(recordedIn(h, HEAVY)).toBe(20);
   });
 });
 
