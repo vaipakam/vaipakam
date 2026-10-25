@@ -203,12 +203,23 @@ contract AccessControlFacet is DiamondAccessControl {
     ///      for a successful handover.
     error TransferAdminToSelf();
 
+    /// @dev Reverts when {transferAdmin} is called by a root admin that is
+    ///      not also the Diamond's ERC-173 owner (#2743). The role root and
+    ///      ownership are separate authorities; moving ownership needs the
+    ///      owner, as every other ownership change does.
+    /// @param owner The Diamond's current ERC-173 owner.
+    error TransferAdminCallerNotOwner(address owner);
+
     /**
      * @notice Atomically hand every privileged role + ERC-173 ownership
      *         from the caller to `newAdmin` in a single transaction.
      *
-     * @dev DEFAULT_ADMIN_ROLE-gated, so post-handover only the Timelock can
-     *      call it — through its queue, after the full delay (#934 / D1).
+     * @dev The caller must hold DEFAULT_ADMIN_ROLE AND be the Diamond's
+     *      ERC-173 owner (#2743). Both are the Timelock after the handover,
+     *      so only it can call this — through its queue, after the full
+     *      delay (#934 / D1). The owner check keeps the two authorities
+     *      separate: a root-admin holder that is not the owner cannot take
+     *      ownership (and with it `diamondCut`) by calling this.
      *      Replaces the legacy 23-tx role-handover
      *      sequence (11 grants + 1 ownership transfer + 11 renounces) with
      *      one atomic tx — same end-state, gas-cheaper, impossible to leave
@@ -246,13 +257,16 @@ contract AccessControlFacet is DiamondAccessControl {
      *
      * @param newAdmin Destination address (multi-sig / Safe / Timelock /
      *                 EOA). Must be non-zero and not the caller. The caller
-     *                 holds DEFAULT_ADMIN_ROLE per `onlyRole`.
+     *                 holds DEFAULT_ADMIN_ROLE per `onlyRole` and is the
+     *                 Diamond's current owner.
      */
     function transferAdmin(
         address newAdmin
     ) external onlyRole(LibAccessControl.DEFAULT_ADMIN_ROLE) {
         if (newAdmin == address(0)) revert TransferAdminToZero();
         if (newAdmin == msg.sender) revert TransferAdminToSelf();
+        address currentOwner = LibDiamond.contractOwner();
+        if (msg.sender != currentOwner) revert TransferAdminCallerNotOwner(currentOwner);
 
         bytes32[] memory roles = LibAccessControl.grantableRoles();
 

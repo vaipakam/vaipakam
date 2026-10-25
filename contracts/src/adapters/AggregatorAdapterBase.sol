@@ -108,6 +108,14 @@ abstract contract AggregatorAdapterBase is ISwapAdapter, Ownable2Step {
     error RouterCallFailed(bytes returnData);
     error InsufficientOutput(uint256 received, uint256 minExpected);
 
+    /// @param initialOwner       Who may edit the swap-target
+    ///                           allowlist. Set at construction so the
+    ///                           adapter never sits on the deploying key
+    ///                           (#2743): the deploy passes the Diamond's
+    ///                           owner, which the governance handover
+    ///                           moves to the Timelock with the rest of
+    ///                           the owned contracts. Zero is refused by
+    ///                           OpenZeppelin's `Ownable`.
     /// @param allowanceTarget_   Pinned approval recipient. For 0x:
     ///                           the AllowanceHolder address. For
     ///                           1inch: the AggregationRouterV6
@@ -117,9 +125,10 @@ abstract contract AggregatorAdapterBase is ISwapAdapter, Ownable2Step {
     ///                           the adapter is unusable without at
     ///                           least one allowlisted target.
     constructor(
+        address initialOwner,
         address allowanceTarget_,
         address[] memory initialSwapTargets
-    ) Ownable(msg.sender) {
+    ) Ownable(initialOwner) {
         if (allowanceTarget_ == address(0)) revert InvalidAllowanceTarget();
         if (initialSwapTargets.length == 0) revert InvalidInitialSwapTargets();
         ALLOWANCE_TARGET = allowanceTarget_;

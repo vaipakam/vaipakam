@@ -75,7 +75,7 @@ contract SwapAdapterTest is Test {
     function _newZeroExAdapter(address router) internal returns (ZeroExAggregatorAdapter) {
         address[] memory seed = new address[](1);
         seed[0] = router;
-        return new ZeroExAggregatorAdapter(router, seed);
+        return new ZeroExAggregatorAdapter(address(this), router, seed);
     }
 
     function testAggregatorAdapterHappyPath() public {
@@ -230,7 +230,7 @@ contract SwapAdapterTest is Test {
         address[] memory seed = new address[](1);
         seed[0] = makeAddr("settler");
         vm.expectRevert(AggregatorAdapterBase.InvalidAllowanceTarget.selector);
-        new ZeroExAggregatorAdapter(address(0), seed);
+        new ZeroExAggregatorAdapter(address(this), address(0), seed);
     }
 
     /// @dev Constructor must reject empty allowlist — an adapter with
@@ -240,7 +240,7 @@ contract SwapAdapterTest is Test {
     function testZeroExConstructorRejectsEmptySwapTargetSeed() public {
         address[] memory empty = new address[](0);
         vm.expectRevert(AggregatorAdapterBase.InvalidInitialSwapTargets.selector);
-        new ZeroExAggregatorAdapter(makeAddr("ah"), empty);
+        new ZeroExAggregatorAdapter(address(this), makeAddr("ah"), empty);
     }
 
     /// @dev Constructor rejects address(0) entries inside the seed —
@@ -250,7 +250,7 @@ contract SwapAdapterTest is Test {
         seed[0] = makeAddr("settler");
         seed[1] = address(0);
         vm.expectRevert(AggregatorAdapterBase.InvalidInitialSwapTargets.selector);
-        new ZeroExAggregatorAdapter(makeAddr("ah"), seed);
+        new ZeroExAggregatorAdapter(address(this), makeAddr("ah"), seed);
     }
 
     /// @dev Owner can add new Settler addresses (0x rotates them per
@@ -260,7 +260,7 @@ contract SwapAdapterTest is Test {
         ZeroExAggregatorAdapter adapter = _newZeroExAdapter(address(router));
         address newSettler = makeAddr("settler-v2");
 
-        // Owner (= deployer = this test contract) can add.
+        // Owner (= the test contract, passed as initialOwner) can add.
         adapter.addSwapTarget(newSettler);
         assertTrue(adapter.swapTargetAllowed(newSettler));
         assertEq(adapter.swapTargetCount(), 2);
@@ -278,6 +278,27 @@ contract SwapAdapterTest is Test {
             )
         );
         adapter.addSwapTarget(newSettler);
+    }
+
+    /// @dev #2743: the adapter is owned by the address the deploy names,
+    ///      never by whoever sent the deploy transaction, so the deploying
+    ///      key holds no allowlist authority over it.
+    function testAdapterOwnerIsTheNamedOwnerNotTheDeployer() public {
+        address governance = makeAddr("governance");
+        address[] memory seed = new address[](1);
+        seed[0] = makeAddr("settler");
+        ZeroExAggregatorAdapter zeroEx = new ZeroExAggregatorAdapter(governance, makeAddr("ah"), seed);
+        OneInchAggregatorAdapter oneInch = new OneInchAggregatorAdapter(governance, makeAddr("router"));
+        assertEq(zeroEx.owner(), governance);
+        assertEq(oneInch.owner(), governance);
+
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", address(this)));
+        zeroEx.addSwapTarget(makeAddr("hostile"));
+        vm.prank(governance);
+        zeroEx.addSwapTarget(makeAddr("settler-v2"));
+
+        vm.expectRevert(abi.encodeWithSignature("OwnableInvalidOwner(address)", address(0)));
+        new OneInchAggregatorAdapter(address(0), makeAddr("router"));
     }
 
     /// @dev Owner can remove Settlers but the LAST target is sticky —
@@ -338,6 +359,7 @@ contract SwapAdapterTest is Test {
         address[] memory seed = new address[](1);
         seed[0] = address(settler);
         ZeroExAggregatorAdapter adapter = new ZeroExAggregatorAdapter(
+            address(this),
             address(ah),
             seed
         );
@@ -379,7 +401,7 @@ contract SwapAdapterTest is Test {
         // singleton allowlist itself.
         MockAggregatorRouter router = new MockAggregatorRouter();
         tokenOut.mint(address(router), 10_000 ether);
-        OneInchAggregatorAdapter adapter = new OneInchAggregatorAdapter(address(router));
+        OneInchAggregatorAdapter adapter = new OneInchAggregatorAdapter(address(this), address(router));
 
         uint256 amountIn = 500 ether;
         uint256 amountOut = 480 ether;

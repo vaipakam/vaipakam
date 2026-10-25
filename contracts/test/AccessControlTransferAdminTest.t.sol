@@ -28,8 +28,9 @@ import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
  *              last so a future intermediate revert leaves the caller
  *              recoverable.
  *
- *         Tests pin both the happy-path end state and the three
- *         revert paths (zero address, self-transfer, non-admin caller).
+ *         Tests pin both the happy-path end state and the four
+ *         revert paths (zero address, self-transfer, non-admin caller,
+ *         a root admin that is not the Diamond owner — #2743).
  */
 contract AccessControlTransferAdminTest is Test {
     VaipakamDiamond internal diamond;
@@ -157,6 +158,22 @@ contract AccessControlTransferAdminTest is Test {
         vm.prank(nonAdmin);
         vm.expectRevert(); // AccessControlUnauthorizedAccount(nonAdmin, DEFAULT_ADMIN_ROLE)
         AccessControlFacet(address(diamond)).transferAdmin(newAdmin);
+    }
+
+    /// @notice #2743: holding DEFAULT_ADMIN_ROLE is not enough. A root
+    ///         admin that is not the Diamond's owner cannot take ownership
+    ///         (and with it `diamondCut`) through this function.
+    function test_transferAdmin_RevertsWhenRootAdminIsNotOwner() public {
+        address rootOnly = address(0xC0DE);
+        address accomplice = address(0xBEEF);
+        AccessControlFacet(address(diamond)).grantRole(LibAccessControl.DEFAULT_ADMIN_ROLE, rootOnly);
+        vm.prank(rootOnly);
+        vm.expectRevert(abi.encodeWithSelector(AccessControlFacet.TransferAdminCallerNotOwner.selector, caller));
+        AccessControlFacet(address(diamond)).transferAdmin(accomplice);
+        assertEq(IERC173(address(diamond)).owner(), caller, "ownership did not move");
+        assertFalse(
+            AccessControlFacet(address(diamond)).hasRole(LibAccessControl.ADMIN_ROLE, accomplice), "no role moved either"
+        );
     }
 
     /// @notice State must not partially mutate when the function reverts

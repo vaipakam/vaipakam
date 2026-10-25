@@ -123,6 +123,7 @@ import {
 import {
   applyRecycleDaySeries,
   ensureRecycleSeriesBackfill,
+  ensureReportedCumulativeProjection,
 } from './recycleDaySeries';
 import {
   sweepCalendarNotifications,
@@ -138,6 +139,9 @@ import {
   reportSpend,
   spent,
   affords,
+  holdBack,
+  release,
+  isRefusing,
   type Cost,
   type Spend,
   type TickBudget,
@@ -202,6 +206,38 @@ const SCAN_LOOKBACK_BLOCKS = 500n;
  *  the scan share one number. */
 export const SCAN_PASS_MAX_BLOCKS = SCAN_LOOKBACK_BLOCKS * 4n;
 const MAX_RANGE_PER_CALL = 5_000n;
+
+/**
+ * What the scan core leaves for the rest of its pass (#2221): the cursor write
+ * and the steps that run once per scan after it — the market-summary sweep,
+ * the notification insert, the protocol-config refresh, the watermark stamps.
+ * Every block after the first is refused any request that would eat into it.
+ *
+ * A STARTING VALUE, not a sum anyone has proved. The steps after the cursor
+ * are fail-open or gate themselves (the reconciliation pass and the heal
+ * lanes ask `affords` per unit), so a reserve that turns out short costs a
+ * deferred notification or watermark, which the archive replay already
+ * recovers, never the cursor: the cursor write is the first request after the
+ * scan core and the reserve always covers it. Re-tune it from the spend every
+ * pass reports at its exit, not from a recount.
+ */
+export const SCAN_TAIL_RESERVE: Cost = { external: 3, d1Queries: 15 };
+
+/** The logs of each block that has any, in chain order, each block's logs in
+ *  log order — the unit the scan core finishes or leaves for the next pass. */
+export function logsByBlock<T extends { blockNumber: bigint; logIndex: number }>(
+  logs: readonly T[],
+): Array<{ blockNumber: bigint; logs: T[] }> {
+  const byBlock = new Map<bigint, T[]>();
+  for (const log of logs) {
+    const list = byBlock.get(log.blockNumber);
+    if (list) list.push(log);
+    else byBlock.set(log.blockNumber, [log]);
+  }
+  return [...byBlock.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([blockNumber, list]) => ({ blockNumber, logs: list.sort((x, y) => x.logIndex - y.logIndex) }));
+}
 const DETAILS_REFRESH_BATCH = 50;
 
 /** Single shared cursor across every domain handler. Adding a new
@@ -498,6 +534,16 @@ export interface ChainIndexerResult {
    *  were deleted before it scanned (deploymentEpoch.ts). The DO broadcasts
    *  the full recovery set on it, since the counters cannot say so. */
   epochReset?: boolean;
+  /** #2221 — the block this pass stopped in, having begun it: the budget
+   *  refused part-way through, and the cursor records the block below. What
+   *  that block had already written is committed and is NOT in any counter
+   *  above, and the replay that finishes it cannot count it either, because
+   *  a write that already landed changes no row the second time (a
+   *  cancellation's `WHERE status = 'active'` matches nothing). So the DO
+   *  broadcasts every key on it, and the hints are marked truncated: no
+   *  count or id list here can say what the unfinished block changed.
+   *  Absent when the pass finished its window. */
+  unfinishedBlock?: bigint;
 }
 
 /**
@@ -2137,8 +2183,16 @@ async function runChainPass(
   // sat inside a helper the quiet path never reached). The structural
   // guard in oneTimeBackfillReachability.test.ts pins this ordering.
   // Cheap after the first run — one flag SELECT each.
+  //
+  // The reported-cumulative projection is the third of them, and it was the
+  // same mistake a second time (Codex #2836 r1): it was reachable only from
+  // inside `applyRecycleDaySeries`, so the caught-up return never ran it, and
+  // once the scan went block by block (#2221) neither did a window with no
+  // events in it. A stale projection version then stayed stale, and the
+  // runway metric stayed unavailable, until an unrelated event arrived.
   await ensureRewardLoopBackfill(env, chainId);
   await ensureRecycleSeriesBackfill(env, chainId);
+  await ensureReportedCumulativeProjection(env, chainId);
 
   // WHAT IS BEING WITHHELD IS SAID BEFORE ANY RPC-DEPENDENT RETURN
   // (#2213 r3 `4011960607`). Quarantined rows go on suppressing reminders
@@ -2432,7 +2486,9 @@ async function runChainPass(
       skipped: 'caught-up',
     };
   }
-  const scanTo =
+  // The window this pass reads logs for. How far it then PROCESSES them is
+  // decided per block below (#2221), so the cursor is `scanTo`, not this.
+  const windowTo =
     scanFrom + SCAN_PASS_MAX_BLOCKS > head
       ? head
       : scanFrom + SCAN_PASS_MAX_BLOCKS;
@@ -2442,10 +2498,10 @@ async function runChainPass(
   // page through MAX_RANGE_PER_CALL at a time.
   const allLogs: DecodedLog[] = [];
   let cursor = scanFrom;
-  while (cursor <= scanTo) {
+  while (cursor <= windowTo) {
     const chunkEnd =
-      cursor + MAX_RANGE_PER_CALL - 1n > scanTo
-        ? scanTo
+      cursor + MAX_RANGE_PER_CALL - 1n > windowTo
+        ? windowTo
         : cursor + MAX_RANGE_PER_CALL - 1n;
     try {
       // Plain address-filtered `eth_getLogs` (no topic filter), then
@@ -2507,14 +2563,53 @@ async function runChainPass(
     cursor = chunkEnd + 1n;
   }
 
-  // ── Per-domain dispatch ─────────────────────────────────────────
-  // We need block timestamps for activity_events.block_at. Fetch
-  // them once per unique block in the scan window, not per log; a
-  // single LoanInitiated tx can carry 3+ events in the same block,
-  // and burning ~3× the eth_getBlockByNumber budget for no reason
-  // shows up as P95 cron-tick latency on a busy day.
-  const uniqueBlocks = new Set<bigint>();
-  for (const log of allLogs) uniqueBlocks.add(log.blockNumber);
+  // ── Per-domain dispatch, ONE BLOCK AT A TIME (#2221) ────────────
+  //
+  // The scan's own work used to be the one part of this pass nothing bounded:
+  // every handler ran over the whole window, and a window busy enough to need
+  // more requests than one invocation allows was aborted before the cursor
+  // write — and then re-read, in full, by every following tick. That is a
+  // frozen chain, and it would freeze on exactly the busiest day.
+  //
+  // Now the window is processed block by block, in chain order, and every
+  // block after the first runs under a held-back floor (`holdBack`): a request
+  // that would eat into what the end of the pass needs is refused before it is
+  // sent, and so is every request after it. The block in which that happens is
+  // not finished. The cursor is recorded just below it, and the next invocation
+  // — the ingest DO rearms at once while `scannedTo` is short of its target —
+  // starts there with a fresh allowance and processes that block again in
+  // full, which every handler already supports (a pass that throws mid-window
+  // replays the whole window today).
+  //
+  // WHAT AN UNFINISHED BLOCK ALREADY WROTE STAYS WRITTEN (Codex #2836 r1).
+  // Its writes are not staged: like every write a pass makes, each is visible
+  // as soon as it lands, so between this pass and the next a reader can see
+  // part of that block's effects, which the next pass completes. That is the
+  // state a reader sees during ANY pass, which writes one statement at a time
+  // across its window, so the block boundary adds no new kind of partial
+  // view; it only bounds how long one lasts. What the boundary does keep
+  // whole is everything that acts on the scan rather than reads the tables:
+  // the cursor, the notifications and the live-update hints count only
+  // finished blocks. Staging a block's writes would need every handler to
+  // give up reading its own earlier writes in the same block.
+  //
+  // THE FIRST BLOCK HAS NO FLOOR. A floor on it could only ever refuse the
+  // one block a pass must finish to make progress, so a block heavier than a
+  // whole allowance would hold the chain at that block forever, by our own
+  // refusal. Without a floor it runs on what the invocation has; the meter
+  // announces any crossing as before, and if the platform does end the
+  // invocation there, nothing is lost that the refusal would have saved.
+  //
+  // A block is the unit because it is the smallest one the cursor can record,
+  // and because it keeps together what the handlers expect to see together:
+  // the events of one transaction (a `LoanInitiated` and its
+  // `LoanInitiatedDetails` companion, an accept and its loan) are always in
+  // one block. Across blocks the handlers now run in chain order rather than
+  // handler by handler over the window, which is the order they were written
+  // to assume.
+  //
+  // Block timestamps are read one per block, as they always were (never one
+  // per log: a single LoanInitiated tx can carry 3+ events in the same block).
   const blockTimestamps = new Map<bigint, number>();
   // RL-2 (Codex #1310 P2) — blocks whose timestamp below is the wall-clock
   // SENTINEL, not the real chain time. Consumers that BUCKET BY DAY and
@@ -2522,116 +2617,172 @@ async function runChainPass(
   // a later scan can apply the event under its true claim day; consumers
   // that only display block_at (activity_events) keep using the sentinel.
   const fallbackTimestampBlocks = new Set<bigint>();
-  for (const blockNum of uniqueBlocks) {
+
+  const scanBlock = async (blockNumber: bigint, logs: DecodedLog[]) => {
     try {
-      const block = await client.getBlock({ blockNumber: blockNum });
-      blockTimestamps.set(blockNum, Number(block.timestamp));
+      const block = await client.getBlock({ blockNumber });
+      blockTimestamps.set(blockNumber, Number(block.timestamp));
     } catch {
       // On RPC hiccup just stamp now() as a sentinel — the block
       // ordering still works because activity_events keys on
-      // (block_number, log_index), not block_at.
-      blockTimestamps.set(blockNum, Math.floor(Date.now() / 1000));
-      fallbackTimestampBlocks.add(blockNum);
+      // (block_number, log_index), not block_at. (A REFUSED read lands
+      // here too, and is harmless: the refusal is sticky, so nothing in
+      // this block is written with the sentinel, and the block is replayed.)
+      blockTimestamps.set(blockNumber, Math.floor(Date.now() / 1000));
+      fallbackTimestampBlocks.add(blockNumber);
     }
-  }
 
-  const offerStats = await processOfferLogs(
-    allLogs,
-    env,
-    chainId,
-    client,
-    diamond,
-  );
-  const loanStats = await processLoanLogs(
-    allLogs,
-    env,
-    chainId,
-    blockTimestamps,
-    client,
-    diamond,
-    fallbackTimestampBlocks,
-  );
-  // #1131 Rate Desk phase 3 — signed-offer book lifecycle. Reconciles the
-  // off-chain `signed_offers` rows against the on-chain fill/cancel/nonce
-  // events. Runs after the offer/loan passes; it touches only its own table.
-  const signedOfferUpdates = await processSignedOfferLogs(
-    allLogs,
-    env,
-    chainId,
-    client,
-    diamond,
-  );
-  // Activity ledger captures EVERY decoded event in `allLogs`. Phase
-  // A and Phase B handlers above mutate domain tables; this writer
-  // appends one row per log to the unified feed for the Activity
-  // page + LoanTimeline + per-wallet history surfaces.
-  // RL-2 (#1303) — reward loop-closure ledger: per-user retention +
-  // per-day flow components behind /metrics/loop-closure. Exactly-once
-  // via the reward_loop_events dedup table, so overlapping scan ranges
-  // never double-count. Runs BEFORE recordActivityEvents so its one-time
-  // backfill can never consume a sentinel-stamped row this scan is about
-  // to insert (Codex #1310 r2 P2). A reward log whose block timestamp
-  // fell back to the wall-clock sentinel gets one in-place retry; if the
-  // chain timestamp is still unavailable the ledger THROWS and the scan
-  // fails without advancing the cursor (Codex #1310 r2 P1 — the cron
-  // path has no guaranteed overlapping scan, so a silent skip would lose
-  // the event forever).
-  await applyRewardLoopLedger(
-    allLogs,
-    env,
-    chainId,
-    blockTimestamps,
-    fallbackTimestampBlocks,
-    async (blockNumber) => {
-      try {
-        const block = await client.getBlock({ blockNumber });
-        return Number(block.timestamp);
-      } catch {
-        return null;
-      }
-    },
-  );
+    const offer = await processOfferLogs(
+      logs,
+      env,
+      chainId,
+      client,
+      diamond,
+    );
+    const loan = await processLoanLogs(
+      logs,
+      env,
+      chainId,
+      blockTimestamps,
+      client,
+      diamond,
+      fallbackTimestampBlocks,
+    );
+    // #1131 Rate Desk phase 3 — signed-offer book lifecycle. Reconciles the
+    // off-chain `signed_offers` rows against the on-chain fill/cancel/nonce
+    // events. Runs after the offer/loan passes; it touches only its own table.
+    const signed = await processSignedOfferLogs(
+      logs,
+      env,
+      chainId,
+      client,
+      diamond,
+    );
+    // Activity ledger captures EVERY decoded event in `logs`. Phase
+    // A and Phase B handlers above mutate domain tables; this writer
+    // appends one row per log to the unified feed for the Activity
+    // page + LoanTimeline + per-wallet history surfaces.
+    // RL-2 (#1303) — reward loop-closure ledger: per-user retention +
+    // per-day flow components behind /metrics/loop-closure. Exactly-once
+    // via the reward_loop_events dedup table, so overlapping scan ranges
+    // never double-count. Runs BEFORE recordActivityEvents so its one-time
+    // backfill can never consume a sentinel-stamped row this scan is about
+    // to insert (Codex #1310 r2 P2). A reward log whose block timestamp
+    // fell back to the wall-clock sentinel gets one in-place retry; if the
+    // chain timestamp is still unavailable the ledger THROWS and the scan
+    // fails without advancing the cursor (Codex #1310 r2 P1 — the cron
+    // path has no guaranteed overlapping scan, so a silent skip would lose
+    // the event forever).
+    await applyRewardLoopLedger(
+      logs,
+      env,
+      chainId,
+      blockTimestamps,
+      fallbackTimestampBlocks,
+      async (blockNumber) => {
+        try {
+          const block = await client.getBlock({ blockNumber });
+          return Number(block.timestamp);
+        } catch {
+          return null;
+        }
+      },
+    );
 
-  // M5 (#1218 / #1349) — recycling transparency day series behind
-  // /metrics/recycling. Exactly-once via its own recycle_series_events
-  // dedup table.
-  //
-  // Takes no timestamps, deliberately: every day index comes out of the
-  // event payload, so this series has no counterpart to RL-2's
-  // sentinel-timestamp recovery above and cannot fail for want of a block
-  // time. The day it stores is the REWARD day the contracts key their own
-  // absorption on — NOT the UTC epoch day RL-2 pins — and the two are not
-  // comparable (see the 0045 migration header).
-  await applyRecycleDaySeries(allLogs, env, chainId);
+    // M5 (#1218 / #1349) — recycling transparency day series behind
+    // /metrics/recycling. Exactly-once via its own recycle_series_events
+    // dedup table.
+    //
+    // Takes no timestamps, deliberately: every day index comes out of the
+    // event payload, so this series has no counterpart to RL-2's
+    // sentinel-timestamp recovery above and cannot fail for want of a block
+    // time. The day it stores is the REWARD day the contracts key their own
+    // absorption on — NOT the UTC epoch day RL-2 pins — and the two are not
+    // comparable (see the 0045 migration header).
+    await applyRecycleDaySeries(logs, env, chainId);
 
-  // #1222 M3 B2-d2 (P7) — commitment reconcile rediscovery: persist every
-  // Base-side CommitmentRemitEligibilityReconciled(dayId, chainId) so the
-  // keeper's mirror commitment-report pass re-unions reconciled OLD days
-  // that fell outside its bounded scan window. INSERT OR IGNORE keeps
-  // overlapping scan ranges exactly-once.
-  for (const log of allLogs) {
-    if (log.eventName !== 'CommitmentRemitEligibilityReconciled') continue;
-    const a = log.args as { dayId?: bigint; chainId?: number | bigint };
-    const dayId = Number(a.dayId ?? 0n);
-    const mirrorChainId = Number(a.chainId ?? 0);
-    if (!Number.isFinite(dayId) || dayId <= 0) continue;
-    if (!Number.isFinite(mirrorChainId) || mirrorChainId <= 0) continue;
-    await env.DB.prepare(
-      `INSERT OR IGNORE INTO keeper_commitment_reconciled
-         (base_chain_id, base_diamond, day_id, mirror_chain_id, reconciled_at)
-       VALUES (?, ?, ?, ?, ?)`,
-    )
-      .bind(
-        chainId,
-        diamond.toLowerCase(),
-        dayId,
-        mirrorChainId,
-        Math.floor(Date.now() / 1000),
+    // #1222 M3 B2-d2 (P7) — commitment reconcile rediscovery: persist every
+    // Base-side CommitmentRemitEligibilityReconciled(dayId, chainId) so the
+    // keeper's mirror commitment-report pass re-unions reconciled OLD days
+    // that fell outside its bounded scan window. INSERT OR IGNORE keeps
+    // overlapping scan ranges exactly-once.
+    for (const log of logs) {
+      if (log.eventName !== 'CommitmentRemitEligibilityReconciled') continue;
+      const a = log.args as { dayId?: bigint; chainId?: number | bigint };
+      const dayId = Number(a.dayId ?? 0n);
+      const mirrorChainId = Number(a.chainId ?? 0);
+      if (!Number.isFinite(dayId) || dayId <= 0) continue;
+      if (!Number.isFinite(mirrorChainId) || mirrorChainId <= 0) continue;
+      await env.DB.prepare(
+        `INSERT OR IGNORE INTO keeper_commitment_reconciled
+           (base_chain_id, base_diamond, day_id, mirror_chain_id, reconciled_at)
+         VALUES (?, ?, ?, ?, ?)`,
       )
-      .run();
-  }
+        .bind(
+          chainId,
+          diamond.toLowerCase(),
+          dayId,
+          mirrorChainId,
+          Math.floor(Date.now() / 1000),
+        )
+        .run();
+    }
 
-  const activityEvents = await recordActivityEvents(allLogs, env, chainId, blockTimestamps);
+    const activity = await recordActivityEvents(logs, env, chainId, blockTimestamps);
+    return { offer, loan, signed, activity };
+  };
+
+  const offerStats = { newOffers: 0, statusUpdates: 0 };
+  const loanStats = { newLoans: 0, statusUpdates: 0, entitlementUpdates: 0, ownershipTransfers: 0 };
+  let signedOfferUpdates = 0;
+  let activityEvents = 0;
+  /** The logs of the blocks this pass FINISHED — everything after the cursor
+   *  write (notifications, push hints, the config refresh) reads these. */
+  const scannedLogs: DecodedLog[] = [];
+  const blocks = logsByBlock(allLogs);
+  let stoppedAt: bigint | null = null;
+  try {
+    for (const [i, { blockNumber, logs }] of blocks.entries()) {
+      if (i === 1) holdBack(budget, SCAN_TAIL_RESERVE);
+      let done: Awaited<ReturnType<typeof scanBlock>>;
+      try {
+        done = await scanBlock(blockNumber, logs);
+      } catch (err) {
+        if (!isRefusing(budget)) throw err;
+        stoppedAt = blockNumber;
+        break;
+      }
+      // A refusal a handler caught and carried on past (a fail-open read)
+      // still leaves the block unfinished: what it would have written was
+      // refused with it.
+      if (isRefusing(budget)) {
+        stoppedAt = blockNumber;
+        break;
+      }
+      scannedLogs.push(...logs);
+      offerStats.newOffers += done.offer.newOffers;
+      offerStats.statusUpdates += done.offer.statusUpdates;
+      loanStats.newLoans += done.loan.newLoans;
+      loanStats.statusUpdates += done.loan.statusUpdates;
+      loanStats.entitlementUpdates += done.loan.entitlementUpdates;
+      loanStats.ownershipTransfers += done.loan.ownershipTransfers;
+      signedOfferUpdates += done.signed;
+      activityEvents += done.activity;
+    }
+  } finally {
+    release(budget);
+  }
+  // Every block below the one that stopped is finished, and so is every block
+  // between the last finished one and it, since those carry no logs of ours.
+  const scanTo = stoppedAt === null ? windowTo : stoppedAt - 1n;
+  if (stoppedAt !== null) {
+    const finished = blocks.findIndex((b) => b.blockNumber === stoppedAt);
+    console.warn(
+      `[chainIndexer] chain ${chainId}: scan stopped at block ${stoppedAt} to keep ` +
+        `what the end of this pass needs (${finished} of ${blocks.length} event ` +
+        `block(s) finished); the cursor records ${scanTo} and the next pass resumes there`,
+    );
+  }
 
 
   // Advance cursor only after every step succeeded — atomic from the
@@ -2700,7 +2851,7 @@ async function runChainPass(
   // before it moves (#2489 r3).
   let notifiedOk = true;
   try {
-    await materializeNotifications(env.DB, chainId, allLogs, blockTimestamps, now);
+    await materializeNotifications(env.DB, chainId, scannedLogs, blockTimestamps, now);
   } catch (err) {
     notifiedOk = false;
     console.error(`[notifications] insert failed on chain ${chainId} — the watermark holds, the archive replays`, err);
@@ -2720,7 +2871,7 @@ async function runChainPass(
     chainId,
     client,
     diamond,
-    scannedEventNames: allLogs.map((l) => l.eventName),
+    scannedEventNames: scannedLogs.map((l) => l.eventName),
     blockNumber: scanTo,
     headBlock: head,
   });
@@ -2795,18 +2946,32 @@ async function runChainPass(
   // D1 counts queries separately from subrequests, so any fixed per-row
   // figure is a guess. A failure, including the platform refusing a request
   // past the invocation ceiling, is logged and the remaining rows wait.
-  const { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds } = await runHealLanes(
-    client,
-    diamond,
-    chainId,
-    env,
-    budget,
-    scanTo,
-    settledHead.settled && scanTo <= settledHead.block,
-    healClient,
-  );
+  //
+  // NOT AFTER A PASS THAT STOPPED INSIDE A BLOCK (#2221, Codex #2836 r5).
+  // Every heal reads the chain at `scanTo`, the block the cursor records, and
+  // acts on what D1 holds. After such a stop D1 also holds the rows the
+  // unfinished block wrote, which are newer than that block: an offer read
+  // there does not exist yet, and its heal would record a zero fill and clear
+  // the only marker that would have healed it. The reconciliation pass above
+  // already declines short of the head; this is the same rule for the heal
+  // lanes, at the one place that knows the pass stopped early. Their rows are
+  // selected again by the next pass that finishes its window, which is what
+  // they are built for.
+  const { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds } =
+    stoppedAt === null
+      ? await runHealLanes(
+          client,
+          diamond,
+          chainId,
+          env,
+          budget,
+          scanTo,
+          settledHead.settled && scanTo <= settledHead.block,
+          healClient,
+        )
+      : { detailRefreshes: 0, loanDetailRefreshes: 0, ledgerSettledLoanIds: [] as number[] };
 
-  const hintStats = pushHintStats(allLogs);
+  const hintStats = pushHintStats(scannedLogs);
   const stubHealForcedTruncation = detailRefreshes > 0 || loanDetailRefreshes > 0;
   // #2476 r16 — a ledger heal truncates the frame too (its loans are old and
   // their holders cannot be enumerated), so it counts here as it does there.
@@ -2869,7 +3034,7 @@ async function runChainPass(
     // Stub HEALS mutate rows without a corresponding log in THIS scan
     // (refreshStubOffers/refreshStubLoans), so a heal-carrying result
     // can't claim its id list is complete (Codex #1244 r1).
-    // A repaired loan is OLD, so it is never in `allLogs` — its id has to
+    // A repaired loan is OLD, so it is never in `scannedLogs` — its id has to
     // be merged in explicitly or the hint set is "complete" while omitting
     // the one position this scan actually corrected (#2190 r5).
     //
@@ -2884,13 +3049,17 @@ async function runChainPass(
     // reason: the scan cannot enumerate who is affected.
     // A ledger-settled loan is old for the same reason a repaired one is
     // (#2476 r4): merged in, and the set truncated.
+    // A pass that stopped inside a block (#2221) cannot list what that
+    // block's committed writes touched either, so its set is truncated too.
+    ...(stoppedAt === null ? {} : { unfinishedBlock: stoppedAt }),
     hints: mergeHintLoanIds(
-      detailRefreshes > 0 ||
+      stoppedAt !== null ||
+        detailRefreshes > 0 ||
         loanDetailRefreshes > 0 ||
         reconciledLoanIds.length > 0 ||
         ledgerSettledLoanIds.length > 0
-        ? { ...collectPushHints(allLogs), truncated: true }
-        : collectPushHints(allLogs),
+        ? { ...collectPushHints(scannedLogs), truncated: true }
+        : collectPushHints(scannedLogs),
       [...cal.loanIds, ...reconciledLoanIds, ...ledgerSettledLoanIds],
     ),
   };
@@ -4931,6 +5100,51 @@ async function recordLoanParticipant(
     .run();
 }
 
+/**
+ * Insert a `LoanInitiated` row and seed its initiation participants in ONE
+ * D1 batch, so the two land together or not at all (#2221, Codex #2836 r6).
+ *
+ * The seeds may be written only by the pass that writes the row: a replay
+ * recomputes the holders from the MUTABLE offers projection, which a later
+ * Transfer may have advanced, and seeding then would backdate the later
+ * holder to the loan's start (Codex #1139 round-5 P2). That rule used to be
+ * "seed when this INSERT changed a row", checked after the insert committed,
+ * so anything that stopped the handler between the insert and the seeds (a
+ * request refused for want of allowance, a failed statement) left a loan
+ * whose replay could never seed it: its INSERT OR IGNORE then changes
+ * nothing. The batch removes the window. Each seed carries the same rule in
+ * SQL, `WHERE NOT EXISTS` the loan row, and runs BEFORE the insert inside the
+ * transaction, so a first pass seeds and a replay of a committed row does not.
+ * A batch is charged and refused whole (`subrequestBudget.ts`), so a refusal
+ * cannot land between its statements either.
+ *
+ * Returns whether the row was new.
+ */
+async function insertInitiatedLoan(
+  env: Env,
+  chainId: number,
+  loanId: number,
+  insert: D1PreparedStatement,
+  participants: readonly { wallet: string | null | undefined; role: 'lender' | 'borrower' }[],
+  fromAt: number,
+): Promise<boolean> {
+  const seeds: D1PreparedStatement[] = [];
+  for (const { wallet, role } of participants) {
+    const w = participantWallet(wallet);
+    if (w === null) continue;
+    seeds.push(
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO loan_participants
+           (chain_id, loan_id, wallet, role, from_at)
+         SELECT ?, ?, ?, ?, ?
+          WHERE NOT EXISTS (SELECT 1 FROM loans WHERE chain_id = ? AND loan_id = ?)`,
+      ).bind(chainId, loanId, w, role, fromAt, chainId, loanId),
+    );
+  }
+  const results = await env.DB.batch([...seeds, insert]);
+  return (results[results.length - 1]?.meta?.changes ?? 0) > 0;
+}
+
 // Exported for the loan-status-projection unit test (#1293): the HF
 // terminal branches flip `loans.status` off the event alone (no RPC), so a
 // focused test can drive them with a stub client over the sqlite D1 shim.
@@ -5099,7 +5313,7 @@ export async function processLoanLogs(
         // duration from the `LoanInitiatedDetails` event itself, so the
         // initiation terms are backed. The other insert paths leave the
         // DEFAULT 1 for `reverifyInitTerms` to clear against the ledger.
-        const result = await env.DB.prepare(
+        const insert = env.DB.prepare(
           `INSERT OR IGNORE INTO loans
             (chain_id, loan_id, offer_id, status, lender, borrower,
              principal, collateral_amount,
@@ -5154,25 +5368,27 @@ export async function processLoanLogs(
             Number(log.blockNumber),
             blockAt,
             now,
-          )
-          .run();
-        const freshInsert = (result.meta?.changes ?? 0) > 0;
-        if (freshInsert) newLoans++;
+          );
         // #1130 — seed participation from the current-owner projection at
         // init (lenderOwner/borrowerOwner already resolve a pre-accept
-        // offer-NFT buyer above). ONLY when the INSERT actually wrote the
-        // row (Codex #1139 round-5 P2): on a REPLAY (a scan that failed
-        // after a later Transfer landed but before the cursor advanced),
-        // the loans INSERT is ignored, but lenderOwner/borrowerOwner were
-        // recomputed from the MUTABLE offers current-owner projection —
-        // which that later Transfer may have advanced — so seeding here
-        // would backdate the later holder to the loan's original blockAt.
-        // The original pass recorded the true init participants; the
-        // Transfer handler records later holders at their own timestamps.
-        if (freshInsert) {
-          await recordLoanParticipant(env, chainId, loanId, lenderOwner, 'lender', blockAt);
-          await recordLoanParticipant(env, chainId, loanId, borrowerOwner, 'borrower', blockAt);
-        }
+        // offer-NFT buyer above), in the same batch as the row and only by
+        // the pass that writes it (see insertInitiatedLoan): on a REPLAY the
+        // projection may already point at a later holder, and seeding would
+        // backdate them to the loan's original blockAt. The original pass
+        // recorded the true init participants; the Transfer handler records
+        // later holders at their own timestamps.
+        const freshInsert = await insertInitiatedLoan(
+          env,
+          chainId,
+          loanId,
+          insert,
+          [
+            { wallet: lenderOwner, role: 'lender' },
+            { wallet: borrowerOwner, role: 'borrower' },
+          ],
+          blockAt,
+        );
+        if (freshInsert) newLoans++;
         continue;
       }
 
@@ -5241,7 +5457,7 @@ export async function processLoanLogs(
             borrowerOwner = offerRow.creator_current_owner;
           }
         }
-        const result = await env.DB.prepare(
+        const insert = env.DB.prepare(
           `INSERT OR IGNORE INTO loans
             (chain_id, loan_id, offer_id, status, lender, borrower,
              principal, collateral_amount,
@@ -5297,18 +5513,22 @@ export async function processLoanLogs(
             Number(log.blockNumber),
             blockAt,
             now,
-          )
-          .run();
-        const freshInsert = (result.meta?.changes ?? 0) > 0;
-        if (freshInsert) newLoans++;
+          );
         // #1130 — participation seed via the offer-projection resolution
-        // above. Fresh-insert-gated for the same replay reason as the
-        // primary path: on a replay the projection may already point at a
-        // LATER holder, and seeding would backdate them to init blockAt.
-        if (freshInsert) {
-          await recordLoanParticipant(env, chainId, loanId, lenderOwner, 'lender', blockAt);
-          await recordLoanParticipant(env, chainId, loanId, borrowerOwner, 'borrower', blockAt);
-        }
+        // above, written with the row by the pass that writes it, for the
+        // same replay reason as the primary path (insertInitiatedLoan).
+        const freshInsert = await insertInitiatedLoan(
+          env,
+          chainId,
+          loanId,
+          insert,
+          [
+            { wallet: lenderOwner, role: 'lender' },
+            { wallet: borrowerOwner, role: 'borrower' },
+          ],
+          blockAt,
+        );
+        if (freshInsert) newLoans++;
         continue;
       }
 
@@ -5317,7 +5537,7 @@ export async function processLoanLogs(
       // LoanInitiated carries it); init_rate_bps / init_duration_days stay
       // NULL here (the event doesn't carry them) and refreshStubLoans
       // COALESCE-stamps them on heal.
-      const result = await env.DB.prepare(
+      const insert = env.DB.prepare(
         `INSERT OR IGNORE INTO loans
           (chain_id, loan_id, offer_id, status, lender, borrower,
            principal, collateral_amount,
@@ -5342,22 +5562,26 @@ export async function processLoanLogs(
           Number(log.blockNumber),
           blockAt,
           now,
-        )
-        .run();
-      const freshInsert = (result.meta?.changes ?? 0) > 0;
-      if (freshInsert) newLoans++;
+        );
       // #1130 — participation seed from the event parties (all the stub
       // path has). Same-tx mint Transfers can't attribute these (the stub
-      // row's token ids are '0'), so this write is the only seed here.
-      // Fresh-insert-gated like the other two paths (Codex #1139 round-5
-      // P2): the event parties themselves are replay-stable, but gating
-      // keeps all three LoanInitiated paths on one invariant — init
-      // participants are seeded exactly once, by the pass that wrote the
-      // row.
-      if (freshInsert) {
-        await recordLoanParticipant(env, chainId, loanId, lender, 'lender', blockAt);
-        await recordLoanParticipant(env, chainId, loanId, borrower, 'borrower', blockAt);
-      }
+      // row's token ids are '0'), so this write is the only seed here. The
+      // event parties themselves are replay-stable, but the stub path takes
+      // the same one route as the other two (insertInitiatedLoan): init
+      // participants are seeded exactly once, with the row, by the pass
+      // that writes it.
+      const freshInsert = await insertInitiatedLoan(
+        env,
+        chainId,
+        loanId,
+        insert,
+        [
+          { wallet: lender, role: 'lender' },
+          { wallet: borrower, role: 'borrower' },
+        ],
+        blockAt,
+      );
+      if (freshInsert) newLoans++;
     } else if (log.eventName === 'LoanRepaid') {
       // Full repay (or a FallbackPending-cure repay). On-chain this is
       // a transition to Repaid; the indexer's `status = 'active'` guard

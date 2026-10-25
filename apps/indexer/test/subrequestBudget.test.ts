@@ -5,8 +5,12 @@ import {
   MAX_D1_QUERIES_PER_INVOCATION,
   MAX_EXTERNAL_SUBREQUESTS_PER_INVOCATION,
   MAX_INTERNAL_SUBREQUESTS_PER_INVOCATION,
+  BudgetRefusal,
   affords,
   createBudget,
+  holdBack,
+  isRefusing,
+  release,
   meterD1,
   meterEnv,
   meterFetch,
@@ -457,5 +461,71 @@ describe('meterEnv', () => {
       twice as unknown as { DB: ReturnType<typeof fakeDb>['db'] }
     ).DB.prepare('SELECT 1').first();
     expect(spent(budget).internal).toBe(1);
+  });
+});
+
+describe('holdBack — the floor the scan core works above (#2221)', () => {
+  it('refuses, BEFORE sending, a request that would eat into the floor', async () => {
+    const budget = createBudget('t', { external: 5 });
+    const sent = vi.fn(async () => new Response('ok'));
+    const send = meterFetch(budget, sent as unknown as typeof fetch);
+    holdBack(budget, { external: 3, d1Queries: 0 });
+    await send('https://a.invalid');
+    await send('https://a.invalid');
+    await expect(send('https://a.invalid')).rejects.toBeInstanceOf(BudgetRefusal);
+    expect(sent).toHaveBeenCalledTimes(2);
+    // The refused request is not charged: what is left is the floor itself.
+    expect(budget.external.remaining).toBe(3);
+  });
+
+  it('is sticky: after one refusal every request is refused, on every meter', async () => {
+    const budget = createBudget('t', { external: 3 });
+    const { db, calls } = fakeDb();
+    const metered = meterD1(db, budget);
+    const send = meterFetch(budget, (async () => new Response('ok')) as unknown as typeof fetch);
+    holdBack(budget, { external: 3, d1Queries: 0 });
+    await expect(send('https://a.invalid')).rejects.toBeInstanceOf(BudgetRefusal);
+    expect(isRefusing(budget)).toBe(true);
+    // A write that would fit is refused too: it could be the fallback of the
+    // read that was just refused.
+    await expect(metered.prepare('INSERT 1').run()).rejects.toBeInstanceOf(BudgetRefusal);
+    expect(calls.filter((c) => c.startsWith('run:'))).toEqual([]);
+    expect(budget.d1Queries.remaining).toBe(budget.d1Queries.limit);
+    expect(budget.internal.remaining).toBe(budget.internal.limit);
+  });
+
+  it('refuses a batch by its statements, without charging the round trip', async () => {
+    const budget = createBudget('t', { d1Queries: 10 });
+    const { db } = fakeDb();
+    const metered = meterD1(db, budget);
+    holdBack(budget, { external: 0, d1Queries: 8 });
+    await expect(
+      metered.batch([metered.prepare('a'), metered.prepare('b'), metered.prepare('c')]),
+    ).rejects.toBeInstanceOf(BudgetRefusal);
+    expect(budget.internal.remaining).toBe(budget.internal.limit);
+    expect(budget.d1Queries.remaining).toBe(10);
+  });
+
+  it('release ends the stretch, says whether it refused, and leaves the floor to nobody', async () => {
+    const budget = createBudget('t', { external: 2 });
+    const send = meterFetch(budget, (async () => new Response('ok')) as unknown as typeof fetch);
+    holdBack(budget, { external: 2, d1Queries: 0 });
+    await expect(send('https://a.invalid')).rejects.toBeInstanceOf(BudgetRefusal);
+    expect(release(budget)).toEqual({ refused: true });
+    // Outside a stretch the meters report rather than refuse, as before.
+    await send('https://a.invalid');
+    await send('https://a.invalid');
+    await send('https://a.invalid');
+    expect(budget.external.remaining).toBe(-1);
+    expect(release(budget)).toEqual({ refused: false });
+  });
+
+  it('with no floor held, nothing is ever refused', async () => {
+    const budget = createBudget('t', { external: 1 });
+    const send = meterFetch(budget, (async () => new Response('ok')) as unknown as typeof fetch);
+    await send('https://a.invalid');
+    await send('https://a.invalid');
+    expect(overspent(budget)).toBe(true);
+    expect(isRefusing(budget)).toBe(false);
   });
 });

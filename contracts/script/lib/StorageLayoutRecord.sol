@@ -5,6 +5,7 @@ import {Vm, VmSafe} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {Deployments} from "./Deployments.sol";
+import {ChainContracts} from "./ChainContracts.sol";
 
 /**
  * @title  StorageLayoutRecord
@@ -113,17 +114,8 @@ library StorageLayoutRecord {
         return !CHEATS.isContext(VmSafe.ForgeContext.TestGroup) && !Deployments.artifactIsRedirected();
     }
 
-    /// The EIP-1967 implementation slot, `bytes32(uint256(keccak256(
-    /// "eip1967.proxy.implementation")) - 1)`: where every UUPS proxy keeps
-    /// the address of the code it runs.
-    bytes32 private constant EIP1967_IMPLEMENTATION_SLOT =
-        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
-
     /// `IDiamondCut.diamondCut`'s selector, which routes to the cut facet.
     bytes4 private constant DIAMOND_CUT_SELECTOR = 0x1f931c1c;
-
-    /// Most addresses the candidate walk ({_liveProxies}) holds at once.
-    uint256 private constant MAX_CANDIDATES = 512;
 
     /// Every code location whose storage layout the record governs, as it
     /// stands now on the active chain (Codex #2684 r2 P1). The record covers
@@ -144,13 +136,12 @@ library StorageLayoutRecord {
     ///        the code those per-user proxies run or are pushed onto;
     ///      - `proxies` / `implementations`: every EIP-1967 proxy the chain
     ///        reaches, sorted by address, with the implementation it points
-    ///        at now. Candidates are every address in the chain's
-    ///        `addresses.json` (outside `.facets`, which the loupe covers),
-    ///        every satellite the Diamond itself names (backstop vault,
-    ///        listing executor, reward messenger, remittance and buyback
-    ///        receivers, return sender and receiver, cross-chain messenger),
-    ///        and the `messenger()` each of those proxies trusts. A candidate
-    ///        counts as a proxy when its implementation slot is non-zero.
+    ///        at now. Candidates are `ChainContracts.walk`'s (#2743): every
+    ///        satellite and registered contract the Diamond names, every
+    ///        address in the chain's `addresses.json` outside `.facets`
+    ///        (which the loupe covers), and the `messenger()` each of those
+    ///        proxies trusts. A candidate counts as a proxy when its
+    ///        implementation slot is non-zero.
     ///
     ///      A Diamond getter that does not exist (an older facet set) reads
     ///      as no candidate, never as a revert.
@@ -179,8 +170,8 @@ library StorageLayoutRecord {
         m.diamond = diamond;
         m.cutFacet = IDiamondLoupe(diamond).facetAddress(DIAMOND_CUT_SELECTOR);
         m.facets = IDiamondLoupe(diamond).facetAddresses();
-        m.vaultTemplate = _readWord(diamond, "getVaipakamVaultImplementationAddress()", 0);
-        m.adapterTemplate = _readWord(diamond, "aggregatorAdapterTemplate()", 0);
+        m.vaultTemplate = ChainContracts.readWord(diamond, "getVaipakamVaultImplementationAddress()", 0);
+        m.adapterTemplate = ChainContracts.readWord(diamond, "aggregatorAdapterTemplate()", 0);
         (m.proxies, m.implementations) = _liveProxies(diamond);
         m.codeHashes = _codeHashes(m);
     }
@@ -217,47 +208,22 @@ library StorageLayoutRecord {
         view
         returns (address[] memory proxies, address[] memory impls)
     {
-        address[] memory cand = new address[](MAX_CANDIDATES);
-        uint256 n;
-        // The satellites the Diamond names. Word indexes follow each getter's
-        // return tuple (`getRepatriationPosition` returns the sender and the
-        // receiver second and third).
-        n = _push(cand, n, _readWord(diamond, "getBackstopVault()", 0));
-        n = _push(cand, n, _readWord(diamond, "getCollateralListingExecutor()", 0));
-        n = _push(cand, n, _readWord(diamond, "getRewardReporterConfig()", 0));
-        n = _push(cand, n, _readWord(diamond, "getRewardRemittanceReceiver()", 0));
-        n = _push(cand, n, _readWord(diamond, "getBuybackRemittanceReceiver()", 0));
-        n = _push(cand, n, _readWord(diamond, "getCrossChainMessenger()", 0));
-        n = _push(cand, n, _readWord(diamond, "getRepatriationPosition()", 1));
-        n = _push(cand, n, _readWord(diamond, "getRepatriationPosition()", 2));
-        // Every address the chain's artifact names.
-        try CHEATS.readFile(Deployments.path()) returns (string memory json) {
-            n = _collectArtifactAddresses(json, "$", cand, n);
+        // The candidates come from the one shared walk (#2743), which the
+        // governance handover reads too; this keeps the proxies.
+        string memory json;
+        try CHEATS.readFile(Deployments.path()) returns (string memory j) {
+            json = j;
         } catch {}
-        // The adapter each proxy trusts (one hop: the adapter is itself a
-        // proxy, and every satellite names the one it calls through).
-        uint256 direct = n;
-        for (uint256 i = 0; i < direct; ++i) {
-            if (_implementationOf(cand[i]) != address(0)) {
-                n = _push(cand, n, _readWord(cand[i], "messenger()", 0));
-            }
-        }
-        // Keep the proxies, sorted and without repeats.
+        ChainContracts.Found[] memory cand = ChainContracts.walk(diamond, json);
+        uint256 n = cand.length;
+        // Keep the proxies, sorted by address.
         address[] memory sorted = new address[](n);
         uint256 k;
         for (uint256 i = 0; i < n; ++i) {
-            address a = cand[i];
-            if (_implementationOf(a) == address(0)) continue;
+            address a = cand[i].addr;
+            if (ChainContracts.implementationOf(a) == address(0)) continue;
             uint256 j = k;
-            bool dup;
-            while (j > 0 && uint160(sorted[j - 1]) >= uint160(a)) {
-                if (sorted[j - 1] == a) {
-                    dup = true;
-                    break;
-                }
-                --j;
-            }
-            if (dup) continue;
+            while (j > 0 && uint160(sorted[j - 1]) > uint160(a)) --j;
             for (uint256 t = k; t > j; --t) sorted[t] = sorted[t - 1];
             sorted[j] = a;
             ++k;
@@ -266,61 +232,8 @@ library StorageLayoutRecord {
         impls = new address[](k);
         for (uint256 i = 0; i < k; ++i) {
             proxies[i] = sorted[i];
-            impls[i] = _implementationOf(sorted[i]);
+            impls[i] = ChainContracts.implementationOf(sorted[i]);
         }
-    }
-
-    /// Walk `json` from `prefix`, pushing every string value that parses as
-    /// an address. `.facets` is skipped: the loupe is the authority on facets.
-    function _collectArtifactAddresses(string memory json, string memory prefix, address[] memory cand, uint256 n)
-        private
-        view
-        returns (uint256)
-    {
-        string[] memory keys;
-        try CHEATS.parseJsonKeys(json, prefix) returns (string[] memory k) {
-            keys = k;
-        } catch {
-            return n;
-        }
-        for (uint256 i = 0; i < keys.length; ++i) {
-            string memory key = keccak256(bytes(prefix)) == keccak256("$")
-                ? string.concat(".", keys[i])
-                : string.concat(prefix, ".", keys[i]);
-            if (keccak256(bytes(key)) == keccak256(".facets")) continue;
-            try CHEATS.parseJsonAddress(json, key) returns (address a) {
-                n = _push(cand, n, a);
-            } catch {
-                n = _collectArtifactAddresses(json, key, cand, n);
-            }
-        }
-        return n;
-    }
-
-    function _push(address[] memory cand, uint256 n, address a) private pure returns (uint256) {
-        if (a == address(0)) return n;
-        require(n < MAX_CANDIDATES, "StorageLayoutRecord: more code locations than the walk holds; raise MAX_CANDIDATES");
-        cand[n] = a;
-        return n + 1;
-    }
-
-    function _implementationOf(address a) private view returns (address) {
-        if (a.code.length == 0) return address(0);
-        return address(uint160(uint256(CHEATS.load(a, EIP1967_IMPLEMENTATION_SLOT))));
-    }
-
-    /// Word `index` of `target.signature()`'s return data, as an address;
-    /// zero when the call reverts, returns too little, or the word is not an
-    /// address.
-    function _readWord(address target, string memory signature, uint256 index) private view returns (address) {
-        if (target.code.length == 0) return address(0);
-        (bool ok, bytes memory ret) = target.staticcall(abi.encodeWithSignature(signature));
-        if (!ok || ret.length < 32 * (index + 1)) return address(0);
-        bytes memory w = new bytes(32);
-        for (uint256 i = 0; i < 32; ++i) w[i] = ret[32 * index + i];
-        uint256 word = abi.decode(w, (uint256));
-        if (word >> 160 != 0) return address(0);
-        return address(uint160(word));
     }
 
     /// Refuse unless this checkout's golden layout describes its code, and

@@ -39,10 +39,15 @@ import {LibLaunchReadiness} from "../src/governance/LibLaunchReadiness.sol";
  *          not proof: the handover's own grant to the Timelock is one.)
  *        - The Diamond's ERC-173 owner and every role's admin role.
  *        - The Timelock's delay and permanent floor.
- *        - Every two-step-owned target in `HandoverPlan.read`: owner, no
+ *        - Every owned target in `HandoverPlan.targets`: the contracts the
+ *          chain must carry, and every other contract the artifact or the
+ *          Diamond names (its swap adapters, rate model and satellites)
+ *          that answers `owner()` with an owner other than the Diamond or
+ *          zero (#2743). Each must be owned by the Timelock with no
  *          outstanding transfer (from `pendingOwner()`, or from the
  *          ownership events for CHAINLINK's two-step shape, which hides its
- *          pending owner), and `guardian()` on every `GuardianPausable`
+ *          pending owner), so a contract still on the deployer or admin key
+ *          fails here. `guardian()` is checked on every `GuardianPausable`
  *          one. A contract the chain must carry but the artifact lacks
  *          fails on a production chain and is reported as not checked on a
  *          testnet — never read as nothing to check.
@@ -635,7 +640,7 @@ contract HandoverGate is Script {
         for (uint256 i; i < botEnv.length; ++i) {
             inp.botHolders[i] = vm.envAddress(botEnv[i]);
         }
-        inp.targets = HandoverPlan.read(json);
+        inp.targets = HandoverPlan.targets(json, inp.diamond, inp.timelock);
         inp.vpfiToken = HandoverPlan.vpfiToken(json);
         inp.vpfiPool = HandoverPlan.readOptional(json, "vpfiTokenPool");
         inp.rateGovernor = HandoverPlan.readOptional(json, "vpfiPoolRateGovernor");
