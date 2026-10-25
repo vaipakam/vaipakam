@@ -404,6 +404,14 @@ library LibVaipakam {
     //    reading as a floor of a fraction of a cent.
     uint256 constant MIN_LIQUIDATION_DUST_FLOOR_NUMERAIRE = 1e18;
     uint256 constant MAX_LIQUIDATION_DUST_FLOOR_NUMERAIRE = 100_000e18;
+    // #2760 — the smallest fill a standing lender intent may advertise, valued
+    // in the active numeraire (1e18-scaled) by the one shared value rule when
+    // the intent is set. A stored 0 reads as the default; the setter bounds a
+    // non-zero value to [MIN, MAX] so a mistyped floor can neither readmit dust
+    // intents nor shut every ordinary lender out.
+    uint256 constant MIN_INTENT_FILL_NUMERAIRE_DEFAULT = 100e18;
+    uint256 constant MIN_INTENT_FILL_NUMERAIRE_FLOOR = 1e18;
+    uint256 constant MIN_INTENT_FILL_NUMERAIRE_CEIL = 1_000_000e18;
     uint256 constant LOAN_INITIATION_FEE_BPS = 20; // 0.2% fee deducted from ERC-20 principal at loan initiation (rev-8 fee freeze, #1352; was 10 = 0.1%). Charged once at accept — no post-init reader, so the bump affects new originations only (open loans already paid their LIF)
     // Fallback-path split (README §7): lender gets principal + accrued
     // interest + {FALLBACK_LENDER_BONUS_BPS} of principal; treasury gets
@@ -8219,6 +8227,14 @@ library LibVaipakam {
         ///      is an O(1) read. Never decreases; stops at the uint256 maximum
         ///      rather than overflowing. Appended — append-only.
         uint256 feeLedgerTotal;
+        /// @dev #2760 — governance's floor on a standing intent's smallest
+        ///      fill, in the active numeraire (1e18). Zero reads as
+        ///      {MIN_INTENT_FILL_NUMERAIRE_DEFAULT}; read through
+        ///      {cfgMinIntentFillNumeraire}. Written only by
+        ///      `LenderIntentFacet.setMinIntentFillNumeraire`, and reset to zero
+        ///      by a numeraire rotation (the value was denominated in the old
+        ///      unit). Appended — append-only.
+        uint256 minIntentFillNumeraire;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -10461,6 +10477,13 @@ library LibVaipakam {
     /// @dev #393 v1 — LenderIntentVault standing-intent fill path kill-switch.
     function cfgLenderIntentEnabled() internal view returns (bool) {
         return storageSlot().protocolCfg.lenderIntentEnabled;
+    }
+
+    /// @dev #2760 — the effective floor on a standing intent's smallest fill,
+    ///      1e18 numeraire: the governance value, or the default while unset.
+    function cfgMinIntentFillNumeraire() internal view returns (uint256) {
+        uint256 v = storageSlot().minIntentFillNumeraire;
+        return v == 0 ? MIN_INTENT_FILL_NUMERAIRE_DEFAULT : v;
     }
 
     /// @dev #399 backstop v0 — master backstop pause (both roles).

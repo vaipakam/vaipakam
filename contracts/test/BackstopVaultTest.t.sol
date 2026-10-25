@@ -50,7 +50,7 @@ contract BackstopVaultTest is SetupTest {
     uint256 internal constant MIN_RATE = 500;
     uint16 internal constant MAX_LTV = 5000; // 50% ⇒ reqColl = 2x
     uint32 internal constant MAX_DUR = 30;
-    uint256 internal constant MIN_FILL = 1 ether;
+    uint256 internal constant MIN_FILL = 100 ether; // the default admission floor at $1 (#2760)
 
     uint64 internal base; // a sane base timestamp for the deadline math
     event CapacityFreeTierSpent(uint8 indexed role, address indexed initiator, uint256 cost, uint256 balanceAfter);

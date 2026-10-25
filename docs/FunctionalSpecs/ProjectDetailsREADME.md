@@ -537,7 +537,19 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   self-collateralized, a positive exposure cap, a fill size no larger than that
   cap, a rate floor no higher than the protocol interest ceiling, an LTV ceiling
   above zero and at most 100%, and a positive term); a malformed intent is
-  rejected. Registering an intent is sanctions-screened like any new lending
+  rejected. An intent is also admitted only when both of its assets are priced
+  by the platform's own value rule, since every fill is sized from the lender's
+  loan-to-value ceiling and an unpriced leg could never fill, and only when its
+  smallest fill is worth at least a governance-set minimum in the active
+  numeraire (100 units by default; governance may set it between 1 and
+  1,000,000, and it returns to the default when the numeraire changes). The
+  rule is applied when the intent is set: a later price move or a raised
+  minimum does not evict an admitted intent, and setting it again re-applies
+  the rule. Because the keeper discovery feed lists an intent only once its
+  funded capital covers one smallest fill, the minimum is also the least
+  capital each listed intent commits, so an intent carrying a token amount of
+  dust cannot enter the feed. The rule binds every intent alike, the backstop
+  vault's and each aggregator adapter's included. Registering an intent is sanctions-screened like any new lending
   commitment; cancelling one is always permitted so a lender can wind down
   standing exposure at any time. Intents are independent per asset-pair, and the
   loan-making path is governed by a feature switch that stays off until enabled

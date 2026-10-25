@@ -80,6 +80,8 @@ export const PROTOCOL_KNOB_GETTERS = [
   { key: 'autoExtendEnabled', getter: 'getAutoExtendEnabled' },
   { key: 'keepersPaused', getter: 'keepersPaused' },
   { key: 'lenderIntentEnabled', getter: 'isLenderIntentEnabled' },
+  // #2760 — the effective value: the default when governance has set none.
+  { key: 'minIntentFillNumeraire', getter: 'getMinIntentFillNumeraire' },
   // Treasury
   { key: 'treasury', getter: 'getTreasury' },
 ] as const satisfies readonly ProtocolKnobGetter[];

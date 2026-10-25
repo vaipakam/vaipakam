@@ -1027,6 +1027,31 @@ flags above. No range bound (bool).
   auto-lend opt-ins; it stops no fill. To stop intent fills in an
   incident, flip THIS switch off.
 
+### Standing-intent admission floor (`minIntentFillNumeraire`)
+
+The least a standing intent's smallest fill (`minFillAmount`) must be
+worth, in the active numeraire, for `setLenderIntent` to admit it
+(#2760). The same check also requires both of the intent's assets to be
+priced by the shared value rule, so an unpriced or zero-priced leg is
+refused. It binds every intent, the backstop vault's and each aggregator
+adapter's included.
+
+- **Default:** `100e18` (100 numeraire units). Zero restores it.
+- **Range:** `[1e18, 1_000_000e18]`.
+- **Getter:** `LenderIntentFacet.getMinIntentFillNumeraire() -> uint256`
+  (the effective value: the default while none is set).
+- **Setter:** `LenderIntentFacet.setMinIntentFillNumeraire(uint256)`
+  (`ADMIN_ROLE`; timelocked post-handover) → emits
+  `MinIntentFillNumeraireSet(effective)`.
+- **Applied when an intent is set, not afterwards.** Raising the floor,
+  or a price move, does not evict an admitted intent; setting it again
+  re-applies the rule.
+- **Also the least capital a listed intent commits.** The keeper feed
+  lists an intent only once its capital covers one smallest fill.
+- **Reset on numeraire rotation.** `setNumeraire` returns it to the
+  default and emits the event, since the old value was denominated in
+  the old numeraire.
+
 ## Liquidator-buys-at-discount path (FlashLoanLiquidationPath.md)
 
 The optional Aave-V3 / Compound-V3 / Morpho-Blue-style liquidation
