@@ -1,4 +1,4 @@
-## Thread — the indexer's scan finishes whole blocks and leaves the rest for the next pass (PR #<n>)
+## Thread — the indexer's scan finishes whole blocks and leaves the rest for the next pass (PR #2836)
 
 The indexer counts every request a pass makes against the hosting plan's three limits (#2647). The scan itself was still unbounded: the work of decoding and storing a window's events. A window busy enough to need more requests than one invocation allows was stopped before the scan recorded how far it had got. Every later pass then re-read the same window and was stopped at the same point, so the chain froze, and it would freeze on exactly its busiest day.
 
