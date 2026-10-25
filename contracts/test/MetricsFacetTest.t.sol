@@ -135,7 +135,7 @@ contract MetricsFacetTest is SetupTest {
 
         (uint256 tvlUsd, uint256 erc20Col, uint256 nftCol) =
             MetricsFacet(address(diamond)).getProtocolTVL();
-        // principal USD + collateral USD. $1 mock price, 8 decimals → (amount * 1e8)/1e8 = amount
+        // principal + collateral at the shared 1e18 rule: $1 per whole 18-decimal token = 1e18 per 1 ether
         assertEq(erc20Col, 4500 ether);
         assertEq(tvlUsd, 3000 ether + 4500 ether);
         assertEq(nftCol, 0);

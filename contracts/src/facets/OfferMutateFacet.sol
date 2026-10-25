@@ -5,15 +5,14 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
-import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /**
  * @title OfferMutateFacet
@@ -884,8 +883,10 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             ? LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT
             : cfgT034.minPrincipalForFinerCadence;
 
+        // The same best-effort read `createOffer` takes (#2419), so create
+        // and modify see one "is this above the cadence threshold?" answer.
         uint256 principalNumeraire =
-            _principalToNumeraire1e18(offer.lendingAsset, newAmount);
+            LibNumeraireValueRead.valueOrZero(offer.lendingAsset, newAmount);
         bool aboveThreshold = principalNumeraire >= threshold;
 
         if (isMultiYear) {
@@ -924,28 +925,6 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                     threshold
                 );
             }
-        }
-    }
-
-    /// @dev Mirrors `OfferCreateFacet._principalToNumeraire1e18` so
-    ///      create + modify see identical "is this above the cadence
-    ///      threshold?" math. Fails soft to 0 when the oracle is
-    ///      unconfigured or reverts (same fail-mode as create).
-    function _principalToNumeraire1e18(
-        address asset,
-        uint256 amount
-    ) private view returns (uint256) {
-        if (asset == address(0) || amount == 0) return 0;
-        try OracleFacet(address(this)).getAssetPrice(asset) returns (
-            uint256 price,
-            uint8 feedDecimals
-        ) {
-            uint8 tokenDecimals = IERC20Metadata(asset).decimals();
-            return (amount * price * 1e18) /
-                (10 ** feedDecimals) /
-                (10 ** tokenDecimals);
-        } catch {
-            return 0;
         }
     }
 

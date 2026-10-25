@@ -5,7 +5,6 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -13,7 +12,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IVPFIToken} from "../interfaces/IVPFIToken.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
-import {OracleFacet} from "./OracleFacet.sol";
+import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
 import {ICrossChainMessenger} from "../crosschain/ICrossChainMessenger.sol";
 import {LibTreasuryBuyback} from "../libraries/LibTreasuryBuyback.sol";
 import {LibBuybackOrderValidation} from "../libraries/LibBuybackOrderValidation.sol";
@@ -402,9 +401,10 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     /// @dev Conversion eligibility — true when EITHER the time since the
     ///      last conversion has exceeded the configured max interval, OR
     ///      the input balance's numeraire value clears the configured
-    ///      threshold. The numeraire leg is best-effort: an oracle that
-    ///      reverts / has no feed leaves only the time leg in force
-    ///      (mirrors `LibFacet.accrueTreasuryFee`'s best-effort pricing).
+    ///      threshold. The numeraire leg reads the shared valuation rule
+    ///      (#2419), 1e18-scaled and rounded down, best-effort: an input the
+    ///      rule cannot value (no or untrusted price, unreadable decimals)
+    ///      leaves only the time leg in force, as `LibFacet`'s fee log does.
     function _eligibleForConversion(address tokenIn, uint256 balance)
         private
         view
@@ -418,12 +418,9 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         if (block.timestamp - s.treasuryLastConversionAt >= maxInterval) {
             return true;
         }
-        (bool ok, uint256 price, uint8 feedDec) =
-            OracleFacet(address(this)).tryGetAssetPrice(tokenIn);
-        if (!ok || price == 0) return false;
-        uint8 tokenDec = IERC20Metadata(tokenIn).decimals();
-        uint256 numeraireValue =
-            (balance * price * 1e18) / (10 ** feedDec) / (10 ** tokenDec);
+        (bool ok, uint256 numeraireValue) =
+            LibNumeraireValueRead.tryValue(tokenIn, balance, false);
+        if (!ok) return false;
         return numeraireValue >= LibVaipakam.cfgTreasuryConvertUsdThreshold();
     }
 

@@ -197,6 +197,47 @@ contract TreasuryConvertAndPayrollTest is SetupTest {
         );
     }
 
+    /// @dev #2419 — inside the interval, the value leg reads the shared
+    ///      rule at 1e18 per numeraire unit whatever the token's decimals: a
+    ///      6-decimal balance worth $20k clears the $10k default threshold.
+    function test_convert_valueLeg_readsTheSharedValue() public {
+        _wireConvert(10_000);
+        vm.prank(owner);
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(
+            mockERC20, _perTargetCalls(3), _minOuts(3)
+        );
+        vm.mockCall(mockERC20, abi.encodeWithSignature("decimals()"), abi.encode(uint256(6)));
+        uint256 worth20k = 20_000e6;
+        TestMutatorFacet(address(diamond)).setTreasuryBalanceRaw(mockERC20, worth20k);
+        ERC20Mock(mockERC20).mint(address(diamond), worth20k);
+        ERC20Mock(wethTok).mint(address(adapter), worth20k);
+        ERC20Mock(wbtcTok).mint(address(adapter), worth20k);
+        ERC20Mock(vpfiTok).mint(address(adapter), worth20k);
+        vm.prank(owner);
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(
+            mockERC20, _perTargetCalls(3), _minOuts(3)
+        );
+        assertEq(_treasuryBal(mockERC20), 0, "converted on value");
+    }
+
+    /// @dev #2419 — a balance the rule cannot value (unreadable decimals)
+    ///      leaves only the time leg in force: not eligible, by name.
+    function test_convert_valueLeg_unvaluedBalanceIsNotEligible() public {
+        _wireConvert(10_000);
+        vm.prank(owner);
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(
+            mockERC20, _perTargetCalls(3), _minOuts(3)
+        );
+        TestMutatorFacet(address(diamond)).setTreasuryBalanceRaw(mockERC20, 1e30);
+        ERC20Mock(mockERC20).mint(address(diamond), 1e30);
+        vm.mockCallRevert(mockERC20, abi.encodeWithSignature("decimals()"), "");
+        vm.prank(owner);
+        vm.expectRevert(TreasuryFacet.ConversionNotEligible.selector);
+        TreasuryFacet(address(diamond)).convertTreasuryAsset(
+            mockERC20, _perTargetCalls(3), _minOuts(3)
+        );
+    }
+
     function test_convert_softFailure_revertsAndRollsBack() public {
         _wireConvert(10_000);
         adapter.setShouldRevert(true);

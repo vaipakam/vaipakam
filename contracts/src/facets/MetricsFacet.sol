@@ -9,6 +9,7 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
@@ -42,11 +43,13 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
  *      views (`getAllLoansPaginated`, `getLoansByStatusPaginated`) and
  *      aggregate off-chain.
  *
- *      Cross-facet reads for numeraire-quoted pricing go through
- *      `address(this)` so the Diamond routes to OracleFacet (getAssetPrice)
- *      at runtime. Pricing failures (no feed / stale) are treated as 0 for
- *      the affected leg so the aggregate metrics never revert due to a
- *      single misbehaving asset. The protocol is currency-agnostic — every
+ *      Every `*Numeraire` figure is valued by the protocol's one shared
+ *      rule (#2419, `NumeraireValueFacet`, read through `address(this)`):
+ *      1e18-scaled, so `1e18` is one numeraire unit whatever the token's
+ *      decimals, and rounded down. An amount the rule cannot value (no feed,
+ *      stale or distrusted price, unreadable decimals) counts as 0 for the
+ *      affected leg so the aggregate metrics never revert due to a single
+ *      misbehaving asset. The protocol is currency-agnostic — every
  *      `*Numeraire` figure below is denominated in whatever numeraire
  *      governance has configured (USD by post-deploy default).
  */
@@ -245,14 +248,16 @@ contract MetricsFacet {
      *      Deployments with treasury balances in assets no longer represented
      *      by any active loan should supplement off-chain with direct reads
      *      of `treasuryBalances(asset)`. Rolling windows are backed by the
-     *      append-only `feeEventsLog` populated by
+     *      append-only fee ledger (`feeLedger`) populated by
      *      `LibFacet.recordTreasuryAccrual`. Values are frozen in the active
      *      numeraire at the moment of accrual (currency-agnostic — USD by
-     *      post-deploy default, governance-rotatable). Window scan is capped
+     *      post-deploy default, governance-rotatable), 1e18-scaled by the
+     *      shared rule (#2419). The ledger began with this valuation: on a
+     *      Diamond refreshed in place across #2419, fees accrued before the
+     *      refresh are not in these figures. Window scan is capped
      *      at `LibVaipakam.MAX_FEE_EVENTS_ITER` from the tail; older events
      *      are skipped from the window count but still counted in
-     *      `totalFeesCollectedNumeraire` via the O(1)
-     *      `cumulativeFeesNumeraire` accumulator.
+     *      `totalFeesCollectedNumeraire` via the O(1) `feeLedgerTotal`.
      */
     function getTreasuryMetrics()
         external
@@ -286,7 +291,7 @@ contract MetricsFacet {
                 + s.treasuryDeployedExternal[assets[k]];
             treasuryBalanceNumeraire += _priceAmount(assets[k], totalForAsset);
         }
-        totalFeesCollectedNumeraire = s.cumulativeFeesNumeraire;
+        totalFeesCollectedNumeraire = s.feeLedgerTotal;
         uint256 since24h = block.timestamp > 1 days ? block.timestamp - 1 days : 0;
         uint256 since7d = block.timestamp > 7 days ? block.timestamp - 7 days : 0;
         (feesLast24hNumeraire, feesLast7dNumeraire) = _sumFeesInWindows(since24h, since7d);
@@ -295,7 +300,8 @@ contract MetricsFacet {
     /**
      * @notice Revenue over the last `days_` days, priced in the active
      *         numeraire at accrual time.
-     * @dev Sums `feeEventsLog` entries whose timestamp is within the window.
+     * @dev Sums fee-ledger (`feeLedger`) entries whose timestamp is within
+     *      the window; the ledger's scope is stated on {getTreasuryMetrics}.
      *      Scan is bounded by `LibVaipakam.MAX_FEE_EVENTS_ITER` entries from
      *      the tail so the call stays cheap on long-lived deployments; on
      *      exceeding that bound the returned figure is a lower bound on the
@@ -330,7 +336,7 @@ contract MetricsFacet {
     ///         spanning the deploy boundary read 0 for the pre-
     ///         deploy days. The lifetime aggregate stays correct via
     ///         the legacy {getRevenueStats(uint256)} which scans the
-    ///         feeEventsLog.
+    ///         fee ledger (`feeLedger`).
     /// @param  asset       The treasury-receiving asset to query.
     /// @param  windowDays  Look-back length in days, `1..365`.
     /// @return totalAccrued Sum of accruals over the window, in the
@@ -1660,14 +1666,13 @@ contract MetricsFacet {
         return LibMetricsTypes.deriveOfferState(s, offerId);
     }
 
-    /// @dev Safe numeraire-quoted valuation. Returns 0 if feed missing or stale.
+    /// @dev Numeraire value of `amount` of `asset` by the shared rule
+    ///      (#2419): 1e18-scaled, rounded down, and 0 when the rule cannot
+    ///      value it (no or untrusted price, unreadable decimals), so one
+    ///      asset never reverts an aggregate.
     function _priceAmount(address asset, uint256 amount) private view returns (uint256) {
-        if (asset == address(0) || amount == 0) return 0;
-        try OracleFacet(address(this)).getAssetPrice(asset) returns (uint256 price, uint8 decimals) {
-            return (amount * price) / (10 ** decimals);
-        } catch {
-            return 0;
-        }
+        if (amount == 0) return 0;
+        return LibNumeraireValueRead.valueOrZero(asset, amount);
     }
 
     function _pushUnique(address[] memory arr, uint256 n, address v) private pure returns (uint256) {
@@ -1678,12 +1683,12 @@ contract MetricsFacet {
         return n + 1;
     }
 
-    /// @dev Tail-scans `feeEventsLog` summing `numeraireValue` for events
+    /// @dev Tail-scans `feeLedger` summing `numeraireValue` for events
     ///      with `timestamp >= since`. Stops early once an older event is hit
     ///      (log is chronologically append-only). Bounded by
     ///      LibVaipakam.MAX_FEE_EVENTS_ITER.
     function _sumFeesSince(uint256 since) private view returns (uint256 sum) {
-        LibVaipakam.FeeEvent[] storage log = LibVaipakam.storageSlot().feeEventsLog;
+        LibVaipakam.FeeEvent[] storage log = LibVaipakam.storageSlot().feeLedger;
         uint256 len = log.length;
         uint256 maxIter = LibVaipakam.MAX_FEE_EVENTS_ITER;
         uint256 scanned;
@@ -1703,7 +1708,7 @@ contract MetricsFacet {
         view
         returns (uint256 sum24h, uint256 sum7d)
     {
-        LibVaipakam.FeeEvent[] storage log = LibVaipakam.storageSlot().feeEventsLog;
+        LibVaipakam.FeeEvent[] storage log = LibVaipakam.storageSlot().feeLedger;
         uint256 len = log.length;
         uint256 maxIter = LibVaipakam.MAX_FEE_EVENTS_ITER;
         uint256 scanned;

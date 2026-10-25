@@ -9,9 +9,9 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
+import {LibNumeraireValueRead} from "../libraries/LibNumeraireValueRead.sol";
 import {LibOfferBounds} from "../libraries/LibOfferBounds.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
@@ -1133,7 +1133,13 @@ contract OfferCreateFacet is
         // would let a lender qualify for finer cadence with a deceptively
         // large upper bound while never actually filling above the
         // threshold.
-        uint256 principalNumeraire = _principalToNumeraire1e18(
+        //
+        // The value is the shared rule's (#2419), rounded down, read best-
+        // effort: an unvalued principal reads as 0, i.e. below the
+        // threshold, which forces None on a loan of a year or less and
+        // Annual on a multi-year one. That degrades safely (no cadence finer
+        // than the terminal path already enforces).
+        uint256 principalNumeraire = LibNumeraireValueRead.valueOrZero(
             params.lendingAsset,
             params.amount
         );
@@ -1194,37 +1200,6 @@ contract OfferCreateFacet is
         }
 
         offer.periodicInterestCadence = cadence;
-    }
-
-    /// @dev Convert a raw token amount to numeraire-units (1e18-scaled).
-    ///      Single step now after the Numeraire generalization (b1) architectural
-    ///      change: `OracleFacet.getAssetPrice` returns numeraire-quoted
-    ///      prices natively (governance rotates the underlying Chainlink
-    ///      feed addresses + denominator constant when the numeraire
-    ///      changes), so this helper just multiplies + scales — no
-    ///      second-step boundary conversion via `INumeraireOracle`.
-    ///
-    ///      Returns 0 if the asset has no oracle coverage — Filter 2
-    ///      then treats every offer as "below threshold" for that asset,
-    ///      forcing None on ≤365d loans and Annual on multi-year. That
-    ///      degrades safely (cadence cannot opt into anything finer than
-    ///      what's enforceable on-chain via the existing terminal path).
-    function _principalToNumeraire1e18(
-        address asset,
-        uint256 amount
-    ) private view returns (uint256) {
-        if (asset == address(0) || amount == 0) return 0;
-        try OracleFacet(address(this)).getAssetPrice(asset) returns (
-            uint256 price,
-            uint8 feedDecimals
-        ) {
-            uint8 tokenDecimals = IERC20Metadata(asset).decimals();
-            return (amount * price * 1e18) /
-                (10 ** feedDecimals) /
-                (10 ** tokenDecimals);
-        } catch {
-            return 0;
-        }
     }
 
     /// @dev Classic-path asset pull: the big if/else that lives in
