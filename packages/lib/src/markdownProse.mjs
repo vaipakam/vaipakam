@@ -103,6 +103,19 @@ export const BLOCK_TAGS = new Set([
 ]);
 
 /**
+ * Inline elements that render as a box of their own (form controls and
+ * embedded content), so the text on either side of one is not one phrase:
+ * `buy<textarea>hello</textarea>Options` shows two words with a text box
+ * between them. Images are deliberately absent: an image's alt text stands
+ * in for it inline, so `VPFI ![buy](x) adapter` reads as one phrase when the
+ * image is not shown.
+ */
+const BOX_TAGS = new Set([
+  'audio', 'button', 'canvas', 'embed', 'iframe', 'input', 'meter', 'object',
+  'progress', 'select', 'textarea', 'video',
+]);
+
+/**
  * Elements whose content the HTML tokenizer reads as raw text, and the mode it
  * reads it in. The HTML tree builder switches the tokenizer into these modes
  * when it sees the start tag; a bare tokenizer has to be told, or the `<b>` in
@@ -410,9 +423,13 @@ function readHtml(html, toFile, sink, startIn = null) {
           pieces.push([a.value, s + a.name.length, e, false, 'html-attribute']);
         }
         interior(pieces);
-        if (BLOCK_TAGS.has(t.tagName)) sink.breakProse();
-        if (!t.selfClosing && HIDDEN_TEXT.has(t.tagName)) hidden.push(t.tagName);
-        if (RAW_TEXT_MODES.has(t.tagName) && !t.selfClosing) enterRaw(t.tagName, tokenizer);
+        if (BLOCK_TAGS.has(t.tagName) || BOX_TAGS.has(t.tagName)) sink.breakProse();
+        // Not `t.selfClosing`: HTML ignores the self-closing flag on an
+        // element that is not void, so `<script/>` opens a script whose text
+        // runs to `</script>`, as `<script>` does. Every element in these
+        // two tables is non-void.
+        if (HIDDEN_TEXT.has(t.tagName)) hidden.push(t.tagName);
+        if (RAW_TEXT_MODES.has(t.tagName)) enterRaw(t.tagName, tokenizer);
       },
       onEndTag(t) {
         flush();
@@ -422,7 +439,7 @@ function readHtml(html, toFile, sink, startIn = null) {
         if (startIn && rawTag === startIn) closed = true;
         rawTag = null;
         interior([[t.tagName, t.location.startOffset, t.location.endOffset, true, 'none']]);
-        if (BLOCK_TAGS.has(t.tagName)) sink.breakProse();
+        if (BLOCK_TAGS.has(t.tagName) || BOX_TAGS.has(t.tagName)) sink.breakProse();
         const at = hidden.lastIndexOf(t.tagName);
         if (at !== -1) hidden.length = at;
       },

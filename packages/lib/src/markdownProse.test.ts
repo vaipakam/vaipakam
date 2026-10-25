@@ -113,13 +113,25 @@ describe('readProse — segments', () => {
   });
 
   it('reads an inline textarea as RCDATA, not as Markdown', () => {
-    expect(texts('prefix<textarea>buy*Options*</textarea>suffix\n', 'prose')).toEqual(['buy*Options*', 'prefixsuffix']);
-    expect(texts('a<textarea>x&amp;y</textarea>b\n', 'prose')).toEqual(['x&y', 'ab']);
+    expect(texts('prefix<textarea>buy*Options*</textarea>suffix\n', 'prose')).toEqual(['prefix', 'buy*Options*', 'suffix']);
+    expect(texts('a<textarea>x&amp;y</textarea>b\n', 'prose')).toEqual(['a', 'x&y', 'b']);
+  });
+
+  it('ends a phrase at an element that renders as its own box', () => {
+    expect(texts('buy<textarea>hello</textarea>Options\n', 'prose')).toEqual(['buy', 'hello', 'Options']);
+    expect(texts('buy<input>Options\n', 'prose')).toEqual(['buy', 'Options']);
+    expect(texts('buy<span>x</span>Options\n', 'prose')).toEqual(['buyxOptions']);
+  });
+
+  it('opens a raw-text element written with the self-closing flag', () => {
+    const source = 'a<script/>buy&ThickSpace;adapter</script>b\n';
+    expect(texts(source, 'literal')).toEqual(['buy&ThickSpace;adapter']);
+    expect(texts(source, 'prose')).toEqual(['ab']);
   });
 
   it('keeps a raw-text element open across paragraphs until its end tag', () => {
     const source = 'prefix<textarea>start\n\nbuy*Options*\n\n</textarea>suffix\n';
-    expect(texts(source, 'prose')).toEqual(['start\n\nbuy*Options*\n\n', 'prefix', 'suffix']);
+    expect(texts(source, 'prose')).toEqual(['prefix', 'start\n\nbuy*Options*\n\n', 'suffix']);
     const script = 'a<script>x\n\n# not a heading &ThickSpace;\n\n</script>b\n';
     expect(texts(script, 'literal')).toEqual(['x\n\n# not a heading &ThickSpace;\n\n']);
     expect(md(script).headingChain(script.length)).toEqual([]);

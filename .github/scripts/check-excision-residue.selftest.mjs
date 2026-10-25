@@ -1007,6 +1007,18 @@ const FIXTURES = [
     body: 'prefix<script>start\n\nbuy&ThickSpace;adapter\n\n</script>suffix\n',
   },
   {
+    name: 'textarea-between-words.md',
+    caught: false,
+    why: 'a textarea renders as a box of its own, so the words on either side are not one name',
+    body: 'buy<textarea>hello</textarea>Options\n',
+  },
+  {
+    name: 'script-self-closing-flag.md',
+    caught: false,
+    why: 'HTML ignores the self-closing flag on a script, so its text stays raw and a reference in it is not decoded',
+    body: 'a<script/>buy&ThickSpace;adapter</script>b\n',
+  },
+  {
     name: 'footnote-reference-between-words.md',
     caught: false,
     why: 'a footnote reference renders a visible marker, so the words on either side are not one name',
