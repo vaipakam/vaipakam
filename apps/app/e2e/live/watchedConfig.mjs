@@ -17,7 +17,30 @@
  * Each entry: `key` (the snapshot field), `fn` (the Diamond getter), `args`
  * (from a context of the loan's assets), `pick` (a field of a tuple result).
  * Getters sharing (fn, args) are read once per snapshot.
+ *
+ * A field of the configuration bundle is picked BY NAME (`bundleField`), its
+ * position looked up in the compiled ABI, never written as a number: #2812
+ * took two flags out of the middle of the bundle and moved
+ * `maxOfferDurationDays` from position 14 to 12. What this does not do is
+ * the app's answer-shape check (`@vaipakam/lib/staticReturn`): `read` hands
+ * back viem's positional decode, so against a Diamond whose ConfigFacet is
+ * not this build's, the picked value can be a neighbouring field. The live
+ * drives run only after a deploy, against a chain refreshed to the build
+ * under review; bringing the shape check into these drives is #2841.
  */
+import configFacetAbi from '@vaipakam/contracts/abis/ConfigFacet.json' with { type: 'json' };
+
+/** A picker for one named output of `getProtocolConfigBundle`, by its
+ *  position in the compiled ABI. Throws at load when the ABI names no such
+ *  output, so a renamed field fails the drive instead of reading another. */
+export function bundleField(name) {
+  const entry = (Array.isArray(configFacetAbi) ? configFacetAbi : configFacetAbi.abi).find(
+    (e) => e.type === 'function' && e.name === 'getProtocolConfigBundle',
+  );
+  const index = entry?.outputs?.findIndex((o) => o.name === name) ?? -1;
+  if (index < 0) throw new Error(`watchedConfig: getProtocolConfigBundle has no output named ${name}`);
+  return (r) => r[index];
+}
 
 /**
  * @typedef {{ principalAsset: string, collateralAsset: string,
@@ -35,7 +58,9 @@ export const WATCHED_CONFIG = Object.freeze([
   // The auto-match posture the banners disclose.
   { key: 'paused', fn: 'paused' },
   { key: 'autoRefinance', fn: 'getAutoRefinanceEnabled' },
-  { key: 'partialFill', fn: 'getMasterFlags', pick: (r) => r[2] },
+  // The matching kill-switch, from its own getter (#2812 retired the
+  // `getMasterFlags` tuple it used to be read from).
+  { key: 'partialFill', fn: 'getPartialFillEnabled' },
   // The fees both reviews quote (and the borrower's reserve is sized with).
   { key: 'treasuryFeeBps', fn: 'getFeesConfig', pick: (r) => r[0] },
   { key: 'lifBps', fn: 'getLoanInitiationFeeBps' },
@@ -47,7 +72,7 @@ export const WATCHED_CONFIG = Object.freeze([
   { key: 'principalPaused', fn: 'isAssetPaused', args: (c) => [c.principalAsset] },
   { key: 'collateralPaused', fn: 'isAssetPaused', args: (c) => [c.collateralAsset] },
   // The form's upper bound on the new length.
-  { key: 'maxOfferDurationDays', fn: 'getProtocolConfigBundle', pick: (r) => r[14] },
+  { key: 'maxOfferDurationDays', fn: 'getProtocolConfigBundle', pick: bundleField('maxOfferDurationDays') },
   // Preconditions that change what an accept requires.
   { key: 'riskAccessGate', fn: 'getRiskAccessGateEnabled' },
   { key: 'sanctionsOracle', fn: 'getSanctionsOracle' },

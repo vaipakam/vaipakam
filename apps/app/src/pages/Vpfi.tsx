@@ -74,7 +74,10 @@ export function Vpfi() {
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const queryClient = useQueryClient();
 
-  const { rows: tierRows, floorLabel: tierFloorLabel } = useVpfiTierTable();
+  const tierTable = useVpfiTierTable();
+  // Figures only from a read of THIS chain (#2812 r3): while the table is
+  // loading or unreadable the page shows none, never a default set.
+  const tierRows = tierTable.state === 'live' ? tierTable.rows : [];
   // Deposits (and consent writes) revert for flagged wallets — block
   // BEFORE the approval tx, same gate as the offer flows. Held pending
   // while the check loads.
@@ -385,19 +388,27 @@ export function Vpfi() {
     <section className="card">
       <h3>{copy.vpfi.educationTitle}</h3>
       <p>{copy.vpfi.educationBody}</p>
-      <dl className="receipt" style={{ margin: 0 }}>
-        {tierRows.map((t) => (
-          <div key={t.held} className="receipt-row">
-            <dt>{t.held}</dt>
-            <dd>{t.discount} {copy.vpfi.offFeesSuffix}</dd>
-          </div>
-        ))}
-      </dl>
-      {/* UX-035 — the below-first-threshold band was unaddressed; state
-          it so a small holder isn't left guessing. */}
-      <p className="field-hint" style={{ marginTop: 6 }}>
-        {copy.vpfi.belowMinNote(tierFloorLabel)}
-      </p>
+      {tierTable.state === 'live' ? (
+        <>
+          <dl className="receipt" style={{ margin: 0 }}>
+            {tierTable.rows.map((t) => (
+              <div key={t.held} className="receipt-row">
+                <dt>{t.held}</dt>
+                <dd>{t.discount} {copy.vpfi.offFeesSuffix}</dd>
+              </div>
+            ))}
+          </dl>
+          {/* UX-035 — the below-first-threshold band was unaddressed; state
+              it so a small holder isn't left guessing. */}
+          <p className="field-hint" style={{ marginTop: 6 }}>
+            {copy.vpfi.belowMinNote(tierTable.floorLabel)}
+          </p>
+        </>
+      ) : (
+        <p className="field-hint" role="status" style={{ margin: 0 }}>
+          {tierTable.state === 'loading' ? copy.chrome.loading : copy.vpfi.tierTableUnknown}
+        </p>
+      )}
       <p className="muted" style={{ marginTop: 12 }}>
         {copy.vpfi.noGasDiscount} {copy.vpfi.withdrawWarning} {copy.vpfi.noSellNote}
       </p>

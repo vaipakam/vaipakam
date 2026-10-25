@@ -9,7 +9,7 @@
  *    window) — every refinance completion is `whenNotPaused`, so while it
  *    is set neither a lender nor the matcher can complete the request;
  *  - `autoRefinance` (`cfgAutoRefinanceEnabled`) and `partialFill` (the
- *    matcher master flag, `getMasterFlags()[2]`) — the order matcher can
+ *    matching kill-switch, `getPartialFillEnabled()`) — the order matcher can
  *    fill a refinance request only while BOTH are on (`matchOffers` /
  *    `matchIntent` revert while `partialFill` is off; admission refuses
  *    tagged pairs while `autoRefinance` is off).

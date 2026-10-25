@@ -7,7 +7,8 @@ import { usePublicClient } from 'wagmi';
 import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
-import { fetchProtocolConfig, protocolConfigFresh } from './indexer';
+import { readProtocolConfigBundle, type ProtocolBundleValue } from '@vaipakam/lib/protocolKnobs';
+import { fetchFreshConfigValues } from './indexer';
 import { readGraceSecondsLive } from '../contracts/preflights';
 import { defaultGraceSeconds, formatGraceSeconds } from '../lib/grace';
 import {
@@ -20,6 +21,40 @@ import {
  *  {@link readRentalBufferBps} or gate on `ready`. */
 const RENTAL_BUFFER_BPS_DEFAULT = 500;
 
+/**
+ * #2812 — the LIVE configuration bundle, by field name, through the one
+ * shared reader (`readProtocolConfigBundle`): decoded only when the chain's
+ * answer has the shape this build's ABI describes. Any other shape means the
+ * deployed ConfigFacet is not the code this build was compiled against, and
+ * a positional read would hand back a neighbouring field's number, so this
+ * THROWS with the reason instead. Submit paths fail closed on that like on
+ * any failed read; display hooks fall back to their deploy default and stay
+ * not-ready.
+ */
+export async function readConfigBundleLive(
+  publicClient: PublicClient,
+  diamondAddress: `0x${string}`,
+): Promise<Record<string, ProtocolBundleValue>> {
+  const r = await readProtocolConfigBundle({
+    client: publicClient,
+    diamond: diamondAddress,
+    abi: DIAMOND_ABI_VIEM,
+  });
+  if (r.kind === 'unreadable') throw new Error(r.reason);
+  return r.values;
+}
+
+/** One named integer field of the bundle (a decimal string in both the
+ *  snapshot and the shared reader's output), or a throw: a field that is
+ *  absent or not an integer is never read as a number. */
+export function bundleInteger(values: object, field: string): number {
+  const v = (values as Readonly<Record<string, unknown>>)[field];
+  if (typeof v !== 'string' || !/^\d+$/.test(v)) {
+    throw new Error(`the configuration bundle carries no integer ${field}`);
+  }
+  return Number(v);
+}
+
 /** Direct read of the LIVE buffer — for submit paths. Throws on read
  *  failure instead of substituting a default: an under-read buffer
  *  under-approves the renter's prepay and the accept reverts AFTER the
@@ -28,18 +63,12 @@ export async function readRentalBufferBps(
   publicClient: PublicClient,
   diamondAddress: `0x${string}`,
 ): Promise<number> {
-  const bundle = (await publicClient.readContract({
-    address: diamondAddress,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'getProtocolConfigBundle',
-  })) as readonly unknown[];
-  return Number(bundle[6] as bigint);
+  return bundleInteger(await readConfigBundleLive(publicClient, diamondAddress), 'rentalBufferBps');
 }
 
-/** NFT-rental prepay buffer in bps (tuple index 6 of
- *  `getProtocolConfigBundle` — see apps/defi useProtocolConfig's
- *  BundleTuple). `ready` is false while the value is still the
- *  fallback — display may proceed, signing must not. */
+/** NFT-rental prepay buffer in bps (the bundle's `rentalBufferBps`).
+ *  `ready` is false while the value is still the fallback — display may
+ *  proceed, signing must not. */
 export function useRentalBufferBps(): { bps: number; ready: boolean } {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
@@ -48,14 +77,12 @@ export function useRentalBufferBps(): { bps: number; ready: boolean } {
     queryKey: ['rentalBufferBps', readChain.chainId],
     enabled: Boolean(publicClient),
     staleTime: 5 * 60_000,
-    // RPC read-diet PR B — display from the indexer snapshot (bundle
-    // index 6), chain fallback; submit paths use readRentalBufferBps
-    // directly and never come here.
+    // RPC read-diet PR B — display from the indexer snapshot's named
+    // `rentalBufferBps`, chain fallback; submit paths use
+    // readRentalBufferBps directly and never come here.
     queryFn: async () => {
-      const snap = await fetchProtocolConfig(readChain.chainId);
-      if (snap && protocolConfigFresh(snap.updatedAt)) {
-        return Number(snap.bundle[6]);
-      }
+      const snap = await fetchFreshConfigValues(readChain.chainId);
+      if (snap?.rentalBufferBps !== undefined) return bundleInteger(snap, 'rentalBufferBps');
       return readRentalBufferBps(publicClient!, readChain.diamondAddress);
     },
   });
@@ -98,27 +125,22 @@ export function useGraceLabel(durationDays: number): {
   };
 }
 
-/** The protocol's range/partial-fill master flags
- *  (`ConfigFacet.getMasterFlags`) — governance kill switches for the
- *  range-order machinery. `partialFill` gates `matchOffers` at runtime,
- *  so the desk's crossable-band surface (#1131 slice B) must key on it:
- *  a band whose Execute action the contract refuses is a lie. */
-export interface MasterFlags {
-  rangeAmount: boolean;
-  rangeRate: boolean;
-  partialFill: boolean;
-}
-
-/** Long-staleTime read of the master flags. `data === undefined` covers
- *  loading AND read failure — consumers of the ADVISORY surfaces treat
- *  that as "flags unknown → show nothing" (fail closed: rendering a
- *  matchable band while the kill switch might be OFF is worse than
- *  briefly hiding a real one). */
-export function useMasterFlags(): { data: MasterFlags | undefined } {
+/** The matching kill-switch (`ConfigFacet.getPartialFillEnabled`): while
+ *  it is off, `matchOffers` / `matchIntent` refuse, so the desk's
+ *  crossable-band surface (#1131 slice B) must key on it — a band whose
+ *  Execute action the contract refuses is a lie. (It was the third value of
+ *  `getMasterFlags` until #2812 retired the two range flags beside it and
+ *  that tuple with them; ranged offers are always on.)
+ *
+ *  Long-staleTime read. `data === undefined` covers loading AND read
+ *  failure — the ADVISORY surfaces treat that as "switch unknown → show
+ *  nothing" (fail closed: rendering a matchable band while the switch might
+ *  be OFF is worse than briefly hiding a real one). */
+export function usePartialFillEnabled(): { data: boolean | undefined } {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   const { data } = useQuery({
-    queryKey: ['masterFlags', readChain.chainId],
+    queryKey: ['partialFillEnabled', readChain.chainId],
     enabled: Boolean(publicClient),
     // Governance kill-switch — flips rarely; 10 min bounds the window a
     // just-flipped switch keeps the band visible (the Execute write
@@ -128,28 +150,17 @@ export function useMasterFlags(): { data: MasterFlags | undefined } {
     // config event, so the snapshot updates within ~one ingest scan —
     // typically FRESHER than this hook's own 10-min staleTime window.
     // The crossable band's execute path still live-checks before the
-    // write, so the advisory surface never turns a stale flag into a
-    // doomed transaction.
-    queryFn: async (): Promise<MasterFlags> => {
-      const snap = await fetchProtocolConfig(readChain.chainId);
-      if (
-        snap &&
-        protocolConfigFresh(snap.updatedAt) &&
-        snap.masterFlags.length >= 3
-      ) {
-        return {
-          rangeAmount: Boolean(snap.masterFlags[0]),
-          rangeRate: Boolean(snap.masterFlags[1]),
-          partialFill: Boolean(snap.masterFlags[2]),
-        };
-      }
-      const [rangeAmount, rangeRate, partialFill] =
-        (await publicClient!.readContract({
-          address: readChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getMasterFlags',
-        })) as readonly [boolean, boolean, boolean];
-      return { rangeAmount, rangeRate, partialFill };
+    // write, so the advisory surface never turns a stale switch into a
+    // doomed transaction. The chain read is the single-output getter, which
+    // answers the same on every ConfigFacet build that has the switch.
+    queryFn: async (): Promise<boolean> => {
+      const snap = await fetchFreshConfigValues(readChain.chainId);
+      if (typeof snap?.partialFillEnabled === 'boolean') return snap.partialFillEnabled;
+      return (await publicClient!.readContract({
+        address: readChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getPartialFillEnabled',
+      })) as boolean;
     },
   });
   return { data };
@@ -157,8 +168,8 @@ export function useMasterFlags(): { data: MasterFlags | undefined } {
 
 /** The automatic-matching posture for refinance requests (#2349 / #2355):
  *  the protocol pause (`AdminFacet.paused`), the auto-refinance switch
- *  (`AdminFacet.getAutoRefinanceEnabled`) and the matcher master flag
- *  (`ConfigFacet.getMasterFlags()[2]`, `partialFill`), read together in ONE
+ *  (`AdminFacet.getAutoRefinanceEnabled`) and the matching kill-switch
+ *  (`ConfigFacet.getPartialFillEnabled`), read together in ONE
  *  query so a single read state covers all three. Neither matcher switch
  *  ever blocks a lender accepting the request directly, so the
  *  refinance surfaces DISCLOSE the posture — always, via
@@ -188,7 +199,7 @@ export function useAutoRefinancePosture(): {
       // staged governance flip and combine into a posture that never
       // existed on-chain.
       const blockNumber = await publicClient!.getBlockNumber();
-      const [paused, autoRefinance, flags] = await Promise.all([
+      const [paused, autoRefinance, partialFill] = await Promise.all([
         publicClient!.readContract({
           address: readChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
@@ -204,11 +215,11 @@ export function useAutoRefinancePosture(): {
         publicClient!.readContract({
           address: readChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
-          functionName: 'getMasterFlags',
+          functionName: 'getPartialFillEnabled',
           blockNumber,
-        }) as Promise<readonly [boolean, boolean, boolean]>,
+        }) as Promise<boolean>,
       ]);
-      return { paused, autoRefinance, partialFill: flags[2] };
+      return { paused, autoRefinance, partialFill };
     },
   });
   return { posture: autoRefinancePostureFrom({ data, isError, isPaused }) };

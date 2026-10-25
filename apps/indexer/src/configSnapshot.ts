@@ -2,8 +2,9 @@
  * RPC read-diet PR B (Alpha02RpcReadDietDesign §4.2.1) — protocol-config
  * snapshot: refresh half + the public GET /config/:chainId route.
  *
- * Protocol config (the `getProtocolConfigBundle` tuple + the range/
- * partial master flags) is chain-only for the apps today: every browser
+ * Protocol config (the `getProtocolConfigBundle` tuple, which carries the
+ * matching kill-switch since the range master flags were retired in #2812)
+ * is chain-only for the apps today: every browser
  * re-reads it on 5–10 min caches even though it changes only on rare
  * governance action. The indexer already scans every Diamond event, so
  * it maintains ONE row per chain here and the apps' DISPLAY surfaces
@@ -26,7 +27,9 @@ import {
   PROTOCOL_KNOB_SETTER_EVENTS,
   abiDescribesGetterAt,
   abiOutputNames as abiOutputNamesOf,
+  readProtocolConfigBundle,
   readProtocolKnobGetters,
+  type ProtocolBundleRead,
   type ProtocolKnobRead,
 } from '@vaipakam/lib/protocolKnobs';
 import { getDeployment } from '@vaipakam/contracts/deployments';
@@ -55,10 +58,9 @@ const CONFIG_EVENT_NAMES: ReadonlySet<string> = new Set([
   'VpfiTierThresholdsSet',
   'VpfiTierDiscountsSet',
   'FallbackSplitSet',
-  'RangeAmountEnabledSet',
-  'RangeRateEnabledSet',
+  // The three range master flags and their events were retired in #2812;
+  // the matching kill-switch is the one flag left, and it is in the bundle.
   'PartialFillEnabledSet',
-  'RangeCollateralEnabledSet',
   'GraceBucketsUpdated',
   'AssetMinPartialBpsUpdated',
   'LifMatcherFeeBpsSet',
@@ -415,19 +417,19 @@ export async function maybeRefreshProtocolConfig(opts: {
       chainId: opts.chainId,
       blockNumber: opts.blockNumber,
     };
-    const [bundle, flags, graceBuckets, pauseLog, bundleAbiBound, flagsAbiBound, knobs] = await Promise.all([
-      opts.client.readContract({
-        address: opts.diamond,
+    const [bundle, graceBuckets, pauseLog, bundleAbiBound, knobs] = await Promise.all([
+      // #2812 — decoded only when the answer has the length this build's
+      // ABI describes. Any other length is other code behind the getter (a
+      // ConfigFacet that predates or postdates this build), and decoding it
+      // by position would store real numbers under the wrong fields; the
+      // row then records why the bundle is unknown, and the rest of the
+      // refresh (the grace schedule, the pause log, the settings) goes on.
+      readProtocolConfigBundle({
+        client: opts.client,
+        diamond: opts.diamond,
         abi: DIAMOND_ABI_VIEM,
-        functionName: 'getProtocolConfigBundle',
         blockNumber: opts.blockNumber,
-      }) as Promise<readonly unknown[]>,
-      opts.client.readContract({
-        address: opts.diamond,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'getMasterFlags',
-        blockNumber: opts.blockNumber,
-      }) as Promise<readonly [boolean, boolean, boolean]>,
+      }) as Promise<ProtocolBundleRead>,
       // #1213 PR 2 (Codex #1298 r1) — the effective governance grace
       // buckets. Not part of the bundle tuple; the calendar sweep derives
       // grace windows from this snapshot column (empty array = the
@@ -502,7 +504,6 @@ export async function maybeRefreshProtocolConfig(opts: {
       // #2073 (Codex #2653 r1) — is this build's ABI the one the chain ran
       // at this block? Never throws; false withholds the names below.
       abiDescribesChainGetter({ ...readAt, functionName: 'getProtocolConfigBundle' }),
-      abiDescribesChainGetter({ ...readAt, functionName: 'getMasterFlags' }),
       // #2071 — the single-output settings the bundle does not carry, in one
       // batched call at the same block. Isolated like the grace read: a
       // failure stores NULL (the route then serves none of them, and the
@@ -539,18 +540,28 @@ export async function maybeRefreshProtocolConfig(opts: {
     // serving build compiled. Stored only when the loupe shows this build's
     // ABI is the code that answered at this block (Codex #2653 r1); NULL
     // when that cannot be established or this build's ABI names none.
-    const bundleNames = bundleAbiBound ? abiOutputNames('getProtocolConfigBundle') : null;
-    const flagNames = flagsAbiBound ? abiOutputNames('getMasterFlags') : null;
+    const bundleNames =
+      bundle.kind === 'read' && bundleAbiBound ? abiOutputNames('getProtocolConfigBundle') : null;
+    if (bundle.kind === 'unreadable') {
+      // eslint-disable-next-line no-console
+      console.warn(`[configSnapshot] chain ${opts.chainId}: the config bundle is stored as unknown: ${bundle.reason}`);
+    }
+    // `master_flags_json` / `master_flags_names_json` held the retired
+    // `getMasterFlags` tuple (#2812). Nothing reads them any more; the
+    // first column is NOT NULL, so it is written as an empty list until the
+    // follow-up migration drops both (#2840).
     await opts.env.DB.prepare(
       `INSERT INTO protocol_config
          (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at,
-          bundle_names_json, master_flags_names_json, knob_values_json, pause_intervals_json)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8, ?9, ?10, ?11)
+          bundle_names_json, master_flags_names_json, knob_values_json, pause_intervals_json,
+          bundle_unread_reason)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8, ?9, ?10, ?11, ?13)
        ON CONFLICT (chain_id) DO UPDATE SET
          bundle_json = excluded.bundle_json,
          master_flags_json = excluded.master_flags_json,
          bundle_names_json = excluded.bundle_names_json,
          master_flags_names_json = excluded.master_flags_names_json,
+         bundle_unread_reason = excluded.bundle_unread_reason,
          knob_values_json = excluded.knob_values_json,
          -- Codex #2822 r1 — a column a stale mark CLEARED (the scan that
          -- set the mark saw that column's own event) stays NULL until a
@@ -578,17 +589,20 @@ export async function maybeRefreshProtocolConfig(opts: {
     )
       .bind(
         opts.chainId,
-        serializeTuple(bundle),
-        JSON.stringify([flags[0], flags[1], flags[2]]),
+        // An unreadable bundle is stored as an empty list beside the reason
+        // (?13); the route serves the reason, never the list.
+        bundle.kind === 'read' ? serializeTuple(bundle.positional) : '[]',
+        '[]', // master_flags_json, retired (#2812)
         graceBuckets === null ? null : serializeTuple(graceBuckets),
         Number(opts.blockNumber),
         now,
         invalidateGrace ? 1 : 0,
         bundleNames === null ? null : JSON.stringify(bundleNames),
-        flagNames === null ? null : JSON.stringify(flagNames),
+        null, // master_flags_names_json, retired (#2812)
         knobs === null ? null : JSON.stringify(knobs),
         pauseLog,
         invalidatePauseLog ? 1 : 0,
+        bundle.kind === 'unreadable' ? bundle.reason : null,
       )
       .run();
   } catch (err) {
@@ -619,14 +633,18 @@ export async function maybeRefreshProtocolConfig(opts: {
 /** GET /config/:chainId — the display snapshot. `available: false` when
  *  the chain has no row yet (apps fall back to their chain read).
  *
- *  Serves the raw positional `bundle`/`masterFlags` AND a labelled
- *  `values`/`flags` view of the same numbers (#1664 item 3). The
- *  positional arrays are what the apps' decoders read and stay the
- *  wire contract; the labelled view is additive, and exists because
- *  this endpoint is public and advertised to automated consumers in
- *  `llms.txt` — an outside reader has no decoder and cannot tell which
- *  slot is the treasury fee. Labels are derived from the compiled ABI
- *  and omitted rather than guessed when they cannot be trusted. */
+ *  Serves the raw positional `bundle` AND a labelled `values` view of the
+ *  same numbers (#1664 item 3). The labelled view exists because this
+ *  endpoint is public and advertised to automated consumers in `llms.txt`
+ *  — an outside reader has no decoder and cannot tell which slot is the
+ *  treasury fee — and since #2812 it is also what the connected app reads.
+ *  Labels are derived from the compiled ABI and omitted rather than guessed
+ *  when they cannot be trusted.
+ *
+ *  `masterFlags` / `flags` (the `getMasterFlags` tuple) are gone with the
+ *  range flags (#2812); the matching kill-switch is `partialFillEnabled` in
+ *  `values`. A bundle the capturing build could not decode is not served:
+ *  `bundleUnreported` says why instead. */
 export async function handleConfigSnapshot(
   chainId: number,
   env: Env,
@@ -638,41 +656,47 @@ export async function handleConfigSnapshot(
   try {
     type Row = {
       bundle_json: string;
-      master_flags_json: string;
       source_block: number;
       updated_at: number;
       bundle_names_json?: string | null;
-      master_flags_names_json?: string | null;
       knob_values_json?: string | null;
       stale_at_block?: number | null;
+      bundle_unread_reason?: string | null;
     };
     // The route must tolerate the previous schema while a migration has not
     // reached the database yet: each step drops the columns the newest
-    // migration added (0070, then 0067), so a missing later column never
-    // costs what an earlier one already provides. Three STATIC statements,
-    // so the SQL-vs-schema guard prepares every one of them against the
-    // migrated schema rather than skipping a built string.
+    // migration added (0074, then 0070, then 0067), so a missing later
+    // column never costs what an earlier one already provides. STATIC
+    // statements, so the SQL-vs-schema guard prepares every one of them
+    // against the migrated schema rather than skipping a built string.
     const reads: (() => Promise<Row | null>)[] = [
       () =>
         env.DB.prepare(
-          `SELECT bundle_json, master_flags_json, source_block, updated_at,
-                  bundle_names_json, master_flags_names_json, knob_values_json,
-                  stale_at_block
+          `SELECT bundle_json, source_block, updated_at,
+                  bundle_names_json, knob_values_json, stale_at_block,
+                  bundle_unread_reason
            FROM protocol_config WHERE chain_id = ?`,
         )
           .bind(chainId)
           .first<Row>(),
       () =>
         env.DB.prepare(
-          `SELECT bundle_json, master_flags_json, source_block, updated_at,
-                  bundle_names_json, master_flags_names_json
+          `SELECT bundle_json, source_block, updated_at,
+                  bundle_names_json, knob_values_json, stale_at_block
            FROM protocol_config WHERE chain_id = ?`,
         )
           .bind(chainId)
           .first<Row>(),
       () =>
         env.DB.prepare(
-          `SELECT bundle_json, master_flags_json, source_block, updated_at
+          `SELECT bundle_json, source_block, updated_at, bundle_names_json
+           FROM protocol_config WHERE chain_id = ?`,
+        )
+          .bind(chainId)
+          .first<Row>(),
+      () =>
+        env.DB.prepare(
+          `SELECT bundle_json, source_block, updated_at
            FROM protocol_config WHERE chain_id = ?`,
         )
           .bind(chainId)
@@ -688,35 +712,32 @@ export async function handleConfigSnapshot(
       }
     }
     if (!row) return jsonResponse({ chainId, available: false });
-    const bundle = JSON.parse(row.bundle_json) as unknown[];
-    const masterFlags = JSON.parse(row.master_flags_json) as boolean[];
+    // #2812 — the capturing build could not decode the bundle (the chain's
+    // ConfigFacet answered a different shape from the one it was compiled
+    // against), so there are no figures to serve, only the reason.
+    const bundleUnreported =
+      typeof row.bundle_unread_reason === 'string' && row.bundle_unread_reason.length > 0
+        ? row.bundle_unread_reason
+        : null;
+    const bundle = bundleUnreported === null ? (JSON.parse(row.bundle_json) as unknown[]) : null;
     // #2073 — labelled ONLY with the names captured beside the tuple (the
     // names the capturing build decoded it with), never with this build's
     // ABI: across an upgrade that reorders the outputs at the same arity,
     // this build's names would attach real values to the wrong fields. A
     // row captured before the names were recorded serves no labelled view
     // until the next capture writes them.
-    const bundleValues = labelTuple(bundle, storedNames(row.bundle_names_json));
-    const flags = labelTuple(masterFlags, storedNames(row.master_flags_names_json));
-    // #2071 — the settings read beside the bundle at the same block join the
-    // named `values` object, and the ones the chain did not answer are named
-    // in `unreported`, so "not reported" is stated rather than inferred from
-    // a missing key. Served only beside a labelled bundle: `values` is absent
-    // when the bundle's labels cannot be trusted, and a partial `values`
-    // would read as a labelled snapshot that happens to lack fields.
+    const bundleValues = bundle === null ? null : labelTuple(bundle, storedNames(row.bundle_names_json));
     const knobs = bundleValues ? storedKnobs(row.knob_values_json) : null;
     const values = bundleValues ? { ...bundleValues, ...(knobs?.values ?? {}) } : null;
     return jsonResponse({
       chainId,
       available: true,
-      bundle,
-      masterFlags,
+      ...(bundle === null ? { bundleUnreported } : { bundle }),
       // Omitted, not empty, when the labels cannot be trusted — an
       // absent key reads as "not available here"; `{}` would read as
       // "this snapshot has no fields", which is false.
       ...(values ? { values } : {}),
       ...(knobs ? { unreported: knobs.unreported } : {}),
-      ...(flags ? { flags } : {}),
       sourceBlock: row.source_block,
       updatedAt: row.updated_at,
       // `markStaleBelow` zeroes `updated_at` when a catch-up scan saw a

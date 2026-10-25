@@ -6,7 +6,7 @@
  * surfaces: the protocol is paused, automatic matching is off, it is on, or
  * the app cannot tell yet. Which one it may state is decided by three reads
  * (`AdminFacet.paused()`, `getAutoRefinanceEnabled()` and
- * `ConfigFacet.getMasterFlags()[2]`, the matcher's `partialFill`), mapped by
+ * `ConfigFacet.getPartialFillEnabled()`, the matching kill-switch), mapped by
  * `autoRefinancePostureFrom` in `src/data/autoRefinancePosture.ts`. This
  * module mirrors that mapping for the KNOWN states only, so a drive can read
  * the same three switches itself and say which sentence the deployed page

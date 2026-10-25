@@ -73,16 +73,12 @@ contract ConfigFacet is DiamondAccessControl {
     event VpfiTierDiscountsSet(uint16 t1, uint16 t2, uint16 t3, uint16 t4);
     /// @custom:event-category informational/config
     event FallbackSplitSet(uint16 lenderBonusBps, uint16 treasuryBps);
-    // ── Range Orders Phase 1 master-flag setter events ──────────────────
-    /// @custom:event-category informational/config
-    event RangeAmountEnabledSet(bool enabled);
-    /// @custom:event-category informational/config
-    event RangeRateEnabledSet(bool enabled);
+    // ── Matching kill-switch setter event ───────────────────────────────
+    // The range master flags and their events were retired in #2812
+    // (ranged offers are always on); `partialFillEnabled` is the one
+    // remaining governance lever over matching.
     /// @custom:event-category informational/config
     event PartialFillEnabledSet(bool enabled);
-    /// Issue #164 — borrower-side collateral range master flag.
-    /// @custom:event-category informational/config
-    event RangeCollateralEnabledSet(bool enabled);
     // T-092 (#508) — kill-switch events declared on AdminFacet.
 
     // ── T-044 — admin-configurable loan-default grace schedule ──────────
@@ -1408,36 +1404,18 @@ contract ConfigFacet is DiamondAccessControl {
         emit FallbackSplitSet(lenderBonusBps, treasuryBps);
     }
 
-    /// ─── Range Orders Phase 1 master kill-switch flags ──────────────
-    /// All three default `false` on a fresh deploy. Each gates a
-    /// distinct mechanic in `OfferFacet` so governance can enable /
-    /// disable independently. See docs/RangeOffersDesign.md §15.
+    /// ─── Matching kill-switch ───────────────────────────────────────
+    /// Ranged offers are always on: every Phase 2 offer is canonically a
+    /// range, so there is no create-time range flag (the three range
+    /// master flags were retired in #2812, owner decision 2026-10-25).
+    /// Matching is the gated operation, and this flag is its lever.
 
-    /// @notice Toggle whether `OfferFacet.createOffer` accepts a range
-    ///         on the lending amount (`amountMax > amount`). When false,
-    ///         every offer is forced single-value (`amountMax == amount`).
-    function setRangeAmountEnabled(bool enabled)
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        LibVaipakam.storageSlot().protocolCfg.rangeAmountEnabled = enabled;
-        emit RangeAmountEnabledSet(enabled);
-    }
-
-    /// @notice Toggle whether `OfferFacet.createOffer` accepts a range
-    ///         on the interest rate.
-    function setRangeRateEnabled(bool enabled)
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        LibVaipakam.storageSlot().protocolCfg.rangeRateEnabled = enabled;
-        emit RangeRateEnabledSet(enabled);
-    }
-
-    /// @notice Toggle whether lender offers can be filled across multiple
-    ///         matches. When false, every lender offer is single-fill
-    ///         even if `rangeAmountEnabled` permits a range — the first
-    ///         match exhausts the offer regardless of remaining capacity.
+    /// @notice Toggle the order matcher and multi-fill. While false (the
+    ///         fresh-deploy default), `matchOffers` / `matchSignedOffer` /
+    ///         `matchIntent` refuse with `FunctionDisabled(3)` (`previewMatch` /
+    ///         `previewIntent` report `MatcherDisabled`) and an accepted offer is
+    ///         single-fill, whatever range capacity it has left. While true,
+    ///         a ranged offer can be filled across several matches.
     function setPartialFillEnabled(bool enabled)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
@@ -1450,23 +1428,6 @@ contract ConfigFacet is DiamondAccessControl {
     // AdminFacet (not here) so ConfigFacet stays under EIP-170.
     // See AdminFacet.setAutoLendEnabled / setAutoRefinanceEnabled /
     // setAutoExtendEnabled.
-
-    /// @notice Issue #164 — toggle whether borrower offers may carry a
-    ///         collateral range (`collateralAmountMax > collateralAmount`).
-    ///         While off (the default), every offer is forced to a
-    ///         single-value collateral shape and behaves bit-for-bit
-    ///         like the pre-#164 contract. Lender offers stay single-
-    ///         value regardless of this flag — the createOffer write-
-    ///         side rejects a ranged-collateral lender offer with
-    ///         `LenderCollateralRangeNotAllowed` independent of the
-    ///         flag's state. See docs/RangeOffersDesign.md §3.
-    function setRangeCollateralEnabled(bool enabled)
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        LibVaipakam.storageSlot().protocolCfg.rangeCollateralEnabled = enabled;
-        emit RangeCollateralEnabledSet(enabled);
-    }
 
     /// ─── Depth-tiered LTV (Piece B) — governance globals ────────────
     /// See docs/DesignsAndPlans/MarketRateWidgetAndDepthTieredLTV.md
@@ -2176,19 +2137,9 @@ contract ConfigFacet is DiamondAccessControl {
         return LibVaipakam.cfgLifMatcherFeeBps();
     }
 
-    /// @notice Single-field getter for the rangeAmount master flag.
-    ///         Mirrors {getMasterFlags}'s first return value. Added for
-    ///         the protocol-console knob schema.
-    function getRangeAmountEnabled() external view returns (bool) {
-        return LibVaipakam.storageSlot().protocolCfg.rangeAmountEnabled;
-    }
-
-    /// @notice Single-field getter for the rangeRate master flag.
-    function getRangeRateEnabled() external view returns (bool) {
-        return LibVaipakam.storageSlot().protocolCfg.rangeRateEnabled;
-    }
-
-    /// @notice Single-field getter for the partialFill master flag.
+    /// @notice The matching kill-switch ({setPartialFillEnabled}). The one
+    ///         remaining offer master flag: the range flags were retired in
+    ///         #2812, and with them the `getMasterFlags` tuple.
     function getPartialFillEnabled() external view returns (bool) {
         return LibVaipakam.storageSlot().protocolCfg.partialFillEnabled;
     }
@@ -2226,27 +2177,11 @@ contract ConfigFacet is DiamondAccessControl {
         t4 = LibVaipakam.cfgVpfiTierDiscountBps(4);
     }
 
-    /// @notice Range Orders Phase 1 master kill-switch flags. All three
-    ///         default `false` on a fresh deploy. Flipped on by governance
-    ///         after the testnet bake. Frontend reads via the bundle
-    ///         below or these direct getters; conditional render of the
-    ///         range / partial-fill UI gates on these values.
-    function getMasterFlags()
-        external
-        view
-        returns (bool rangeAmount, bool rangeRate, bool partialFill)
-    {
-        LibVaipakam.ProtocolConfig storage c = LibVaipakam.storageSlot().protocolCfg;
-        rangeAmount = c.rangeAmountEnabled;
-        rangeRate = c.rangeRateEnabled;
-        partialFill = c.partialFillEnabled;
-    }
-
     /// ─── Depth-tiered LTV (Piece B) — getters ───────────────────────
 
     /// @notice Single-field getter for the depth-tiered-LTV master flag.
-    ///         Mirrors {getRangeAmountEnabled} & co. for the
-    ///         protocol-console knob schema.
+    ///         Mirrors {getPartialFillEnabled} for the protocol-console
+    ///         knob schema.
     function getDepthTieredLtvEnabled() external view returns (bool) {
         return LibVaipakam.storageSlot().protocolCfg.depthTieredLtvEnabled;
     }
@@ -2325,11 +2260,9 @@ contract ConfigFacet is DiamondAccessControl {
             uint256 rentalBufferBps,
             uint256[4] memory tierThresholds,
             uint256[4] memory tierDiscountBps,
-            // Range Orders Phase 1 master kill-switch flags. Frontend
-            // conditionals + Advanced-mode reveals for range sliders /
-            // partial-fill checkbox gate on these. See §15 of design doc.
-            bool rangeAmountEnabled,
-            bool rangeRateEnabled,
+            // The matching kill-switch ({setPartialFillEnabled}). The
+            // range master flags that sat beside it were retired in #2812:
+            // ranged offers are always on.
             bool partialFillEnabled,
             // Matcher's slice of the LIF kickback (BPS).
             // Governance-tunable via `setLifMatcherFeeBps`; default
@@ -2364,10 +2297,7 @@ contract ConfigFacet is DiamondAccessControl {
             LibVaipakam.cfgVpfiTierDiscountBps(3),
             LibVaipakam.cfgVpfiTierDiscountBps(4)
         ];
-        LibVaipakam.ProtocolConfig storage cfg = LibVaipakam.storageSlot().protocolCfg;
-        rangeAmountEnabled = cfg.rangeAmountEnabled;
-        rangeRateEnabled = cfg.rangeRateEnabled;
-        partialFillEnabled = cfg.partialFillEnabled;
+        partialFillEnabled = LibVaipakam.storageSlot().protocolCfg.partialFillEnabled;
         lifMatcherFeeBps = LibVaipakam.cfgLifMatcherFeeBps();
         autoPauseDurationSeconds = LibVaipakam.cfgAutoPauseDurationSeconds();
         maxOfferDurationDays = LibVaipakam.cfgMaxOfferDurationDays();

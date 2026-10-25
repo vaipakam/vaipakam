@@ -9,6 +9,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -293,6 +294,9 @@ contract OfferExpiryTest is SetupTest {
     // ─── previewMatch classifier ────────────────────────────────────
 
     function testPreviewMatchReturnsOfferExpiredWhenLenderExpired() public {
+        // Matching on: with it off, previewMatch reports the switch
+        // before any offer-level verdict (#2812).
+        ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         uint64 deadline = uint64(block.timestamp + ONE_HOUR);
         uint256 lenderId = _createLender(deadline);
         uint256 borrowerId = _createBorrower(0); // GTC borrower
@@ -309,6 +313,9 @@ contract OfferExpiryTest is SetupTest {
     }
 
     function testPreviewMatchReturnsOfferExpiredWhenBorrowerExpired() public {
+        // Matching on: with it off, previewMatch reports the switch
+        // before any offer-level verdict (#2812).
+        ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         uint64 deadline = uint64(block.timestamp + ONE_HOUR);
         uint256 lenderId = _createLender(0); // GTC lender
         uint256 borrowerId = _createBorrower(deadline);

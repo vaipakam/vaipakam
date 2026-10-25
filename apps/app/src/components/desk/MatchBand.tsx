@@ -10,8 +10,8 @@
  *    `previewMatch(lenderOfferId, borrowerOfferId)` returns
  *    `errorCode == 0` (Ok). Any non-Ok code → NO band, no explanation
  *    strip — a crossed-but-unmatchable book is a normal resting state.
- *  - The governance kill switch gates it: `getMasterFlags().partialFill`
- *    is the runtime gate on `matchOffers`, so flags unknown or OFF →
+ *  - The governance kill switch gates it: `getPartialFillEnabled()` is
+ *    the runtime gate on `matchOffers`, so switch unknown or OFF →
  *    nothing (fail closed for an advisory surface).
  *  - The risk-access gate gates it too (Codex #1145 round-5):
  *    `previewMatchRiskBlock` must read 0 — `_executeMatch` asserts the
@@ -31,7 +31,7 @@ import { Zap } from 'lucide-react';
 import { copy } from '../../content/copy';
 import { useActiveChain } from '../../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../../contracts/diamond';
-import { useMasterFlags } from '../../data/protocol';
+import { usePartialFillEnabled } from '../../data/protocol';
 import { assertWalletNotSanctionedLive } from '../../data/sanctions';
 import { captureTxError } from '../../lib/errors';
 import { flowDisabled } from '../../lib/killSwitch';
@@ -60,7 +60,7 @@ export function MatchBand({
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
-  const flags = useMasterFlags();
+  const partialFill = usePartialFillEnabled();
 
   // Top-of-book pair (on-chain offers only — matchOffers can't cross a
   // signed row; see topOfBookMatchPair). Null when not crossed.
@@ -98,15 +98,15 @@ export function MatchBand({
   const killed = flowDisabled('accept-offer');
 
   // Governance kill switch: partialFill gates matchOffers at runtime.
-  // Unknown flags (loading / read failure) also hide — fail closed.
-  if (flags.data?.partialFill !== true) return null;
+  // Unknown (loading / read failure) also hides — fail closed.
+  if (partialFill.data !== true) return null;
   if (pair === null) return null;
   const p = preview.data;
   // §5.2: ONLY a contract-confirmed Ok preview may render the band.
   if (!p || p.errorCode !== 0) return null;
   // …and only a clear risk gate (0). Loading (`undefined`) and
   // transport failure (`null`) both hide — fail closed while unknown,
-  // consistent with the masterFlags posture above. A missing selector
+  // consistent with the kill-switch posture above. A missing selector
   // on an older Diamond already resolved to 0 inside the hook (fail
   // open — the direct-accept path's posture for a missing
   // `previewOfferAcceptBlock`; the contract still enforces at write
@@ -145,19 +145,19 @@ export function MatchBand({
       // `matchOffers`. Direct reads (never the cached query), one
       // round-trip: the contract's own `previewMatch` verdict plus the
       // risk-gate mirror (`_executeMatch` enforces both — see the
-      // render-time comments), plus the `partialFill` MASTER FLAG
-      // (Codex #1145 round-6 P2): the rendered flag rides
-      // useMasterFlags' 10-min staleTime, and `matchOffers` re-checks
+      // render-time comments), plus the `partialFill` KILL SWITCH
+      // (Codex #1145 round-6 P2): the rendered switch rides
+      // usePartialFillEnabled's 10-min staleTime, and `matchOffers` re-checks
       // `s.protocolCfg.partialFillEnabled` at runtime — reverting
       // `FunctionDisabled(3)` when governance switched it off
       // (OfferMatchFacet.sol:184-188) — while `previewMatch` does NOT
       // mirror that flag (OfferMatchFacet.sol:140-146 delegates to
       // `LibOfferMatch.previewMatch`, which never reads it; only the
       // intent preview does, LibOfferMatch.sol:734), so the preview
-      // recheck alone would wave a doomed write through. Same read
-      // shape as useMasterFlags (`getMasterFlags` tuple, index 2 =
-      // partialFill); an unreadable flag resolves `null` → abort (fail
-      // closed, the render-time posture). Non-Ok / blocked / flag-off /
+      // recheck alone would wave a doomed write through. Same getter as
+      // usePartialFillEnabled's chain read (`getPartialFillEnabled`);
+      // an unreadable switch resolves `null` → abort (fail closed, the
+      // render-time posture). Non-Ok / blocked / flag-off /
       // unreadable all abort BEFORE gas; the invalidations below
       // re-sync the band with what the chain just said (it hides or
       // re-renders on fresh data).
@@ -168,17 +168,15 @@ export function MatchBand({
           publicClient.readContract({
             address: walletChain.diamondAddress,
             abi: DIAMOND_ABI_VIEM,
-            functionName: 'getMasterFlags',
-          }) as Promise<readonly [boolean, boolean, boolean]>
-        )
-          .then((flags) => flags[2])
-          .catch(() => null),
+            functionName: 'getPartialFillEnabled',
+          }) as Promise<boolean>
+        ).catch(() => null),
       ]);
       if (livePartialFill !== true) {
-        // Refetching masterFlags unmounts the band (the render gate
+        // Refetching the switch unmounts the band (the render gate
         // above keys on it) — the honest end state for a kill-switch
         // flip, with its own copy (a "book moved" message would lie).
-        void queryClient.invalidateQueries({ queryKey: ['masterFlags'] });
+        void queryClient.invalidateQueries({ queryKey: ['partialFillEnabled'] });
         throw new Error(text.matchingDisabled);
       }
       if (livePreview === null || livePreview.errorCode !== 0 || liveRisk !== 0) {

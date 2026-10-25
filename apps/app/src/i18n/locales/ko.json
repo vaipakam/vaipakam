@@ -2123,6 +2123,7 @@
       "noGasDiscount": "VPFI 할인은 네트워크 가스를 줄여주지 않습니다.",
       "withdrawWarning": "VPFI를 출금하면 향후 수수료 할인이 낮아질 수 있습니다.",
       "belowMinNote": "{{floor}} VPFI 미만을 보유하면 fee discount가 없습니다.",
+      "tierTableUnknown": "지금은 이 네트워크에서 할인 등급을 읽을 수 없어 여기에는 표시하지 않습니다.",
       "notOnThisChain": "{{chain}}에서는 아직 VPFI deposits를 사용할 수 없습니다. Vaipakam의 나머지는 VPFI 없이 작동합니다.",
       "tokenChanged": "검토하신 이후 VPFI 토큰 구성이 변경되었습니다. 아무것도 승인되지 않았습니다 — 업데이트된 숫자를 확인하고 다시 시도해 주세요.",
       "tokenCheckRetry": "지금 VPFI 토큰을 확인할 수 없었습니다 — 아무것도 승인되지 않았습니다. 잠시 후 다시 시도해 주세요.",
@@ -2836,9 +2837,7 @@
       "autoPause": "자동 일시정지 지속 시간",
       "maxOfferDuration": "오퍼 최대 기간",
       "flagsHeading": "기능 플래그",
-      "rangeAmount": "범위 금액 오퍼",
-      "rangeRate": "범위 금리 오퍼",
-      "partialFill": "부분 체결",
+      "partialFill": "주문 매칭(부분 체결)",
       "tiersHeading": "VPFI 할인 등급",
       "tiers": "등급",
       "tierThreshold": "{{n}}등급 임계값",
@@ -2919,7 +2918,8 @@
       "autoRefinanceHint": "꺼짐은 키퍼와 주문 매처가 재융자를 완료하지 못하게 합니다. 차입자가 자신의 대출을 재융자하거나 대출자가 재융자 요청을 직접 수락하는 것은 여전히 진행됩니다.",
       "autoExtendHint": "꺼짐은 차입자가 직접 요청하는 연장을 포함해 모든 현장 대출 연장을 막습니다.",
       "numeraireFeed": "기준 통화 기준 ETH 가격 피드",
-      "numeraireFeedHint": "기준 통화로 ETH 가격을 매기는 Chainlink 피드입니다. 기준 통화와 함께 바뀝니다."
+      "numeraireFeedHint": "기준 통화로 ETH 가격을 매기는 Chainlink 피드입니다. 기준 통화와 함께 바뀝니다.",
+      "partialFillHint": "꺼져 있으면 주문 매처가 거부하고, 수락된 오퍼는 한 번만 체결됩니다. 켜져 있으면 범위가 있는 오퍼를 여러 번의 매칭에 걸쳐 체결할 수 있습니다. 범위가 있는 오퍼 자체는 항상 사용할 수 있습니다."
     },
     "forcedClose": {
       "title": "이 대출은 연체되었습니다",

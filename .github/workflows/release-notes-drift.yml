@@ -184,6 +184,22 @@ jobs:
       #
       # Blocking, deliberately. #687-A removed that surface for legal
       # reasons, so new text presenting it as live is not a style nit.
+      #
+      # It reads Markdown through micromark and the parse5 tokenizer (#1732,
+      # #1758), which live in `@vaipakam/lib`, so this job installs that one
+      # package's dependencies and nothing else.
+      - name: Install pnpm (excision gate parsers)
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Setup Node.js (excision gate parsers)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install the excision gate's parsers
+        run: pnpm install --frozen-lockfile --filter @vaipakam/lib
+
       - name: Excision residue gate (#687-A VPFI buy surface)
         run: |
           set -euo pipefail

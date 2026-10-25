@@ -130,32 +130,40 @@ across all 5 testnet chains?
 
 ## 5. Cross-chain
 
-> DVN policy compliant per CLAUDE.md (3-required + 2-optional + 1-of-2
-> threshold)? Future migration path?
+> Is the cross-chain layer configured to a reviewed policy before it
+> carries value?
 
-**Pre-committed answer**:
+**Pre-committed answer** (rewritten 2026-10-25, #1728; this section
+described the retired LayerZero layer until then):
 
-- Current cross-chain layer: LayerZero V2 OFT for VPFI, reward mesh,
-  Buy adapter. DVN policy enforced at deploy gate
-  ([`LZConfig.t.sol`](../../contracts/test/LZConfig.t.sol)): 3 required
-  (LayerZero Labs + Google Cloud + Polyhedra/Nethermind) + 2 optional
-  (BWare + Stargate/Horizen), threshold 1-of-2.
-- Rate-limits set on `VPFIBuyAdapter` via
-  `setRateLimits(50_000e18, 500_000e18)` — defaults are
-  `type(uint256).max` (off); admin must set the real values.
-- April 2026 OFT exploit (Kelp / LayerZero) is the precedent: 1-required
-  + 0-optional default would have been the attack vector — Vaipakam's
-  policy rejects that shape at the deploy gate.
+- The cross-chain layer is **Chainlink CCIP** (T-068 migrated it off
+  LayerZero). It carries VPFI as a Cross-Chain Token through the stock
+  `LockReleaseTokenPool` (canonical chain) and `BurnMintTokenPool`
+  (mirror chains), the reward mesh (`VaipakamRewardMessenger`), and the
+  reward-budget and buyback remittance receivers. CCIP's security is
+  operated by Chainlink and is the same for every integrator, so there is
+  no verifier set to choose and no insecure default to reject.
+- There is **no protocol VPFI purchase surface.** The cross-chain
+  fixed-rate buy flow was removed in #687-A
+  ([`VPFISecuritiesFeatureExcision.md`](../DesignsAndPlans/VPFISecuritiesFeatureExcision.md)),
+  so there is nothing to rate-limit or sign off for it.
+- Before any lane routes value: lanes enabled and every `CcipMessenger`
+  registry configured; per-lane rate limits set on every VPFI token pool
+  through `VpfiPoolRateGovernor` (starting values: capacity 50,000 VPFI,
+  refill about 5.8 VPFI/s; the governor refuses to disable a lane's
+  limit); the token-admin registry entry and every cross-chain
+  contract's owner handed to the admin multisig and then the governance
+  timelock.
+- Every cross-chain contract carries a guardian-or-owner pause on both
+  the send and receive paths. A paused inbound message fails in CCIP and
+  can be re-executed once unpaused, so nothing is lost.
 
-**Roadmap**: migration to Chainlink CCIP planned ([`@vaipakam-labs`
-Issue #5](https://github.com/vaipakam/vaipakam/issues/5) — T-068).
-Driven by cross-vendor diversification and CCIP's risk-management-
-network approach. **Not gating for mainnet rollout** — current LZ
-config is hardened. Migration becomes a separate audit cycle.
+Full detail:
+[`LayerZeroToChainlinkCcipMigration.md`](../DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md).
 
-**Committee question to confirm**: do you accept the current LZ-V2
-+ hardened-DVN posture, with a documented CCIP migration roadmap,
-as sufficient for mainnet enablement?
+**Committee question to confirm**: do you accept the CCIP posture
+above, with the rate limits and ownership handover verified per chain
+in the §8 readback, as sufficient for mainnet enablement?
 
 ---
 
@@ -292,7 +300,7 @@ To be filled in by each committee signer once §1-§8 are answered.
 | 2. Parameter sanity | ☐ Accept ☐ Accept-with-override-floor ☐ Reject |
 | 3. Kill-switch readiness | ☐ Accept ☐ Accept-with-emergency-pause-fast-path ☐ Reject |
 | 4. Bot dependencies | ☐ Accept-after-1-bake ☐ Require-N-testnet-bakes ☐ Reject |
-| 5. Cross-chain | ☐ Accept LZ + CCIP roadmap ☐ Require-CCIP-before-mainnet ☐ Reject |
+| 5. Cross-chain | ☐ Accept the CCIP posture ☐ Require changes ☐ Reject |
 | 6. Liquidation economics | ☐ Accept in-kind fallback + claim retry ☐ Reject |
 | 7. Sequencer / oracle outage | ☐ Accept layered fail-closed ☐ Require additional admin lever ☐ Reject |
 | 8. Scope | ☐ Accept protocol-wide ☐ Require per-chain ☐ Reject |

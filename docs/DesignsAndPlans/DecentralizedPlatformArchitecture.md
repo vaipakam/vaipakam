@@ -1,5 +1,11 @@
 # Decentralized Platform Architecture — Industry-Standard, IPFS-Hostable, Serverless-Capable
 
+> **Removed surface (#687-A, noted in #1728).** This is a dated record. What it
+> says about the cross-chain fixed-rate VPFI buy flow (the buy adapter and
+> receiver, the direct ETH sale, and their events, errors and config) describes
+> code that #687-A deleted. There is no protocol VPFI purchase surface. Read
+> those parts as history, not as instructions; see [`VPFISecuritiesFeatureExcision.md`](VPFISecuritiesFeatureExcision.md).
+
 **Status:** Drafted 2026-05-07. Anchor design doc for the
 architecture-optimisation work in the pre-mainnet window. Each
 phase listed here gets its own detailed sub-design as it lands.

@@ -2179,7 +2179,7 @@ phase_verify() {
 
   echo
   echo "[3] Master flag state"
-  echo "  getMasterFlags() = $(cast call "$DIAMOND" 'getMasterFlags()(bool,bool,bool)' --rpc-url "$RPC" 2>/dev/null | tr '\n' ' ' || echo '?')"
+  echo "  getPartialFillEnabled() = $(cast call "$DIAMOND" 'getPartialFillEnabled()(bool)' --rpc-url "$RPC" 2>/dev/null | tr '\n' ' ' || echo '?')"
 
   # CCIP per-lane rate limits live on the VPFI TokenPool and are set
   # through the bounds-checked VpfiPoolRateGovernor — the CLAUDE.md

@@ -5,16 +5,19 @@
  * deploy defaults only while the read is in flight; the `ready` flag
  * lets money-critical surfaces distinguish live from fallback.
  *
- * Bundle tuple indices per apps/defi useProtocolConfig BundleTuple:
- * [0] treasuryFeeBps (yield fee), [1] loanInitiationFeeBps,
- * [14] maxOfferDurationDays (createOffer rejects longer terms).
+ * Every value is read from the configuration bundle BY NAME
+ * (`treasuryFeeBps`, `loanInitiationFeeBps`, `maxOfferDurationDays`), from
+ * the snapshot's labelled values or through the shared bundle reader. They
+ * were read by tuple position until #2812, which took two flags out of the
+ * middle of the bundle and moved `maxOfferDurationDays` from position 14 to
+ * 12.
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import type { PublicClient } from 'viem';
-import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
-import { fetchProtocolConfig, protocolConfigFresh } from './indexer';
+import { fetchFreshConfigValues } from './indexer';
+import { bundleInteger, readConfigBundleLive } from './protocol';
 
 const TREASURY_FEE_BPS_DEFAULT = 200; // 2% of interest (#1352 fee freeze)
 const LIF_BPS_DEFAULT = 20; // 0.2% of principal (#1352 fee freeze)
@@ -47,24 +50,15 @@ export function useProtocolFees(): ProtocolFees {
       // fall back to the live chain read when the snapshot is absent,
       // stale, or the indexer is down. Submit paths never come here —
       // readLiveProtocolFees below stays chain-only (L51–52).
-      const snap = await fetchProtocolConfig(readChain.chainId);
-      if (snap && protocolConfigFresh(snap.updatedAt)) {
-        return {
-          treasuryFeeBps: Number(snap.bundle[0]),
-          loanInitiationFeeBps: Number(snap.bundle[1]),
-          maxOfferDurationDays: Number(snap.bundle[14]),
-        };
+      const snap = await fetchFreshConfigValues(readChain.chainId);
+      if (snap) {
+        try {
+          return feesFrom(snap);
+        } catch {
+          // A snapshot missing one of the three: the chain read below.
+        }
       }
-      const bundle = (await publicClient!.readContract({
-        address: readChain.diamondAddress,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'getProtocolConfigBundle',
-      })) as readonly unknown[];
-      return {
-        treasuryFeeBps: Number(bundle[0] as bigint),
-        loanInitiationFeeBps: Number(bundle[1] as bigint),
-        maxOfferDurationDays: Number(bundle[14] as bigint),
-      };
+      return readLiveProtocolFees(publicClient!, readChain.diamondAddress);
     },
   });
 
@@ -85,14 +79,17 @@ export async function readLiveProtocolFees(
   publicClient: PublicClient,
   diamondAddress: `0x${string}`,
 ): Promise<Pick<ProtocolFees, 'treasuryFeeBps' | 'loanInitiationFeeBps' | 'maxOfferDurationDays'>> {
-  const bundle = (await publicClient.readContract({
-    address: diamondAddress,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'getProtocolConfigBundle',
-  })) as readonly unknown[];
+  return feesFrom(await readConfigBundleLive(publicClient, diamondAddress));
+}
+
+/** The three fee fields from named bundle values; throws when any is absent
+ *  or not an integer, so neither source can substitute a guess. */
+function feesFrom(
+  values: object,
+): Pick<ProtocolFees, 'treasuryFeeBps' | 'loanInitiationFeeBps' | 'maxOfferDurationDays'> {
   return {
-    treasuryFeeBps: Number(bundle[0] as bigint),
-    loanInitiationFeeBps: Number(bundle[1] as bigint),
-    maxOfferDurationDays: Number(bundle[14] as bigint),
+    treasuryFeeBps: bundleInteger(values, 'treasuryFeeBps'),
+    loanInitiationFeeBps: bundleInteger(values, 'loanInitiationFeeBps'),
+    maxOfferDurationDays: bundleInteger(values, 'maxOfferDurationDays'),
   };
 }

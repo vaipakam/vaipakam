@@ -58,7 +58,7 @@ contract PositiveFlowsLenderIntent is PositiveFlowsBase {
     }
 
     function _runScenario(uint256 index) internal override {
-        (, , bool partialFill) = ConfigFacet(diamond).getMasterFlags();
+        bool partialFill = ConfigFacet(diamond).getPartialFillEnabled();
         if (!partialFill) {
             return _skip("partial fills are off (partialFillEnabled=false), so no intent can be filled");
         }

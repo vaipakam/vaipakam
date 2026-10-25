@@ -134,8 +134,9 @@ epic; see below). One doc per functional domain:
 - Position NFTs — offer / loan position NFTs and their metadata
 - VPFI Token, Discounts, Staking & Rewards — fee discounts, staking
   rewards, interaction rewards
-- Cross-Chain — the CCIP messenger, mirror token, buy adapter/receiver,
-  reward messenger
+- Cross-Chain — the CCIP messenger, mirror token, reward messenger and the
+  remittance receivers (the fixed-rate buy adapter/receiver was removed in
+  #687-A)
 - Treasury & Founder Distribution
 - Compliance — sanctions screening (KYC / country-pair gates are dormant
   on the retail deploy — see the project CLAUDE.md)

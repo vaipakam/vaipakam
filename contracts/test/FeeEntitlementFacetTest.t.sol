@@ -203,9 +203,6 @@ contract FeeEntitlementFacetTest is SetupTest {
     function _signedScaffold() internal returns (uint256 borrowerOfferId) {
         _config().setFeeEntitlementEnabled(true);
         vm.startPrank(owner);
-        _config().setRangeAmountEnabled(true);
-        _config().setRangeRateEnabled(true);
-        _config().setRangeCollateralEnabled(true);
         _config().setPartialFillEnabled(true);
         vm.stopPrank();
         vpfiToken.transfer(signedMaker, PARTY_VPFI_STAKE);
@@ -898,9 +895,6 @@ contract FeeEntitlementFacetTest is SetupTest {
     function testMatch_LenderOfferFullIsHonored() public {
         _config().setFeeEntitlementEnabled(true);
         vm.startPrank(owner);
-        _config().setRangeAmountEnabled(true);
-        _config().setRangeRateEnabled(true);
-        _config().setRangeCollateralEnabled(true);
         _config().setPartialFillEnabled(true);
         vm.stopPrank();
         _stakeVpfi(borrower, PARTY_VPFI_STAKE);
@@ -963,9 +957,6 @@ contract FeeEntitlementFacetTest is SetupTest {
     function testMatch_LenderWithoutFullStaysUncharged() public {
         _config().setFeeEntitlementEnabled(true);
         vm.startPrank(owner);
-        _config().setRangeAmountEnabled(true);
-        _config().setRangeRateEnabled(true);
-        _config().setRangeCollateralEnabled(true);
         _config().setPartialFillEnabled(true);
         vm.stopPrank();
         _stakeVpfi(borrower, PARTY_VPFI_STAKE);
@@ -1021,9 +1012,6 @@ contract FeeEntitlementFacetTest is SetupTest {
     function testMatch_LenderStrictFullRevertsWhileFeatureIsOff() public {
         // Deliberately NOT enabling fee entitlement — that is the point.
         vm.startPrank(owner);
-        _config().setRangeAmountEnabled(true);
-        _config().setRangeRateEnabled(true);
-        _config().setRangeCollateralEnabled(true);
         _config().setPartialFillEnabled(true);
         vm.stopPrank();
         _stakeVpfi(borrower, PARTY_VPFI_STAKE);
@@ -1049,9 +1037,6 @@ contract FeeEntitlementFacetTest is SetupTest {
     /// satisfied by simply failing every matched fill while the switch is off.
     function testMatch_LenderFullWithDowngradeOpensWhileFeatureIsOff() public {
         vm.startPrank(owner);
-        _config().setRangeAmountEnabled(true);
-        _config().setRangeRateEnabled(true);
-        _config().setRangeCollateralEnabled(true);
         _config().setPartialFillEnabled(true);
         vm.stopPrank();
         _stakeVpfi(borrower, PARTY_VPFI_STAKE);
@@ -1097,9 +1082,6 @@ contract FeeEntitlementFacetTest is SetupTest {
     function testMatch_CarriedLenderAuthDoesNotLeakIntoALaterAccept() public {
         _config().setFeeEntitlementEnabled(true);
         vm.startPrank(owner);
-        _config().setRangeAmountEnabled(true);
-        _config().setRangeRateEnabled(true);
-        _config().setRangeCollateralEnabled(true);
         _config().setPartialFillEnabled(true);
         vm.stopPrank();
         _stakeVpfi(borrower, PARTY_VPFI_STAKE);

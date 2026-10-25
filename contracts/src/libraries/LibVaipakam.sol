@@ -1205,23 +1205,25 @@ library LibVaipakam {
         // formula's accuracy. Stored as uint16 so the slot stays
         // packed; the runtime read returns uint256 via `cfgMaxOfferDurationDays`.
         uint16 maxOfferDurationDays; // 0 ⇒ MAX_OFFER_DURATION_DAYS_DEFAULT (365)
-        // ── Range Orders Phase 1 master kill-switch flags ─────────────
-        // All default `false` on a fresh deploy. Flipped on by governance
-        // via `ConfigFacet.setRangeAmountEnabled` / `setRangeRateEnabled`
-        // / `setPartialFillEnabled` after the testnet bake. While off,
-        // `OfferFacet.createOffer` enforces the legacy single-value
-        // shape — see docs/RangeOffersDesign.md §15.
-        bool rangeAmountEnabled;
-        bool rangeRateEnabled;
+        // RETIRED (#2812, owner decision 2026-10-25): the range master
+        // flags. Ranged offers are always on (every Phase 2 offer is
+        // canonically a range), so nothing has read these since the
+        // create-time kill-switches were removed, and nothing writes them
+        // any more: their setters and getters are gone. The slots keep
+        // their positions so the struct's layout is unchanged.
+        bool retiredRangeAmountEnabled;
+        bool retiredRangeRateEnabled;
+        // The matching kill-switch, default `false`, set via
+        // `ConfigFacet.setPartialFillEnabled`. While off, the order
+        // matchers (`matchOffers`, `matchIntent`) refuse and an accepted
+        // offer is single-fill; while on, a ranged offer can be filled
+        // across several matches.
         bool partialFillEnabled;
-        // Phase 1 follow-up (Issue #164) — borrower-side collateral
-        // range. Mirrors the lender-side amount range: when off (the
-        // default), every offer must have `collateralAmountMax ==
-        // collateralAmount` (single-value), so today's behaviour is
-        // unchanged. Flipped on by governance via
-        // `ConfigFacet.setRangeCollateralEnabled` once the contract
-        // halves of #164 have baked on testnet.
-        bool rangeCollateralEnabled;
+        // RETIRED (#2812): the borrower-side collateral range flag
+        // (Issue #164), dead for the same reason as the two above: a
+        // borrower offer's collateral is canonically ranged, nothing reads
+        // it and nothing writes it. Position kept.
+        bool retiredRangeCollateralEnabled;
         // ── VPFI discount tier thresholds (18-dec VPFI; 0 ⇒ default) ──
         uint256 vpfiTier1Min; // 0 ⇒ VPFI_TIER1_MIN (100e18)
         uint256 vpfiTier2Min; // 0 ⇒ VPFI_TIER2_MIN (1_000e18)
@@ -1438,7 +1440,7 @@ library LibVaipakam {
         // a fresh deploy (per-user consent flags + the feature
         // setters still work, but the actual auto-paths revert).
         // Admin flips to `true` post-deploy after the testnet bake.
-        // Mirrors the `rangeAmountEnabled` / `partialFillEnabled` /
+        // Mirrors the `partialFillEnabled` /
         // `cfgKeeperRewardEnabled` pattern: feature ships off,
         // governance turns on, governance can break-glass off
         // again if a bug surfaces. Setters live on `ConfigFacet`
@@ -1670,9 +1672,8 @@ library LibVaipakam {
         //    fields above (= the min). Auto-collapsed to single-value
         //    semantics when left at 0 — preserves backward compat with
         //    every existing test / script that builds CreateOfferParams.
-        //    Range mode requires the corresponding master flag
-        //    (`rangeAmountEnabled` / `rangeRateEnabled`) to be true on
-        //    the protocol config; see §15 of the design doc.
+        //    Ranges need no protocol flag: ranged offers are always on
+        //    (the range master flags were retired in #2812).
         uint256 amountMax;
         uint256 interestRateBpsMax;
         // ── Issue #164 — borrower-side collateral range (mirrors

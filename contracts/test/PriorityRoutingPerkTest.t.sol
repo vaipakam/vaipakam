@@ -83,9 +83,6 @@ contract PriorityRoutingPerkTest is SetupTest {
         // The intent fill path: both master gates on (they are also two of the
         // perk's three deliverability conditions).
         vm.startPrank(owner);
-        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
-        ConfigFacet(address(diamond)).setRangeRateEnabled(true);
-        ConfigFacet(address(diamond)).setRangeCollateralEnabled(true);
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         LenderIntentFacet(address(diamond)).setLenderIntentEnabled(true);
         vm.stopPrank();

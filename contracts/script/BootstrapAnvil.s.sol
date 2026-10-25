@@ -57,40 +57,16 @@ contract BootstrapAnvil is Script {
 
         vm.startBroadcast(adminKey);
         ConfigFacet cfg = ConfigFacet(diamond);
-        cfg.setRangeAmountEnabled(true);
-        cfg.setRangeRateEnabled(true);
+        // Ranged offers need no flag: they are always on (#2812). The
+        // matcher is the one switch.
         cfg.setPartialFillEnabled(true);
         vm.stopBroadcast();
 
-        // Verify with a single bundle read so the script can't return
-        // success on a silently-failed setter.
-        // #687-B: getProtocolConfigBundle dropped vpfiStakingAprBps, so the
-        // leading skip group is one shorter (tFee..disc = 9 fields).
-        (
-            ,
-            ,
-            ,
-            ,
-            ,
-            ,
-            ,
-            ,
-            ,
-            bool rangeAmount,
-            bool rangeRate,
-            bool partialFill,
-            // matcher BPS + auto-pause duration + max-offer-duration
-            // fields — destructure but don't assert here; they're
-            // tested separately in ConfigFacetTest.
-            ,
-            ,
-        ) = cfg.getProtocolConfigBundle();
-        require(
-            rangeAmount && rangeRate && partialFill,
-            "BootstrapAnvil: one or more master flags failed to flip on"
-        );
+        // Read it back so the script can't return success on a
+        // silently-failed setter.
+        require(cfg.getPartialFillEnabled(), "BootstrapAnvil: partial-fill failed to flip on");
 
-        console.log("Master flags ON: rangeAmount, rangeRate, partialFill");
+        console.log("Matcher ON (partial-fill); ranged offers are always on");
         console.log("Anvil playground ready. Next: forge script SeedAnvilOffers.s.sol");
     }
 }

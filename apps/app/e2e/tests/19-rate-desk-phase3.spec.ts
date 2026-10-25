@@ -118,16 +118,16 @@ async function previewMatch(
   })) as { errorCode: number; matchAmount: bigint; matchRateBps: bigint };
 }
 
-/** The band renders only under `getMasterFlags().partialFill` — the
+/** The band renders only under `getPartialFillEnabled()` — the
  *  governance kill switch DeployDiamond flips ON everywhere (§5.2).
- *  Asserted as a named precondition so a flags regression on the fork
+ *  Asserted as a named precondition so a switch regression on the fork
  *  fails diagnosably instead of as a silent missing band. */
 async function assertPartialFillFlagOn(): Promise<void> {
-  const [, , partialFill] = (await pub.readContract({
+  const partialFill = (await pub.readContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
-    functionName: 'getMasterFlags',
-  })) as readonly [boolean, boolean, boolean];
+    functionName: 'getPartialFillEnabled',
+  })) as boolean;
   expect(partialFill, 'partialFill master flag expected ON (deploy default)').toBe(
     true,
   );

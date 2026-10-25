@@ -2123,6 +2123,7 @@
       "noGasDiscount": "Tu descuento VPFI no reduce el gas de red.",
       "withdrawWarning": "Retirar VPFI puede reducir descuentos de comisiones futuros.",
       "belowMinNote": "Mantener menos de {{floor}} VPFI no otorga descuento de comisiones.",
+      "tierTableUnknown": "Los niveles de descuento no se pueden leer desde esta red en este momento, así que aquí no se muestra ninguno.",
       "notOnThisChain": "Los depósitos VPFI aún no están disponibles en {{chain}}. Todo lo demás en Vaipakam funciona sin VPFI.",
       "tokenChanged": "La configuración del token VPFI cambió desde que revisaste. No se aprobó nada — revisa los números actualizados e inténtalo de nuevo.",
       "tokenCheckRetry": "No pudimos confirmar el token VPFI ahora mismo — no se aprobó nada. Inténtalo de nuevo en un momento.",
@@ -2836,9 +2837,7 @@
       "autoPause": "Duración de la pausa automática",
       "maxOfferDuration": "Duración máxima de oferta",
       "flagsHeading": "Indicadores de función",
-      "rangeAmount": "Ofertas de importe por rango",
-      "rangeRate": "Ofertas de tipo por rango",
-      "partialFill": "Ejecución parcial",
+      "partialFill": "Emparejamiento de órdenes (ejecución parcial)",
       "tiersHeading": "Niveles de descuento VPFI",
       "tiers": "Niveles",
       "tierThreshold": "Umbral del nivel {{n}}",
@@ -2919,7 +2918,8 @@
       "autoRefinanceHint": "Desactivado impide que los keepers y el emparejador de órdenes completen refinanciaciones. Un prestatario que refinancia su propio préstamo, o un prestamista que acepta directamente una solicitud de refinanciación, sigue adelante.",
       "autoExtendHint": "Desactivado bloquea toda extensión de préstamo en el sitio, incluida la que pide directamente el prestatario.",
       "numeraireFeed": "Feed de precio de ETH en la moneda de referencia",
-      "numeraireFeedHint": "El feed de Chainlink que cotiza ETH en la moneda de referencia. Cambia junto con la moneda de referencia."
+      "numeraireFeedHint": "El feed de Chainlink que cotiza ETH en la moneda de referencia. Cambia junto con la moneda de referencia.",
+      "partialFillHint": "Si está desactivado, los emparejadores de órdenes lo rechazan y una oferta aceptada se ejecuta una sola vez. Si está activado, una oferta con rango puede ejecutarse en varios emparejamientos. Las ofertas con rango están siempre disponibles."
     },
     "forcedClose": {
       "title": "Este préstamo está vencido",

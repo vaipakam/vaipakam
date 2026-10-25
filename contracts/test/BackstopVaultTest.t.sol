@@ -124,9 +124,6 @@ contract BackstopVaultTest is SetupTest {
         vm.warp(base);
 
         vm.startPrank(owner);
-        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
-        ConfigFacet(address(diamond)).setRangeRateEnabled(true);
-        ConfigFacet(address(diamond)).setRangeCollateralEnabled(true);
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         LenderIntentFacet(address(diamond)).setLenderIntentEnabled(true);
 
