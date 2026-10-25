@@ -26,6 +26,7 @@ import {
     TokenAdminRegistryStub
 } from "../mocks/GovernanceHarnesses.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {ZeroExAggregatorAdapter} from "../../src/adapters/ZeroExAggregatorAdapter.sol";
 
 /// @dev Exposes the real handover body with an in-memory config, so the test
 ///      runs exactly what `--phase handover` runs without touching the
@@ -79,6 +80,9 @@ contract HandoverGateTest is Test {
     ///      reads its `guardian()`, which a stub would only imitate.
     VPFIToken internal vpfiToken;
     TokenAdminRegistryStub internal cctRegistry;
+    /// @dev A registered swap adapter: a FOUND target (#2743), owned by the
+    ///      Diamond's owner as `DeploySwapAdapters` builds it.
+    ZeroExAggregatorAdapter internal swapAdapter;
 
     HandoverGate internal gate;
 
@@ -93,6 +97,7 @@ contract HandoverGateTest is Test {
         bool skipPoolAccept; // the Timelock never accepts the CCIP pool
         bool skipCctAccept; // the Timelock never accepts the CCT administrator
         bool noWatcher; // WATCHER_ADDRESS = 0: role deliberately left unheld
+        bool adapterOnDeployer; // the swap adapter was deployed owned by the deployer key (#2743)
     }
 
     function setUp() public {
@@ -189,6 +194,55 @@ contract HandoverGateTest is Test {
         (string[] memory failures,) = _evaluate(_build(t));
         _assertContains(failures, "ccipMessenger: owner() is");
         _assertContains(failures, "ccipMessenger: a transfer to");
+    }
+
+    /// @notice #2743: a swap adapter left on the deployer key survives the
+    ///         handover (the admin cannot move it) and the gate names it.
+    ///         With it on the admin key, the handover moves it and the
+    ///         correct-handover case above passes.
+    function test_SwapAdapterOnDeployerKey_Fails() public {
+        Twist memory t = _none();
+        t.adapterOnDeployer = true;
+        (string[] memory failures,) = _evaluate(_build(t));
+        _assertMentions(failures, "getSwapAdapters()[0]: owner() is", deployer);
+    }
+
+    function test_SwapAdapterMovesWithTheHandover() public {
+        (string[] memory failures,) = _evaluate(_build(_none()));
+        _assertNoFailures(failures);
+        assertEq(swapAdapter.owner(), address(timelock));
+    }
+
+    /// @notice On a production chain the handover refuses, before the admin
+    ///         gives anything up, an owned contract the admin cannot move.
+    function test_Handover_RefusesAnUnmovableTargetOnProduction() public {
+        vm.chainId(8453);
+        address[] memory settlers = new address[](1);
+        settlers[0] = makeAddr("settler");
+        swapAdapter = new ZeroExAggregatorAdapter(deployer, makeAddr("allowanceHolder"), settlers);
+        Handover.Config memory c;
+        c.adminKey = ADMIN_KEY;
+        c.admin = admin;
+        c.governanceSafe = governanceSafe;
+        c.pauserSafe = pauserSafe;
+        c.diamond = makeAddr("diamond");
+        c.timelock = makeAddr("timelock");
+        c.botHolders = new address[](3);
+        c.targets = new HandoverPlan.Target[](1);
+        c.targets[0] = HandoverPlan.Target(
+            "getSwapAdapters()[0]", address(swapAdapter), HandoverPlan.OwnableKind.OpenZeppelin, false, false
+        );
+        HandoverProbe probe = new HandoverProbe();
+        vm.expectRevert(
+            bytes(
+                string.concat(
+                    "getSwapAdapters()[0] is owned by ",
+                    vm.toString(deployer),
+                    ", not ADMIN_ADDRESS or the Timelock - move it to ADMIN_ADDRESS before the handover"
+                )
+            )
+        );
+        probe.exec(c);
     }
 
     /// @notice CHAINLINK's two-step shape hides its pending owner; the gate
@@ -438,6 +492,10 @@ contract HandoverGateTest is Test {
                 )
             )
         );
+        address[] memory settlers = new address[](1);
+        settlers[0] = makeAddr("settler");
+        swapAdapter =
+            new ZeroExAggregatorAdapter(t.adapterOnDeployer ? deployer : admin, makeAddr("allowanceHolder"), settlers);
         cctRegistry = new TokenAdminRegistryStub();
         cctRegistry.seed(address(vpfiToken), admin);
         cctRegistry.setPool(address(vpfiToken), address(tokenPool));
@@ -472,6 +530,7 @@ contract HandoverGateTest is Test {
         _accept(address(rateGovernor), abi.encodeWithSignature("acceptOwnership()"));
         if (!t.skipPoolAccept) _accept(address(tokenPool), abi.encodeWithSignature("acceptOwnership()"));
         _accept(address(vpfiToken), abi.encodeWithSignature("acceptOwnership()"));
+        if (!t.adapterOnDeployer) _accept(address(swapAdapter), abi.encodeWithSignature("acceptOwnership()"));
         if (!t.skipCctAccept) {
             _accept(address(cctRegistry), abi.encodeWithSignature("acceptAdminRole(address)", address(vpfiToken)));
         }
@@ -492,13 +551,17 @@ contract HandoverGateTest is Test {
     }
 
     function _targets() internal view returns (HandoverPlan.Target[] memory t) {
-        t = new HandoverPlan.Target[](4);
+        t = new HandoverPlan.Target[](5);
         t[0] = HandoverPlan.Target("ccipMessenger", address(messenger), HandoverPlan.OwnableKind.OpenZeppelin, true, true);
         t[1] = HandoverPlan.Target("vpfiTokenPool", address(tokenPool), HandoverPlan.OwnableKind.Chainlink, true, false);
         t[2] = HandoverPlan.Target(
             "vpfiPoolRateGovernor", address(rateGovernor), HandoverPlan.OwnableKind.OpenZeppelin, true, false
         );
         t[3] = HandoverPlan.Target("vpfiToken", address(vpfiToken), HandoverPlan.OwnableKind.OpenZeppelin, true, true);
+        // As `HandoverPlan.targets` finds it through `getSwapAdapters()`.
+        t[4] = HandoverPlan.Target(
+            "getSwapAdapters()[0]", address(swapAdapter), HandoverPlan.OwnableKind.OpenZeppelin, false, false
+        );
     }
 
     function _accept(address target, bytes memory data) internal {
