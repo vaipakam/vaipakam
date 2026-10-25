@@ -66,27 +66,68 @@ import {Deployments} from "./lib/Deployments.sol";
 contract DeployTimelock is Script {
     uint256 internal constant DEFAULT_MIN_DELAY = 48 hours;
 
+    /// @notice Everything the deploy decides from, as plain values.
+    /// @dev    `run()` fills it from the environment; tests build it directly
+    ///         and call `runWith`, so no test reads or writes the process
+    ///         environment. `vm.setEnv` writes one environment shared by
+    ///         every test thread, and forge runs tests in parallel, so a
+    ///         test that set these as env vars could read another test's
+    ///         values (#2716; the `DeployDiamond.runWith` precedent is #72).
+    /// @param deployerKey Broadcasting key (`DEPLOYER_PRIVATE_KEY`).
+    /// @param minDelay    Timelock minimum delay in seconds (`TIMELOCK_MIN_DELAY`, default 48h).
+    /// @param proposer    The Governance Safe (`TIMELOCK_PROPOSER`).
+    /// @param executor    Executor, or zero for "anyone may execute" (`TIMELOCK_EXECUTOR`).
+    /// @param canceller   The Pauser Safe, the independent canceller (`PAUSER_ADDRESS`).
+    /// @param revoker     `EMERGENCY_REVOKER_ADDRESS`, or zero when unset; when
+    ///                    set it must name the same Safe as `proposer`.
+    struct Config {
+        uint256 deployerKey;
+        uint256 minDelay;
+        address proposer;
+        address executor;
+        address canceller;
+        address revoker;
+    }
+
     function run() external returns (address timelock) {
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        uint256 minDelay = vm.envOr("TIMELOCK_MIN_DELAY", DEFAULT_MIN_DELAY);
-        address proposer = vm.envAddress("TIMELOCK_PROPOSER");
-        address executor = vm.envOr("TIMELOCK_EXECUTOR", address(0));
-        // The canceller IS the Pauser Safe — read from the same variable
-        // `Handover.s.sol` grants PAUSER_ROLE from, never from a separate
-        // one (Codex #2642 r1).
-        address canceller = vm.envOr("PAUSER_ADDRESS", address(0));
+        return runWith(configFromEnv());
+    }
+
+    /// @notice Reads the deploy inputs from the environment.
+    /// @dev    The retired `TIMELOCK_CANCELLER` is refused here, because it
+    ///         is a property of the environment, not of the deploy: the
+    ///         canceller is only ever `PAUSER_ADDRESS`.
+    function configFromEnv() public view returns (Config memory c) {
         require(
             vm.envOr("TIMELOCK_CANCELLER", address(0)) == address(0),
             "DeployTimelock: TIMELOCK_CANCELLER is retired - the canceller is PAUSER_ADDRESS; unset it"
         );
+        c.deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        c.minDelay = vm.envOr("TIMELOCK_MIN_DELAY", DEFAULT_MIN_DELAY);
+        c.proposer = vm.envAddress("TIMELOCK_PROPOSER");
+        c.executor = vm.envOr("TIMELOCK_EXECUTOR", address(0));
+        // The canceller IS the Pauser Safe — read from the same variable
+        // `Handover.s.sol` grants PAUSER_ROLE from, never from a separate
+        // one (Codex #2642 r1).
+        c.canceller = vm.envOr("PAUSER_ADDRESS", address(0));
+        c.revoker = vm.envOr("EMERGENCY_REVOKER_ADDRESS", address(0));
+    }
+
+    /// @notice Checks `c` and deploys the Timelock. Every refusal happens
+    ///         before anything is broadcast.
+    function runWith(Config memory c) public returns (address timelock) {
+        uint256 deployerKey = c.deployerKey;
+        uint256 minDelay = c.minDelay;
+        address proposer = c.proposer;
+        address executor = c.executor;
+        address canceller = c.canceller;
 
         require(proposer != address(0), "DeployTimelock: proposer required");
         // The proposer is the Governance Safe, which Handover also names as
         // EMERGENCY_REVOKER_ADDRESS and refuses unless it holds PROPOSER_ROLE
         // here. Catch a mismatch now rather than at handover.
-        address revoker = vm.envOr("EMERGENCY_REVOKER_ADDRESS", address(0));
         require(
-            revoker == address(0) || revoker == proposer,
+            c.revoker == address(0) || c.revoker == proposer,
             "DeployTimelock: TIMELOCK_PROPOSER must equal EMERGENCY_REVOKER_ADDRESS (one Governance Safe)"
         );
         require(minDelay >= 1 hours, "DeployTimelock: min delay < 1h");
