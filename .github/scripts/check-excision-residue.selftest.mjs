@@ -995,6 +995,24 @@ const FIXTURES = [
     body: 'prefix<textarea>buy*Options*</textarea>suffix\n',
   },
   {
+    name: 'inline-textarea-across-paragraphs.md',
+    caught: false,
+    why: 'a textarea an inline tag opens stays open past blank lines until its end tag, so the paragraphs inside are RCDATA, not emphasis',
+    body: 'prefix<textarea>start\n\nbuy*Options*\n\n</textarea>suffix\n',
+  },
+  {
+    name: 'inline-script-across-paragraphs.md',
+    caught: false,
+    why: 'a script an inline tag opens stays open past blank lines, so a reference after one is not decoded',
+    body: 'prefix<script>start\n\nbuy&ThickSpace;adapter\n\n</script>suffix\n',
+  },
+  {
+    name: 'footnote-reference-between-words.md',
+    caught: false,
+    why: 'a footnote reference renders a visible marker, so the words on either side are not one name',
+    body: 'buy[^note]Options\n\n[^note]: separate note\n',
+  },
+  {
     name: 'html-prototype-tag.md',
     caught: false,
     why: 'a tag named after an Object property is an ordinary tag, not a tokenizer mode',

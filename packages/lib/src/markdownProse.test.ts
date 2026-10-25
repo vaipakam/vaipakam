@@ -113,14 +113,26 @@ describe('readProse — segments', () => {
   });
 
   it('reads an inline textarea as RCDATA, not as Markdown', () => {
-    expect(texts('prefix<textarea>buy*Options*</textarea>suffix\n', 'prose')).toEqual(['prefixbuy*Options*suffix']);
-    expect(texts('a<textarea>x&amp;y</textarea>b\n', 'prose')).toEqual(['ax&yb']);
+    expect(texts('prefix<textarea>buy*Options*</textarea>suffix\n', 'prose')).toEqual(['buy*Options*', 'prefixsuffix']);
+    expect(texts('a<textarea>x&amp;y</textarea>b\n', 'prose')).toEqual(['x&y', 'ab']);
+  });
+
+  it('keeps a raw-text element open across paragraphs until its end tag', () => {
+    const source = 'prefix<textarea>start\n\nbuy*Options*\n\n</textarea>suffix\n';
+    expect(texts(source, 'prose')).toEqual(['start\n\nbuy*Options*\n\n', 'prefix', 'suffix']);
+    const script = 'a<script>x\n\n# not a heading &ThickSpace;\n\n</script>b\n';
+    expect(texts(script, 'literal')).toEqual(['x\n\n# not a heading &ThickSpace;\n\n']);
+    expect(md(script).headingChain(script.length)).toEqual([]);
+  });
+
+  it('ends a phrase at a footnote reference, which renders as a visible marker', () => {
+    expect(texts('buy[^note]Options\n\n[^note]: separate note\n', 'prose')).toEqual(['buy', 'Options', 'separate note']);
   });
 
   it('reads an inline script as its raw source, not as Markdown', () => {
     expect(texts('a<script>b&ThickSpace;c *d*</script>e\n', 'literal')).toEqual(['b&ThickSpace;c *d*']);
     expect(texts('a<script>b&ThickSpace;c *d*</script>e\n', 'prose')).toEqual(['ae']);
-    expect(texts('a<script>left *open\n', 'literal')).toEqual(['left *open']);
+    expect(texts('a<script>left *open\n', 'literal')).toEqual(['left *open\n']);
   });
 
   it('keeps unrendered script text out of the prose, inline or in a block', () => {

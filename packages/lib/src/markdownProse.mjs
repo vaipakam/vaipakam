@@ -286,11 +286,9 @@ export function alignOffsets(value, source, from, to, { references = 'markdown',
  * they arrive.
  */
 class BlockSink {
-  constructor(unit, segments, source, leafEnd) {
+  constructor(unit, segments) {
     this.unit = unit;
     this.segments = segments;
-    this.source = source;
-    this.leafEnd = leafEnd;
     this.text = '';
     this.map = [];
     // Open elements whose text is never shown (see HIDDEN_TEXT). Kept on the
@@ -299,14 +297,6 @@ class BlockSink {
     // text `note` arrives BETWEEN two fragments, and is still inside the
     // script for a browser.
     this.hidden = [];
-    // Inside a paragraph, a raw-text element (see RAW_TEXT_MODES) that an
-    // inline tag opened and has not closed: its name, where its content
-    // began (the end of the opening tag) and where it ends (the start of its
-    // closing tag, or the end of the paragraph). Its content is read by the
-    // HTML tokenizer in that element's mode, not as the Markdown nodes
-    // micromark made of it: a script's or a textarea's text is not emphasis,
-    // and `&ThickSpace;` in a script is not a space.
-    this.raw = null;
   }
 
   /** Text a reader would see unless an open hidden element holds it. */
@@ -341,7 +331,8 @@ class BlockSink {
  * given, is a raw-text element `html` starts inside of (its opening tag was
  * an earlier fragment): the tokenizer starts in that element's mode.
  *
- * Returns the raw-text element still open at the end of `html`, or null.
+ * Returns `left`, the raw-text element still open at the end of `html` (or
+ * null), and `closed`, whether the `startIn` element's end tag was reached.
  */
 function readHtml(html, toFile, sink, startIn = null) {
   // Character tokens arrive in small pieces (the tokenizer splits on
@@ -356,6 +347,7 @@ function readHtml(html, toFile, sink, startIn = null) {
   let rawUndecoded = false;
   // The raw-text element the tokenizer is inside of, or null.
   let rawTag = null;
+  let closed = false;
   const enterRaw = (tag, tokenizer) => {
     const mode = RAW_TEXT_MODES.get(tag);
     tokenizer.state = mode;
@@ -425,6 +417,9 @@ function readHtml(html, toFile, sink, startIn = null) {
       onEndTag(t) {
         flush();
         rawUndecoded = false;
+        // Inside raw text the tokenizer emits only the element's own end
+        // tag, so an end tag met there is the one that closes it.
+        if (startIn && rawTag === startIn) closed = true;
         rawTag = null;
         interior([[t.tagName, t.location.startOffset, t.location.endOffset, true, 'none']]);
         if (BLOCK_TAGS.has(t.tagName)) sink.breakProse();
@@ -452,17 +447,72 @@ function readHtml(html, toFile, sink, startIn = null) {
       },
     },
   );
-  if (startIn) enterRaw(startIn, tokenizer);
+  if (startIn) {
+    enterRaw(startIn, tokenizer);
+    if (HIDDEN_TEXT.has(startIn)) hidden.push(startIn);
+  }
   tokenizer.write(html, true);
-  return rawTag;
+  return { left: rawTag, closed };
+}
+
+/**
+ * Read a Markdown document. See the module header for what comes back.
+ */
+/** A sink that keeps nothing, for asking the tokenizer a question. */
+const probeSink = () => ({ hidden: [], prose() {}, emit() {}, breakProse() {} });
+
+/**
+ * RAW-TEXT REGIONS: where a raw-text element (see RAW_TEXT_MODES) that an
+ * html node opens without closing is still open, in the rendered page.
+ *
+ * Markdown renders everything else as text or escaped markup, so only an
+ * html node, inline or block, can close the element, and it closes it where
+ * the HTML tokenizer, started in the element's mode, meets its end tag. The
+ * element can outlast its paragraph: in
+ * `prefix<textarea>start` / blank line / `buy*Options*` / blank line /
+ * `</textarea>suffix` the middle paragraph is textarea content to a browser,
+ * not emphasis. So the html nodes are walked in document order and each is
+ * asked, of the same tokenizer the reader uses, whether it leaves such an
+ * element open. A region runs from the end of the node that opened it to the
+ * start of the node that closes it, or to the end of the document.
+ *
+ * Returns the regions, by the offset their opener ends at and by the offset
+ * their closer starts at.
+ */
+function rawTextRegions(tree) {
+  const nodes = [];
+  const visit = (node) => {
+    if (node.type === 'html') nodes.push(node);
+    if (node.children) node.children.forEach(visit);
+  };
+  visit(tree);
+  const list = [];
+  const openers = new Map();
+  const closers = new Map();
+  let open = null;
+  for (const node of nodes) {
+    const [s, e] = span(node);
+    if (open && s < open.from) continue;
+    const startIn = open ? open.tag : null;
+    const { left, closed } = readHtml(node.value, () => 0, probeSink(), startIn);
+    if (open && !closed) continue;
+    if (open) {
+      open.to = s;
+      closers.set(s, open.tag);
+      open = null;
+    }
+    if (left) {
+      open = { tag: left, from: e, to: Infinity };
+      list.push(open);
+      openers.set(e, open);
+    }
+  }
+  return { list, openers, closers };
 }
 
 /** The source span of an mdast node. */
 const span = (node) => [node.position.start.offset, node.position.end.offset];
 
-/**
- * Read a Markdown document. See the module header for what comes back.
- */
 function readMarkdown(source) {
   const tree = fromMarkdown(source, {
     extensions: [gfm()],
@@ -474,31 +524,40 @@ function readMarkdown(source) {
   /** A value read from `node`'s source span, as file offsets. */
   const aligned = (value, from, to, opts) => alignOffsets(value, source, from, to, opts);
 
+  const regions = rawTextRegions(tree);
+  /** The raw-text region `offset` is inside of, or undefined. */
+  const insideRaw = (offset) => regions.list.find((r) => r.from <= offset && offset < r.to);
+
   /**
-   * Read the content of the raw-text element an inline tag left open, once
-   * the walk has passed it: the source from the end of the opening tag to
-   * the start of the closing one, through the HTML tokenizer started in that
-   * element's mode. The closing tag is its own html node, read as usual.
+   * Read an html node (block or inline) into `sink`: started inside the
+   * raw-text element it closes, if it closes one; and if it opens one, the
+   * element's content after it is read too, as its own segments under the
+   * same unit. The opener's sink does not stay inside the element: the
+   * Markdown that follows the closing tag is outside it.
    */
-  const flushRaw = (sink) => {
-    const { raw } = sink;
-    if (!raw) return;
-    sink.raw = null;
-    readHtml(source.slice(raw.from, raw.to), (k) => raw.from + k, sink, raw.tag);
+  const html = (node, sink) => {
+    const [s, e] = span(node);
+    const local = aligned(node.value, s, e, { references: 'none' });
+    readHtml(node.value, (k) => local[Math.min(k, local.length - 1)] ?? s, sink, regions.closers.get(s) ?? null);
+    const region = regions.openers.get(e);
+    if (!region) return;
+    const at = sink.hidden.lastIndexOf(region.tag);
+    if (at !== -1) sink.hidden.length = at;
+    const inner = new BlockSink(sink.unit, segments);
+    readHtml(source.slice(region.from, region.to), (k) => region.from + k, inner, region.tag);
+    inner.close();
   };
 
   const phrasing = (node, sink) => {
-    // Inside a raw-text element an inline tag opened, every node micromark
-    // made of its content is skipped; the content is read as HTML when the
-    // walk reaches the closing tag. A node that runs past where the element
-    // closes (the closing tag inside a code span) takes the raw read with it.
-    if (sink.raw) {
-      const [s, e] = span(node);
-      if (s < sink.raw.to) {
-        sink.raw.to = Math.max(sink.raw.to, e);
-        return;
-      }
-      flushRaw(sink);
+    // Inside a raw-text element, every node micromark made of its content
+    // is skipped: the content was read as HTML at the opening tag. A node
+    // that starts inside and runs past the closing tag (`*a</textarea>b*`)
+    // is entered, for the part after.
+    const [s, e] = span(node);
+    const region = insideRaw(s);
+    if (region) {
+      if (node.children && e > region.to) for (const child of node.children) phrasing(child, sink);
+      return;
     }
     switch (node.type) {
       case 'text': {
@@ -514,20 +573,9 @@ function readMarkdown(source) {
       case 'break':
         sink.prose('\n', [node.position.start.offset]);
         return;
-      case 'html': {
-        const [s, e] = span(node);
-        const local = aligned(node.value, s, e, { references: 'none' });
-        const tag = readHtml(node.value, (k) => local[Math.min(k, local.length - 1)] ?? s, sink);
-        if (tag) {
-          // Where the HTML tokenizer would end the element: `</tag` followed
-          // by whitespace, `/` or `>`, without regard to case.
-          const close = new RegExp(`</${tag}(?=[\\t\\n\\f\\r />])`, 'i');
-          const rest = source.slice(e, sink.leafEnd);
-          const at = rest.search(close);
-          sink.raw = { tag, from: e, to: at === -1 ? sink.leafEnd : e + at };
-        }
+      case 'html':
+        html(node, sink);
         return;
-      }
       case 'image':
       case 'imageReference': {
         const [s, e] = span(node);
@@ -547,11 +595,14 @@ function readMarkdown(source) {
         destination(node, last ? last.position.end.offset : s, e, sink);
         return;
       }
-      case 'footnoteReference': {
-        const [s, e] = span(node);
+      case 'footnoteReference':
+        // Rendered as a visible marker (a superscript number) this reader
+        // cannot reproduce, so the words on either side are not one phrase:
+        // `buy[^n]Options` reads `buy¹Options`. The label is scanned on its
+        // own.
+        sink.breakProse();
         sink.emit('interior', node.label ?? '', aligned(node.label ?? '', s, e));
         return;
-      }
       default:
         if (node.children) for (const child of node.children) phrasing(child, sink);
         else if (typeof node.value === 'string') {
@@ -623,9 +674,8 @@ function readMarkdown(source) {
   };
 
   const leaf = (node, container, context, read) => {
-    const sink = new BlockSink(unitFor(node, container, context), segments, source, node.position.end.offset);
+    const sink = new BlockSink(unitFor(node, container, context), segments);
     read(sink);
-    flushRaw(sink);
     sink.close();
   };
 
@@ -646,16 +696,24 @@ function readMarkdown(source) {
    * the same way.
    */
   const block = (node, container, scopeEnd, context) => {
+    // A block that starts inside a raw-text element is that element's
+    // content, not Markdown: it is not a heading, and a leaf of it is not
+    // read. One that runs past the closing tag (the paragraph holding
+    // `</textarea>suffix`) is read, and its phrasing skips the part inside.
+    const [ns, ne] = span(node);
+    const region = node.type === 'root' ? undefined : insideRaw(ns);
+    if (region && (ne <= region.to || !node.children)) return;
+    const inRaw = region !== undefined;
     switch (node.type) {
       case 'heading': {
         const [s, e] = span(node);
-        headings.push({ offset: s, scopeEnd, level: node.depth, raw: source.slice(s, e) });
+        if (!inRaw) headings.push({ offset: s, scopeEnd, level: node.depth, raw: source.slice(s, e) });
         leaf(node, container, context, (sink) => node.children.forEach((c) => phrasing(c, sink)));
         return;
       }
       case 'paragraph': {
         const first = node.children[0];
-        if (first && first.type === 'strong' && first.position.start.offset === node.position.start.offset) {
+        if (!inRaw && first && first.type === 'strong' && first.position.start.offset === node.position.start.offset) {
           // The whole paragraph, not just its bold label: in
           // `**Status:** These contracts were removed.` the status is the
           // sentence after the label, and it governs what follows as much
@@ -686,14 +744,9 @@ function readMarkdown(source) {
         });
         return;
       }
-      case 'html': {
-        const [s, e] = span(node);
-        const local = aligned(node.value, s, e, { references: 'none' });
-        leaf(node, container, context, (sink) =>
-          readHtml(node.value, (k) => local[Math.min(k, local.length - 1)] ?? s, sink),
-        );
+      case 'html':
+        leaf(node, container, context, (sink) => html(node, sink));
         return;
-      }
       case 'definition': {
         const [s, e] = span(node);
         leaf(node, container, context, (sink) => {
