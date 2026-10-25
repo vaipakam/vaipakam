@@ -1,4 +1,4 @@
-## Thread — A watcher key can no longer chain auto-pauses (PR #TBD)
+## Thread — A watcher key can no longer chain auto-pauses (PR #2837)
 
 The anomaly watcher's auto-pause freezes the protocol for a bounded window (30 minutes by default, at most 2 hours), and a running window was never extended. But nothing stopped the same watcher key opening the next window the moment the last one lapsed, so a compromised key could keep the protocol frozen for as long as nobody revoked its role. Since the D2 loan clock, every paused second also moves every open loan's due date and grace end later, so a chained freeze delays every exit as well.
 

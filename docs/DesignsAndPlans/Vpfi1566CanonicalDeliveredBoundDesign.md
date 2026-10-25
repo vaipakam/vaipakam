@@ -8283,6 +8283,32 @@ contended case.
 > choices. The sentence above is kept as the design's original reasoning,
 > not as a live requirement.
 
+> **SUPERSEDED — one funded day per remittance (#2821, owner decision
+> 2026-10-25).** The refusal half 3c-1 shipped is retired with it. A
+> remittance funding several days landed as one epoch shared by them, and
+> 3c-1 withheld that epoch while more than one listed day was arrived and
+> open. A day closes only when every entry covering it has claimed past it,
+> so an entry spanning two listed days waited on itself: the epoch could pay
+> its first day only once that day was closed, and the day closed only once
+> the entry had been paid. The protocol two-chain Anvil suite found it
+> (#848, PR #2825): every multi-day remittance stranded the rewards of any
+> loan open across it.
+>
+> The fix is at the source. The canonical chain funds ONE day per remittance
+> (`TRANSPORT_DAY_FANOUT_CAP = 1`, enforced on the send and on its fee
+> quote); close-only days may ride along, since they never reach the
+> destination's list. On the mirror the contest gate and the necessity tier
+> are removed: with one funded day per send neither can be reached. Any
+> epoch listing more than one day, which only a source breaking the rule
+> could send, is admitted and withheld for good (`GATE_MULTI_DAY`), counted
+> as `withheldMultiDay`, and never drawn, staged or pending. No
+> contested-allocation machinery is planned, so 3c-2 and 3c-3 are retired
+> rather than held, and #2387 has no case left to reopen for.
+>
+> The d6 wire still carries a chunked, rooted day list sized for many days.
+> Collapsing it to a single inline day is a separate simplification,
+> tracked as #2828.
+
 **Transport epochs PR 3d — the d6 wire.** The new wire version embedding a
 Merkle root over fixed-size chunks together with the authenticated extent,
 the indexed materialization pages verified against it, **and the INTENDED

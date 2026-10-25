@@ -42,6 +42,7 @@ the run. Nothing reads a secret or a live RPC.
 | --- | --- | --- |
 | PF-260 | `interactionRewards`: finalizes each day from both reports | Each day closes on both chains, and the mirror's report crosses the lane. Base finalizes the global pair as the sum of the two chains' own reported figures. After the broadcast the mirror knows exactly the pair Base finalized. |
 | PF-120, PF-259 (Base) | `interactionRewards`: pays lender and borrower on Base | Each claim pays the wallet exactly what `simulateClaimInteractionRewards` reported, and nothing goes to the vault. The static preview never quotes more. Nothing is left to claim afterwards. |
+| PF-260 (funding) | `interactionRewards`: refuses to fund all three owed days in one remittance | Every listed day owes the mirror a budget, and Base refuses the list on the fee quote and on the send alike with `TransportDayFanoutExceeded(3, 1)`: one funded day per remittance (#2821). One day alone passes both. |
 | PF-259 (mirror), PF-260 (funding) | `interactionRewards`: remits the mirror's budget and pays its claims | Base remits one day per remittance. For each, the Base pool locks exactly the quoted budget, the mirror mints exactly that, and the mirror's supply equals what Base holds locked. The delivery funds no claim until its day is indexed. Indexing rebuilds the day list from Base's reservation with the shared wire rules, and both roots must match. Each party's first mirror claim defers and opens a staging slice. The slice is stepped home permissionlessly, then the claim pays as simulated, within what was remitted. |
 | PF-261 | `crossChain`: VPFI out and back | A user sends VPFI over the real Router to the mirror and back. Balances, the Base pool, the mirror supply and the backing invariant hold at each step, and Base's supply never changes. |
 | PF-257 | `crossChain`: tier push | A deposit ages past the minimum staked days, then `pokeMyTier` pushes the tier. The mirror's cache holds Base's tier and discount. The mirror's discount stays zero until the user consents on the mirror, then equals Base's. |
@@ -49,11 +50,9 @@ the run. Nothing reads a secret or a live RPC.
 
 ## Not covered here
 
-- **A remittance listing several days.** It lands as one shared batch that the
-  mirror withholds while more than one of its days is open. An entry covering
-  those days keeps them open until its own claim pays, so the claim is refused
-  for good. The suite remits one day at a time and the defect is recorded as
-  #2821.
+- **A multi-day batch reaching the mirror.** Base no longer sends one (#2821),
+  so no scenario can make it; the mirror's refusal to draw one is covered by
+  the Foundry suites instead.
 - **PF-258**: a fee discount applied at settlement on the mirror from the
   cached tier. The suite proves the cache and the discount read, not a
   settlement priced by it.

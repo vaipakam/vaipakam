@@ -2231,7 +2231,7 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   whose delivery can never execute is repaired on BASE:
   `releaseRemitReservation(remitId)` (`ADMIN_ROLE`, at least seven days after the
   send, reservation still pending) re-opens its days, then `remitRewardBudget`
-  sends them again. If the original message executes after the release,
+  sends them again, one funded day per send (#2821). If the original message executes after the release,
   `RemitAckAfterRelease` surfaces the double landing — reconcile it as that
   event's notes describe.
 - **Liveness.** With `fromDay = 1`, every included pre-`D*` day also waits for its

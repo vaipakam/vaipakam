@@ -1398,9 +1398,13 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
             _broadcastV2(_armedPacket(d));
         }
         _entry(1, n + 1);
-        bytes32 hA = _liveOf(20e18, _days(4, 1), 141, keccak256("gate-11d-a"));
-        _prove(hA, _days(4, 1));
-        bytes32 hB = _liveOf(1e18, _days(n - 4, 5), 142, keccak256("gate-11d-b"));
+        // One delivery per day, as the canonical chain sends them (#2821):
+        // days 1-4 landed and proven, days 5..n landed and not yet proven.
+        bytes32[] memory held = new bytes32[](n + 1);
+        for (uint256 d = 1; d <= n; ++d) {
+            held[d] = _liveOf(d <= 4 ? 5e18 : 1e18, _one(d), 140 + d, keccak256(abi.encode("gate-11d", d)));
+            if (d <= 4) _prove(held[d], _one(d));
+        }
         assertFalse(_awaits(0, 4), "fixture: day 4 landed");
         assertTrue(_awaits(0, 5), "fixture: day 5 owes fresh and its delivery is unproven");
 
@@ -1416,7 +1420,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertEq(_mut().getArmedFreshPaidRaw(), paidBefore, "nothing fresh charged");
         assertEq(_cursor(), 4, "stored: the fold rests before the held day");
 
-        _prove(hB, _days(n - 4, 5));
+        for (uint256 d = 5; d <= n; ++d) _prove(held[d], _one(d));
         assertEq(_claim(), 0, "proven: the same claim resumes the preparation");
         (phase, prepared, , records) = _domainOf();
         assertEq(phase, uint8(LibVaipakam.DomainPhase.Staging), "still preparing, nothing paid");

@@ -67,30 +67,36 @@ const DEFAULT_LANE_CAP = 50_000n * 10n ** 18n;
 const ARMED_BACKSCAN_DAYS = 90;
 /**
  * Codex #2232 r4 — the per-remittance DAY-COUNT bound, mirroring
- * `LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP`.
+ * `LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP`: ONE funded day per send since
+ * #2821.
  *
- * The destination retires an old-wire delivery's day list in one go, so the
- * send and its fee quote both refuse a batch naming more days than that. This
- * is a SECOND, independent ceiling beside `laneCap`: the lane cap bounds the
- * VPFI a batch moves, and says nothing about how many days it spans. Those
- * come apart in exactly the situation that matters — a keeper outage or a
- * run of delayed commitment reports leaves many days owed, each carrying a
- * small slice, so the whole window fits comfortably under the monetary cap
- * while naming far more than 32 days. Before this bound the keeper built that
- * batch every tick, `quoteRemittanceFee` reverted before anything was sent,
- * and the next tick rebuilt the identical batch: a mirror unfunded
- * indefinitely, with no figure in the ledger to show it and nothing draining
- * the backlog.
+ * The send and its fee quote both refuse a batch funding more days than that.
+ * This is a SECOND, independent ceiling beside `laneCap`: the lane cap bounds
+ * the VPFI a batch moves, and says nothing about how many days it spans. Those
+ * come apart after a keeper outage or a run of delayed commitment reports: many
+ * days owed, each carrying a small slice, so the whole window fits the monetary
+ * cap while naming many days. Before this bound the keeper built that batch
+ * every tick, `quoteRemittanceFee` reverted before anything was sent, and the
+ * next tick rebuilt the identical batch: a mirror unfunded indefinitely.
  *
- * Days beyond the cap are DEFERRED, not dropped — they are counted into the
+ * Why one (#2821): a send funding several days lands on the mirror as one
+ * transport epoch listing all of them, and its balance funds every listed day
+ * at once, so a draw for one is contested by the others. A mirror day closes
+ * only when every entry covering it has claimed past it, so an entry spanning
+ * two listed days would need the epoch to pay the first day and the first day
+ * paid to free the epoch: it could never be paid. The chain therefore funds one
+ * day per send and the mirror withholds any wider epoch for good. A backlog
+ * drains one day per tick per mirror, at one CCIP fee per day, which is also
+ * the steady-state cost.
+ *
+ * Days beyond the bound are DEFERRED, not dropped — they are counted into the
  * same `deferred` total the lane cap's overflow feeds, so the coverage signal
- * reports the mirror as not settled and the next tick takes the next ones.
- * The pass itself sends fewer: see {@link REMIT_FUNDED_DAYS_PER_SEND}.
+ * reports the mirror as not settled and the next tick takes the next one.
  *
  * It bounds FUNDED days only (Codex #2232 r5). The send and its quote trim the
  * payload to the days that actually carry VPFI and apply the bound to that
- * count, so a close-only day never reaches the destination list and is free of
- * this cap exactly as it is free of `laneCap`.
+ * count, so a close-only day never reaches the destination list and rides
+ * along free of this cap exactly as it is free of `laneCap`.
  *
  * `rewardBudgetRemitFanoutCap.test.ts` pins BOTH halves against the contract
  * source: the figure against `TRANSPORT_DAY_FANOUT_CAP`, and the population
@@ -98,33 +104,14 @@ const ARMED_BACKSCAN_DAYS = 90;
  * figure alone would not have caught this — the first revision had the right
  * number and the wrong subject.
  */
-const TRANSPORT_DAY_FANOUT_CAP = 32;
+const TRANSPORT_DAY_FANOUT_CAP = 1;
 
 /**
- * #2821 — how many FUNDED days one send may carry: ONE.
- *
- * A send funding several days lands on the mirror as one transport epoch
- * listing all of them. The mirror withholds that epoch from every draw as
- * contested while more than one of its arrived days is still open, and a day
- * closes only when every entry covering it has claimed past it. An entry that
- * spans two of the epoch's days therefore needs the epoch to claim the first
- * and needs the first claimed to free the epoch: it can never be paid there.
- * Any loan open across a batch has such an entry, so after a backlog (a late
- * commitment report, a paused keeper, the delivery gate opening) a greedy
- * multi-day batch strands the rewards it carries.
- *
- * One funded day per send leaves every epoch with a single day, which the
- * contest cannot reach. A backlog drains one day per tick per mirror instead
- * of up to {@link TRANSPORT_DAY_FANOUT_CAP}, at one CCIP fee per day, which is
- * also the steady-state cost. Close-only days still ride along: they move no
- * VPFI and never reach the destination's day list.
- *
- * This is the keeper's half. Whether the protocol should also refuse or split
- * a multi-day batch is the contract-side question #2821 puts to the owner;
- * until a chain carries that answer, this bound is what keeps the keeper from
- * building the batch.
+ * #2821 — how many FUNDED days one send carries: the chain's own bound
+ * ({@link TRANSPORT_DAY_FANOUT_CAP}), so the pass never builds a batch the
+ * send would refuse.
  */
-export const REMIT_FUNDED_DAYS_PER_SEND = 1;
+export const REMIT_FUNDED_DAYS_PER_SEND = TRANSPORT_DAY_FANOUT_CAP;
 
 /**
  * The batch a tick sends, and what it leaves behind.
