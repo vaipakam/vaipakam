@@ -9,7 +9,8 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {
     IRewardMessenger,
     RewardBroadcastV2,
-    RewardBroadcastV3
+    RewardBroadcastV3,
+    ChainDayReport
 } from "../interfaces/IRewardMessenger.sol";
 
 /// @dev #1434 P2-w2 — the remittance facet's compensation hook, reached
@@ -26,36 +27,6 @@ import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibRewardDayReport} from "../libraries/LibRewardDayReport.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-
-/// @notice #1222 M3 B1 (Codex #1413 r3) — the pre-widening sender shape, the
-///         `closeDay` fallback target when the bound messenger has not been
-///         upgraded to the six-argument surface yet. Both messenger
-///         generations expose it (the pre-#1222 build natively, the widened
-///         build via its legacy overload).
-interface IRewardMessengerLegacySend {
-    function sendChainReport(
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        address payable refundAddress
-    ) external payable;
-}
-
-/// @dev #1222 M3 B1 six-argument sender — the shape that preceded B3's
-///      eight-word report. Declared separately (rather than reached through
-///      {IRewardMessenger}, which now carries both) so the rollout shim in
-///      {RewardReporterFacet-closeDay} can name each generation explicitly:
-///      8 → 6 → 4, one fallback per messenger generation.
-interface IRewardMessengerB1Send {
-    function sendChainReport(
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18,
-        address payable refundAddress
-    ) external payable;
-}
 
 /**
  * @title RewardReporterFacet
@@ -92,28 +63,6 @@ contract RewardReporterFacet is
     DiamondPausable,
     IVaipakamErrors
 {
-    /// @dev #1222 M3 B3 — the six figures one day-close report carries,
-    ///      gathered once and threaded through the canonical write and the
-    ///      mirror send as a memory struct rather than six stack slots
-    ///      (viaIR headroom: {closeDay} also holds the day cursor, the
-    ///      messenger address and the rollout shim's frames).
-    ///
-    ///      `lender` / `borrower` — this chain's day-`D` interest
-    ///      numerators. `recycledCumulative18` / `recycledForDay18` — B1's
-    ///      availability cumulative and `Ā` day-attribution pair.
-    ///      `commitRetiredCumulative18` / `commitReleasedCumulative18` — B3's
-    ///      commitment-retirement pair (see the design record).
-    struct ReportFigures {
-        uint256 lender;
-        uint256 borrower;
-        uint256 recycledCumulative18;
-        uint256 recycledForDay18;
-        uint256 commitRetiredCumulative18;
-        uint256 commitReleasedCumulative18;
-        /// @dev #1566 PR C revision — this chain's live custody era (B4).
-        uint64 custodyEra;
-    }
-
     /// @notice The interest fold was advanced through `through` (or as far as one
     ///         call reaches): the two per-side frontiers after the call (#2277).
     event InterestFrontiersAdvanced(uint256 through, uint256 lenderFrontier, uint256 borrowerFrontier);
@@ -240,14 +189,18 @@ contract RewardReporterFacet is
         // reservation ledger and give back availability for commitments this
         // chain released un-spent (forfeit / RL-3 expiry leave the tokens in
         // the bucket). Both are monotonic; Base ratchets and clamps them.
-        ReportFigures memory f = ReportFigures({
-            lender: lenderNumeraire18,
-            borrower: borrowerNumeraire18,
+        // #2620 — and the clock its day numbers count from, so Base can tell
+        // whether this chain's day `dayId` is Base's day `dayId`.
+        ChainDayReport memory report = ChainDayReport({
+            dayId: dayId,
+            lenderNumeraire18: lenderNumeraire18,
+            borrowerNumeraire18: borrowerNumeraire18,
             recycledCumulative18: LibVpfiRecycle.creditedCumulative(s),
             recycledForDay18: s.recycledCreditedByDay[dayId],
             commitRetiredCumulative18: s.recycleCommitRetiredCumulative,
             commitReleasedCumulative18: s.recycleCommitReleasedCumulative,
-            custodyEra: s.custodyEraCurrent
+            custodyEra: s.custodyEraCurrent,
+            rewardLaunchTimestamp: s.interactionLaunchTimestamp
         });
 
         s.chainReportSentAt[dayId] = uint64(block.timestamp);
@@ -255,7 +208,7 @@ contract RewardReporterFacet is
         if (s.isCanonicalRewardChain) {
             // Base writes directly — no cross-chain hop for its own numbers.
             uint32 chainId = uint32(block.chainid);
-            _recordChainReportLocal(s, dayId, chainId, f);
+            _recordChainReportLocal(s, chainId, report);
             emit ChainInterestReported(
                 dayId,
                 chainId,
@@ -282,29 +235,18 @@ contract RewardReporterFacet is
                 /* viaMessenger */ true
             );
 
-            // Forward full msg.value; messenger refunds the caller directly.
-            _dispatchChainReport(messenger, dayId, f);
+            // #2621 — ONE report shape, sent through whatever messenger the
+            // Diamond holds as this transaction runs, to the Base this Diamond
+            // names. The messenger refuses any other route, and a messenger
+            // without this send reverts; either way the whole close reverts
+            // with its day stamp, so a report is stamped sent only once it has
+            // left for this Diamond's Base. The messenger refunds the caller.
+            IRewardMessenger(messenger).sendChainReport{value: msg.value}(
+                s.baseChainId, report, payable(msg.sender)
+            );
         }
     }
 
-    /**
-     * @dev Mirror-side send with the generation-fallback rollout shim.
-     *
-     *      Codex #1413 r3 — an upgraded mirror diamond in front of a
-     *      not-yet-upgraded messenger falls back a generation at a time
-     *      (#1222 M3 B3: 8-word → 6-word → legacy 4-word), so the
-     *      permissionless day-close never reverts through an upgrade window;
-     *      the fields the older messenger cannot carry simply don't travel,
-     *      and Base's ledger treats their absence as "nothing to advance".
-     *
-     *      Codex r4 P1 — a fallback fires ONLY on the missing-selector shape
-     *      (an older messenger has no receive path for the unknown selector
-     *      and reverts with EMPTY data). Every reasoned failure — paused,
-     *      InsufficientFee from a caller who quoted an older shape — bubbles
-     *      unchanged, because downgrading a current messenger's real failure
-     *      would permanently strip that day's extra fields
-     *      (`chainReportSentAt` blocks a resend).
-     */
     /// @notice Catch the interest fold up through a strictly-past day — permissionless
     ///         and resumable (#2277; the 3b-ii closure proof's frontier condition
     ///         relies on it too). Each call advances each side's frontier by at
@@ -339,79 +281,6 @@ contract RewardReporterFacet is
         return (s.lenderFrontierDay, s.borrowerFrontierDay);
     }
 
-    function _dispatchChainReport(
-        address messenger,
-        uint256 dayId,
-        ReportFigures memory f
-    ) private {
-        // #1566 PR C revision — the B4 report carries this chain's live custody
-        // era, so the canonical chain stamps every rooted remittance it sends
-        // here with the era it will land in. Tried first; a messenger without
-        // it (the empty revert of an unknown selector) downgrades a generation.
-        try IRewardMessenger(messenger).sendChainReport{value: msg.value}(
-            dayId,
-            f.lender,
-            f.borrower,
-            f.recycledCumulative18,
-            f.recycledForDay18,
-            f.commitRetiredCumulative18,
-            f.commitReleasedCumulative18,
-            f.custodyEra,
-            payable(msg.sender)
-        ) {} catch (bytes memory b4Reason) {
-            _bubbleUnlessMissingSelector(b4Reason);
-            _dispatchChainReportB3(messenger, dayId, f);
-        }
-    }
-
-    /// @dev The B3 → B1 → legacy ladder, for a messenger without the B4 send.
-    function _dispatchChainReportB3(
-        address messenger,
-        uint256 dayId,
-        ReportFigures memory f
-    ) private {
-        try IRewardMessenger(messenger).sendChainReport{value: msg.value}(
-            dayId,
-            f.lender,
-            f.borrower,
-            f.recycledCumulative18,
-            f.recycledForDay18,
-            f.commitRetiredCumulative18,
-            f.commitReleasedCumulative18,
-            payable(msg.sender)
-        ) {} catch (bytes memory reason) {
-            _bubbleUnlessMissingSelector(reason);
-            // A failed attempt returned its full value; the fallback
-            // re-forwards it.
-            try IRewardMessengerB1Send(messenger).sendChainReport{
-                value: msg.value
-            }(
-                dayId,
-                f.lender,
-                f.borrower,
-                f.recycledCumulative18,
-                f.recycledForDay18,
-                payable(msg.sender)
-            ) {} catch (bytes memory b1Reason) {
-                _bubbleUnlessMissingSelector(b1Reason);
-                IRewardMessengerLegacySend(messenger).sendChainReport{
-                    value: msg.value
-                }(dayId, f.lender, f.borrower, payable(msg.sender));
-            }
-        }
-    }
-
-    /// @dev Re-throws `reason` verbatim unless it is the empty revert an
-    ///      older messenger returns for an unknown selector — the ONLY shape
-    ///      that may downgrade a generation (see {_dispatchChainReport}).
-    function _bubbleUnlessMissingSelector(bytes memory reason) private pure {
-        if (reason.length != 0) {
-            assembly ("memory-safe") {
-                revert(add(reason, 0x20), mload(reason))
-            }
-        }
-    }
-
     /// @dev Shared write path for Base-side "my own chain's report"
     ///      and for the aggregator's cross-chain-ingress record hook.
     ///      NOT public — the aggregator calls it through its own trusted
@@ -420,18 +289,18 @@ contract RewardReporterFacet is
     ///      the body — every facet compiles separately.
     function _recordChainReportLocal(
         LibVaipakam.Storage storage s,
-        uint256 dayId,
         uint32 sourceChainId,
-        ReportFigures memory f
+        ChainDayReport memory r
     ) internal {
-        s.chainDailyLenderInterestNumeraire18[dayId][sourceChainId] = f.lender;
+        uint256 dayId = r.dayId;
+        s.chainDailyLenderInterestNumeraire18[dayId][sourceChainId] = r.lenderNumeraire18;
         s.chainDailyBorrowerInterestNumeraire18[dayId][sourceChainId] =
-            f.borrower;
+            r.borrowerNumeraire18;
         // #1222 M3 B1 — Base records its OWN chain in the per-chain recycled
         // ledger through the same helper the mirror ingress uses, so both
         // paths write identically and B2/B3's netting sees one uniform ledger.
         LibVpfiRecycle.recordChainRecycled(
-            s, sourceChainId, dayId, f.recycledCumulative18, f.recycledForDay18
+            s, sourceChainId, dayId, r.recycledCumulative18, r.recycledForDay18
         );
         // #1222 M3 B3 — and the retirement half of the same report, which
         // closes `chainOutstandingRecycledCommit[c]` and restores
@@ -442,8 +311,8 @@ contract RewardReporterFacet is
         LibVpfiRecycle.recordChainCommitRetirement(
             s,
             sourceChainId,
-            f.commitRetiredCumulative18,
-            f.commitReleasedCumulative18
+            r.commitRetiredCumulative18,
+            r.commitReleasedCumulative18
         );
         // The same bookkeeping a mirror's report gets: only a listed chain
         // starts the grace window (#2618 / #2613).

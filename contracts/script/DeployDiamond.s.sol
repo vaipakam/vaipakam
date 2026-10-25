@@ -114,6 +114,7 @@ import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
+import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 
 contract DeployDiamond is Script, ArtifactRootBase {
     // ── Deployed addresses (logged at the end) ──────────────────────────
@@ -263,190 +264,190 @@ contract DeployDiamond is Script, ArtifactRootBase {
         vm.startBroadcast(deployerKey);
 
         // ── Step 1: Deploy all facets ───────────────────────────────────
-        DiamondCutFacet cutFacet = new DiamondCutFacet();
-        DiamondLoupeFacet loupeFacet = new DiamondLoupeFacet();
-        OwnershipFacet ownershipFacet = new OwnershipFacet();
-        AccessControlFacet accessControlFacet = new AccessControlFacet();
-        AdminFacet adminFacet = new AdminFacet();
-        ProfileFacet profileFacet = new ProfileFacet();
-        OracleFacet oracleFacet = new OracleFacet();
-        OracleAdminFacet oracleAdminFacet = new OracleAdminFacet();
-        VaipakamNFTFacet nftFacet = new VaipakamNFTFacet();
-        VaultFactoryFacet vaultFactoryFacet = new VaultFactoryFacet();
-        OfferCreateFacet offerCreateFacet = new OfferCreateFacet();
+        DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
+        DiamondLoupeFacet loupeFacet = DiamondLoupeFacet(ArtifactDeploy.deploy(type(DiamondLoupeFacet).name));
+        OwnershipFacet ownershipFacet = OwnershipFacet(ArtifactDeploy.deploy(type(OwnershipFacet).name));
+        AccessControlFacet accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
+        AdminFacet adminFacet = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
+        ProfileFacet profileFacet = ProfileFacet(ArtifactDeploy.deploy(type(ProfileFacet).name));
+        OracleFacet oracleFacet = OracleFacet(ArtifactDeploy.deploy(type(OracleFacet).name));
+        OracleAdminFacet oracleAdminFacet = OracleAdminFacet(ArtifactDeploy.deploy(type(OracleAdminFacet).name));
+        VaipakamNFTFacet nftFacet = VaipakamNFTFacet(ArtifactDeploy.deploy(type(VaipakamNFTFacet).name));
+        VaultFactoryFacet vaultFactoryFacet = VaultFactoryFacet(ArtifactDeploy.deploy(type(VaultFactoryFacet).name));
+        OfferCreateFacet offerCreateFacet = OfferCreateFacet(ArtifactDeploy.deploy(type(OfferCreateFacet).name));
         // T-086 Round-8 (#358) — borrow-OR-sell parallel-sale facet
         // (carved off OfferCreateFacet — see _getOfferParallelSaleSelectors).
-        OfferParallelSaleFacet offerParallelSaleFacet = new OfferParallelSaleFacet();
-        OfferAcceptFacet offerAcceptFacet = new OfferAcceptFacet();
+        OfferParallelSaleFacet offerParallelSaleFacet = OfferParallelSaleFacet(ArtifactDeploy.deploy(type(OfferParallelSaleFacet).name));
+        OfferAcceptFacet offerAcceptFacet = OfferAcceptFacet(ArtifactDeploy.deploy(type(OfferAcceptFacet).name));
         // #1835 — the borrower-LIF charge + net delivery, split out of
         // OfferAcceptFacet for EIP-170 headroom (24,412 of 24,576 bytes used).
-        OfferAcceptFeeFacet offerAcceptFeeFacet = new OfferAcceptFeeFacet();
-        OfferPreviewFacet offerPreviewFacet = new OfferPreviewFacet();
+        OfferAcceptFeeFacet offerAcceptFeeFacet = OfferAcceptFeeFacet(ArtifactDeploy.deploy(type(OfferAcceptFeeFacet).name));
+        OfferPreviewFacet offerPreviewFacet = OfferPreviewFacet(ArtifactDeploy.deploy(type(OfferPreviewFacet).name));
         // Range Orders Phase 1 EIP-170 split: matchOffers + previewMatch
         // live on a separate facet to keep OfferFacet under the
         // 24576-byte runtime-bytecode ceiling.
-        OfferMatchFacet offerMatchFacet = new OfferMatchFacet();
+        OfferMatchFacet offerMatchFacet = OfferMatchFacet(ArtifactDeploy.deploy(type(OfferMatchFacet).name));
         // Same EIP-170 pressure split out cancelOffer + read views into
         // OfferCancelFacet. Selectors land on the diamond identically;
         // frontend / keeper-bot bindings unaffected by the move.
-        OfferCancelFacet offerCancelFacet = new OfferCancelFacet();
+        OfferCancelFacet offerCancelFacet = OfferCancelFacet(ArtifactDeploy.deploy(type(OfferCancelFacet).name));
         // #193 — in-place offer modification surface. Carved into its
         // own facet for the same EIP-170 reason the cancel + match
         // halves were; selectors land on the diamond identically.
-        OfferMutateFacet offerMutateFacet = new OfferMutateFacet();
-        LoanFacet loanFacet = new LoanFacet();
-        RepayFacet repayFacet = new RepayFacet();
-        RepayPeriodicFacet repayPeriodicFacet = new RepayPeriodicFacet();
-        SwapToRepayFacet swapToRepayFacet = new SwapToRepayFacet();
+        OfferMutateFacet offerMutateFacet = OfferMutateFacet(ArtifactDeploy.deploy(type(OfferMutateFacet).name));
+        LoanFacet loanFacet = LoanFacet(ArtifactDeploy.deploy(type(LoanFacet).name));
+        RepayFacet repayFacet = RepayFacet(ArtifactDeploy.deploy(type(RepayFacet).name));
+        RepayPeriodicFacet repayPeriodicFacet = RepayPeriodicFacet(ArtifactDeploy.deploy(type(RepayPeriodicFacet).name));
+        SwapToRepayFacet swapToRepayFacet = SwapToRepayFacet(ArtifactDeploy.deploy(type(SwapToRepayFacet).name));
         // #2416 — the partial swap-to-repay route, split off for EIP-170.
-        SwapToRepayPartialFacet swapToRepayPartialFacet = new SwapToRepayPartialFacet();
+        SwapToRepayPartialFacet swapToRepayPartialFacet = SwapToRepayPartialFacet(ArtifactDeploy.deploy(type(SwapToRepayPartialFacet).name));
         // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
-        SwapToRepayIntentFacet swapToRepayIntentFacet = new SwapToRepayIntentFacet();
+        SwapToRepayIntentFacet swapToRepayIntentFacet = SwapToRepayIntentFacet(ArtifactDeploy.deploy(type(SwapToRepayIntentFacet).name));
         // T-087 Sub 3.B — the 1inch LOP v4 callback dispatcher;
         // owns preInteraction / postInteraction / isValidSignature
         // for BOTH the repay path and the buyback path.
-        IntentDispatchFacet intentDispatchFacet = new IntentDispatchFacet();
+        IntentDispatchFacet intentDispatchFacet = IntentDispatchFacet(ArtifactDeploy.deploy(type(IntentDispatchFacet).name));
         // T-092 Phase 1 (#499) — consent surface for auto-lend /
         // auto-refinance / auto-extend. Setters + readers only;
         // Phase 2/3 wire the caps into RefinanceFacet + add the
         // extendLoanInPlace executor.
-        AutoLifecycleFacet autoLifecycleFacet = new AutoLifecycleFacet();
+        AutoLifecycleFacet autoLifecycleFacet = AutoLifecycleFacet(ArtifactDeploy.deploy(type(AutoLifecycleFacet).name));
         // #407 PR 2 — thin cross-facet mutate surface for the
         // vault encumbrance sub-ledger; see facet natspec.
-        EncumbranceMutateFacet encumbranceMutateFacet = new EncumbranceMutateFacet();
+        EncumbranceMutateFacet encumbranceMutateFacet = EncumbranceMutateFacet(ArtifactDeploy.deploy(type(EncumbranceMutateFacet).name));
         // #1132 (S10 central enforcement) — diamond-internal host that performs
         // a loan's TERMINAL status transition AND records both holders'
         // fail-closed frozen-claimant markers in one place; see facet natspec.
         // #396 v0.5 — gasless signed off-chain offer book fill surface.
-        SignedOfferFacet signedOfferFacet = new SignedOfferFacet();
+        SignedOfferFacet signedOfferFacet = SignedOfferFacet(ArtifactDeploy.deploy(type(SignedOfferFacet).name));
         // #393 v1 — LenderIntentVault standing-terms surface.
-        LenderIntentFacet lenderIntentFacet = new LenderIntentFacet();
+        LenderIntentFacet lenderIntentFacet = LenderIntentFacet(ArtifactDeploy.deploy(type(LenderIntentFacet).name));
         // #398 v1.5 — per-aggregator ERC-4626 adapter factory.
         AggregatorAdapterFactoryFacet aggregatorAdapterFactoryFacet =
-            new AggregatorAdapterFactoryFacet();
+            AggregatorAdapterFactoryFacet(ArtifactDeploy.deploy(type(AggregatorAdapterFactoryFacet).name));
         // #399 v2.5 — treasury-seeded backstop vault governance + Role-A drive.
-        BackstopFacet backstopFacet = new BackstopFacet();
-        ReceiverFacet receiverFacet = new ReceiverFacet();
-        ConsolidationFacet consolidationFacet = new ConsolidationFacet();
+        BackstopFacet backstopFacet = BackstopFacet(ArtifactDeploy.deploy(type(BackstopFacet).name));
+        ReceiverFacet receiverFacet = ReceiverFacet(ArtifactDeploy.deploy(type(ReceiverFacet).name));
+        ConsolidationFacet consolidationFacet = ConsolidationFacet(ArtifactDeploy.deploy(type(ConsolidationFacet).name));
         // #671 — self-sovereign progressive risk-access facet.
-        RiskAccessFacet riskAccessFacet = new RiskAccessFacet();
+        RiskAccessFacet riskAccessFacet = RiskAccessFacet(ArtifactDeploy.deploy(type(RiskAccessFacet).name));
         // #1104 — read-only risk preview cluster + cross-facet gate asserts,
         // split off RiskAccessFacet for EIP-170 headroom.
-        RiskPreviewFacet riskPreviewFacet = new RiskPreviewFacet();
+        RiskPreviewFacet riskPreviewFacet = RiskPreviewFacet(ArtifactDeploy.deploy(type(RiskPreviewFacet).name));
         // #1212 (E-10 Claim-All) — generic best-effort delegatecall batcher.
-        MulticallFacet multicallFacet = new MulticallFacet();
+        MulticallFacet multicallFacet = MulticallFacet(ArtifactDeploy.deploy(type(MulticallFacet).name));
         // #1347 (M2 PR-5a/5b) — Full VPFI tariff surface.
-        FeeEntitlementFacet feeEntitlementFacet = new FeeEntitlementFacet();
+        FeeEntitlementFacet feeEntitlementFacet = FeeEntitlementFacet(ArtifactDeploy.deploy(type(FeeEntitlementFacet).name));
         // T-090 v1.1 (#389) — intent-based swap-to-repay config knobs.
         // Carved off `ConfigFacet` after the round-2 PR #420 CI block
         // pushed it past EIP-170.
-        IntentConfigFacet intentConfigFacet = new IntentConfigFacet();
-        DefaultedFacet defaultedFacet = new DefaultedFacet();
-        RiskFacet riskFacet = new RiskFacet();
+        IntentConfigFacet intentConfigFacet = IntentConfigFacet(ArtifactDeploy.deploy(type(IntentConfigFacet).name));
+        DefaultedFacet defaultedFacet = DefaultedFacet(ArtifactDeploy.deploy(type(DefaultedFacet).name));
+        RiskFacet riskFacet = RiskFacet(ArtifactDeploy.deploy(type(RiskFacet).name));
         RiskMatchLiquidationFacet riskMatchLiquidationFacet =
-            new RiskMatchLiquidationFacet();
+            RiskMatchLiquidationFacet(ArtifactDeploy.deploy(type(RiskMatchLiquidationFacet).name));
         RiskSplitLiquidationFacet riskSplitLiquidationFacet =
-            new RiskSplitLiquidationFacet();
-        ClaimFacet claimFacet = new ClaimFacet();
-        AddCollateralFacet addCollateralFacet = new AddCollateralFacet();
-        TreasuryFacet treasuryFacet = new TreasuryFacet();
-        PayrollFacet payrollFacet = new PayrollFacet();
-        EarlyWithdrawalFacet earlyWithdrawalFacet = new EarlyWithdrawalFacet();
-        EarlyWithdrawalDirectFacet earlyWithdrawalDirectFacet = new EarlyWithdrawalDirectFacet();
-        PartialWithdrawalFacet partialWithdrawalFacet = new PartialWithdrawalFacet();
-        PrecloseFacet precloseFacet = new PrecloseFacet();
-        PrepayListingFacet prepayListingFacet = new PrepayListingFacet();
-        NFTPrepayListingFacet nftPrepayListingFacet = new NFTPrepayListingFacet();
-        NFTPrepayDutchListingFacet nftPrepayDutchListingFacet = new NFTPrepayDutchListingFacet();
-        NFTPrepayListingAtomicFacet nftPrepayListingAtomicFacet = new NFTPrepayListingAtomicFacet();
-        NFTPrepayAutoListFacet nftPrepayAutoListFacet = new NFTPrepayAutoListFacet();
-        RefinanceFacet refinanceFacet = new RefinanceFacet();
-        MetricsFacet metricsFacet = new MetricsFacet();
-        MetricsDashboardFacet metricsDashboardFacet = new MetricsDashboardFacet();
-        VPFITokenFacet vpfiTokenFacet = new VPFITokenFacet();
-        VPFIDiscountFacet vpfiDiscountFacet = new VPFIDiscountFacet();
+            RiskSplitLiquidationFacet(ArtifactDeploy.deploy(type(RiskSplitLiquidationFacet).name));
+        ClaimFacet claimFacet = ClaimFacet(ArtifactDeploy.deploy(type(ClaimFacet).name));
+        AddCollateralFacet addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
+        TreasuryFacet treasuryFacet = TreasuryFacet(ArtifactDeploy.deploy(type(TreasuryFacet).name));
+        PayrollFacet payrollFacet = PayrollFacet(ArtifactDeploy.deploy(type(PayrollFacet).name));
+        EarlyWithdrawalFacet earlyWithdrawalFacet = EarlyWithdrawalFacet(ArtifactDeploy.deploy(type(EarlyWithdrawalFacet).name));
+        EarlyWithdrawalDirectFacet earlyWithdrawalDirectFacet = EarlyWithdrawalDirectFacet(ArtifactDeploy.deploy(type(EarlyWithdrawalDirectFacet).name));
+        PartialWithdrawalFacet partialWithdrawalFacet = PartialWithdrawalFacet(ArtifactDeploy.deploy(type(PartialWithdrawalFacet).name));
+        PrecloseFacet precloseFacet = PrecloseFacet(ArtifactDeploy.deploy(type(PrecloseFacet).name));
+        PrepayListingFacet prepayListingFacet = PrepayListingFacet(ArtifactDeploy.deploy(type(PrepayListingFacet).name));
+        NFTPrepayListingFacet nftPrepayListingFacet = NFTPrepayListingFacet(ArtifactDeploy.deploy(type(NFTPrepayListingFacet).name));
+        NFTPrepayDutchListingFacet nftPrepayDutchListingFacet = NFTPrepayDutchListingFacet(ArtifactDeploy.deploy(type(NFTPrepayDutchListingFacet).name));
+        NFTPrepayListingAtomicFacet nftPrepayListingAtomicFacet = NFTPrepayListingAtomicFacet(ArtifactDeploy.deploy(type(NFTPrepayListingAtomicFacet).name));
+        NFTPrepayAutoListFacet nftPrepayAutoListFacet = NFTPrepayAutoListFacet(ArtifactDeploy.deploy(type(NFTPrepayAutoListFacet).name));
+        RefinanceFacet refinanceFacet = RefinanceFacet(ArtifactDeploy.deploy(type(RefinanceFacet).name));
+        MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
+        MetricsDashboardFacet metricsDashboardFacet = MetricsDashboardFacet(ArtifactDeploy.deploy(type(MetricsDashboardFacet).name));
+        VPFITokenFacet vpfiTokenFacet = VPFITokenFacet(ArtifactDeploy.deploy(type(VPFITokenFacet).name));
+        VPFIDiscountFacet vpfiDiscountFacet = VPFIDiscountFacet(ArtifactDeploy.deploy(type(VPFIDiscountFacet).name));
         VPFIDiscountAccumulatorFacet vpfiDiscountAccumulatorFacet =
-            new VPFIDiscountAccumulatorFacet();
+            VPFIDiscountAccumulatorFacet(ArtifactDeploy.deploy(type(VPFIDiscountAccumulatorFacet).name));
         // T-087 Sub 2.C — mirror-side tier-push receiver facet.
         MirrorTierReceiverFacet mirrorTierReceiverFacet =
-            new MirrorTierReceiverFacet();
+            MirrorTierReceiverFacet(ArtifactDeploy.deploy(type(MirrorTierReceiverFacet).name));
         // T-087 Sub 2.D — protocol-funded mirror broadcast orchestrator.
         ProtocolBroadcastFacet protocolBroadcastFacet =
-            new ProtocolBroadcastFacet();
-        InteractionRewardsFacet interactionRewardsFacet = new InteractionRewardsFacet();
+            ProtocolBroadcastFacet(ArtifactDeploy.deploy(type(ProtocolBroadcastFacet).name));
+        InteractionRewardsFacet interactionRewardsFacet = InteractionRewardsFacet(ArtifactDeploy.deploy(type(InteractionRewardsFacet).name));
         // #1351 slice 2c — the CLAIM entry points live on their own facet so the
         // ShareOfPool day walk (~5.8 KB inlined) has EIP-170 room.
-        RewardClaimFacet rewardClaimFacet = new RewardClaimFacet();
+        RewardClaimFacet rewardClaimFacet = RewardClaimFacet(ArtifactDeploy.deploy(type(RewardClaimFacet).name));
         RewardHorizonSweepFacet rewardHorizonSweepFacet =
-            new RewardHorizonSweepFacet();
-        PerkFacet perkFacet = new PerkFacet();
-        RewardBroadcastFacet rewardBroadcastFacet = new RewardBroadcastFacet();
+            RewardHorizonSweepFacet(ArtifactDeploy.deploy(type(RewardHorizonSweepFacet).name));
+        PerkFacet perkFacet = PerkFacet(ArtifactDeploy.deploy(type(PerkFacet).name));
+        RewardBroadcastFacet rewardBroadcastFacet = RewardBroadcastFacet(ArtifactDeploy.deploy(type(RewardBroadcastFacet).name));
         // #1306 follow-up — read-only lens carved off InteractionRewardsFacet
         // for EIP-170 headroom (view/getter surface only, shared storage).
         InteractionRewardsLensFacet interactionRewardsLensFacet =
-            new InteractionRewardsLensFacet();
-        RewardReporterFacet rewardReporterFacet = new RewardReporterFacet();
-        RewardAggregatorFacet rewardAggregatorFacet = new RewardAggregatorFacet();
-        RewardRemittanceFacet rewardRemittanceFacet = new RewardRemittanceFacet();
-        RewardRemittanceLensFacet rewardRemittanceLensFacet = new RewardRemittanceLensFacet();
+            InteractionRewardsLensFacet(ArtifactDeploy.deploy(type(InteractionRewardsLensFacet).name));
+        RewardReporterFacet rewardReporterFacet = RewardReporterFacet(ArtifactDeploy.deploy(type(RewardReporterFacet).name));
+        RewardAggregatorFacet rewardAggregatorFacet = RewardAggregatorFacet(ArtifactDeploy.deploy(type(RewardAggregatorFacet).name));
+        RewardRemittanceFacet rewardRemittanceFacet = RewardRemittanceFacet(ArtifactDeploy.deploy(type(RewardRemittanceFacet).name));
+        RewardRemittanceLensFacet rewardRemittanceLensFacet = RewardRemittanceLensFacet(ArtifactDeploy.deploy(type(RewardRemittanceLensFacet).name));
         // #1566 slice 4 PR A — custody lifecycle + paid-side rebase.
-        RewardCustodyFacet rewardCustodyFacet = new RewardCustodyFacet();
+        RewardCustodyFacet rewardCustodyFacet = RewardCustodyFacet(ArtifactDeploy.deploy(type(RewardCustodyFacet).name));
         // #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch.
-        RewardReconciliationFacet rewardReconciliationFacet = new RewardReconciliationFacet();
+        RewardReconciliationFacet rewardReconciliationFacet = RewardReconciliationFacet(ArtifactDeploy.deploy(type(RewardReconciliationFacet).name));
         // #1566 transport epochs PR 3a — the mirror-side ingress half of the remittance facet.
-        RewardIngressFacet rewardIngressFacet = new RewardIngressFacet();
-        RewardEpochFacet rewardEpochFacet = new RewardEpochFacet();
+        RewardIngressFacet rewardIngressFacet = RewardIngressFacet(ArtifactDeploy.deploy(type(RewardIngressFacet).name));
+        RewardEpochFacet rewardEpochFacet = RewardEpochFacet(ArtifactDeploy.deploy(type(RewardEpochFacet).name));
         // 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads, hosted apart.
-        RewardEpochViewFacet rewardEpochViewFacet = new RewardEpochViewFacet();
+        RewardEpochViewFacet rewardEpochViewFacet = RewardEpochViewFacet(ArtifactDeploy.deploy(type(RewardEpochViewFacet).name));
         // 3b-ii-A2 (#2305) — the claim's entry walk, hosted; the staging machinery's home.
-        RewardStagingFacet rewardStagingFacet = new RewardStagingFacet();
+        RewardStagingFacet rewardStagingFacet = RewardStagingFacet(ArtifactDeploy.deploy(type(RewardStagingFacet).name));
         // 3b-ii-A2 (#2305) — the settle walks' hosts (one per walk), refreshed with their facades.
-        RewardClaimWalkFacet rewardClaimWalkFacet = new RewardClaimWalkFacet();
-        RewardSweepWalkFacet rewardSweepWalkFacet = new RewardSweepWalkFacet();
-        RewardForfeitWalkFacet rewardForfeitWalkFacet = new RewardForfeitWalkFacet();
+        RewardClaimWalkFacet rewardClaimWalkFacet = RewardClaimWalkFacet(ArtifactDeploy.deploy(type(RewardClaimWalkFacet).name));
+        RewardSweepWalkFacet rewardSweepWalkFacet = RewardSweepWalkFacet(ArtifactDeploy.deploy(type(RewardSweepWalkFacet).name));
+        RewardForfeitWalkFacet rewardForfeitWalkFacet = RewardForfeitWalkFacet(ArtifactDeploy.deploy(type(RewardForfeitWalkFacet).name));
         // 3b-ii-A2 (#2305) — the staging record's settlement half (resolve, unwind, venue).
-        RewardStagingSettleFacet rewardStagingSettleFacet = new RewardStagingSettleFacet();
+        RewardStagingSettleFacet rewardStagingSettleFacet = RewardStagingSettleFacet(ArtifactDeploy.deploy(type(RewardStagingSettleFacet).name));
         // 3b-ii-A2-ii (#2305) — the multi-chunk claim domain's lifecycle entries.
-        RewardStagingDomainFacet rewardStagingDomainFacet = new RewardStagingDomainFacet();
+        RewardStagingDomainFacet rewardStagingDomainFacet = RewardStagingDomainFacet(ArtifactDeploy.deploy(type(RewardStagingDomainFacet).name));
         // 3b-ii-B (#1566) — the per-day closure proof.
-        RewardClosureFacet rewardClosureFacet = new RewardClosureFacet();
+        RewardClosureFacet rewardClosureFacet = RewardClosureFacet(ArtifactDeploy.deploy(type(RewardClosureFacet).name));
         // slice 4 PR C-1 (#1566) — the custody era registry.
-        RewardEraFacet rewardEraFacet = new RewardEraFacet();
-        ServiceCapacityFacet serviceCapacityFacet = new ServiceCapacityFacet();
-        OfferMatchIntentFacet offerMatchIntentFacet = new OfferMatchIntentFacet();
+        RewardEraFacet rewardEraFacet = RewardEraFacet(ArtifactDeploy.deploy(type(RewardEraFacet).name));
+        ServiceCapacityFacet serviceCapacityFacet = ServiceCapacityFacet(ArtifactDeploy.deploy(type(ServiceCapacityFacet).name));
+        OfferMatchIntentFacet offerMatchIntentFacet = OfferMatchIntentFacet(ArtifactDeploy.deploy(type(OfferMatchIntentFacet).name));
         // #1566 slice 2 - the fallback-custody host. RiskFacet and DefaultedFacet
         // enter the fallback, and ClaimFacet retries its swap and disposes of it,
         // through this facet's Diamond-internal entries (self-calls).
-        FallbackCustodyFacet fallbackCustodyFacet = new FallbackCustodyFacet();
+        FallbackCustodyFacet fallbackCustodyFacet = FallbackCustodyFacet(ArtifactDeploy.deploy(type(FallbackCustodyFacet).name));
         // #2472 - the swap-attempt host. Every facet that sells through
         // LibSwap's failover runs each attempt in this facet's frame (a
         // self-call), so a partial or short-delivered attempt unwinds alone.
-        SwapAttemptFacet swapAttemptFacet = new SwapAttemptFacet();
+        SwapAttemptFacet swapAttemptFacet = SwapAttemptFacet(ArtifactDeploy.deploy(type(SwapAttemptFacet).name));
         // #2440 - the treasury fee host. Every facet that charges a fee from a
         // payer's wallet or a user's vault moves it, and records the accrual,
         // through this facet's Diamond-internal entries (self-calls).
-        TreasuryFeeFacet treasuryFeeFacet = new TreasuryFeeFacet();
+        TreasuryFeeFacet treasuryFeeFacet = TreasuryFeeFacet(ArtifactDeploy.deploy(type(TreasuryFeeFacet).name));
         // #2419 - the one 1e18 valuation rule. RiskFacet and every facet that
         // inlines LibRiskMath value an amount through its views (self-calls).
-        NumeraireValueFacet numeraireValueFacet = new NumeraireValueFacet();
+        NumeraireValueFacet numeraireValueFacet = NumeraireValueFacet(ArtifactDeploy.deploy(type(NumeraireValueFacet).name));
         // #2769 - the paid-notification fee: the billing role's charge and the
         // wallet's own consent to it, moved off LoanFacet and ProfileFacet.
-        NotificationFeeFacet notificationFeeFacet = new NotificationFeeFacet();
+        NotificationFeeFacet notificationFeeFacet = NotificationFeeFacet(ArtifactDeploy.deploy(type(NotificationFeeFacet).name));
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
-            new RewardCompensationDispatchFacet();
-        RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
-        RepatriationFacet repatriationFacet = new RepatriationFacet();
-        ConfigFacet configFacet = new ConfigFacet();
+            RewardCompensationDispatchFacet(ArtifactDeploy.deploy(type(RewardCompensationDispatchFacet).name));
+        RewardCommitmentFacet rewardCommitmentFacet = RewardCommitmentFacet(ArtifactDeploy.deploy(type(RewardCommitmentFacet).name));
+        RepatriationFacet repatriationFacet = RepatriationFacet(ArtifactDeploy.deploy(type(RepatriationFacet).name));
+        ConfigFacet configFacet = ConfigFacet(ArtifactDeploy.deploy(type(ConfigFacet).name));
         // #394 (Codex #647) — numeraire / PAD / periodic-interest config
         // carved off `ConfigFacet` to keep it under EIP-170. Sibling
         // facet sharing LibVaipakam storage.
-        NumeraireConfigFacet numeraireConfigFacet = new NumeraireConfigFacet();
+        NumeraireConfigFacet numeraireConfigFacet = NumeraireConfigFacet(ArtifactDeploy.deploy(type(NumeraireConfigFacet).name));
         // LegalFacet — Phase 4.1 Terms-of-Service acceptance gate. The
         // gate stays disabled until governance writes a non-zero
         // `currentTosVersion` via `LegalFacet.setCurrentTos`; cutting
         // the facet now keeps that surface reachable on the deployed
         // Diamond instead of leaving it as dead code.
-        LegalFacet legalFacet = new LegalFacet();
+        LegalFacet legalFacet = LegalFacet(ArtifactDeploy.deploy(type(LegalFacet).name));
 
         console.log("All 35 facets deployed.");
 
@@ -456,9 +457,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // + every role to admin and renounces them from deployer, leaving
         // the post-script topology (owner=admin, all roles on admin) matching
         // the Phase-1 runbook.
-        VaipakamDiamond vaipakamDiamond = new VaipakamDiamond(
-            deployerAddr,
-            address(cutFacet)
+        VaipakamDiamond vaipakamDiamond = VaipakamDiamond(
+            payable(
+                ArtifactDeploy.deploy(
+                    type(VaipakamDiamond).name, abi.encode(deployerAddr, address(cutFacet))
+                )
+            )
         );
         diamond = address(vaipakamDiamond);
         diamondCutFacet = address(cutFacet);
@@ -3137,7 +3141,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](39);
+        s = new bytes4[](36);
         // The lapse-schedule setter + day-clock reads live on
         // RewardCommitmentFacet for EIP-170 reasons. #1569 then split the
         // broadcast cluster out entirely (this facet had reached 32 bytes of
@@ -3159,14 +3163,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // which has ~557B of EIP-170 headroom.
         s[4] = RewardAggregatorFacet.getChainSurplusPosition.selector;
         s[5] = RewardAggregatorFacet.setRecycleSurplusMultiple.selector;
-        // #1222 M3 B3 — the eight-word report ingress (a THIRD overload of
-        // `onChainReportReceived`, so it too must be pinned by signature) and
-        // the commitment-retirement transparency reads.
-        s[6] = bytes4(
-            keccak256(
-                "onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256,uint256,uint256)"
-            )
-        );
+        // #2621 — the ONE day-report ingress, and the
+        // commitment-retirement transparency reads.
+        s[6] = RewardAggregatorFacet.onChainReportReceived.selector;
         s[7] =
             RewardAggregatorFacet.getChainRecycledCommitRetirement.selector;
         s[8] =
@@ -3177,17 +3176,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1222 M3 B2-b — per-side D1 ceilings + mirror funding counter +
         // the payload-accurate broadcast quote (Codex #1417 r1).
         s[11] = RewardAggregatorFacet.getDayUserSideCaps.selector;
-        // #1222 M3 B1 — the ingress is OVERLOADED (six-word shape + the
-        // legacy four-word rollout shim), so `.selector` on the bare name
-        // is ambiguous; pin both signatures explicitly.
-        s[12] = bytes4(
-            keccak256(
-                "onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256)"
-            )
-        );
-        s[13] = bytes4(
-            keccak256("onChainReportReceived(uint32,uint256,uint256,uint256)")
-        );
+        // #2626 / #2619 — what a finalized day counted, as it counted it.
+        s[12] = RewardAggregatorFacet.isChainIncluded.selector;
+        s[13] = RewardAggregatorFacet.getDayZeroedChains.selector;
         s[14] = RewardAggregatorFacet.finalizeDay.selector;
         s[15] = RewardAggregatorFacet.forceFinalizeDay.selector;
         s[16] = RewardAggregatorFacet.setExpectedSourceChainIds.selector;
@@ -3214,18 +3205,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
             RewardAggregatorFacet.getChainKeeperAllocateBps.selector;
         s[31] =
             RewardAggregatorFacet.getChainKeeperDraw.selector;
-        // #1566 PR C revision — the B4 report ingress (pinned by signature: it
-        // overloads `onChainReportReceived`) and the reported-era read.
-        s[32] = bytes4(keccak256("onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint64)"));
+        // #2047 — the per-day attribution ceiling's backlog read (its setter
+        // and getter are s[34] / s[35]).
+        s[32] = RewardAggregatorFacet.getChainAttributionBacklog.selector;
+        // #1566 PR C revision — the reported-era read.
         s[33] = RewardAggregatorFacet.getChainCustodyEraReported.selector;
 
         // #2047 — the per-day attribution ceiling the earmark is armed behind.
         s[34] = RewardAggregatorFacet.setChainDailyAttributionCap.selector;
         s[35] = RewardAggregatorFacet.getChainDailyAttributionCap.selector;
-        s[36] = RewardAggregatorFacet.getChainAttributionBacklog.selector;
-        // #2626 / #2619 — what a finalized day counted, as it counted it.
-        s[37] = RewardAggregatorFacet.isChainIncluded.selector;
-        s[38] = RewardAggregatorFacet.getDayZeroedChains.selector;
     }
 
     function _getRewardRemittanceSelectors()

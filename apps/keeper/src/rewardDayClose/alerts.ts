@@ -202,11 +202,11 @@ const KINDS: readonly AlertKind[] = [
       const via = rec.via.length > 0 ? `messenger ${rec.via.join(', ')}` : 'no messenger this keeper could see (the receipt carries no report event)';
       const head =
         `${tag}: the close of reward day ${day} sent its report through ${via}, not the reward messenger this run checked (${rec.checked}); it was rotated between the check and the transaction. ` +
-        'Whether that report is the shape Base applies after finalization, and whether it routes to Base, was not checked, and the day cannot be closed again. If Base finalizes the day before it lands, or it never reaches Base, this chain\'s interest counts as zero for the day.';
+        'The contract held its route to Base and its report shape (#2621), but whether Base\'s end accepts reports from that messenger was not checked, and the day cannot be closed again. If it never reaches Base, or Base finalizes the day before it lands, this chain\'s interest counts as zero for the day.';
       // A dispatch is recorded only by a close, which only a tenure that
       // serves Base makes (store.ts), so its outcome is always learnable here;
       // a Base no longer served is another tenure, which retires this alert.
-      return HOLDS(`${head} This alert stands until Base records the day's outcome. A contract-side guard is tracked in #2621.`);
+      return HOLDS(`${head} This alert stands until Base records the day's outcome.`);
     },
   },
   {

@@ -24,6 +24,45 @@ struct RewardBroadcastV2 {
     uint256 destChainId;
 }
 
+/// @notice A mirror's closed-day REPORT to the canonical chain — the ONE
+///         report shape (#2621). Encoded on the kind-1 wire as
+///         `abi.encode(uint8 kind, ChainDayReport)` and delivered whole to
+///         `RewardAggregatorFacet.onChainReportReceived`. All-static on purpose,
+///         like {RewardBroadcastV2}: encode and decode stay symmetric with no
+///         hand-maintained word list.
+/// @dev Day figures (`lender`, `borrower`, `recycledForDay18`) describe the
+///      reporter's day `dayId` and count toward Base's day `dayId` only when the
+///      two chains run the same reward clock. The rest describe the chain, not
+///      the day, and apply whenever the report is authenticated.
+struct ChainDayReport {
+    /// Interaction day being reported, on the reporter's clock.
+    uint256 dayId;
+    /// This chain's lender interest for `dayId`, Numeraire18.
+    uint256 lenderNumeraire18;
+    /// This chain's borrower interest for `dayId`, Numeraire18.
+    uint256 borrowerNumeraire18;
+    /// Monotonic cumulative recycle-bucket credits (Base's availability ledger).
+    uint256 recycledCumulative18;
+    /// The recycle credit this chain claims for `dayId` (`Ā` attribution).
+    uint256 recycledForDay18;
+    /// Σ of every decrement of this chain's outstanding recycled commitments.
+    uint256 commitRetiredCumulative18;
+    /// The release-only subset of `commitRetiredCumulative18`.
+    uint256 commitReleasedCumulative18;
+    /// This chain's live custody era (#1566 PR C).
+    uint64 custodyEra;
+    /// This chain's `interactionLaunchTimestamp` — the reward clock its day
+    /// numbers count from (#2620). Base counts the day figures only when it
+    /// equals its own.
+    uint256 rewardLaunchTimestamp;
+}
+
+/// @notice Base-side Diamond ingress for an inbound {ChainDayReport}
+///         (`RewardAggregatorFacet.onChainReportReceived`).
+interface IRewardAggregatorIngress {
+    function onChainReportReceived(uint32 sourceChainId, ChainDayReport calldata report) external;
+}
+
 /// @notice #1222 M3 B2-b — mirror-side Diamond ingress for an inbound V2
 ///         broadcast (`RewardReporterFacet.onRewardBroadcastV2Received`).
 interface IRewardReporterIngressV2 {
@@ -177,70 +216,25 @@ interface IRewardRemitAckIngress {
  */
 interface IRewardMessenger {
     /**
-     * @notice Send a day-close chain report to the canonical (Base)
-     *         reward messenger.
-     * @dev Callable only by the Diamond that owns this messenger. The
-     *      messenger composes a CCIP `EVM2AnyMessage` carrying
-     *      `(dayId, lenderNumeraire18, borrowerNumeraire18)` plus the
-     *      source chain selector derived from its own
-     *      `getCurrentChainSelector()`. Reverts if `msg.value` doesn't
-     *      cover the CCIP native fee; the caller should quote first
-     *      via {quoteSendChainReport}.
-     * @param dayId            Elapsed interaction day being reported.
-     * @param lenderNumeraire18      This-chain lender USD-18 interest on `dayId`.
-     * @param borrowerNumeraire18    This-chain borrower USD-18 interest on `dayId`.
-     * @param refundAddress    Address that receives leftover CCIP fee.
+     * @notice Send a closed-day {ChainDayReport} to the canonical (Base)
+     *         reward messenger — the one report shape (#2621).
+     * @dev Callable only by the Diamond that owns this messenger. Reverts if
+     *      `msg.value` doesn't cover the CCIP native fee (quote first via
+     *      {quoteSendChainReport}); the remainder returns to `refundAddress`.
+     *
+     *      `destChainId` is the Base the CALLER means — the Diamond's own
+     *      `baseChainId`. The messenger sends only if it equals its own
+     *      `baseChainId`, so the two settings can never disagree silently: a
+     *      mismatch, or a messenger rotated in between a caller's read and its
+     *      send, reverts the whole close instead of stamping a day sent along
+     *      a route that does not reach that Base.
+     * @param destChainId   The chain the caller expects the report to reach.
+     * @param report        The day's report, built by `closeDay`.
+     * @param refundAddress Address that receives leftover CCIP fee.
      */
     function sendChainReport(
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18,
-        address payable refundAddress
-    ) external payable;
-
-    /**
-     * @notice #1222 M3 B3 — day-close chain report carrying the
-     *         commitment-RETIREMENT cumulatives alongside the B1 recycled
-     *         figures (report payload 6 → 8 words).
-     * @dev    Same call as the six-argument overload above, plus the two
-     *         counters that let Base close its per-chain reservation ledger
-     *         and restore availability for commitments this chain released
-     *         un-spent. Both are monotonic cumulative totals — Base ratchets
-     *         and clamps them, so a delayed or replayed delivery is inert
-     *         rather than corrupting.
-     * @param commitRetiredCumulative18  Σ of every actual decrement of this
-     *        chain's outstanding recycled commitments (claims + releases).
-     * @param commitReleasedCumulative18 The release-only subset (tokens
-     *        stayed in the bucket); always `≤ commitRetiredCumulative18`.
-     */
-    function sendChainReport(
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18,
-        uint256 commitRetiredCumulative18,
-        uint256 commitReleasedCumulative18,
-        address payable refundAddress
-    ) external payable;
-
-    /**
-     * @notice #1566 PR C revision — the B4 report: the eight B3 words plus the
-     *         reporting chain's LIVE custody era, so the canonical chain stamps
-     *         the rooted remittances it sends here with the era they will land
-     *         in — the destination's, never its own.
-     */
-    function sendChainReport(
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18,
-        uint256 commitRetiredCumulative18,
-        uint256 commitReleasedCumulative18,
-        uint64 custodyEra,
+        uint256 destChainId,
+        ChainDayReport calldata report,
         address payable refundAddress
     ) external payable;
 
@@ -271,47 +265,14 @@ interface IRewardMessenger {
         address payable refundAddress
     ) external payable;
 
-    /// @notice Quote the native CCIP fee for a single mirror→Base chain report.
-    /// @param dayId         Day id the report is for (kept to forward-proof
-    ///                      enforced-options keyed on dayId ranges, even if
-    ///                      today's implementation ignores it).
-    /// @param lenderNumeraire18   Lender USD-18 total that will be sent.
-    /// @param borrowerNumeraire18 Borrower USD-18 total that will be sent.
-    /// @return nativeFee    Wei of native gas token required on msg.value.
+    /// @notice Quote the native CCIP fee for {sendChainReport}. The payload is
+    ///         fixed-width, so any figures price the bytes a real report
+    ///         sends. Refuses a `destChainId` other than this messenger's
+    ///         `baseChainId`, exactly as the send does.
+    /// @return nativeFee Wei of native gas token required on msg.value.
     function quoteSendChainReport(
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18
-    ) external view returns (uint256 nativeFee);
-
-    /// @notice #1222 M3 B3 — quote the EIGHT-word report shape (the
-    ///         six-word figures plus the two commitment-retirement
-    ///         cumulatives). Keepers pricing `closeDay` must quote the shape
-    ///         their diamond will actually dispatch.
-    function quoteSendChainReport(
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18,
-        uint256 commitRetiredCumulative18,
-        uint256 commitReleasedCumulative18
-    ) external view returns (uint256 nativeFee);
-
-    /// @notice #1566 PR C revision — quote the B4 report shape (the B3 words
-    ///         plus the custody era). Keepers pricing `closeDay` must quote the
-    ///         shape their diamond will actually dispatch.
-    function quoteSendChainReport(
-        uint256 dayId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18,
-        uint256 commitRetiredCumulative18,
-        uint256 commitReleasedCumulative18,
-        uint64 custodyEra
+        uint256 destChainId,
+        ChainDayReport calldata report
     ) external view returns (uint256 nativeFee);
 
     /// @notice Quote the native CCIP fee SUM for a Base→mirrors broadcast.

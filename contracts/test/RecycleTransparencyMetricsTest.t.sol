@@ -75,6 +75,7 @@ contract RecycleTransparencyMetricsTest is SetupTest {
 
         messenger = new MockRewardMessenger(address(diamond));
         vm.chainId(CHAIN_BASE);
+        _ensureRewardClockLaunched();
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(true);
         _rep().setRewardMessenger(address(messenger));

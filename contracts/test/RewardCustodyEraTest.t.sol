@@ -12,6 +12,7 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
@@ -425,20 +426,23 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         assertEq(_rlens().getIngressPacket(h0).custodyEra, 0, "an earlier packet keeps its own");
     }
 
-    /// @dev The mirror's day report carries its live custody era (B4), and a
-    ///      messenger without the B4 send downgrades the report to B3.
-    function test_TheDayReport_CarriesTheLiveEra_AndDowngrades() public {
+    /// @dev The mirror's day report carries its live custody era, its reward
+    ///      clock, and the Base this Diamond names (#2620 / #2621).
+    function test_TheDayReport_CarriesTheLiveEra() public {
         activateRewardCustodyForTest(address(vpfi), 0);
         MockRewardMessenger messenger = new MockRewardMessenger(address(diamond));
         _rep().setRewardMessenger(address(messenger));
         _detach();
         _reattach();
         _rep().closeDay(1);
-        assertEq(messenger.lastSendArity(), 9, "the B4 shape");
         assertEq(messenger.lastSendCustodyEra(), 2, "carrying the live era");
-        messenger.setB4Unsupported(true);
-        _rep().closeDay(2);
-        assertEq(messenger.lastSendArity(), 8, "downgraded to B3 on a messenger without B4");
+        assertEq(
+            messenger.lastSendRewardLaunch(),
+            InteractionRewardsLensFacet(address(diamond)).getInteractionLaunchTimestamp(),
+            "carrying its reward clock"
+        );
+        (,, uint32 baseChainId,,) = _rep().getRewardReporterConfig();
+        assertEq(messenger.lastSendDest(), baseChainId, "naming its Base");
     }
 
     /// @dev The era rule for a packet's fresh: a retired, unfinalized era BOOKS it

@@ -18,6 +18,7 @@ import {MockChainlinkRegistry, MockChainlinkFeed} from "../../script/mocks/MockC
 import {MockUniswapV3Factory} from "../../script/mocks/MockUniswapV3.sol";
 import {MockSwapAdapter} from "../mocks/MockSwapAdapter.sol";
 import {DeployTestnetMocks} from "../../script/DeployTestnetMocks.s.sol";
+import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title TestnetMockOracleRig
@@ -69,7 +70,7 @@ abstract contract TestnetMockOracleRig is Test, DeployTestnetMocks {
         mWETH = new ERC20Mock("Mock Wrapped ETH", "mWETH", 18);
         weth = new ERC20Mock("Wrapped ETH", "WETH", 18);
 
-        DiamondCutFacet cutFacet = new DiamondCutFacet();
+        DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cutFacet));
         HelperTest helper = new HelperTest();
 
@@ -86,32 +87,32 @@ abstract contract TestnetMockOracleRig is Test, DeployTestnetMocks {
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](6);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(new OracleFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OracleFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getOracleFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
-            facetAddress: address(new AdminFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(AdminFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getAdminFacetSelectors()
         });
         cuts[2] = IDiamondCut.FacetCut({
-            facetAddress: address(new AccessControlFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(AccessControlFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getAccessControlFacetSelectors()
         });
         cuts[3] = IDiamondCut.FacetCut({
-            facetAddress: address(new OracleAdminFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OracleAdminFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: oracleAdminSelectors
         });
         cuts[4] = IDiamondCut.FacetCut({
-            facetAddress: address(new ConfigFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(ConfigFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getConfigFacetSelectors()
         });
         cuts[5] = IDiamondCut.FacetCut({
-            facetAddress: address(new RiskFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(RiskFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: riskSelectors
         });

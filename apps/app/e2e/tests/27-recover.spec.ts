@@ -31,7 +31,6 @@
 import { test, expect } from '../lib/wallet-fixture';
 import { connectWallet } from '../lib/wallet-fixture';
 import {
-  ADMIN,
   CHAIN_ID,
   DIAMOND,
   DIAMOND_ABI_VIEM,
@@ -41,8 +40,9 @@ import {
   walletFor,
   confirm,
 } from '../lib/chain';
-import { anvilRpc, setBalance } from '../lib/anvil';
-import { encodeFunctionData, parseAbi, parseUnits, type Address } from 'viem';
+import { anvilRpc } from '../lib/anvil';
+import { sendAsAdmin } from '../lib/admin';
+import { parseAbi, parseUnits, type Address } from 'viem';
 
 const MINT_ABI = parseAbi(['function mint(address to, uint256 amount)']);
 const BAL_ABI = parseAbi(['function balanceOf(address) view returns (uint256)']);
@@ -57,25 +57,8 @@ const MOCK_ORACLE = '0x000000000000000000000000000000000000bEEF' as Address;
 const ALWAYS_FALSE_CODE = '0x600060005260206000f3';
 
 async function setSanctionsOracle(target: Address): Promise<void> {
-  // The setter is owner-gated — impersonate the deployment admin.
-  await setBalance(ADMIN, 10n ** 18n);
-  await anvilRpc('anvil_impersonateAccount', [ADMIN]);
-  try {
-    const txHash = (await anvilRpc('eth_sendTransaction', [
-      {
-        from: ADMIN,
-        to: DIAMOND,
-        data: encodeFunctionData({
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'setSanctionsOracle',
-          args: [target],
-        }),
-      },
-    ])) as `0x${string}`;
-    await confirm(txHash, 'setSanctionsOracle');
-  } finally {
-    await anvilRpc('anvil_stopImpersonatingAccount', [ADMIN]);
-  }
+  // The setter is owner-gated — sent as the deployment admin.
+  await sendAsAdmin('setSanctionsOracle', [target]);
 }
 
 test('help explainer gates the flow; dusted vault recovers to the wallet', async ({

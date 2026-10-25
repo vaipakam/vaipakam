@@ -442,6 +442,20 @@ path or a guardrail:
 | `packages/contracts/src/abis/index.ts` | the re-export barrel — the export script does **not** touch it |
 | `packages/contracts/scripts/diamond-facets.json` | `facets` — the combined Diamond ABI is built from it. `contracts/test/deploy/ExportedFacetParityTest` fails unless it equals `cutFacetNames()` plus `DiamondCutFacet`, so an omission is a red deploy-sanity check. More in "Frontend ABI sync" **below** |
 
+**In those scripts, deploy the facet from its artifact, never with `new`**
+(#2718): `XFacet(ArtifactDeploy.deploy(type(XFacet).name))`, from
+`contracts/script/lib/ArtifactDeploy.sol`. The same holds for every contract
+the Diamond build and refresh scripts create (`DeployDiamond`,
+`RefreshAllFacetsInPlace`, `RedeployFacets`, `ReplaceStaleFacets`,
+`UpgradeOracleFacet`, `MigrateRiskTermsCommitReveal`,
+`SlippageCensusPreDeploy`). A `new` compiles the facet's whole creation code
+into the script, and so into every deploy-sanity test and probe that
+constructs or inherits it, where viaIR optimizes it again per contract; one
+suite and its probe cost 470 s of solc on a warm cache. Pass `type(X).name`,
+never a string literal: it forces the import, and the import is what makes
+Foundry rebuild X's artifact before the run. The deployed code, sender and
+address are the ones `new` would have produced.
+
 **Conditional** — required only when the stated condition holds, so *not*
 registering these can be correct:
 
