@@ -145,9 +145,16 @@ Diamond from before it (`PredatesLoanClock`). The marker is the routing of
 `LoanFacet.getLoanDeadlines`. The log is new
 storage appended to the pause namespace, so the storage-layout guard
 records it. A chain upgraded in place starts with an empty log, and a
-pause that ended before the upgrade is not credited. A pause still in
-force at the upgrade is, because upgrades run under the manual pause: the
-unpause that finds no open interval records one from the last pause
-boundary the namespace already stamps (`lastPauseBoundaryAt`). An
-auto-pause fired under that manual pause would move the boundary, so it
-first records the manual pause as an open interval from the old boundary.
+pause that ended before the upgrade is not credited. A pause the pause
+flags still record is: a manual pause in force at the upgrade (upgrades
+run under the manual pause), or an auto-pause window set before it,
+running or lapsed. One rule in `LibPausable` reads that pause as the
+interval it will be stored as, starting at the last pause boundary the
+namespace already stamps (`lastPauseBoundaryAt`) and never before the end
+of the last stored interval (#2809 r1). Every reader counts it from the
+moment of the upgrade, so a loan's credit runs during the inherited pause
+and repay stays open against the moved deadlines before anyone unpauses;
+the interval log view reports it as its last entry. Every writer (pause,
+unpause, auto-pause) stores it first, unchanged, before it moves the
+boundary or clears the flags, so the credit is the same before and after
+it reaches storage and never moves backwards.

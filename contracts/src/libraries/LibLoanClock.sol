@@ -40,6 +40,15 @@ library LibLoanClock {
         return originalMaturity(loan) + pauseCredit(loan);
     }
 
+    /// @notice Whole days left until the effective maturity, counting a
+    ///         part day as a day; zero once the loan has reached it. The
+    ///         remaining term a listing of the loan carries.
+    function remainingTermDays(LibVaipakam.Loan storage loan) internal view returns (uint256) {
+        uint256 m = maturity(loan);
+        if (block.timestamp >= m) return 0;
+        return (m - block.timestamp + 1 days - 1) / 1 days;
+    }
+
     /// @notice The loan's effective grace end: past it the loan may be
     ///         defaulted and may no longer be repaid.
     function graceEnd(LibVaipakam.Loan storage loan) internal view returns (uint256) {

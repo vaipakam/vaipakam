@@ -122,6 +122,8 @@ library LibPausable {
     /// @dev The manual pause was required and only an auto-pause window (or
     ///      nothing) is active.
     error ExpectedManualPause();
+    /// @dev {pauseIntervalAt} was asked for an interval past the log.
+    error PauseIntervalOutOfRange(uint256 index);
 
     function _storage() private pure returns (PausableStorage storage ps) {
         bytes32 position = PAUSABLE_STORAGE_POSITION;
@@ -218,6 +220,7 @@ library LibPausable {
 
     function pause() internal {
         PausableStorage storage ps = _storage();
+        _recordUnlogged(ps);
         _openInterval(ps);
         ps.paused = true;
         ps.lastPauseBoundaryAt = SafeCast.toUint64(block.timestamp);
@@ -248,6 +251,9 @@ library LibPausable {
         // claim, and stamping it would spuriously drop up to a heartbeat of
         // executable accrual for every RL-3-stamped entry (Codex #1317 r3 P3).
         bool wasPaused = ps.paused || ps.pausedUntilTimestamp > block.timestamp;
+        // Clearing the flags below erases what {_unlogged} reads, so an
+        // unlogged pause (even a lapsed window) reaches the log first.
+        _recordUnlogged(ps);
         if (wasPaused) _closeInterval(ps);
         ps.paused = false;
         ps.pausedUntilTimestamp = 0;
@@ -284,12 +290,12 @@ library LibPausable {
         PausableStorage storage ps = _storage();
         if (ps.pausedUntilTimestamp > block.timestamp) return;
         uint64 until = SafeCast.toUint64(block.timestamp + duration);
-        // Under the manual pause the open interval already covers the
-        // window; outside it the window is its own closed interval. The
-        // boundary stamp below moves, so a manual pause the log has not yet
-        // recorded is adopted first, from the boundary it stamped.
-        if (ps.paused) _adoptUnloggedManualPause(ps);
-        else _appendInterval(ps, SafeCast.toUint64(block.timestamp), until);
+        // The boundary stamp below moves, so a pause the log has not yet
+        // recorded reaches it first, from the boundary it stamped. Then,
+        // under the manual pause the open interval already covers the
+        // window; outside it the window is its own closed interval.
+        _recordUnlogged(ps);
+        if (!ps.paused) _appendInterval(ps, SafeCast.toUint64(block.timestamp), until);
         ps.pausedUntilTimestamp = until;
         // Stamp the boundary at the START of the auto-pause window. Passive
         // expiry fires no unpause tx, so this is the only boundary marker for
@@ -329,37 +335,58 @@ library LibPausable {
     }
 
     /// @dev Closes the paused interval an unpause ends, at `now`: the open
-    ///      manual interval, or an auto-pause window cut short. A pause in
-    ///      force with no interval on the log (a Diamond upgraded in place
-    ///      while paused, before the log existed) is recorded from the last
-    ///      pause boundary, which the pause that is ending stamped.
+    ///      manual interval, or an auto-pause window cut short. Called only
+    ///      while a pause is in force and after {_recordUnlogged}, so the
+    ///      last interval on the log is the one in force.
     function _closeInterval(PausableStorage storage ps) private {
         uint64 nowTs = SafeCast.toUint64(block.timestamp);
-        uint256 n = ps.pauseIntervals.length;
-        PauseInterval storage last;
-        if (n != 0 && ps.pauseIntervals[n - 1].end > nowTs) {
-            last = ps.pauseIntervals[n - 1];
-            last.end = nowTs;
-        } else {
-            uint64 from = ps.lastPauseBoundaryAt;
-            if (n != 0 && from < ps.pauseIntervals[n - 1].end) from = ps.pauseIntervals[n - 1].end;
-            _appendInterval(ps, from, nowTs);
-            last = ps.pauseIntervals[n];
-        }
+        PauseInterval storage last = ps.pauseIntervals[ps.pauseIntervals.length - 1];
+        last.end = nowTs;
         emit PauseIntervalClosed(last.start, nowTs, last.pausedBefore + (nowTs - last.start));
     }
 
-    /// @dev A manual pause in force with no open interval on the log (a
-    ///      Diamond upgraded in place while paused, before the log existed)
-    ///      is recorded as open from the boundary that pause stamped, never
-    ///      earlier than the end of the last recorded interval. No-op when the
-    ///      protocol is not manually paused or the interval is already open.
-    function _adoptUnloggedManualPause(PausableStorage storage ps) private {
+    /// @dev The pause the flags record and the log does not, as the interval
+    ///      it would be on the log. That is a manual pause in force, or an
+    ///      auto-pause window (running or lapsed), set before the log existed
+    ///      on a Diamond upgraded in place (#2809 r1). It starts at the
+    ///      boundary that pause stamped, never earlier than the end of the
+    ///      last recorded interval, so it can only understate the paused time.
+    ///      `found` is false when the log already covers the pause state.
+    ///      Every reader counts it ({pausedSecondsAt}, {pauseIntervalCount},
+    ///      {pauseIntervalAt}) and every writer records it first
+    ///      ({_recordUnlogged}), so a loan's pause credit is the same before
+    ///      and after the interval reaches the log, and repay stays open
+    ///      against the moved deadlines during an inherited pause.
+    function _unlogged(PausableStorage storage ps)
+        private
+        view
+        returns (bool found, PauseInterval memory iv)
+    {
         uint256 n = ps.pauseIntervals.length;
-        if (n != 0 && ps.pauseIntervals[n - 1].end == OPEN_END) return;
-        uint64 from = ps.lastPauseBoundaryAt;
-        if (n != 0 && from < ps.pauseIntervals[n - 1].end) from = ps.pauseIntervals[n - 1].end;
-        _appendInterval(ps, from, OPEN_END);
+        uint64 floor;
+        if (n != 0) {
+            PauseInterval storage last = ps.pauseIntervals[n - 1];
+            if (last.end == OPEN_END) return (false, iv);
+            floor = last.end;
+            iv.pausedBefore = last.pausedBefore + (last.end - last.start);
+        }
+        iv.start = ps.lastPauseBoundaryAt > floor ? ps.lastPauseBoundaryAt : floor;
+        if (ps.paused) {
+            iv.end = OPEN_END;
+            return (true, iv);
+        }
+        if (ps.pausedUntilTimestamp > iv.start) {
+            iv.end = ps.pausedUntilTimestamp;
+            return (true, iv);
+        }
+        return (false, iv);
+    }
+
+    /// @dev Writes {_unlogged}'s interval to the log, unchanged. No-op when
+    ///      the log already covers the pause state.
+    function _recordUnlogged(PausableStorage storage ps) private {
+        (bool found, PauseInterval memory iv) = _unlogged(ps);
+        if (found) ps.pauseIntervals.push(iv);
     }
 
     function _appendInterval(PausableStorage storage ps, uint64 start, uint64 end) private {
@@ -375,9 +402,14 @@ library LibPausable {
     /// @notice Total time the protocol had been paused before `t`.
     /// @dev    Binary search over the log: the last interval starting at or
     ///         before `t`, plus the part of it before `t`. An open interval
-    ///         counts up to `t`. Zero before the first pause.
+    ///         counts up to `t`. Zero before the first pause. A pause the log
+    ///         has not yet recorded ({_unlogged}) is counted as the interval
+    ///         it will be recorded as; it starts after every logged one.
     function pausedSecondsAt(uint256 t) internal view returns (uint256) {
-        PauseInterval[] storage log_ = _storage().pauseIntervals;
+        PausableStorage storage ps = _storage();
+        (bool found, PauseInterval memory tail) = _unlogged(ps);
+        if (found && tail.start <= t) return _pausedWithin(tail, t);
+        PauseInterval[] storage log_ = ps.pauseIntervals;
         uint256 lo;
         uint256 hi = log_.length;
         // Find the number of intervals with start <= t.
@@ -387,7 +419,12 @@ library LibPausable {
             else hi = mid;
         }
         if (lo == 0) return 0;
-        PauseInterval storage iv = log_[lo - 1];
+        return _pausedWithin(log_[lo - 1], t);
+    }
+
+    /// @dev Paused time before `t` for the interval starting at or before
+    ///      `t`: every earlier interval plus the part of this one before `t`.
+    function _pausedWithin(PauseInterval memory iv, uint256 t) private pure returns (uint256) {
         uint256 end = iv.end < t ? iv.end : t;
         return uint256(iv.pausedBefore) + (end - iv.start);
     }
@@ -398,14 +435,23 @@ library LibPausable {
         return pausedSecondsAt(to) - pausedSecondsAt(from);
     }
 
-    /// @notice Number of intervals on the log.
+    /// @notice Number of intervals on the log, counting a pause in force the
+    ///         log has not yet recorded ({_unlogged}) as its last entry.
     function pauseIntervalCount() internal view returns (uint256) {
-        return _storage().pauseIntervals.length;
+        PausableStorage storage ps = _storage();
+        (bool found, ) = _unlogged(ps);
+        return ps.pauseIntervals.length + (found ? 1 : 0);
     }
 
-    /// @notice One interval of the log; `end == OPEN_END` while open.
+    /// @notice One interval of the log; `end == OPEN_END` while open. The
+    ///         entry past the stored ones is the unrecorded pause, exactly as
+    ///         the next pause-state change will record it.
     function pauseIntervalAt(uint256 i) internal view returns (PauseInterval memory) {
-        return _storage().pauseIntervals[i];
+        PausableStorage storage ps = _storage();
+        if (i < ps.pauseIntervals.length) return ps.pauseIntervals[i];
+        (bool found, PauseInterval memory tail) = _unlogged(ps);
+        if (!found || i != ps.pauseIntervals.length) revert PauseIntervalOutOfRange(i);
+        return tail;
     }
 
     /// @dev Block-timestamp at which the pause STATE last changed (pause /

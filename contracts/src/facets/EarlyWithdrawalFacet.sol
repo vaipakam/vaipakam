@@ -353,11 +353,10 @@ contract EarlyWithdrawalFacet is
             revert SalePositionNotConsolidatable();
         }
 
-        // Calculate remaining days — revert if loan is past maturity
-        uint256 elapsed = block.timestamp - loan.startTime;
-        uint256 elapsedDays = elapsed / 1 days;
-        if (elapsedDays >= loan.durationDays) revert InvalidSaleOffer();
-        uint256 remainingDays = loan.durationDays - elapsedDays;
+        // Remaining term to the loan's EFFECTIVE maturity (the pause credit
+        // included, #668 / #935) — revert once the loan has reached it.
+        uint256 remainingDays = LibLoanClock.remainingTermDays(loan);
+        if (remainingDays == 0) revert InvalidSaleOffer();
 
         // Design item 1 — mandatory finite expiry, clamped at the loan's own
         // maturity. Validated in its own frame (viaIR stack ceiling).
@@ -548,7 +547,7 @@ contract EarlyWithdrawalFacet is
      *           [MIN_SALE_LISTING_SECONDS, MAX_SALE_LISTING_SECONDS] — there
      *           is no never-expires option and no sub-minimum flash listing.
      *        2. The expiry is clamped at the loan's LIVE maturity
-     *           (`startTime + durationDays`), so a listing can never be
+     *           (`LibLoanClock.maturity`, the pause credit included), so a listing can never be
      *           accepted inside the grace window: `isOfferExpired` treats
      *           `now >= expiresAt` as expired, and stamping exactly the
      *           maturity timestamp makes the listing die the second the loan

@@ -30,7 +30,13 @@ keeper and app changes that consume the new read are tracked as a
 follow-up. A sale listing's price floor still hedges interest only to the
 original grace end. After a long pause, a fill late in the extended window
 can therefore be refused as short. The borrower can still repay, or post
-the listing again.
+the listing again. Whether a loan may still be listed for sale, and the
+remaining term the listing carries, follow the moved due date.
+
+A chain upgraded in place while paused, or during an auto-pause window,
+counts that pause from the upgrade on, before anyone lifts it, rather
+than only once it ends, so repayment stays open against the moved
+deadlines during it. A later pause never drops it from the record.
 
 The change reaches a chain only by a fresh deploy or the all-facets
 in-place refresh. The two curated refresh scripts refuse a Diamond from

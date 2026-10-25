@@ -12,6 +12,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
+import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LoanClockProbeFacet} from "./mocks/LoanClockProbeFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -211,9 +212,13 @@ contract GlobalPauseLoanClockTest is SetupTest {
     function test_log_upgradedWhilePaused_unpauseRecordsThePause() public {
         admin.pause();
         vm.store(address(diamond), _logLengthSlot(), bytes32(0));
-        assertEq(_intervals().length, 0, "fixture-live: the log is empty, as before the upgrade");
+        assertEq(
+            uint256(vm.load(address(diamond), _logLengthSlot())), 0, "fixture-live: nothing stored, as before the upgrade"
+        );
+        assertEq(_intervals().length, 1, "the pause in force is still reported");
         vm.warp(vm.getBlockTimestamp() + 2 days);
         admin.unpause();
+        assertEq(uint256(vm.load(address(diamond), _logLengthSlot())), 1, "the unpause stored it");
         assertEq(_intervals().length, 1);
         assertEq(admin.pausedSecondsAt(vm.getBlockTimestamp()), 2 days, "the whole pause is recorded");
     }
@@ -230,6 +235,54 @@ contract GlobalPauseLoanClockTest is SetupTest {
         admin.unpause();
         assertEq(_intervals().length, 1, "one interval");
         assertEq(admin.pausedSecondsAt(vm.getBlockTimestamp()), 3 days, "counted from the manual pause");
+    }
+
+    /// @dev #2809 r1 — before that pause is lifted, the clock already counts
+    ///      it: the log reports it as its last entry, the loan's credit grows
+    ///      with it, and repay stays open past the original grace end.
+    function test_log_upgradedWhilePaused_clockCountsThePauseBeforeUnpause() public {
+        uint256 loanId = _openLoan();
+        uint256 start = vm.getBlockTimestamp();
+        vm.warp(start + (DURATION_DAYS - 1) * 1 days);
+        admin.pause();
+        uint256 pausedAt = vm.getBlockTimestamp();
+        vm.store(address(diamond), _logLengthSlot(), bytes32(0));
+        vm.warp(pausedAt + 10 days); // past the ORIGINAL grace end, still paused
+
+        LibPausable.PauseInterval[] memory iv = _intervals();
+        assertEq(iv.length, 1, "the unrecorded pause is reported");
+        assertEq(iv[0].start, pausedAt);
+        assertEq(iv[0].end, LibPausable.OPEN_END, "as open");
+        (, uint256 credit, , ) = _deadlines(loanId);
+        assertEq(credit, 10 days, "credited while it runs");
+
+        vm.startPrank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        vm.stopPrank();
+        assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Repaid));
+    }
+
+    /// @dev #2809 r1 — an auto-pause window set before the log existed is
+    ///      counted, and a later pause records it rather than dropping it,
+    ///      so a loan's credit never moves backwards.
+    function test_log_upgradedDuringAutoPause_windowIsKeptByTheNextPause() public {
+        uint256 loanId = _openLoan();
+        vm.warp(vm.getBlockTimestamp() + 1 days);
+        uint256 n0 = _intervals().length;
+        admin.autoPause("incident");
+        LibPausable.PauseInterval memory w = _intervals()[n0];
+        vm.store(address(diamond), _logLengthSlot(), bytes32(n0)); // drop the window's entry
+        vm.warp(uint256(w.end) + 1 days); // the window has lapsed by itself
+
+        (, uint256 creditBefore, , ) = _deadlines(loanId);
+        assertGt(creditBefore, 0, "fixture-live: a non-empty window");
+        assertEq(creditBefore, w.end - w.start, "the lapsed window is credited");
+
+        admin.pause();
+        (, uint256 creditAfter, , ) = _deadlines(loanId);
+        assertEq(creditAfter, creditBefore, "the next pause keeps it");
+        assertEq(_intervals().length, n0 + 2, "recorded, then the new pause opened");
     }
 
     function test_getPauseIntervals_pages() public {
@@ -382,6 +435,39 @@ contract GlobalPauseLoanClockTest is SetupTest {
         vm.warp(vm.getBlockTimestamp() + 3 days);
         (, uint256 credit, , ) = _deadlines(loanId);
         assertEq(credit, 3 days);
+    }
+
+    /// @dev A loan paused for 10 days from day 5, with the clock at `day`.
+    function _pausedTenDaysThenAt(uint256 day) internal returns (uint256 loanId) {
+        loanId = _openLoan();
+        uint256 start = vm.getBlockTimestamp();
+        vm.warp(start + 5 days);
+        admin.pause();
+        vm.warp(vm.getBlockTimestamp() + 10 days);
+        admin.unpause();
+        vm.warp(start + day * 1 days);
+    }
+
+    /// @dev #2809 r1 — a lender may list the loan for sale inside the moved
+    ///      term: past the original maturity but before the effective one.
+    function test_clock_saleListingOpenInsideTheMovedTerm() public {
+        uint256 loanId = _pausedTenDaysThenAt(DURATION_DAYS + 1); // past the ORIGINAL maturity
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
+            loanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
+        );
+    }
+
+    /// @dev Past the effective maturity the listing is refused.
+    function test_clock_saleListingRefusedPastTheMovedMaturity() public {
+        uint256 loanId = _pausedTenDaysThenAt(DURATION_DAYS + 10);
+        (, uint256 credit, , ) = _deadlines(loanId);
+        assertEq(credit, 10 days, "fixture-live: at the moved maturity");
+        vm.prank(lender);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
+            loanId, 500, true, uint64(LibVaipakam.MIN_SALE_LISTING_SECONDS)
+        );
     }
 
     // ─── 4. Disclosure ───────────────────────────────────────────────────────
