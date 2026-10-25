@@ -28,6 +28,7 @@
 import { isSendPastDeadline, queuedWallet, reportSendError } from './submissionQueue';
 import { attemptErrorReason } from './keeperSend';
 import {
+  type Abi,
   type Address,
   createWalletClient,
   http,
@@ -44,7 +45,7 @@ import {
   RiskSplitLiquidationFacetABI,
 } from '@vaipakam/contracts/abis';
 import { attemptCloseOut } from './closeOut';
-import { parseLiquidationLoan, type LiquidationLoan } from './liquidationLoan';
+import { parseLiquidationLoan } from './liquidationLoan';
 import { tryMatchLiquidation } from './matchLiquidation';
 import { orchestrateDexDirectQuotes } from './dexDirectQuotes';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
@@ -64,6 +65,13 @@ import {
 } from './serverQuotes';
 import { flashLoanRoute } from './flashLoanProviders';
 import { discountPathBlocker } from './discountPath';
+import {
+  liquidatorFunction,
+  minProfitForFee,
+  planFlashLoanLiquidation,
+  readDiscountedLiquidation,
+} from './discountedLiquidation';
+import { estimateTxFeeWei } from './txFee';
 import {
   BPS,
   MAX_PARTIAL_FRACTION_BPS,
@@ -642,13 +650,13 @@ export async function maybeAutonomousLiquidate(
     //    FlashLoanLiquidationPath.md. Slots in AHEAD of partial /
     //    split / atomic because the discount path is the most
     //    capital-efficient option when:
-    //      - the discount-path master kill-switch is on, AND
-    //      - we have a FlashLoanLiquidator deployed on this chain,
-    //        AND
-    //      - the projected swap proceeds (collateral seizure ×
-    //        best DEX quote) exceed (totalDebt + flash-loan fee +
-    //        gas headroom). I.e. the trade clears with positive
-    //        margin even after the liquidator-side costs.
+    //      - we have a FlashLoanLiquidator deployed on this chain and
+    //        the operator has armed it, AND
+    //      - the Diamond's preview says the discounted liquidation can
+    //        run (its own switch on, the loan under water, the
+    //        collateral tiered and priced), AND
+    //      - the exact call, its swap quoted for the previewed seizure,
+    //        simulates to a run that keeps at least its own fee (#2697).
     //
     //    If any condition fails, we fall through to the existing
     //    partial / split / atomic branches — same code path as
@@ -660,9 +668,6 @@ export async function maybeAutonomousLiquidate(
       publicClient,
       loanId,
       loanIdBig,
-      loan,
-      hfRaw,
-      quotes, // full-size collateral→principal quotes already fetched
     });
     if (flashLoanSubmitted) return true;
 
@@ -1091,31 +1096,26 @@ interface FlashLoanBranchArgs {
   publicClient: PublicClient;
   loanId: number;
   loanIdBig: bigint;
-  loan: LiquidationLoan;
-  hfRaw: bigint;
-  /** Quote bundle for the full-size collateral→principal swap.
-   *  Reused from the main flow's earlier `orchestrateServerQuotes`
-   *  call — no extra RPC roundtrip needed. */
-  quotes: ServerOrchestrationResult;
 }
 
 /**
  * Try the flash-loan-funded discount path. Three gates:
  *   1. Per-chain `FlashLoanLiquidator` deployed AND at least one
  *      flash-loan provider configured (Aave V3 / Balancer V2).
- *   2. Diamond's `discountPathEnabled` governance flag is true.
- *   3. Simulated trade is profitable after flash-loan fee + a
- *      gas-headroom buffer.
+ *   2. The operator has armed the chain (`DISCOUNT_PATH_CHAIN_IDS`).
+ *   3. The trade (discountedLiquidation.ts): the Diamond's preview says
+ *      the liquidation can run, a DEX-direct quote sells exactly its
+ *      seizure, and the exact call simulates to a run that keeps at least
+ *      its own fee. The Diamond's own discount-path switch is the
+ *      preview's `Disabled` status.
  *
- * Returns true iff a tx was submitted. Any failure mode (provider
- * not configured, kill-switch off, unprofitable simulation, RPC
- * error during read) returns false silently so the caller falls
- * through to the existing decision tree.
+ * Returns true iff a tx was submitted. Every skip is logged with its
+ * reason, and the caller falls through to the existing decision tree.
  */
 async function tryFlashLoanDiscountedPath(
   args: FlashLoanBranchArgs,
 ): Promise<boolean> {
-  const { env, chain, ctx, publicClient, loanId, loanIdBig, loan, quotes } = args;
+  const { env, chain, ctx, publicClient, loanId, loanIdBig } = args;
 
   // Gate 1 — the static route: our FlashLoanLiquidator and a provider on
   // this chain (`flashLoanRoute`, the same reading the start-up posture line
@@ -1127,139 +1127,75 @@ async function tryFlashLoanDiscountedPath(
   const { route } = resolvedRoute;
 
   // Gate 2 — the operator has armed this chain (`DISCOUNT_PATH_CHAIN_IDS`,
-  // discountPath.ts, #2633). The Diamond has its own discount-path
-  // switch, but no cheap view of it: the only read is a per-loan
-  // eth_call of triggerLiquidationDiscounted, matched on its
-  // `DiscountPathDisabled` revert. So the operator names the chain once
-  // that switch is on, and an unnamed chain, an unset setting or one that
-  // cannot be read keeps the path inert.
+  // discountPath.ts, #2633). The Diamond's own discount-path switch is read
+  // per loan, as the preview's `Disabled` status (gate 3); this is the
+  // operator's separate, affirmative step, so an unnamed chain, an unset
+  // setting or one that cannot be read keeps the path inert.
   const blocker = discountPathBlocker(env.DISCOUNT_PATH_CHAIN_IDS, chain.id);
   if (blocker !== null) {
     console.log(`[keeper] loan=${loanId} chain=${chain.name} flash-loan-skip not-armed: ${blocker}`);
     return false;
   }
 
-  // Gate 3 — profitability simulation. We already have the full-
-  // size collateral→principal quote bundle from the main flow (the
-  // best-ranked entry's `expectedOutput` is what the swap would
-  // yield). Subtract the flash-loan fee + a small gas headroom
-  // expressed in principal-token units.
-  if (quotes.calls.length === 0) return false;
-  const bestQuote = quotes.ranked[0];
-  if (!bestQuote) return false;
-
-  // Compute totalDebt — principal + accrued interest. The diamond
-  // computes this internally inside `triggerLiquidationDiscounted`;
-  // we approximate off-chain so the simulation matches what the
-  // diamond will charge. Floor: just the principal. Ceiling: read
-  // current borrow balance via `LoanFacet.getLoanDetails` (already
-  // in `loan`) — but `getLoanDetails` returns the snapshot at
-  // init, not the current balance. For now we estimate using the
-  // principal as the lower-bound; the actual on-chain seize will
-  // top out at the real `totalDebt`. The keeper bot can be made
-  // more precise in a follow-up by adding a `calculateCurrentDebt`
-  // view to `LoanFacet`.
-  const totalDebtEstimate = loan.collateralAmount; // very rough placeholder
-  // (TODO: compute proper currentBorrowBalance via OracleFacet)
-
-  // Aave V3 standard premium = 5 BPS. Reading the exact value from
-  // `IAaveV3Pool.FLASHLOAN_PREMIUM_TOTAL()` costs a per-tick RPC
-  // call; the standard 5 BPS holds on every chain we target, so
-  // we use the conservative constant. There is no override.
-  const flashFeeBps = 5;
-  const flashFee = (totalDebtEstimate * BigInt(flashFeeBps)) / 10_000n;
-
-  // Simulated proceeds = best-quote expectedOutput on the
-  // collateral→principal swap. The seizure size at the diamond
-  // includes the per-tier discount which we don't precisely
-  // simulate here (Tier 3 default 5%), so the realised proceeds
-  // will be slightly higher than this estimate. Adding the
-  // discount-implied uplift would tighten the simulation; for v1
-  // we use the floor estimate so the simulation is conservative.
-  const simulatedProceeds = bestQuote.expectedOutput;
-
-  // Gas headroom — order-of-magnitude estimate for a flash-loan
-  // tx (~600k gas at 2 gwei on an L2 = ~1.2e-3 ETH), as a fixed
-  // amount of the principal token: 1e18 base units, which is one
-  // token only for an 18-decimal principal. There is no override:
-  // the per-chain `FLASH_GAS_HEADROOM_PRINCIPAL_<chainId>` this
-  // read before #2633 was never carried by `resolveEnv`, so it was
-  // always this constant. Sizing it per principal token, with the
-  // debt estimate above, is #2697.
-  const gasHeadroom = 10n ** 18n;
-
-  const requiredProceeds = totalDebtEstimate + flashFee + gasHeadroom;
-  if (simulatedProceeds < requiredProceeds) {
-    console.log(
-      `[keeper] loan=${loanId} chain=${chain.name} flash-loan-skip ` +
-        `unprofitable: proceeds=${simulatedProceeds} < ` +
-        `needed=${requiredProceeds} (debt~${totalDebtEstimate} ` +
-        `fee=${flashFee} gas=${gasHeadroom})`,
-    );
-    return false;
-  }
-
+  // Gate 3 — the trade itself (#2697, discountedLiquidation.ts): the
+  // Diamond's preview gives the debt and the seizure, the swap is quoted for
+  // exactly that seizure with the FlashLoanLiquidator as taker (an
+  // aggregator's response is taker-specific, so the main flow's
+  // adapter-taker quotes cannot be reused), and the exact call is estimated,
+  // which simulates the whole run. The run must keep at least its own fee,
+  // in the principal token's units, or the liquidator reverts it.
   const account = ctx.wallet.account;
   if (!account) return false;
-
-  // ── DEX-direct quote fetch ────────────────────────────────────
-  // Re-fetch with the FlashLoanLiquidator receiver as taker, so the
-  // aggregator builds calldata + allowance target tailored to the
-  // receiver's call shape. We can't reuse the `quotes` bundle from the
-  // main flow: that one is quoted for each Diamond swap ADAPTER as taker
-  // (the LibSwap path, #2468), and an aggregator's response is
-  // taker-specific.
-  const directQuotes = await orchestrateDexDirectQuotes(env, publicClient, {
+  const diamond = chain.diamond as Address;
+  const functionName = liquidatorFunction(route.via);
+  const plan = await planFlashLoanLiquidation({
     chainId: chain.id,
-    sellToken: loan.collateralAsset,
-    buyToken: loan.principalAsset,
-    sellAmount: loan.collateralAmount,
-    taker: route.liquidator,
+    loanId: loanIdBig,
+    readPreview: () => readDiscountedLiquidation(publicClient, diamond, loanIdBig),
+    quote: async (sellAmount, preview) => {
+      const direct = await orchestrateDexDirectQuotes(env, publicClient, {
+        chainId: chain.id,
+        sellToken: preview.collateralAsset,
+        buyToken: preview.principalAsset,
+        sellAmount,
+        taker: route.liquidator,
+      });
+      if (direct.ranked.length === 0 && direct.failed.length > 0) {
+        console.log(
+          `[keeper] loan=${loanId} chain=${chain.name} flash-loan dex-direct quotes failed: ${direct.failed.join(',')}`,
+        );
+      }
+      return direct.ranked;
+    },
+    estimateFee: (args) =>
+      estimateTxFeeWei(publicClient, chain.id, {
+        address: route.liquidator,
+        abi: FlashLoanLiquidatorABI as Abi,
+        functionName,
+        args,
+        account,
+      }),
+    minProfit: (principalAsset, feeWei) => minProfitForFee(publicClient, diamond, chain.id, principalAsset, feeWei),
   });
-  if (directQuotes.ranked.length === 0) {
-    console.log(
-      `[keeper] loan=${loanId} chain=${chain.name} flash-loan-skip ` +
-        `no-dex-direct-quotes (failed: ${directQuotes.failed.join(',')})`,
-    );
-    return false;
-  }
-  const bestDirect = directQuotes.ranked[0];
-
-  // Re-validate profitability against the DEX-direct quote
-  // (which can differ from the LibSwap-adapter quote we used in
-  // the initial simulation — the aggregator returns slightly
-  // different routes per-taker).
-  if (bestDirect.expectedOutput < requiredProceeds) {
-    console.log(
-      `[keeper] loan=${loanId} chain=${chain.name} flash-loan-skip ` +
-        `direct-quote-unprofitable: proceeds=${bestDirect.expectedOutput} < ` +
-        `needed=${requiredProceeds}`,
-    );
+  if (plan.kind === 'skip') {
+    console.log(`[keeper] loan=${loanId} chain=${chain.name} flash-loan-skip ${plan.reason}`);
     return false;
   }
 
   try {
-    const fnName = route.via === 'aave-v3' ? 'liquidateViaAaveV3' : 'liquidateViaBalancerV2';
     const hash = await ctx.wallet.writeContract({
       address: route.liquidator,
       abi: FlashLoanLiquidatorABI,
-      functionName: fnName,
-      args: [
-        loanIdBig,
-        loan.principalAsset,
-        loan.collateralAsset,
-        totalDebtEstimate,
-        bestDirect.swapTarget,
-        bestDirect.swapAllowanceTarget,
-        bestDirect.swapCalldata,
-      ],
+      functionName,
+      args: plan.args,
       account,
       chain: ctx.wallet.chain,
     });
     console.log(
       `[keeper] loan=${loanId} chain=${chain.name} submitted-flashloan ` +
-        `tx=${hash} via=${route.via} ` +
-        `swap=${bestDirect.kind} expected=${bestDirect.expectedOutput}`,
+        `tx=${hash} via=${route.via} swap=${plan.quote.kind} ` +
+        `debt=${plan.preview.debt} sell=${plan.preview.seized} ` +
+        `expected=${plan.quote.expectedOutput} minProfit=${plan.minProfit}`,
     );
     return true;
   } catch (err) {

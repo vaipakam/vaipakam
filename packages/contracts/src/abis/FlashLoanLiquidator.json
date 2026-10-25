@@ -130,17 +130,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "principalAsset",
-        "type": "address",
-        "internalType": "address"
+        "name": "sellAmount",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
-        "name": "collateralAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "totalDebt",
+        "name": "minProfit",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -173,17 +168,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "principalAsset",
-        "type": "address",
-        "internalType": "address"
+        "name": "sellAmount",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
-        "name": "collateralAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "totalDebt",
+        "name": "minProfit",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -293,6 +283,12 @@
         "internalType": "uint256"
       },
       {
+        "name": "collateralSold",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "swapProceeds",
         "type": "uint256",
         "indexed": false,
@@ -376,6 +372,22 @@
   },
   {
     "type": "error",
+    "name": "NotLiquidatable",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NotOwner",
     "inputs": []
   },
@@ -392,6 +404,22 @@
         "name": "token",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SeizureBelowQuote",
+    "inputs": [
+      {
+        "name": "seized",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sellAmount",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

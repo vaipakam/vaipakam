@@ -70,7 +70,8 @@ import {
 } from './keeper';
 import { reportSendError } from './submissionQueue';
 import { summarizeFailure } from '@vaipakam/lib/errorDescription';
-import { ROLL_MIN_VALUE_TO_GAS, estimateRollFeeWei, judgeRollValue, rollUnpricedReason } from './rollGasFloor';
+import { ROLL_MIN_VALUE_TO_GAS, judgeRollValue } from './rollGasFloor';
+import { estimateTxFeeWei, txFeeUnpricedReason } from './txFee';
 
 // `getActiveOffersCount` / `getActiveOffersPaginated` live on
 // MetricsFacet; `getOffer` on OfferCancelFacet post the EIP-170 facet
@@ -1375,7 +1376,7 @@ async function runIntentRollPass(
   if (rollable.length === 0) return;
   // #2760 item 3 — a chain whose fee the keeper cannot value gets no rolls at
   // all: say it once and leave the loans to their owners.
-  const unpriced = rollUnpricedReason(ctx.chainId);
+  const unpriced = txFeeUnpricedReason(ctx.chainId);
   if (unpriced) {
     console.log(
       `[matcher] chain=${ctx.chainId} roll pass: not rolling, ${unpriced}; owners can roll or claim their loans themselves`,
@@ -1403,7 +1404,7 @@ async function runIntentRollPass(
     // shows: it reverts `KeeperAccessRequired` before anything is signed.
     let feeWei: bigint;
     try {
-      feeWei = await estimateRollFeeWei(ctx.client, ctx.chainId, {
+      feeWei = await estimateTxFeeWei(ctx.client, ctx.chainId, {
         address: ctx.diamond,
         abi: MATCHER_ABI,
         functionName: 'rollIntentLoan',

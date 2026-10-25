@@ -15,6 +15,7 @@ import {
 } from "../src/interfaces/IBalancerV2Vault.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {LibDiscountedLiquidation} from "../src/libraries/LibDiscountedLiquidation.sol";
 
 /// @title FlashLoanLiquidatorTest
 /// @notice Unit tests for the FlashLoanLiquidator reference contract
@@ -80,6 +81,7 @@ contract FlashLoanLiquidatorTest is Test {
         aavePool.setPremiumBps(AAVE_PREMIUM_BPS);
         balancerVault.setPrincipal(address(principal));
         diamond.setAssets(address(principal), address(collateral));
+        diamond.setDebt(FLASH_LOAN_AMOUNT);
         diamond.setSeizureAmount(COLLATERAL_SEIZED);
         swap.setIO(address(collateral), address(principal));
         swap.setRateMul(105);   // 1.05× = 5% profitable swap
@@ -144,9 +146,8 @@ contract FlashLoanLiquidatorTest is Test {
         vm.expectRevert(FlashLoanLiquidator.NotOwner.selector);
         liquidator.liquidateViaAaveV3(
             LOAN_ID,
-            address(principal),
-            address(collateral),
-            FLASH_LOAN_AMOUNT,
+            COLLATERAL_SEIZED,
+            0,
             address(swap),
             address(swap),
             _swapCalldata()
@@ -158,9 +159,8 @@ contract FlashLoanLiquidatorTest is Test {
         vm.expectRevert(FlashLoanLiquidator.NotOwner.selector);
         liquidator.liquidateViaBalancerV2(
             LOAN_ID,
-            address(principal),
-            address(collateral),
-            FLASH_LOAN_AMOUNT,
+            COLLATERAL_SEIZED,
+            0,
             address(swap),
             address(swap),
             _swapCalldata()
@@ -176,7 +176,8 @@ contract FlashLoanLiquidatorTest is Test {
     // ─── Callback validation ─────────────────────────────────────────
 
     function testExecuteOperationRevertsIfNotInFlight() public {
-        // Direct call to the callback — no flash-loan in-flight.
+        // The provider itself calling back with no run committed.
+        vm.prank(address(aavePool));
         vm.expectRevert(FlashLoanLiquidator.NotInFlight.selector);
         liquidator.executeOperation(
             address(principal),
@@ -195,8 +196,50 @@ contract FlashLoanLiquidatorTest is Test {
         uint256[] memory fees = new uint256[](1);
         fees[0] = 0;
 
+        vm.prank(address(balancerVault));
         vm.expectRevert(FlashLoanLiquidator.NotInFlight.selector);
         liquidator.receiveFlashLoan(toks, amts, fees, "");
+    }
+
+    function testCallbackFromNonProviderReverts() public {
+        vm.prank(attacker);
+        vm.expectRevert(
+            abi.encodeWithSelector(FlashLoanLiquidator.NotFlashLoanProvider.selector, address(aavePool), attacker)
+        );
+        liquidator.executeOperation(address(principal), 1, 0, address(liquidator), "");
+    }
+
+    // ─── #2697 one run per owner call ────────────────────────────────
+
+    /// A nested Balancer loan opened mid-run (Balancer accepts any
+    /// recipient) cannot run a second liquidation with its own calldata.
+    function testNestedBalancerLoanDuringAaveRunIsRefused() public {
+        NestingSwap nester = _nester();
+        nester.arm(NestingSwap.Via.Balancer, abi.encode(uint256(1)));
+        _runAaveVia(nester);
+        assertEq(nester.nestedRevert(), FlashLoanLiquidator.NotInFlight.selector, "nested callback refused");
+    }
+
+    /// Even the run's own parameters, replayed through the same provider,
+    /// are refused: the first callback spent the commitment.
+    function testReplayedCallbackDuringRunIsRefused() public {
+        NestingSwap nester = _nester();
+        nester.arm(NestingSwap.Via.AaveReplay, "");
+        _runAaveVia(nester);
+        assertEq(nester.nestedRevert(), FlashLoanLiquidator.NotInFlight.selector, "replay refused");
+    }
+
+    function _nester() internal returns (NestingSwap nester) {
+        nester = new NestingSwap(liquidator, aavePool, balancerVault, swap, principal);
+        principal.mint(address(nester), 10_000 ether);
+    }
+
+    function _runAaveVia(NestingSwap nester) internal {
+        bytes memory cd = abi.encodeWithSelector(
+            NestingSwap.swap.selector, address(collateral), address(principal), COLLATERAL_SEIZED
+        );
+        vm.prank(owner);
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(nester), address(nester), cd);
     }
 
     // ─── Happy paths ─────────────────────────────────────────────────
@@ -207,9 +250,8 @@ contract FlashLoanLiquidatorTest is Test {
         vm.prank(owner);
         liquidator.liquidateViaAaveV3(
             LOAN_ID,
-            address(principal),
-            address(collateral),
-            FLASH_LOAN_AMOUNT,
+            COLLATERAL_SEIZED,
+            0,
             address(swap),
             address(swap),
             _swapCalldata()
@@ -233,9 +275,8 @@ contract FlashLoanLiquidatorTest is Test {
         vm.prank(owner);
         liquidator.liquidateViaBalancerV2(
             LOAN_ID,
-            address(principal),
-            address(collateral),
-            FLASH_LOAN_AMOUNT,
+            COLLATERAL_SEIZED,
+            0,
             address(swap),
             address(swap),
             _swapCalldata()
@@ -270,9 +311,8 @@ contract FlashLoanLiquidatorTest is Test {
         );
         liquidator.liquidateViaAaveV3(
             LOAN_ID,
-            address(principal),
-            address(collateral),
-            FLASH_LOAN_AMOUNT,
+            COLLATERAL_SEIZED,
+            0,
             address(swap),
             address(swap),
             _swapCalldata()
@@ -288,9 +328,8 @@ contract FlashLoanLiquidatorTest is Test {
         vm.expectRevert(FlashLoanLiquidator.SwapFailed.selector);
         liquidator.liquidateViaAaveV3(
             LOAN_ID,
-            address(principal),
-            address(collateral),
-            FLASH_LOAN_AMOUNT,
+            COLLATERAL_SEIZED,
+            0,
             address(swap),
             address(swap),
             _swapCalldata()
@@ -310,9 +349,8 @@ contract FlashLoanLiquidatorTest is Test {
         vm.expectRevert(FlashLoanLiquidator.ProviderNotConfigured.selector);
         l.liquidateViaAaveV3(
             LOAN_ID,
-            address(principal),
-            address(collateral),
-            FLASH_LOAN_AMOUNT,
+            COLLATERAL_SEIZED,
+            0,
             address(swap),
             address(swap),
             _swapCalldata()
@@ -330,9 +368,8 @@ contract FlashLoanLiquidatorTest is Test {
         vm.expectRevert(FlashLoanLiquidator.ProviderNotConfigured.selector);
         l.liquidateViaBalancerV2(
             LOAN_ID,
-            address(principal),
-            address(collateral),
-            FLASH_LOAN_AMOUNT,
+            COLLATERAL_SEIZED,
+            0,
             address(swap),
             address(swap),
             _swapCalldata()
@@ -360,9 +397,8 @@ contract FlashLoanLiquidatorTest is Test {
         );
         liquidator.liquidateViaAaveV3(
             LOAN_ID,
-            address(principal),
-            address(collateral),
-            FLASH_LOAN_AMOUNT,
+            COLLATERAL_SEIZED,
+            0,
             address(swap),
             address(swap),
             _swapCalldata()
@@ -383,15 +419,15 @@ contract FlashLoanLiquidatorTest is Test {
             FLASH_LOAN_AMOUNT,
             FLASH_FEE,
             COLLATERAL_SEIZED,
+            COLLATERAL_SEIZED,
             SWAP_PROCEEDS,
             SWAP_PROCEEDS - FLASH_LOAN_AMOUNT - FLASH_FEE
         );
         vm.prank(owner);
         liquidator.liquidateViaAaveV3(
             LOAN_ID,
-            address(principal),
-            address(collateral),
-            FLASH_LOAN_AMOUNT,
+            COLLATERAL_SEIZED,
+            0,
             address(swap),
             address(swap),
             _swapCalldata()
@@ -417,15 +453,15 @@ contract FlashLoanLiquidatorTest is Test {
             FLASH_LOAN_AMOUNT,
             FLASH_FEE,
             COLLATERAL_SEIZED,
+            COLLATERAL_SEIZED,
             SWAP_PROCEEDS,
             SWAP_PROCEEDS - FLASH_LOAN_AMOUNT - FLASH_FEE
         );
         vm.prank(owner);
         liquidator.liquidateViaAaveV3(
             LOAN_ID,
-            address(principal),
-            address(collateral),
-            FLASH_LOAN_AMOUNT,
+            COLLATERAL_SEIZED,
+            0,
             address(swap),
             address(swap),
             _swapCalldata()
@@ -442,9 +478,8 @@ contract FlashLoanLiquidatorTest is Test {
         vm.prank(owner);
         liquidator.liquidateViaAaveV3(
             LOAN_ID,
-            address(principal),
-            address(collateral),
-            FLASH_LOAN_AMOUNT,
+            COLLATERAL_SEIZED,
+            0,
             address(swap),
             address(swap),
             _swapCalldata()
@@ -459,6 +494,112 @@ contract FlashLoanLiquidatorTest is Test {
 
         assertEq(principal.balanceOf(owner) - ownerBefore, profit);
         assertEq(principal.balanceOf(address(liquidator)), 0);
+    }
+
+    // ─── #2697 — the preview sizes the run ──────────────────────────
+
+    /// @dev The flash loan is the debt the Diamond previews in the same
+    ///      transaction, not a figure the caller supplies.
+    function testFlashBorrowsExactlyThePreviewedDebt() public {
+        uint256 debt = 987 ether;
+        diamond.setDebt(debt);
+        vm.prank(owner);
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(swap), address(swap), _swapCalldata());
+        assertEq(aavePool.lastAmount(), debt, "flash-borrowed the previewed debt");
+        assertEq(principal.allowance(address(liquidator), address(diamond)), 0, "no Diamond allowance left");
+    }
+
+    /// @dev A Diamond that pulls less than it previewed leaves no allowance
+    ///      behind: it is cleared after the call whatever it consumed.
+    function testDiamondAllowanceClearedAfterTrigger() public {
+        diamond.setPull(FLASH_LOAN_AMOUNT - 1 ether);
+        vm.prank(owner);
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(swap), address(swap), _swapCalldata());
+        assertEq(principal.allowance(address(liquidator), address(diamond)), 0, "allowance cleared");
+    }
+
+    function testRevertsWhenPreviewSaysNotLiquidatable() public {
+        diamond.setStatus(LibDiscountedLiquidation.Status.Healthy);
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlashLoanLiquidator.NotLiquidatable.selector,
+                LOAN_ID,
+                uint8(LibDiscountedLiquidation.Status.Healthy)
+            )
+        );
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(swap), address(swap), _swapCalldata());
+    }
+
+    /// @dev Refused before any flash loan when the preview already delivers
+    ///      less than the swap was quoted for.
+    function testRevertsBeforeFlashWhenPreviewSeizureBelowQuote() public {
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlashLoanLiquidator.SeizureBelowQuote.selector, COLLATERAL_SEIZED, COLLATERAL_SEIZED + 1
+            )
+        );
+        liquidator.liquidateViaBalancerV2(
+            LOAN_ID, COLLATERAL_SEIZED + 1, 0, address(swap), address(swap), _swapCalldata()
+        );
+        assertEq(aavePool.lastAmount(), 0, "no flash loan taken");
+    }
+
+    /// @dev Measured again after the trigger: a delivery short of the quote
+    ///      reverts the run.
+    function testRevertsWhenDeliveredSeizureBelowQuote() public {
+        diamond.setDelivered(COLLATERAL_SEIZED - 1);
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlashLoanLiquidator.SeizureBelowQuote.selector, COLLATERAL_SEIZED - 1, COLLATERAL_SEIZED
+            )
+        );
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(swap), address(swap), _swapCalldata());
+    }
+
+    /// @dev Only the quoted amount is offered to the swap; the rest of the
+    ///      seizure stays here as standing balance and the event says so.
+    function testSellsOnlyTheQuotedAmount() public {
+        uint256 seized = COLLATERAL_SEIZED + 50 ether;
+        diamond.setSeizureAmount(seized);
+        vm.expectEmit(true, true, true, true, address(liquidator));
+        emit FlashLoanLiquidator.FlashLoanLiquidationCompleted(
+            LOAN_ID,
+            address(principal),
+            address(collateral),
+            FLASH_LOAN_AMOUNT,
+            FLASH_FEE,
+            seized,
+            COLLATERAL_SEIZED,
+            SWAP_PROCEEDS,
+            SWAP_PROCEEDS - FLASH_LOAN_AMOUNT - FLASH_FEE
+        );
+        vm.prank(owner);
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(swap), address(swap), _swapCalldata());
+        assertEq(collateral.balanceOf(address(liquidator)), 50 ether, "unsold seizure kept");
+        assertEq(collateral.allowance(address(liquidator), address(swap)), 0, "no allowance left");
+    }
+
+    /// @dev The run must keep `minProfit` on top of the flash-loan fee.
+    function testMinProfitIsEnforced() public {
+        uint256 profit = SWAP_PROCEEDS - FLASH_LOAN_AMOUNT - FLASH_FEE;
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FlashLoanLiquidator.InsufficientPostSwapBalance.selector,
+                FLASH_LOAN_AMOUNT + FLASH_FEE + profit + 1,
+                SWAP_PROCEEDS
+            )
+        );
+        liquidator.liquidateViaAaveV3(
+            LOAN_ID, COLLATERAL_SEIZED, profit + 1, address(swap), address(swap), _swapCalldata()
+        );
+
+        vm.prank(owner);
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, profit, address(swap), address(swap), _swapCalldata());
+        assertEq(principal.balanceOf(address(liquidator)), profit, "exactly the floor kept");
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────
@@ -478,6 +619,7 @@ contract FlashLoanLiquidatorTest is Test {
 contract MockAaveV3Pool is IAaveV3Pool {
     address public principalAsset;
     uint16 public premiumBpsLocal;
+    uint256 public lastAmount;
 
     function setPrincipal(address a) external { principalAsset = a; }
     function setPremiumBps(uint256 bps) external { premiumBpsLocal = SafeCast.toUint16(bps); }
@@ -509,6 +651,7 @@ contract MockAaveV3Pool is IAaveV3Pool {
         uint16 /* referralCode */
     ) external {
         uint256 premium = (amount * premiumBpsLocal) / 10_000;
+        lastAmount = amount;
         // Send funds to receiver
         IERC20(asset).transfer(receiver, amount);
         // Sync callback — must return true
@@ -557,27 +700,49 @@ contract MockBalancerV2Vault is IBalancerV2Vault {
 contract MockDiamond {
     address public principal;
     address public collateral;
+    uint256 public debt;
     uint256 public seizureAmount;
+    /// @dev What the trigger actually delivers / pulls, when it differs
+    ///      from the preview (0 = same as the preview).
+    uint256 public deliveredOverride;
+    uint256 public pullOverride;
+    LibDiscountedLiquidation.Status public status = LibDiscountedLiquidation.Status.Ready;
 
     function setAssets(address p, address c) external {
         principal = p;
         collateral = c;
     }
+    function setDebt(uint256 d) external { debt = d; }
     function setSeizureAmount(uint256 a) external { seizureAmount = a; }
+    function setDelivered(uint256 a) external { deliveredOverride = a; }
+    function setPull(uint256 a) external { pullOverride = a; }
+    function setStatus(LibDiscountedLiquidation.Status s) external { status = s; }
 
-    // Mimics `triggerLiquidationDiscounted` — pulls principal from
-    // caller, sends collateral to recipient.
+    /// Mimics `ForcedSaleFacet.previewDiscountedLiquidation`.
+    function previewDiscountedLiquidation(uint256)
+        external
+        view
+        returns (LibDiscountedLiquidation.Preview memory p)
+    {
+        p.status = status;
+        p.principalAsset = principal;
+        p.collateralAsset = collateral;
+        if (status != LibDiscountedLiquidation.Status.Ready) return p;
+        p.tier = 3;
+        p.discountBps = 500;
+        p.debt = debt;
+        p.seized = seizureAmount;
+    }
+
+    // Mimics `triggerLiquidationDiscounted` — pulls exactly the debt from
+    // the caller (as `LibDelivery.pullExact` does), sends the seizure.
     function triggerLiquidationDiscounted(
         uint256 /* loanId */,
         address recipient,
         bytes calldata /* extraData */
     ) external {
-        // Pull the debt amount from caller (must approve first).
-        // For simplicity, pull the entire allowance.
-        uint256 allowance = IERC20(principal).allowance(msg.sender, address(this));
-        IERC20(principal).transferFrom(msg.sender, address(this), allowance);
-        // Send seized collateral to recipient
-        IERC20(collateral).transfer(recipient, seizureAmount);
+        IERC20(principal).transferFrom(msg.sender, address(this), pullOverride == 0 ? debt : pullOverride);
+        IERC20(collateral).transfer(recipient, deliveredOverride == 0 ? seizureAmount : deliveredOverride);
     }
 }
 
@@ -610,5 +775,81 @@ contract MockSwapAggregator {
         // Send buy-token at the configured rate
         uint256 proceeds = (amount * rateMul) / rateDiv;
         IERC20(buy).transfer(msg.sender, proceeds);
+    }
+}
+
+/// A swap route that, mid-run, tries to make the liquidator run a second
+/// callback, records how that attempt reverted, then swaps honestly.
+contract NestingSwap {
+    enum Via { Balancer, AaveReplay }
+
+    FlashLoanLiquidator immutable liquidator;
+    MockAaveV3Pool immutable aave;
+    MockBalancerV2Vault immutable balancer;
+    MockSwapAggregator immutable honest;
+    IERC20 immutable principal;
+    Via via;
+    bytes params;
+    bytes4 public nestedRevert;
+
+    constructor(
+        FlashLoanLiquidator l,
+        MockAaveV3Pool a,
+        MockBalancerV2Vault b,
+        MockSwapAggregator h,
+        IERC20 p
+    ) {
+        liquidator = l;
+        aave = a;
+        balancer = b;
+        honest = h;
+        principal = p;
+    }
+
+    function arm(Via v, bytes calldata p) external {
+        via = v;
+        params = p;
+    }
+
+    function swap(address sell, address buy, uint256 amount) external {
+        bytes memory replay = params;
+        if (via == Via.AaveReplay) {
+            // The run's own params, read back from the outer call.
+            replay = _outerParams();
+        }
+        try this.nest(replay) {
+            nestedRevert = bytes4(0);
+        } catch (bytes memory reason) {
+            nestedRevert = bytes4(reason);
+        }
+        // Then swap at 1.05x, like the honest aggregator.
+        IERC20(sell).transferFrom(msg.sender, address(this), amount);
+        IERC20(buy).transfer(msg.sender, (amount * 105) / 100);
+    }
+
+    function nest(bytes memory p) external {
+        if (via == Via.Balancer) {
+            address[] memory toks = new address[](1);
+            toks[0] = address(principal);
+            uint256[] memory amts = new uint256[](1);
+            amts[0] = 1;
+            balancer.flashLoan(IFlashLoanRecipient(address(liquidator)), toks, amts, p);
+        } else {
+            aave.flashLoanSimple(address(liquidator), address(principal), 1, p, 0);
+        }
+    }
+
+    function _outerParams() private view returns (bytes memory) {
+        return abi.encode(
+            FlashLoanLiquidator.Run({
+                loanId: 42,
+                collateralAsset: honest.sellToken(),
+                sellAmount: 1_050 ether,
+                minProfit: 0,
+                swapTarget: address(this),
+                swapAllowanceTarget: address(this),
+                swapCalldata: abi.encodeWithSelector(this.swap.selector, honest.sellToken(), address(principal), 1_050 ether)
+            })
+        );
     }
 }

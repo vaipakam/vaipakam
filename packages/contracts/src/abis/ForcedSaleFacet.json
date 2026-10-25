@@ -37,6 +37,67 @@
   },
   {
     "type": "function",
+    "name": "previewDiscountedLiquidation",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct LibDiscountedLiquidation.Preview",
+        "components": [
+          {
+            "name": "status",
+            "type": "uint8",
+            "internalType": "enum LibDiscountedLiquidation.Status"
+          },
+          {
+            "name": "principalAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "tier",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "discountBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "debt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "seized",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "surplus",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "previewForcedSale",
     "inputs": [
       {

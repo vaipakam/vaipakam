@@ -14,7 +14,9 @@
  *      V2 and Polygon zkEVM has neither).
  *   3. On-chain `triggerLiquidationDiscounted` has been enabled by
  *      governance (`ConfigFacet.discountPathEnabled` true on that
- *      diamond) — read live from the diamond, not from this table.
+ *      diamond) — read live from the diamond per loan, as the
+ *      `Disabled` status of its discounted-liquidation preview
+ *      (#2697), not from this table.
  *
  * All addresses default to `undefined` until we actually deploy
  * the receiver. A chain whose `liquidator` is `undefined` is
