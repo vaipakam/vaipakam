@@ -38,6 +38,48 @@ contract GasBurningTierMessenger {
     }
 }
 
+/// @dev A two-lane messenger stand-in: lane A's quote burns every unit of
+///      gas it is given, lane B quotes and sends normally. Lets a test show
+///      that a lane failing by gas exhaustion leaves the next lane served.
+contract FirstLaneBurnsTierMessenger {
+    uint256 internal constant LANE_A = 11_155_111;
+    uint256 internal constant LANE_B = 421_614;
+    uint256 public sentToB;
+
+    function getBroadcastDestinations() external pure returns (uint256[] memory d) {
+        d = new uint256[](2);
+        d[0] = LANE_A;
+        d[1] = LANE_B;
+    }
+
+    function quoteSendTierUpdateTo(uint256 dst, address, uint8, uint16, uint40, uint256, uint40, uint16)
+        external
+        view
+        returns (uint256)
+    {
+        if (dst == LANE_A) {
+            uint256 x;
+            while (gasleft() > 0) {
+                unchecked {
+                    ++x;
+                }
+            }
+            return x;
+        }
+        return 1 gwei;
+    }
+
+    function sendTierUpdateTo(uint256 dst, address, uint8, uint16, uint40, uint256, uint40, uint16, address payable)
+        external
+        payable
+        returns (bytes32)
+    {
+        require(dst == LANE_B && msg.value == 1 gwei, "unexpected send");
+        ++sentToB;
+        return bytes32(sentToB);
+    }
+}
+
 /// @title TierPushDeliveryTest
 /// @notice #898 / #911 / #1277 — the cross-chain tier push never makes the
 ///         user's action fail. Each broadcast lane is delivered on its own
@@ -297,6 +339,30 @@ contract TierPushDeliveryTest is SetupTest {
         assertEq(IERC20(address(vpfiToken)).balanceOf(user), STAKE + 1, "unstake landed");
     }
 
+    /// @dev Codex #2853 r3 P1. Each call is capped at its own budget, so a
+    ///      first lane that burns all the gas its quote is given cannot take
+    ///      the gas the second lane needs: the action lands, lane A is
+    ///      deferred and lane B is delivered. Uncapped, lane A's quote would
+    ///      have consumed 63/64 of the transaction's gas and lane B's guard
+    ///      would have reverted the whole unstake.
+    function test_FirstLaneBurnsGas_SecondLaneDelivered_ActionLands() public {
+        _reachTierOne();
+        FirstLaneBurnsTierMessenger stand = new FirstLaneBurnsTierMessenger();
+        RewardReporterFacet(address(diamond)).setRewardMessenger(address(stand));
+        uint256 budgetBefore = pb.getProtocolBroadcastBudget();
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ProtocolBroadcastFacet.TierPushDeferred(
+            user, MIRROR_A, 2, ProtocolBroadcastFacet.TierPushDeferral.Quote
+        );
+        vm.prank(user);
+        VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault{gas: 3_000_000}(STAKE + 1);
+        assertEq(IERC20(address(vpfiToken)).balanceOf(user), STAKE + 1, "unstake landed");
+        assertEq(stand.sentToB(), 1, "lane B sent");
+        assertEq(_lane(MIRROR_B).delivered.nonce, 2, "lane B delivered");
+        assertEq(_lane(MIRROR_A).delivered.nonce, 1, "lane A still owed");
+        assertEq(pb.getProtocolBroadcastBudget(), budgetBefore - 1 gwei, "budget paid lane B only");
+    }
+
     /// @dev Codex #2853 r1 P1. Through the real reward messenger, CCIP adapter
     ///      and router, sweep the gas a downgrading unstake carries: at every
     ///      limit it either reverts or delivers the downgrade on both lanes.
@@ -323,7 +389,7 @@ contract TierPushDeliveryTest is SetupTest {
             vm.revertToState(snap);
         }
         assertGt(landed, 0, "ample gas lands the unstake");
-        assertGt(guarded, 0, "the gas floor refuses the tight limits");
+        assertGt(guarded, 0, "the gas guard refuses the tight limits");
     }
 
     // ─── Admin ──────────────────────────────────────────────────────────

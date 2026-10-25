@@ -120,20 +120,18 @@ then run out of gas inside the try block, and the action would land with the
 lane deferred.
 
 Base closes this before each call, not after it. Every call to the messenger
-is made only when the facet holds enough gas that the call is sure to receive
-a fixed floor:
+is given exactly a fixed gas budget, and is made only when the facet holds
+enough gas that the call is sure to receive all of it:
 
-| Call | Floor |
+| Call | Gas given |
 | --- | --- |
 | Destination list | 100,000 |
 | A lane's quote | 300,000 |
 | A lane's send | 1,000,000 |
 
-Each floor is several times what the call costs through the reward
+Each budget is several times what the call costs through the reward
 messenger, the adapter and the router. With less gas in hand, the whole
-action reverts (`TierPushOutOfGas`) before the call is made. All gas is
-forwarded, not capped, so a call that costs more than expected still
-succeeds when the caller supplied enough.
+action reverts (`TierPushOutOfGas`) before the call is made.
 
 A failure the call does return is therefore the lane's own, at any depth.
 An earlier draft checked the gas left after a failure instead (under 1/63 of
@@ -142,9 +140,20 @@ chain: each nested frame keeps its own 1/64 reserve, and those reserves leave
 the facet with more than 1/63 when an inner call is the one that ran out
 (Codex #2853 round 1).
 
-The floors are gas an action must carry while a lane is owed, not gas it
-spends. A floor set too low never blocks a push; it only weakens the
-guarantee. Raising one is a facet refresh.
+The budget is a cap as well as a guarantee. A call is never given more than
+its budget, so a lane whose call burns everything it is given spends only
+that lane's budget, and the lanes after it are still served. A second draft
+forwarded all remaining gas instead; then a first lane that burned its gas
+left too little for the second lane's check, and the whole action reverted,
+which is the coupling between lanes this design removes (Codex #2853
+round 3).
+
+The trade is stated, not hidden. If CCIP ever grew more expensive than a
+budget, the call would fail on every lane: each lane would be deferred with
+the reason naming that call (Quote, Send or Destinations), and each mirror
+would keep the tier it last received, bounded by its maximum age, until a
+facet refresh raised the budget. The user's action still lands. The budgets
+are gas an action must carry while a lane is owed, not gas it spends.
 
 ### 2.5 Funds
 
