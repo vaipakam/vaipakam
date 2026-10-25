@@ -24,14 +24,17 @@ import {EarlyWithdrawalDirectFacet} from "../../src/facets/EarlyWithdrawalDirect
 import {LibSaleSolvency} from "../../src/libraries/LibSaleSolvency.sol";
 import {RevertProbe} from "../lib/RevertProbe.sol";
 import {Vm} from "forge-std/Vm.sol";
+import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
+import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
 
 /**
  * @title PositiveFlowsAdvancedCredit
  * @notice Advanced credit flows (#848 Phase 1): lender opt-in partial repay,
  *         refinance, range orders with a third-party match and partial fills,
- *         borrower preclose by obligation handover and by offset, and the lender
+ *         borrower preclose by obligation handover and by offset, the lender
  *         exits (direct sale into a buy offer, the sale solvency floor on that
- *         route, and the same floor on the listing-accept route).
+ *         route, and the same floor on the listing-accept route), and the
+ *         atomic accept-and-refinance of a tagged borrower offer (#848 Phase 2).
  *
  *         Moved from the retired `AnvilNewPositiveFlows` suite, whose `N`
  *         labels the comments below still use in places; {PositiveFlowsBase}
@@ -43,7 +46,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
     }
 
     function scenarios() public pure override returns (Scenario[] memory list) {
-        list = new Scenario[](8);
+        list = new Scenario[](9);
         list[0] = Scenario("PF-114", "Partial repay on a lender-opted-in loan, then full close",
             "PF-114");
         list[1] = Scenario("PF-214", "Borrower refinances onto a new lender through a borrower offer",
@@ -60,6 +63,8 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
             "PF-230");
         list[7] = Scenario("PF-231", "Listing accept refused under the solvency floor, then settles once the price recovers",
             "PF-231");
+        list[8] = Scenario("PF-098", "A new lender accepts a refinance-tagged borrower offer; the old loan closes in the same transaction",
+            "PF-098, PF-213, PF-112");
     }
 
     function _runScenario(uint256 index) internal override {
@@ -71,6 +76,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         else if (index == 5) _sellLoanViaBuyOffer();
         else if (index == 6) _saleSolvencyFloor();
         else if (index == 7) _saleAdmissionOnAcceptBranch();
+        else if (index == 8) _acceptAndRefinance();
         else revert("PositiveFlowsAdvancedCredit: no scenario at index");
     }
 
@@ -199,6 +205,70 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
 
     }
 
+    // ─── PF-098: Atomic accept-and-refinance ────────────────────────────────
+
+    /// @dev The borrower sets refinance caps on the open loan and posts a
+    ///      borrower offer tagged with that loan, at a rate inside the caps.
+    ///      When a new lender accepts it, the accept itself repays the old
+    ///      loan: one transaction leaves the old loan Repaid and the new one
+    ///      Active. The tagged offer reuses the old loan's collateral (the
+    ///      carry-over), so the borrower's WETH stays locked once, not twice.
+    ///      The old payoff is pulled from the borrower's wallet, so the
+    ///      borrower approves it up front, as the app does at consent time.
+    function _acceptAndRefinance() internal {
+        uint256 offerId = _createLenderOffer(lenderKey);
+        uint256 oldLoanId = _acceptAs(borrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
+        console.log("Old loan initiated:", oldLoanId);
+
+        uint256 newRate = 400;
+        LibVaipakam.CreateOfferParams memory request = _borrowerOfferStandard();
+        request.interestRateBps = newRate;
+        request.interestRateBpsMax = newRate;
+        request.fillMode = LibVaipakam.FillMode.Aon; // a refinance request is all-or-nothing
+        request.refinanceTargetLoanId = oldLoanId;
+
+        vm.startBroadcast(borrowerKey);
+        AutoLifecycleFacet(diamond).setAutoRefinanceCaps(
+            oldLoanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        uint256 requestId = OfferCreateFacet(diamond).createOffer(request);
+        usdc.approve(diamond, LOAN_AMOUNT * 2); // old principal plus its interest
+        vm.stopBroadcast();
+        require(
+            OfferCancelFacet(diamond).getOfferDetails(requestId).refinanceCarryOver,
+            "PF-098: the tagged request should carry the old collateral over"
+        );
+        console.log("Refinance request posted:", requestId);
+
+        uint256 lockedBefore = MetricsFacet(diamond).getEncumbered(borrower, address(weth), 0);
+        uint256 newLoanId = _acceptAs(newLenderKey, requestId, address(usdc), LOAN_AMOUNT);
+        console.log("New loan from the accept:", newLoanId);
+
+        require(
+            LoanFacet(diamond).getLoanDetails(oldLoanId).status == LibVaipakam.LoanStatus.Repaid,
+            "PF-098: the old loan should be Repaid by the same accept"
+        );
+        LibVaipakam.Loan memory newLoan = LoanFacet(diamond).getLoanDetails(newLoanId);
+        require(newLoan.status == LibVaipakam.LoanStatus.Active, "PF-098: the new loan should be Active");
+        require(newLoan.lender == newLender, "PF-098: the accepting lender funds the new loan");
+        require(newLoan.borrower == borrower, "PF-098: the borrower keeps the position");
+        require(newLoan.principal == LOAN_AMOUNT, "PF-098: the new loan carries the requested principal");
+        require(newLoan.interestRateBps == newRate, "PF-098: the new loan runs at the requested rate");
+        require(newLoan.collateralAmount == COLLATERAL_AMOUNT, "PF-098: the new loan holds the old collateral");
+        require(
+            MetricsFacet(diamond).getEncumbered(borrower, address(weth), 0) == lockedBefore,
+            "PF-098: the collateral should stay locked once (carried over, not pledged again)"
+        );
+
+        // The old lender is paid out of the accept; the new loan closes
+        // normally.
+        vm.startBroadcast(lenderKey);
+        ClaimFacet(diamond).claimAsLender(oldLoanId);
+        vm.stopBroadcast();
+        _repayInFull(borrowerKey, newLoanId);
+        _claimBoth(newLenderKey, borrowerKey, newLoanId);
+    }
+
     // ─── PF-053: Range Orders Match + Partial Fill ───────────────────────────
 
     /// @dev Range Orders Phase 1 — bot-driven matching against a
@@ -220,23 +290,17 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
     ///                 `amountMin` (2k) → dust auto-close, residual
     ///                 refund.
     ///
-    ///      Verifies: rangeAmountEnabled / rangeRateEnabled /
-    ///      partialFillEnabled flags work end-to-end; midpoint
-    ///      computation; matcher kickback; dust close.
+    ///      Verifies: ranged offers match with `partialFillEnabled` on;
+    ///      midpoint computation; each child loan's terms; the matcher's
+    ///      exact kickback; dust close.
     function _rangeMatchAndPartialFill() internal {
-        // Pre-flight: confirm the master flags are on (BootstrapAnvil
-        // flips them post-deploy). Skip the scenario gracefully if
-        // the operator forgot — this script can also run against a
-        // future testnet where the flags might be off.
-        (bool rangeAmt, bool rangeRate, bool partialFill) =
-            ConfigFacet(diamond).getMasterFlags();
-        if (!(rangeAmt && rangeRate && partialFill)) {
-            return _skip(string.concat(
-                "range/partial-fill master flags are not all on (rangeAmount=",
-                vm.toString(rangeAmt), ", rangeRate=", vm.toString(rangeRate),
-                ", partialFill=", vm.toString(partialFill), ")"
-            ));
-        }
+        // Pre-flight: matching needs `partialFillEnabled` (LibOfferMatch
+        // refuses a match with FunctionDisabled while it is off). Skip,
+        // saying so, where it is off. The two range flags returned beside
+        // it gate nothing any more (OfferCreateFacet: "now-dead"), so they
+        // are not read.
+        (, , bool partialFill) = ConfigFacet(diamond).getMasterFlags();
+        if (!partialFill) return _skip("partial fills are off (partialFillEnabled=false), so offers cannot be matched");
 
         // ── Phase A: Lender posts a ranged offer ─────────────────────
         // Collateral chosen to clear the worst-case HF gate at the
@@ -281,12 +345,26 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
             "PF-053: previewMatch did not return Ok"
         );
 
-        // newBorrower acts as the matcher (the bot/searcher).
+        // newBorrower acts as the matcher (the bot/searcher). Its wallet and
+        // the borrower's are read either side of the match so PF-057 can
+        // check the kickback against the fee the borrower actually paid.
+        address matcher = vm.addr(newBorrowerKey);
+        uint256 borrowerUsdcBefore = usdc.balanceOf(borrower);
+        uint256 matcherUsdcBefore = usdc.balanceOf(matcher);
         vm.startBroadcast(newBorrowerKey);
         uint256 loanFromMatch1 =
             OfferMatchFacet(diamond).matchOffers(lenderOfferId, borrowerOffer1);
         vm.stopBroadcast();
         console.log("Match 1 -> loanId:", loanFromMatch1);
+
+        // The fill locks the collateral the match sized for it (the preview's
+        // `reqCollateral`), not everything the borrower offer posted.
+        _requireChildLoan(loanFromMatch1, borrower, 2_500e6, preview.reqCollateral, rateMin, rateMax);
+        _requireMatcherShare(
+            2_500e6,
+            usdc.balanceOf(borrower) - borrowerUsdcBefore,
+            usdc.balanceOf(matcher) - matcherUsdcBefore
+        );
 
         // Inspect lender offer post-match. amountFilled should be 2500e6.
         LibVaipakam.Offer memory lenderState1 = OfferCancelFacet(diamond).getOffer(lenderOfferId);
@@ -306,6 +384,8 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         uint256 borrowerOffer2 = OfferCreateFacet(diamond).createOffer(
             _matchableBorrowerOfferAs(newBorrower, 2_000e6, 500, b2Collateral)
         );
+        LibOfferMatch.MatchResult memory preview2 =
+            OfferMatchFacet(diamond).previewMatch(lenderOfferId, borrowerOffer2, newBorrower, newBorrower);
         // newBorrower also doubles as the matcher here — fine, the
         // matcher just gets paid the LIF kickback regardless of
         // identity overlap with the borrower (no self-deal guard
@@ -314,6 +394,9 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
             OfferMatchFacet(diamond).matchOffers(lenderOfferId, borrowerOffer2);
         vm.stopBroadcast();
         console.log("Match 2 -> loanId:", loanFromMatch2);
+        // The matcher is also this loan's borrower, so its wallet nets the
+        // principal and the kickback together; PF-057 is checked on match 1.
+        _requireChildLoan(loanFromMatch2, newBorrower, 2_000e6, preview2.reqCollateral, rateMin, rateMax);
 
         LibVaipakam.Offer memory lenderState2 = OfferCancelFacet(diamond).getOffer(lenderOfferId);
         // Either dust-closed (accepted == true, slot still here) OR
@@ -325,6 +408,49 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
             "PF-053: amountFilled should be 4500 (2500 + 2000) at dust close"
         );
         console.log("Lender amountFilled (dust-closed):", lenderState2.amountFilled);
+    }
+
+    /// @dev PF-055: a fill of a partial-fill offer opens its own loan, with
+    ///      the fill's principal, the collateral the match sized for that
+    ///      fill, the offer creator as lender and the filling borrower as
+    ///      borrower, at a rate inside the lender's range.
+    function _requireChildLoan(
+        uint256 loanId,
+        address expectedBorrower,
+        uint256 expectedPrincipal,
+        uint256 expectedCollateral,
+        uint256 rateMin,
+        uint256 rateMax
+    ) internal view {
+        LibVaipakam.Loan memory child = LoanFacet(diamond).getLoanDetails(loanId);
+        require(child.status == LibVaipakam.LoanStatus.Active, "PF-055: child loan should be Active");
+        require(child.lender == lender, "PF-055: child loan lender should be the offer creator");
+        require(child.borrower == expectedBorrower, "PF-055: child loan borrower should be the filling borrower");
+        require(child.principal == expectedPrincipal, "PF-055: child loan principal should equal the fill");
+        require(child.principalAsset == address(usdc), "PF-055: child loan lends the offer's asset");
+        require(child.collateralAmount == expectedCollateral, "PF-055: child loan holds the collateral the match sized");
+        require(
+            child.interestRateBps >= rateMin && child.interestRateBps <= rateMax,
+            "PF-055: child loan rate should sit inside the lender's range"
+        );
+        console.log("Child loan principal / rate bps:", child.principal, child.interestRateBps);
+    }
+
+    /// @dev PF-057: the matcher receives the configured share of the loan
+    ///      initiation fee. The fee is read from what the borrower received
+    ///      (the principal less the fee), not recomputed from the fee rate,
+    ///      so a holder discount on the borrower's side cannot make the
+    ///      check pass or fail for the wrong reason.
+    function _requireMatcherShare(uint256 principal, uint256 borrowerReceived, uint256 matcherReceived)
+        internal
+        view
+    {
+        require(borrowerReceived < principal, "PF-057: borrower paid no initiation fee, so no share to check");
+        uint256 initiationFee = principal - borrowerReceived;
+        uint256 expected = (initiationFee * ConfigFacet(diamond).getLifMatcherFeeBps()) / 10_000;
+        require(expected > 0, "PF-057: configured matcher share rounds to zero on this fee");
+        require(matcherReceived == expected, "PF-057: matcher should receive its configured share of the fee");
+        console.log("Initiation fee / matcher share:", initiationFee, matcherReceived);
     }
 
     function _rangedLenderOffer(

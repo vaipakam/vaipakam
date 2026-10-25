@@ -13,6 +13,8 @@ import {LibAcceptTestSigner} from "../../test/helpers/LibAcceptTestSigner.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
+import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
+import {RepayFacet} from "../../src/facets/RepayFacet.sol";
 import {OracleAdminFacet} from "../../src/facets/OracleAdminFacet.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
 import {RiskFacet} from "../../src/facets/RiskFacet.sol";
@@ -71,8 +73,9 @@ import {MockPoolPricing} from "../lib/MockPoolPricing.sol";
  *         it deploys itself: the Chainlink registry and ETH/USD feed, the v3
  *         factory, the PAA quote set, WETH, the sanctions oracle, and risk
  *         parameters for its own tokens. Scenarios also pause and unpause the
- *         Diamond and flip master flags. Pointed at a shared testnet Diamond,
- *         that replaces the chain's live price and sanctions sources. So a
+ *         Diamond and change its fee and treasury settings. Pointed at a
+ *         shared testnet Diamond, that replaces the chain's live price and
+ *         sanctions sources. So a
  *         module refuses any chain but a local Anvil (31337) unless
  *         `POSITIVE_FLOWS_ALLOW_CHAIN_ID` names the chain it is pointed at,
  *         which is meant for a Diamond deployed for the rehearsal.
@@ -475,6 +478,25 @@ abstract contract PositiveFlowsBase is Script {
         if (approveAmount != 0) ERC20Mock(approveAsset).approve(diamond, approveAmount);
         loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, terms, sig);
         vm.stopBroadcast();
+    }
+
+    /// @dev `key` posts the standard lender offer (`LOAN_AMOUNT` USDC).
+    function _createLenderOffer(uint256 key) internal returns (uint256 offerId) {
+        vm.startBroadcast(key);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        vm.stopBroadcast();
+        console.log("Lender offer created:", offerId);
+    }
+
+    /// @dev `key` repays the whole USDC debt of `loanId`.
+    function _repayInFull(uint256 key, uint256 loanId) internal {
+        vm.startBroadcast(key);
+        uint256 repayAmt = RepayFacet(diamond).calculateRepaymentAmount(loanId);
+        usdc.approve(diamond, repayAmt);
+        RepayFacet(diamond).repayLoan(loanId);
+        vm.stopBroadcast();
+        console.log("Loan repaid:", repayAmt);
     }
 
     /// @dev Both sides claim a settled loan. Every caller reaches this right
