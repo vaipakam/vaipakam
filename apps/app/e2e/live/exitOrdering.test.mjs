@@ -109,7 +109,7 @@ describe('a funds defect that was READ outranks every blocker', () => {
   // would have dropped out of the promotion silently, and a new arm would
   // have defaulted to unpromoted with nothing to notice.
   it('promotes from the tag, never from the message', () => {
-    const decl = src.slice(at('const observedNow ='), at(OBSERVED_NOW_EXIT));
+    const decl = between(src, 'const observedNow =', OBSERVED_NOW_EXIT);
     expect(decl).toContain('pr.blockable === false');
     expect(decl).not.toMatch(/did not reach|NOT first|test\(pr\.why\)/);
     expect(src).not.toContain('PROMOTED_OBSERVED');
@@ -216,7 +216,7 @@ describe('a funds defect that was READ outranks every blocker', () => {
   it('exits 1 rather than 2 — a finding, not an inconclusive run', () => {
     // The distinction the batch acts on: 2 means "re-run, nothing was
     // learned", which is how a confirmed defect would disappear.
-    const block = src.slice(at(OBSERVED_NOW_EXIT), at(ROUTE_EXIT));
+    const block = between(src, OBSERVED_NOW_EXIT, ROUTE_EXIT);
     expect(block).toContain('process.exit(1)');
     expect(block).not.toContain('process.exit(2)');
   });
@@ -237,7 +237,7 @@ describe('a funds defect that was READ outranks every blocker', () => {
   // reads the TAG rather than the bare verdict — the property the
   // original comment described all along.
   it('bypasses the blockers only for failures that were READ', () => {
-    const decl = src.slice(at('const observedNow ='), at(OBSERVED_NOW_EXIT));
+    const decl = between(src, 'const observedNow =', OBSERVED_NOW_EXIT);
     expect(decl).toContain('pr.blockable === false');
     expect(decl).not.toContain('failures');
   });
@@ -249,7 +249,7 @@ describe('a funds defect that was READ outranks every blocker', () => {
     // fold there is no forced-close-shaped filter here to lose it in: the
     // promotion selects on the tag alone and knows nothing about which
     // card produced the problem.
-    const decl = src.slice(at('const observedNow ='), at(OBSERVED_NOW_EXIT));
+    const decl = between(src, 'const observedNow =', OBSERVED_NOW_EXIT);
     expect(decl.includes('pr.blockable === false'), 'the promotion must read the tag').toBe(
       true,
     );
@@ -285,11 +285,10 @@ describe('a funds defect that was READ outranks every blocker', () => {
   //
   // Two properties, and the second is what makes the first worth having.
   it('re-reads the accepted sale before a lender visit, and skips without spending the cap', () => {
-    const fn = src.slice(
-      src.indexOf('async function stillEligible(loan)'),
-      src.indexOf('The lender card’s observable shape'),
-    );
-    expect(fn.length, 'stillEligible was not found').toBeGreaterThan(0);
+    // The function's own body. This was sliced up to a comment the drive
+    // has since dropped, so the closing search returned -1 and the rule
+    // read the rest of the file (#2172); `blockFrom` throws instead.
+    const fn = blockFrom(src, 'async function stillEligible(loan) {');
     expect(fn, 'the sale is re-read, not taken from the upfront ranking').toContain(
       'saleLockedOn(loan.lenderTokenId, loan.id, undefined,',
     );
@@ -328,13 +327,9 @@ describe('a funds defect that was READ outranks every blocker', () => {
     // Comments stripped: the note explaining the change QUOTES the call it
     // replaced, and a guard reading prose as code would fail on the
     // explanation of why it passes.
-    const branch = stripLineComments(
-      src.slice(
-        src.indexOf('ROUND 93 P2 — A MALFORMED ENVELOPE IS ITS OWN CATEGORY'),
-        src.indexOf('badMethod = MALFORMED_RPC;'),
-      ),
-    );
-    expect(branch.length, 'the malformed-envelope branch was not found').toBeGreaterThan(0);
+    // The branch that handles a refused envelope, by its own header rather
+    // than by the comment that opens it (#2172).
+    const branch = stripLineComments(blockFrom(src, 'if (!calls) {'));
     expect(branch, 'names come from the lax reader').toContain('rpcMethodNamesIn(parsed)');
     // Not from the strict one, which cannot succeed here — it just refused
     // this same body.

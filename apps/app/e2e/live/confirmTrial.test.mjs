@@ -37,7 +37,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { between, blockFrom } from './sourceBlock.mjs';
+import { after, between, blockFrom } from './sourceBlock.mjs';
 
 const DRIVE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -88,7 +88,7 @@ describe('the trial click is aimed at the control it reported on', () => {
   });
 
   it('re-reads the label and compares it before trialling', () => {
-    const block = src.slice(at(TRIAL_GATE), trialCall());
+    const block = between(src, TRIAL_GATE, 'trial: true');
     expect(block.length, 'the slice must not be empty').toBeGreaterThan(0);
     expect(block).toContain('labelNow');
     // ROUND 76 P2 — either polarity. The guard became an early `!==`
@@ -138,7 +138,7 @@ describe('the trial click is aimed at the control it reported on', () => {
     // identical string is how the duplicated-helper fixes in #2102 went
     // to the wrong copy.
     const haveControl = blockFrom(block, 'if (confirmAction.index >= 0) {');
-    const noControlArm = block.slice(block.indexOf(haveControl) + haveControl.length);
+    const noControlArm = after(block, haveControl);
     expect(noControlArm, 'the no-control arm is still an else').toContain('else');
     expect(noControlArm, 'the no-control arm still records an outcome').toContain(
       'confirmAction.clickable = null;',
@@ -312,12 +312,11 @@ describe('a reading that did not happen is never reported as an absence', () => 
     );
     expect(src, 'nothing in the drive evaluates source inside the page').not.toContain('new Function(');
     expect(src).toContain("import { withVisibility } from './visibility.mjs';");
-    const wait = src.indexOf('.waitForFunction(');
-    expect(wait, 'the mount wait was not found').toBeGreaterThan(-1);
-    const waitEnd = src.indexOf('{ timeout: timeoutMs, polling: 250 }', wait);
-    expect(waitEnd, 'the mount wait no longer carries its options').toBeGreaterThan(wait);
-    expect(src.slice(wait, waitEnd)).toContain('withVisibility((V) =>');
-    expect(src.slice(wait, waitEnd)).toContain('.some(V.visible)');
+    // Throws when the wait or its options are gone (#2172), so neither
+    // search can return -1 and widen the region to the rest of the file.
+    const wait = between(src, '.waitForFunction(', '{ timeout: timeoutMs, polling: 250 }');
+    expect(wait).toContain('withVisibility((V) =>');
+    expect(wait).toContain('.some(V.visible)');
   });
 
   it('builds the nothing-established shape in exactly ONE place', () => {
