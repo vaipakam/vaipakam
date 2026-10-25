@@ -70,6 +70,10 @@ export interface LoanTerms {
   collateralTliq: string;
   rateBps: number;
   days: number;
+  /** `LibVaipakam.PeriodicInterestCadence` (0 None, 1 Monthly, …). Omitted,
+   *  None. A finer cadence needs periodic interest switched on and a
+   *  principal above the finer-cadence threshold. */
+  cadence?: number;
 }
 
 export interface OpenedLoan {
@@ -114,7 +118,7 @@ export async function openLoan(sc: ScenarioChain, t: LoanTerms): Promise<OpenedL
       amountMax: principal,
       interestRateBpsMax: BigInt(t.rateBps),
       collateralAmountMax: collateral,
-      periodicInterestCadence: 0,
+      periodicInterestCadence: t.cadence ?? 0,
       expiresAt: 0n,
       fillMode: 0,
       allowsPrepayListing: false,

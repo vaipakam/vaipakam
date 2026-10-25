@@ -62,3 +62,20 @@ export function pagedWalk(total: bigint, pageSize: bigint, run: number): WalkPag
 export function walkFrom<T>(items: readonly T[], run: number): T[] {
   return rotate(items, walkStart(run, items.length));
 }
+
+/** This run's batch: `width` candidates starting `run × width` along the
+ *  list, so consecutive runs take consecutive, non-overlapping batches and
+ *  every candidate is attempted within ⌈length ÷ width⌉ runs while the set
+ *  holds steady. Stateless, so nothing has to persist between isolates; a
+ *  set that changes between runs can shift a loan by a batch, which delays
+ *  it by a run rather than skipping it for good. */
+export function pickBatch<T>(
+  items: readonly T[],
+  run: number,
+  width: number,
+): { picked: T[]; deferred: T[] } {
+  if (items.length <= width) return { picked: [...items], deferred: [] };
+  const ordered = rotate(items, run * width);
+  return { picked: ordered.slice(0, width), deferred: ordered.slice(width) };
+}
+

@@ -69,7 +69,7 @@
  */
 
 import { createPublicClient, http, type Abi, type Address, type PublicClient } from 'viem';
-import { DefaultedFacetABI, MetricsFacetABI } from '@vaipakam/contracts/abis';
+import { DefaultedFacetABI } from '@vaipakam/contracts/abis';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { attemptErrorReason } from './keeperSend';
 import type { ChainConfig, Env } from './env';
@@ -90,19 +90,15 @@ export {
   type GraceDefaultOutcome,
   type GraceLoan,
 } from './closeOut';
-import { rotate } from './rotate';
+import { pickBatch } from './rotate';
+import { readActiveWindow, type ScanWindow } from './activeLoanWindow';
 
 const DEFAULTED_ABI: Abi = DefaultedFacetABI as Abi;
-const METRICS_ABI: Abi = MetricsFacetABI as Abi;
 
-/** Pagination size for `getActiveLoansPaginated`. */
-const SCAN_PAGE = 200n;
-
-/** Active-list ids one run scans: two pages and four eligibility
- *  aggregates, so a run's scan costs at most eight subrequests (block,
- *  count, pages, aggregates) however large the book. A larger book is
- *  walked a window per visit. */
-export const SCAN_WINDOW = 400;
+/** The shared active-list window (`activeLoanWindow.ts`): with four
+ *  eligibility aggregates on top, a run's scan costs at most eight
+ *  subrequests (block, count, pages, aggregates) however large the book. */
+export { SCAN_WINDOW, type ScanWindow } from './activeLoanWindow';
 
 /** `isLoanDefaultable` reads per aggregate — the liquidator's HF chunk size,
  *  so one eth_call never grows with the active-loan count. */
@@ -279,13 +275,6 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
 /** The skip reason for a run the subrequest cap cut short. */
 export const BUDGET_SPENT = `subrequest-budget-spent (cap ${SUBREQUEST_BUDGET}; tried again on a later visit)`;
 
-/** Where a scan looked: window `index` of `count` over `total` active loans. */
-export interface ScanWindow {
-  index: number;
-  count: number;
-  total: number;
-}
-
 /** Active loans past grace within one SCAN_WINDOW of the active list,
  *  everything read at one pinned block. `visit` picks the window, so
  *  successive visits walk the list and wrap. */
@@ -295,32 +284,7 @@ export async function findDefaultable(
   chainId: number,
   visit = 0,
 ): Promise<{ defaultable: bigint[]; unread: bigint[]; window: ScanWindow }> {
-  const blockNumber = await client.getBlockNumber({ cacheTime: 0 });
-  const total = (await client.readContract({
-    address: diamond,
-    abi: METRICS_ABI,
-    functionName: 'getActiveLoansCount',
-    blockNumber,
-  })) as bigint;
-  const count = Math.max(1, Math.ceil(Number(total) / SCAN_WINDOW));
-  const index = visit % count;
-  const window: ScanWindow = { index, count, total: Number(total) };
-  const from = BigInt(index * SCAN_WINDOW);
-  const to = from + BigInt(SCAN_WINDOW) < total ? from + BigInt(SCAN_WINDOW) : total;
-
-  const ids: bigint[] = [];
-  for (let cursor = from; cursor < to; cursor += SCAN_PAGE) {
-    const limit = cursor + SCAN_PAGE > to ? to - cursor : SCAN_PAGE;
-    // eslint-disable-next-line no-await-in-loop
-    const page = (await client.readContract({
-      address: diamond,
-      abi: METRICS_ABI,
-      functionName: 'getActiveLoansPaginated',
-      args: [cursor, limit],
-      blockNumber,
-    })) as bigint[];
-    ids.push(...page);
-  }
+  const { ids, blockNumber, window } = await readActiveWindow(client, diamond, visit);
   const results: Awaited<ReturnType<typeof batchedRead>> = [];
   for (let i = 0; i < ids.length; i += READ_CHUNK) {
     // eslint-disable-next-line no-await-in-loop
@@ -353,19 +317,5 @@ export async function findDefaultable(
 /** The candidates starting at `step mod length` — the keeper's shared rule (`rotate.ts`). */
 export { rotate } from './rotate';
 
-/** This run's batch: `width` candidates starting `run × width` along the
- *  list, so consecutive runs take consecutive, non-overlapping batches and
- *  every candidate is attempted within ⌈length ÷ width⌉ runs while the set
- *  holds steady. Stateless, so nothing has to persist between isolates; a
- *  set that changes between runs can shift a loan by a batch, which delays
- *  it by a run rather than skipping it for good. */
-export function pickBatch<T>(
-  items: readonly T[],
-  run: number,
-  width: number,
-): { picked: T[]; deferred: T[] } {
-  if (items.length <= width) return { picked: [...items], deferred: [] };
-  const ordered = rotate(items, run * width);
-  return { picked: ordered.slice(0, width), deferred: ordered.slice(width) };
-}
-
+/** This run's batch (the keeper's shared rule, `rotate.ts`). */
+export { pickBatch } from './rotate';

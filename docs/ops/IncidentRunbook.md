@@ -305,7 +305,7 @@ Derive it from source rather than from any prose list, this one included — but
 derive it from the **right** entry point, because there are two and the obvious
 one is the minority case. `keeperBlockers` (`keeper.ts:891`) is the shared
 gate: `isKeeperEnabled` wraps it, and `passIsArmed` calls it directly, which is
-how `matcher`, `liquidator`, `autoLifecycle`, `graceDefault`,
+how `matcher`, `liquidator`, `autoLifecycle`, `graceDefault`, `periodicSettle`,
 `rewardBudgetRemit`, `remitAck` and `commitmentReport` are gated. Only two call
 sites reach `isKeeperEnabled` by name (`keeper.ts:268`,
 `liquidityConfidence.ts:807`), so grepping for that alone finds two of nine and
@@ -368,6 +368,21 @@ sudo systemctl try-restart vaipakam-keeper
 `triggerDefault` is permissionless, so stopping the pass stops only this
 keeper's submissions; the lender's own close-out button and any third party
 can still default a past-grace loan.
+
+**`periodicSettle` has its own switch too, and it also sells collateral.**
+The pass submits `settlePeriodicInterest` for periodic-interest loans whose
+period's grace is over. When the period's interest is short, that sells the
+part of the borrower's collateral the contract sizes to the shortfall. It runs
+whenever both `KEEPER_ENABLED` and `PERIODIC_SETTLE_ENABLED` are `true`, so
+check it before re-arming the master switch too. To stop only this pass:
+
+```bash
+# In /etc/vaipakam/keeper.env:  PERIODIC_SETTLE_ENABLED=false
+sudo systemctl try-restart vaipakam-keeper
+```
+
+`settlePeriodicInterest` is permissionless, so stopping the pass stops only
+this keeper's submissions; anyone can still settle an overdue period.
 
 A deploy afterwards does apply the committed `"TG_BOT_USERNAME": ""` over
 whatever is live, with or without `--keep-vars` — but that is harmless here
