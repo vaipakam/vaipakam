@@ -4,7 +4,6 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
-import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -28,6 +27,7 @@ import {RiskFacet} from "./RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
+import {ForcedSaleFacet} from "./ForcedSaleFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
@@ -43,10 +43,13 @@ import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
  *      {triggerDefault} is permissionless — any caller may invoke it once the
  *      loan is past `endTime + gracePeriod(durationDays)`. Asset-handling
  *      branches:
- *        - **Liquid ERC-20 collateral**: 0x swap (slippage ≤
- *          `MAX_LIQUIDATION_SLIPPAGE_BPS`); on swap failure falls back to
- *          {FallbackCustodyFacet.enterFallback} (claim-time retry in
- *          ClaimFacet, also through {FallbackCustodyFacet}).
+ *        - **Liquid ERC-20 collateral**: the one forced-sale rule on
+ *          {ForcedSaleFacet} (#2796) sells only the collateral the debt
+ *          needs (slippage ≤ the liquidation cap) and leaves the rest and
+ *          the extra proceeds to the borrower's claim; when every route
+ *          fails it falls back to {FallbackCustodyFacet.enterFallback}
+ *          (claim-time retry in ClaimFacet, also through
+ *          {FallbackCustodyFacet}).
  *          High-volatility check (#1192): only a genuine LTV > 110% value
  *          collapse routes directly to the full-collateral in-kind branch;
  *          an HF < 1 loan whose collateral still covers the debt (LTV ≤ 110%)
@@ -57,6 +60,10 @@ import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
  *        - **NFT rental**: remaining prepay to lender (minus treasury fee),
  *          buffer to treasury, renter reset to address(0).
  *        - **NFT/ERC-1155 collateral**: direct NFT transfer to lender.
+ *
+ *      Refresh together (#2796): {ForcedSaleFacet}, RiskFacet,
+ *      RiskSplitLiquidationFacet, DefaultedFacet and RepayPeriodicFacet — the
+ *      liquid sale is a self-call into {ForcedSaleFacet.sellToNeed}.
  *
  *      Refresh together (#1566 slice 2): {FallbackCustodyFacet}, RiskFacet,
  *      DefaultedFacet, ClaimFacet, AddCollateralFacet, RepayFacet and
@@ -185,16 +192,26 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
 
     /**
      * @notice Triggers default for a loan past grace period (permissionless).
-     * @dev If liquid collateral: Calls triggerLiquidation (0x swap).
-     *      If illiquid: Transfers full collateral to lender.
+     * @dev If liquid collateral: sells only the collateral the debt needs
+     *      through the shared forced-sale rule ({ForcedSaleFacet.sellToNeed},
+     *      #2796); the unsold collateral and the extra proceeds wait for the
+     *      borrower's claim.
+     *      If illiquid (or its value collapsed): transfers full collateral to lender.
      *      Enhanced for NFTs: Transfers prepay (amount * durationDays) to lender, buffer (5%) to treasury from borrower vault.
      *      Revokes this rental's renter via vaultSetRentalUser(loanId, address(0), 0).
      *      Updates loan to Defaulted, burns NFTs.
      *      Emits LoanDefaulted.
      * @param loanId The loan ID to default.
+     * @param sellAmount The collateral amount the try-list's quotes were built
+     *        for, read only on the liquid sale route. Must lie between
+     *        `previewForcedSale(loanId, TimeBasedDefault)`'s `sell` and
+     *        `maxSell` at the settling block, else the call reverts
+     *        `ForcedSaleQuoteOutOfRange` and nothing moves (quote again).
+     * @param adapterCalls Keeper-ranked swap try-list for the liquid sale route.
      */
     function triggerDefault(
         uint256 loanId,
+        uint256 sellAmount,
         LibSwap.AdapterCall[] calldata adapterCalls
     ) external whenNotPaused nonReentrant {
         // T-090 v1.1 (#389) §5.8 — if a v1.1 intent commit is live
@@ -295,21 +312,14 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             return;
         }
 
-        // #569 §4.4 (2026-06-13) — release the collateral lien only
-        // AFTER the internal-match dispatch returned false. Codex #571
-        // P1: an EARLY release (before dispatch) tombstoned the lien, so
-        // a PARTIAL internal match that leaves the loan Active with
-        // reduced collateral would strand the residual collateral
-        // unprotected (the post-match decrement no-ops on a released
-        // row). The internal-match path owns its own lien adjustment
-        // (pre-withdraw decrement in `_executeTwoWayMatch` /
-        // `_executeThreeWayMatch`); from here down we're on the
-        // terminal external/default-transfer path, where a full release
-        // is correct and clears the guard for the collateral drains
-        // below. Idempotent on already-released / empty rows; no-op on
-        // NFT rentals (D-1). Private helper keeps `triggerDefault`'s
-        // stack under viaIR's ceiling.
-        _releaseLienAtDefault(loanId);
+        // #569 §4.4 / #2796 — the collateral lien is released only on the
+        // routes that move the WHOLE collateral (the unpriced fallback, the
+        // in-kind transfer, an NFT rental), each just before its move. The
+        // liquid sale route keeps it live: the forced-sale host lowers it by
+        // exactly what it sells, so the collateral the sale leaves stays
+        // protected in the borrower's vault until their claim. An internal
+        // match above owned its own lien adjustment (Codex #571 P1: an early
+        // release would strand a partial match's residual unprotected).
 
         // Execution routing (README §1): liquidation depends on whether the
         // live network exposes a swap path for the collateral. When the
@@ -404,82 +414,57 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     > LibVaipakam.cfgVolatilityLtvThresholdBps();
             }
 
-            if (
-                unpricedPair ||
-                (liquidity == LibVaipakam.LiquidityStatus.Liquid && !isLtvCollapsed)
-            ) {
-                // #1005 (S9) — a liquid time-based default must attempt at least
-                // one enabled swap route: `LibSwap.swapWithFailover` (below)
-                // reverts `NoEnabledSwapRoute` when the try-list is empty or every
-                // entry is a governance-disabled venue, rolling back the
-                // collateral move-out, so a permissionless caller can't push an
-                // eligible loan into the full-collateral fallback with zero DEX
-                // attempts. (Illiquid / genuinely LTV-collapsed defaults
-                // legitimately need no swap list and fall through to the in-kind
-                // branch below. An unpriced pair needs none either: it enters
-                // the fallback without a swap, #2419, see the route note above.)
-
-                // Time-based default with liquid collateral: swap directly without HF check.
-                // RiskFacet.triggerLiquidation requires HF < 1 (for HF-based liquidation),
-                // but time-based defaults are independent — the README treats non-repayment
-                // after grace as a separate default trigger regardless of collateral health.
-
-                // Withdraw collateral from borrower's vault. #821 (Codex #832 r3
-                // P1) — move-out-exempt so a borrower flagged after init doesn't
-                // brick the liquid time-based default (collateral pushed OUT to
-                // the already-screened swap recipients).
-                // #2440 — a forced close-out acts on what arrived: the loan's
-                // collateral becomes what reached the Diamond, so the quote, the
-                // sale and a fallback entry all use that figure and a short
-                // delivery is never made up from the Diamond's other balance.
+            if (unpricedPair) {
+                // #2419 — see the route note above: no price, no sale. The
+                // whole collateral goes to the Diamond (#821: move-out exempt,
+                // so a borrower flagged after init never bricks the default;
+                // #2440: the loan's collateral becomes what arrived) and the
+                // loan enters the fallback exactly as a failed swap would.
+                _releaseLienAtDefault(loanId);
                 loan.collateralAmount = LibSanctionedLock.pullToDiamond(
                     s,
                     loan.borrower,
                     loan.collateralAsset,
                     loan.collateralAmount
                 );
-
-                if (unpricedPair) {
-                    // #2419 — see the route note above: no price, no sale.
-                    _enterFallback(loanId);
-                    emit LoanFallbackPending(
-                        loanId,
-                        loan.lender,
-                        loan.riskAndTermsConsentFromBoth,
-                        loan.status
-                    );
-                    return;
-                }
-
-                // README §3 lines 140–141 + §7 line 263: compute the oracle-
-                // derived expected output and the 6% slippage floor. Adapters
-                // enforce the floor on their side (UniV3 / Balancer pass it
-                // through to the underlying DEX as `amountOutMinimum`;
-                // aggregators check via balance delta around the call).
-                uint256 expectedProceeds = LibFallback.expectedSwapOutput(
-                    address(this),
-                    loan.collateralAsset,
-                    loan.principalAsset,
-                    loan.collateralAmount
-                );
-                uint256 minOutputAmount = (expectedProceeds *
-                    (LibVaipakam.BASIS_POINTS - LibVaipakam.cfgMaxLiquidationSlippageBps())) /
-                    LibVaipakam.BASIS_POINTS;
-
-                // Phase 7a — caller-ranked failover across the registered
-                // swap adapters (mirror of RiskFacet.triggerLiquidation).
-                // Total failure routes to the same full-collateral
-                // fallback as pre-7a.
-                (bool swapSuccess, uint256 proceedsFromSwap, ) = LibSwap.swapWithFailover(
+                _enterFallback(loanId);
+                emit LoanFallbackPending(
                     loanId,
-                    loan.collateralAsset,
-                    loan.principalAsset,
-                    loan.collateralAmount,
-                    minOutputAmount,
-                    address(this),
-                    adapterCalls
+                    loan.lender,
+                    loan.riskAndTermsConsentFromBoth,
+                    loan.status
                 );
-                if (!swapSuccess) {
+                return;
+            }
+
+            if (liquidity == LibVaipakam.LiquidityStatus.Liquid && !isLtvCollapsed) {
+                // Time-based default with liquid collateral: sell without an
+                // HF check — the README treats non-repayment after grace as a
+                // separate default trigger regardless of collateral health.
+                //
+                // #2796 — the forced-sale host sells only what the debt needs
+                // (the least collateral whose proceeds at the slippage cap
+                // cover the debt plus the largest charges, at the keeper's
+                // quoted `sellAmount`), and divides the proceeds: keeper bonus
+                // (the same curve as the HF paths, L-h #1010), the lender's
+                // debt in full, the 2% handling fee on the debt subordinated
+                // to the lender, and the rest held for the borrower beside
+                // the collateral the sale did not take.
+                //
+                // Sanctions posture — this is a Tier-2 close-out: the TRIGGER
+                // stays permissionless and never reverts on a sanctioned
+                // caller (README sanctions policy), but the host withholds
+                // the bonus from one (it stays in the waterfall). The bonus
+                // is intentionally NOT KYC-gated: KYC is off on retail and
+                // this Tier-2 path must not add a gating revert.
+                //
+                // #1005 (S9) — an empty or all-disabled try-list reverts
+                // `NoEnabledSwapRoute` inside the host, so a permissionless
+                // caller can't push an eligible loan into the fallback with
+                // zero DEX attempts. When every route fails the host returns
+                // with the whole collateral on the Diamond and the loan
+                // enters the fallback.
+                if (!_sellToNeed(loanId, sellAmount, adapterCalls)) {
                     _enterFallback(loanId);
                     // §3.8 — FallbackCustodyFacet.enterFallback transitioned the
                     // loan to FallbackPending; emit the matching state-change
@@ -492,160 +477,8 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     );
                     return;
                 }
-                uint256 proceeds = proceedsFromSwap;
-
                 // Liquid-collateral DEX liquidation succeeded → "Loan Liquidated".
                 terminalStatus = LibVaipakam.LoanPositionStatus.LoanLiquidated;
-
-                // Debt: principal + NET accrued interest + late fees.
-                // #641 — accrue from the interest clock (post-partial origin),
-                // not the immutable term start. #915 (M7) — credit
-                // `loan.interestSettled` (periodic auto-liquidation already
-                // forwarded that interest to the lender and the accrual clock is
-                // NOT reset, so the raw accrual still spans the settled periods);
-                // subtract it (saturating) so the forced-close debt does not
-                // double-count — matching the HF paths' `currentBorrowBalance`
-                // and the proper-close `settlementInterestNet`. Inline accrual
-                // (not `currentBorrowBalance`) avoids a full storage→memory Loan
-                // copy that would blow this facet past EIP-170.
-                uint256 accruedInterest;
-                {
-                    uint256 elapsed =
-                        block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
-                    accruedInterest = (loan.principal * loan.interestRateBps * elapsed) /
-                        (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-                }
-                accruedInterest = LibEntitlement.creditSettledInterest(loan, accruedInterest);
-                uint256 lateFee = LibVaipakam.calculateLateFee(loanId);
-                uint256 totalDebt = loan.principal + accruedInterest + lateFee;
-                uint256 interestPortion = accruedInterest + lateFee;
-
-                // L-h #1010 — the time-based default now pays the caller the
-                // SAME dynamic liquidator incentive curve as the HF paths (6% −
-                // slippage, capped 3%) via the shared helper, so permissionless
-                // default-triggering stays economically motivated. Bonus
-                // computed BEFORE the waterfall so it takes first priority
-                // (keeper liveness incentive).
-                //
-                // Sanctions posture — the time-based default is a Tier-2
-                // close-out: the TRIGGER stays DELIBERATELY permissionless and
-                // must not brick (README sanctions policy — `markDefaulted` /
-                // time-based liquidation stay open so the unflagged counterparty
-                // is made whole), so we never revert on a sanctioned caller. But
-                // the bonus is a NEW value payment, so — like the Tier-1
-                // HF-liquidation bonus — it is WITHHELD from a sanctioned caller:
-                // the incentive is zeroed (it stays in `proceeds` and flows to
-                // the lender/borrower via the waterfall below) while the default
-                // still completes. Unflagged keepers earn it normally. The bonus
-                // is intentionally NOT KYC-gated (unlike Tier-1): KYC is off on
-                // retail and this Tier-2 path must not add a gating revert.
-                uint256 bonus = (proceeds *
-                    LibEntitlement.liquidatorIncentiveBps(
-                        loan.collateralAsset, proceeds, expectedProceeds
-                    )) / LibVaipakam.BASIS_POINTS;
-                if (bonus > proceeds) bonus = proceeds;
-                if (LibVaipakam.isSanctionedAddress(msg.sender)) bonus = 0;
-                if (bonus > 0) {
-                    // #2440 — a bonus books nobody by what arrives (LibDelivery
-                    // outcome 3); refused only if it cost the Diamond more
-                    // than it sent.
-                    LibDelivery.pushOut(loan.principalAsset, msg.sender, bonus);
-                }
-
-                // Waterfall (L-g #1009): bonus first, full lender recovery next,
-                // then the 2% treasury handling fee SUBORDINATED to lender
-                // recovery (taken only from surplus above debt), borrower keeps
-                // the residual. Underwater ⇒ handling fee collapses to 0.
-                uint256 afterBonus = proceeds - bonus;
-                uint256 allocated = afterBonus > totalDebt ? totalDebt : afterBonus;
-                uint256 surplusAfterDebt = afterBonus - allocated;
-                uint256 handlingFee = (proceeds * LibVaipakam.cfgLiquidationHandlingFeeBps())
-                    / LibVaipakam.BASIS_POINTS;
-                if (handlingFee > surplusAfterDebt) handlingFee = surplusAfterDebt;
-                uint256 borrowerSurplus = surplusAfterDebt - handlingFee;
-
-                uint256 treasuryInterestFee;
-                uint256 lenderProceeds;
-                if (allocated > loan.principal) {
-                    uint256 interestRecovered = allocated - loan.principal;
-                    if (interestRecovered > interestPortion) interestRecovered = interestPortion;
-                    (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRecovered);
-                    // #1383 — recovered interest is lender interest, so the
-                    // frozen F2 rule reaches it. Keyed on the CURRENT
-                    // position-NFT holder (the consolidation is skip-not-block).
-                    // `lenderProceeds` is a residual of the cut, so only the
-                    // treasury term moves.
-                    (, treasuryInterestFee) = LibLenderYieldFeeHost.resolve(
-                        loanId,
-                        LibERC721.ownerOf(loan.lenderTokenId),
-                        interestRecovered,
-                        treasuryInterestFee
-                    );
-                    lenderProceeds = allocated - treasuryInterestFee;
-                } else {
-                    lenderProceeds = allocated;
-                }
-
-                // Send treasury (subordinated) handling fee + interest fee.
-                // #1195 C4 (Pass-2) — record the accrual so the treasury/revenue
-                // analytics ring buffer counts this liquid time-default's take,
-                // matching the HF paths (`RiskFacet`). Both legs (the handling
-                // fee AND the interest fee) are treasury-destined here.
-                // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
-                LibFacet.transferToTreasury(loan.principalAsset, handlingFee + treasuryInterestFee);
-
-                // Deposit lender proceeds into lender's vault for claim. #821 —
-                // vault-lock so a flagged stored lender doesn't brick the default
-                // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance).
-                // #2440 — the claim names what the vault received.
-                lenderProceeds = LibSanctionedLock.depositLocked(
-                    s, loan.lender, loanId, loan.principalAsset, lenderProceeds
-                );
-                // #998 S10 (#1006 / #1132) — the fail-closed frozen-claimant
-                // markers for BOTH holders are recorded centrally at the
-                // `Defaulted` transition below via `EncumbranceMutateFacet.terminalizeFromAny`.
-                s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
-                    asset: loan.principalAsset,
-                    amount: lenderProceeds,
-                    assetType: LibVaipakam.AssetType.ERC20,
-                    tokenId: 0,
-                    quantity: 0,
-                    claimed: false
-                });
-                // #592 — reserve VPFI lender proceeds against the unstake path
-                // until the current holder claims (released in ClaimFacet).
-                // The proceeds sit in the stored lender's vault; VPFI is the
-                // one principal asset with a user-facing tracked exit. No-op
-                // for non-VPFI principal.
-                if (loan.principalAsset == s.vpfiToken) {
-                    LibEncumbrance.encumberLenderProceeds(
-                        loanId, loan.lender, loan.principalAsset, lenderProceeds
-                    );
-                }
-
-                // Borrower surplus
-                if (borrowerSurplus > 0) {
-                    // #2440 — the claim names what the vault received.
-                    borrowerSurplus = LibSanctionedLock.depositLocked(
-                        s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
-                    );
-                    // #661 — reserve a VPFI surplus against the unstake path until
-                    // the current borrower-position holder claims it (mirror of
-                    // the #592 lender-proceeds reserve above). No-op for non-VPFI.
-                    if (loan.principalAsset == s.vpfiToken) {
-                        LibEncumbrance.encumberBorrowerProceeds(
-                            loanId, loan.borrower, loan.principalAsset, borrowerSurplus
-                        );
-                    }
-                }
-                s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
-                    asset: loan.principalAsset,
-                    amount: borrowerSurplus,
-                    assetType: LibVaipakam.AssetType.ERC20,
-                    tokenId: 0,
-                    quantity: 0,
-                    claimed: borrowerSurplus == 0
-                });
             } else if (
                 ((liquidity == LibVaipakam.LiquidityStatus.Liquid &&
                     isLtvCollapsed) ||
@@ -654,6 +487,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             ) {
                 // Illiquid or value collapsed: Move collateral from borrower's vault to lender's vault
                 // so ClaimFacet.claimAsLender can withdraw from lender's vault consistently.
+                // The whole collateral moves, so the lien goes first (it
+                // would otherwise block the vault withdrawal below).
+                _releaseLienAtDefault(loanId);
                 // #821 — vault-lock the in-kind collateral into a flagged stored
                 // lender's vault rather than bricking the default. #832 r7 P3 —
                 // report the real parked payload in the lock event: ERC-1155
@@ -749,19 +585,23 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // ClaimFacet.claimAsLender, which withdraws them in the correct
                 // payment asset via the NFT-gated claim model.
                 // No borrower claim on default (lender takes full collateral)
+
+                // #1566 S2c: the VPFI re-stamp of the borrower after the
+                // in-kind transfer. The sale route's host re-stamps after its
+                // own movements, and the fallback entry after its own. See
+                // {_restampCollateralVpfi}.
+                _restampCollateralVpfi(loanId);
             } else {
                 revert LiquidationFailed();
             }
-
-            // #1566 S2c: one VPFI re-stamp of the borrower after BOTH
-            // collateral routes above (the swap and the in-kind transfer).
-            // The swap-failure fallback returned earlier. See
-            // {_restampCollateralVpfi}.
-            _restampCollateralVpfi(loanId);
         }
 
         // NFT-specific handling (if lendingAsset is NFT)
         if (loan.assetType != LibVaipakam.AssetType.ERC20) {
+            // An NFT rental carries no collateral lien (D-1); the release is
+            // the idempotent no-op it always was here, kept so every whole-
+            // collateral route releases before it moves anything.
+            _releaseLienAtDefault(loanId);
             // Reset renter
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -992,6 +832,37 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             ),
             bytes4(0)
         );
+    }
+
+    /// @dev #2796 — the liquid time-based default's sale, sized to need, on
+    ///      the one forced-sale host ({ForcedSaleFacet.sellToNeed}). Its own
+    ///      frame keeps the outcome decode off `triggerDefault`'s stack, which
+    ///      sits near solc's ceiling.
+    /// @return sold False when every route failed: the whole collateral is
+    ///         on the Diamond with the lien released, for the fallback entry.
+    function _sellToNeed(
+        uint256 loanId,
+        uint256 sellAmount,
+        LibSwap.AdapterCall[] calldata adapterCalls
+    ) private returns (bool sold) {
+        ForcedSaleFacet.ForcedSaleOutcome memory out = abi.decode(
+            LibFacet.crossFacetCallReturn(
+                abi.encodeCall(
+                    ForcedSaleFacet.sellToNeed,
+                    (
+                        loanId,
+                        ForcedSaleFacet.ForcedSaleKind.TimeBasedDefault,
+                        sellAmount,
+                        adapterCalls,
+                        new LibSwap.SplitCall[](0),
+                        msg.sender
+                    )
+                ),
+                bytes4(0)
+            ),
+            (ForcedSaleFacet.ForcedSaleOutcome)
+        );
+        return out.sold;
     }
 
     /// @dev #407 PR 4 (T-407-B, 2026-06-12) — extracted from

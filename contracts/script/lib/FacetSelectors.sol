@@ -505,24 +505,27 @@ library FacetSelectors {
         s[2] = NumeraireValueFacet.getLiquidNumeraireValue.selector;
     }
 
-    /// @notice Full external selector surface of {ForcedSaleFacet} (3).
+    /// @notice Full external selector surface of {ForcedSaleFacet} (4).
     ///
-    /// @dev    #2795. The one forced-sale rule: size the sale to the debt,
-    ///         sell it, and split the proceeds lender first. `RepayPeriodicFacet`
-    ///         (the periodic-interest settlement) reads the plan and settles
-    ///         through these selectors by self-call, so a curated refresh of it
-    ///         WITHOUT this facet reverts `FunctionDoesNotExist` on every
-    ///         periodic settlement that has to sell. `RedeployFacets` therefore
-    ///         cuts it from this list.
+    /// @dev    #2795 / #2796. The one forced-sale rule: size the sale to the
+    ///         debt, sell it, and split the proceeds lender first.
+    ///         `RepayPeriodicFacet` (the periodic-interest settlement),
+    ///         `RiskFacet` and `RiskSplitLiquidationFacet` (the Health-Factor
+    ///         liquidation) and `DefaultedFacet` (the liquid time-based
+    ///         default) sell through `sellToNeed` by self-call, so a curated
+    ///         refresh of any of them WITHOUT this facet reverts
+    ///         `FunctionDoesNotExist` on every forced sale. `RedeployFacets`
+    ///         therefore cuts it from this list.
     ///
     ///         The ONLY copy of the list, as for {swapAttempt}:
     ///         `DeployDiamond` (`_getForcedSaleSelectors`) and `HelperTest`
     ///         (`getForcedSaleFacetSelectors`) return it, and
     ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
     function forcedSale() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = ForcedSaleFacet.previewForcedSale.selector;
-        s[1] = ForcedSaleFacet.settlePeriodicSale.selector;
+        s[1] = ForcedSaleFacet.sellToNeed.selector;
         s[2] = ForcedSaleFacet.payBorrowerWallet.selector;
+        s[3] = bytes4(keccak256("QUOTE_MARGIN_BPS()"));
     }
 }
