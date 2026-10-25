@@ -183,9 +183,11 @@ contract RewardRemittanceFacet is
     ///         owed day from one that owed nothing.
     ///         Settled: `Remitted`, `Closed`. Nothing owed: `NothingOwed`.
     ///         Still owed: `Ineligible` (funded by the manual-budget path),
-    ///         `AwaitingCommitment` (an armed day whose commitment report is
-    ///         not complete), `Unbacked` (its recycled share fails the net
-    ///         backing gate in THIS batch, after the days listed before it).
+    ///         `AwaitingCommitment` (an armed day with a budget for this
+    ///         mirror whose commitment report is not complete; a zero-budget
+    ///         day reads `NothingOwed` whether or not its report has arrived),
+    ///         `Unbacked` (its recycled share fails the net backing gate in
+    ///         THIS batch, after the days listed before it).
     ///         Not judged: `NotFinalized`, `Repeated` (a later copy of an
     ///         earlier entry; the first copy carries the verdict).
     ///         `Closeable`: this batch would close it, possibly moving zero.
@@ -878,11 +880,6 @@ contract RewardRemittanceFacet is
             p.status = RemitDayStatus.Ineligible;
             return p;
         }
-        bool armed = armedFrom != 0 && dayId >= armedFrom;
-        if (armed && !c.complete) {
-            p.status = RemitDayStatus.AwaitingCommitment;
-            return p;
-        }
         LibInteractionRewards.ChainDayBudget memory b = LibInteractionRewards
             .chainRewardBudgetSideSplitForDay(s, dstChainId, dayId);
         uint256 grossRecycled = b.recycledLender + b.recycledBorrower;
@@ -893,6 +890,16 @@ contract RewardRemittanceFacet is
         uint256 sliceRecycled = grossRecycled - localBacking;
         if (sliceFresh + sliceRecycled == 0 && localBacking == 0) {
             p.status = RemitDayStatus.NothingOwed;
+            return p;
+        }
+        // The commitment gate runs AFTER the zero-budget test (#2760 r1): a
+        // finalized day's budget is fixed, and the report can only clamp it
+        // down, so a day that gave this mirror nothing owes nothing whether
+        // or not its report has arrived. Gating first would name it owed and
+        // waiting. Eligibility is unchanged: neither branch closes the day.
+        bool armed = armedFrom != 0 && dayId >= armedFrom;
+        if (armed && !c.complete) {
+            p.status = RemitDayStatus.AwaitingCommitment;
             return p;
         }
         p.status = RemitDayStatus.Closeable;

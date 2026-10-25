@@ -4993,6 +4993,19 @@ contract RewardRemitLedgerTest is SetupTest {
         _assertAgrees(_days(1));
     }
 
+    /// An ARMED day that gave this mirror no budget owes nothing even before
+    /// its commitment report arrives: the report can only clamp a budget
+    /// down, so the gate must not name such a day owed and waiting (#2760 r1).
+    function test_Status_ArmedDayWithNoBudgetOwesNothingBeforeItsReport() public {
+        rewardMessenger.deliverChainReport(CHAIN_BASE, 1, 10e18, 5e18);
+        rewardMessenger.deliverChainReport(CHAIN_ARB, 1, 0, 0);
+        rewardMessenger.deliverChainReport(CHAIN_OP, 1, 30e18, 15e18);
+        RewardAggregatorFacet(address(diamond)).finalizeDay(1);
+        _armDayForArb(1, 0, 0);
+        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.NothingOwed), "nothing owed, no report");
+        _assertAgrees(_days(1));
+    }
+
     /// The zero value is never `Closeable`, so a status a path forgot to set
     /// cannot read as one.
     function test_Status_ZeroValueIsNotCloseable() public pure {
