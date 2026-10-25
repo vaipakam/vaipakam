@@ -1012,22 +1012,36 @@ which, under the post-deploy default (`numeraireSymbol` empty,
 > `updateKYCThresholds` setter only re-tunes within the same
 > numeraire.
 
-## Range Orders Phase 1 (master kill switches — bool flags)
+## Range orders and the matching kill-switch
 
-### Range Orders kill-switch flags (rangeAmountEnabled, rangeRateEnabled, partialFillEnabled)
+Ranged offers are always on. The two range master flags
+(`rangeAmountEnabled`, `rangeRateEnabled`) and the borrower-side
+`rangeCollateralEnabled` flag were retired in #2812 (owner decision
+2026-10-25): nothing read them, so they gated nothing, and their
+setters and getters are gone. Their storage slots are kept, unused.
 
-All three default `false` post-deploy. Governance flips each on once
-the corresponding mechanic is ready to ship. No range bound (bool).
-Each flip emits a config event so off-chain monitoring can correlate
-behavior changes to the governance action.
+### Matching kill-switch (`partialFillEnabled`)
+
+The governance lever over matching. Defaults `false` post-deploy; the
+deploy scripts turn it on.
+
+- **While off:** `matchOffers` and `matchIntent` (and the match
+  preview) refuse with `FunctionDisabled(3)`, and an accepted offer is
+  single-fill.
+- **While on:** a ranged offer can be filled across several matches.
+- **Getter:** `ConfigFacet.getPartialFillEnabled() -> bool`
+  (also a field of `getProtocolConfigBundle`).
+- **Setter:** `ConfigFacet.setPartialFillEnabled(bool)` (`ADMIN_ROLE`;
+  timelocked post-handover) → emits `PartialFillEnabledSet`.
+- No range bound (bool).
 
 ### Standing-intent fill switch (`lenderIntentEnabled`)
 
 Master kill-switch for the standing lending-intent fill path
 (`matchIntent`). Defaults `false` post-deploy: lenders can register
 intents, but no intent fill executes until governance turns it on. Same
-ship-off / governance-on / break-glass-off pattern as the range-order
-flags above. No range bound (bool).
+ship-off / governance-on / break-glass-off pattern as the matching
+kill-switch above. No range bound (bool).
 
 - **Getter:** `LenderIntentFacet.isLenderIntentEnabled() -> bool`
 - **Setter:** `LenderIntentFacet.setLenderIntentEnabled(bool)`
