@@ -1529,7 +1529,7 @@ intact (compare against `wrangler r2 object get … --pipe | sha256sum`).
 
 For the re-derivable tables (`offers`, `loans`, `activity_events`,
 `oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor`,
-`prenotify_scan_cursor`, `indexer_deployment`),
+`prenotify_scan_cursor`, `prenotify_pass`, `indexer_deployment`),
 the design doc favours **re-indexing from block 0** over restoring
 from the archive. Why:
 
@@ -1568,6 +1568,7 @@ DELETE FROM recycle_prelaunch; \
 DELETE FROM recycle_chain_reported; \
 DELETE FROM recycle_backing_snapshot; \
 DELETE FROM prenotify_scan_cursor; \
+DELETE FROM prenotify_pass; \
 DELETE FROM push_rail_status; \
 DELETE FROM indexer_deployment; \
 DELETE FROM indexer_cursor"
@@ -1586,21 +1587,24 @@ Clearing it costs at most a minute of the agent's `GET /push/status`
 answering for its own rail alone. Keeping it would let a restored row vouch for a
 configuration the keeper may no longer have.
 
-`prenotify_scan_cursor` (#2219) is a watermark like `indexer_cursor`,
-not data: it records the DEADLINE at which the pre-notify scan resumes.
-Clearing it restarts that scan at the nearest deadline, which prefers
-duplicated work to stepping over a nearer one — the direction this
-failure must take. That is a property of the restarted run, not a
-guarantee about the reminders: if the lane has more due loans than one
-run can examine, a run restarting at the front spends its allowance on
-the prefix, and a loan in the tail close to its own deadline can leave
-the notification window before a later run reaches it. The single
-statement of what a pass does and does not promise is in
-`docs/FunctionalSpecs/Alpha02ConnectedApp.md` under the reminder-run
-bullets; this note does not restate it.
+What the pre-notify lane has examined in its current pass (#2230) lives on
+the `loans` rows themselves, in the `prenotify_examined_*` columns, so
+clearing `loans` clears it too. The pass in progress and when it began are
+recorded per chain in `prenotify_pass` (with whether it has finished),
+cleared above with the rest. The
+replay rebuilds every row unexamined, and with no pass record the lane
+begins a new pass that looks at every loan again. That prefers duplicated
+work to stepping over a loan, which is the direction this failure must take.
+It is a property of the restarted pass, not a guarantee about the reminders:
+if the lane has more due loans than one run can examine, the pass may not
+reach a loan close to its own deadline before that loan leaves the
+notification window. The single statement of what a pass does and does not
+promise is in `docs/FunctionalSpecs/Alpha02ConnectedApp.md` under the
+reminder-run bullets; this note does not restate it.
 
-Leaving the row would be worse than clearing it: it would point the lane
-at a deadline from a database the replay is in the middle of rebuilding.
+`prenotify_scan_cursor` (#2219) held the lane's previous record, a deadline
+to resume at. Nothing reads it since #2230, and a later migration drops it.
+Until then the command above still clears it, which is harmless.
 
 Clearing the tables is not optional, and resetting only the cursor
 is NOT equivalent: the replay handlers upsert by key and **never

@@ -107,7 +107,8 @@ const SECONDS_PER_DAY = 86_400;
  * THIS IS A CAP ON A TICK, NOT ON A LOAN. The window is `preNotifyDays` wide
  * (three days by default) and ticks are minutes apart, so a deferred loan has
  * thousands of later chances. Two things make that true rather than hopeful:
- * the ORDER (`candidatesInWindow`) and the stored scan position.
+ * the ORDER (`candidatesInWindow`) and the per-loan examination marks
+ * (`examinationPass`, #2230).
  */
 // EXPORTED AS A TEST SEAM (#2213 r22). Ten budget tests hand-computed their
 // expectations from these three numbers, so adding the pause read broke all
@@ -149,23 +150,25 @@ export const MAX_D1_PER_LOAN = 5;
 export const MAX_SUBREQUESTS_PER_LOAN = MAX_SENDS_PER_LOAN + MAX_D1_PER_LOAN;
 
 /**
- * The scan position written back at the end of every pass.
+ * The write that marks which candidates a batch examined, made once at the end
+ * of every batch that examined any (#2230).
  *
  * HELD BACK FROM THE LOAN LOOP, not merely counted (#2213 r32 `4017648029`).
- * It is inside `CHAIN_OPENING_REQUESTS_AFTER_IDENTITY`, so a chain is only
- * ADMITTED when there is room for it — and nothing kept the loop from
- * spending it afterwards. A run of cheap loans could take the remainder to
- * exactly a loan's worth, admit one more, spend all of it, and then issue
- * this write anyway: one request past the stated cap.
+ * The loop admits a batch only with room for its read, a loan's worth and this
+ * write, and admits each loan only while a loan's worth and this write remain,
+ * so a run of cheap loans can never take the remainder to exactly a loan's
+ * worth, admit one more, spend all of it, and then issue this write anyway:
+ * one request past the stated cap.
  *
- * The same shape as the indexer lane's P1 one round earlier (#2221): a
- * request made at the END of a pass, by a step no gate consults, in a lane
- * whose gates all reason about what comes next. A pass that spends its last
- * request on work and then cannot record where it got to is the failure
- * every one of these budgets exists to prevent, so this one is reserved
+ * The same shape as the indexer lane's P1 (#2221): a request made at the END
+ * of a unit of work, by a step no gate consults, in a lane whose gates all
+ * reason about what comes next. A batch that spends its last request on work
+ * and then cannot record what it examined is the failure every one of these
+ * budgets exists to prevent: the next tick would examine the same loans again
+ * and, under sustained load, never reach the rest. So this one is reserved
  * rather than hoped for.
  */
-export const CURSOR_WRITE_RESERVE = 1;
+export const EXAMINED_MARK_RESERVE = 1;
 
 /**
  * How many candidates one batched chain read covers, and how many such reads
@@ -231,7 +234,35 @@ interface LoanRow {
   periodic_interest_cadence: number;
   last_period_settled_at: number;
   period_pre_notified_at: number;
+  /**
+   * Which pass of this lane last EXAMINED the loan, and for which period
+   * (#2230). Written by this lane alone, after the batch that looked at the
+   * loan, whatever the outcome — reminded, nobody to tell, rejected by the
+   * chain, unreadable. A mark for a different period than the one now due is
+   * no mark at all. See `examinationPass`.
+   */
+  prenotify_examined_checkpoint: number;
+  prenotify_examined_lap: number;
 }
+
+/**
+ * The chain's pass record as stored (`prenotify_pass`, #2230): the latest
+ * pass, when it began, and when it was seen to finish (null while it is in
+ * progress). Read in the same batch as the candidates, so a tick spends no
+ * request of its own on it. See `readPassRecord` for what it means.
+ */
+interface PassRow {
+  lap: unknown;
+  started_at: unknown;
+  completed_at: unknown;
+}
+
+/** The chain's pass record, read: what `examinationPass` decides from. */
+export type PassRecord =
+  | { state: 'none' }
+  | { state: 'unreadable' }
+  | { state: 'open'; lap: number; startedAt: number }
+  | { state: 'closed'; lap: number; startedAt: number };
 
 interface UserPushRow {
   wallet: string;
@@ -256,11 +287,14 @@ interface TickBudget {
  * What one chain still needs AFTER its identity is settled.
  *
  * FIVE CHAIN READS — the head, the pause, the pause log (#2808), the config
- * (lead time + periodic switch), and one batched status read — AND FOUR D1
- * CALLS: the indexer cursor,
- * this lane's stored scan position, the candidate query, and the write that
- * saves the position again (#2213 r27 `4016129218`). The D1 half was missing
- * from this number for as long as the budget believed D1 was free.
+ * (lead time + periodic switch), and one batched status read — AND THREE D1
+ * CALLS: the indexer cursor, the candidate query, and the write that marks
+ * what the first batch examined (#2213 r27 `4016129218`; #2230). The D1 half
+ * was missing from this number for as long as the budget believed D1 was free.
+ *
+ * Which loans this pass has already examined costs nothing here: the marks
+ * live on the loan rows and arrive with the candidate query (#2230), where the
+ * position they replace was a read and a write of its own.
  *
  * A chain does not go further unless this plus a loan's worth is available, so
  * a pass never spends its opening reads and then finds it cannot afford to
@@ -274,7 +308,7 @@ interface TickBudget {
  * this test runs after the verdict, where the probe has already charged
  * itself or not.
  */
-export const CHAIN_OPENING_REQUESTS_AFTER_IDENTITY = 9;
+export const CHAIN_OPENING_REQUESTS_AFTER_IDENTITY = 8;
 
 export async function runPeriodicPreNotify(env: Env): Promise<void> {
   const chains = getChainConfigs(env).filter(
@@ -665,25 +699,36 @@ async function preNotifyChain(
   // instead. A `LIMIT` here would cap the wrong thing: rows, before the
   // window filter and before the deadline ordering, so the cap would fall on
   // whatever the database returned first rather than on what this tick can
-  // afford to send. D1 reads are not outbound subrequests — the allowance
-  // this lane has to respect is spent on chain reads and pushes, and both are
-  // bounded explicitly.
-  budget.remaining -= 1; // the candidate query — D1 is a subrequest
-  const rows = await env.DB.prepare(
-    `SELECT loan_id, chain_id, lender, borrower, start_time,
-            periodic_interest_cadence, last_period_settled_at,
-            period_pre_notified_at
-     FROM loans
-     WHERE chain_id = ?
-       AND status = 'active'
-       AND periodic_interest_cadence > 0
-       AND last_period_settled_at > 0`,
-  )
-    .bind(chain.id)
-    .all<LoanRow>();
+  // afford to send. The query itself is ONE call however many rows it
+  // returns, and it is charged as one below.
+  //
+  // The examination marks come with the rows, and the chain's pass record
+  // (#2230) is read in the same batch, so knowing what this pass has already
+  // looked at, and when it began, costs no request of its own.
+  budget.remaining -= 1; // the candidates and the pass record, one batch — D1 is a subrequest
+  const [rows, passRows] = (await env.DB.batch([
+    env.DB.prepare(PRENOTIFY_CANDIDATES_SQL).bind(chain.id),
+    env.DB.prepare(PRENOTIFY_PASS_SQL).bind(chain.id),
+  ])) as [D1Result<LoanRow>, D1Result<PassRow>];
+  const record = readPassRecord(passRows.results?.[0]);
 
   const due = candidatesInWindow(rows.results ?? [], now, windowSec, pauseLog);
-  if (due.length === 0) return;
+  if (due.length === 0) {
+    // AN EMPTY WINDOW ENDS THE PASS IN PROGRESS (Codex #2845 r2). Nothing in
+    // the window is left unexamined in it, which is what finishing a pass
+    // means. Left open, a loan arriving days later would join a pass that
+    // ended long before, and the pass's age would report a backlog that never
+    // existed. Written once: a closed pass is not closed again.
+    if (record.state === 'open') {
+      reportPassLength(chain, record, now, windowSec);
+      await closePassRecord(env, chain, record.lap, now, budget);
+    } else if (record.state === 'unreadable') {
+      // Reported, then removed, so it is not reported on every idle tick: a
+      // record that cannot be read counts as none either way.
+      await dropPassRecord(env, chain, budget);
+    }
+    return;
+  }
 
   // TWO LIMITS, NOT ONE (#2213 r6 `4012464544`). Round 5 took a single slice
   // of `budget.remaining` candidates and both read and messaged within it,
@@ -696,46 +741,28 @@ async function preNotifyChain(
   // at. The cap was supposed to defer a loan by a tick; for those it deferred
   // it indefinitely, which is the opposite of what this file claims.
   //
-  // So the read pass now SCANS PAST rejected candidates, in batches, and only
-  // the sends draw on the allowance.
-  // AND THE SCAN RESUMES WHERE IT STOPPED — from STORED state, not from the
-  // clock (#2213 r12 `4013387382`).
+  // So the read pass SCANS PAST rejected candidates, in batches, and only the
+  // sends draw on the allowance.
   //
-  // Round 8 started successive ticks at successive spans, keyed on the minute.
-  // That was a clock-derived index, and a clock-derived index aliases with any
-  // periodic opportunity: first with the cron period (r8 follow-up pinned the
-  // schedule to keep the step coprime), and then — the finding that retired the
-  // approach — with the CHAIN rotation. A chain that only gets a turn every
-  // `chains.length` ticks sees the minute advance in steps of that size, so
-  // with three chains and three spans `minute % spans` is CONSTANT on every
-  // opportunity it ever gets, and two thirds of its window is never examined.
-  // Patching the arithmetic again would only move the collision, because the
-  // defect is the input: a clock cannot know which ticks this chain was
-  // actually scanned on.
-  //
-  // So the position advances on its own PROGRESS. Nothing can alias with it,
-  // there is no coprimality to preserve, and the cron schedule becomes
-  // irrelevant to coverage — which is why this change also deletes the test
-  // that pinned that schedule.
-  //
-  // AND IT RESUMES EXACTLY, because the stored value is a DEADLINE (#2219).
-  //
-  // This note used to say the resumption was approximate and that an exact one
-  // "would need a key that survives reordering, which a deadline-ordered list
-  // does not have". The second half was wrong: the list is sorted by
-  // `(nextCheckpoint, loanId)`, and that pair IS such a key — it does not move
-  // when other loans enter or leave. What the list does not have is a stable
-  // POSITION, which is what was being stored.
-  //
-  // The cost of getting that wrong was not an approximation. Stamping the
-  // nearest five and persisting 5 meant the next tick started at what was now
-  // the eleventh loan, stepping over the sixth through tenth — the nearest
-  // remaining deadlines. Under sustained load the lane's own
-  // nearest-deadline-first guarantee ran backwards.
-  const resumeKey = await scanResumeKey(env, chain.id, budget);
-  const start = resumeIndex(due, resumeKey);
+  // AND WHAT A PASS HAS EXAMINED IS REMEMBERED PER LOAN, not as a place in the
+  // list (#2230). Each examined loan carries the pass that examined it, and a
+  // tick works through the loans this pass has NOT examined yet, nearest
+  // deadline first. So a tick never re-reads what this pass already looked at
+  // (the starvation #2213 r6/r8 removed), and a loan that turns up mid-pass —
+  // newly indexed, or a period that just came into the window — is taken in
+  // deadline order among the rest of the pass rather than waiting for the
+  // pass to wrap. The stored positions this replaces (a list index, then a
+  // deadline, #2219) could give only one of those two: a place in the order
+  // has nothing in front of it to come back to.
+  const pass = examinationPass(due, now, record);
+  const toExamine = pass.pending;
+  // A PASS THIS TICK BEGINS IS RECORDED WITH ITS FIRST MARKS, in the same
+  // write, so no mark can name a pass the record does not and the record costs
+  // no request of its own. Until a batch's marks land, the pass has not begun:
+  // a tick that examines nothing in it leaves the record as it was.
+  let passRecorded = !pass.begins;
 
-  let cursor = start;
+  let cursor = 0;
   let reminded = 0;
   let unreached = 0;
   let noRoute = 0;
@@ -746,18 +773,20 @@ async function preNotifyChain(
   let checkpointLag = 0;
   let staleCheckpoint = 0;
   let unreadable = 0;
+  let unmarkedBatches = 0;
   const pushUnconfigured = new Set<string>();
   const tgUnconfigured = new Set<string>();
   let batches = 0;
   let batchFailed = false;
   while (
-    cursor < due.length &&
-    // Room for this batch's read AND a loan's worth of sends: reading a batch
-    // this tick cannot afford to act on spends a request for nothing.
-    budget.remaining >= 1 + MAX_SUBREQUESTS_PER_LOAN + CURSOR_WRITE_RESERVE &&
+    cursor < toExamine.length &&
+    // Room for this batch's read, a loan's worth of sends AND the write that
+    // marks what the batch examined: reading a batch this tick cannot afford
+    // to act on spends a request for nothing.
+    budget.remaining >= 1 + MAX_SUBREQUESTS_PER_LOAN + EXAMINED_MARK_RESERVE &&
     batches < MAX_EXAMINE_BATCHES
   ) {
-    const batch = due.slice(cursor, cursor + EXAMINE_BATCH);
+    const batch = toExamine.slice(cursor, cursor + EXAMINE_BATCH);
     batches += 1;
 
     // ONE CHAIN READ FOR THE WHOLE BATCH (#2213 r5 `4012300071`). An earlier
@@ -776,7 +805,8 @@ async function preNotifyChain(
       // the only thing an operator saw during an RPC incident was "not
       // pre-notifying this tick" — while deliveries and failed rails from the
       // completed batches went unreported. Breaking keeps them, and the
-      // summary below describes only THIS batch as unreadable.
+      // summary below describes only THIS batch as unreadable. Nothing in it
+      // is marked, so the next tick examines it again.
       batchFailed = true;
       break;
     }
@@ -797,38 +827,59 @@ async function preNotifyChain(
     unreadable += outcome.unreadable;
     for (const w of outcome.pushUnconfigured) pushUnconfigured.add(w);
     for (const w of outcome.tgUnconfigured) tgUnconfigured.add(w);
+    // WHAT THIS BATCH EXAMINED, marked as this pass's before the next batch
+    // starts. Every loan the batch LOOKED AT is marked, whatever came of it;
+    // the ones it left unexamined when the allowance ran out mid-batch are
+    // not, so they stay at the front of the next tick.
+    if (outcome.consumed > 0) {
+      // THE BATCH THAT EXAMINES THE LAST OF THE PASS CLOSES IT, in the same
+      // write (Codex #2845 r2), so a loan arriving later begins the next pass
+      // rather than joining this one. Only when every earlier batch's marks
+      // landed: a loan whose mark failed is still unexamined in this pass.
+      const completes =
+        cursor + outcome.consumed >= toExamine.length && unmarkedBatches === 0;
+      const marked = await markExamined(
+        env, chain, batch.slice(0, outcome.consumed), pass.lap,
+        { beginsAt: passRecorded ? null : now, completesAt: completes ? now : null },
+        budget,
+      );
+      if (marked) passRecorded = true;
+      else unmarkedBatches += 1;
+    }
     cursor += outcome.consumed;
   }
 
-  // WHERE THE NEXT TICK PICKS UP. Written even when nothing was examined, so
-  // a pass that stopped for want of allowance does not re-read the same
-  // prefix next time.
-  //
-  // The DEADLINE of the next unexamined candidate, not its position — so a
-  // loan stamped by this tick leaving the list cannot shift what the next tick
-  // resumes at. A finished window stores the bottom of the order, which is how
-  // the scan wraps.
-  const resumeAtEnd = cursor >= due.length;
-  const resumeKeyNext: ScanResume = resumeAtEnd
-    ? SCAN_FROM_TOP
-    : { checkpoint: due[cursor].nextCheckpoint, loanId: due[cursor].row.loan_id };
-  const resumeRecorded = await saveScanResumeKey(env, chain.id, resumeKeyNext, budget);
-
   // WHAT THIS TICK LEFT UNDONE, and which of the two limits left it.
-  const examined = cursor - start;
-  // TESTS THE CURSOR, not how many rows this tick looked at (#2213 r13
-  // `4013571024`). A pass that RESUMED at 300 in a 350-row window and finished
-  // it examined 50 — so the old `examined < due.length` was true and the tick
-  // announced a remainder it had just consumed, telling an operator the run
-  // was partial when it had completed the window.
-  if (!resumeAtEnd) {
+  const examined = cursor;
+  const passDone = cursor >= toExamine.length;
+  // How this tick's examinations relate to the pass, for both summaries. A
+  // mark that failed to land is a loan the next tick examines again, and the
+  // summary says so rather than claiming progress the database refused.
+  const passText =
+    `pass ${pass.lap}: ${pass.alreadyExamined} of ${due.length} in the ` +
+    `window already examined in it before this tick` +
+    (pass.malformedMarks > 0
+      ? `, ${pass.malformedMarks} with an unreadable examination mark (treated ` +
+        `as not examined, so they are looked at again rather than skipped)`
+      : '') +
+    (pass.unreadableRecord
+      ? `; the chain's pass record could not be read, so it counts as none and ` +
+        `this pass begins above every mark in the window, looking at every loan ` +
+        `again rather than skipping one`
+      : '');
+  const unmarkedText =
+    unmarkedBatches > 0
+      ? ` What ${unmarkedBatches} batch(es) examined could not be marked (see ` +
+        `the warning above), so the next tick examines those loans again.`
+      : '';
+  if (!passDone) {
     // THE SAME THRESHOLD THE LOOP TESTS (#2213 r14 `4013761165`). The loop
     // needs a batch read AND a loan's sends to continue, so a tick stopping
     // with exactly four left was halted by the allowance and reported only
     // "stopping". And it is the OUTBOUND-REQUEST allowance now, not a send
     // allowance — reads come out of the same counter since r13.
     const capped =
-      budget.remaining < 1 + MAX_SUBREQUESTS_PER_LOAN + CURSOR_WRITE_RESERVE
+      budget.remaining < 1 + MAX_SUBREQUESTS_PER_LOAN + EXAMINED_MARK_RESERVE
         ? `the invocation's outbound-request allowance is down to ${budget.remaining}`
         : null;
     const scanned = batches >= MAX_EXAMINE_BATCHES ? 'the scan reached its read cap' : null;
@@ -837,10 +888,9 @@ async function preNotifyChain(
     // bare "stopping" — on the very summary that exists to report what the
     // completed batches did, during the incident that makes it matter.
     const failed = batchFailed ? 'a status read failed for the batch after these' : null;
-    const span = start > 0 ? ` (resumed at ${start})` : '';
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: ${due.length} loan(s) in the ` +
-        `notification window${span}, ${examined} examined, ${reminded} reminded, ` +
+        `notification window (${passText}), ${examined} examined, ${reminded} reminded, ` +
         `${unreached} reached nobody, ${noRoute} with nobody to tell, ` +
         `${failedRails} rail(s) unconfirmed, ${refusedRails} refused by the ` +
         `service, ${transientRails} deferred by the service, ` +
@@ -849,14 +899,10 @@ async function preNotifyChain(
         `${unreadable} unreadable — ` +
         `${failed ?? capped ?? scanned ?? 'stopping'}. ` +
         `The remainder is not dropped: nothing is stamped for it, and the ` +
-        `next tick ${
-          resumeRecorded
-            ? `RESUMES at the loan due ${resumeKeyNext.checkpoint} (loan ` +
-              `${resumeKeyNext.loanId}) rather than re-reading this prefix`
-            : `starts from where THIS one did, because the position could ` +
-              `not be recorded (see the warning above) — so this prefix is ` +
-              `re-read and the tail stays unreached until a write lands`
-        }. A tick that reports the read cap with ` +
+        `next tick continues this pass with the loans it has not examined, ` +
+        `nearest deadline first — including any that enter the window ` +
+        `meanwhile — rather than re-reading what it already looked at.` +
+        `${unmarkedText} A tick that reports the read cap with ` +
         `hundreds rejected is reporting orphaned rows, not load — whereas ` +
         `hundreds awaiting the indexer is the indexer being behind, which ` +
         `needs nothing done to the rows themselves — and anything at all ` +
@@ -865,8 +911,9 @@ async function preNotifyChain(
     );
   } else if (
     noRoute + unreached + failedRails + refusedRails + transientRails + rejected +
-      checkpointLag + staleCheckpoint + unreadable >
-    0
+      checkpointLag + staleCheckpoint + unreadable + unmarkedBatches + pass.malformedMarks >
+      0 ||
+    pass.unreadableRecord
   ) {
     // A COMPLETED SCAN REPORTS TOO, when it has something to report (#2213
     // r19 `4014677438`). The summary above only fires on an early stop, on the
@@ -880,16 +927,18 @@ async function preNotifyChain(
     // Still silent on a clean tick. The condition is "did anything happen that
     // someone would want to know about", not "did the scan end early".
     console.warn(
-      `[periodicPreNotify] chain=${chain.name}: scan complete — ` +
+      `[periodicPreNotify] chain=${chain.name}: pass complete (${passText}) — ` +
         `${examined} examined, ${reminded} reminded, ${unreached} reached ` +
         `nobody, ${noRoute} with nobody to tell, ${failedRails} rail(s) ` +
         `unconfirmed, ${refusedRails} refused by the service, ` +
         `${transientRails} deferred by the service, ` +
         `${rejected} rejected by the chain, ${checkpointLag} ` +
         `awaiting the indexer, ${staleCheckpoint} with a checkpoint ahead of ` +
-        `the chain, ${unreadable} unreadable.`,
+        `the chain, ${unreadable} unreadable.${unmarkedText}`,
     );
   }
+
+  reportPassLength(chain, pass.timed, now, windowSec);
 
   // THE DEPLOYMENT'S OWN CONFIGURATION, SAID OUT LOUD (#2213 r19
   // `4014677438`). Once per chain per tick with a count, never per loan: this
@@ -1017,9 +1066,9 @@ async function messageBatch(
   for (let i = 0; i < batch.length; i++) {
     // RESERVED, not spent. A loan may need up to four sends and must not be
     // started unless all four are available — see `MAX_SENDS_PER_LOAN` — AND
-    // the scan position must still be writable afterwards, which is what
-    // `CURSOR_WRITE_RESERVE` holds back (#2213 r32 `4017648029`).
-    if (budget.remaining < MAX_SUBREQUESTS_PER_LOAN + CURSOR_WRITE_RESERVE) {
+    // the batch's examination mark must still be writable afterwards, which
+    // is what `EXAMINED_MARK_RESERVE` holds back (#2213 r32 `4017648029`).
+    if (budget.remaining < MAX_SUBREQUESTS_PER_LOAN + EXAMINED_MARK_RESERVE) {
       return {
         consumed: i, reminded, unreached, noRoute, failedRails,
         rejected, checkpointLag, staleCheckpoint, unreadable,
@@ -1270,13 +1319,16 @@ async function messageBatch(
 /** The `indexer_cursor` row the indexer advances for its own chain scan. */
 const INDEXER_SCAN_KIND = 'diamond';
 
-// The scan position USED to live in `indexer_cursor` under the kind
-// 'prenotify_scan', as an index into the candidate list — chosen so it needed
-// no migration and so it could not walk into the deploy-window hazard #2214
-// describes. That reasoning was sound about the cost and wrong about the
-// value: an index into a list rebuilt every tick does not point where it did
-// (#2219). It now lives in `prenotify_scan_cursor` as the deadline to resume
-// at, which migration 0050 creates and whose old row that migration deletes.
+// WHAT A PASS HAS EXAMINED lives on the loan rows (#2230), in the three
+// `prenotify_examined_*` columns migration 0073 adds. Before that it was a
+// single stored place in the deadline order — first a list index in
+// `indexer_cursor` (retired by #2219, because a list rebuilt every tick does
+// not keep its positions), then the deadline to resume at in
+// `prenotify_scan_cursor`. A place in the order cannot take a loan that
+// arrives in front of it, which is the whole of #2230. Nothing reads or writes
+// that table any more; dropping it is a separate, later migration, because
+// the agent build that still reads it keeps serving until this one deploys.
+//
 // The rotation position below is genuinely a small integer and stays where it
 // is.
 
@@ -1303,7 +1355,7 @@ async function rotationStart(env: Env, chainCount: number, budget: TickBudget): 
     const at = row ? Number(row.last_block) : 0;
     return Number.isFinite(at) && at >= 0 ? at % chainCount : 0;
   } catch (err) {
-    // SAID, for the same reason the scan position is (#2213 r14
+    // SAID, for the same reason the examination marks are (#2213 r14
     // `4013761131`). Silently leading with the first chain every tick lets a
     // busy one hold the shared allowance and starve the rest — the failure
     // the rotation exists to prevent, reinstated by a failure nobody sees.
@@ -1316,107 +1368,26 @@ async function rotationStart(env: Env, chainCount: number, budget: TickBudget): 
   }
 }
 
-/** Remember which chain leads next. Reported when it fails — see `saveScanOffset`. */
-async function saveRotationStart(env: Env, next: number, budget: TickBudget): Promise<void> {
-  await persistRotationCursor(env, ROTATION_ROW_CHAIN_ID, next, budget);
-}
-
 /**
- * Remember where to resume — and SAY SO when that cannot be done (#2213 r13
- * `4013571011`).
+ * Remember which chain leads next — and SAY SO when that cannot be done
+ * (#2213 r13 `4013571011`).
  *
- * A write that never lands, or a read that keeps failing, returns the scan to
- * the front on every tick. That is not merely "one wasteful repeat": with a
- * few hundred unreachable or rejected loans at the head of the window — the
- * exact case persistence was added for — it restores the starvation the
- * persistence removed. So the failure is reported rather than swallowed.
+ * A write that never lands returns the rotation to the same chain on every
+ * tick, so one busy chain holds the shared allowance and the chains behind it
+ * may not be reached at all. The failure is reported rather than swallowed.
  *
  * **There was an in-isolate fallback here, and r14 deleted it** (`4013761116`,
- * `4013761131`). The idea was that a database refusing writes should still
- * make progress for as long as the isolate lives, and it produced two findings
- * in one round: a later successful READ overwrote the remembered value with
- * the stale stored one, and the rotation never consulted the memory at all.
- * Both were real, and fixing each would have left a third — dirty-vs-clean
- * tracking, per-kind, across two readers — for a case nothing has observed.
+ * `4013761131`). A later successful READ overwrote the remembered value with
+ * the stale stored one, and fixing that would have needed dirty-vs-clean
+ * tracking across readers for a case nothing has observed. So there is ONE
+ * source of truth, D1, and a failure to use it degrades fairness LOUDLY
+ * instead of quietly.
  *
- * So there is ONE source of truth, D1, and a failure to use it degrades
- * fairness LOUDLY instead of quietly. That is what the finding which asked for
- * this behaviour actually required ("preserve an in-isolate fallback or at
- * minimum report the unavailable cursor"); the fallback was the more elaborate
- * half of an either/or, and it earned its complexity in findings rather than
- * in behaviour.
+ * It names no chain: the row's id is `ROTATION_ROW_CHAIN_ID`, a sentinel
+ * chosen precisely because it is not a chain, so a line naming "chain 0" would
+ * send an operator to one that does not exist (#2213, self-review after r20).
  */
-/**
- * The two positions this lane keeps — named by what they MEAN, not by where
- * they are stored (#2219). They now live in different tables, and a union over
- * storage keys would have stopped describing them the moment one moved.
- */
-type PrenotifyCursorKind = 'scan' | 'rotation';
-
-/**
- * What a failed write of THIS cursor costs, in the terms its own reader uses.
- *
- * Found by auditing this file's operator-facing lines against the evidence
- * each one actually has (#2213, self-review after r20). One shared message
- * served both callers and was wrong for the rotation one twice over.
- *
- * It named `chain ${chainId}`, and the rotation row's id is
- * `ROTATION_ROW_CHAIN_ID` — a SENTINEL, chosen a few lines above precisely
- * because it "cannot collide with a real one". So the line told an operator
- * to go and look at chain 0, which does not exist.
- *
- * And it asserted the SCAN's consequence — loans behind a run of unreachable
- * ones stop being reached — for a failure whose actual fallout is the one
- * `rotationStart`'s own catch describes: the same chain leads every tick and
- * the later ones can be starved of the shared allowance. Different failure,
- * different remedy, one sentence claiming the first for both.
- *
- * A union rather than a `string`, so the switch is exhaustive and a third
- * cursor kind cannot inherit either description by default — the same reason
- * `explainVerdict` returns its bucket alongside its wording.
- */
-function describeCursorLoss(kind: PrenotifyCursorKind, chainId: number): {
-  subject: string;
-  consequence: string;
-} {
-  switch (kind) {
-    case 'rotation':
-      return {
-        subject: 'the chain rotation position',
-        consequence:
-          'The next tick therefore leads with the same chain this one did ' +
-          'rather than the next — so if this keeps appearing, one busy chain ' +
-          'holds the shared allowance and the chains behind it may not be ' +
-          'reached at all.',
-      };
-    case 'scan':
-      return {
-        subject: `the scan position for chain ${chainId}`,
-        consequence:
-          'The next tick therefore starts from where this one did rather ' +
-          'than from where it stopped — so if this keeps appearing, loans ' +
-          'behind a run of unreachable ones stop being reached, and that is ' +
-          'the fairness guarantee degrading, not a wasted read.',
-      };
-  }
-}
-
-/**
- * Writes the ROTATION row — the only position still kept in `indexer_cursor`,
- * since the scan's moved to its own table in #2219.
- *
- * It takes no `kind` any more. It briefly did, typed by the LOGICAL kind that
- * `describeCursorLoss` switches on, and bound that value straight into the
- * storage column — writing `rotation` where the reader a few lines above looks
- * for `prenotify_rotation`, which would have left the rotation permanently at
- * its default while reporting success. One caller, one row, one literal.
- */
-async function persistRotationCursor(
-  env: Env,
-  chainId: number,
-  at: number,
-  budget: TickBudget,
-): Promise<boolean> {
+async function saveRotationStart(env: Env, next: number, budget: TickBudget): Promise<void> {
   budget.remaining -= 1; // D1 is a subrequest (#2213 r27 `4016129218`)
   try {
     await env.DB.prepare(
@@ -1426,223 +1397,351 @@ async function persistRotationCursor(
          last_block = excluded.last_block,
          updated_at = excluded.updated_at`,
     )
-      .bind(chainId, PRENOTIFY_ROTATION_KIND, at, Math.floor(Date.now() / 1000))
+      .bind(ROTATION_ROW_CHAIN_ID, PRENOTIFY_ROTATION_KIND, next, Math.floor(Date.now() / 1000))
       .run();
-    return true;
   } catch (err) {
-    const { subject, consequence } = describeCursorLoss('rotation', chainId);
     console.warn(
-      `[periodicPreNotify] could not persist ${subject} at ${at}: ` +
-        `${describeFailure(err)}. ${consequence}`,
+      `[periodicPreNotify] could not persist the chain rotation position at ` +
+        `${next}: ${describeFailure(err)}. The next tick therefore leads with ` +
+        `the same chain this one did rather than the next — so if this keeps ` +
+        `appearing, one busy chain holds the shared allowance and the chains ` +
+        `behind it may not be reached at all.`,
     );
-    // REPORTED, not swallowed (#2213 r25 `4015755019`). The caller's summary
-    // tells an operator where the next tick resumes, and that sentence is only
-    // true if this landed. Returning void let the summary promise a resume the
-    // database had just refused — contradicting the warning printed one line
-    // above it.
-    return false;
   }
 }
 
 /**
- * Record the DEADLINE to resume at (#2219).
+ * Which candidates this tick examines: the ones the CURRENT PASS has not
+ * examined yet, in the order `candidatesInWindow` gives (#2230).
  *
- * Its own table rather than the shared cursor row, because the value is a pair
- * and a pair does not fit an integer column honestly. Packing both into one
- * number would have avoided a migration and left a figure nobody can read; an
- * operator looking at this table sees a deadline and a loan.
+ * A pass is one trip through every loan in the notification window. The
+ * chain's pass record (`prenotify_pass`) names the pass in progress and when
+ * it began. Each loan carries the number of the last pass that examined it,
+ * for the period it was examined for; a mark for a different period than the
+ * one now due counts as no mark, because that is a different reminder.
  *
- * ONE ROW, ONE WRITE. The pair has to move together — a checkpoint stored
- * without its tiebreak, or the two written separately and one failing, is a
- * cursor that points between two loans.
+ *  - a candidate not marked with the current pass has not been examined in
+ *    it, and is examined this tick or a later one, nearest deadline first,
+ *    whether it has been waiting since the pass began or arrived a minute ago;
+ *  - a candidate marked with the current pass is skipped, so a run of loans
+ *    that are examined but never stamped (nobody to tell, opted out, rejected
+ *    by the chain) is looked at once per pass, not once per tick;
+ *  - when no candidate is left unexamined, when the last pass was seen to
+ *    finish, or when the chain has no pass yet, the next pass begins: every
+ *    candidate is pending again, under a number above the record's and every
+ *    mark the candidates carry, so no old mark can count in it.
  *
- * @returns whether the position actually landed — the summary depends on it.
+ * THE RECORD IS WHAT DATES A PASS, not the marks (Codex #2845 r1). A marked
+ * loan leaves the window once its deadline passes, so the earliest mark still
+ * in the window kept moving forward and a pass that had run longer than the
+ * window could never be seen to; and a pass whose marks had all left fell back
+ * to the number before it. The record has neither failure: it changes only
+ * when a pass begins and when it is seen to finish.
+ *
+ * AND THE RECORD SAYS WHEN A PASS FINISHED (Codex #2845 r2): the batch that
+ * examines the last of a pass closes it, and so does a tick that finds the
+ * window empty. A loan arriving later begins the next pass instead of joining
+ * one that ended days before and reporting its age as a backlog.
+ *
+ * A MARK OR A RECORD THAT CANNOT BE READ counts as none. That fails toward
+ * examining a loan again rather than skipping it, and the summary says so,
+ * counting unreadable marks and naming an unreadable record, so the repeat
+ * is visible.
  */
-async function saveScanResumeKey(
+export function examinationPass(
+  due: readonly DueLoan[],
+  now: number,
+  record: PassRecord,
+): {
+  /** The pass these examinations belong to — what `markExamined` writes. */
+  lap: number;
+  /** Whether this tick begins that pass, so its first marks carry its record. */
+  begins: boolean;
+  /** The candidates still to examine in it, in examination order. */
+  pending: DueLoan[];
+  /** How many candidates this pass had already examined before this tick. */
+  alreadyExamined: number;
+  /**
+   * The pass whose length this tick judges, from the chain's record: the one
+   * in progress, which this tick continues or finishes. A pass this tick
+   * begins after a closed one, or with no readable record, is dated `now`.
+   */
+  timed: { lap: number; startedAt: number };
+  /** Candidates whose stored mark is not a whole, non-negative number. */
+  malformedMarks: number;
+  /** Whether the chain's pass record exists but could not be read. */
+  unreadableRecord: boolean;
+} {
+  let malformedMarks = 0;
+  const lapOf = (d: DueLoan): number => {
+    const lap = Number(d.row.prenotify_examined_lap);
+    const checkpoint = Number(d.row.prenotify_examined_checkpoint);
+    if (!isMarkNumber(lap) || !isMarkNumber(checkpoint)) {
+      malformedMarks += 1;
+      return 0;
+    }
+    return checkpoint === d.nextCheckpoint ? lap : 0;
+  };
+  const laps = due.map(lapOf);
+  const unreadableRecord = record.state === 'unreadable';
+  const open = record.state === 'open' ? record : null;
+  const pending = open ? due.filter((_, i) => laps[i] !== open.lap) : [];
+  if (open === null || pending.length === 0) {
+    const recordLap = record.state === 'open' || record.state === 'closed' ? record.lap : 0;
+    const lap = laps.reduce((m, l) => (l > m ? l : m), recordLap) + 1;
+    return {
+      lap,
+      begins: true,
+      pending: [...due],
+      alreadyExamined: 0,
+      timed: open ?? { lap, startedAt: now },
+      malformedMarks,
+      unreadableRecord,
+    };
+  }
+  return {
+    lap: open.lap,
+    begins: false,
+    pending,
+    alreadyExamined: due.length - pending.length,
+    timed: open,
+    malformedMarks,
+    unreadableRecord,
+  };
+}
+
+/**
+ * The chain's pass record, read (#2230). No row is no pass yet; a row with a
+ * completion time is a pass seen to finish, so the next candidate begins a
+ * new one; a row without is the pass in progress.
+ *
+ * A row whose figures are not whole, non-negative numbers (or a pass number
+ * of 0) is UNREADABLE, and is reported as such rather than mistaken for no
+ * pass at all: the table is STRICT, so this takes a hand-run statement or a
+ * bad restore, and the repeat it causes should be visible.
+ */
+export function readPassRecord(row: PassRow | undefined): PassRecord {
+  if (row === undefined) return { state: 'none' };
+  const lap = Number(row.lap);
+  const startedAt = Number(row.started_at);
+  const completedAt = row.completed_at === null ? null : Number(row.completed_at);
+  if (
+    row.lap === null || row.started_at === null ||
+    !isMarkNumber(lap) || lap === 0 || !isMarkNumber(startedAt) ||
+    (completedAt !== null && !isMarkNumber(completedAt))
+  ) {
+    return { state: 'unreadable' };
+  }
+  return completedAt === null
+    ? { state: 'open', lap, startedAt }
+    : { state: 'closed', lap, startedAt };
+}
+
+/**
+ * WHEN A PASS STOPS FITTING INSIDE THE WINDOW, SAY SO (#2230). A loan a pass
+ * examined without stamping — nobody reached, a deferred rail, an unreadable
+ * slot, the indexer behind — is looked at again only in the next pass. While
+ * a pass takes less than the window that is a later chance before the
+ * deadline; once a pass takes longer, it may not be. That is a provisioning
+ * fact about this lane (its allowance and its cadence), not something any
+ * order fixes, so it is stated rather than absorbed. Judged on the pass in
+ * progress, including on the tick that finishes it.
+ */
+function reportPassLength(
+  chain: { name: string },
+  timed: { lap: number; startedAt: number },
+  now: number,
+  windowSec: number,
+): void {
+  if (now - timed.startedAt <= windowSec) return;
+  const hours = Math.floor((now - timed.startedAt) / 3600);
+  console.warn(
+    `[periodicPreNotify] chain=${chain.name}: pass ${timed.lap} over the ` +
+      `notification window began ${hours}h ago, longer than the ` +
+      `${windowSec / SECONDS_PER_DAY}-day window itself. A loan this pass ` +
+      `examined without stamping is not reconsidered until the next pass, ` +
+      `so it can now reach its deadline first. This lane needs a larger ` +
+      `allowance or a shorter cadence on this chain.`,
+  );
+}
+
+/**
+ * Record that pass `lap` finished at `now`, for a tick whose window is empty
+ * (#2230). A failure is reported and costs nothing else: the next idle tick
+ * closes it, and a candidate arriving first joins the open pass, as it would
+ * have before the pass was closed.
+ */
+async function closePassRecord(
   env: Env,
-  chainId: number,
-  key: ScanResume,
+  chain: { id: number; name: string },
+  lap: number,
+  now: number,
   budget: TickBudget,
-): Promise<boolean> {
-  budget.remaining -= 1; // D1 is a subrequest (#2213 r27 `4016129218`)
+): Promise<void> {
+  if (budget.remaining < 1) return;
+  budget.remaining -= 1; // D1 is a subrequest
   try {
-    await env.DB.prepare(
-      `INSERT INTO prenotify_scan_cursor (chain_id, next_checkpoint, loan_id, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(chain_id) DO UPDATE SET
-         next_checkpoint = excluded.next_checkpoint,
-         loan_id = excluded.loan_id,
-         updated_at = excluded.updated_at`,
-    )
-      .bind(chainId, key.checkpoint, key.loanId, Math.floor(Date.now() / 1000))
-      .run();
-    return true;
+    await env.DB.prepare(COMPLETE_PASS_SQL).bind(chain.id, lap, now).run();
   } catch (err) {
-    const { subject, consequence } = describeCursorLoss('scan', chainId);
     console.warn(
-      `[periodicPreNotify] could not persist ${subject} at deadline ` +
-        `${key.checkpoint} (loan ${key.loanId}): ${describeFailure(err)}. ` +
-        `${consequence}`,
+      `[periodicPreNotify] chain=${chain.name}: could not record that pass ` +
+        `${lap} finished with the window empty (${describeFailure(err)}). A ` +
+        `later tick records it; until then a loan entering the window joins ` +
+        `that pass.`,
     );
-    // REPORTED, not swallowed (#2213 r25 `4015755019`). The caller's summary
-    // tells an operator where the next tick resumes, and that sentence is only
-    // true if this landed. Returning void let the summary promise a resume the
-    // database had just refused — contradicting the warning printed one line
-    // above it.
-    return false;
   }
 }
 
-
-/**
- * WHERE THIS CHAIN'S SCAN RESUMES — a DEADLINE, not a list position (#2219).
- *
- * The position used to be an index into the candidate list. That list is
- * rebuilt every tick and a loan stamped last tick is no longer in it, so the
- * index did not point where it did: stamp the nearest five, persist 5, and
- * next tick position 5 is the ELEVENTH original loan — the sixth through
- * tenth, the NEAREST remaining deadlines, stepped over. Under sustained load
- * that inverts the nearest-deadline-first guarantee this lane states, which is
- * the whole of #2219.
- *
- * A deadline survives insertion and removal; a position does not. So the
- * cursor is the ordering key itself — the same `(nextCheckpoint, loanId)` pair
- * `candidatesInWindow` sorts by — and resuming means "the first candidate at
- * or after this", which is well defined however the list has changed.
- *
- * ABSENT OR UNREADABLE RESUMES AT THE TOP, and the direction of that failure
- * is the point: starting at the nearest deadline re-reads a prefix, it never
- * steps over one.
- *
- * THAT IS A PROPERTY OF ONE TICK, never an absolute. A read that fails on
- * EVERY tick is a different thing entirely: each tick reprocesses the same
- * allowance-filling prefix, the scan never advances, and loans in the tail can
- * pass their deadline. Duplicated work is the cost of one failed read; a
- * persistent one costs reminders, which is precisely why both non-throwing
- * paths below announce themselves rather than absorbing it.
- *
- * The full statement lives ONCE, in `docs/FunctionalSpecs/
- * Alpha02ConnectedApp.md` under "THE RESTART PROPERTY", and is not restated
- * here or in the migration, the restore runbook or the release note. Four
- * consecutive review rounds each caught this property overstated in a
- * different surface, every one of them written by re-deriving it locally
- * instead of pointing at it (#2229 r1-r4).
- */
-interface ScanResume {
-  checkpoint: number;
-  loanId: number;
+/** Remove a pass record that cannot be read, reporting it (#2230). */
+async function dropPassRecord(
+  env: Env,
+  chain: { id: number; name: string },
+  budget: TickBudget,
+): Promise<void> {
+  console.warn(
+    `[periodicPreNotify] chain=${chain.name}: the chain's pass record could ` +
+      `not be read; it counts as none, so the next pass begins above every ` +
+      `examination mark and looks at every loan again. Removing it.`,
+  );
+  if (budget.remaining < 1) return;
+  budget.remaining -= 1; // D1 is a subrequest
+  try {
+    await env.DB.prepare(DROP_PASS_SQL).bind(chain.id).run();
+  } catch (err) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: could not remove the ` +
+        `unreadable pass record (${describeFailure(err)}).`,
+    );
+  }
 }
 
-/** Before every real deadline, so it resumes at the nearest one. */
-const SCAN_FROM_TOP: ScanResume = { checkpoint: 0, loanId: 0 };
+/**
+ * The pass record's writes. Exported so a test runs them against SQLite.
+ *
+ * BEGIN: `?1` chain, `?2` pass, `?3` when it began. Run only with the first
+ * marks of the pass it names, in the same batch; it replaces the previous
+ * pass, closed or not, and opens this one.
+ */
+export const BEGIN_PASS_SQL = `INSERT INTO prenotify_pass (chain_id, lap, started_at, completed_at)
+VALUES (?1, ?2, ?3, NULL)
+ON CONFLICT (chain_id) DO UPDATE SET lap = excluded.lap, started_at = excluded.started_at,
+  completed_at = NULL`;
 
 /**
- * One rule for both halves of the key, so they cannot drift apart.
- *
- * `Number.isSafeInteger` covers whole, exact and within the range where
- * integer comparison means what it says; the sign check covers the rest,
- * since neither a unix second nor a loan id is negative and a negative key
- * would sort before every candidate and silently disable the resume.
+ * COMPLETE: `?1` chain, `?2` pass, `?3` when it was seen to finish. Run with
+ * the marks of the batch that examines the last of the pass, or alone on a
+ * tick whose window is empty. Names the pass, so it can never close a later
+ * one, and closes it once.
  */
-function isCursorNumber(v: number): boolean {
+export const COMPLETE_PASS_SQL = `UPDATE prenotify_pass SET completed_at = ?3
+ WHERE chain_id = ?1 AND lap = ?2 AND completed_at IS NULL`;
+
+/** DROP: `?1` chain. Only for a record that cannot be read. */
+export const DROP_PASS_SQL = `DELETE FROM prenotify_pass WHERE chain_id = ?1`;
+
+/** The pass record's read: `?1` chain. Batched with the candidate query. */
+export const PRENOTIFY_PASS_SQL = `SELECT lap, started_at, completed_at
+  FROM prenotify_pass WHERE chain_id = ?1`;
+
+/**
+ * One rule for every half of a mark: `Number.isSafeInteger` covers whole,
+ * exact and within the range where integer comparison means what it says; the
+ * sign check covers the rest, since neither a pass number, a unix second nor a
+ * checkpoint is negative.
+ */
+function isMarkNumber(v: number): boolean {
   return Number.isSafeInteger(v) && v >= 0;
 }
 
-async function scanResumeKey(
-  env: Env,
-  chainId: number,
-  budget: TickBudget,
-): Promise<ScanResume> {
-  budget.remaining -= 1; // D1 is a subrequest (#2213 r27 `4016129218`)
-  try {
-    const row = await env.DB.prepare(
-      `SELECT next_checkpoint, loan_id FROM prenotify_scan_cursor WHERE chain_id = ?`,
-    )
-      .bind(chainId)
-      .first<{ next_checkpoint: number; loan_id: number }>();
-    // SAID, BOTH WAYS (#2229 r1 `4034434474`). A cursor that is gone and a
-    // cursor that is unreadable have the same consequence — the lane re-reads
-    // a prefix — and this file's own promise is that an unavailable position
-    // is announced rather than absorbed. Returning quietly on the two
-    // non-throwing paths would have made that promise true only of the
-    // throwing one, and a row being deleted or corrupted repeatedly is
-    // exactly the case an operator would never hear about.
-    //
-    // A chain that has genuinely never been scanned has no position to be
-    // missing, so that first tick is not reported as a loss: it is the same
-    // absent row, and the sentence says which it is.
-    if (!row) {
-      console.warn(
-        `[periodicPreNotify] chain ${chainId}: no stored scan position; ` +
-          `starting from the nearest deadline. Expected once for a chain this ` +
-          `lane has not scanned before, and after a restore clears the row — ` +
-          `repeated appearances otherwise mean the position is not being kept.`,
-      );
-      return SCAN_FROM_TOP;
-    }
-    const checkpoint = Number(row.next_checkpoint);
-    const loanId = Number(row.loan_id);
-    // A WHOLE, NON-NEGATIVE, EXACTLY-REPRESENTABLE pair, or it is not a
-    // position (#2229 r2 `4034537653`). Finiteness alone was not enough: an
-    // ordinary SQLite column accepts a REAL, and `(deadline, 7.5)` is finite
-    // and sorts between loan 7 and loan 8 — so the scan would resume just past
-    // loan 7 and step over it, silently, which is the defect this cursor
-    // exists to remove. The table is STRICT so this should be unreachable
-    // through the migration; a restored or hand-made table is why it is
-    // checked here too.
-    if (!isCursorNumber(checkpoint) || !isCursorNumber(loanId)) {
-      console.warn(
-        `[periodicPreNotify] chain ${chainId}: the stored scan position is ` +
-          `not a pair of whole numbers (${String(row.next_checkpoint)}, ` +
-          `${String(row.loan_id)}); starting from the nearest deadline. THIS ` +
-          `tick re-reads a prefix rather than skipping one, but the position ` +
-          `is not being kept: until it is, the tail is not reached and loans ` +
-          `in it can pass their deadline.`,
-      );
-      return SCAN_FROM_TOP;
-    }
-    return { checkpoint, loanId };
-  } catch (err) {
-    // A failure here is safe to absorb — nothing is decided on this value
-    // except where to start looking, so the worst case is a repeated prefix
-    // rather than a wrong message. It is NOT safe to absorb silently: a
-    // repeated prefix IS the starvation this persistence removed.
-    //
-    // This is also what a deploy landing ahead of its migration looks like
-    // (#2214): the table is absent, every tick says so, and the lane keeps
-    // working from the nearest deadline until the migration lands.
-    console.warn(
-      `[periodicPreNotify] chain ${chainId}: could not read the stored scan ` +
-        `position (${describeFailure(err)}); starting from the nearest ` +
-        `deadline. THIS tick re-reads a prefix rather than skipping one. If ` +
-        `this keeps appearing the position is not being kept at all, and a ` +
-        `prefix that fills a tick then holds the allowance every tick — the ` +
-        `tail is not reached, and loans in it can pass their deadline.`,
-    );
-    return SCAN_FROM_TOP;
-  }
-}
+/**
+ * The statement that marks a batch's examined loans as the given pass's.
+ *
+ * ONE STATEMENT FOR THE WHOLE BATCH, however many loans it covers. The loans
+ * and the period each was examined for travel as one JSON array, because a
+ * hundred loans as separate bound parameters would pass D1's per-query limit,
+ * and as separate statements would cost a query each against the
+ * invocation's allowance. Exported so a test can run it against SQLite itself
+ * rather than against a fake that only matches its text.
+ *
+ * It does not touch `updated_at`: an examination changes nothing about the
+ * loan, and that column means the loan's record changed.
+ */
+export const MARK_EXAMINED_SQL = `UPDATE loans
+   SET prenotify_examined_lap = ?1,
+       prenotify_examined_checkpoint = (
+         SELECT json_extract(e.value, '$[1]') FROM json_each(?3) AS e
+          WHERE json_extract(e.value, '$[0]') = loans.loan_id
+       )
+ WHERE chain_id = ?2
+   AND loan_id IN (SELECT json_extract(value, '$[0]') FROM json_each(?3))`;
 
 /**
- * The index to resume at: the first candidate AT OR AFTER the stored key.
- *
- * "At or after" rather than "after", because the key names the next
- * UNEXAMINED candidate rather than the last examined one. If that exact loan
- * is still in the list it is the one to start with; if it has been stamped,
- * settled or has passed its deadline, the next one along is — which is what
- * makes this stable under removal, and what a position could never be.
- *
- * No match means every remaining deadline is nearer than the stored one: the
- * window has moved past where this chain stopped, so the scan wraps to the
- * front rather than doing nothing.
+ * The candidate query: every active periodic loan on the chain (`?1`), with
+ * its examination mark (#2230). Batched with `PRENOTIFY_PASS_SQL`, so the
+ * chain's pass record costs no request of its own. Exported so a test runs
+ * it against SQLite itself.
  */
-function resumeIndex(due: DueLoan[], key: ScanResume): number {
-  const at = due.findIndex(
-    (c) =>
-      c.nextCheckpoint > key.checkpoint ||
-      (c.nextCheckpoint === key.checkpoint && c.row.loan_id >= key.loanId),
-  );
-  return at === -1 ? 0 : at;
+export const PRENOTIFY_CANDIDATES_SQL = `SELECT loan_id, chain_id, lender, borrower, start_time,
+       periodic_interest_cadence, last_period_settled_at,
+       period_pre_notified_at,
+       prenotify_examined_checkpoint, prenotify_examined_lap
+  FROM loans
+ WHERE chain_id = ?1
+   AND status = 'active'
+   AND periodic_interest_cadence > 0
+   AND last_period_settled_at > 0`;
+
+/**
+ * Mark what a batch examined as this pass's (#2230), and record in the same
+ * batch, when given, that this pass began (`beginsAt`) or finished
+ * (`completesAt`).
+ *
+ * @returns whether the marks landed — the summary depends on it. A failure is
+ * REPORTED, because its consequence is the starvation the marks exist to
+ * prevent: the next tick examines the same loans again, and if the write keeps
+ * failing a front of the window that fills a tick is re-examined on every tick
+ * while the rest is never reached.
+ */
+async function markExamined(
+  env: Env,
+  chain: { id: number; name: string },
+  examined: readonly DueLoan[],
+  lap: number,
+  record: { beginsAt: number | null; completesAt: number | null },
+  budget: TickBudget,
+): Promise<boolean> {
+  budget.remaining -= 1; // D1 is a subrequest (#2213 r27 `4016129218`)
+  const marks = JSON.stringify(examined.map((d) => [d.row.loan_id, d.nextCheckpoint]));
+  const mark = env.DB.prepare(MARK_EXAMINED_SQL).bind(lap, chain.id, marks);
+  try {
+    if (record.beginsAt === null && record.completesAt === null) {
+      await mark.run();
+    } else {
+      // ONE BATCH IS ONE REQUEST, applied whole or not at all: the pass is
+      // recorded as begun exactly when its first marks are, and as finished
+      // exactly when its last are.
+      await env.DB.batch([
+        ...(record.beginsAt === null
+          ? []
+          : [env.DB.prepare(BEGIN_PASS_SQL).bind(chain.id, lap, record.beginsAt)]),
+        mark,
+        ...(record.completesAt === null
+          ? []
+          : [env.DB.prepare(COMPLETE_PASS_SQL).bind(chain.id, lap, record.completesAt)]),
+      ]);
+    }
+    return true;
+  } catch (err) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: could not mark the ` +
+        `${examined.length} loan(s) this batch examined as examined in pass ` +
+        `${lap} (${describeFailure(err)}). The next tick examines them again ` +
+        `rather than skipping them; if this keeps appearing, the same nearest ` +
+        `loans are examined on every tick and the rest of the window is not ` +
+        `reached.`,
+    );
+    return false;
+  }
 }
 
 /**
@@ -1810,9 +1909,9 @@ interface DueLoan {
   row: LoanRow;
   /**
    * The period's UNMOVED end — the period's identity, which the de-dup stamp,
-   * the chain's eligibility rule and the resume key are all written in. Never
-   * moved by a pause, so a pause between ticks cannot make the stored key name
-   * a different period (#2808).
+   * the chain's eligibility rule and the examination mark are all written in.
+   * Never moved by a pause, so a pause between ticks cannot make a stored
+   * stamp or mark name a different period (#2808).
    */
   nextCheckpoint: number;
   /** Seconds to the payment DEADLINE: the unmoved end plus the loan's pause
@@ -1838,14 +1937,15 @@ interface DueLoan {
  * SQL `CASE` is a copy that drifts the first time the enum grows a member —
  * silently, because a mis-ordered query still returns rows.
  *
- * THE WINDOW IS THE MOVED DEADLINE, THE ORDER IS THE UNMOVED END (#2808).
+ * THE WINDOW AND THE ORDER ARE BOTH THE MOVED DEADLINE (#2808, #2230).
  * Whether a loan is due soon is a question about the deadline the chain
  * enforces, which the loan clock moves by the paused time since the loan
- * started. The ORDER stays on the period's unmoved end, because the stored
- * resume key is written in it and a key in deadline terms would shift under
- * every pause between ticks. Two loans with different credits can therefore
- * be taken slightly out of deadline order; every loan in the window is still
- * reached, which is what the order is for.
+ * started, and so is which loan goes first. The order used to stay on the
+ * period's unmoved end, because a stored resume key was written in it and a
+ * key in deadline terms would have shifted under every pause between ticks;
+ * with no stored place in the order (the marks name a loan and its period,
+ * not a position), nothing is left to shift, and the order is the deadline
+ * itself. Ties break on the unmoved end and then the loan id, so it is total.
  */
 function candidatesInWindow(
   rows: LoanRow[],
@@ -1868,7 +1968,12 @@ function candidatesInWindow(
     if (row.period_pre_notified_at === nextCheckpoint) continue;
     due.push({ row, nextCheckpoint, secsUntil });
   }
-  due.sort((a, b) => a.nextCheckpoint - b.nextCheckpoint || a.row.loan_id - b.row.loan_id);
+  due.sort(
+    (a, b) =>
+      a.secsUntil - b.secsUntil ||
+      a.nextCheckpoint - b.nextCheckpoint ||
+      a.row.loan_id - b.row.loan_id,
+  );
   return due;
 }
 
