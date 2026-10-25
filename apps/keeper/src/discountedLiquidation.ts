@@ -19,11 +19,13 @@
 //     units. Before #2697 it was a fixed 1e18 base units, one token only for
 //     an 18-decimal principal.
 //   - The PROFIT the run must keep is that fee (`minProfit`), enforced by the
-//     FlashLoanLiquidator on-chain. The keeper simulates the run twice: once
-//     with no floor, to measure the fee, and once with the floor, so a trade
-//     that would not net its gas reverts in the simulation, is skipped with
-//     its reason, and is never sent. Each simulation runs the whole trade,
-//     the real flash-loan fee and the real swap included.
+//     FlashLoanLiquidator on-chain. The keeper simulates the run with no
+//     floor to measure the fee, then with the floor that fee implies, and
+//     re-sizes the floor if the floored call measures dearer, so the call it
+//     sends never nets less than its own measured fee. A trade that would not
+//     net its gas reverts in the simulation, is skipped with its reason, and
+//     is never sent. Each simulation runs the whole trade, the real
+//     flash-loan fee and the real swap included.
 //
 // The decision is a pure function of injected reads (`planFlashLoanLiquidation`)
 // so it can be tested without a chain; keeper.ts supplies the reads.
@@ -183,26 +185,41 @@ export async function planFlashLoanLiquidation(deps: FlashLoanPlanDeps): Promise
 
   const args = (minProfit: bigint): LiquidatorArgs =>
     [deps.loanId, preview.seized, minProfit, best.swapTarget, best.swapAllowanceTarget, best.swapCalldata] as const;
-  // Estimated with no profit floor: what it costs to send at all. The send
-  // below carries the floor, and its own estimate simulates it.
+  // Estimated first with no profit floor: what it costs to send at all.
   let feeWei: bigint;
   try {
     feeWei = await deps.estimateFee(args(0n));
   } catch (err) {
     return { kind: 'skip', reason: `simulation reverted: ${summarizeFailure(err, 200)}` };
   }
-  const floor = await deps.minProfit(preview.principalAsset, feeWei);
-  if (floor.kind === 'unpriced') return { kind: 'skip', reason: `gas cannot be valued: ${floor.reason}` };
-  // Simulate again WITH the floor: a run that nets something, but less than
-  // its fee, reverts here and is skipped with its reason rather than failing
-  // at submission.
-  try {
-    await deps.estimateFee(args(floor.minProfit));
-  } catch (err) {
-    return {
-      kind: 'skip',
-      reason: `does not net its fee of ${floor.minProfit}: ${summarizeFailure(err, 200)}`,
-    };
+  // Then simulate WITH the floor that fee implies. A run that nets something,
+  // but less than its fee, reverts here and is skipped with its reason rather
+  // than failing at submission. Carrying the floor changes the call itself
+  // (non-zero calldata, and any L1 data fee priced on it), so the floored
+  // call can cost more than the call the floor was sized from: the floor is
+  // re-sized from each floored measurement until the measured fee no longer
+  // exceeds the fee it was sized from, so the call sent never nets less than
+  // its own measured fee.
+  for (let round = 0; round < FLOOR_ROUNDS; round++) {
+    const floor = await deps.minProfit(preview.principalAsset, feeWei);
+    if (floor.kind === 'unpriced') return { kind: 'skip', reason: `gas cannot be valued: ${floor.reason}` };
+    let flooredFee: bigint;
+    try {
+      flooredFee = await deps.estimateFee(args(floor.minProfit));
+    } catch (err) {
+      return {
+        kind: 'skip',
+        reason: `does not net its fee of ${floor.minProfit}: ${summarizeFailure(err, 200)}`,
+      };
+    }
+    if (flooredFee <= feeWei) {
+      return { kind: 'send', args: args(floor.minProfit), preview, quote: best, feeWei, minProfit: floor.minProfit };
+    }
+    feeWei = flooredFee;
   }
-  return { kind: 'send', args: args(floor.minProfit), preview, quote: best, feeWei, minProfit: floor.minProfit };
+  return { kind: 'skip', reason: `the fee kept rising with its own profit floor after ${FLOOR_ROUNDS} simulations` };
 }
+
+/** Re-sizings of the profit floor before giving up. Each one only changes the
+ *  floor's calldata bytes, so a second round settles any real call. */
+const FLOOR_ROUNDS = 3;

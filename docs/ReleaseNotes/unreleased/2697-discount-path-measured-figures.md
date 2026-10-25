@@ -15,9 +15,11 @@ collateral delivered and the surplus left for the borrower. The figures come
 from one shared rule, which the liquidation itself now charges and seizes by,
 so a reading inside the same transaction is exactly what the liquidation
 does. The one exception is named in the preview's own description: a
-liquidation that first moves the collateral to a new holder of the borrower
-position can seize less when the collateral token delivers less than it
-sends, so there the previewed seizure is an upper bound. The FlashLoanLiquidator reads that preview in the liquidating
+collateral token that delivers less than it sends. Its recipient receives
+less than the seizure, and a liquidation that first moves the collateral to
+a new holder of the borrower position can seize less, so for such a token
+the previewed seizure is an upper bound on what arrives. The flash-loan
+receiver refuses a run that delivers less than its swap was quoted for. The FlashLoanLiquidator reads that preview in the liquidating
 transaction and flash-borrows exactly the debt, takes the loan's assets from
 it rather than from its caller, clears its Diamond allowance after the call,
 and sells exactly the collateral its swap was quoted for. Each run also names

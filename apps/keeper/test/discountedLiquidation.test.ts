@@ -209,6 +209,32 @@ describe('planFlashLoanLiquidation', () => {
     expect(estimated.map((a) => a[2])).toEqual([0n, 300_000n]);
   });
 
+  it('re-sizes the floor when the floored call measures dearer, and sends the call it measured', async () => {
+    // 0.0001 ETH unfloored; 0.0002 ETH once any floor rides along.
+    const { d, estimated } = deps({
+      estimateFee: async (args) => {
+        estimated.push(args);
+        return args[2] === 0n ? 10n ** 14n : 2n * 10n ** 14n;
+      },
+    });
+    const plan = await planFlashLoanLiquidation(d);
+    expect(estimated.map((a) => a[2])).toEqual([0n, 300_000n, 600_000n]);
+    expect(plan.kind === 'send' && plan.args[2]).toBe(600_000n);
+    expect(plan.kind === 'send' && plan.feeWei).toBe(2n * 10n ** 14n);
+  });
+
+  it('skips when the fee keeps rising with its own floor', async () => {
+    let fee = 10n ** 14n;
+    const { d } = deps({
+      estimateFee: async () => {
+        fee *= 2n;
+        return fee;
+      },
+    });
+    const plan = await planFlashLoanLiquidation(d);
+    expect(plan.kind === 'skip' && plan.reason).toMatch(/kept rising/);
+  });
+
   it('skips on a chain whose gas cannot be valued, before reading anything', async () => {
     let read = false;
     const { d } = deps({

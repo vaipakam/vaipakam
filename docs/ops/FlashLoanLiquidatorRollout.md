@@ -468,7 +468,11 @@ will show one of:
 - `SeizureBelowQuote(seized, sellAmount)` — the liquidation would
   deliver less collateral than the swap was quoted for (the
   collateral's price rose between the quote and the block). Healthy;
-  the next tick re-quotes.
+  the next tick re-quotes. If it repeats on every tick for one
+  collateral, the token delivers less than it sends: the preview's
+  seizure is then an upper bound on what arrives, so this path cannot
+  size that loan, and the keeper's simulation skips it each tick
+  without sending.
 - `NotLiquidatable(loanId, status)` — the preview ruled the loan out
   by the time the transaction ran (another liquidator closed it, or
   the price recovered).

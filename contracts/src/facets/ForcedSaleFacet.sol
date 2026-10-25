@@ -284,11 +284,12 @@ contract ForcedSaleFacet is IVaipakamErrors {
      *         liquidation itself charges and seizes by, so a reader in the
      *         same transaction (a flash-loan receiver) gets exactly the
      *         liquidation's figures; read earlier, the debt can only have
-     *         grown by the block that settles. One exception: a liquidation
-     *         that first moves the collateral to a new borrower-NFT holder
-     *         can seize less than previewed when the collateral token
-     *         credits less than it sends (see {LibDiscountedLiquidation}),
-     *         so the seizure is an upper bound there.
+     *         grown by the block that settles. One exception: for a
+     *         collateral token that delivers less than it sends, the
+     *         recipient receives less than `seized`, and a liquidation that
+     *         first moves the collateral to a new borrower-NFT holder can
+     *         seize less (see {LibDiscountedLiquidation}), so `seized` is an
+     *         upper bound on what arrives.
      *
      *         `status` is the first check that fails, in the liquidation's
      *         own order; the figures are filled only when it is `Ready`,

@@ -16,20 +16,25 @@ import {OracleFacet} from "../facets/OracleFacet.sol";
  *         through here, and so does its preview
  *         ({ForcedSaleFacet.previewDiscountedLiquidation}), so the preview
  *         read in the same block as the liquidation names exactly what the
- *         liquidation then does, with one exception stated below. A caller
+ *         liquidation then charges and debits, for a collateral token that
+ *         delivers what it sends (the exception is stated below). A caller
  *         that funds the debt up front (a flash-loan receiver) reads the
  *         preview and borrows that figure; before #2697 it could only guess
  *         it.
  *
- *         The exception: when the borrower position NFT has changed hands,
- *         the liquidation first moves the collateral to the new holder's
- *         vault, and a collateral token that credits less than it sends
- *         lowers the pledged amount there (#2440). The debt is unchanged,
- *         but where the seizure was capped at the pledged collateral, the
- *         seizure and surplus come out smaller than the preview said. The
- *         preview cannot know a token's transfer shortfall before the move,
- *         so a reader must treat its seizure as an upper bound in that case
- *         and check what it actually received.
+ *         The exception is a collateral token that delivers less than it
+ *         sends, which a preview cannot know before the transfer. Two
+ *         transfers can fall short:
+ *         - the seizure's own transfer from the borrower's vault to the
+ *           recipient: the seizure is debited in full, and the recipient
+ *           receives it less the token's shortfall;
+ *         - when the borrower position NFT has changed hands, the move of
+ *           the collateral to the new holder's vault before the seizure,
+ *           which lowers the pledge there (#2440). The debt is unchanged,
+ *           but where the seizure was capped at the pledge, the seizure and
+ *           the surplus both come out smaller.
+ *         For such a token the previewed seizure is an UPPER BOUND on what
+ *         the recipient receives, and a reader must check what arrived.
  *
  *         THE RULE, with `D` the debt and `d` the collateral's per-tier
  *         discount:
@@ -68,8 +73,10 @@ library LibDiscountedLiquidation {
     /// @param tier            The collateral's effective liquidity tier.
     /// @param discountBps     The tier's discount.
     /// @param debt            `D`, pulled from the liquidator in full.
-    /// @param seized          Collateral delivered to the liquidator's
-    ///                        recipient.
+    /// @param seized          Collateral the liquidation debits from the
+    ///                        pledge and sends to the liquidator's recipient
+    ///                        (what arrives is less for a collateral token
+    ///                        that delivers less than it sends).
     /// @param surplus         Collateral left in the borrower's vault for
     ///                        the borrower's claim.
     struct Preview {
