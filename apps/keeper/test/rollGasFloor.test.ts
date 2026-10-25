@@ -3,7 +3,8 @@
  * worth at least 100x the roll's gas, both valued by the Diamond.
  */
 import { describe, expect, it } from 'vitest';
-import type { Address } from 'viem';
+import { createPublicClient, custom, encodeAbiParameters, toFunctionSelector, type Address } from 'viem';
+import { baseSepolia } from 'viem/chains';
 import {
   ROLL_MIN_VALUE_TO_GAS,
   estimateRollFeeWei,
@@ -46,7 +47,9 @@ describe('rollFeeModel', () => {
 describe('estimateRollFeeWei', () => {
   const request = {
     address: DIAMOND,
-    abi: [] as never,
+    abi: [
+      { type: 'function', name: 'rollIntentLoan', inputs: [{ type: 'uint256' }], outputs: [], stateMutability: 'nonpayable' },
+    ] as never,
     functionName: 'rollIntentLoan',
     args: [1n],
     account: { address: DIAMOND, type: 'json-rpc' } as never,
@@ -59,6 +62,40 @@ describe('estimateRollFeeWei', () => {
     const c = { estimateContractGas: async () => 50_000n, getGasPrice: async () => 3n };
     await expect(estimateRollFeeWei(c as never, 97, request)).rejects.toThrow(/fee model/);
   });
+  /** A Base Sepolia client over a fake RPC: execution gas 50_000 at 3 wei, an
+   *  L1 data fee of 7_000 wei, operator scalar 2_000_000 (2x) and constant 11. */
+  function opClient(failOperatorFee = false) {
+    const word = (v: bigint) => encodeAbiParameters([{ type: 'uint256' }], [v]);
+    const sel = (sig: string) => toFunctionSelector(sig).slice(0, 10);
+    return createPublicClient({
+      chain: baseSepolia,
+      transport: custom({
+        async request({ method, params }: { method: string; params?: unknown }) {
+          if (method === 'eth_estimateGas') return '0xc350';
+          if (method === 'eth_gasPrice') return '0x3';
+          if (method === 'eth_chainId') return '0x14a34';
+          if (method === 'eth_call') {
+            const data = ((params as [{ data: string }])[0].data ?? '').slice(0, 10);
+            if (data === sel('getL1Fee(bytes)')) return word(7_000n);
+            if (failOperatorFee) throw new Error('fetch failed');
+            if (data === sel('operatorFeeScalar()')) return word(2_000_000n);
+            if (data === sel('operatorFeeConstant()')) return word(11n);
+          }
+          throw new Error(`unexpected ${method}`);
+        },
+      }),
+    });
+  }
+
+  it('on an OP-stack chain adds the L1 data fee and the operator fee to the gas', async () => {
+    // 50_000 x 3 + 7_000 + (50_000 x 2_000_000 / 1e6 + 11)
+    expect(await estimateRollFeeWei(opClient() as never, 84532, request)).toBe(150_000n + 7_000n + 100_011n);
+  });
+
+  it('fails closed when the operator fee cannot be read, instead of taking it as zero (Codex #2807 r3)', async () => {
+    await expect(estimateRollFeeWei(opClient(true) as never, 84532, request)).rejects.toThrow();
+  });
+
   it('passes the estimate revert through, so an undelegated owner is still recognised', async () => {
     const c = {
       estimateContractGas: async () => {

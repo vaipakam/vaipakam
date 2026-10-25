@@ -7,6 +7,13 @@
  * message" was the wrong fix and why nothing here truncates a message at all.
  */
 import { describe, it, expect } from 'vitest';
+import {
+  ContractFunctionExecutionError,
+  ContractFunctionRevertedError,
+  HttpRequestError,
+  toFunctionSelector,
+  type Abi,
+} from 'viem';
 import { describeFailure, redactAndBound, summarizeFailure } from './errorDescription';
 
 /** What viem hands a catch block when an RPC rejects the request. */
@@ -158,16 +165,44 @@ describe('viem\'s real wrapper shape, not a hand-built stand-in', () => {
 
 
 describe('summarizeFailure', () => {
-  it("keeps viem's short message, which names the revert", () => {
-    const e = Object.assign(new Error('long message with URL: https://rpc.example.com/KEY'), {
-      name: 'ContractFunctionExecutionError',
-      shortMessage: 'The contract function "rollIntentLoan" reverted.\n\nError: KeeperAccessRequired()',
+  const abi = [
+    { type: 'function', name: 'rollIntentLoan', inputs: [{ type: 'uint256' }], outputs: [], stateMutability: 'nonpayable' },
+    { type: 'error', name: 'KeeperAccessRequired', inputs: [] },
+  ] as const satisfies Abi;
+
+  /** What viem actually throws for a decoded custom-error revert. */
+  function realRevert(): Error {
+    const cause = new ContractFunctionRevertedError({
+      abi,
+      functionName: 'rollIntentLoan',
+      data: toFunctionSelector('KeeperAccessRequired()'),
     });
-    expect(summarizeFailure(e)).toContain('KeeperAccessRequired');
-    expect(summarizeFailure(e)).not.toContain('KEY');
+    return new ContractFunctionExecutionError(cause, {
+      abi,
+      functionName: 'rollIntentLoan',
+      args: [1n],
+      contractAddress: '0x0000000000000000000000000000000000000001',
+    });
+  }
+
+  it('names a decoded custom error, which viem keeps out of every message (Codex #2807 r3)', () => {
+    const e = realRevert();
+    expect((e as { shortMessage: string }).shortMessage).not.toContain('KeeperAccessRequired');
+    expect(summarizeFailure(e).startsWith('KeeperAccessRequired: ')).toBe(true);
   });
 
-  it('never prints the raw message, and strips a URL from the short message', () => {
+  it('never prints a transport URL, from a real viem error', () => {
+    const e = new HttpRequestError({
+      url: 'https://base-sepolia.example.com/v1/SUPERSECRETAPIKEY',
+      body: { method: 'eth_call' },
+      status: 429,
+    });
+    const said = summarizeFailure(e);
+    expect(said).not.toContain('SUPERSECRETAPIKEY');
+    expect(said).not.toContain('example.com');
+  });
+
+  it('strips a URL from the short message and falls back to the bounded description', () => {
     expect(summarizeFailure(viemHttpError())).toBe('HttpRequestError, HTTP 429');
     const e = Object.assign(new Error('x'), { shortMessage: 'failed at https://rpc.example.com/v1/SECRET now' });
     expect(summarizeFailure(e)).toBe('failed at <redacted url> now');

@@ -37,6 +37,8 @@
  * falsify it; the suite now builds real viem errors.
  */
 
+import { extractRevertName } from './decodeContractError';
+
 /**
  * Strip anything URL-shaped and cap the length.
  *
@@ -97,17 +99,20 @@ export function describeFailure(err: unknown): string {
  *
  * {@link describeFailure} prints class names and numbers only, so a revert
  * reads as `ContractFunctionExecutionError ← ContractFunctionRevertedError`
- * and the reason an operator needs (`KeeperAccessRequired`, say) is lost. viem
- * puts that reason in `shortMessage`, which, unlike `message`, carries no
- * request URL. It is still a value from a dependency, so anything URL-shaped
- * in it is stripped as {@link redactAndBound} does; without a `shortMessage`
- * the bounded description stands in. Never the raw message.
+ * and the reason an operator needs is lost. viem keeps a decoded custom error's
+ * NAME on `ContractFunctionRevertedError.data.errorName`, one or more causes
+ * down, and not in any message (Codex #2807 r3): its `shortMessage` says only
+ * `The contract function "x" reverted.` So the summary is that name, found by
+ * walking the causes ({@link extractRevertName}), followed by viem's
+ * `shortMessage`, which, unlike `message`, carries no request URL. Both are
+ * values from a dependency, so anything URL-shaped in them is stripped as
+ * {@link redactAndBound} does. Without a `shortMessage` the bounded
+ * description stands in. Never the raw message.
  */
 export function summarizeFailure(err: unknown, max = 200): string {
+  const stripUrls = (t: string) => t.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, '<redacted url>');
   const short = (err as { shortMessage?: unknown } | null)?.shortMessage;
-  const text =
-    typeof short === 'string' && short.length > 0
-      ? short.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, '<redacted url>')
-      : describeFailure(err);
-  return text.slice(0, max);
+  const body = typeof short === 'string' && short.length > 0 ? stripUrls(short) : describeFailure(err);
+  const name = extractRevertName(err);
+  return (name ? `${stripUrls(name)}: ${body}` : body).slice(0, max);
 }

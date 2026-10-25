@@ -12,7 +12,8 @@
  *
  * The cost valued is the roll's WHOLE fee, as each chain charges it (see
  * {@link rollFeeModel}): on an OP-stack chain that is the execution gas plus
- * the separately charged L1 data fee and any operator fee. A chain whose fee
+ * the separately charged L1 data fee and operator fee, each read, and none
+ * assumed zero because its read failed. A chain whose fee
  * model this keeper does not know gets no figure, rather than the execution
  * gas alone, which would understate it.
  *
@@ -26,8 +27,8 @@
 import { NumeraireValueFacetABI } from '@vaipakam/contracts/abis';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { summarizeFailure } from '@vaipakam/lib/errorDescription';
-import type { Abi, Account, Address, PublicClient } from 'viem';
-import { estimateContractTotalFee } from 'viem/op-stack';
+import { encodeFunctionData, type Abi, type Account, type Address, type PublicClient } from 'viem';
+import { estimateL1Fee } from 'viem/op-stack';
 
 /** The rolled amount must be worth at least this many times the roll's gas. */
 export const ROLL_MIN_VALUE_TO_GAS = 100n;
@@ -93,23 +94,41 @@ export function rollUnpricedReason(chainId: number): string | null {
   return null;
 }
 
+/** OP-stack `L1Block` predeploy: carries the operator-fee parameters. */
+const OP_L1_BLOCK = '0x4200000000000000000000000000000000000015' as const;
+const OP_L1_BLOCK_ABI = [
+  { type: 'function', name: 'operatorFeeScalar', inputs: [], outputs: [{ type: 'uint32' }], stateMutability: 'view' },
+  { type: 'function', name: 'operatorFeeConstant', inputs: [], outputs: [{ type: 'uint64' }], stateMutability: 'view' },
+] as const;
+
 /** The roll's whole fee in wei under the chain's fee model. Throws what the
  *  estimate throws (an undelegated owner's revert among them), and throws on a
- *  chain whose fee model is unknown rather than returning the gas alone. */
+ *  chain whose fee model is unknown rather than returning the gas alone.
+ *
+ *  On an OP-stack chain every part is read, and a part that cannot be read
+ *  fails the estimate (Codex #2807 r3). viem's own `estimateTotalFee` treats a
+ *  failed operator-fee read as "no operator fee" whatever the reason, which on
+ *  an RPC outage understates the fee; every chain this keeper lists as
+ *  OP-stack has the operator fee (Isthmus), so its parameters must answer. */
 export async function estimateRollFeeWei(
   client: PublicClient,
   chainId: number,
   request: { address: Address; abi: Abi; functionName: string; args: readonly unknown[]; account: Account },
 ): Promise<bigint> {
   const model = rollFeeModel(chainId);
-  if (model === 'opStack') {
-    return estimateContractTotalFee(client as never, request as never);
-  }
-  if (model === 'gasOnly') {
-    const [gas, price] = await Promise.all([client.estimateContractGas(request as never), client.getGasPrice()]);
-    return gas * price;
-  }
-  throw new Error(`no transaction fee model is known for chain ${chainId}`);
+  if (model === null) throw new Error(`no transaction fee model is known for chain ${chainId}`);
+  const [gas, price] = await Promise.all([client.estimateContractGas(request as never), client.getGasPrice()]);
+  const execution = gas * price;
+  if (model === 'gasOnly') return execution;
+  const data = encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args } as never);
+  const [l1Fee, scalar, constant] = await Promise.all([
+    estimateL1Fee(client as never, { account: request.account, to: request.address, data, chain: client.chain } as never),
+    client.readContract({ address: OP_L1_BLOCK, abi: OP_L1_BLOCK_ABI, functionName: 'operatorFeeScalar' }),
+    client.readContract({ address: OP_L1_BLOCK, abi: OP_L1_BLOCK_ABI, functionName: 'operatorFeeConstant' }),
+  ]);
+  // The operator fee as the chain charges it: gasUsed x scalar / 1e6 + constant.
+  const operatorFee = (gas * BigInt(scalar)) / 1_000_000n + BigInt(constant);
+  return execution + l1Fee + operatorFee;
 }
 
 /** Pure rule: is a roll worth `rolledValue` worth its `gasValue`? Both are
