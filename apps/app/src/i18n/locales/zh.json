@@ -332,6 +332,11 @@
       "paidLowVault": "你的 Vault 中有 {{free}} 可用 VPFI，少于 {{fee}} VPFI 的费用，因此在你向 Vault 添加 VPFI 之前，无法收取付费 Push 提醒的费用。",
       "paidReadFailed": "我们无法从链上读取你对付费 Push 提醒的同意。请稍后再试。",
       "paidStale": "我们无法从 {{chain}} 刷新这些信息。下方的费用和你的同意来自上一次成功读取，可能已过时，因此在读取成功之前暂停同意。你仍然可以撤回同意。",
+      "paidStaleLegacy": "我们无法从 {{chain}} 刷新这些信息。下方显示的内容来自上一次成功读取，可能已过时。",
+      "paidPredatesConsent": "{{chain}} 上的合约是没有付费 Push 同意功能的旧版本，因此你无法在这里同意付费或撤回同意。",
+      "paidPredatesBillable": "这个版本仍可通过协议的计费角色收取该费用，而且收费前可能不会检查是否有你的同意。",
+      "paidPredatesNotBillable": "这个版本也没有计费调用，因此在 {{chain}} 上无法收取该费用。",
+      "paidPredatesBillingUnknown": "我们无法确认这个版本能否收取该费用。",
       "paidAgreed": "已保存：你已同意在 {{chain}} 上每个贷款方最多支付 {{fee}} VPFI。",
       "paidWithdrawn": "已撤回：在 {{chain}} 上不会再向你收取付费 Push 提醒费用。"
     },

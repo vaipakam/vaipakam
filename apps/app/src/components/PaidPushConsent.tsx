@@ -23,6 +23,10 @@
  *  - A warning when a covering consent stands on a billed network and the
  *    vault's free VPFI is below the fee; the bill itself stays authoritative.
  *
+ * On a network whose Diamond predates the consent record, it says so, offers
+ * neither, and states whether that older version can still charge the fee —
+ * never that the wallet "can't be charged" when a billing call is routed.
+ *
  * The consent is per network (each network's Diamond keeps its own record),
  * so every line names the network it describes. It is also per wallet, so the
  * card's own state (a confirmation, an error, a pending write) belongs to the
@@ -40,6 +44,7 @@ import type { PushBillingState } from '../data/alerts';
 import {
   effectiveConsent,
   notificationFeeConsentKey,
+  paidPushBilledOn,
   paidPushConsentScope,
   paidPushConsentView,
   useNotificationFeeConsent,
@@ -116,8 +121,40 @@ function PaidPushConsentFor({ billing }: PaidPushConsentProps) {
         {copy.alerts.paidReadFailed}
       </p>
     ) : null;
+  } else if (consentQuery.data.kind === 'predates-consent') {
+    // An older Diamond with no consent record: nothing to agree to or
+    // withdraw, and whether it can charge the fee is stated as read.
+    const legacy = consentQuery.data;
+    const billed = paidPushBilledOn(billing, chainId);
+    body = (
+      <>
+        {consentQuery.isError ? (
+          <div className="banner banner-warn" role="status" data-testid="paid-push-stale">
+            <span className="banner-body">{copy.alerts.paidStaleLegacy(chainName)}</span>
+          </div>
+        ) : null}
+        <p className="muted" style={{ margin: 0 }}>
+          {copy.alerts.paidFee(chainName, vpfi(legacy.feeVpfi))}
+        </p>
+        {billed !== 'billed' ? (
+          <p className="muted" role="status" style={{ margin: 0 }} data-testid="paid-push-billing">
+            {billed === 'not-billed'
+              ? copy.alerts.paidNotBilled(chainName)
+              : copy.alerts.paidBilledUnknown(chainName)}
+          </p>
+        ) : null}
+        <p style={{ margin: 0 }} data-testid="paid-push-consent">
+          {copy.alerts.paidPredatesConsent(chainName)}{' '}
+          {legacy.billingRouted === true
+            ? copy.alerts.paidPredatesBillable
+            : legacy.billingRouted === false
+              ? copy.alerts.paidPredatesNotBillable(chainName)
+              : copy.alerts.paidPredatesBillingUnknown}
+        </p>
+      </>
+    );
   } else {
-    const consent = effectiveConsent(consentQuery.data, written);
+    const consent = effectiveConsent(consentQuery.data.consent, written);
     const stale = consentQuery.isError;
     // The free balance is only compared while its own read is current.
     const snapshot = vpfiSnapshot.isError ? undefined : vpfiSnapshot.data;

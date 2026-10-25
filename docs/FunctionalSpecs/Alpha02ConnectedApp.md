@@ -2696,6 +2696,15 @@ is the borrower's own money.
   and withdrawing stays offered. A mined agreement or withdrawal is shown as
   the recorded cap straight away, but it establishes only the cap: it never
   marks the fee, or the rest of a failed read, as current.
+- On a network whose contracts predate the consent record, the card says
+  so, and offers neither agreeing nor withdrawing (there is no record to
+  write). It still states the fee and the service's billing answer. It also
+  states, from the contract's own routing, whether that older version can
+  still charge the fee: if it can, the card says the fee may be charged
+  without an agreement. It never says the wallet cannot be charged there.
+  If the routing can't be read, the card says it couldn't check. Only the
+  contract's own "no such function" answer counts as an older version; any
+  other failure is a failed read.
 - Whether paid Push is billed on a network is the alert service's own answer,
   never inferred from the fee being configured. Agreeing to pay is offered
   only on a network the service says it bills on, and at the current fee;

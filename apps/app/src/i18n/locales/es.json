@@ -332,6 +332,11 @@
       "paidLowVault": "Tu Vault tiene {{free}} VPFI libres, menos que la tarifa de {{fee}} VPFI, así que no se puede cobrar una alerta Push de pago hasta que añadas VPFI a tu Vault.",
       "paidReadFailed": "No pudimos leer en la cadena tu aceptación de las alertas Push de pago. Inténtalo de nuevo más tarde.",
       "paidStale": "No pudimos actualizar esto desde {{chain}}. La tarifa y tu aceptación que ves abajo son de la última lectura correcta y pueden estar desactualizadas, así que aceptar queda en pausa hasta que una lectura funcione. Aún puedes retirarla.",
+      "paidStaleLegacy": "No pudimos actualizar esto desde {{chain}}. Lo que ves abajo es de la última lectura correcta y puede estar desactualizado.",
+      "paidPredatesConsent": "Los contratos de {{chain}} son una versión anterior sin la aceptación de Push de pago, así que aquí no puedes aceptar pagar ni retirar una aceptación.",
+      "paidPredatesBillable": "Esta versión aún puede cobrar la tarifa mediante el rol de facturación del protocolo, y es posible que no compruebe una aceptación antes de hacerlo.",
+      "paidPredatesNotBillable": "Esta versión tampoco tiene una llamada de facturación, así que la tarifa no se puede cobrar en {{chain}}.",
+      "paidPredatesBillingUnknown": "No pudimos comprobar si esta versión puede cobrar la tarifa.",
       "paidAgreed": "Guardado: has aceptado pagar hasta {{fee}} VPFI por lado del préstamo en {{chain}}.",
       "paidWithdrawn": "Retirada: ya no se te pueden cobrar tarifas de alertas Push de pago en {{chain}}."
     },

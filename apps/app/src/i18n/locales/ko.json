@@ -332,6 +332,11 @@
       "paidLowVault": "Vault에 사용 가능한 VPFI가 {{free}}로 {{fee}} VPFI 수수료보다 적으므로, Vault에 VPFI를 추가할 때까지 유료 Push 알림을 청구할 수 없습니다.",
       "paidReadFailed": "체인에서 유료 Push 알림 동의를 읽지 못했습니다. 나중에 다시 시도해 주세요.",
       "paidStale": "{{chain}}에서 이 정보를 새로 고치지 못했습니다. 아래 수수료와 동의 내용은 마지막으로 성공한 읽기 기준이며 오래되었을 수 있으므로, 읽기가 성공할 때까지 동의는 일시 중지됩니다. 동의 철회는 계속 할 수 있습니다.",
+      "paidStaleLegacy": "{{chain}}에서 이 정보를 새로 고치지 못했습니다. 아래 내용은 마지막으로 성공한 읽기 기준이며 오래되었을 수 있습니다.",
+      "paidPredatesConsent": "{{chain}}의 컨트랙트는 유료 Push 알림 동의 기능이 없는 이전 버전이므로, 여기서는 결제에 동의하거나 동의를 철회할 수 없습니다.",
+      "paidPredatesBillable": "이 버전은 프로토콜의 청구 역할을 통해 여전히 수수료를 청구할 수 있으며, 청구 전에 동의 여부를 확인하지 않을 수 있습니다.",
+      "paidPredatesNotBillable": "이 버전에는 청구 호출도 없으므로 {{chain}}에서는 수수료를 청구할 수 없습니다.",
+      "paidPredatesBillingUnknown": "이 버전이 수수료를 청구할 수 있는지 확인하지 못했습니다.",
       "paidAgreed": "저장됨: {{chain}}에서 대출 한쪽당 최대 {{fee}} VPFI 지불에 동의했습니다.",
       "paidWithdrawn": "철회됨: {{chain}}에서 유료 Push 알림 수수료가 청구되지 않습니다."
     },
