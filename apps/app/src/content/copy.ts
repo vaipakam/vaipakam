@@ -795,6 +795,10 @@ const copySource = {
     ),
     paidReadFailed:
       'We couldn’t read your paid Push agreement from the chain. Please try again later.',
+    paidStale: tmpl(
+      'We couldn’t refresh this from {{chain}}. The fee and your agreement below are from the last successful read and may be out of date, so agreeing is paused until a read succeeds. You can still withdraw.',
+      ['chain'],
+    ),
     paidAgreed: tmpl('Saved: you’ve agreed to pay up to {{fee}} VPFI per loan side on {{chain}}.', [
       'fee',
       'chain',

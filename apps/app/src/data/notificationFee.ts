@@ -87,7 +87,8 @@ export interface PaidPushConsentView {
    *  or a cap below it (which no bill can pass). */
   consent: 'none' | 'covers' | 'below';
   /** Offer agreeing to the current fee — only where the service says it bills
-   *  on this chain, and only when the record does not already cover it. */
+   *  on this chain, only when the record does not already cover it, and only
+   *  from a CURRENT read: a cached fee may no longer be the fee. */
   offerAgree: boolean;
   /** Offer withdrawing — whenever any consent is stored, whatever the billing
    *  posture, the Terms or the protocol's pause state. */
@@ -111,6 +112,10 @@ export function paidPushConsentView(args: {
   consent: NotificationFeeConsent;
   /** The vault's free (unencumbered) VPFI, or undefined when unknown. */
   freeVpfi: bigint | undefined;
+  /** The last refresh of `consent` failed, so it is the last-known record,
+   *  not a current one. The card says so; withdrawing stays offered (a zero
+   *  cap is right whatever the record became), agreeing does not. */
+  stale: boolean;
 }): PaidPushConsentView {
   const { consent } = args;
   const billed = paidPushBilledOn(args.billing, args.chainId);
@@ -119,7 +124,7 @@ export function paidPushConsentView(args: {
   return {
     billed,
     consent: state,
-    offerAgree: billed === 'billed' && state !== 'covers',
+    offerAgree: billed === 'billed' && state !== 'covers' && !args.stale,
     offerWithdraw: state !== 'none',
     lowVaultBalance:
       billed === 'billed' &&

@@ -93,8 +93,9 @@ export function PaidPushConsent({ billing }: { billing: PushBillingState | undef
 
   // A failed FIRST read is stated as unread. A failed background refresh
   // keeps the last read on screen (TanStack keeps `data` with an error
-  // status), so the withdrawal it offers stays reachable rather than
-  // vanishing behind a transient RPC error.
+  // status) so the withdrawal it offers stays reachable, but the figures are
+  // then labelled last-known and agreeing is held until a read succeeds:
+  // a cached fee or cap is not presented as the chain's current record.
   let body: React.ReactNode;
   if (!consentQuery.data) {
     body = consentQuery.isError ? (
@@ -104,16 +105,24 @@ export function PaidPushConsent({ billing }: { billing: PushBillingState | undef
     ) : null;
   } else {
     const consent = consentQuery.data;
-    const snapshot = vpfiSnapshot.data;
+    const stale = consentQuery.isError;
+    // The free balance is only compared while its own read is current.
+    const snapshot = vpfiSnapshot.isError ? undefined : vpfiSnapshot.data;
     const view = paidPushConsentView({
       billing,
       chainId,
       consent,
       freeVpfi: snapshot && snapshot.registered ? snapshot.freeBalance : undefined,
+      stale,
     });
     const fee = vpfi(consent.feeVpfi);
     body = (
       <>
+        {stale ? (
+          <div className="banner banner-warn" role="status" data-testid="paid-push-stale">
+            <span className="banner-body">{copy.alerts.paidStale(chainName)}</span>
+          </div>
+        ) : null}
         <p className="muted" style={{ margin: 0 }}>
           {copy.alerts.paidFee(chainName, fee)}
         </p>

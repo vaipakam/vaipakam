@@ -331,6 +331,7 @@
       "paidWithdrawNote": "Du kannst sie jederzeit zurückziehen, auch während das Protokoll pausiert ist. Eine bereits für einen Kredit berechnete Gebühr wird nicht erstattet.",
       "paidLowVault": "Dein Vault enthält {{free}} freie VPFI, weniger als die Gebühr von {{fee}} VPFI. Eine kostenpflichtige Push-Benachrichtigung kann daher erst berechnet werden, wenn du VPFI in deinen Vault einzahlst.",
       "paidReadFailed": "Wir konnten deine Zustimmung zu kostenpflichtigen Push-Benachrichtigungen nicht von der Chain lesen. Bitte versuche es später erneut.",
+      "paidStale": "Wir konnten dies nicht von {{chain}} aktualisieren. Die Gebühr und deine Zustimmung unten stammen aus dem letzten erfolgreichen Lesevorgang und können veraltet sein. Zustimmen ist daher pausiert, bis ein Lesevorgang gelingt. Du kannst deine Zustimmung weiterhin zurückziehen.",
       "paidAgreed": "Gespeichert: Du hast zugestimmt, bis zu {{fee}} VPFI pro Kreditseite auf {{chain}} zu zahlen.",
       "paidWithdrawn": "Zurückgezogen: Gebühren für kostenpflichtige Push-Benachrichtigungen können dir auf {{chain}} nicht berechnet werden."
     },

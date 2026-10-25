@@ -23,7 +23,8 @@ const view = (
   billing: PushBillingState | undefined,
   c: NotificationFeeConsent,
   freeVpfi: bigint | undefined = 10n ** 18n,
-) => paidPushConsentView({ billing, chainId: BASE_SEPOLIA, consent: c, freeVpfi });
+  stale = false,
+) => paidPushConsentView({ billing, chainId: BASE_SEPOLIA, consent: c, freeVpfi, stale });
 
 describe('paidPushBilledOn', () => {
   it('is the service’s answer for THIS network, and unknown when it gave none', () => {
@@ -44,6 +45,13 @@ describe('paidPushConsentView', () => {
       expect(view(billing, consent(0n, false)).offerAgree).toBe(false);
       expect(view(billing, consent(FEE - 1n, false)).offerAgree).toBe(false);
     }
+  });
+
+  it('holds agreeing on a last-known record, and keeps withdrawing offered', () => {
+    expect(view(billedHere, consent(0n, false), 10n ** 18n, true).offerAgree).toBe(false);
+    expect(view(billedHere, consent(FEE - 1n, false), 10n ** 18n, true).offerAgree).toBe(false);
+    expect(view(billedHere, consent(FEE - 1n, false), 10n ** 18n, true).offerWithdraw).toBe(true);
+    expect(view(billedNowhere, consent(FEE, true), 10n ** 18n, true).offerWithdraw).toBe(true);
   });
 
   it('offers withdrawing whenever any cap is stored, whatever the billing posture', () => {

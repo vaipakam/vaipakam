@@ -2687,7 +2687,10 @@ is the borrower's own money.
   of the agreed cap, never the fee of the day: nothing above the cap can be
   charged, so a rise in the fee is charged without a new agreement while it
   stays within the cap, and only a fee above the cap needs one. Figures it could not read are stated as unread,
-  never as zero.
+  never as zero. When a later refresh fails, the figures last read stay on
+  screen labelled as the last successful read that may be out of date, never
+  as the network's current record; agreeing is held until a read succeeds,
+  and withdrawing stays offered.
 - Whether paid Push is billed on a network is the alert service's own answer,
   never inferred from the fee being configured. Agreeing to pay is offered
   only on a network the service says it bills on, and at the current fee;

@@ -331,6 +331,7 @@
       "paidWithdrawNote": "你可以随时撤回，即使协议处于暂停状态也可以。已为某笔贷款收取的费用不予退还。",
       "paidLowVault": "你的 Vault 中有 {{free}} 可用 VPFI，少于 {{fee}} VPFI 的费用，因此在你向 Vault 添加 VPFI 之前，无法收取付费 Push 提醒的费用。",
       "paidReadFailed": "我们无法从链上读取你对付费 Push 提醒的同意。请稍后再试。",
+      "paidStale": "我们无法从 {{chain}} 刷新这些信息。下方的费用和你的同意来自上一次成功读取，可能已过时，因此在读取成功之前暂停同意。你仍然可以撤回同意。",
       "paidAgreed": "已保存：你已同意在 {{chain}} 上每个贷款方最多支付 {{fee}} VPFI。",
       "paidWithdrawn": "已撤回：在 {{chain}} 上不会再向你收取付费 Push 提醒费用。"
     },

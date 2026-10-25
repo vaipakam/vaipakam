@@ -331,6 +331,7 @@
       "paidWithdrawNote": "Puedes retirarla en cualquier momento, incluso mientras el protocolo está en pausa. Una tarifa ya cobrada por un préstamo no se reembolsa.",
       "paidLowVault": "Tu Vault tiene {{free}} VPFI libres, menos que la tarifa de {{fee}} VPFI, así que no se puede cobrar una alerta Push de pago hasta que añadas VPFI a tu Vault.",
       "paidReadFailed": "No pudimos leer en la cadena tu aceptación de las alertas Push de pago. Inténtalo de nuevo más tarde.",
+      "paidStale": "No pudimos actualizar esto desde {{chain}}. La tarifa y tu aceptación que ves abajo son de la última lectura correcta y pueden estar desactualizadas, así que aceptar queda en pausa hasta que una lectura funcione. Aún puedes retirarla.",
       "paidAgreed": "Guardado: has aceptado pagar hasta {{fee}} VPFI por lado del préstamo en {{chain}}.",
       "paidWithdrawn": "Retirada: ya no se te pueden cobrar tarifas de alertas Push de pago en {{chain}}."
     },

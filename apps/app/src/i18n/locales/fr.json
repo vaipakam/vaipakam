@@ -331,6 +331,7 @@
       "paidWithdrawNote": "Vous pouvez le retirer à tout moment, même lorsque le protocole est en pause. Des frais déjà prélevés pour un prêt ne sont pas remboursés.",
       "paidLowVault": "Votre Vault contient {{free}} VPFI libres, moins que les frais de {{fee}} VPFI : une alerte Push payante ne peut donc pas être facturée tant que vous n’ajoutez pas de VPFI à votre Vault.",
       "paidReadFailed": "Nous n’avons pas pu lire votre accord pour les alertes Push payantes sur la chaîne. Veuillez réessayer plus tard.",
+      "paidStale": "Nous n’avons pas pu actualiser ces informations depuis {{chain}}. Les frais et votre accord ci-dessous proviennent de la dernière lecture réussie et peuvent être dépassés : l’acceptation est donc suspendue jusqu’à ce qu’une lecture réussisse. Vous pouvez toujours retirer votre accord.",
       "paidAgreed": "Enregistré : vous avez accepté de payer jusqu’à {{fee}} VPFI par côté de prêt sur {{chain}}.",
       "paidWithdrawn": "Retiré : les frais d’alertes Push payantes ne peuvent plus vous être facturés sur {{chain}}."
     },
