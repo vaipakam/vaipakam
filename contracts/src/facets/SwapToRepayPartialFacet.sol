@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -211,7 +212,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         if (collateralSwapAmount == 0 || collateralSwapAmount > loan.collateralAmount)
             revert InvalidAmount();
 
-        uint256 endTime = loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY;
+        uint256 endTime = LibLoanClock.maturity(loan);
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
@@ -425,11 +426,9 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
         // mirroring `RepayFacet.repayPartial`. Seed the clock from the term for
         // any loan that predates the fields before reading elapsed.
         LibVaipakam.seedInterestClockIfUnset(loan);
-        uint256 elapsedSinceSegmentStart;
-        unchecked {
-            elapsedSinceSegmentStart =
-                (block.timestamp - loan.interestAccrualStart) / LibVaipakam.ONE_DAY;
-        }
+        // #668 / #935 — a paused day is not consumed: the pause moved the
+        // term's end by that day ({LibLoanClock.interestTermEnd}).
+        uint256 elapsedSinceSegmentStart = LibLoanClock.unpausedDaysSinceInterestStart(loan);
         if (elapsedSinceSegmentStart >= loan.interestRemainingDays) {
             loan.interestRemainingDays = 0;
         } else {

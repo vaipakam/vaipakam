@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibLoanClock} from "./LibLoanClock.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
 
 /**
@@ -107,7 +108,7 @@ library LibOwedAtDefault {
             (principal * loan.interestRateBps * elapsed) /
                 (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS)
         );
-        lateFee = (principal * LibVaipakam.lateFeeBps(loan.startTime + loan.durationDays * 1 days)) /
+        lateFee = (principal * LibVaipakam.lateFeeBps(LibLoanClock.maturity(loan))) /
             LibVaipakam.BASIS_POINTS;
     }
 }

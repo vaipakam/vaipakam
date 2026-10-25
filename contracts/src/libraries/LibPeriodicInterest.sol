@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibLoanClock} from "./LibLoanClock.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
@@ -32,8 +33,32 @@ library LibPeriodicInterest {
     }
 
     /// @dev Period boundary timestamp — `lastPeriodicInterestSettledAt +
-    ///      intervalDays`. Returns 0 when cadence is None.
+    ///      intervalDays`, moved by the loan's pause credit
+    ///      ({LibLoanClock.pauseCredit}, #668 / #935) like every other loan
+    ///      deadline. Returns 0 when cadence is None. The checkpoint itself
+    ///      ({advanceCheckpoint}) still steps by whole intervals from the
+    ///      original anchor; the credit is applied where a boundary is read,
+    ///      so the loan's whole schedule moves together.
     function periodEndAt(
+        LibVaipakam.Loan storage loan
+    ) internal view returns (uint256) {
+        uint256 days_ = LibVaipakam.intervalDays(loan.periodicInterestCadence);
+        if (days_ == 0) return 0;
+        return uint256(loan.lastPeriodicInterestSettledAt) + days_ * LibVaipakam.ONE_DAY
+            + LibLoanClock.pauseCredit(loan);
+    }
+
+    /// @dev The point a full settlement of the current period pays the
+    ///      lender through: `lastPeriodicInterestSettledAt + intervalDays`,
+    ///      NOT moved by the pause credit. A period's expected interest is
+    ///      one interval's worth ({expectedInterestForPeriod}) and interest
+    ///      accrues by elapsed time, pause included (#668 / #935), so one
+    ///      interval of interest covers one interval of elapsed time. The
+    ///      moved {periodEndAt} is the payment DEADLINE; this is what was
+    ///      PAID. Stamping the deadline as paid-through would mark the
+    ///      paused stretch paid when nobody paid it. Returns 0 when cadence
+    ///      is None.
+    function deliveredThroughAt(
         LibVaipakam.Loan storage loan
     ) internal view returns (uint256) {
         uint256 days_ = LibVaipakam.intervalDays(loan.periodicInterestCadence);
@@ -55,8 +80,8 @@ library LibPeriodicInterest {
     ) internal view returns (uint256) {
         uint256 days_ = LibVaipakam.intervalDays(loan.periodicInterestCadence);
         if (days_ == 0) return 0;
-        uint256 boundary = uint256(loan.lastPeriodicInterestSettledAt) +
-            days_ * LibVaipakam.ONE_DAY;
+        // The boundary carries the pause credit ({periodEndAt}).
+        uint256 boundary = periodEndAt(loan);
         // Grace looks up by `intervalDays - 1` so a Monthly cadence
         // (30d interval) hits slot 1 (< 30d → 1 day default) rather
         // than slot 2 (< 90d → 3 days). Slot 4 (≥ 365d → 30 days,
@@ -91,8 +116,8 @@ library LibPeriodicInterest {
     ) internal view returns (bool) {
         uint256 days_ = LibVaipakam.intervalDays(loan.periodicInterestCadence);
         if (days_ == 0) return false;
-        uint256 boundary = uint256(loan.lastPeriodicInterestSettledAt) +
-            days_ * LibVaipakam.ONE_DAY;
+        // The boundary carries the pause credit ({periodEndAt}).
+        uint256 boundary = periodEndAt(loan);
         if (block.timestamp < boundary) return false;
         return uint256(loan.interestPaidSinceLastPeriod) >= expectedInterestForPeriod(loan);
     }

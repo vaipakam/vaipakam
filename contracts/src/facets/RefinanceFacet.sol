@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
@@ -330,8 +331,6 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // grace window). The strictly-post-grace BLOCK is enforced further down
         // against the REPLACEMENT's acceptance time, not `block.timestamp` — see
         // the gate after `newLoan` is resolved (Codex #1233 r2 P1).
-        uint256 oldEndTime = uint256(oldLoan.startTime) +
-            uint256(oldLoan.durationDays) * LibVaipakam.ONE_DAY;
         // The current borrower-NFT holder — the fund source and collateral
         // recipient on every route (fail-open screened in {_authorizeRefinance}).
         address currentBorrowerNftOwner =
@@ -539,7 +538,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // treasury/lender like the interest. The yield-fee branch below keeps the
         // whole `interest + lateFee` for the lender (mirrors RepayFacet), so the
         // penalty is never silently dropped on the discounted path.
-        uint256 lateFee = LibVaipakam.calculateLateFee(oldLoanId, oldEndTime);
+        uint256 lateFee = LibVaipakam.calculateLateFee(oldLoanId);
         uint256 interestPortion = oldInterest + lateFee;
         (uint256 treasuryFee, uint256 lenderInterest) = LibEntitlement.splitTreasury(
             oldLoan,
@@ -887,9 +886,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // GRACE; a late refinance (past grace, before default was triggered) is a
         // non-clean close and forfeits the old borrower reward, matching the
         // preclose/repay convention (Codex #1061 P2).
-        uint256 oldGraceEnd = oldLoan.startTime
-            + oldLoan.durationDays * LibVaipakam.ONE_DAY
-            + LibVaipakam.gracePeriod(oldLoan.durationDays);
+        uint256 oldGraceEnd = LibLoanClock.graceEnd(oldLoan);
         LibInteractionRewards.closeLoan(
             oldLoanId,
             /* borrowerClean */ block.timestamp <= oldGraceEnd,

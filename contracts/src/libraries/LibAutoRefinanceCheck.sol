@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibLoanClock} from "./LibLoanClock.sol";
 import {LibERC721} from "./LibERC721.sol";
 import {LibPeriodicInterest} from "./LibPeriodicInterest.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
@@ -180,10 +181,7 @@ library LibAutoRefinanceCheck {
         // overdue (Active-but-past-grace) target is unfillable, so drop it from
         // the match-admissible set instead of previewing an unfillable match.
         if (
-            block.timestamp >
-            uint256(oldLoan.startTime) +
-                uint256(oldLoan.durationDays) * 1 days +
-                LibVaipakam.gracePeriod(oldLoan.durationDays)
+            block.timestamp > LibLoanClock.graceEnd(oldLoan)
         ) return false;
         // No live swap-to-repay intent commit on the target (mirror
         // `LibVaipakam.assertNoLiveIntentCommit`).
@@ -327,10 +325,7 @@ library LibAutoRefinanceCheck {
         // target fails fast at create/accept instead of being admitted and then
         // reverted after the replacement-loan work.
         if (
-            block.timestamp >
-            uint256(loan.startTime) +
-                uint256(loan.durationDays) * 1 days +
-                LibVaipakam.gracePeriod(loan.durationDays)
+            block.timestamp > LibLoanClock.graceEnd(loan)
         ) {
             revert RefinanceTargetPastGrace();
         }

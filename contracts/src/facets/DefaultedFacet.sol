@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
@@ -252,7 +253,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // Illiquid asset: valued at 0, KYC always passes.
         }
 
-        uint256 endTime = loan.startTime + loan.durationDays * 1 days;
+        uint256 endTime = LibLoanClock.maturity(loan);
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
         if (block.timestamp <= graceEnd) revert NotDefaultedYet();
 
@@ -515,7 +516,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                         (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
                 }
                 accruedInterest = LibEntitlement.creditSettledInterest(loan, accruedInterest);
-                uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
+                uint256 lateFee = LibVaipakam.calculateLateFee(loanId);
                 uint256 totalDebt = loan.principal + accruedInterest + lateFee;
                 uint256 interestPortion = accruedInterest + lateFee;
 
@@ -927,7 +928,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) return false;
 
-        uint256 endTime = loan.startTime + loan.durationDays * 1 days;
+        uint256 endTime = LibLoanClock.maturity(loan);
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
         return block.timestamp > graceEnd;
     }

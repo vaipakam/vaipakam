@@ -808,7 +808,12 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     /// @dev PAUSER_ROLE-only. Emits LibPausable.Paused. Admin / role-mgmt /
     ///      diamond-cut / oracle-admin / vault-upgrade paths intentionally
     ///      remain callable while paused — see PauseGatingTest for the full
-    ///      gated surface.
+    ///      gated surface. Under owner decision D2 (#668 / #935) repay
+    ///      (`repayLoan`, `repayPartial`) and `addCollateral` also stay open,
+    ///      so a borrower can always lower their risk, and the paused time is
+    ///      added to every open loan's due date and grace end
+    ///      ({LibLoanClock}); the interval is recorded on the pause log
+    ///      ({getPauseIntervals}).
     function pause() external onlyRole(LibAccessControl.PAUSER_ROLE) {
         LibPausable.pause();
     }
@@ -891,6 +896,39 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     ///         auto-pause window is still active.
     function paused() external view returns (bool) {
         return LibPausable.paused();
+    }
+
+    /// @notice Total time the protocol had been paused before `timestamp`
+    ///         (#668 / #935, owner decision D2). An open loan's deadlines
+    ///         move by `pausedSecondsAt(now) - pausedSecondsAt(startTime)`.
+    /// @dev    Counts only pauses recorded on the pause-interval log, which
+    ///         starts empty on a Diamond upgraded in place: a pause that ended
+    ///         before the upgrade is not counted.
+    function pausedSecondsAt(uint256 timestamp) external view returns (uint256) {
+        return LibPausable.pausedSecondsAt(timestamp);
+    }
+
+    /// @notice Pages the pause-interval log, oldest first (#668 / #935).
+    /// @dev    `end == type(uint64).max` marks the interval of a manual pause
+    ///         still in force. An auto-pause interval carries its window's own
+    ///         end, which may still be in the future. `pausedBefore` is the
+    ///         total paused time of every earlier interval.
+    /// @param from  Index of the first interval to return.
+    /// @param count Maximum number of intervals to return.
+    /// @return intervals The page, possibly shorter than `count`.
+    /// @return total Number of intervals on the log.
+    function getPauseIntervals(uint256 from, uint256 count)
+        external
+        view
+        returns (LibPausable.PauseInterval[] memory intervals, uint256 total)
+    {
+        total = LibPausable.pauseIntervalCount();
+        uint256 n = from >= total ? 0 : total - from;
+        if (n > count) n = count;
+        intervals = new LibPausable.PauseInterval[](n);
+        for (uint256 i; i < n; ++i) {
+            intervals[i] = LibPausable.pauseIntervalAt(from + i);
+        }
     }
 
     /// @notice Auto-pause primitive used by the off-chain anomaly

@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
@@ -614,7 +615,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // and turn the borrower's auto-extend consent into an early-
         // maturity / default vector. An "extension" must strictly
         // extend the loan's end time.
-        uint256 oldEndTime = uint256(loan.startTime) + loan.durationDays * 1 days;
+        uint256 oldEndTime = LibLoanClock.maturity(loan);
         if (newEndTimeUint <= oldEndTime) revert ExtensionMustExtend();
         // Codex round-4 P1 — refuse extension once the loan is past
         // its default grace window. At that point
@@ -666,7 +667,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // matching RepayFacet. (`oldEndTime` is shadowed-removed
         // here — the same value computed at the cap-intersection
         // block above.)
-        uint256 lateFee = LibVaipakam.calculateLateFee(loanId, oldEndTime);
+        uint256 lateFee = LibVaipakam.calculateLateFee(loanId);
         if (accruedInterest + lateFee > 0) {
             // Codex round-1 P2 — use the protocol's
             // `cfgTreasuryFeeBps` (resolved via `splitTreasury`)

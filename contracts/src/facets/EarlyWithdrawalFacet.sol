@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -352,11 +353,10 @@ contract EarlyWithdrawalFacet is
             revert SalePositionNotConsolidatable();
         }
 
-        // Calculate remaining days — revert if loan is past maturity
-        uint256 elapsed = block.timestamp - loan.startTime;
-        uint256 elapsedDays = elapsed / 1 days;
-        if (elapsedDays >= loan.durationDays) revert InvalidSaleOffer();
-        uint256 remainingDays = loan.durationDays - elapsedDays;
+        // Remaining term to the loan's EFFECTIVE maturity (the pause credit
+        // included, #668 / #935) — revert once the loan has reached it.
+        uint256 remainingDays = LibLoanClock.remainingTermDays(loan);
+        if (remainingDays == 0) revert InvalidSaleOffer();
 
         // Design item 1 — mandatory finite expiry, clamped at the loan's own
         // maturity. Validated in its own frame (viaIR stack ceiling).
@@ -547,7 +547,7 @@ contract EarlyWithdrawalFacet is
      *           [MIN_SALE_LISTING_SECONDS, MAX_SALE_LISTING_SECONDS] — there
      *           is no never-expires option and no sub-minimum flash listing.
      *        2. The expiry is clamped at the loan's LIVE maturity
-     *           (`startTime + durationDays`), so a listing can never be
+     *           (`LibLoanClock.maturity`, the pause credit included), so a listing can never be
      *           accepted inside the grace window: `isOfferExpired` treats
      *           `now >= expiresAt` as expired, and stamping exactly the
      *           maturity timestamp makes the listing die the second the loan
@@ -565,8 +565,7 @@ contract EarlyWithdrawalFacet is
             listingSeconds < LibVaipakam.MIN_SALE_LISTING_SECONDS ||
             listingSeconds > LibVaipakam.MAX_SALE_LISTING_SECONDS
         ) revert SaleListingWindowInvalid();
-        uint256 maturity = uint256(loan.startTime) +
-            uint256(loan.durationDays) * 1 days;
+        uint256 maturity = LibLoanClock.maturity(loan);
         uint256 requested = block.timestamp + uint256(listingSeconds);
         uint256 bounded = requested < maturity ? requested : maturity;
         if (bounded < block.timestamp + LibVaipakam.MIN_SALE_LISTING_SECONDS)
@@ -708,10 +707,11 @@ contract EarlyWithdrawalFacet is
         // routed to treasury or Noah.
         // #641 — accrued/remaining split reads the interest clock (post-partial
         // origin + remaining term), not the immutable term tuple.
+        // #668 / #935 — the remaining term runs to the pause-moved end
+        // ({LibLoanClock.interestTermEnd}), so a buyer is compensated for the
+        // days a pause added to the position they take on.
         uint256 accrualStart = LibVaipakam.interestAccrualStartOf(loan);
-        uint256 elapsed = block.timestamp - accrualStart;
-        uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
-        uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
+        uint256 remainingSecs = LibLoanClock.remainingInterestSeconds(loan, block.timestamp);
         // #1503 item 28 — the FORFEITURE clock is not the accrual clock. The
         // seller forfeits accrued interest because the borrower has not paid it;
         // on a periodic loan the borrower has paid part of it, since periodic
@@ -720,9 +720,9 @@ contract EarlyWithdrawalFacet is
         // interest already in their hands.
         //
         // Narrowing the WINDOW rather than subtracting an amount — see
-        // {LibEntitlement.forfeitureAccrualStart}. `elapsed` above is unchanged
-        // and still measures the loan's own progress, which is what
-        // `remainingSecs` needs; only the forfeiture figure uses the later start.
+        // {LibEntitlement.forfeitureAccrualStart}. `remainingSecs` above still
+        // measures the loan's own progress from the accrual clock; only the
+        // forfeiture figure uses the later start.
         uint256 forfeitFrom = LibEntitlement.forfeitureAccrualStart(loanId, accrualStart);
         uint256 forfeitSecs =
             block.timestamp > forfeitFrom ? block.timestamp - forfeitFrom : 0;

@@ -6,6 +6,7 @@ import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
+import {LibLoanClock} from "./LibLoanClock.sol";
 // Numeraire generalization (b1) (T-047 prep): the INumeraireOracle interface that
 // Phase 1+2 introduced for numeraire→USD boundary conversion is no
 // longer needed — `OracleFacet.getAssetPrice` now returns numeraire-
@@ -10758,8 +10759,10 @@ library LibVaipakam {
     ///         window). Pulling the comparison into a single helper
     ///         avoids the off-by-one risk of duplicating the
     ///         `>=`/`<` pair at every call site.
-    /// @dev    `loanEnd = loan.startTime + loan.durationDays × 1 days`;
-    ///         `gracePeriodEnd = loanEnd + gracePeriod(durationDays)`.
+    /// @dev    `loanEnd` and `gracePeriodEnd` are the loan's effective
+    ///         maturity and grace end from {LibLoanClock}, which add the
+    ///         time the protocol was paused since the loan started (#668 /
+    ///         #935).
     ///         The lower bound is inclusive (`>=`) because the loan is
     ///         "in grace" the moment it crosses its repayment deadline;
     ///         the upper bound is exclusive (`<`) because
@@ -10767,7 +10770,7 @@ library LibVaipakam {
     ///         `block.timestamp == gracePeriodEnd` (Codex round-1 P3
     ///         fix on PR #356).
     function isGraceWindow(Loan storage loan) internal view returns (bool) {
-        uint256 loanEnd = uint256(loan.startTime) + (uint256(loan.durationDays) * 1 days);
+        uint256 loanEnd = LibLoanClock.maturity(loan);
         uint256 gracePeriodEnd = loanEnd + gracePeriod(loan.durationDays);
         return block.timestamp >= loanEnd && block.timestamp < gracePeriodEnd;
     }
@@ -10955,16 +10958,16 @@ library LibVaipakam {
     }
 
     /// @dev Late fee schedule: 1% on the first day past due, +0.5% each
-    ///      subsequent day, capped at 5% of principal. Returns 0 when the
-    ///      loan is still within `endTime`.
+    ///      subsequent day, capped at 5% of principal. Returns 0 until the
+    ///      loan's effective maturity ({LibLoanClock.maturity}), so no late
+    ///      fee is charged for time the protocol was paused (#668 / #935).
+    ///      The maturity is worked out here, never passed in, so no caller
+    ///      can price the fee against a deadline the pause credit missed.
     /// @param loanId  Loan id.
-    /// @param endTime Unix timestamp at which the loan's duration expires.
     /// @return fee    Late fee in principal units (BPS-scaled).
-    function calculateLateFee(
-        uint256 loanId,
-        uint256 endTime
-    ) internal view returns (uint256 fee) {
-        return (storageSlot().loans[loanId].principal * lateFeeBps(endTime)) / 10000; // Basis points
+    function calculateLateFee(uint256 loanId) internal view returns (uint256 fee) {
+        Loan storage loan = storageSlot().loans[loanId];
+        return (loan.principal * lateFeeBps(LibLoanClock.maturity(loan))) / 10000; // Basis points
     }
 
     /// @dev #2427 — the late-fee rate {calculateLateFee} applies, in BPS of
@@ -11003,15 +11006,14 @@ library LibVaipakam {
     ///      pre-funded buffer guarantees `fee <= bufferAmount` under ANY later
     ///      config change — RepayFacet funds the rental late fee from
     ///      `bufferAmount`.
+    ///      Like {calculateLateFee}, it runs from the rental's effective
+    ///      maturity, so paused time is never charged (#668 / #935).
     /// @param loanId  Rental loan id.
-    /// @param endTime Unix timestamp at which the rental term expires.
     /// @return fee    Late fee in prepay-asset units.
-    function calculateRentalLateFee(
-        uint256 loanId,
-        uint256 endTime
-    ) internal view returns (uint256 fee) {
+    function calculateRentalLateFee(uint256 loanId) internal view returns (uint256 fee) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        uint256 endTime = LibLoanClock.maturity(loan);
 
         if (block.timestamp <= endTime) return 0;
 

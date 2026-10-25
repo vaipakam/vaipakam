@@ -6,6 +6,7 @@ import {LibERC721} from "./LibERC721.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
+import {LibLoanClock} from "./LibLoanClock.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 
 /**
@@ -296,9 +297,8 @@ library LibSaleListing {
     ) internal view returns (uint256) {
         LibVaipakam.Loan storage loan = s.loans[loanId];
         uint256 accrualStart = LibVaipakam.interestAccrualStartOf(loan);
-        uint256 elapsed = at > accrualStart ? at - accrualStart : 0;
-        uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
-        uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
+        // #668 / #935 — the remaining term runs to the pause-moved end.
+        uint256 remainingSecs = LibLoanClock.remainingInterestSeconds(loan, at);
 
         uint256 forfeitFrom = LibEntitlement.forfeitureAccrualStart(loanId, accrualStart);
         uint256 forfeitSecs = at > forfeitFrom ? at - forfeitFrom : 0;

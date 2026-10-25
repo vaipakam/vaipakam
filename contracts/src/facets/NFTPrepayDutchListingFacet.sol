@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -331,7 +332,7 @@ contract NFTPrepayDutchListingFacet is
     ///      load-bearing for the split — both facets must compute the
     ///      same value from the same loan record.
     function _gracePeriodEnd(LibVaipakam.Loan storage loan) private view returns (uint256) {
-        uint256 endTime = uint256(loan.startTime) + (uint256(loan.durationDays) * 1 days);
+        uint256 endTime = LibLoanClock.maturity(loan);
         return endTime + LibVaipakam.gracePeriod(loan.durationDays);
     }
 
