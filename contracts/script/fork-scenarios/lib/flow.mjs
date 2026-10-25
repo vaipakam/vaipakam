@@ -483,15 +483,15 @@ export const NFT_STATUS = {
   LoanLiquidated: 5, LoanClosed: 6, LoanFallbackPending: 7,
 };
 
+/** Both position NFTs recording `status` — the shape every terminal step states. */
+export const bothNfts = (status) => ({ lenderNftStatus: status, borrowerNftStatus: status });
+
 /**
  * Why a position NFT is transfer-locked. The specification locks the lender
  * NFT while a lender sale offer is live and the borrower NFT while a preclose
  * offset link or a prepay collateral listing is live; each lock releases on
  * cancel or settlement. Indices are `LibERC721.LockReason`'s.
  */
-/** Both position NFTs recording `status` — the shape every terminal step states. */
-export const bothNfts = (status) => ({ lenderNftStatus: status, borrowerNftStatus: status });
-
 export const NFT_LOCK = { None: 0, PrecloseOffset: 1, EarlyWithdrawalSale: 2, PrepayCollateralListing: 3, SwapToRepayIntent: 4 };
 
 /**
