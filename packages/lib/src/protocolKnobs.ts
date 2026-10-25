@@ -18,11 +18,16 @@
  * console says the setting is not shown yet rather than borrow a position.
  * The package test pins every entry to that shape in the compiled ABI.
  *
- * SETTINGS, NOT LIVE STATE. Each value here changes only when governance
- * sets it, so a snapshot of it is true as of the block it was read at. A
- * value that moves with the clock (the global pause, whose auto-pause
- * window lapses without any event) is not a setting and is not listed:
- * a snapshot would keep reporting it after it had changed.
+ * SETTINGS AND RECORDED FACTS, NOT LIVE STATE. Each value here changes
+ * only in a transaction that announces the change (or, for an `eventless`
+ * entry, says it does not), so a snapshot of it is true as of the block it
+ * was read at. Most are settings governance sets. A few are facts the
+ * protocol records and that only an announced transaction moves, such as
+ * when the auto-pause cooldown ends (#2843): a stored timestamp, compared
+ * with the clock by whoever reads it. A value that moves with the clock
+ * itself (the global pause, whose auto-pause window lapses without any
+ * event) is not listed: a snapshot would keep reporting it after it had
+ * changed.
  *
  * The ABI is a parameter rather than an import so this package keeps no
  * runtime dependency on `@vaipakam/contracts`; both callers pass the
@@ -37,11 +42,13 @@ interface ProtocolKnobGetterBase {
   readonly key: string;
   /** The Diamond view that answers it: no arguments, one output. */
   readonly getter: string;
-  /** Codex #2815 r1 — every event a setter of this value emits. The
-   *  indexer refreshes its snapshot on exactly these (plus its own list of
-   *  bundle setters), so a setting added here cannot be published without
-   *  naming what announces its change. The package test pins each name to
-   *  an event the Diamond ABI declares. */
+  /** Codex #2815 r1 — every event emitted by a transaction that changes
+   *  this value: its setters' events and, for a recorded fact (#2843), the
+   *  event of the transaction that records it. The indexer refreshes its
+   *  snapshot on exactly these (plus its own list of bundle setters), so a
+   *  value added here cannot be published without naming what announces
+   *  its change. The package test pins each name to an event the Diamond
+   *  ABI declares. */
   readonly setterEvents: readonly string[];
 }
 
@@ -97,6 +104,20 @@ export const PROTOCOL_KNOB_GETTERS = [
   { key: 'autoRefinanceEnabled', getter: 'getAutoRefinanceEnabled', setterEvents: ['AutoRefinanceEnabledSet'] },
   { key: 'autoExtendEnabled', getter: 'getAutoExtendEnabled', setterEvents: ['AutoExtendEnabledSet'] },
   { key: 'keepersPaused', getter: 'keepersPaused', setterEvents: ['KeepersPausedSet'] },
+  // #2843 — the gap after an auto-pause window that froze a live protocol
+  // before the watcher may open the next one (the effective value: the
+  // default when governance has set none).
+  { key: 'autoPauseCooldownSeconds', getter: 'autoPauseCooldownSeconds', setterEvents: ['AutoPauseCooldownSet'] },
+  // #2843 — a recorded fact, not a setting: when that cooldown ends (zero
+  // while no window has ever frozen a live protocol). A window that freezes
+  // one moves it (`AutoPaused`), and so does a new cooldown, which applies
+  // to the one already running. Nothing else does: it is the stored end of
+  // the last such window plus the cooldown, never a reading of the clock.
+  {
+    key: 'autoPauseAvailableAt',
+    getter: 'autoPauseAvailableAt',
+    setterEvents: ['AutoPaused', 'AutoPauseCooldownSet'],
+  },
   { key: 'lenderIntentEnabled', getter: 'isLenderIntentEnabled', setterEvents: ['LenderIntentEnabledSet'] },
   // #2760 — the effective value: the default when governance has set none.
   { key: 'minIntentFillNumeraire', getter: 'getMinIntentFillNumeraire', setterEvents: ['MinIntentFillNumeraireSet'] },
@@ -111,7 +132,7 @@ export const EVENTLESS_PROTOCOL_KNOBS: ReadonlySet<string> = new Set(
 );
 
 /** Codex #2815 r1 — every event that announces a change to a published
- *  setting. The indexer's snapshot refreshes on each of these. */
+ *  value. The indexer's snapshot refreshes on each of these. */
 export const PROTOCOL_KNOB_SETTER_EVENTS: ReadonlySet<string> = new Set(
   PROTOCOL_KNOB_GETTERS.flatMap((k): readonly string[] => k.setterEvents),
 );

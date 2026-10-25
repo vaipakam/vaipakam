@@ -68,10 +68,10 @@ import {
   type ConsoleReading,
   type SnapshotGap,
 } from '../data/protocolConsoleRead';
-import { CONSOLE_SECTIONS, type ConsoleRow } from '../data/protocolConsoleRows';
+import { CONSOLE_SECTIONS, readNotBefore, type ConsoleRow } from '../data/protocolConsoleRows';
 import { EVENTLESS_PROTOCOL_KNOBS } from '@vaipakam/lib/protocolKnobs';
 import { useActiveChain } from '../chain/useActiveChain';
-import { exactAmountString, localeDecimalString, localeNumber } from '../lib/format';
+import { exactAmountString, formatExactSpan, localeDecimalString, localeNumber } from '../lib/format';
 import { VPFI_DECIMALS } from '../data/vpfi';
 import { useNowSec } from '../hooks/useNowSec';
 import { idleAware } from '../lib/idle';
@@ -130,13 +130,28 @@ function makeFormatters(locale: string | undefined) {
     return localeDecimalString(v, locale);
   }
 
+  /** A unix time as a date and time in the app's language, with its time
+   *  zone named, so a reader comparing it with their own clock knows which
+   *  clock it is on. */
+  function dateTime(unixSec: number): string {
+    return new Date(unixSec * 1000).toLocaleString(locale, {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZoneName: 'short',
+    });
+  }
+
   const ZERO_ADDRESS = /^0x0{40}$/i;
   const ZERO_WORD = /^0x0{64}$/i;
 
   /** #2071 — one row's value, written the way its format says. A value
    *  the source did not report is `—`, which the row marks "not reported";
-   *  a value that IS reported but unset says "not set", never a dash. */
-  function rowValue(row: ConsoleRow, values: ProtocolKnobValues): string {
+   *  a value that IS reported but unset says "not set", never a dash.
+   *  `nowSec` is the page's ticking clock, for a time compared with now. */
+  function rowValue(row: ConsoleRow, values: ProtocolKnobValues, nowSec: number): string {
     const v = values[row.key];
     if (v === undefined) return '—';
     const str = String(v);
@@ -171,6 +186,20 @@ function makeFormatters(locale: string | undefined) {
         const amount = exactDecimal(exactAmountString(BigInt(str), 18));
         const n = values.numeraireSymbol === undefined ? null : numeraireOf(values.numeraireSymbol);
         return n === null ? copy.protocolConsole.numeraireUnits(amount) : `${amount} ${n.symbol}`;
+      }
+      case 'notBefore': {
+        // #2843 — the recorded time, always shown beside the verdict.
+        const r = readNotBefore(str, nowSec);
+        switch (r.kind) {
+          case 'unreadable':
+            return str;
+          case 'none':
+            return row.zeroMeans ? copy.protocolConsole[row.zeroMeans] : copy.protocolConsole.notSet;
+          case 'passed':
+            return copy.protocolConsole.availableNow(dateTime(r.at));
+          case 'ahead':
+            return copy.protocolConsole.availableFrom(dateTime(r.at), formatExactSpan(r.inSec));
+        }
       }
     }
   }
@@ -481,7 +510,7 @@ export function ProtocolConsole() {
                 <Row
                   key={row.key}
                   label={copy.protocolConsole[row.label]}
-                  value={rowValue(row, v)}
+                  value={rowValue(row, v, nowSec)}
                   notes={[
                     ...(row.hint ? [copy.protocolConsole[row.hint]] : []),
                     // Codex #2683 r3 — a setting whose change emits no event
