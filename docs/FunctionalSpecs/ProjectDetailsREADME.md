@@ -3028,6 +3028,20 @@ General design requirements:
   read from the chain at the event's own block; if that historical read fails,
   the row should be left untouched for a later healing scan rather than written
   with a guessed fallback.
+- **A Scan Finishes Whole Blocks Within One Invocation (#2221):** A busy stretch
+  of chain must never stop the index from advancing. When a scan's window holds
+  more events than one invocation's request allowance can process, the scan
+  finishes as many whole blocks as it can, in chain order. It holds back what the
+  end of the pass needs to record its position and finish its once-per-pass
+  steps, and it records its position just below the first block it did not
+  finish. The next invocation resumes from there. A block is finished whole or
+  not at all: nothing the scan learned from an unfinished block is presented as
+  indexed, and the block is processed again in full by the next pass. A pass
+  always finishes at least its first block with events, so no single block can
+  hold the index in place. Where a scan stops early, it says so in its log: where
+  it stopped, how many blocks it finished and why. Steps that run after the scan,
+  such as notifications and live-update hints, act only on the blocks the pass
+  finished.
 - Same-block lifecycle ordering should be resolved from authoritative chain
   state rather than inferred from balances alone. For example, if an internal
   match and a repay / swap-repay settle the same loan in one block, the indexed
