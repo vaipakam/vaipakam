@@ -3035,7 +3035,9 @@ General design requirements:
   end of the pass needs to record its position and finish its once-per-pass
   steps, and it records its position just below the first block it did not
   finish. The next invocation resumes from there and processes that block again
-  in full. The scan's recorded position never claims a block it did not finish.
+  in full. A scan that stopped this way starts that next invocation itself,
+  without waiting for the regular schedule, however close to the chain's head
+  it stopped; it made progress, so it is not treated as a failed attempt. The scan's recorded position never claims a block it did not finish.
   The records an unfinished block had already written are visible until the
   next pass completes them, exactly as any pass's writes are visible while the
   pass is still running. Those records are what the chain recorded, and
