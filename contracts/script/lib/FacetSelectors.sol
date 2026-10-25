@@ -335,6 +335,24 @@ library FacetSelectors {
         return bytes4(keccak256("updateRiskParams(address,uint256,uint256,uint256)"));
     }
 
+    /// @notice The forced-sale entry points whose signatures #2796 changed.
+    ///         The three forced-sale entries gained the caller's quoted sell
+    ///         amount, and the host's periodic-only settlement entry gave way
+    ///         to the one sale entry every forced sale uses. A `Replace` of
+    ///         the new surfaces leaves each old selector routed to the OLD
+    ///         build, which would sell the whole collateral on the old
+    ///         waterfall; a curated refresh Removes whichever are routed.
+    /// @dev    Computed from the signatures: none exists in source any more.
+    function retiredForcedSaleSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = bytes4(keccak256("triggerLiquidation(uint256,(uint256,bytes)[])"));
+        s[1] = bytes4(keccak256("triggerDefault(uint256,(uint256,bytes)[])"));
+        s[2] = bytes4(keccak256("settlePeriodicInterest(uint256,(uint256,bytes)[])"));
+        s[3] = bytes4(keccak256(
+            "settlePeriodicSale(uint256,(uint256,uint256,uint256,uint256,bool),uint256,(uint256,bytes)[],address)"
+        ));
+    }
+
     /// @notice The ETH·day recycle-tariff setter #2489 DELETED from `ConfigFacet`
     ///         (its slot is retained, dead; security review of #2489). A
     ///         `Replace` of the new surface leaves it routed to the OLD
@@ -524,24 +542,27 @@ library FacetSelectors {
         s[2] = NumeraireValueFacet.getLiquidNumeraireValue.selector;
     }
 
-    /// @notice Full external selector surface of {ForcedSaleFacet} (3).
+    /// @notice Full external selector surface of {ForcedSaleFacet} (4).
     ///
-    /// @dev    #2795. The one forced-sale rule: size the sale to the debt,
-    ///         sell it, and split the proceeds lender first. `RepayPeriodicFacet`
-    ///         (the periodic-interest settlement) reads the plan and settles
-    ///         through these selectors by self-call, so a curated refresh of it
-    ///         WITHOUT this facet reverts `FunctionDoesNotExist` on every
-    ///         periodic settlement that has to sell. `RedeployFacets` therefore
-    ///         cuts it from this list.
+    /// @dev    #2795 / #2796. The one forced-sale rule: size the sale to the
+    ///         debt, sell it, and split the proceeds lender first.
+    ///         `RepayPeriodicFacet` (the periodic-interest settlement),
+    ///         `RiskFacet` and `RiskSplitLiquidationFacet` (the Health-Factor
+    ///         liquidation) and `DefaultedFacet` (the liquid time-based
+    ///         default) sell through `sellToNeed` by self-call, so a curated
+    ///         refresh of any of them WITHOUT this facet reverts
+    ///         `FunctionDoesNotExist` on every forced sale. `RedeployFacets`
+    ///         therefore cuts it from this list.
     ///
     ///         The ONLY copy of the list, as for {swapAttempt}:
     ///         `DeployDiamond` (`_getForcedSaleSelectors`) and `HelperTest`
     ///         (`getForcedSaleFacetSelectors`) return it, and
     ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
     function forcedSale() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = ForcedSaleFacet.previewForcedSale.selector;
-        s[1] = ForcedSaleFacet.settlePeriodicSale.selector;
+        s[1] = ForcedSaleFacet.sellToNeed.selector;
         s[2] = ForcedSaleFacet.payBorrowerWallet.selector;
+        s[3] = bytes4(keccak256("QUOTE_MARGIN_BPS()"));
     }
 }

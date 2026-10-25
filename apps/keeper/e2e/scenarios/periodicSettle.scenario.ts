@@ -8,9 +8,9 @@
  *   1. Before the period's grace is over the pass sends nothing.
  *   2. Once it is over, with the borrower having paid no interest, the pass
  *      sells the borrower's collateral through the fixture's swap venue for
- *      EXACTLY the amount the contract sizes (`previewForcedSale(loanId, 0)`,
- *      #2795), not the whole collateral: the sale's `ForcedSaleSettled`
- *      reports that amount sold, the lender paid the whole shortfall, and the
+ *      the middle of the range the contract sizes (`previewForcedSale(loanId,
+ *      0)`, #2795 / #2796), not the whole collateral: the sale's
+ *      `ForcedSaleSettled` reports that amount sold, the lender paid the whole shortfall, and the
  *      sale covered. The settlement is the keeper's own transaction, and the
  *      loan stays Active with its next period opened.
  *   3. The next run sends nothing: the period it settled is no longer due.
@@ -26,6 +26,7 @@ import { openScenario, type KeeperChain } from '../harness/chain';
 import { keeperEnvFor, tickNow, type KeeperHarness } from '../harness/keeperEnv';
 import { collectOpsAlerts, type OpsAlertLog } from '../harness/opsAlerts';
 import { openLoan, WETH } from '@vaipakam/anvil-harness/lending';
+import { forcedSaleQuoteAmount, type ForcedSalePlan } from '@vaipakam/lib/routeBuilder';
 
 /** `LibVaipakam.PeriodicInterestCadence.Monthly`. */
 const MONTHLY = 1;
@@ -34,13 +35,7 @@ const PERIODIC = 0;
 /** The finer-cadence threshold's floor ($1,000), so a 1-WETH loan qualifies. */
 const THRESHOLD = 1_000n * 10n ** 18n;
 
-interface Plan {
-  debt: bigint;
-  need: bigint;
-  sell: bigint;
-  floor: bigint;
-  covered: boolean;
-}
+type Plan = ForcedSalePlan;
 
 let sc: KeeperChain;
 let k: KeeperHarness;
@@ -120,7 +115,7 @@ describe('periodicSettle on an Anvil chain', () => {
     expect(await keeperNonce()).toBe(before);
   });
 
-  it('sells exactly the contract-sized slice once the grace is over, and pays the lender the shortfall', async () => {
+  it('sells the contract-sized slice once the grace is over, and pays the lender the shortfall', async () => {
     const preview = await sc.read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(
       'previewPeriodicSettle',
       [loanId],
@@ -134,6 +129,11 @@ describe('periodicSettle on an Anvil chain', () => {
     expect(plan.covered).toBe(true);
     expect(plan.sell).toBeGreaterThan(0n);
     expect(plan.sell).toBeLessThan(collateral);
+    expect(plan.maxSell).toBeGreaterThanOrEqual(plan.sell);
+    expect(plan.maxSell).toBeLessThanOrEqual(collateral);
+    // The keeper quotes the middle of the range; nothing mines between this
+    // read and its own, so the range it reads is this one.
+    const quoted = forcedSaleQuoteAmount(plan)!;
 
     const fromBlock = await sc.blockNumber();
     const before = await keeperNonce();
@@ -146,7 +146,7 @@ describe('periodicSettle on an Anvil chain', () => {
     expect(ev.loanId).toBe(loanId);
     expect(Number(ev.kind)).toBe(PERIODIC);
     expect(ev.debt).toBe(plan.debt);
-    expect(ev.collateralSold).toBe(plan.sell);
+    expect(ev.collateralSold).toBe(quoted);
     expect(ev.lenderPaid).toBe(plan.debt);
     expect(ev.covered).toBe(true);
     expect((ev.keeper as Address).toLowerCase()).toBe(sc.address('keeper').toLowerCase());
@@ -156,7 +156,7 @@ describe('periodicSettle on an Anvil chain', () => {
 
     const after = await sc.read<{ status: number; collateralAmount: bigint }>('getLoanDetails', [loanId]);
     expect(Number(after.status)).toBe(0); // Active
-    expect(after.collateralAmount).toBe(collateral - plan.sell);
+    expect(after.collateralAmount).toBe(collateral - quoted);
     const next = await sc.read<readonly [number, bigint, bigint, bigint, bigint, bigint, boolean]>(
       'previewPeriodicSettle',
       [loanId],

@@ -15,6 +15,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title  FallbackCustodyFacetGateTest
@@ -140,7 +141,8 @@ contract FallbackCustodyFacetGateTest is SetupTest {
     ///      with the Diamond's balance unchanged by the entry.
     function _fcEnter() internal {
         uint256 heldBefore = _bal(address(diamond));
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         assertEq(
             uint8(_fcStatus(loanId)),
             uint8(LibVaipakam.LoanStatus.FallbackPending),

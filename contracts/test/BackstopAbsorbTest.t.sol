@@ -25,6 +25,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
+import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title  BackstopAbsorbTest
@@ -197,7 +198,8 @@ contract BackstopAbsorbTest is SetupTest {
             "swap failed"
         );
         mockOraclePrice(mockCollateralERC20, collateralPrice, 8);
-        DefaultedFacet(address(diamond)).triggerDefault(id, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), id);
+        DefaultedFacet(address(diamond)).triggerDefault(id, sellQuote, defaultAdapterCalls());
         mockOraclePrice(mockCollateralERC20, PAR_PRICE, 8);
 
         assertEq(

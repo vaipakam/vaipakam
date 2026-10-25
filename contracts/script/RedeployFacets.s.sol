@@ -451,7 +451,14 @@ contract RedeployFacets is Script {
         (bytes4[] memory fsToAdd, bytes4[] memory fsToReplace) =
             _partitionByRouting(diamond, FacetSelectors.forcedSale());
 
-        uint256 nExtra =
+        // #2796 - every forced-sale entry point gained the caller's sell
+        // amount, so each selector CHANGED: the new ones are Add/Replace by
+        // routing and the retired shapes are Removed wherever still routed
+        // (idempotent: nothing is removed on a fresh or migrated Diamond).
+        IDiamondCut.FacetCut[] memory sellCuts =
+            _forcedSaleEntryCuts(diamond, address(defaultedFacet));
+
+        uint256 nExtra = sellCuts.length +
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
             (riskToRemove.length > 0 ? 1 : 0) +
             (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0) +
@@ -507,6 +514,9 @@ contract RedeployFacets is Script {
         // ProfileFacet + ClaimFacet are partitioned below (not fixed Replaces)
         // because each gained new-and-possibly-unrouted selectors.
         uint256 idx = 9;
+        for (uint256 i = 0; i < sellCuts.length; i++) {
+            cuts[idx++] = sellCuts[i];
+        }
         if (riskToRemove.length > 0) {
             cuts[idx++] = _remove(riskToRemove);
         }
@@ -709,6 +719,7 @@ contract RedeployFacets is Script {
         console.log("  NotificationFee selectors repl.: ", nfToReplace.length);
         console.log("  ForcedSale selectors added:      ", fsToAdd.length);
         console.log("  ForcedSale selectors repl.:      ", fsToReplace.length);
+        console.log("  Sell-amount entry cuts (#2796):  ", sellCuts.length);
     }
 
     /// @dev #1566 S2b - the fallback-custody boundary. From S2b the fallback
@@ -943,25 +954,29 @@ contract RedeployFacets is Script {
         // to Replace. The two #394 HF-floor selectors and the #2696 three-arg
         // `updateRiskParams` may be NEW and go through `_riskAddSelectors()`
         // (partitioned Add/Replace) instead — see the cut wiring above.
-        s = new bytes4[](6);
+        // #2796 - `triggerLiquidation` gained the sell amount, so its selector
+        // is new on an older Diamond and moved to `_riskAddSelectors()`.
+        s = new bytes4[](5);
         s[0] = RiskFacet.calculateLTV.selector;
         s[1] = RiskFacet.calculateHealthFactor.selector;
         s[2] = RiskFacet.isCollateralValueCollapsed.selector;
-        s[3] = RiskFacet.triggerLiquidation.selector;
-        s[4] = RiskFacet.triggerPartialLiquidation.selector;
-        s[5] = RiskFacet.triggerLiquidationDiscounted.selector;
+        s[3] = RiskFacet.triggerPartialLiquidation.selector;
+        s[4] = RiskFacet.triggerLiquidationDiscounted.selector;
     }
 
     /// @dev The RiskFacet selectors that may be unrouted on the target, so they
     ///      are partitioned by live routing (Add the unrouted, Replace the
     ///      routed): the #394 (Codex #647 round-5) runtime HF-floor knob, and
     ///      the #2696 three-argument `updateRiskParams`, whose four-argument
-    ///      predecessor is Removed separately.
+    ///      predecessor is Removed separately, and the #2796 sell-amount
+    ///      `triggerLiquidation`, whose predecessor is Removed by
+    ///      {_forcedSaleEntryCuts}.
     function _riskAddSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = RiskFacet.setMinHealthFactor.selector;
         s[1] = RiskFacet.getMinHealthFactor.selector;
         s[2] = RiskFacet.updateRiskParams.selector;
+        s[3] = RiskFacet.triggerLiquidation.selector;
     }
 
     /// @dev #658 — RiskSplitLiquidationFacet's single selector, mirrors
@@ -971,10 +986,42 @@ contract RedeployFacets is Script {
         s[0] = RiskSplitLiquidationFacet.triggerLiquidationSplit.selector;
     }
 
+    /// @dev The DefaultedFacet selectors routed on every Diamond this script
+    ///      accepts. #2796's sell-amount `triggerDefault` is cut by
+    ///      {_forcedSaleEntryCuts} instead, because it may be new.
     function _defaultedSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
-        s[0] = DefaultedFacet.triggerDefault.selector;
-        s[1] = DefaultedFacet.isLoanDefaultable.selector;
+        s = new bytes4[](1);
+        s[0] = DefaultedFacet.isLoanDefaultable.selector;
+    }
+
+    /// @dev #2796 - the cuts the sell-amount entry points need beyond the
+    ///      partitioned facet lists: a Remove of every retired pre-#2796 shape
+    ///      still routed on `diamond` (the old `triggerLiquidation`,
+    ///      `triggerDefault`, `settlePeriodicInterest` and `settlePeriodicSale`),
+    ///      then `triggerDefault` as an Add where it is new or a Replace where
+    ///      it is routed. The new `triggerLiquidation`, `settlePeriodicInterest`
+    ///      and `sellToNeed` ride the RiskFacet, RepayPeriodicFacet and
+    ///      ForcedSaleFacet partitions. Kept out of `runWith` so its locals do
+    ///      not join that frame.
+    function _forcedSaleEntryCuts(address diamond, address defaultedFacet)
+        internal
+        view
+        returns (IDiamondCut.FacetCut[] memory out)
+    {
+        (, bytes4[] memory retiredRouted) =
+            _partitionByRouting(diamond, FacetSelectors.retiredForcedSaleSelectors());
+        bytes4[] memory entry = new bytes4[](1);
+        entry[0] = DefaultedFacet.triggerDefault.selector;
+        (bytes4[] memory toAdd, bytes4[] memory toReplace) =
+            _partitionByRouting(diamond, entry);
+        out = new IDiamondCut.FacetCut[](
+            (retiredRouted.length > 0 ? 1 : 0) + (toAdd.length > 0 ? 1 : 0)
+                + (toReplace.length > 0 ? 1 : 0)
+        );
+        uint256 i;
+        if (retiredRouted.length > 0) out[i++] = _remove(retiredRouted);
+        if (toReplace.length > 0) out[i++] = _replace(defaultedFacet, toReplace);
+        if (toAdd.length > 0) out[i++] = _add(defaultedFacet, toAdd);
     }
 
     function _loanSelectors() internal pure returns (bytes4[] memory s) {

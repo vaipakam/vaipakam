@@ -9,7 +9,9 @@
  *   2. Fetches quotes from every available DEX venue server-side
  *      (no proxy roundtrip — the keeper sees the API keys directly).
  *   3. Ranks by expected output, packs `AdapterCall[]`.
- *   4. Submits `triggerLiquidation(loanId, calls)` from the keeper EOA.
+ *   4. Submits `triggerLiquidation(loanId, sellAmount, calls)` from the
+ *      keeper EOA, quoted for only the collateral the debt needs (#2796):
+ *      the middle of the range `previewForcedSale` accepts.
  *
  * SAFETY:
  *   - `KEEPER_PRIVATE_KEY` is a Cloudflare secret — never logged.
@@ -47,6 +49,12 @@ import { tryMatchLiquidation } from './matchLiquidation';
 import { orchestrateDexDirectQuotes } from './dexDirectQuotes';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { inTermOnLoanClock } from './loanClockReads';
+import {
+  FORCED_SALE_KIND,
+  forcedSaleQuoteAmount,
+  readForcedSalePlan,
+  type ForcedSalePlan,
+} from '@vaipakam/lib/routeBuilder';
 import type { ChainConfig, Env } from './env';
 import {
   orchestrateServerQuotes,
@@ -168,6 +176,25 @@ function computeOptimalPartialFractionBps(
   return BigInt(fBps);
 }
 
+/**
+ * #2796 — the collateral a full and a split liquidation quote for, from the
+ * contract's own plans (`previewForcedSale` kinds HealthFactorLiquidation and
+ * HealthFactorSplitLiquidation, read at one block). Each is the middle of the
+ * range its kind accepts (`forcedSaleQuoteAmount`); the split's is cut into
+ * two legs that sum to it exactly. Null when no full sale is due; a split
+ * with no sale due has no total and no legs.
+ */
+export function liquidationSaleSizes(
+  fullPlan: ForcedSalePlan,
+  splitPlan: ForcedSalePlan,
+): { fullAmount: bigint; splitTotal: bigint | null; halfAmount: bigint; otherHalf: bigint } | null {
+  const fullAmount = forcedSaleQuoteAmount(fullPlan);
+  if (fullAmount === null) return null;
+  const splitTotal = forcedSaleQuoteAmount(splitPlan);
+  const halfAmount = (splitTotal ?? 0n) / 2n;
+  return { fullAmount, splitTotal, halfAmount, otherHalf: (splitTotal ?? 0n) - halfAmount };
+}
+
 /** Decide whether splitting the liquidation swap 50/50 across two
  *  distinct adapters beats running the full size through a single
  *  adapter via failover. Returns the chosen `{a, b}` half-quote pair
@@ -182,12 +209,16 @@ function computeOptimalPartialFractionBps(
  *  half-quotes (which is usually 0x and 1inch, since each tends to
  *  win when the other doesn't).
  */
-function pickSplitLegs(
+export function pickSplitLegs(
   halfQuotes: ServerOrchestrationResult,
   fullQuotes: ServerOrchestrationResult,
   minImprovementBps: number,
+  /** Collateral the split sells (both legs) and the full sale sells. Since
+   *  #2796 each sale is sized by its own `previewForcedSale` kind, so the
+   *  two can differ and their outputs are compared per unit sold. */
+  sizes: { split: bigint; full: bigint },
 ): { a: ServerRankedQuote; b: ServerRankedQuote; totalExpected: bigint; gainBps: number } | null {
-  if (fullQuotes.ranked.length === 0) return null;
+  if (fullQuotes.ranked.length === 0 || sizes.split === 0n || sizes.full === 0n) return null;
   // AGGREGATOR LEGS ONLY (#2480 r1 `4267324333`). `swapSplit` gives every
   // leg `minOutputAmount = 0` and checks only the total, so a leg must
   // carry its own slippage bound — which aggregator calldata does and a raw
@@ -212,10 +243,15 @@ function pickSplitLegs(
   if (!b) return null;
   const totalExpected = a.expectedOutput + b.expectedOutput;
   const fullTop = fullQuotes.ranked[0].expectedOutput;
-  if (totalExpected <= fullTop) return null;
-  // `gainBps = (totalExpected - fullTop) * 10_000 / fullTop`, computed
+  // Output per unit of collateral sold, cross-multiplied so nothing is
+  // divided before the comparison: the split's rate is totalExpected /
+  // split, the full sale's fullTop / full.
+  const splitScaled = totalExpected * sizes.full;
+  const fullScaled = fullTop * sizes.split;
+  if (fullScaled === 0n || splitScaled <= fullScaled) return null;
+  // `gainBps = (splitRate - fullRate) * 10_000 / fullRate`, computed
   // with bigints to avoid Number precision at e18 magnitudes.
-  const gainBps = Number(((totalExpected - fullTop) * 10_000n) / fullTop);
+  const gainBps = Number(((splitScaled - fullScaled) * 10_000n) / fullScaled);
   if (gainBps < minImprovementBps) return null;
   return { a, b, totalExpected, gainBps };
 }
@@ -481,15 +517,43 @@ export async function maybeAutonomousLiquidate(
       optimalPartialFractionBps > 0n &&
       optimalPartialFractionBps < MAX_PARTIAL_FRACTION_BPS;
 
+    // #2796 — a full or split liquidation sells only the collateral the
+    // debt needs, and the contract accepts a quote only inside the range
+    // `previewForcedSale` reports at the settling block (else it reverts
+    // `ForcedSaleQuoteOutOfRange`, before broadcast here: `writeContract`
+    // estimates first). Both ranges come from one block. A split is its own
+    // kind because its legs bear their own charges; its legs' amounts sum
+    // into its range. A partial liquidation is sized by its fraction, not by
+    // these. No sale due by the contract's reckoning ends the attempt.
+    const planBlock = await publicClient.getBlockNumber({ cacheTime: 0 });
+    const [fullPlan, splitPlan] = await Promise.all([
+      readForcedSalePlan({
+        client: publicClient,
+        diamond: ctx.diamond,
+        loanId: loanIdBig,
+        kind: FORCED_SALE_KIND.HealthFactorLiquidation,
+        blockNumber: planBlock,
+      }),
+      readForcedSalePlan({
+        client: publicClient,
+        diamond: ctx.diamond,
+        loanId: loanIdBig,
+        kind: FORCED_SALE_KIND.HealthFactorSplitLiquidation,
+        blockNumber: planBlock,
+      }),
+    ]);
+    const sizes = liquidationSaleSizes(fullPlan, splitPlan);
+    if (sizes === null) {
+      console.log(`[keeper] loan=${loanId} chain=${chain.name} skip: no liquidation sale due (previewForcedSale sells nothing)`);
+      return false;
+    }
+    const { fullAmount, splitTotal, halfAmount, otherHalf } = sizes;
+
     // Compute the partial-size for quote fetching. When no partial is
     // eligible the value is unused (the half amount, for the split below).
     const partialAmount = partialEligible
       ? (loan.collateralAmount * optimalPartialFractionBps) / 10_000n
-      : loan.collateralAmount / 2n;
-    // The split-route decision is built around 50/50 splitting, so we
-    // always also fetch the half-size quote for that branch.
-    const halfAmount = loan.collateralAmount / 2n;
-    const otherHalf = loan.collateralAmount - halfAmount;
+      : halfAmount;
     // ONE roster read for this loan's builds — the same moment for the
     // full, half and partial quotes and any re-size below (#2480 r1). A
     // failed read is left to each build, which reports it.
@@ -526,8 +590,9 @@ export async function maybeAutonomousLiquidate(
       return res;
     };
     const [quotes, halfQuotes, partialQuotes] = await Promise.all([
-      buildRoute(loan.collateralAmount, 'full'),
-      buildRoute(halfAmount, 'half'),
+      buildRoute(fullAmount, 'full'),
+      // No split sale due (its plan sells nothing) → no half quote.
+      halfAmount > 0n ? buildRoute(halfAmount, 'half') : Promise.resolve(null),
       // Skip the third quote when partial isn't viable — keeps the
       // hot-path RPC volume the same as before in the common "full
       // liquidation" case. When partial IS viable, all three run in
@@ -560,7 +625,11 @@ export async function maybeAutonomousLiquidate(
       // roster, a venue that did not answer, or one this keeper cannot ask
       // also leaves it empty, and a route might exist there. Only the
       // shared `declined` verdict says the market was asked and said no.
-      const blocker = inKindBlocker([quotes, halfQuotes, ...(partialQuotes ? [partialQuotes] : [])]);
+      const blocker = inKindBlocker([
+        quotes,
+        ...(halfQuotes ? [halfQuotes] : []),
+        ...(partialQuotes ? [partialQuotes] : []),
+      ]);
       if (blocker === null) return tryInKindCloseOut(chain, ctx, publicClient, loanIdBig);
       console.log(`[keeper] loan=${loanId} chain=${chain.name} in-kind not considered: ${blocker}`);
       return false;
@@ -671,14 +740,18 @@ export async function maybeAutonomousLiquidate(
     }
 
     // Split-route decision: when ≥2 distinct-adapter quotes succeeded at
-    // the half size AND their combined output beats the single-adapter
-    // full quote by `SPLIT_MIN_IMPROVEMENT_BPS` (default 100 = 1%), use
+    // the half size AND their combined output per unit sold beats the
+    // single-adapter full quote's by `SPLIT_MIN_IMPROVEMENT_BPS` (default
+    // 100 = 1%), use
     // `triggerLiquidationSplit`. Below the threshold the gas + tx
     // complexity isn't worth it. The split is atomic-revert-on-leg-
     // failure on-chain, so we only invoke it when both legs are
     // independently OK at quote time.
     const minImprovementBps = parsePosIntEnv(env.SPLIT_MIN_IMPROVEMENT_BPS, 100);
-    const split = pickSplitLegs(halfQuotes, quotes, minImprovementBps);
+    const split =
+      halfQuotes && splitTotal !== null
+        ? pickSplitLegs(halfQuotes, quotes, minImprovementBps, { split: splitTotal, full: fullAmount })
+        : null;
     if (split) {
       const splits = [
         { adapterIdx: split.a.call.adapterIdx, splitAmount: halfAmount, data: split.a.call.data },
@@ -722,12 +795,12 @@ export async function maybeAutonomousLiquidate(
       address: ctx.diamond,
       abi: TRIGGER_ABI,
       functionName: 'triggerLiquidation',
-      args: [loanIdBig, quotes.calls],
+      args: [loanIdBig, fullAmount, quotes.calls],
       account,
       chain: ctx.wallet.chain,
     });
     console.log(
-      `[keeper] loan=${loanId} chain=${chain.name} submitted tx=${hash} via=${quotes.ranked[0].kind} expected=${quotes.ranked[0].expectedOutput}`,
+      `[keeper] loan=${loanId} chain=${chain.name} submitted tx=${hash} via=${quotes.ranked[0].kind} sell=${fullAmount} expected=${quotes.ranked[0].expectedOutput}`,
     );
     return true;
   } catch (err) {

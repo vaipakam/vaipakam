@@ -28,6 +28,7 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {MockLopFill} from "../mocks/MockLopFill.sol";
 import {MockSanctionsList} from "../mocks/MockSanctionsList.sol";
 import {LibFallbackCustody} from "../../src/libraries/LibFallbackCustody.sol";
+import {defaultQuote, liquidationQuote} from "../helpers/ForcedSaleQuote.sol";
 
 /// @dev The intent cancel grace the harness configures and the handler waits out on the
 ///      permissionless expired-cancel path. One constant, read by both, so they cannot disagree.
@@ -316,7 +317,8 @@ contract CustodyHandler is Test {
         uint256 pastGrace = uint256(l.startTime) + l.durationDays * 1 days + PAST_EVERY_GRACE;
         if (pastGrace > block.timestamp) vm.warp(pastGrace);
         LibSwap.AdapterCall[] memory route = _adapterCalls(swapFails);
-        try DefaultedFacet(diamond).triggerDefault(loanId, route) {
+        uint256 sellQuote = defaultQuote(diamond, loanId);
+        try DefaultedFacet(diamond).triggerDefault(loanId, sellQuote, route) {
             if (_statusOf(loanId) == LibVaipakam.LoanStatus.FallbackPending) {
                 _trackFallback(loanId);
                 // Keep it uncurable by a plain top-up: only the `cure` action restores health.
@@ -597,7 +599,8 @@ contract CustodyHandler is Test {
     function _liquidate(uint256 loanId, bool swapFails) internal returns (bool enteredFallback) {
         _setRisk(loanId, HF_LIQUIDATABLE, LTV_LIQUIDATABLE);
         LibSwap.AdapterCall[] memory route = _adapterCalls(swapFails);
-        try RiskFacet(diamond).triggerLiquidation(loanId, route) {
+        uint256 sellQuote = liquidationQuote(diamond, loanId);
+        try RiskFacet(diamond).triggerLiquidation(loanId, sellQuote, route) {
             LibVaipakam.LoanStatus st = _statusOf(loanId);
             if (st == LibVaipakam.LoanStatus.FallbackPending) {
                 _trackFallback(loanId);

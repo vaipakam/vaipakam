@@ -36,6 +36,7 @@ import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
+import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
@@ -44,6 +45,7 @@ import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title ClaimFacetTest
@@ -151,7 +153,7 @@ contract ClaimFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut all facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -242,6 +244,14 @@ contract ClaimFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
+        });
+        // #2795 / #2796 - every forced sale runs through a self-call into
+        // ForcedSaleFacet, so a hand-built Diamond that cuts a seller must cut
+        // this host too.
+        cuts[24] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ForcedSaleFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getForcedSaleFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -532,7 +542,8 @@ contract ClaimFacetTest is Test {
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Borrower has no claim after illiquid default
         vm.prank(borrower);
@@ -653,7 +664,8 @@ contract ClaimFacetTest is Test {
             abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, mockCollateralERC20),
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Loan is Defaulted; borrower has no claim — lender claiming should settle immediately
         vm.prank(lender);
@@ -761,7 +773,8 @@ contract ClaimFacetTest is Test {
             abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, mockCollateralERC20),
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         (, uint256 lenderAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(lenderAmount, 0);

@@ -205,27 +205,23 @@ are never charged twice. The treasury's share of that close is recorded, not
 asserted (A9.16b): the specification does not fix the fee basis for a loan
 whose earlier interest was paid by a sale.
 
-**Checked as today's code, not as the intended rule**: how much collateral a
-periodic auto-settlement sells. A9.11 checks the code's current rule: the
-shortfall at the oracle plus the max-slippage buffer, with the settler bonus
-and the handling charge taken from the proceeds. The owner decided on
-2026-10-25 to replace it, for every forced sale, with sell-to-need:
-- sell the least collateral whose worst-case proceeds cover the debt plus the
-  charges;
-- take the charges on the debt;
-- return the extra proceeds and the unsold collateral to the borrower.
-
-That change is #2795 (periodic) and #2796 (the shared rule). Once a chain
-carries it, A9.11 is rewritten to assert the new rule. Until then a pass on
-A9.11 means the chain still runs the old rule, not that the rule is the
-intended one.
+**Every forced sale is checked against sell-to-need** (owner decision
+2026-10-25, #2795 and #2796): the sale sells the least collateral whose
+worst-case proceeds cover the debt plus the charges, takes the charges on the
+debt (the handling charge only after the lender is paid), and leaves the extra
+proceeds and the unsold collateral to the borrower. Each forced close quotes
+its amount from the contract's own published plan (`previewForcedSale`) and
+asserts that exactly that much was sold: A9.11 for the periodic settlement,
+A3.6b, A3.12b and A3.13b for the default and the two liquidations. A deployment
+still on the old sell-everything facets refuses the three-argument calls, so
+the scenarios run only against a chain that carries the new rule.
 
 **Read from the specification, where it is not explicit**: the specification
 names "Loan Initiated" at the fill, "Loan Defaulted" or "Loan Liquidated"
 after a forced close, and "Loan Closed" then burned on each side's claim. It
 does not name the status between a repayment and the claims, which the
 scenarios state as "Loan Repaid". Nor does it say which forced-close path
-records which of its two names; every forced close here sells the collateral,
+records which of its two names; every forced close here sells collateral,
 and the chain records "Loan Liquidated" for all of them, the time-based
 default included. Both readings are logged in
 `docs/FunctionalSpecs/_CodeVsDocsAudit.md`.

@@ -126,6 +126,7 @@ import {
   setAsideByDerivedGate,
 } from './chooserEligibility.mjs';
 import { createInFlight } from './inFlight.mjs';
+import { readDefaultQuote } from './forcedSaleQuote.mjs';
 import { forcedCloseFacts, forcedCloseReadPlan } from './forcedCloseRule.mjs';
 import { forcedCloseOnlyWhy, lenderVisitMode } from './lenderPool.mjs';
 import { createPageHeadTracker } from './pageHead.mjs';
@@ -3897,11 +3898,15 @@ async function readLenderCardText(page, card) {
  */
 async function probeCloseOut(loanId, blockNumber, account) {
   try {
+    // #2796 — the close-out names the amount it sells; quoted inside the
+    // range the Diamond publishes at the same block, the empty-list probe
+    // asks the question it always asked rather than stopping at the quote.
+    const quote = await readDefaultQuote(pub, DIAMOND, DIAMOND_ABI_VIEM, loanId, blockNumber);
     await pub.simulateContract({
       address: DIAMOND,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'triggerDefault',
-      args: [loanId, []],
+      args: [loanId, quote, []],
       // ROUND 75 P2 — THE ACCOUNT IS A PARAMETER, not the module-scoped
       // `observed`.
       //

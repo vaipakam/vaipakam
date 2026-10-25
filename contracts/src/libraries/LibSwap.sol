@@ -29,8 +29,10 @@ import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
  *
  *  - `minOutputAmount` is oracle-derived by the liquidation facet
  *    and passed down unchanged. The adapter enforces it on the DEX
- *    side; the library does NOT re-check (adapters are trusted to
- *    revert on under-fill).
+ *    side, and since #2796 the library re-checks it on what actually
+ *    arrived (`SwapOutputBelowFloor`): a forced sale sells only the
+ *    collateral the debt needs, so the floor is what guarantees the
+ *    lender is covered, and it must not rest on an adapter's own check.
  *
  *  - #2472 — every committed attempt is MEASURED on the Diamond's side:
  *    the input balance must have fallen by what the sale spent, and the
@@ -164,6 +166,16 @@ library LibSwap {
         uint256 adapterIdx,
         uint256 received,
         uint256 reported
+    );
+    /// @notice #2796 — the recipient received `received`, below the sale's
+    ///         oracle-derived floor `minOutputAmount`, though the adapter did
+    ///         not revert. Same scope as {SwapOutputShortDelivered}: the
+    ///         attempt fails and the next route is tried.
+    error SwapOutputBelowFloor(
+        uint256 loanId,
+        uint256 adapterIdx,
+        uint256 received,
+        uint256 minOutputAmount
     );
     error SplitMinOutputUnderfilled(uint256 totalOutput, uint256 minOutputAmount);
     error EmptySplitList();
@@ -435,6 +447,9 @@ library LibSwap {
         uint256 received = outAfter > outBefore ? outAfter - outBefore : 0;
         if (received < outputAmount) {
             revert SwapOutputShortDelivered(sale.loanId, adapterIdx, received, outputAmount);
+        }
+        if (received < sale.minOutputAmount) {
+            revert SwapOutputBelowFloor(sale.loanId, adapterIdx, received, sale.minOutputAmount);
         }
         outputAmount = received;
         uint256 inAfter = input.balanceOf(address(this));

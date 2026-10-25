@@ -178,18 +178,21 @@ runs half of it on old code:
   own UUPS contract: they reach a chain only through `upgradeBackstopVault`,
   not through any facet refresh.
 
-- **ForcedSaleFacet + every facet that sells through it (#2795).** The
-  periodic-interest settlement (RepayPeriodicFacet) reads the sale plan
-  (`previewForcedSale`) and settles the sale (`settlePeriodicSale`) by
-  self-call. The extra a sale holds for the borrower follows the borrower
+- **ForcedSaleFacet + every facet that sells through it (#2795, #2796).**
+  Every forced sale runs through one self-call, `sellToNeed`: the
+  periodic-interest settlement (RepayPeriodicFacet), the Health-Factor
+  liquidation on the single route (RiskFacet) and the split route
+  (RiskSplitLiquidationFacet), and the liquid time-based default
+  (DefaultedFacet). The host checks the caller's quote against
+  `previewForcedSale`, sells, and books the sale (the periodic kind keeps
+  the loan open; the terminal kinds write the lender and borrower claim
+  rows). The extra a sale holds for the borrower follows the borrower
   position: consolidation moves it (every facet inlining `LibConsolidation`)
   and an obligation handover pays it to the exiting holder (PrecloseFacet,
-  through `EncumbranceMutateFacet.payHeldBorrowerExtra`). RepayPeriodicFacet
-  refreshed without the host reverts `FunctionDoesNotExist` on every periodic
-  settlement that sells (a hard revert, never the old waterfall).
-  `RefreshAllFacetsInPlace` and `RedeployFacets` both carry the host. The
-  Health-Factor routes and the time-based default join this family when they
-  move onto the host (#2796).
+  through `EncumbranceMutateFacet.payHeldBorrowerExtra`). A seller refreshed
+  without the host reverts `FunctionDoesNotExist` on every forced sale (a
+  hard revert, never the old waterfall). `RefreshAllFacetsInPlace` and
+  `RedeployFacets` both carry the host and all four sellers.
 
 - **VaultFactoryFacet + every facet that withdraws from a vault (#2440).**
   `vaultWithdrawERC20` now returns what the recipient received, and every
@@ -206,14 +209,16 @@ runs half of it on old code:
   OracleFacet carries, to tell a missing price (the lender takes all the
   collateral) from a distrusted one (the close-out refuses). It is inlined into
   FallbackCustodyFacet (the fallback entry), RiskFacet (the discounted
-  liquidation), ClaimFacet (the backstop par check) and DefaultedFacet (the
-  liquid time-based default's priced-pair route, #2419); find the set again with
-  a grep for `tryOracleRate`, `collateralEquivalent`, `principalEquivalent` and
+  liquidation), ClaimFacet (the backstop par check), and DefaultedFacet and
+  ForcedSaleFacet through `LibDefaultRoute` (the time-based default's route
+  rule, which the default acts on and the sale preview reads, #2419 / #2796);
+  find the set again with a grep for `tryOracleRate`, `LibDefaultRoute`,
+  `collateralEquivalent`, `principalEquivalent` and
   `computeFallbackEntitlements`, not from this list. Any of them refreshed onto
   a Diamond whose OracleFacet predates #666 reverts `FunctionDoesNotExist` on
   that path (a hard revert, never a misread price). `RefreshAllFacetsInPlace`
-  carries all five and `UpgradeOracleFacet` adds the selector; `RedeployFacets`
-  carries the four consumers but not OracleFacet, so it refuses such a Diamond
+  carries all six and `UpgradeOracleFacet` adds the selector; `RedeployFacets`
+  carries the five consumers but not OracleFacet, so it refuses such a Diamond
   (`PredatesOraclePriceStatus`) and the oracle is refreshed first.
 
 - **NumeraireValueFacet + every facet that values an amount in the numeraire

@@ -433,6 +433,7 @@ describe('previewCloseOut', () => {
       diamond,
       account: A(0xe),
       loanId: 21n,
+      sellAmount: 0n,
       calls: [{ adapterIdx: 0n, data: '0x' }],
     });
 
@@ -492,6 +493,7 @@ describe('previewCloseOutDetail (#2487)', () => {
       diamond,
       account: A(0xe),
       loanId: 21n,
+      sellAmount: 0n,
       calls: [],
     });
 
@@ -520,6 +522,7 @@ describe('previewCloseOutDetail (#2487)', () => {
       diamond,
       account: A(0xe),
       loanId: 21n,
+      sellAmount: 0n,
       calls: [],
     });
     expect(out).toEqual({ preview: 'unknown', defaulted: false, internalMatch: false });

@@ -16,6 +16,7 @@ import {DefaultedFacet} from "../../src/facets/DefaultedFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../../src/facets/AddCollateralFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
+import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 
 /**
  * @title Handler
@@ -316,7 +317,8 @@ contract Handler is Test {
         uint256 target = L.startTime + L.durationDays * 1 days + 30 days;
         if (target > block.timestamp) vm.warp(target);
 
-        try DefaultedFacet(diamond).triggerDefault(loanId, defaultAdapterCalls()) {} catch {}
+        uint256 sellQuote = defaultQuote(diamond, loanId);
+        try DefaultedFacet(diamond).triggerDefault(loanId, sellQuote, defaultAdapterCalls()) {} catch {}
     }
 
     /// @notice Lender claims on a defaulted / fallback-pending loan.

@@ -660,8 +660,9 @@ contract DeployTestnetMocks is Script {
         console.log("liquidate without a manual transfer: ~100k tLIQ, ~60M mUSDC,");
         console.log("~100k mWETH. For a principal token NOT in that set, transfer");
         console.log("it to the MockSwapAdapter first. Trigger with:");
-        console.log("  triggerLiquidation(loanId, [{adapterIdx, data:0x}])");
-        console.log("where adapterIdx is the adapter's slot in getSwapAdapters().");
+        console.log("  triggerLiquidation(loanId, sellAmount, [{adapterIdx, data:0x}])");
+        console.log("where sellAmount is previewForcedSale(loanId, 1).sell and");
+        console.log("adapterIdx is the adapter's slot in getSwapAdapters().");
     }
 
     /// @dev Re-derive a v3-clone pool's initialization `sqrtPriceX96` from

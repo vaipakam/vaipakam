@@ -31,11 +31,13 @@ import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
+import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {defaultAdapterCalls} from "../helpers/AdapterCallHelpers.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 
 /**
  * @title Scenario4_IlliquidCollateral
@@ -118,7 +120,7 @@ contract Scenario4_IlliquidCollateral is Test {
         helperTest        = new HelperTest();
 
         // Cut all facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](23);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -197,6 +199,14 @@ contract Scenario4_IlliquidCollateral is Test {
             facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
+        });
+        // #2795 / #2796 - every forced sale runs through a self-call into
+        // ForcedSaleFacet, so a hand-built Diamond that cuts a seller must cut
+        // this host too.
+        cuts[22] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ForcedSaleFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getForcedSaleFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -314,9 +324,10 @@ contract Scenario4_IlliquidCollateral is Test {
         assertTrue(DefaultedFacet(address(diamond)).isLoanDefaultable(loanId), "Loan should be defaultable");
 
         // Step 4: Trigger default (permissionless — anyone can call)
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // riskAndTermsConsentFromBoth = true
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Step 5: Verify loan is Defaulted
         loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
