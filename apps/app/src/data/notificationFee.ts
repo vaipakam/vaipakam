@@ -19,7 +19,9 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
+import { toFunctionSelector, type PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
+import { isFunctionDoesNotExistRevert } from '../contracts/preflights';
 import { useActiveChain } from '../chain/useActiveChain';
 import { signalAware } from '../chain/railHealth';
 import type { PushBillingState } from './alerts';
@@ -36,6 +38,31 @@ export interface NotificationFeeConsent {
    *  whether this read already includes it. */
   atBlock: bigint;
 }
+
+/**
+ * What the read found on this network's Diamond.
+ *
+ * - `consent-record` — the Diamond keeps the per-wallet consent, read as
+ *   `consent`.
+ * - `predates-consent` — the Diamond answers the fee but has no consent
+ *   record at all (`getNotificationFeeConsent` is not routed), so nothing
+ *   can be agreed to or withdrawn here. Whether it can still charge the fee
+ *   is read separately, from the loupe: `billingRouted` is whether
+ *   `markNotifBilled` is routed (null when that could not be read). Where it
+ *   is, the app cannot tell whether that older bill checks an agreement, and
+ *   the card says so rather than promising either way.
+ */
+export type NotificationFeeRead =
+  | { kind: 'consent-record'; consent: NotificationFeeConsent }
+  | {
+      kind: 'predates-consent';
+      feeVpfi: bigint;
+      atBlock: bigint;
+      billingRouted: boolean | null;
+    };
+
+const MARK_NOTIF_BILLED_SELECTOR = toFunctionSelector('markNotifBilled(uint256,bool)');
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 /** A consent write this card saw mined: the cap it recorded, and where. */
 export interface MinedConsentWrite {
@@ -68,6 +95,67 @@ export function notificationFeeConsentKey(chainId: number, address: string | und
 }
 
 /**
+ * One read of the fee and the wallet's consent on `diamond`, at one block.
+ * Kept outside the hook so the older-deployment branch is tested against a
+ * real viem client.
+ */
+export async function readNotificationFee(
+  publicClient: PublicClient,
+  diamond: `0x${string}`,
+  address: `0x${string}`,
+): Promise<NotificationFeeRead> {
+  // Both views at ONE block, so the fee, the cap and the contract's
+  // coverage answer describe the same state, and the block says whether
+  // a write the card saw mined is already in it.
+  const atBlock = await publicClient.getBlockNumber();
+  const [config, consent] = await Promise.allSettled([
+    publicClient.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getNotificationFeeConfig',
+      blockNumber: atBlock,
+    }) as Promise<readonly [bigint, bigint]>,
+    publicClient.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getNotificationFeeConsent',
+      args: [address],
+      blockNumber: atBlock,
+    }) as Promise<readonly [bigint, boolean]>,
+  ]);
+  if (config.status === 'rejected') throw config.reason;
+  const feeVpfi = config.value[0];
+  if (consent.status === 'fulfilled') {
+    return {
+      kind: 'consent-record',
+      consent: {
+        feeVpfi,
+        capVpfi: consent.value[0],
+        coversCurrentFee: consent.value[1],
+        atBlock,
+      },
+    };
+  }
+  // Only the Diamond's own "no facet hosts this" is an older deployment;
+  // any other failure is a failed read, never a missing feature.
+  if (!isFunctionDoesNotExistRevert(consent.reason)) throw consent.reason;
+  let billingRouted: boolean | null = null;
+  try {
+    const host = (await publicClient.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'facetAddress',
+      args: [MARK_NOTIF_BILLED_SELECTOR],
+      blockNumber: atBlock,
+    })) as string;
+    billingRouted = host.toLowerCase() !== ZERO_ADDRESS;
+  } catch {
+    billingRouted = null;
+  }
+  return { kind: 'predates-consent', feeVpfi, atBlock, billingRouted };
+}
+
+/**
  * The connected wallet's consent and the current fee on the read chain.
  * A failed read is an error state, never a zero: "no consent" is a fact the
  * card states, so it must not stand in for "could not read".
@@ -83,29 +171,9 @@ export function useNotificationFeeConsent() {
     // the figures are current; the card overlays its own mined write with
     // `effectiveConsent` instead. The poll reconciles a fee retune.
     refetchInterval: signalAware(60_000),
-    queryFn: async (): Promise<NotificationFeeConsent> => {
+    queryFn: async (): Promise<NotificationFeeRead> => {
       if (!publicClient || !address) throw new Error('unreachable');
-      const diamond = readChain.diamondAddress;
-      // Both views at ONE block, so the fee, the cap and the contract's
-      // coverage answer describe the same state, and the block says whether
-      // a write the card saw mined is already in it.
-      const atBlock = await publicClient.getBlockNumber();
-      const [config, consent] = await Promise.all([
-        publicClient.readContract({
-          address: diamond,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getNotificationFeeConfig',
-          blockNumber: atBlock,
-        }) as Promise<readonly [bigint, bigint]>,
-        publicClient.readContract({
-          address: diamond,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getNotificationFeeConsent',
-          args: [address],
-          blockNumber: atBlock,
-        }) as Promise<readonly [bigint, boolean]>,
-      ]);
-      return { feeVpfi: config[0], capVpfi: consent[0], coversCurrentFee: consent[1], atBlock };
+      return readNotificationFee(publicClient, readChain.diamondAddress, address);
     },
   });
 }
@@ -123,7 +191,10 @@ export function paidPushConsentScope(chainId: number, address: string | undefine
 /** Whether the alert service charges the fee on this chain, as it says. */
 export type PaidPushBilled = 'billed' | 'not-billed' | 'unknown';
 
-export function paidPushBilledOn(billing: PushBillingState | undefined, chainId: number): PaidPushBilled {
+export function paidPushBilledOn(
+  billing: PushBillingState | undefined,
+  chainId: number,
+): PaidPushBilled {
   if (!billing || billing.kind === 'unknown') return 'unknown';
   return billing.chainIds.includes(chainId) ? 'billed' : 'not-billed';
 }

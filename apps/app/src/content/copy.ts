@@ -763,6 +763,9 @@ const copySource = {
       'On {{chain}}, paid Push alerts cost {{fee}} VPFI per loan side. The fee is paid from the free VPFI in your vault to the protocol, at most once for each loan you’re on, on the first paid Push alert about it. Telegram alerts are always free.',
       ['chain', 'fee'],
     ),
+    paidBilled: tmpl('The alert service charges this fee for paid Push alerts on {{chain}}.', [
+      'chain',
+    ]),
     paidNotBilled: tmpl(
       'Paid Push alerts aren’t billed on {{chain}} right now: nothing charges this fee here yet, so there’s nothing to agree to.',
       ['chain'],
@@ -799,6 +802,21 @@ const copySource = {
       'We couldn’t refresh this from {{chain}}. The fee and your agreement below are from the last successful read and may be out of date, so agreeing is paused until a read succeeds. You can still withdraw.',
       ['chain'],
     ),
+    paidStaleLegacy: tmpl(
+      'We couldn’t refresh this from {{chain}}. What’s shown below is from the last successful read and may be out of date.',
+      ['chain'],
+    ),
+    paidPredatesConsent: tmpl(
+      '{{chain}}’s contracts are an older version without the paid Push agreement, so you can’t agree to pay or withdraw an agreement here.',
+      ['chain'],
+    ),
+    paidPredatesBillable:
+      'This version can still charge the fee through the protocol’s billing role, and it may not check for an agreement before it does.',
+    paidPredatesNotBillable: tmpl(
+      'This version has no billing call either, so the fee can’t be charged on {{chain}}.',
+      ['chain'],
+    ),
+    paidPredatesBillingUnknown: 'We couldn’t check whether this version can charge the fee.',
     paidAgreed: tmpl('Saved: you’ve agreed to pay up to {{fee}} VPFI per loan side on {{chain}}.', [
       'fee',
       'chain',
