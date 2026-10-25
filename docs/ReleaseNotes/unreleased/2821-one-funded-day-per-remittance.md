@@ -1,4 +1,4 @@
-## Thread — Reward remittances fund one day per send (PR #TBD)
+## Thread — Reward remittances fund one day per send (PR #2832)
 
 A reward remittance from Base to a mirror now funds exactly one day. Before,
 one send could fund several days, and the mirror received them as one shared
