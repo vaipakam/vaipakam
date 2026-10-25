@@ -384,7 +384,7 @@ const EXCLUDED_PREFIXES = [
  */
 const PINNED = new Map([
   [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples — digest re-pinned #1734: both mentions unchanged; the scope paragraph above them was rewritten for the prose-only scope", "3b4122c91eaa"]],
-  ["CLAUDE.md", [13, "RETRACTION — the \"VpfiBuyAdapter — REMOVED\" section, the cross-chain note and the omit-keys note, each naming the removed flow to say it is gone (triaged #1728)", "0cf18c23e605"]],
+  ["CLAUDE.md", [13, "RETRACTION — the \"VpfiBuyAdapter — REMOVED\" section, the cross-chain note and the omit-keys note, each naming the removed flow to say it is gone (triaged #1728)", "0a31bdacf8b9"]],
   ["SECURITY.md", [3, "RETRACTION — the CCIP section's note that there is no purchase surface and the removed contracts are out of scope; #1728 took them out of the live scope lists", "8f06034746ef"]],
   ["apps/agent/README.md", [2, "RETRACTION — #1651 notes where the buy-watchdog responsibility stood (triaged #1728)", "abf12c10c2e6"]],
   ["apps/www/src/content/whitepaper/Whitepaper.en.md", [3, "LIVE-TEXT — user-facing; verify against the §8 supersede banner before raising", "285f32e0bdcf"]],
@@ -405,7 +405,7 @@ const PINNED = new Map([
   ["docs/FunctionalSpecs/TokenomicsTechSpec.md", [2, "RETRACTION — the §8 supersede banner", "66406ac74943"]],
   ["docs/GLOSSARY.md", [5, "RETRACTION + HISTORICAL — the \"Buy adapter / receiver — REMOVED\" entry and the LayerZero-era contract list (#1728)", "fb4c4be5e25e"]],
   ["docs/TestScopes/AdvancedUserGuideTestMatrix.md", [2, "RETRACTION — two rows marked retired by #687-A (#1728)", "c83f3daef417"]],
-  ["docs/ToDo.md", [31, "HISTORICAL — closed ToDo items and a past Safe-transaction record. The file is the owner's list and is not rewritten (triaged #1728)", "e1dab6b8d442"]],
+  ["docs/ToDo.md", [31, "HISTORICAL — closed ToDo items and a past Safe-transaction record. The file is the owner's list and is not rewritten (triaged #1728)", "d5e9ebd21157"]],
   ["docs/internal/ContractFollowupsFromRehearsal-2026-05-06.md", [12, "HISTORICAL — dated rehearsal follow-ups; #1728 added a removed-surface banner at the top", "73dc107274df"]],
   ["docs/internal/DeployOnTestnet.md", [3, "HISTORICAL — LayerZero-era deploy notes; #1728 added a removed-surface banner at the top", "599d06f26c7d"]],
   ["docs/internal/Issue687A-FrontendExcisionScout.md", [16, "RETRACTION — the #687-A excision checklist, which names what it removed (triaged #1728)", "545223732c1e"]],
@@ -418,7 +418,7 @@ const PINNED = new Map([
   ["docs/ops/BaseSepoliaDeploy.md", [31, "LIVE-TEXT — known debt, PLUS a #884 retraction banner on §4 (+5). The banner is why the count rose: it names the removed knobs (VPFI_BUY_GLOBAL_CAP / _PER_WALLET_CAP / _ENABLED, getVPFIBuyConfig, DeployVPFIBuyReceiver) in order to tell an operator they no longer exist, and to stop §4's hand-invocation of ConfigureVPFIBuy walking around the peg gate. The residue BELOW the banner is untouched and still debt", "5ee913304383"]],
   ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "ebaadfe01519"]],
   ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "64e398056c19"]],
-  ["docs/ops/DeploymentRunbook.md", [46, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner. #884 LOWERED 47→46: the configure-phase prose no longer lists ConfigureVPFIBuy as a launch child", "0faa8803ab5e"]],
+  ["docs/ops/DeploymentRunbook.md", [46, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner. #884 LOWERED 47→46: the configure-phase prose no longer lists ConfigureVPFIBuy as a launch child", "9d01e8c44c57"]],
   ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "c888ab8c4bee"]],
   ["docs/ops/VPFITokenRotationRunbook.md", [1, "HISTORICAL — rotation-scope note", "192752fa405c"]],
 ]);
