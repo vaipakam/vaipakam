@@ -769,6 +769,17 @@ The app uses chain reads and indexed reads for different jobs.
   that place, and re-reading the front on every run would let records that
   are examined but never reminded hold the allowance on every run. Where a
   record's examination cannot be read, the record counts as not examined.
+- **Each pass is dated and numbered by its own record, kept per chain, never
+  by what it has examined.** The service records which pass is in progress
+  and when it began, in the same step as that pass's first examinations, and
+  changes that record only when the next pass begins. A record examined in a
+  pass leaves the list once its deadline passes, so what is left in the list
+  says neither how long ago the pass began nor which pass it is. Read from
+  there, a long pass would keep looking recent and never be reported, and a
+  pass whose examined records had all left would fall back to the number
+  before it. Where the record is missing or cannot be read, the next pass
+  begins, numbered above every examination the list still carries, so none
+  of those can count in it.
 - **THE RESTART PROPERTY, stated once and not restated elsewhere.** Every
   surface that describes records being examined again because what a pass
   examined was lost — missing, unreadable, malformed, or deliberately cleared
@@ -799,7 +810,8 @@ The app uses chain reads and indexed reads for different jobs.
   next pass. That matters only where a pass takes longer than the notice
   period itself, and in that state the service is under-provisioned in a way
   no ordering can conceal. So the service says, each run, when the current
-  pass has run longer than the reminder window, rather than leaving the
+  pass has run longer than the reminder window, measured from that pass's
+  own record and including the run that finishes it, rather than leaving the
   condition to be inferred. The honest statement is that this is bounded by
   how long a pass takes, not that it cannot happen.
 - **The same allowance governs the runs that keep the records current, and

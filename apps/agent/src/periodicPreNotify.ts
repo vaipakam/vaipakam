@@ -243,8 +243,14 @@ interface LoanRow {
    */
   prenotify_examined_checkpoint: number;
   prenotify_examined_lap: number;
-  /** When that pass examined it (unix seconds) — what dates the pass. */
-  prenotify_examined_at: number;
+  /**
+   * The chain's pass record (`prenotify_pass`, #2230), read with the
+   * candidates in the same statement so a tick spends no request of its own
+   * on it: the pass in progress and when it began. Null on every row until
+   * the chain's first pass begins. The same on every row of one read.
+   */
+  pass_lap: number | null;
+  pass_started_at: number | null;
 }
 
 interface UserPushRow {
@@ -685,21 +691,11 @@ async function preNotifyChain(
   // afford to send. The query itself is ONE call however many rows it
   // returns, and it is charged as one below.
   //
-  // The examination marks (#2230) come with the rows, so knowing what this
-  // pass has already looked at costs no request of its own.
+  // The examination marks and the chain's pass record (#2230) come with the
+  // rows, so knowing what this pass has already looked at, and when it began,
+  // costs no request of its own.
   budget.remaining -= 1; // the candidate query — D1 is a subrequest
-  const rows = await env.DB.prepare(
-    `SELECT loan_id, chain_id, lender, borrower, start_time,
-            periodic_interest_cadence, last_period_settled_at,
-            period_pre_notified_at,
-            prenotify_examined_checkpoint, prenotify_examined_lap,
-            prenotify_examined_at
-     FROM loans
-     WHERE chain_id = ?
-       AND status = 'active'
-       AND periodic_interest_cadence > 0
-       AND last_period_settled_at > 0`,
-  )
+  const rows = await env.DB.prepare(PRENOTIFY_CANDIDATES_SQL)
     .bind(chain.id)
     .all<LoanRow>();
 
@@ -730,8 +726,13 @@ async function preNotifyChain(
   // pass to wrap. The stored positions this replaces (a list index, then a
   // deadline, #2219) could give only one of those two: a place in the order
   // has nothing in front of it to come back to.
-  const pass = examinationPass(due);
+  const pass = examinationPass(due, now);
   const toExamine = pass.pending;
+  // A PASS THIS TICK BEGINS IS RECORDED WITH ITS FIRST MARKS, in the same
+  // write, so no mark can name a pass the record does not and the record costs
+  // no request of its own. Until a batch's marks land, the pass has not begun:
+  // a tick that examines nothing in it leaves the record as it was.
+  let passRecorded = !pass.begins;
 
   let cursor = 0;
   let reminded = 0;
@@ -804,9 +805,11 @@ async function preNotifyChain(
     // not, so they stay at the front of the next tick.
     if (outcome.consumed > 0) {
       const marked = await markExamined(
-        env, chain, batch.slice(0, outcome.consumed), pass.lap, now, budget,
+        env, chain, batch.slice(0, outcome.consumed), pass.lap,
+        passRecorded ? null : now, budget,
       );
-      if (!marked) unmarkedBatches += 1;
+      if (marked) passRecorded = true;
+      else unmarkedBatches += 1;
     }
     cursor += outcome.consumed;
   }
@@ -901,11 +904,11 @@ async function preNotifyChain(
   // before the deadline; once a pass takes longer, it may not be. That is a
   // provisioning fact about this lane (its allowance and its cadence), not
   // something any order fixes, so it is stated rather than absorbed.
-  if (pass.startedAt !== null && now - pass.startedAt > windowSec) {
-    const hours = Math.floor((now - pass.startedAt) / 3600);
+  if (now - pass.timed.startedAt > windowSec) {
+    const hours = Math.floor((now - pass.timed.startedAt) / 3600);
     console.warn(
-      `[periodicPreNotify] chain=${chain.name}: pass ${pass.lap} over the ` +
-        `notification window began at least ${hours}h ago, longer than the ` +
+      `[periodicPreNotify] chain=${chain.name}: pass ${pass.timed.lap} over the ` +
+        `notification window began ${hours}h ago, longer than the ` +
         `${windowSec / SECONDS_PER_DAY}-day window itself. A loan this pass ` +
         `examined without stamping is not reconsidered until the next pass, ` +
         `so it can now reach its deadline first. This lane needs a larger ` +
@@ -1387,41 +1390,52 @@ async function saveRotationStart(env: Env, next: number, budget: TickBudget): Pr
  * Which candidates this tick examines: the ones the CURRENT PASS has not
  * examined yet, in the order `candidatesInWindow` gives (#2230).
  *
- * A pass is one trip through every loan in the notification window. Each loan
- * carries the number of the last pass that examined it, for the period it was
- * examined for; a mark for a different period than the one now due counts as
- * no mark, because that is a different reminder. The current pass is the
- * highest pass number any candidate carries:
+ * A pass is one trip through every loan in the notification window. The
+ * chain's pass record (`prenotify_pass`) names the pass in progress and when
+ * it began. Each loan carries the number of the last pass that examined it,
+ * for the period it was examined for; a mark for a different period than the
+ * one now due counts as no mark, because that is a different reminder.
  *
- *  - a candidate with a LOWER mark (or none) has not been examined in it, and
- *    is examined this tick or a later one, nearest deadline first — whether
- *    it has been waiting since the pass began or arrived a minute ago;
- *  - a candidate carrying the current pass's number is skipped, so a run of
- *    loans that are examined but never stamped (nobody to tell, opted out,
- *    rejected by the chain) is looked at once per pass, not once per tick;
- *  - when no candidate is left unexamined, the pass is complete and the next
- *    one starts: every candidate is pending again, under the next number.
+ *  - a candidate not marked with the current pass has not been examined in
+ *    it, and is examined this tick or a later one, nearest deadline first,
+ *    whether it has been waiting since the pass began or arrived a minute ago;
+ *  - a candidate marked with the current pass is skipped, so a run of loans
+ *    that are examined but never stamped (nobody to tell, opted out, rejected
+ *    by the chain) is looked at once per pass, not once per tick;
+ *  - when no candidate is left unexamined, or the chain has no pass yet, the
+ *    next pass begins: every candidate is pending again, under a number above
+ *    every mark the candidates carry, so no old mark can count in it.
  *
- * Nothing about a pass is stored apart from the marks, so there is no second
- * record to drift from them: the number is read off the candidates, and a
- * pass whose marked loans have all left the window simply hands its number
- * back to the one before it, whose loans are then the oldest-examined and
- * come round first anyway.
+ * THE RECORD IS WHAT DATES A PASS, not the marks (Codex #2845 r1). A marked
+ * loan leaves the window once its deadline passes, so the earliest mark still
+ * in the window kept moving forward and a pass that had run longer than the
+ * window could never be seen to; and a pass whose marks had all left fell back
+ * to the number before it. The record has neither failure: it changes only
+ * when a pass begins.
  *
- * A MARK THAT CANNOT BE READ counts as no mark. That fails toward examining a
- * loan again rather than skipping it, and the summary counts such marks so the
- * repeat is visible.
+ * A MARK OR A RECORD THAT CANNOT BE READ counts as none. That fails toward
+ * examining a loan again rather than skipping it, and the summary counts
+ * unreadable marks so the repeat is visible.
  */
-export function examinationPass(due: readonly DueLoan[]): {
+export function examinationPass(
+  due: readonly DueLoan[],
+  now: number,
+): {
   /** The pass these examinations belong to — what `markExamined` writes. */
   lap: number;
+  /** Whether this tick begins that pass, so its first marks carry its record. */
+  begins: boolean;
   /** The candidates still to examine in it, in examination order. */
   pending: DueLoan[];
   /** How many candidates this pass had already examined before this tick. */
   alreadyExamined: number;
-  /** The earliest examination time among them: when the pass began, at the
-   *  latest. `null` for a pass this tick begins. */
-  startedAt: number | null;
+  /**
+   * The pass whose length this tick judges, from the chain's record: the one
+   * in progress, or the one this tick finishes by beginning the next, so a
+   * pass that ran over the window is reported even on the tick that ends it.
+   * A pass this tick begins with no readable record before it is dated `now`.
+   */
+  timed: { lap: number; startedAt: number };
   /** Candidates whose stored mark is not a whole, non-negative number. */
   malformedMarks: number;
 } {
@@ -1436,31 +1450,44 @@ export function examinationPass(due: readonly DueLoan[]): {
     return checkpoint === d.nextCheckpoint ? lap : 0;
   };
   const laps = due.map(lapOf);
-  const current = laps.reduce((m, l) => (l > m ? l : m), 0);
-  const pending = due.filter((_, i) => laps[i]! < current);
-  if (pending.length === 0) {
+  const head = due[0]?.row;
+  const recordLap = head ? Number(head.pass_lap) : NaN;
+  const recordStart = head ? Number(head.pass_started_at) : NaN;
+  const record =
+    head && head.pass_lap !== null && isMarkNumber(recordLap) && recordLap > 0 &&
+    head.pass_started_at !== null && isMarkNumber(recordStart)
+      ? { lap: recordLap, startedAt: recordStart }
+      : null;
+  const pending = record ? due.filter((_, i) => laps[i] !== record.lap) : [];
+  if (record === null || pending.length === 0) {
+    const highest = laps.reduce((m, l) => (l > m ? l : m), record?.lap ?? 0);
     return {
-      lap: current + 1,
+      lap: highest + 1,
+      begins: true,
       pending: [...due],
       alreadyExamined: 0,
-      startedAt: null,
+      timed: record ?? { lap: highest + 1, startedAt: now },
       malformedMarks,
     };
   }
-  let startedAt: number | null = null;
-  for (let i = 0; i < due.length; i++) {
-    if (laps[i] !== current) continue;
-    const at = Number(due[i]!.row.prenotify_examined_at);
-    if (isMarkNumber(at) && at > 0 && (startedAt === null || at < startedAt)) startedAt = at;
-  }
   return {
-    lap: current,
+    lap: record.lap,
+    begins: false,
     pending,
     alreadyExamined: due.length - pending.length,
-    startedAt,
+    timed: record,
     malformedMarks,
   };
 }
+
+/**
+ * The pass record's write: `?1` chain, `?2` pass, `?3` when it began. Run only
+ * with the first marks of the pass it names, in the same batch. Exported so a
+ * test runs it against SQLite.
+ */
+export const BEGIN_PASS_SQL = `INSERT INTO prenotify_pass (chain_id, lap, started_at)
+VALUES (?1, ?2, ?3)
+ON CONFLICT (chain_id) DO UPDATE SET lap = excluded.lap, started_at = excluded.started_at`;
 
 /**
  * One rule for every half of a mark: `Number.isSafeInteger` covers whole,
@@ -1487,16 +1514,36 @@ function isMarkNumber(v: number): boolean {
  */
 export const MARK_EXAMINED_SQL = `UPDATE loans
    SET prenotify_examined_lap = ?1,
-       prenotify_examined_at = ?2,
        prenotify_examined_checkpoint = (
-         SELECT json_extract(e.value, '$[1]') FROM json_each(?4) AS e
+         SELECT json_extract(e.value, '$[1]') FROM json_each(?3) AS e
           WHERE json_extract(e.value, '$[0]') = loans.loan_id
        )
- WHERE chain_id = ?3
-   AND loan_id IN (SELECT json_extract(value, '$[0]') FROM json_each(?4))`;
+ WHERE chain_id = ?2
+   AND loan_id IN (SELECT json_extract(value, '$[0]') FROM json_each(?3))`;
 
 /**
- * Mark what a batch examined as this pass's (#2230).
+ * The candidate query: every active periodic loan on the chain (`?1`), with
+ * its examination mark and the chain's pass record on each row (#2230). The
+ * record rides along as two scalar subselects, NULL when the chain has none,
+ * so reading it costs no request of its own. Exported so a test runs it
+ * against SQLite itself.
+ */
+export const PRENOTIFY_CANDIDATES_SQL = `SELECT loan_id, chain_id, lender, borrower, start_time,
+       periodic_interest_cadence, last_period_settled_at,
+       period_pre_notified_at,
+       prenotify_examined_checkpoint, prenotify_examined_lap,
+       (SELECT lap FROM prenotify_pass WHERE chain_id = ?1) AS pass_lap,
+       (SELECT started_at FROM prenotify_pass WHERE chain_id = ?1) AS pass_started_at
+  FROM loans
+ WHERE chain_id = ?1
+   AND status = 'active'
+   AND periodic_interest_cadence > 0
+   AND last_period_settled_at > 0`;
+
+/**
+ * Mark what a batch examined as this pass's (#2230), and, when `beginsAt` is
+ * given, record in the same batch that this pass is the chain's pass in
+ * progress and began then.
  *
  * @returns whether the marks landed — the summary depends on it. A failure is
  * REPORTED, because its consequence is the starvation the marks exist to
@@ -1509,13 +1556,23 @@ async function markExamined(
   chain: { id: number; name: string },
   examined: readonly DueLoan[],
   lap: number,
-  now: number,
+  beginsAt: number | null,
   budget: TickBudget,
 ): Promise<boolean> {
   budget.remaining -= 1; // D1 is a subrequest (#2213 r27 `4016129218`)
   const marks = JSON.stringify(examined.map((d) => [d.row.loan_id, d.nextCheckpoint]));
+  const mark = env.DB.prepare(MARK_EXAMINED_SQL).bind(lap, chain.id, marks);
   try {
-    await env.DB.prepare(MARK_EXAMINED_SQL).bind(lap, now, chain.id, marks).run();
+    if (beginsAt === null) {
+      await mark.run();
+    } else {
+      // ONE BATCH IS ONE REQUEST, applied whole or not at all: the pass is
+      // recorded exactly when its first marks are.
+      await env.DB.batch([
+        env.DB.prepare(BEGIN_PASS_SQL).bind(chain.id, lap, beginsAt),
+        mark,
+      ]);
+    }
     return true;
   } catch (err) {
     console.warn(

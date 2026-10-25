@@ -280,15 +280,29 @@ const scanOffsets = new Map<string, number>();
  * surviving across ticks the way the columns do. The fixtures' rows carry
  * none, so the candidate query merges these in as the database would.
  */
-const marks = new Map<string, { lap: number; checkpoint: number; at: number }>();
+const marks = new Map<string, { lap: number; checkpoint: number }>();
+/**
+ * #2230 — each chain's pass record (`prenotify_pass`), keyed by chain id and
+ * surviving across ticks like the table does. The candidate query returns it
+ * on every row, as its two scalar subselects do.
+ */
+const passes = new Map<number, { lap: unknown; startedAt: unknown }>();
 /** When set, the mark write fails — the examinations are not recorded. */
 let markThrows = false;
-/** Mark loans examined in a pass, as a pass the lane ran earlier would have. */
-function markAs(lap: number, ids: number[], at = NOW - 3600) {
+/** When set, the pass-record write fails — the pass cannot begin. */
+let passThrows = false;
+/** The size of each D1 batch the lane sent, in order. */
+const d1Batches: number[] = [];
+/**
+ * Mark loans examined in a pass, as a pass the lane ran earlier would have,
+ * and record that pass as the chain's pass in progress, begun at `startedAt`.
+ */
+function markAs(lap: number, ids: number[], startedAt = NOW - 3600) {
+  passes.set(84532, { lap, startedAt });
   for (const id of ids) {
     const settledAt = settledAtOf.get(id);
     if (settledAt === undefined) throw new Error(`no fixture loan ${id}`);
-    marks.set(`84532:${id}`, { lap, checkpoint: settledAt + 30 * DAY, at });
+    marks.set(`84532:${id}`, { lap, checkpoint: settledAt + 30 * DAY });
   }
 }
 /** Blocks the batched read was pinned to, so the pin can be asserted. */
@@ -471,10 +485,12 @@ function env(extra: Record<string, unknown> = {}) {
         const rows = loanRowsByChain?.[chainId] ?? (loanRowsByChain ? [] : loanRows);
         return rows.map((r) => {
           const m = marks.get(`${chainId}:${Number(r.loan_id)}`);
+          const p = passes.get(chainId);
           return {
             prenotify_examined_lap: m?.lap ?? 0,
             prenotify_examined_checkpoint: m?.checkpoint ?? 0,
-            prenotify_examined_at: m?.at ?? 0,
+            pass_lap: p?.lap ?? null,
+            pass_started_at: p?.startedAt ?? null,
             ...r,
           };
         });
@@ -491,6 +507,7 @@ function env(extra: Record<string, unknown> = {}) {
       // statement itself is run against real SQLite in
       // periodicPreNotifyMarks.test.ts; this fake only has to keep the state.
       const isMarkWrite = sql.includes('prenotify_examined_lap = ?1');
+      const isPassWrite = sql.includes('INSERT INTO prenotify_pass');
       const leaf = (params: unknown[]) => ({
         all: async () => ({ results: rowsFor(params) }),
         first: async () => {
@@ -513,10 +530,17 @@ function env(extra: Record<string, unknown> = {}) {
           }
           if (isMarkWrite) {
             if (markThrows) throw new Error('D1_ERROR: mark write failed');
-            const [lap, at, chainId, json] = params as [number, number, number, string];
+            const [lap, chainId, json] = params as [number, number, string];
             for (const [loanId, checkpoint] of JSON.parse(json) as [number, number][]) {
-              marks.set(`${chainId}:${loanId}`, { lap, checkpoint, at });
+              marks.set(`${chainId}:${loanId}`, { lap, checkpoint });
             }
+            record(params);
+            return { meta: { changes: 0 } };
+          }
+          if (isPassWrite) {
+            if (passThrows) throw new Error('D1_ERROR: pass write failed');
+            const [chainId, lap, startedAt] = params as [number, number, number];
+            passes.set(chainId, { lap, startedAt });
             record(params);
             return { meta: { changes: 0 } };
           }
@@ -531,6 +555,24 @@ function env(extra: Record<string, unknown> = {}) {
         },
       });
       return { bind: (...params: unknown[]) => leaf(params), ...leaf([]) };
+    },
+    // D1's batch: one request, applied whole or not at all. The fake keeps
+    // the all-or-nothing half by restoring the lane's state on a failure.
+    async batch(stmts: { run: () => Promise<unknown> }[]) {
+      const savedMarks = new Map(marks);
+      const savedPasses = new Map(passes);
+      d1Batches.push(stmts.length);
+      try {
+        const out = [];
+        for (const st of stmts) out.push(await st.run());
+        return out;
+      } catch (err) {
+        marks.clear();
+        for (const [k, v] of savedMarks) marks.set(k, v);
+        passes.clear();
+        for (const [k, v] of savedPasses) passes.set(k, v);
+        throw err;
+      }
     },
   };
   return {
@@ -661,7 +703,10 @@ beforeEach(() => {
   cursorWriteFails = null;
   scanOffsets.clear();
   marks.clear();
+  passes.clear();
+  d1Batches.length = 0;
   markThrows = false;
+  passThrows = false;
   sends.length = 0;
   pushAttemptFor = () => 'accepted';
   tgAccepts = 'accepted';
@@ -1599,8 +1644,76 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     loanRows = tenLoans();
     markAs(4, [100, 99], NOW - 4 * DAY);
     const { said } = await run();
-    expect(said).toContain('pass 4 over the notification window began at least');
+    expect(said).toContain('pass 4 over the notification window began 96h ago');
     expect(said).toContain('longer than the 3-day window itself');
+  });
+
+  it('keeps a pass, its number and its start, when every loan it marked has left the window', async () => {
+    // Codex #2845 r1. A marked loan leaves the window once its deadline
+    // passes. Dated from the marks still in the window, a long pass kept
+    // looking young and was never reported; numbered from them, a pass whose
+    // marks had ALL left fell back to the number before it. The record has
+    // neither failure: here pass 4 began four days ago and none of the loans
+    // now in the window carries its mark.
+    loanRows = tenLoans();
+    passes.set(84532, { lap: 4, startedAt: NOW - 4 * DAY });
+    const { said, stamped } = await run();
+    expect(said).toContain('pass 4 over the notification window began 96h ago');
+    expect(said).not.toContain('pass 5');
+    // The pass goes on under its own number, nearest first.
+    expect(stamped).toEqual(Array.from({ length: LOANS_PER_TICK }, (_, k) => 100 - k));
+    expect(marks.get('84532:100')?.lap).toBe(4);
+    // And its record is not rewritten: it began when it began.
+    expect(passes.get(84532)).toEqual({ lap: 4, startedAt: NOW - 4 * DAY });
+    expect(d1Batches).toEqual([]);
+  });
+
+  it('reports a pass that ran over on the tick that finishes it', async () => {
+    // A pass can cross the window's length between its last tick and the one
+    // that begins the next. The finished pass is judged on that tick too.
+    loanRows = tenLoans();
+    markAs(2, [100, 99, 98, 97, 96, 95, 94, 93, 92, 91], NOW - 4 * DAY);
+    const { said } = await run();
+    expect(said).toContain('pass 2 over the notification window began 96h ago');
+    expect(passes.get(84532)?.lap).toBe(3);
+  });
+
+  it('records a pass it begins in the same write as the pass\'s first marks', async () => {
+    // One batch, one request: the record and the first marks land together or
+    // not at all, so no mark names a pass the record does not.
+    loanRows = tenLoans();
+    await run();
+    expect(d1Batches).toEqual([2]);
+    const record = passes.get(84532);
+    expect(record?.lap).toBe(1);
+    expect(Math.abs(Number(record?.startedAt) - NOW)).toBeLessThan(600);
+    expect(marks.get('84532:100')?.lap).toBe(1);
+  });
+
+  it('leaves the pass unbegun when its first marks cannot be written', async () => {
+    // The batch is applied whole or not at all, so a failed mark write leaves
+    // no record behind, and the next tick begins the same pass afresh.
+    loanRows = tenLoans();
+    markThrows = true;
+    const first = await run();
+    expect(passes.has(84532)).toBe(false);
+    expect(marks.size).toBe(0);
+    expect(first.said).toContain('could not mark');
+    markThrows = false;
+    await run();
+    expect(passes.get(84532)?.lap).toBe(1);
+  });
+
+  it('numbers a new pass above every mark when the record cannot be read', async () => {
+    // A cleared or unreadable record counts as none. The next pass is numbered
+    // above every mark in the window, so no old mark can count in it.
+    loanRows = tenLoans();
+    markAs(6, [100, 99]);
+    passes.set(84532, { lap: 'six', startedAt: NOW - 3600 });
+    const { stamped } = await run();
+    expect(stamped[0]).toBe(100);
+    expect(passes.get(84532)?.lap).toBe(7);
+    expect(marks.get('84532:100')?.lap).toBe(7);
   });
 
   it('says nothing about pass length while a pass fits inside the window', async () => {

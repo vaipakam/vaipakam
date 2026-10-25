@@ -1529,7 +1529,7 @@ intact (compare against `wrangler r2 object get … --pipe | sha256sum`).
 
 For the re-derivable tables (`offers`, `loans`, `activity_events`,
 `oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor`,
-`prenotify_scan_cursor`, `indexer_deployment`),
+`prenotify_scan_cursor`, `prenotify_pass`, `indexer_deployment`),
 the design doc favours **re-indexing from block 0** over restoring
 from the archive. Why:
 
@@ -1568,6 +1568,7 @@ DELETE FROM recycle_prelaunch; \
 DELETE FROM recycle_chain_reported; \
 DELETE FROM recycle_backing_snapshot; \
 DELETE FROM prenotify_scan_cursor; \
+DELETE FROM prenotify_pass; \
 DELETE FROM push_rail_status; \
 DELETE FROM indexer_deployment; \
 DELETE FROM indexer_cursor"
@@ -1588,8 +1589,10 @@ configuration the keeper may no longer have.
 
 What the pre-notify lane has examined in its current pass (#2230) lives on
 the `loans` rows themselves, in the `prenotify_examined_*` columns, so
-clearing `loans` clears it too. The replay rebuilds every row unexamined,
-and the lane's next pass looks at every loan again. That prefers duplicated
+clearing `loans` clears it too. The pass in progress and when it began are
+recorded per chain in `prenotify_pass`, cleared above with the rest. The
+replay rebuilds every row unexamined, and with no pass record the lane
+begins a new pass that looks at every loan again. That prefers duplicated
 work to stepping over a loan, which is the direction this failure must take.
 It is a property of the restarted pass, not a guarantee about the reminders:
 if the lane has more due loans than one run can examine, the pass may not

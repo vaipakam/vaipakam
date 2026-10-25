@@ -1,18 +1,23 @@
 /**
- * #2230 — the statement that marks a batch's examined loans, run against
- * SQLite itself over the shared database's real migrations.
+ * #2230 — the statements that mark a batch's examined loans, record the
+ * chain's pass and read both back, run against SQLite itself over the shared
+ * database's real migrations.
  *
  * The lane's main suite drives a fake database that recognises this statement
  * by its text and keeps the marks in a map, which is enough to test the lane's
- * decisions and says nothing about whether D1 would apply the statement as
+ * decisions and says nothing about whether D1 would apply the statements as
  * intended. D1 executes SQLite, so this runs the exported statement on an
  * in-memory SQLite built from `apps/indexer/migrations`, the single owner of
- * that schema.
+ * that schema. The exported statements are the ones the lane runs.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
-import { MARK_EXAMINED_SQL } from '../src/periodicPreNotify';
+import {
+  BEGIN_PASS_SQL,
+  MARK_EXAMINED_SQL,
+  PRENOTIFY_CANDIDATES_SQL,
+} from '../src/periodicPreNotify';
 
 const MIGRATIONS = new URL('../../indexer/migrations/', import.meta.url);
 
@@ -31,24 +36,23 @@ function loan(db: DatabaseSync, chainId: number, loanId: number, updatedAt = 111
        lending_asset, collateral_asset, duration_days, token_id,
        collateral_token_id, lender_token_id, borrower_token_id,
        lender_current_owner, borrower_current_owner, interest_rate_bps,
-       start_time, start_block, start_at, updated_at)
+       start_time, start_block, start_at, updated_at,
+       periodic_interest_cadence, last_period_settled_at)
      VALUES (?, ?, 1, 'active', '0x1', '0x2', '100', '200', 0, 0, '0xa', '0xc',
-       30, '0', '0', '1', '2', '0x1', '0x2', 500, 0, 0, 0, ?)`,
+       30, '0', '0', '1', '2', '0x1', '0x2', 500, 0, 0, 0, ?, 1, 1_700_000_000)`,
   ).run(chainId, loanId, updatedAt);
 }
 
 type Marks = {
   prenotify_examined_lap: number;
   prenotify_examined_checkpoint: number;
-  prenotify_examined_at: number;
   updated_at: number;
 };
 
 function marksOf(db: DatabaseSync, chainId: number, loanId: number): Marks {
   return db
     .prepare(
-      `SELECT prenotify_examined_lap, prenotify_examined_checkpoint,
-              prenotify_examined_at, updated_at
+      `SELECT prenotify_examined_lap, prenotify_examined_checkpoint, updated_at
          FROM loans WHERE chain_id = ? AND loan_id = ?`,
     )
     .get(chainId, loanId) as Marks;
@@ -61,22 +65,20 @@ describe('the examination-mark statement (#2230)', () => {
     expect(marksOf(db, 84532, 1)).toMatchObject({
       prenotify_examined_lap: 0,
       prenotify_examined_checkpoint: 0,
-      prenotify_examined_at: 0,
     });
   });
 
-  it('marks each loan in the batch with this pass, this time and its own period', () => {
+  it('marks each loan in the batch with this pass and its own period', () => {
     const db = database();
     for (const id of [1, 2, 3]) loan(db, 84532, id);
     const batch = JSON.stringify([
       [1, 1_800_000_001],
       [3, 1_800_000_003],
     ]);
-    db.prepare(MARK_EXAMINED_SQL).run(7, 1_790_000_000, 84532, batch);
+    db.prepare(MARK_EXAMINED_SQL).run(7, 84532, batch);
     expect(marksOf(db, 84532, 1)).toMatchObject({
       prenotify_examined_lap: 7,
       prenotify_examined_checkpoint: 1_800_000_001,
-      prenotify_examined_at: 1_790_000_000,
     });
     expect(marksOf(db, 84532, 3)).toMatchObject({
       prenotify_examined_lap: 7,
@@ -90,7 +92,7 @@ describe('the examination-mark statement (#2230)', () => {
     const db = database();
     loan(db, 84532, 1, 111);
     loan(db, 421614, 1, 222);
-    db.prepare(MARK_EXAMINED_SQL).run(2, 1_790_000_000, 84532, JSON.stringify([[1, 5]]));
+    db.prepare(MARK_EXAMINED_SQL).run(2, 84532, JSON.stringify([[1, 5]]));
     expect(marksOf(db, 421614, 1).prenotify_examined_lap).toBe(0);
     // An examination changes nothing about the loan.
     expect(marksOf(db, 84532, 1).updated_at).toBe(111);
@@ -99,15 +101,79 @@ describe('the examination-mark statement (#2230)', () => {
 
   it('covers a whole batch of a hundred loans in one statement', () => {
     // A hundred loans as separate bound parameters would pass D1's per-query
-    // parameter limit; the JSON array keeps the statement at four.
+    // parameter limit; the JSON array keeps the statement at three.
     const db = database();
     const ids = Array.from({ length: 100 }, (_, i) => i + 1);
     for (const id of ids) loan(db, 84532, id);
     const info = db
       .prepare(MARK_EXAMINED_SQL)
-      .run(1, 1_790_000_000, 84532, JSON.stringify(ids.map((id) => [id, 1_800_000_000 + id])));
+      .run(1, 84532, JSON.stringify(ids.map((id) => [id, 1_800_000_000 + id])));
     expect(Number(info.changes)).toBe(100);
     expect(marksOf(db, 84532, 100).prenotify_examined_checkpoint).toBe(1_800_000_100);
     expect((MARK_EXAMINED_SQL.match(/\?\d/g) ?? []).length).toBeLessThanOrEqual(6);
+  });
+});
+
+type Candidate = {
+  loan_id: number;
+  prenotify_examined_lap: number;
+  pass_lap: number | null;
+  pass_started_at: number | null;
+};
+
+function candidates(db: DatabaseSync, chainId: number): Candidate[] {
+  return db.prepare(PRENOTIFY_CANDIDATES_SQL).all(chainId) as Candidate[];
+}
+
+describe('the pass record (#2230, Codex #2845 r1)', () => {
+  it('rides on every candidate row, NULL while the chain has no pass', () => {
+    const db = database();
+    for (const id of [1, 2]) loan(db, 84532, id);
+    const rows = candidates(db, 84532);
+    expect(rows).toHaveLength(2);
+    for (const r of rows) {
+      expect(r.pass_lap).toBeNull();
+      expect(r.pass_started_at).toBeNull();
+    }
+  });
+
+  it('is written when a pass begins, and read back on each row of that chain only', () => {
+    const db = database();
+    loan(db, 84532, 1);
+    loan(db, 421614, 1);
+    db.prepare(BEGIN_PASS_SQL).run(84532, 3, 1_790_000_000);
+    expect(candidates(db, 84532)[0]).toMatchObject({
+      pass_lap: 3,
+      pass_started_at: 1_790_000_000,
+    });
+    expect(candidates(db, 421614)[0].pass_lap).toBeNull();
+  });
+
+  it('is replaced, not added to, when the next pass begins', () => {
+    // One row per chain: beginning pass 4 moves both the number and the start,
+    // which is what dates the new pass from its own first tick.
+    const db = database();
+    loan(db, 84532, 1);
+    db.prepare(BEGIN_PASS_SQL).run(84532, 3, 1_790_000_000);
+    db.prepare(BEGIN_PASS_SQL).run(84532, 4, 1_790_086_400);
+    expect(candidates(db, 84532)[0]).toMatchObject({
+      pass_lap: 4,
+      pass_started_at: 1_790_086_400,
+    });
+    const count = db.prepare('SELECT COUNT(*) AS n FROM prenotify_pass').get() as { n: number };
+    expect(Number(count.n)).toBe(1);
+  });
+
+  it('keeps its start while the pass marks loans, however many', () => {
+    // THE DEFECT r1 FOUND: a pass dated from its marks moved forward as marked
+    // loans left the window. Marks never touch the record.
+    const db = database();
+    for (const id of [1, 2]) loan(db, 84532, id);
+    db.prepare(BEGIN_PASS_SQL).run(84532, 5, 1_790_000_000);
+    db.prepare(MARK_EXAMINED_SQL).run(5, 84532, JSON.stringify([[1, 9], [2, 9]]));
+    for (const r of candidates(db, 84532)) {
+      expect(r.prenotify_examined_lap).toBe(5);
+      expect(r.pass_started_at).toBe(1_790_000_000);
+    }
   });
 });
