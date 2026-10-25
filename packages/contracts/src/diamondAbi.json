@@ -2704,6 +2704,7 @@
 {"type":"error","name":"CannotEmergencyRevokeFromOwner","inputs":[{"name":"owner","type":"address","internalType":"address"}]},
 {"type":"error","name":"CannotEmergencyRevokeRootAdmin","inputs":[]},
 {"type":"error","name":"CannotRemoveOwnerRootAdmin","inputs":[{"name":"owner","type":"address","internalType":"address"}]},
+{"type":"error","name":"TransferAdminCallerNotOwner","inputs":[{"name":"owner","type":"address","internalType":"address"}]},
 {"type":"error","name":"TransferAdminToSelf","inputs":[]},
 {"type":"error","name":"TransferAdminToZero","inputs":[]},
 {"type":"function","name":"owner","inputs":[],"outputs":[{"name":"owner_","type":"address","internalType":"address"}],"stateMutability":"view"},
