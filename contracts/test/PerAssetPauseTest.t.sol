@@ -17,6 +17,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /// @title PerAssetPauseTest
 /// @notice Validates per-asset reserve pause: pausing an asset
@@ -33,20 +34,20 @@ contract PerAssetPauseTest is Test {
     address internal notAdmin = address(0xBEEF);
 
     function setUp() public {
-        DiamondCutFacet cutFacet = new DiamondCutFacet();
+        DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(address(this), address(cutFacet));
         HelperTest helper = new HelperTest();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);
-        cuts[0] = _cut(address(new AccessControlFacet()), helper.getAccessControlFacetSelectors());
-        cuts[1] = _cut(address(new AdminFacet()), helper.getAdminFacetSelectors());
-        cuts[2] = _cut(address(new OfferCreateFacet()), helper.getOfferCreateFacetSelectors());
-        cuts[3] = _cut(address(new AddCollateralFacet()), helper.getAddCollateralFacetSelectors());
-        cuts[4] = _cut(address(new EarlyWithdrawalFacet()), helper.getEarlyWithdrawalFacetSelectors());
-        cuts[5] = _cut(address(new OfferCancelFacet()), helper.getOfferCancelFacetSelectors());
+        cuts[0] = _cut(ArtifactDeploy.deploy(type(AccessControlFacet).name), helper.getAccessControlFacetSelectors());
+        cuts[1] = _cut(ArtifactDeploy.deploy(type(AdminFacet).name), helper.getAdminFacetSelectors());
+        cuts[2] = _cut(ArtifactDeploy.deploy(type(OfferCreateFacet).name), helper.getOfferCreateFacetSelectors());
+        cuts[3] = _cut(ArtifactDeploy.deploy(type(AddCollateralFacet).name), helper.getAddCollateralFacetSelectors());
+        cuts[4] = _cut(ArtifactDeploy.deploy(type(EarlyWithdrawalFacet).name), helper.getEarlyWithdrawalFacetSelectors());
+        cuts[5] = _cut(ArtifactDeploy.deploy(type(OfferCancelFacet).name), helper.getOfferCancelFacetSelectors());
 
         // #569 (2026-06-13) — encumbrance mutate facet for lien wires.
-        cuts[6] = _cut(address(new EncumbranceMutateFacet()), helper.getEncumbranceMutateFacetSelectors());
+        cuts[6] = _cut(ArtifactDeploy.deploy(type(EncumbranceMutateFacet).name), helper.getEncumbranceMutateFacetSelectors());
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();

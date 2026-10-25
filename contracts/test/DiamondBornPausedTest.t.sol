@@ -11,6 +11,7 @@ import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title DiamondBornPausedTest
@@ -42,7 +43,7 @@ contract DiamondBornPausedTest is Test {
     HelperTest internal helper;
 
     function setUp() public {
-        DiamondCutFacet cutFacet = new DiamondCutFacet();
+        DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(address(this), address(cutFacet));
         helper = new HelperTest();
     }
@@ -103,7 +104,7 @@ contract DiamondBornPausedTest is Test {
         bytes4[] memory selectors = helper.getOfferCreateFacetSelectors();
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(new OfferCreateFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OfferCreateFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: selectors
         });
@@ -119,12 +120,12 @@ contract DiamondBornPausedTest is Test {
     function _addAccessControlAndAdmin() internal {
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(new AccessControlFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(AccessControlFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getAccessControlFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
-            facetAddress: address(new AdminFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(AdminFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getAdminFacetSelectors()
         });

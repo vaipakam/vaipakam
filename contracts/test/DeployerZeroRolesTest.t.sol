@@ -9,6 +9,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /// @title DeployerZeroRolesTest
 /// @notice Enforces the post-deploy key-rotation invariant from
@@ -63,9 +64,9 @@ contract DeployerZeroRolesTest is Test {
         notifBillerBot = makeAddr("notif-biller-bot");
         keeperBot = makeAddr("keeper-bot");
 
-        cutFacet = new DiamondCutFacet();
+        cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(deployer, address(cutFacet));
-        accessControlFacet = new AccessControlFacet();
+        accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         helperTest = new HelperTest();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
@@ -77,7 +78,7 @@ contract DeployerZeroRolesTest is Test {
         // Ownership moves in the rotation (D1): the deployer cannot give
         // up DEFAULT_ADMIN_ROLE while it is still the Diamond owner (#906).
         cuts[1] = IDiamondCut.FacetCut({
-            facetAddress: address(new OwnershipFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OwnershipFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOwnershipFacetSelectors()
         });

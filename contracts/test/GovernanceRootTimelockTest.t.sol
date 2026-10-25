@@ -10,6 +10,7 @@ import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {VaipakamTimelock} from "../src/governance/VaipakamTimelock.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title GovernanceRootTimelockTest
@@ -41,18 +42,18 @@ contract GovernanceRootTimelockTest is Test {
 
     function setUp() public {
         admin = address(this);
-        DiamondCutFacet cutFacet = new DiamondCutFacet();
+        DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(admin, address(cutFacet));
         HelperTest helper = new HelperTest();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(new AccessControlFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(AccessControlFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getAccessControlFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
-            facetAddress: address(new OwnershipFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OwnershipFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getOwnershipFacetSelectors()
         });

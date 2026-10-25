@@ -65,6 +65,7 @@ import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 contract OfferFacetTest is Test {
     VaipakamDiamond diamond;
@@ -125,7 +126,7 @@ contract OfferFacetTest is Test {
         // Mock ERC1155 would need IERC1155 impl; skip for simplicity or add
 
         // Deploy Diamond and cut facets
-        DiamondCutFacet cutFacet = new DiamondCutFacet();
+        DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cutFacet));
         console.log("address(diamond): ", address(diamond));
         // LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -137,12 +138,12 @@ contract OfferFacetTest is Test {
         // Prepare cuts for required facets
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(new OfferCreateFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OfferCreateFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: getOfferCreateFacetSelectors()
         });
         cuts[9] = IDiamondCut.FacetCut({
-            facetAddress: address(new OfferAcceptFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OfferAcceptFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: getOfferAcceptFacetSelectors()
         });
@@ -151,14 +152,14 @@ contract OfferFacetTest is Test {
         // mandatory: `_acceptOffer` self-calls it, so an ERC-20 accept on a
         // Diamond missing this cut reverts `FunctionDoesNotExist`.
         cuts[12] = IDiamondCut.FacetCut({
-            facetAddress: address(new OfferAcceptFeeFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OfferAcceptFeeFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: getOfferAcceptFeeFacetSelectors()
         });
         // #2440 — that charge moves the treasury's cut through a self-call into
         // the treasury fee host, so it needs its cut too.
         cuts[13] = IDiamondCut.FacetCut({
-            facetAddress: address(new TreasuryFeeFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(TreasuryFeeFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
         });
@@ -166,42 +167,42 @@ contract OfferFacetTest is Test {
         // through NumeraireValueFacet by self-call, so a hand-built Diamond
         // that cuts any of them must cut this host too.
         cuts[14] = IDiamondCut.FacetCut({
-            facetAddress: address(new NumeraireValueFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
-            facetAddress: address(new ProfileFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(ProfileFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: getProfileFacetSelectors() // getSelectors("ProfileFacet")
         });
         // logSelectors("ProfileFacet", cuts[1]);
         cuts[2] = IDiamondCut.FacetCut({
-            facetAddress: address(new OracleFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OracleFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: getOracleFacetSelectors()
         });
         // logSelectors("OracleFacet", cuts[2]);
         cuts[3] = IDiamondCut.FacetCut({
-            facetAddress: address(new VaipakamNFTFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(VaipakamNFTFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: getVaipakamNFTFacetSelectors()
         });
         // logSelectors("VaipakamNFTFacet", cuts[3]);
         cuts[4] = IDiamondCut.FacetCut({
-            facetAddress: address(new VaultFactoryFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(VaultFactoryFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: getVaultFactoryFacetSelectors()
         });
         // logSelectors("VaultFactoryFacet", cuts[4]);
         cuts[5] = IDiamondCut.FacetCut({
-            facetAddress: address(new LoanFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(LoanFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: getLoanFacetSelectors()
         });
         // logSelectors("LoanFacet", cuts[5]);
         cuts[6] = IDiamondCut.FacetCut({
-            facetAddress: address(new AccessControlFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(AccessControlFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getAccessControlFacetSelectors()
         });
@@ -214,7 +215,7 @@ contract OfferFacetTest is Test {
         // OfferFacet for the EIP-170 split. Same selectors land on
         // the diamond.
         cuts[8] = IDiamondCut.FacetCut({
-            facetAddress: address(new OfferCancelFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OfferCancelFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferCancelFacetSelectors()
         });
@@ -222,7 +223,7 @@ contract OfferFacetTest is Test {
         console.log("inside setup function 001");
         // #407 PR 4 (T-407-B, 2026-06-12) — encumbrance mutate facet.
         cuts[10] = IDiamondCut.FacetCut({
-            facetAddress: address(new EncumbranceMutateFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(EncumbranceMutateFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()
         });
@@ -231,7 +232,7 @@ contract OfferFacetTest is Test {
         // so this minimal-cut diamond must route it or every ERC-20 accept
         // reverts `FunctionDoesNotExist`.
         cuts[11] = IDiamondCut.FacetCut({
-            facetAddress: address(new FeeEntitlementFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(FeeEntitlementFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFeeEntitlementFacetSelectors()
         });

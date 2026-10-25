@@ -8,6 +8,7 @@ import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /// @title GovernanceConfigTest
 /// @notice Targeted coverage for the Phase-1 governance-config additions:
@@ -30,10 +31,10 @@ contract GovernanceConfigTest is Test {
         owner = address(this);
         attacker = makeAddr("attacker");
 
-        cutFacet = new DiamondCutFacet();
+        cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cutFacet));
-        accessControlFacet = new AccessControlFacet();
-        configFacet = new ConfigFacet();
+        accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
+        configFacet = ConfigFacet(ArtifactDeploy.deploy(type(ConfigFacet).name));
         helperTest = new HelperTest();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);

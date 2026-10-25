@@ -11,6 +11,7 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 // Minimal loupe interface to avoid IERC165 collision between @diamond-3 and OpenZeppelin
 interface ILoupe {
@@ -47,16 +48,16 @@ contract DiamondLoupeFacetTest is Test {
         owner = address(this);
         newOwner = makeAddr("newOwner");
 
-        cutFacet = new DiamondCutFacet();
+        cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cutFacet));
         // Deploy DiamondLoupeFacet via raw bytecode to avoid IERC165 identifier collision
         bytes memory code = vm.getCode("DiamondLoupeFacet.sol:DiamondLoupeFacet");
         address deployed;
         assembly { deployed := create(0, add(code, 0x20), mload(code)) }
         loupeFacet = deployed;
-        ownershipFacet = new OwnershipFacet();
-        adminFacet = new AdminFacet();
-        accessControlFacet = new AccessControlFacet();
+        ownershipFacet = OwnershipFacet(ArtifactDeploy.deploy(type(OwnershipFacet).name));
+        adminFacet = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
+        accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         helperTest = new HelperTest();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);

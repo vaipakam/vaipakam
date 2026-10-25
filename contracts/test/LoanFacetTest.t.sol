@@ -64,6 +64,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 contract LoanFacetTest is Test {
     VaipakamDiamond diamond;
@@ -149,20 +150,20 @@ contract LoanFacetTest is Test {
         MockRentableNFT721(mockNft721).mint(lender, 1);
 
         // Deploy facets
-        cutFacet = new DiamondCutFacet();
+        cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cutFacet));
 
-        offerCreateFacet = new OfferCreateFacet();
-        offerAcceptFacet = new OfferAcceptFacet();
+        offerCreateFacet = OfferCreateFacet(ArtifactDeploy.deploy(type(OfferCreateFacet).name));
+        offerAcceptFacet = OfferAcceptFacet(ArtifactDeploy.deploy(type(OfferAcceptFacet).name));
 
-        offerCancelFacet = new OfferCancelFacet();
-        profileFacet = new ProfileFacet();
-        oracleFacet = new OracleFacet();
-        nftFacet = new VaipakamNFTFacet();
-        vaultFacet = new VaultFactoryFacet();
-        loanFacet = new LoanFacet();
-        riskFacet = new RiskFacet(); // Added
-        accessControlFacet = new AccessControlFacet();
+        offerCancelFacet = OfferCancelFacet(ArtifactDeploy.deploy(type(OfferCancelFacet).name));
+        profileFacet = ProfileFacet(ArtifactDeploy.deploy(type(ProfileFacet).name));
+        oracleFacet = OracleFacet(ArtifactDeploy.deploy(type(OracleFacet).name));
+        nftFacet = VaipakamNFTFacet(ArtifactDeploy.deploy(type(VaipakamNFTFacet).name));
+        vaultFacet = VaultFactoryFacet(ArtifactDeploy.deploy(type(VaultFactoryFacet).name));
+        loanFacet = LoanFacet(ArtifactDeploy.deploy(type(LoanFacet).name));
+        riskFacet = RiskFacet(ArtifactDeploy.deploy(type(RiskFacet).name)); // Added
+        accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
@@ -186,7 +187,7 @@ contract LoanFacetTest is Test {
         // cut it or every ERC-20 accept reverts FunctionDoesNotExist at the
         // self-call, with the accept facet itself looking perfectly fine.
         cuts[14] = IDiamondCut.FacetCut({
-            facetAddress: address(new OfferAcceptFeeFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OfferAcceptFeeFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferAcceptFeeFacetSelectors()
         });
@@ -236,19 +237,19 @@ contract LoanFacetTest is Test {
         // is safe for the rest of the suite: ConfigFacet selectors live in
         // a disjoint namespace from the other facets here.
         cuts[10] = IDiamondCut.FacetCut({
-            facetAddress: address(new ConfigFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(ConfigFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getConfigFacetSelectors()
         });
 
-        cuts[11] = IDiamondCut.FacetCut({facetAddress: address(new RiskMatchLiquidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
+        cuts[11] = IDiamondCut.FacetCut({facetAddress: ArtifactDeploy.deploy(type(RiskMatchLiquidationFacet).name), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
         // #602 — EncumbranceMutateFacet. The offer-create path
         // (`OfferCreateFacet._pullCreatorAssetsClassic`, Lender+ERC20 branch)
         // cross-calls `EncumbranceMutateFacet.createOfferPrincipalLien` (the
         // #566/#407 offer-principal lock), and the loan lifecycle calls its
         // sibling lien mutators. Without this cut every offer-create here
         // reverts `FunctionDoesNotExist`, which broke the whole suite.
-        cuts[13] = IDiamondCut.FacetCut({facetAddress: address(new EncumbranceMutateFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()});
+        cuts[13] = IDiamondCut.FacetCut({facetAddress: ArtifactDeploy.deploy(type(EncumbranceMutateFacet).name), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()});
         // #1566 S2a - RiskFacet, DefaultedFacet and ClaimFacet reach the
         // fallback custody flows (entry, retry swap, in-kind distribution)
         // through a Diamond self-call into FallbackCustodyFacet, the one host
@@ -256,7 +257,7 @@ contract LoanFacetTest is Test {
         // cut this host too, or a failed-swap liquidation or default and the
         // fallback claim revert FunctionDoesNotExist at that self-call.
         cuts[15] = IDiamondCut.FacetCut({
-            facetAddress: address(new FallbackCustodyFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(FallbackCustodyFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
         });
@@ -266,7 +267,7 @@ contract LoanFacetTest is Test {
         // of them must cut this host too, or every attempt is refused
         // SwapAttemptHostMissing.
         cuts[16] = IDiamondCut.FacetCut({
-            facetAddress: address(new SwapAttemptFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(SwapAttemptFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSwapAttemptFacetSelectors()
         });
@@ -276,7 +277,7 @@ contract LoanFacetTest is Test {
         // hand-built Diamond that cuts any of them must cut this host too, or
         // the fee reverts FunctionDoesNotExist at that self-call.
         cuts[17] = IDiamondCut.FacetCut({
-            facetAddress: address(new TreasuryFeeFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(TreasuryFeeFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
         });
@@ -284,7 +285,7 @@ contract LoanFacetTest is Test {
         // through NumeraireValueFacet by self-call, so a hand-built Diamond
         // that cuts any of them must cut this host too.
         cuts[18] = IDiamondCut.FacetCut({
-            facetAddress: address(new NumeraireValueFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
         });

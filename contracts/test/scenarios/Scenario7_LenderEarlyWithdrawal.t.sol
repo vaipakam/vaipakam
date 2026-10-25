@@ -39,6 +39,7 @@ import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {MockVaultWithdraw} from "../helpers/MockVaultWithdraw.sol";
+import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title Scenario7_LenderEarlyWithdrawal
@@ -110,25 +111,25 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         ERC20Mock(mockCollateralERC20).mint(newLender, 100000 ether);
         ERC20Mock(mockCollateralERC20).mint(borrower,  100000 ether);
 
-        cutFacet = new DiamondCutFacet();
+        cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond  = new VaipakamDiamond(owner, address(cutFacet));
-        offerCreateFacet = new OfferCreateFacet();
-        offerAcceptFacet = new OfferAcceptFacet();
-        offerCancelFacet = new OfferCancelFacet();
-        profileFacet = new ProfileFacet();
-        oracleFacet = new OracleFacet();
-        nftFacet = new VaipakamNFTFacet();
-        vaultFacet = new VaultFactoryFacet();
-        loanFacet = new LoanFacet();
-        riskFacet = new RiskFacet();
-        repayFacet = new RepayFacet();
-        defaultFacet = new DefaultedFacet();
-        adminFacet = new AdminFacet();
-        claimFacet = new ClaimFacet();
-        addCollateralFacet = new AddCollateralFacet();
-        earlyFacet = new EarlyWithdrawalFacet();
-        earlyFacetDirect = new EarlyWithdrawalDirectFacet();
-        accessControlFacet = new AccessControlFacet();
+        offerCreateFacet = OfferCreateFacet(ArtifactDeploy.deploy(type(OfferCreateFacet).name));
+        offerAcceptFacet = OfferAcceptFacet(ArtifactDeploy.deploy(type(OfferAcceptFacet).name));
+        offerCancelFacet = OfferCancelFacet(ArtifactDeploy.deploy(type(OfferCancelFacet).name));
+        profileFacet = ProfileFacet(ArtifactDeploy.deploy(type(ProfileFacet).name));
+        oracleFacet = OracleFacet(ArtifactDeploy.deploy(type(OracleFacet).name));
+        nftFacet = VaipakamNFTFacet(ArtifactDeploy.deploy(type(VaipakamNFTFacet).name));
+        vaultFacet = VaultFactoryFacet(ArtifactDeploy.deploy(type(VaultFactoryFacet).name));
+        loanFacet = LoanFacet(ArtifactDeploy.deploy(type(LoanFacet).name));
+        riskFacet = RiskFacet(ArtifactDeploy.deploy(type(RiskFacet).name));
+        repayFacet = RepayFacet(ArtifactDeploy.deploy(type(RepayFacet).name));
+        defaultFacet = DefaultedFacet(ArtifactDeploy.deploy(type(DefaultedFacet).name));
+        adminFacet = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
+        claimFacet = ClaimFacet(ArtifactDeploy.deploy(type(ClaimFacet).name));
+        addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
+        earlyFacet = EarlyWithdrawalFacet(ArtifactDeploy.deploy(type(EarlyWithdrawalFacet).name));
+        earlyFacetDirect = EarlyWithdrawalDirectFacet(ArtifactDeploy.deploy(type(EarlyWithdrawalDirectFacet).name));
+        accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
@@ -137,7 +138,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         // settlement now, so `transferLenderRewardEntry` must resolve here;
         // unrouted it would bubble as the deploy-drift failure and revert
         // this scenario's sale paths. Unconfigured program → no-op early-return.
-        cuts[21] = IDiamondCut.FacetCut({facetAddress: address(new InteractionRewardsFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getInteractionRewardsFacetSelectors()});
+        cuts[21] = IDiamondCut.FacetCut({facetAddress: ArtifactDeploy.deploy(type(InteractionRewardsFacet).name), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getInteractionRewardsFacetSelectors()});
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -149,7 +150,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         // cut it or every ERC-20 accept reverts FunctionDoesNotExist at the
         // self-call, with the accept facet itself looking perfectly fine.
         cuts[22] = IDiamondCut.FacetCut({
-            facetAddress: address(new OfferAcceptFeeFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OfferAcceptFeeFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferAcceptFeeFacetSelectors()
         });
@@ -170,17 +171,17 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
-        cuts[16] = IDiamondCut.FacetCut({facetAddress: address(new RiskMatchLiquidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
+        cuts[16] = IDiamondCut.FacetCut({facetAddress: ArtifactDeploy.deploy(type(RiskMatchLiquidationFacet).name), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
         // #1503 PR-E — the sale paths now read `RiskPreviewFacet.saleAdmission`
         // (the admission classification lives there for EIP-170 headroom), so
         // this scenario's diamond must route it or every sale reverts
         // FunctionDoesNotExist.
-        cuts[19] = IDiamondCut.FacetCut({facetAddress: address(new RiskPreviewFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskPreviewFacetSelectors()});
+        cuts[19] = IDiamondCut.FacetCut({facetAddress: ArtifactDeploy.deploy(type(RiskPreviewFacet).name), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskPreviewFacetSelectors()});
         // #407 PR 4 (T-407-B, 2026-06-12) — encumbrance mutate facet,
         // required so the loan-lifecycle terminals' cross-facet
         // release call (e.g. {RepayFacet.repayLoan}) resolves
         // in this scenario's minimal diamond cut.
-        EncumbranceMutateFacet encumbranceMutateFacet = new EncumbranceMutateFacet();
+        EncumbranceMutateFacet encumbranceMutateFacet = EncumbranceMutateFacet(ArtifactDeploy.deploy(type(EncumbranceMutateFacet).name));
         cuts[18] = IDiamondCut.FacetCut({
             facetAddress: address(encumbranceMutateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -194,7 +195,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         // cut this host too, or a failed-swap liquidation or default and the
         // fallback claim revert FunctionDoesNotExist at that self-call.
         cuts[23] = IDiamondCut.FacetCut({
-            facetAddress: address(new FallbackCustodyFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(FallbackCustodyFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
         });
@@ -204,7 +205,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         // of them must cut this host too, or every attempt is refused
         // SwapAttemptHostMissing.
         cuts[24] = IDiamondCut.FacetCut({
-            facetAddress: address(new SwapAttemptFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(SwapAttemptFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSwapAttemptFacetSelectors()
         });
@@ -214,7 +215,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         // hand-built Diamond that cuts any of them must cut this host too, or
         // the fee reverts FunctionDoesNotExist at that self-call.
         cuts[25] = IDiamondCut.FacetCut({
-            facetAddress: address(new TreasuryFeeFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(TreasuryFeeFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
         });
@@ -222,7 +223,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         // through NumeraireValueFacet by self-call, so a hand-built Diamond
         // that cuts any of them must cut this host too.
         cuts[26] = IDiamondCut.FacetCut({
-            facetAddress: address(new NumeraireValueFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
         });
