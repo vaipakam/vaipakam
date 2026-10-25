@@ -27,7 +27,8 @@ import type { PassTick } from '../../src/passSchedule';
 import { bindings, createKeeperD1, createSharedD1 } from '../../test/helpers/schemas';
 import { armHeldFence, settleIndexer } from '../../test/helpers/epochFence';
 import type { SqliteD1 } from '../../test/helpers/sqliteD1';
-import { ANVIL_DEV_KEYS, type AnyScenarioChain } from './chain';
+import { ANVIL_DEV_KEYS } from '@vaipakam/anvil-harness/devKeys';
+import type { ScenarioChain } from '@vaipakam/anvil-harness/scenarioChain';
 import { bindingFor, scenarioIndexer, type ScenarioIndexer } from './indexer';
 
 export type PassFlag =
@@ -47,13 +48,13 @@ export interface KeeperHarness {
 }
 
 export async function keeperEnvFor(
-  scs: AnyScenarioChain | readonly AnyScenarioChain[],
+  scs: ScenarioChain | readonly ScenarioChain[],
   flags: readonly PassFlag[],
   opts: { indexer?: boolean } = {},
 ): Promise<KeeperHarness> {
   // One chain, or every chain of a two-chain scenario: each node is bound
   // under the RPC secret the keeper reads for the chain id it presents.
-  const chains: readonly AnyScenarioChain[] = Array.isArray(scs) ? scs : [scs as AnyScenarioChain];
+  const chains: readonly ScenarioChain[] = Array.isArray(scs) ? scs : [scs as ScenarioChain];
   const shared = createSharedD1();
   const keeperDb = createKeeperD1();
   const env = {
