@@ -94,6 +94,19 @@ export async function freshTenor(
   );
 }
 
+/** Behavioural terms a seeded offer may carry instead of the desk
+ *  defaults (partial repay on; prepay listing, full-term interest and a
+ *  periodic cadence off). A term left out keeps its default. A cadence is
+ *  the `PeriodicInterestCadence` index (0 None, 1 Monthly, …), and the
+ *  chain admits a non-None one only while periodic interest is enabled
+ *  and the principal clears the finer-cadence threshold. */
+export interface DeskOfferTerms {
+  allowsPartialRepay?: boolean;
+  allowsPrepayListing?: boolean;
+  periodicInterestCadence?: number;
+  useFullTermInterest?: boolean;
+}
+
 /** Direct-write seeding (the lib/seed.ts pattern): approve + createOffer
  *  from the role wallet, mirroring offerSchema's canonical
  *  role-asymmetric payload mapping — lender ships floor rate + open
@@ -114,6 +127,10 @@ export async function seedDeskOffer(opts: {
    *  assumed — so `collateralTliq` parses to the right base units. */
   collateralAsset?: `0x${string}`;
   collateralDecimals?: number;
+  /** Lender side only: the offer's lower bound, which is what an accept
+   *  binds as the principal. Default: 10% of `amountWeth`. */
+  minAmountWeth?: string;
+  terms?: DeskOfferTerms;
 }): Promise<bigint> {
   const account = accountFor(opts.role);
   const wallet = walletFor(account);
@@ -138,7 +155,13 @@ export async function seedDeskOffer(opts: {
   const params = {
     offerType: isLend ? 0 : 1,
     lendingAsset: WETH,
-    amount: isLend ? (amount / 10n > 0n ? amount / 10n : 1n) : amount,
+    amount: isLend
+      ? opts.minAmountWeth !== undefined
+        ? parseEther(opts.minAmountWeth)
+        : amount / 10n > 0n
+          ? amount / 10n
+          : 1n
+      : amount,
     interestRateBps: isLend ? BigInt(opts.rateBps) : 0n,
     collateralAsset,
     collateralAmount: collateral,
@@ -151,17 +174,17 @@ export async function seedDeskOffer(opts: {
     collateralAssetType: 0,
     collateralTokenId: 0n,
     collateralQuantity: 0n,
-    allowsPartialRepay: true,
+    allowsPartialRepay: opts.terms?.allowsPartialRepay ?? true,
     amountMax: amount,
     interestRateBpsMax: isLend ? 10_000n : BigInt(opts.rateBps),
     collateralAmountMax: collateral,
-    periodicInterestCadence: 0,
+    periodicInterestCadence: opts.terms?.periodicInterestCadence ?? 0,
     expiresAt: 0n, // GTC
     fillMode: 0, // Partial
-    allowsPrepayListing: false,
+    allowsPrepayListing: opts.terms?.allowsPrepayListing ?? false,
     allowsParallelSale: false,
     refinanceTargetLoanId: 0n,
-    useFullTermInterest: false,
+    useFullTermInterest: opts.terms?.useFullTermInterest ?? false,
   };
   const hash = await wallet.writeContract({
     address: DIAMOND,

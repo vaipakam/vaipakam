@@ -15,7 +15,10 @@
  *    ones the position carries, and the sale did not change them. A sale
  *    vehicle once carried only `useFullTermInterest` and left the other
  *    terms at their defaults (#1503 item 23), which a buyer would have
- *    signed without seeing;
+ *    signed without seeing. So the loan is seeded with EVERY behavioural
+ *    term away from its default (full-term interest, partial repay,
+ *    prepay listing, a Monthly cadence): a vehicle that dropped any of
+ *    them back would show here, where a default-terms loan could not;
  *  - the buyer's payment is accounted for exactly: what left the buyer
  *    (wallet and vault) is what reached the seller and the treasury,
  *    with any rate shortfall credited back to the buyer's vault. No
@@ -31,16 +34,28 @@ import { erc20Abi, type Address } from "viem";
 import { test, expect } from "../lib/wallet-fixture";
 import { connectWallet } from "../lib/wallet-fixture";
 import {
-  postLenderOffer,
-  acceptAsBorrower,
   newestOfferIdFor,
-  newestLoanIdFor,
   consentAndWaitEnabled,
   signAcceptReview,
 } from "../lib/flows";
+import { seedDeskOffer, acceptOfferDirect } from "../lib/desk";
+import { sendAsAdmin } from "../lib/admin";
 import { pub, DIAMOND, DIAMOND_ABI_VIEM } from "../lib/chain";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
+
+/** Every behavioural term away from its default (see the header). */
+const SEEDED_TERMS = {
+  useFullTermInterest: true,
+  allowsPartialRepay: true,
+  allowsPrepayListing: true,
+  periodicInterestCadence: 1, // Monthly
+} as const;
+
+/** The lowest finer-cadence threshold the chain accepts (1,000 in the
+ *  numeraire, 1e18-scaled), so a 0.5 WETH principal qualifies for a
+ *  Monthly cadence. */
+const CADENCE_THRESHOLD_FLOOR = 1_000n * 10n ** 18n;
 
 type Loan = {
   status: number | bigint;
@@ -122,16 +137,47 @@ async function outsideParties(
 test("a third wallet buys a listed lender position; the position migrates and the payment is accounted for", async ({
   launchWallet,
 }) => {
-  // A running loan between the fixture wallets.
-  const lenderPost = await launchWallet("lender");
-  await postLenderOffer(lenderPost.page);
-  const offerId = await newestOfferIdFor(lenderPost.account.address);
-  await lenderPost.ctx.close();
+  // A running loan between the fixture wallets, carrying every
+  // behavioural term away from its default. A non-None cadence is
+  // admitted only while periodic interest is on and the principal clears
+  // the finer-cadence threshold, both off-range on the fresh chain, so
+  // the spec opens that window for the one offer it seeds and restores
+  // both values straight after. Only origination reads them (a sale
+  // vehicle stores the position's cadence verbatim), so nothing later in
+  // the spec depends on the window staying open. The threshold getter
+  // returns the effective value, so a library default comes back as the
+  // same number written explicitly, which admits exactly the same offers.
+  const periodicWas = await read<boolean>("getPeriodicInterestEnabled", []);
+  const thresholdWas = await read<bigint>("getMinPrincipalForFinerCadence", []);
+  let offerId: bigint;
+  try {
+    await sendAsAdmin("setPeriodicInterestEnabled", [true]);
+    await sendAsAdmin("setMinPrincipalForFinerCadence", [CADENCE_THRESHOLD_FLOOR]);
+    offerId = await seedDeskOffer({
+      role: "lender",
+      side: "lend",
+      rateBps: 900,
+      amountWeth: "0.5",
+      minAmountWeth: "0.5",
+      collateralTliq: "10",
+      days: 60, // longer than one Monthly interval, as the cadence requires
+      terms: SEEDED_TERMS,
+    });
+  } finally {
+    await sendAsAdmin("setMinPrincipalForFinerCadence", [thresholdWas]);
+    await sendAsAdmin("setPeriodicInterestEnabled", [periodicWas]);
+  }
+  const loanId = await acceptOfferDirect("borrower", offerId);
 
-  const borrower = await launchWallet("borrower");
-  await acceptAsBorrower(borrower.page, offerId);
-  const loanId = await newestLoanIdFor(borrower.account.address, "borrower");
-  await borrower.ctx.close();
+  // CONFIRM THE SETUP FROM CHAIN STATE (#2183): the position carries the
+  // seeded terms, or the preservation checks below would prove nothing.
+  const seeded = await loanOf(loanId);
+  for (const [term, value] of Object.entries(SEEDED_TERMS)) {
+    expect(
+      Number(seeded[term as keyof typeof SEEDED_TERMS]),
+      `the seeded loan should carry ${term} = ${String(value)}`,
+    ).toBe(Number(value));
+  }
 
   // The seller lists the position from its own form (spec 40's drive).
   const seller = await launchWallet("lender", { advanced: true });
