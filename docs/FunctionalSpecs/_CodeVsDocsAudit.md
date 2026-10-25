@@ -1306,3 +1306,28 @@ and the spec now says so in its own words. If an offline page is wanted
 later, it has to be a page that runs no app code.
 
 **Status:** resolved by #2687.
+
+## Forced sales: the spec now sizes them to the debt, ahead of the code (#2796, 2026-10-25)
+
+**A spec change made on a recorded owner decision, ahead of the code.** On
+2026-10-25 the owner chose one sell-to-need rule for every forced sale, with
+the handling charge and the caller's incentive taken on what the borrower
+owes rather than on the proceeds (decision "Yes, charges on the debt"), and
+the extra from a periodic auto-liquidation paid back to the borrower
+(decision "Pay it back to the borrower"). `ProjectDetailsREADME.md` states
+that rule now, under "Forced Sales Sell Only What the Debt Needs" and the
+charge, periodic-settlement and Proceeds Distribution lines it touches. The
+design record is `docs/DesignsAndPlans/ForcedSaleSizingDesign.md`.
+
+**What the code does until the implementation lands.** The Health-Factor
+liquidation (single and split route) and the liquid branch of the time-based
+default sell the whole collateral and take both charges as shares of the
+proceeds. The periodic auto-liquidation sizes its sale with a fixed buffer
+and credits the lender with everything above the charges, the shortfall
+included. Partial liquidation takes its charges as shares of the proceeds
+alongside the repayment. Each of those is now a divergence from the stated
+intent, not a defect in the spec.
+
+**Status:** open. Implementation in order: the shared host with the
+periodic settlement (#2795), then the Health-Factor routes, then the
+time-based default and the partial-liquidation charge rule (#2796).
