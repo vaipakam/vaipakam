@@ -1,4 +1,4 @@
-## Thread — An unconfigured asset can back a loan; the reserve factor is retired (PR #TBD)
+## Thread — An unconfigured asset can back a loan; the reserve factor is retired (PR #2817)
 
 Any ERC-20 that passes the liquidity test was meant to be usable as collateral
 without per-asset setup, with the per-asset loan-to-value value acting only as
