@@ -81,7 +81,34 @@ library LibPausable {
         // entry is only ever added, or its `end` written once. See
         // {PauseInterval} and docs/DesignsAndPlans/GlobalPauseD2Design.md.
         PauseInterval[] pauseIntervals;
+        // #2744 — the end of the last auto-pause window that froze a live
+        // protocol. The next such window may open only `autoPauseCooldownSeconds`
+        // after it, so a watcher key cannot chain windows back to back into
+        // an indefinite freeze (every paused second also moves every open
+        // loan's deadlines, #668 / #935). Never cleared: an unpause that cuts
+        // a window short leaves the cooldown running from the window's
+        // scheduled end. A window recorded under the manual pause does not
+        // write it (it froze nothing the manual pause had not already).
+        uint64 lastAutoPauseUntil;
+        // #2744 — the cooldown above, in seconds. Zero means
+        // {AUTO_PAUSE_COOLDOWN_DEFAULT}. Set by the admin role (the Timelock
+        // after handover), inside [{MIN_AUTO_PAUSE_COOLDOWN},
+        // {MAX_AUTO_PAUSE_COOLDOWN}].
+        uint32 autoPauseCooldownSeconds;
     }
+
+    /// @dev #2744 — the default gap between the end of one auto-pause window
+    ///      that froze a live protocol and the start of the next: 24 hours.
+    ///      With the 2-hour window ceiling, a watcher key on its own can keep
+    ///      the protocol frozen at most 2 hours in every 26 until its role is
+    ///      revoked; a longer freeze needs the manual pause, which only the
+    ///      pauser can set and only the unpauser (the Timelock) can lift.
+    uint256 internal constant AUTO_PAUSE_COOLDOWN_DEFAULT = 24 hours;
+    /// @dev The cooldown's floor. Not zero, so the setter cannot switch the
+    ///      cooldown off.
+    uint256 internal constant MIN_AUTO_PAUSE_COOLDOWN = 1 hours;
+    /// @dev The cooldown's ceiling.
+    uint256 internal constant MAX_AUTO_PAUSE_COOLDOWN = 7 days;
 
     /// @notice One paused interval.
     /// @dev `end == OPEN_END` while a manual pause is in force. An
@@ -116,6 +143,10 @@ library LibPausable {
     ///         end is the `until` of its {AutoPaused}.
     /// @custom:event-category informational/admin
     event PauseIntervalClosed(uint64 start, uint64 end, uint64 pausedTotal);
+    /// @notice The cooldown between auto-pause windows was set (#2744).
+    ///         `newSeconds == 0` restores the default.
+    /// @custom:event-category informational/config
+    event AutoPauseCooldownSet(uint32 newSeconds);
 
     error EnforcedPause();
     error ExpectedPause();
@@ -124,6 +155,13 @@ library LibPausable {
     error ExpectedManualPause();
     /// @dev {pauseIntervalAt} was asked for an interval past the log.
     error PauseIntervalOutOfRange(uint256 index);
+    /// @dev #2744 — an auto-pause would freeze a live protocol before the
+    ///      cooldown since the last such window has run. `availableAt` is the
+    ///      first timestamp at which it may.
+    error AutoPauseCoolingDown(uint64 availableAt);
+    /// @dev #2744 — a cooldown outside [`minSec`, `maxSec`] (0 is allowed:
+    ///      it restores the default).
+    error InvalidAutoPauseCooldown(uint32 provided, uint256 minSec, uint256 maxSec);
 
     function _storage() private pure returns (PausableStorage storage ps) {
         bytes32 position = PAUSABLE_STORAGE_POSITION;
@@ -270,10 +308,14 @@ library LibPausable {
     }
 
     /// @dev Phase 1 follow-up — auto-pause primitive. Sets a time-
-    ///      bounded pause window. An ACTIVE window is never extended, so a
-    ///      compromised watcher can't chain repeated calls into an
-    ///      indefinite freeze; the most it can do is set the window once,
-    ///      which auto-clears at `now + duration`.
+    ///      bounded pause window. An ACTIVE window is never extended, and a
+    ///      window that would freeze a live protocol may open only after the
+    ///      cooldown since the end of the last such window (#2744), so a
+    ///      compromised watcher can't chain calls into an indefinite freeze:
+    ///      the most it can do is one window per cooldown, each of which
+    ///      auto-clears at `now + duration`. A call refused by the cooldown
+    ///      reverts {AutoPauseCoolingDown} rather than returning quietly, so
+    ///      the watcher learns the protocol was NOT paused.
     ///
     ///      A watcher firing while the MANUAL pause is in force is NOT a
     ///      no-op any more (#1566 slice 4 PR A, Codex #2158 post-cap P1): it
@@ -290,6 +332,15 @@ library LibPausable {
         PausableStorage storage ps = _storage();
         if (ps.pausedUntilTimestamp > block.timestamp) return;
         uint64 until = SafeCast.toUint64(block.timestamp + duration);
+        // #2744 — a window that would freeze a live protocol waits out the
+        // cooldown since the last one, and starts the next cooldown. Under
+        // the manual pause the window freezes nothing more, so it neither
+        // waits nor starts one: the incident still leaves its trace below.
+        if (!ps.paused) {
+            uint64 availableAt = _autoPauseAvailableAt(ps);
+            if (block.timestamp < availableAt) revert AutoPauseCoolingDown(availableAt);
+            ps.lastAutoPauseUntil = until;
+        }
         // The boundary stamp below moves, so a pause the log has not yet
         // recorded reaches it first, from the boundary it stamped. Then,
         // under the manual pause the open interval already covers the
@@ -313,6 +364,45 @@ library LibPausable {
     function pausedUntil() internal view returns (uint256) {
         uint64 t = _storage().pausedUntilTimestamp;
         return uint256(t) > block.timestamp ? uint256(t) : 0;
+    }
+
+    /// @dev #2744 — the effective cooldown between auto-pause windows that
+    ///      freeze a live protocol.
+    function autoPauseCooldownSeconds() internal view returns (uint256) {
+        return _cooldownSeconds(_storage());
+    }
+
+    /// @dev #2744 — the first timestamp at which an auto-pause may freeze a
+    ///      live protocol: the end of the last such window plus the cooldown,
+    ///      read with the cooldown as it is set now. Zero when no window has
+    ///      ever frozen a live protocol.
+    function autoPauseAvailableAt() internal view returns (uint256) {
+        return _autoPauseAvailableAt(_storage());
+    }
+
+    /// @dev #2744 — sets the cooldown; 0 restores the default. The caller
+    ///      enforces the role; this enforces the bounds, so no caller can set
+    ///      a value outside them.
+    function setAutoPauseCooldownSeconds(uint32 newSeconds) internal {
+        if (
+            newSeconds != 0
+                && (newSeconds < MIN_AUTO_PAUSE_COOLDOWN || newSeconds > MAX_AUTO_PAUSE_COOLDOWN)
+        ) {
+            revert InvalidAutoPauseCooldown(newSeconds, MIN_AUTO_PAUSE_COOLDOWN, MAX_AUTO_PAUSE_COOLDOWN);
+        }
+        _storage().autoPauseCooldownSeconds = newSeconds;
+        emit AutoPauseCooldownSet(newSeconds);
+    }
+
+    function _cooldownSeconds(PausableStorage storage ps) private view returns (uint256) {
+        uint32 v = ps.autoPauseCooldownSeconds;
+        return v == 0 ? AUTO_PAUSE_COOLDOWN_DEFAULT : uint256(v);
+    }
+
+    function _autoPauseAvailableAt(PausableStorage storage ps) private view returns (uint64) {
+        uint64 last = ps.lastAutoPauseUntil;
+        if (last == 0) return 0;
+        return last + SafeCast.toUint64(_cooldownSeconds(ps));
     }
 
     // ─── Pause-interval log (#668 / #935, owner decision D2) ────────────────
