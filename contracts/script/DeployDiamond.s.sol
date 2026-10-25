@@ -3277,7 +3277,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](21);
+        s = new bytes4[](20);
         s[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         s[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
         s[3] = RewardEpochFacet.getTransportBatch.selector;
@@ -3294,10 +3294,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[16] = RewardEpochFacet.getTransportDayScanIds.selector;
         // 3b-ii-A2 (#2305) — the staged terms' read.
         s[17] = RewardEpochFacet.getTransportBatchStaged.selector;
-        // 3c-1 — the two gates' views.
-        s[18] = RewardEpochFacet.getTransportTiersForDay.selector;
-        s[19] = RewardEpochFacet.getTransportBatchGates.selector;
-        s[20] = RewardEpochFacet.getTransportBatchDays.selector;
+        // The batch gates and the indexed day list.
+        s[18] = RewardEpochFacet.getTransportBatchGates.selector;
+        s[19] = RewardEpochFacet.getTransportBatchDays.selector;
         // 3d-1 — the rooted (d6) chunk index.
         s[0] = RewardEpochFacet.materializeTransportBatchChunk.selector;
         // #1944 consequence 1 — the delivery proofs for packets holding no batch.

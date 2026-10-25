@@ -202,7 +202,8 @@ describe('cross-chain flows on a canonical chain and a mirror', () => {
     await closeDays(m, days);
     await finalizeDays(m, days);
     await broadcastDays(m, days);
-    const owed = [startDay + 1, startDay + 2];
+    // One funded day per remittance (#2821).
+    const owed = [startDay + 1];
     const [quoted] = await m.base.read<readonly [bigint, readonly bigint[]]>('quoteRewardBudget', [MIRROR_ID, owed.map(BigInt)]);
     expect(quoted).toBeGreaterThan(0n);
 
