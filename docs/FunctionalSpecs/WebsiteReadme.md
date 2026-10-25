@@ -298,6 +298,15 @@ Farcaster Frame requirements:
 - Frame image responses should be stateless, branded, and suitable for common Farcaster clients
 - Frame and worker reads must use generated Diamond ABI JSON from the monorepo contract bundle. The active-loan selector is `getUserActiveLoans(address)` on `MetricsFacet`; hand-written ABI strings or obsolete names such as `getActiveLoansByUser(address)` should not be used.
 
+Page integrity requirements:
+
+- the public website runs only script it serves from its own address. The one script that must run inside the page before anything else loads (the theme, the language and reading direction) is allowed by its exact content, so any other script placed in the page is refused, including one an attacker manages to inject
+- the public website never turns text into code at run time, and its content policy says so
+- every page the website ships, including the pre-rendered page for each route and language, must carry only scripts its own content policy allows; a build that would ship a page whose policy blocks its own script must stop instead
+- the public website connects no wallet and embeds no frame, and it must not be shown inside another site's frame
+- the content policy names only what the website actually loads. A service the website does not use, such as an analytics loader or a web-font host, is not allowed in advance; it is added deliberately when it is introduced, through the consent pipeline where consent applies
+- this narrows what an injected script can do on the website. It does not protect against a compromised deployment, which serves its own policy, or against software on the visitor's own device such as a browser extension, and the website does not claim otherwise
+
 Privacy and consent requirements:
 
 - the public website and connected app must include a cookie-consent banner that supports Google Consent Mode v2 and EU / GDPR expectations

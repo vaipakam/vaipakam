@@ -1,99 +1,54 @@
-# Cloudflare Pages / Workers static-assets header rules.
-
-# https://developers.cloudflare.com/pages/configuration/headers/
-
+# Cloudflare Workers static-assets header rules.
+# https://developers.cloudflare.com/workers/static-assets/headers/
 #
-
 # This file is copied verbatim from `public/` to `dist/` by Vite at build
-
 # time; Cloudflare serves it as deploy-time routing metadata, so nothing
-
 # here ships as code to the browser.
-
 #
-
-# The CSP lets the wallet flow work (wallet-registry icons, session-relay
-
-# WebSocket, the verify-context iframe, injected browser-extension
-
-# popups) while keeping the rest of the surface tight. Review before
-
-# loosening further.
-
+# THE SCRIPT POLICY (#43 / ET-017). `script-src` is `'self'` plus the
+# SHA-256 of each inline boot script in the BUILT `index.html` (today one:
+# theme and language/direction before first paint). The build writes those
+# hashes in place of the placeholder below and fails if it cannot (see
+# packages/lib/src/cspScriptHashes.mjs), and the prerender refuses any
+# snapshot carrying an inline script the completed policy does not allow,
+# so a page never ships with a script its own policy blocks. There is no
+# `'unsafe-inline'` and no `'unsafe-eval'`: nothing on this site evaluates
+# text as code, and either keyword would let an injected script run.
 #
-
-# The permissive-https allowances on `connect-src` / `img-src` are
-
-# inherent to a crypto frontend: RPC endpoints come from env-configurable
-
-# hosts (our CHAIN_REGISTRY), and token / wallet icons live on arbitrary
-
-# HTTPS origins across the ecosystem. Pin more narrowly in a later
-
-# hardening pass if we decide to freeze the RPC set.
-
+# WHAT THE POLICY NO LONGER ALLOWS, and why. It was copied from the retired
+# connected app and allowed things this site never does:
+#   - Google's tag loader and runtime. This site loads no analytics today.
+#     Analytics, if added, loads through the consent pipeline
+#     (`src/lib/consent.ts`) and is added here as a deliberate entry; its
+#     inline consent defaults are then hashed like any other boot script.
+#   - Google Fonts. The site loads no web fonts; it uses the device's own.
+#   - The WalletConnect verify iframe and WebSockets. This site connects no
+#     wallet; it embeds no frame at all (`frame-src 'none'`).
+#   - Being framed by Safe's dapp browser. That is the connected app's
+#     Safe-App support; a marketing page has no reason to be framed, and
+#     `frame-ancestors 'none'` stops it being framed for clickjacking.
 #
-
-# Safe-App embed support: `frame-ancestors` explicitly allows Safe's
-
-# dapp-browser origins so Vaipakam can run inside a Safe multisig UI
-
-# via the Safe-App pattern. `X-Frame-Options` is deliberately omitted —
-
-# that legacy header only supports `DENY`/`SAMEORIGIN` and would block
-
-# the Safe iframe; modern browsers enforce `frame-ancestors` instead,
-
-# which is the superset. `Cross-Origin-Resource-Policy` is `cross-origin`
-
-# so the Safe parent frame can read our resources (it's a different
-
-# origin than us); `same-origin` would break that path.
-
+# The permissive `https:` on `connect-src` / `img-src` stays for now. The
+# site's one data read is the indexer's published protocol-config snapshot,
+# whose origin is build configuration; locking `connect-src` to it is still
+# open on #43, together with the connected app's.
 #
-
-# Google Analytics / gtag.js: `script-src` allows the gtag loader from
-
-# `www.googletagmanager.com` and the runtime from `www.google-analytics.com`.
-
-# The outbound analytics beacons are already covered by the permissive
-
-# `connect-src https:` above — no extra rule needed there.
-
-#
-
 # `static.cloudflareinsights.com` is DELIBERATELY ABSENT (#1816). If the
-
 # zone has Web Analytics auto-injection on, Cloudflare inserts its RUM
-
 # beacon into every HTML page response — not into assets, images or
-
 # other non-HTML payloads — and this CSP refuses it, which shows up as
-
 # a console error on every page load. The fix is to turn the injection
-
 # OFF at the zone — NOT to add the host here. That beacon is injected at
-
 # the edge, downstream of the app, so `lib/consent.ts` cannot gate it:
-
 # allowing it would run an analytics collector before the visitor has
-
 # consented to any, which the privacy spec forbids outright. The spec
-
 # applies the same rule to the connected app's wallet SDKs' own
-
 # telemetry — a requirement, not a description: neither connector
-
 # switches it off (#1824) — Coinbase reports on every app load,
-
 # WalletConnect is enabled but only forwards events a prior session
-
 # stored — so do not read it here as a shipped precedent.
-
 # Any future analytics — Cloudflare's included — has to load
-
 # through the consent-aware pipeline, and would then be added here as a
-
 # deliberate entry rather than to silence an error.
 
 /*
@@ -102,7 +57,7 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
   Cross-Origin-Opener-Policy: same-origin-allow-popups
   Cross-Origin-Resource-Policy: cross-origin
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.google-analytics.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https: wss:; frame-src 'self' https://verify.walletconnect.com https://verify.walletconnect.org; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://app.safe.global https://*.safe.global; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' __INLINE_SCRIPT_HASHES__; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' https:; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
 
 # SPA entry point — Cloudflare returns this for every non-asset path via
 

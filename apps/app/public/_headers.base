@@ -18,7 +18,8 @@
 # index.html, and NOTHING else (#43 / ET-017). The upper-case token in
 # script-src below is a placeholder: the build replaces it with the
 # SHA-256 of each inline script in the page it actually wrote
-# (scripts/cspScriptHashes.mjs, wired as a Vite plugin), and fails if it
+# (packages/lib/src/cspScriptHashes.mjs, wired as a Vite plugin; the
+# marketing site uses the same one), and fails if it
 # cannot. Editing a boot script therefore needs nothing here. (The token
 # is not spelled out in this comment because the build requires it to
 # occur exactly once in the file.)
