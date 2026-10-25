@@ -9,8 +9,10 @@
  * decides which pass a loan belongs to, and each role refuses the other's:
  *
  *  - `grace` — the grace-default pass (#2483). A past-grace loan ABOVE the
- *    line: quote a sale of its whole collateral and send a `sale`, or an
- *    `other` ending (an illiquid or rental in-kind close, an internal match).
+ *    line: quote a sale of only the collateral its debt needs (#2796, the
+ *    contract's `previewForcedSale(loanId, TimeBasedDefault)` range) and
+ *    send a `sale`, or an `other` ending (an illiquid or rental in-kind
+ *    close, an internal match).
  *  - `in-kind` — the HF liquidator's no-route fallback (#2487). A past-grace
  *    loan BELOW the line, for which no venue quoted at any size. Sent with
  *    an empty try-list, and only when the preview shows a terminal no-swap
@@ -27,6 +29,14 @@
  * (#2078) refuses a loan whose lender position a buyer has accepted, the
  * collateral must not have changed since it was read (#2472), and the
  * preview runs at the same fresh block as the gate's other reads.
+ *
+ * THE SALE SIZE (#2796). A default that sells takes a `sellAmount`, the
+ * collateral the try-list was quoted for, and the contract accepts it only
+ * inside the range `previewForcedSale` reports at the settling block. The
+ * attempt quotes the middle of that range (`forcedSaleQuoteAmount`, shared
+ * with the app), re-reads the range at the gate's block, and refuses a
+ * quote that has left it. An empty-list close sells nothing and passes 0,
+ * which an in-kind branch ignores.
  */
 
 import {
@@ -46,7 +56,11 @@ import {
 import { isRevert } from '@vaipakam/lib/contractRevert';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import {
+  FORCED_SALE_KIND,
+  forcedSaleQuoteAccepted,
+  forcedSaleQuoteAmount,
   previewCloseOutDetail,
+  readForcedSalePlan,
   type CloseOutPreview,
   type CloseOutPreviewDetail,
 } from '@vaipakam/lib/routeBuilder';
@@ -87,12 +101,19 @@ export type GraceDefaultOutcome =
   // `preview` is the ending the chain showed — `sale` is the only one that
   // swaps — and `calls` is the try-list sent, which an `other` ending (an
   // internal match, an in-kind close) may not use at all.
-  | { kind: 'submitted'; tx: string; preview: CloseOutPreview; calls: number }
+  | { kind: 'submitted'; tx: string; preview: CloseOutPreview; calls: number; sellAmount: bigint }
   // The signed transaction went to the RPC and no answer came back: it may
   // be in the mempool or may never have arrived. `tx` is its hash, computed
   // locally from the signed bytes, so an operator can look it up; the
   // next run's pending-transaction check settles it on-chain either way.
-  | { kind: 'unconfirmed'; tx: string; preview: CloseOutPreview; calls: number; reason: string }
+  | {
+      kind: 'unconfirmed';
+      tx: string;
+      preview: CloseOutPreview;
+      calls: number;
+      sellAmount: bigint;
+      reason: string;
+    }
   | { kind: 'skipped'; reason: string };
 
 /** Everything one loan's attempt needs, injected so the decision is
@@ -104,9 +125,10 @@ export interface GraceDefaultDeps {
   chainId: number;
   /** The sending pass's run deadline (#2572), enforced at the send's turn. */
   notAfterMs: number;
-  /** Builds the try-list for a sale of the loan's whole collateral. The
-   *  `in-kind` role never calls it: it sends an empty list by definition. */
-  buildRoute: (loan: GraceLoan) => Promise<ServerOrchestrationResult>;
+  /** Builds the try-list for a sale of `sellAmount` of the loan's
+   *  collateral. The `in-kind` role never calls it: it sends an empty list
+   *  by definition. */
+  buildRoute: (loan: GraceLoan, sellAmount: bigint) => Promise<ServerOrchestrationResult>;
 }
 
 /** The grace-default pass's attempt: {@link attemptCloseOut} as `grace`. */
@@ -156,8 +178,17 @@ export async function attemptCloseOut(
     loan.collateralAssetType === ASSET_TYPE_ERC20 && loan.assetType === ASSET_TYPE_ERC20;
   let calls: readonly AdapterCall[] = [];
   let routeNote = '';
-  if (role === 'grace' && swappable) {
-    const route = await deps.buildRoute(loan);
+  let sellAmount = 0n;
+  const sells = role === 'grace' && swappable;
+  if (sells) {
+    // The contract sizes the sale; the quote is built for an amount inside
+    // the range it accepts. No sale due by its reckoning is not this
+    // attempt's to second-guess.
+    const plan = await readForcedSalePlan({ client, diamond, loanId, kind: FORCED_SALE_KIND.TimeBasedDefault });
+    const quoted = forcedSaleQuoteAmount(plan);
+    if (quoted === null) return { kind: 'skipped', reason: 'plan-sells-nothing' };
+    sellAmount = quoted;
+    const route = await deps.buildRoute(loan, sellAmount);
     calls = route.calls;
     if (route.failed.length > 0) routeNote = ` (failed: ${route.failed.join(',')})`;
   }
@@ -176,11 +207,14 @@ export async function attemptCloseOut(
   // An empty list still previews: a liquid loan reverts, an illiquid or
   // collapsed one takes the in-kind branch, and only the chain knows which.
   const gateBlock = await client.getBlockNumber({ cacheTime: 0 });
-  const [lateHf, lateSale, live, detail] = await Promise.all([
+  const [lateHf, lateSale, live, detail, latePlan] = await Promise.all([
     hfStanding(client, diamond, loanId, gateBlock),
     saleVerdict(client, diamond, loanId, loan.lenderTokenId, keeper, gateBlock),
     readLoan(client, diamond, loanId, gateBlock),
-    previewCloseOutDetail({ client, diamond, account: keeper, loanId, calls, blockNumber: gateBlock }),
+    previewCloseOutDetail({ client, diamond, account: keeper, loanId, sellAmount, calls, blockNumber: gateBlock }),
+    sells
+      ? readForcedSalePlan({ client, diamond, loanId, kind: FORCED_SALE_KIND.TimeBasedDefault, blockNumber: gateBlock })
+      : Promise.resolve(null),
   ]);
   if (typeof lateHf === 'object') return { kind: 'skipped', reason: `gate:hf-unread:${lateHf.unread}` };
   const lateNotOurs = ownerVerdict(role, lateHf);
@@ -192,6 +226,15 @@ export async function attemptCloseOut(
   // amount means something moved the loan while it was being judged.
   if ((swappable || role === 'in-kind') && live.collateralAmount !== loan.collateralAmount) {
     return { kind: 'skipped', reason: 'gate:collateral-changed' };
+  }
+
+  // The range moves with accrual and price; a quote that has left it would
+  // revert `ForcedSaleQuoteOutOfRange`, so it is quoted again next run.
+  if (latePlan !== null && !forcedSaleQuoteAccepted(latePlan, sellAmount)) {
+    return {
+      kind: 'skipped',
+      reason: `gate:quote-out-of-range quoted=${sellAmount} range=[${latePlan.sell},${latePlan.maxSell}]`,
+    };
   }
 
   const refusal = previewVerdict(role, detail, calls.length, routeNote);
@@ -206,11 +249,11 @@ export async function attemptCloseOut(
     deps.chainId,
     deps.notAfterMs,
     diamond,
-    encodeFunctionData({ abi: DEFAULTED_ABI, functionName: 'triggerDefault', args: [loanId, calls] }),
+    encodeFunctionData({ abi: DEFAULTED_ABI, functionName: 'triggerDefault', args: [loanId, sellAmount, calls] }),
   );
   return sent.kind === 'submitted'
-    ? { kind: 'submitted', tx: sent.tx, preview, calls: calls.length }
-    : { kind: 'unconfirmed', tx: sent.tx, preview, calls: calls.length, reason: sent.reason };
+    ? { kind: 'submitted', tx: sent.tx, preview, calls: calls.length, sellAmount }
+    : { kind: 'unconfirmed', tx: sent.tx, preview, calls: calls.length, sellAmount, reason: sent.reason };
 }
 
 /** Null when the loan is this role's to close; otherwise the reason not to. */

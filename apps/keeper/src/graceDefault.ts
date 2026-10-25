@@ -35,14 +35,16 @@
  *           lender-position sale strands the buyer's principal. An accepted
  *           sale, or a sale state the chain does not establish, skips.
  *        c. The try-list. Liquid ERC-20 collateral for an ERC-20 loan is
- *           quoted through the shared route builder for the loan's whole
- *           collateral. Anything else sends an empty list and lets the
- *           contract take its in-kind branch, or refuse.
+ *           quoted through the shared route builder for only the
+ *           collateral the debt needs: the middle of the range
+ *           `previewForcedSale(loanId, TimeBasedDefault)` accepts (#2796).
+ *           Anything else sends an empty list and lets the contract take its
+ *           in-kind branch, or refuse.
  *        d. The final gate, everything at ONE fresh block: the health
  *           factor still on the side of the line step a judged it on, the
  *           sale state again, the collateral amount the quotes were made
- *           for (#2472 — after a top-up the adapter sells only the quoted
- *           amount and the rest lands in no one's claim), and the preview.
+ *           for (#2472), the quoted amount still inside the contract's
+ *           range, and the preview.
  *           `previewCloseOut` runs the call on `eth_simulateV1` and
  *           reads its logs, because a plain simulation SUCCEEDS into the
  *           full-collateral fallback when every route fails. Only a `sale`
@@ -204,13 +206,13 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
     diamond: ctx.diamond,
     chainId: chain.id,
     notAfterMs: ctx.notAfterMs,
-    buildRoute: (loan) =>
+    buildRoute: (loan, sellAmount) =>
       orchestrateServerQuotes(env, client, {
         chainId: chain.id,
         diamond: ctx.diamond,
         sellToken: loan.collateralAsset,
         buyToken: loan.principalAsset,
-        sellAmount: loan.collateralAmount,
+        sellAmount,
         txOrigin: keeper,
         fetchFn: budget.fetch,
       }),
@@ -254,12 +256,12 @@ async function processChain(env: Env, chain: ChainConfig, visit: number, deadlin
     if (outcome.kind === 'submitted') {
       submitted += 1;
       console.log(
-        `[keeper] graceDefault chain=${chain.id} loan=${loanId} submitted tx=${outcome.tx} preview=${outcome.preview} calls=${outcome.calls}`,
+        `[keeper] graceDefault chain=${chain.id} loan=${loanId} submitted tx=${outcome.tx} preview=${outcome.preview} calls=${outcome.calls} sell=${outcome.sellAmount}`,
       );
     } else if (outcome.kind === 'unconfirmed') {
       unconfirmed += 1;
       console.log(
-        `[keeper] graceDefault chain=${chain.id} loan=${loanId} send-unconfirmed tx=${outcome.tx} preview=${outcome.preview} calls=${outcome.calls}: ${outcome.reason} — may or may not have been broadcast; later runs hold while it is pending`,
+        `[keeper] graceDefault chain=${chain.id} loan=${loanId} send-unconfirmed tx=${outcome.tx} preview=${outcome.preview} calls=${outcome.calls} sell=${outcome.sellAmount}: ${outcome.reason} — may or may not have been broadcast; later runs hold while it is pending`,
       );
     } else {
       console.log(
