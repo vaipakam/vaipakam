@@ -3046,7 +3046,11 @@ General design requirements:
   hold the index in place. Where a scan stops early, it says so in its log:
   where it stopped, how many blocks it finished and why. Steps that act on what
   the scan found rather than on the stored records, such as notifications and
-  live-update hints, act only on the blocks the pass finished. The one
+  live-update hints, act only on the blocks the pass finished. Steps that
+  re-read the chain at the recorded position to complete stored records do
+  not run after such a stop at all, because the unfinished block has stored
+  records newer than that position; the next pass that finishes its window
+  runs them. The one
   exception is the live-update signal itself: a pass that stopped inside a
   block cannot say what that block had already written, and the pass that
   finishes it will not see those records change, so the stopping pass tells

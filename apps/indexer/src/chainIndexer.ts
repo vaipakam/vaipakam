@@ -2946,16 +2946,30 @@ async function runChainPass(
   // D1 counts queries separately from subrequests, so any fixed per-row
   // figure is a guess. A failure, including the platform refusing a request
   // past the invocation ceiling, is logged and the remaining rows wait.
-  const { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds } = await runHealLanes(
-    client,
-    diamond,
-    chainId,
-    env,
-    budget,
-    scanTo,
-    settledHead.settled && scanTo <= settledHead.block,
-    healClient,
-  );
+  //
+  // NOT AFTER A PASS THAT STOPPED INSIDE A BLOCK (#2221, Codex #2836 r5).
+  // Every heal reads the chain at `scanTo`, the block the cursor records, and
+  // acts on what D1 holds. After such a stop D1 also holds the rows the
+  // unfinished block wrote, which are newer than that block: an offer read
+  // there does not exist yet, and its heal would record a zero fill and clear
+  // the only marker that would have healed it. The reconciliation pass above
+  // already declines short of the head; this is the same rule for the heal
+  // lanes, at the one place that knows the pass stopped early. Their rows are
+  // selected again by the next pass that finishes its window, which is what
+  // they are built for.
+  const { detailRefreshes, loanDetailRefreshes, ledgerSettledLoanIds } =
+    stoppedAt === null
+      ? await runHealLanes(
+          client,
+          diamond,
+          chainId,
+          env,
+          budget,
+          scanTo,
+          settledHead.settled && scanTo <= settledHead.block,
+          healClient,
+        )
+      : { detailRefreshes: 0, loanDetailRefreshes: 0, ledgerSettledLoanIds: [] as number[] };
 
   const hintStats = pushHintStats(scannedLogs);
   const stubHealForcedTruncation = detailRefreshes > 0 || loanDetailRefreshes > 0;

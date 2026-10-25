@@ -167,12 +167,32 @@ function recordedIn(h: ReturnType<typeof chainDb>, block: number): number {
 
 /** One pass over the fixture under the given allowance (the tier's own by default). */
 async function pass(h: ReturnType<typeof chainDb>, limits: { external?: number; d1Queries?: number } = {}) {
-  const { fetchFn } = rpc();
+  return (await passWithMethods(h, limits)).result;
+}
+
+/** {@link pass}, plus every RPC method the pass sent, in order. */
+async function passWithMethods(h: ReturnType<typeof chainDb>, limits: { external?: number; d1Queries?: number } = {}) {
+  const { fetchFn, methods } = rpc();
   vi.stubGlobal('fetch', fetchFn);
   const env = { DB: h.d1 } as unknown as Env;
   const budget = createBudget('test pass', limits);
-  return runChainIndexerForChain(env, chain, RECONCILE_BUDGET_SHARED_TICK, budget);
+  const result = await runChainIndexerForChain(env, chain, RECONCILE_BUDGET_SHARED_TICK, budget);
+  return { result, methods };
 }
+
+/** A placeholder offer the stub heal lane selects and re-reads on chain. */
+function seedStubOffer(h: ReturnType<typeof chainDb>, offerId: number) {
+  h.db
+    .prepare(
+      `INSERT INTO offers (chain_id, offer_id, status, creator, offer_type, asset_type, collateral_asset_type,
+         lending_asset, collateral_asset, amount, interest_rate_bps, collateral_amount, duration_days,
+         first_seen_block, first_seen_at, updated_at, is_stub)
+       VALUES (?, ?, 'active', '0xc0', 1, 0, 0, '0xa1', '0xb1', '1000', 500, '150', 30, ?, 1, 1, 1)`,
+    )
+    .run(BASE, offerId, CURSOR);
+}
+
+const calls = (methods: string[]) => methods.filter((m) => m === 'eth_call').length;
 
 describe('the scan core finishes whole blocks within the allowance (#2221)', () => {
   afterEach(() => {
@@ -302,6 +322,30 @@ describe('a heavy block left unfinished (Codex #2836 r1)', () => {
     while (cursorOf(h) < HEAVY && passes++ < 5) await pass(h);
     expect(cursorOf(h)).toBeGreaterThanOrEqual(HEAVY);
     expect(recordedIn(h, HEAVY)).toBe(20);
+  });
+
+  it('runs no heal lane after it: they read at the recorded block, and the block wrote newer rows (Codex #2836 r5)', { timeout: 120_000 }, async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const HEAVY = EVENT_BLOCKS[1]!;
+    eventsInBlock = { [HEAVY]: 20 };
+    // The same stopped pass with and without a row the heal lanes would
+    // re-read: the row adds no chain read, so no heal ran.
+    const bare = await passWithMethods(chainDb());
+    const seeded = chainDb();
+    seedStubOffer(seeded, 7);
+    const withRow = await passWithMethods(seeded);
+    expect(withRow.result.unfinishedBlock).toBe(BigInt(HEAVY));
+    expect(calls(withRow.methods)).toBe(calls(bare.methods));
+    // A pass that finishes its window does heal it: the same comparison
+    // shows the row's reads.
+    eventsInBlock = {};
+    const bareDone = await passWithMethods(chainDb());
+    const seededDone = chainDb();
+    seedStubOffer(seededDone, 7);
+    const withRowDone = await passWithMethods(seededDone);
+    expect(withRowDone.result.unfinishedBlock).toBeUndefined();
+    expect(calls(withRowDone.methods)).toBeGreaterThan(calls(bareDone.methods));
   });
 });
 
