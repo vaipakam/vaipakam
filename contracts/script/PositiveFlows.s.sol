@@ -11,6 +11,8 @@ import {PositiveFlowsVaultAndVpfi} from "./positive-flows/PositiveFlowsVaultAndV
 import {PositiveFlowsKeeperAutomation} from "./positive-flows/PositiveFlowsKeeperAutomation.s.sol";
 import {PositiveFlowsOperatorAdmin} from "./positive-flows/PositiveFlowsOperatorAdmin.s.sol";
 import {PositiveFlowsPositionHolder} from "./positive-flows/PositiveFlowsPositionHolder.s.sol";
+import {PositiveFlowsLenderIntent} from "./positive-flows/PositiveFlowsLenderIntent.s.sol";
+import {PositiveFlowsSwapToRepay} from "./positive-flows/PositiveFlowsSwapToRepay.s.sol";
 
 /**
  * @title PositiveFlows
@@ -36,6 +38,11 @@ import {PositiveFlowsPositionHolder} from "./positive-flows/PositiveFlowsPositio
  *           - PositiveFlowsPositionHolder: a transferred position NFT moves
  *             its side's authority and proceeds to the new holder (#848
  *             Phase 2).
+ *           - PositiveFlowsLenderIntent: a standing lender intent registered,
+ *             funded, filled by a solver, paused, withdrawn and rolled.
+ *           - PositiveFlowsSwapToRepay: full and partial swap-to-repay
+ *             through a fixed-rate adapter, every share of the proceeds
+ *             accounted for.
  *         The catalog's cross-chain module is not written: no module
  *         rehearses CCIP, and this runner does not claim to.
  *
@@ -81,13 +88,15 @@ contract PositiveFlows is Script {
     function run() external {
         string memory only = vm.envOr("ONLY_SCENARIO", string(""));
 
-        PositiveFlowsBase[] memory modules = new PositiveFlowsBase[](6);
+        PositiveFlowsBase[] memory modules = new PositiveFlowsBase[](8);
         modules[0] = new PositiveFlowsBasicLifecycle();
         modules[1] = new PositiveFlowsAdvancedCredit();
         modules[2] = new PositiveFlowsVaultAndVpfi();
         modules[3] = new PositiveFlowsKeeperAutomation();
         modules[4] = new PositiveFlowsOperatorAdmin();
         modules[5] = new PositiveFlowsPositionHolder();
+        modules[6] = new PositiveFlowsLenderIntent();
+        modules[7] = new PositiveFlowsSwapToRepay();
 
         if (bytes(only).length != 0) {
             bool known;

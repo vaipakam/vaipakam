@@ -26,6 +26,9 @@ import {RevertProbe} from "../lib/RevertProbe.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
 import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
+import {AdminFacet} from "../../src/facets/AdminFacet.sol";
+import {LibAutoRefinanceCheck} from "../../src/libraries/LibAutoRefinanceCheck.sol";
+import {LibOfferMatchExecute} from "../../src/libraries/LibOfferMatchExecute.sol";
 
 /**
  * @title PositiveFlowsAdvancedCredit
@@ -34,7 +37,9 @@ import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
  *         borrower preclose by obligation handover and by offset, the lender
  *         exits (direct sale into a buy offer, the sale solvency floor on that
  *         route, and the same floor on the listing-accept route), and the
- *         atomic accept-and-refinance of a tagged borrower offer (#848 Phase 2).
+ *         atomic accept-and-refinance of a tagged borrower offer, and the
+ *         matcher completing a refinance inside the borrower's caps (#848
+ *         Phase 2).
  *
  *         Moved from the retired `AnvilNewPositiveFlows` suite, whose `N`
  *         labels the comments below still use in places; {PositiveFlowsBase}
@@ -46,7 +51,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
     }
 
     function scenarios() public pure override returns (Scenario[] memory list) {
-        list = new Scenario[](9);
+        list = new Scenario[](10);
         list[0] = Scenario("PF-114", "Partial repay on a lender-opted-in loan, then full close",
             "PF-114");
         list[1] = Scenario("PF-214", "Borrower refinances onto a new lender through a borrower offer",
@@ -65,6 +70,8 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
             "PF-231");
         list[8] = Scenario("PF-098", "A new lender accepts a refinance-tagged borrower offer; the old loan closes in the same transaction",
             "PF-098, PF-213, PF-112");
+        list[9] = Scenario("PF-215", "A matcher completes a refinance inside the borrower's caps, once the admin switch is on",
+            "PF-215, PF-098, PF-057");
     }
 
     function _runScenario(uint256 index) internal override {
@@ -77,6 +84,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         else if (index == 6) _saleSolvencyFloor();
         else if (index == 7) _saleAdmissionOnAcceptBranch();
         else if (index == 8) _acceptAndRefinance();
+        else if (index == 9) _matchedRefinanceWithinCaps();
         else revert("PositiveFlowsAdvancedCredit: no scenario at index");
     }
 
@@ -267,6 +275,121 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         vm.stopBroadcast();
         _repayInFull(borrowerKey, newLoanId);
         _claimBoth(newLenderKey, borrowerKey, newLoanId);
+    }
+
+    // ─── PF-215: Matched refinance within caps ─────────────────────────────
+
+    /// @dev The automated refinance route: the borrower pre-approves caps and
+    ///      posts a refinance-tagged request, and a third-party matcher (a
+    ///      keeper bot) pairs it with a standing lender offer. The matcher's
+    ///      fill repays the old loan in the same transaction. Shows the three
+    ///      gates on that route:
+    ///        1. A request priced above the caps is refused at creation.
+    ///        2. With the admin auto-refinance switch off, the matcher is
+    ///           refused (a lender's direct accept, PF-098, is not gated).
+    ///        3. With it on, the fill opens the replacement loan inside the
+    ///           caps, carries the collateral over, and pays the matcher its
+    ///           share of the initiation fee.
+    ///      The switch is put back as the scenario found it.
+    function _matchedRefinanceWithinCaps() internal {
+        (, , bool partialFill) = ConfigFacet(diamond).getMasterFlags();
+        if (!partialFill) return _skip("partial fills are off (partialFillEnabled=false), so offers cannot be matched");
+
+        uint256 oldLoanId = _acceptAs(borrowerKey, _createLenderOffer(lenderKey), address(weth), COLLATERAL_AMOUNT);
+        console.log("Old loan initiated:", oldLoanId);
+
+        uint16 capRateBps = 600;
+        vm.startBroadcast(borrowerKey);
+        AutoLifecycleFacet(diamond).setAutoRefinanceCaps(oldLoanId, true, capRateBps, uint64(block.timestamp + 365 days));
+        vm.stopBroadcast();
+
+        // Gate 1: a request whose rate ceiling is above the cap.
+        LibVaipakam.CreateOfferParams memory request = _borrowerOfferStandard();
+        request.interestRateBps = 400;
+        request.interestRateBpsMax = capRateBps + 100;
+        request.fillMode = LibVaipakam.FillMode.Aon;
+        request.refinanceTargetLoanId = oldLoanId;
+        (bool ok, bytes memory ret) = RevertProbe.call(
+            borrower, diamond, abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, request)
+        );
+        require(
+            !ok && ret.length == 4 && bytes4(ret) == LibAutoRefinanceCheck.RefinanceRateExceedsCap.selector,
+            "PF-215: a request priced above the caps should be refused (RefinanceRateExceedsCap)"
+        );
+
+        request.interestRateBpsMax = capRateBps;
+        vm.startBroadcast(borrowerKey);
+        uint256 requestId = OfferCreateFacet(diamond).createOffer(request);
+        usdc.approve(diamond, LOAN_AMOUNT * 2); // the payoff: old principal plus its interest
+        vm.stopBroadcast();
+        uint256 lenderOfferId = _createLenderOffer(newLenderKey);
+        console.log("Refinance request / standing lender offer:", requestId, lenderOfferId);
+
+        // Gate 2: the matcher is refused while the switch is off.
+        bool switchWasOn = AdminFacet(diamond).getAutoRefinanceEnabled();
+        if (switchWasOn) _setAutoRefinance(false);
+        (ok, ret) = RevertProbe.call(
+            newBorrower,
+            diamond,
+            abi.encodeWithSelector(OfferMatchFacet.matchOffers.selector, lenderOfferId, requestId)
+        );
+        require(
+            !ok && ret.length == 4 && bytes4(ret) == LibOfferMatchExecute.RefinanceTaggedOfferNotMatchable.selector,
+            "PF-215: with the switch off the matcher should be refused (RefinanceTaggedOfferNotMatchable)"
+        );
+        console.log("Matcher refused while auto-refinance is off");
+
+        // Gate 3: switch on, the matcher's fill completes the refinance.
+        _setAutoRefinance(true);
+        address matcher = newBorrower;
+        uint256 lockedBefore = MetricsFacet(diamond).getEncumbered(borrower, address(weth), 0);
+        uint256 matcherBefore = usdc.balanceOf(matcher);
+        uint256 borrowerBefore = usdc.balanceOf(borrower);
+        uint256 payoff = RepayFacet(diamond).calculateRepaymentAmount(oldLoanId);
+        vm.startBroadcast(newBorrowerKey);
+        uint256 newLoanId = OfferMatchFacet(diamond).matchOffers(lenderOfferId, requestId);
+        vm.stopBroadcast();
+        if (!switchWasOn) _setAutoRefinance(false);
+        console.log("New loan from the matcher's fill:", newLoanId);
+
+        require(
+            LoanFacet(diamond).getLoanDetails(oldLoanId).status == LibVaipakam.LoanStatus.Repaid,
+            "PF-215: the old loan should be Repaid by the matcher's fill"
+        );
+        LibVaipakam.Loan memory newLoan = LoanFacet(diamond).getLoanDetails(newLoanId);
+        require(newLoan.status == LibVaipakam.LoanStatus.Active, "PF-215: the new loan should be Active");
+        require(newLoan.lender == newLender && newLoan.borrower == borrower,
+            "PF-215: the standing lender funds the new loan and the borrower keeps the position");
+        require(newLoan.matcher == matcher, "PF-215: the matcher should be recorded on the new loan");
+        require(newLoan.principal == LOAN_AMOUNT, "PF-215: the new loan carries the old principal");
+        require(
+            newLoan.interestRateBps >= request.interestRateBps && newLoan.interestRateBps <= capRateBps,
+            "PF-215: the new rate should sit inside the borrower's caps"
+        );
+        require(newLoan.collateralAmount == COLLATERAL_AMOUNT, "PF-215: the new loan holds the old collateral");
+        require(
+            MetricsFacet(diamond).getEncumbered(borrower, address(weth), 0) == lockedBefore,
+            "PF-215: the collateral should stay locked once (carried over, not pledged again)"
+        );
+        // The borrower's wallet nets the new principal (less the initiation
+        // fee) against the old loan's payoff; the fee, less the matcher's
+        // share, is what PF-057 measures.
+        uint256 borrowerAfter = usdc.balanceOf(borrower);
+        uint256 netIn = borrowerAfter + payoff - borrowerBefore;
+        _requireMatcherShare(LOAN_AMOUNT, netIn, usdc.balanceOf(matcher) - matcherBefore);
+
+        vm.startBroadcast(lenderKey);
+        ClaimFacet(diamond).claimAsLender(oldLoanId);
+        vm.stopBroadcast();
+        _repayInFull(borrowerKey, newLoanId);
+        _claimBoth(newLenderKey, borrowerKey, newLoanId);
+    }
+
+    function _setAutoRefinance(bool enabled) internal {
+        vm.startBroadcast(adminKey);
+        AdminFacet(diamond).setAutoRefinanceEnabled(enabled);
+        vm.stopBroadcast();
+        require(AdminFacet(diamond).getAutoRefinanceEnabled() == enabled, "the auto-refinance switch should land");
     }
 
     // ─── PF-053: Range Orders Match + Partial Fill ───────────────────────────
