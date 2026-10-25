@@ -767,7 +767,7 @@ const copySource = {
       'chain',
     ]),
     paidNotBilled: tmpl(
-      'Paid Push alerts aren’t billed on {{chain}} right now: nothing charges this fee here yet, so there’s nothing to agree to.',
+      'The alert service doesn’t charge this fee on {{chain}} right now, so there’s nothing to agree to.',
       ['chain'],
     ),
     paidBilledUnknown: tmpl(
@@ -811,7 +811,7 @@ const copySource = {
       ['chain'],
     ),
     paidPredatesBillable:
-      'This version can still charge the fee through the protocol’s billing role, and it may not check for an agreement before it does.',
+      'Separately from the alert service, this contract version lets the protocol’s billing role charge the fee directly, and it may not check for an agreement before it does.',
     paidPredatesNotBillable: tmpl(
       'This version has no billing call either, so the fee can’t be charged on {{chain}}.',
       ['chain'],

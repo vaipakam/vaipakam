@@ -281,7 +281,7 @@ test('paid Push: the fee is stated from the chain, and nothing is offered where 
   await expect(card.getByText(new RegExp(`cost ${feeText} VPFI per loan side`))).toBeVisible({
     timeout: 30_000,
   });
-  await expect(card.getByTestId('paid-push-billing')).toHaveText(/aren.t billed on/i);
+  await expect(card.getByTestId('paid-push-billing')).toHaveText(/alert service doesn.t charge this fee/i);
   await expect(card.getByTestId('paid-push-consent')).toHaveText(/haven.t agreed to pay/i);
   await expect(card.getByRole('button', { name: /agree to pay/i })).toHaveCount(0);
   await expect(card.getByRole('button', { name: /withdraw my agreement/i })).toHaveCount(0);
