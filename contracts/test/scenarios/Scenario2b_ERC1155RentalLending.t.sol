@@ -42,6 +42,7 @@ import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.so
 import {ZeroExProxyMock} from "../mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "../mocks/MockZeroExLegacyAdapter.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 
 /**
  * @title Scenario2b_ERC1155RentalLending
@@ -462,7 +463,8 @@ contract Scenario2b_ERC1155RentalLending is Test {
         uint256 gracePeriod = 1 days;
         vm.warp(endTime + gracePeriod + 1);
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted), "loan Defaulted");

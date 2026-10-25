@@ -21,6 +21,7 @@ import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /// @title FallbackCureTest
 /// @notice Pinpoint coverage for the cure-from-FallbackPending path
@@ -115,7 +116,8 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         );
         uint256 diamond0 = ERC20Mock(mockCollateralERC20).balanceOf(address(diamond));
 
-        DefaultedFacet(address(diamond)).triggerDefault(1, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), 1);
+        DefaultedFacet(address(diamond)).triggerDefault(1, sellQuote, defaultAdapterCalls());
 
         // Fixture-live: the custody is vault-held and the Diamond kept nothing.
         (uint256 row, uint256 legacy) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(1);

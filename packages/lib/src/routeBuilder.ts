@@ -623,6 +623,7 @@ const TRIGGER_DEFAULT_ABI = [
     stateMutability: 'nonpayable',
     inputs: [
       { name: 'loanId', type: 'uint256' },
+      { name: 'sellAmount', type: 'uint256' },
       {
         name: 'adapterCalls',
         type: 'tuple[]',
@@ -652,6 +653,11 @@ export interface PreviewCloseOutDeps {
   diamond: Address;
   account: Address;
   loanId: bigint;
+  /** The collateral amount the route was quoted for (#2796): what
+   *  `triggerDefault` is told it sells. Read it with
+   *  {@link forcedSaleQuoteAmount}; 0 where no sale can happen (the
+   *  in-kind branch ignores it). */
+  sellAmount: bigint;
   calls: readonly AdapterCall[];
   /** Simulate at this block rather than the node's latest — so a preview
    *  can be judged together with reads pinned to the same block. */
@@ -693,7 +699,7 @@ export async function previewCloseOutDetail(
   deps: PreviewCloseOutDeps,
 ): Promise<CloseOutPreviewDetail> {
   const unknown: CloseOutPreviewDetail = { preview: 'unknown', defaulted: false, internalMatch: false };
-  const { client, diamond, account, loanId, calls, blockNumber } = deps;
+  const { client, diamond, account, loanId, sellAmount, calls, blockNumber } = deps;
   let results;
   try {
     ({ results } = await client.simulateCalls({
@@ -704,7 +710,7 @@ export async function previewCloseOutDetail(
           data: encodeFunctionData({
             abi: TRIGGER_DEFAULT_ABI,
             functionName: 'triggerDefault',
-            args: [loanId, calls],
+            args: [loanId, sellAmount, calls],
           }),
         },
       ],
@@ -740,4 +746,103 @@ export async function previewCloseOutDetail(
       ? 'fallback'
       : 'other';
   return { preview, defaulted, internalMatch };
+}
+
+// ─── The forced-sale plan (#2796) ─────────────────────────────────────────
+
+/**
+ * `ForcedSaleFacet.ForcedSaleKind`. Values are append-only on the contract,
+ * so these never move.
+ */
+export const FORCED_SALE_KIND = {
+  PeriodicSettlement: 0,
+  HealthFactorLiquidation: 1,
+  HealthFactorSplitLiquidation: 2,
+  TimeBasedDefault: 3,
+} as const;
+export type ForcedSaleKind = (typeof FORCED_SALE_KIND)[keyof typeof FORCED_SALE_KIND];
+
+/**
+ * `ForcedSaleFacet.previewForcedSale`: the size of the forced sale a kind
+ * would make now. Every forced sale sells only what the debt needs (the
+ * least collateral whose worst-case proceeds cover the debt plus the
+ * largest charges), and the contract accepts a quote from `sell` to
+ * `maxSell` only. An all-zero plan means no sale of that kind is due now.
+ */
+export interface ForcedSalePlan {
+  debt: bigint;
+  need: bigint;
+  sell: bigint;
+  floor: bigint;
+  covered: boolean;
+  maxSell: bigint;
+}
+
+const PREVIEW_FORCED_SALE_ABI = [
+  {
+    type: 'function',
+    name: 'previewForcedSale',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'loanId', type: 'uint256' },
+      { name: 'kind', type: 'uint8' },
+    ],
+    outputs: [
+      {
+        name: 'plan',
+        type: 'tuple',
+        components: [
+          { name: 'debt', type: 'uint256' },
+          { name: 'need', type: 'uint256' },
+          { name: 'sell', type: 'uint256' },
+          { name: 'floor', type: 'uint256' },
+          { name: 'covered', type: 'bool' },
+          { name: 'maxSell', type: 'uint256' },
+        ],
+      },
+    ],
+  },
+] as const;
+
+export interface ReadForcedSalePlanDeps {
+  client: Pick<PublicClient, 'readContract'>;
+  diamond: Address;
+  loanId: bigint;
+  kind: ForcedSaleKind;
+  /** Read at this block, to judge the plan with other reads of that block. */
+  blockNumber?: bigint;
+}
+
+/** Read the plan. Throws what the read throws (no fresh price, an RPC
+ *  failure): a caller that cannot read the plan cannot quote a sale. */
+export async function readForcedSalePlan(deps: ReadForcedSalePlanDeps): Promise<ForcedSalePlan> {
+  const { client, diamond, loanId, kind, blockNumber } = deps;
+  const plan = await client.readContract({
+    address: diamond,
+    abi: PREVIEW_FORCED_SALE_ABI,
+    functionName: 'previewForcedSale',
+    args: [loanId, kind],
+    ...(blockNumber !== undefined ? { blockNumber } : {}),
+  });
+  return plan as ForcedSalePlan;
+}
+
+/**
+ * The collateral amount to quote a forced sale for: the middle of the range
+ * the contract accepts, or `null` when no sale is due.
+ *
+ * The middle, not the least amount, because the range moves between the
+ * quote and the block that settles it, in both directions: the debt
+ * accrues every second (the range rises), and a rising collateral price
+ * shrinks what must be sold (the range falls). An uncovered sale's range
+ * is one point, the whole collateral, so its middle is that point.
+ */
+export function forcedSaleQuoteAmount(plan: ForcedSalePlan): bigint | null {
+  if (plan.sell === 0n) return null;
+  return plan.sell + (plan.maxSell - plan.sell) / 2n;
+}
+
+/** Whether `quoted` still lies in the range `plan` accepts. */
+export function forcedSaleQuoteAccepted(plan: ForcedSalePlan, quoted: bigint): boolean {
+  return plan.sell !== 0n && quoted >= plan.sell && quoted <= plan.maxSell;
 }

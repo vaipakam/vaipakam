@@ -33,6 +33,7 @@ import {CallbackERC20} from "./mocks/CallbackERC20.sol";
 import {MockLopFill} from "./mocks/MockLopFill.sol";
 import {LibLopDomain} from "../src/libraries/LibLopDomain.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
+import {liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title  TakerReentry
@@ -424,8 +425,9 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         assertEq(CallbackERC20(weth).callbacks(), 1, "fixture-live: the hook fired");
         assertEq(CallbackERC20(weth).lastRevertSelector(), LibFillLock.FillInProgress.selector, "refused by the lock");
         assertEq(uint8(_status(other)), uint8(LibVaipakam.LoanStatus.Active), "the other loan is untouched");
+        uint256 sellQuote = liquidationQuote(address(diamond), other);
         vm.prank(makeAddr("liquidator"));
-        RiskFacet(address(diamond)).triggerLiquidation(other, _workingRoute());
+        RiskFacet(address(diamond)).triggerLiquidation(other, sellQuote, _workingRoute());
         assertTrue(_status(other) != LibVaipakam.LoanStatus.Active, "straddle: outside a fill it liquidates");
     }
 
@@ -611,8 +613,9 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         sanctionsList.setFlagged(borrower, true);
         _setRisk(loanId, 0.9e18, 9_600);
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.prank(makeAddr("liquidator"));
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, _workingRoute());
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, _workingRoute());
 
         assertTrue(_status(loanId) != LibVaipakam.LoanStatus.Active, "the loan was liquidated");
         vm.expectRevert(abi.encodeWithSelector(SwapToRepayIntentFacet.IntentNoCommit.selector, loanId));

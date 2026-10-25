@@ -23,6 +23,7 @@ import {LoanClockProbeFacet} from "./mocks/LoanClockProbeFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
+import {defaultQuote, periodicQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /// @title GlobalPauseLoanClockTest
 /// @notice Owner decision D2 (#668 / #935): under a global pause repay and
@@ -353,8 +354,9 @@ contract GlobalPauseLoanClockTest is SetupTest {
         uint256 loanId = _openLoan();
         vm.warp(vm.getBlockTimestamp() + DURATION_DAYS * 1 days + GRACE + 1);
         admin.pause();
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
     }
 
     // ─── 3. The loan clock ───────────────────────────────────────────────────
@@ -378,8 +380,9 @@ contract GlobalPauseLoanClockTest is SetupTest {
         assertGt(vm.getBlockTimestamp(), original + GRACE, "fixture-live: past the original grace end");
 
         assertFalse(DefaultedFacet(address(diamond)).isLoanDefaultable(loanId), "not defaultable after the pause");
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(DefaultedFacet.NotDefaultedYet.selector);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         vm.warp(graceEnd + 1);
         assertTrue(DefaultedFacet(address(diamond)).isLoanDefaultable(loanId), "defaultable past the moved grace end");
@@ -574,8 +577,9 @@ contract GlobalPauseLoanClockTest is SetupTest {
         admin.unpause();
         vm.warp(start + 30 days + 60 days + 5 days); // past the moved period end and its grace
 
+        uint256 sellQuote = periodicQuote(address(diamond), loanId);
         vm.prank(makeAddr("settler"));
-        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, defaultAdapterCalls());
+        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, sellQuote, defaultAdapterCalls());
 
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(loanId).lastPeriodicInterestSettledAt,

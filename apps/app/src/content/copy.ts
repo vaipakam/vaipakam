@@ -2675,10 +2675,11 @@ const copySource = {
     // asked because this deployment has no quote service for them.
     routeNoQuotePartlyConfigured:
       'None of the exchanges this app asked gave a usable price for this sale just now, so nothing was sent and nothing was spent. Some of the exchanges the protocol uses on this network were not asked, because this app cannot ask them from here. Trying again later may help, and if it keeps happening, contact support.',
-    // #2463 round 9 — the borrower added collateral after the prices were
-    // collected, so the quoted calldata no longer covers the whole sale.
-    routeCollateralChanged:
-      'The loan’s collateral changed while the prices were being collected, so they no longer match what would be sold. Nothing was sent and nothing was spent. Confirm again to collect new prices.',
+    // #2796 — the prices were collected for an amount the sale no longer
+    // accepts: the debt accrued, a price moved or the collateral changed
+    // since, so the quoted calldata is for the wrong amount.
+    routeSaleSizeChanged:
+      'The amount of collateral this sale must sell changed while the prices were being collected, so they no longer match it. Nothing was sent and nothing was spent. Confirm again to collect new prices.',
     routeRosterFailed:
       'We could not read this loan or the exchanges the protocol uses on this network, so nothing was sent and nothing was spent. Try again in a moment.',
     // The agent answered for every aggregator asked that this deployment

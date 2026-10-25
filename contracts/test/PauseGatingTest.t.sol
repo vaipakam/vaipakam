@@ -26,6 +26,7 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
+import {defaultQuote, liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title PauseGatingTest
@@ -202,8 +203,9 @@ contract PauseGatingTest is SetupTest {
     // ── RiskFacet ───────────────────────────────────────────────────────────
 
     function test_pause_triggerLiquidation() public {
+        uint256 sellQuote = liquidationQuote(address(diamond), 0);
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        RiskFacet(address(diamond)).triggerLiquidation(0, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(0, sellQuote, defaultAdapterCalls());
     }
 
     /// @dev The two risk setters are governance configuration, NOT
@@ -220,8 +222,9 @@ contract PauseGatingTest is SetupTest {
     // ── DefaultedFacet ──────────────────────────────────────────────────────
 
     function test_pause_triggerDefault() public {
+        uint256 sellQuote = defaultQuote(address(diamond), 0);
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        DefaultedFacet(address(diamond)).triggerDefault(0, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(0, sellQuote, defaultAdapterCalls());
     }
 
     // ── ProfileFacet ────────────────────────────────────────────────────────

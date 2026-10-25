@@ -44,6 +44,7 @@ import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title ClaimFacetTest
@@ -532,7 +533,8 @@ contract ClaimFacetTest is Test {
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Borrower has no claim after illiquid default
         vm.prank(borrower);
@@ -653,7 +655,8 @@ contract ClaimFacetTest is Test {
             abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, mockCollateralERC20),
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Loan is Defaulted; borrower has no claim — lender claiming should settle immediately
         vm.prank(lender);
@@ -761,7 +764,8 @@ contract ClaimFacetTest is Test {
             abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, mockCollateralERC20),
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         (, uint256 lenderAmount,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
         assertGt(lenderAmount, 0);

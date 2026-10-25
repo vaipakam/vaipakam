@@ -19,6 +19,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {defaultQuote, liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title  FallbackPartialLegCureTest
@@ -157,8 +158,9 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
         uint256 c = _plCureByTopUp(f);
 
         _plSetRisk(f.a, PL_HF_LIQUIDATABLE, PL_LTV_LIQUIDATABLE);
+        uint256 sellQuote = liquidationQuote(address(diamond), f.a);
         vm.prank(plLiquidator);
-        RiskFacet(address(diamond)).triggerLiquidation(f.a, _plRoute(false));
+        RiskFacet(address(diamond)).triggerLiquidation(f.a, sellQuote, _plRoute(false));
 
         assertEq(
             uint8(_plStatus(f.a)),
@@ -182,8 +184,9 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
         uint256 c = _plCureByTopUp(f);
 
         _plSetRisk(f.a, PL_HF_LIQUIDATABLE, PL_LTV_LIQUIDATABLE);
+        uint256 sellQuote = liquidationQuote(address(diamond), f.a);
         vm.prank(plLiquidator);
-        RiskFacet(address(diamond)).triggerLiquidation(f.a, _plRoute(true));
+        RiskFacet(address(diamond)).triggerLiquidation(f.a, sellQuote, _plRoute(true));
 
         assertEq(
             uint8(_plStatus(f.a)),
@@ -206,8 +209,9 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
 
         LibVaipakam.Loan memory l = _plLoan(f.a);
         vm.warp(uint256(l.startTime) + l.durationDays * 1 days + PL_PAST_EVERY_GRACE);
+        uint256 sellQuote = defaultQuote(address(diamond), f.a);
         vm.prank(plLiquidator);
-        DefaultedFacet(address(diamond)).triggerDefault(f.a, _plRoute(false));
+        DefaultedFacet(address(diamond)).triggerDefault(f.a, sellQuote, _plRoute(false));
 
         assertEq(
             uint8(_plStatus(f.a)),
@@ -230,8 +234,9 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
 
         LibVaipakam.Loan memory l = _plLoan(f.a);
         vm.warp(uint256(l.startTime) + l.durationDays * 1 days + PL_PAST_EVERY_GRACE);
+        uint256 sellQuote = defaultQuote(address(diamond), f.a);
         vm.prank(plLiquidator);
-        DefaultedFacet(address(diamond)).triggerDefault(f.a, _plRoute(true));
+        DefaultedFacet(address(diamond)).triggerDefault(f.a, sellQuote, _plRoute(true));
 
         assertEq(
             uint8(_plStatus(f.a)),
@@ -461,7 +466,8 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
     ///      top-up does not cure it unless the cell restores them.
     function _plLiquidateToFallback(uint256 loanId) internal {
         _plSetRisk(loanId, PL_HF_LIQUIDATABLE, PL_LTV_LIQUIDATABLE);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, _plRoute(true));
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, _plRoute(true));
         assertEq(
             uint8(_plStatus(loanId)),
             uint8(LibVaipakam.LoanStatus.FallbackPending),

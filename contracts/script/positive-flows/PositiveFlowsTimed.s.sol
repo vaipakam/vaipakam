@@ -14,6 +14,7 @@ import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {NumeraireConfigFacet} from "../../src/facets/NumeraireConfigFacet.sol";
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
+import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 import {Deployments} from "../lib/Deployments.sol";
 import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
 
@@ -508,8 +509,12 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         FixedRateSwapAdapter adapter = settlementAdapter;
         LibSwap.AdapterCall[] memory route = _swapRouteFor(address(adapter));
         Balances memory b0 = _balances(adapter);
+        // The settler quotes the host's plan, as a keeper does (#2796).
+        uint256 sellAmount = ForcedSaleFacet(diamond)
+            .previewForcedSale(periodicLoanId, ForcedSaleFacet.ForcedSaleKind.PeriodicSettlement)
+            .sell;
         vm.startBroadcast(newLenderKey);
-        RepayPeriodicFacet(diamond).settlePeriodicInterest(periodicLoanId, route);
+        RepayPeriodicFacet(diamond).settlePeriodicInterest(periodicLoanId, sellAmount, route);
         vm.stopBroadcast();
         _requireSettleAccounted(before, b0, _balances(adapter), shortfall);
     }

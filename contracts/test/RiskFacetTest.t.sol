@@ -102,6 +102,7 @@ import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
 
 contract RiskFacetTest is Test {
     VaipakamDiamond diamond;
@@ -1022,6 +1023,7 @@ contract RiskFacetTest is Test {
         // Expect: HFLiquidationTriggered(loanId, liquidator=address(this), proceeds=1980 ether)
         // loanId and liquidator are indexed (topic1, topic2); proceeds is data.
         vm.expectEmit(true, true, false, true);
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         emit RiskFacet.HFLiquidationTriggered(
             loanId,
             address(this),
@@ -1030,6 +1032,7 @@ contract RiskFacetTest is Test {
 
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
 
@@ -1149,7 +1152,8 @@ contract RiskFacetTest is Test {
         if (stampFull) {
             _expectResolverKeyedOnHolder(loanId);
         }
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, defaultAdapterCalls());
 
         lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
         toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - treasuryBefore;
@@ -1731,15 +1735,19 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
             abi.encode(true)
         );
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
 
         // Second call should revert as loan is now Defaulted
+        uint256 sellQuote2 = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(RiskFacet.InvalidLoan.selector);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote2,
             defaultAdapterCalls()
         );
         vm.clearMockedCalls();
@@ -1801,9 +1809,11 @@ contract RiskFacetTest is Test {
             abi.encode(HF_SCALE - 1)
         );
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(IVaipakamErrors.NonLiquidAsset.selector);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
         vm.clearMockedCalls();
@@ -1818,9 +1828,11 @@ contract RiskFacetTest is Test {
 
         // HF-based liquidation always requires HF < 1, even past grace.
         // Healthy loans past grace are handled by DefaultedFacet, not RiskFacet.
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(RiskFacet.HealthFactorNotLow.selector);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
     }
@@ -1831,9 +1843,11 @@ contract RiskFacetTest is Test {
 
         // HF is 1.53 (healthy) and still within grace period
         // The real calculateHealthFactor returns 1.53e18 (> 1e18)
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(RiskFacet.HealthFactorNotLow.selector);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
     }
@@ -1899,10 +1913,12 @@ contract RiskFacetTest is Test {
 
         // Slim form: only loanId is indexed (informational/liquidation per
         // EventSourcingAudit §1.4 + §1.5).
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit RiskFacet.LiquidationFallback(loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
 
@@ -1955,10 +1971,12 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.prank(liquidator);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
         vm.clearMockedCalls();
@@ -1987,9 +2005,11 @@ contract RiskFacetTest is Test {
             "withdraw failed"
         );
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(bytes("withdraw failed"));
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
         vm.clearMockedCalls();
@@ -2024,9 +2044,11 @@ contract RiskFacetTest is Test {
             "vault fail"
         );
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(bytes("vault fail"));
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
         vm.clearMockedCalls();
@@ -2059,9 +2081,11 @@ contract RiskFacetTest is Test {
             "nft fail"
         );
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(bytes("nft fail"));
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
         vm.clearMockedCalls();
@@ -2112,9 +2136,11 @@ contract RiskFacetTest is Test {
             "nft fail"
         );
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(bytes("nft fail"));
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
         vm.clearMockedCalls();
@@ -2173,10 +2199,12 @@ contract RiskFacetTest is Test {
 
         // Slim form: only loanId is indexed (informational/liquidation per
         // EventSourcingAudit §1.4 + §1.5).
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit RiskFacet.LiquidationFallback(loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
 
@@ -2289,8 +2317,10 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 1800 ether + 900 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
 
@@ -2329,10 +2359,11 @@ contract RiskFacetTest is Test {
             abi.encode(HF_SCALE - 1)
         );
         MockVaultWithdraw.deliversAll(address(diamond));
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(
             abi.encodeWithSelector(LibSwap.NoEnabledSwapRoute.selector, loanId)
         );
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, emptyAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, emptyAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -2352,11 +2383,12 @@ contract RiskFacetTest is Test {
             abi.encode(HF_SCALE - 1)
         );
         MockVaultWithdraw.deliversAll(address(diamond));
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(
             abi.encodeWithSelector(LibSwap.NoEnabledSwapRoute.selector, loanId)
         );
         // defaultAdapterCalls() points at adapter slot 0, now disabled.
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, defaultAdapterCalls());
 
         AdminFacet(address(diamond)).setSwapAdapterDisabled(adapter0, false); // restore
         vm.clearMockedCalls();
@@ -2381,11 +2413,12 @@ contract RiskFacetTest is Test {
         calls[0] = LibSwap.AdapterCall({adapterIdx: idx, data: ""});
         calls[1] = LibSwap.AdapterCall({adapterIdx: 0, data: ""}); // the 0x shim, rate 11/10
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectEmit(true, true, false, true);
         emit LibSwap.SwapAdapterAttempted(loanId, idx, address(partialVenue), false);
         vm.expectEmit(true, true, false, true);
         emit RiskFacet.HFLiquidationTriggered(loanId, address(this), 1980 ether);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, calls);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, calls);
 
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
@@ -2421,9 +2454,10 @@ contract RiskFacetTest is Test {
         LibSwap.AdapterCall[] memory calls = new LibSwap.AdapterCall[](1);
         calls[0] = LibSwap.AdapterCall({adapterIdx: idx, data: ""});
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit RiskFacet.LiquidationFallback(loanId);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, calls);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, calls);
 
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
@@ -2503,7 +2537,8 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 3000 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, defaultAdapterCalls());
 
         (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
             .getClaimableAmount(loanId, true);
@@ -2566,7 +2601,8 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 8000 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, defaultAdapterCalls());
         (, uint256 borrowerSurplus, ) = ClaimFacet(address(diamond))
             .getClaimableAmount(loanId, false);
         assertEq(
@@ -2654,8 +2690,10 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 1800 ether + highProceeds); // enough for all transfers
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
 
@@ -2806,8 +2844,10 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 1800 ether + lowProceeds);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
 
@@ -2865,6 +2905,7 @@ contract RiskFacetTest is Test {
         // bonus = 0, so bonus transfer is skipped; proceeds all go to lender vault
         // ZeroExProxyMock rate is 11/10 → proceeds = 1980 ether
         vm.expectEmit(true, true, false, true);
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         emit RiskFacet.HFLiquidationTriggered(
             loanId,
             address(this),
@@ -2872,6 +2913,7 @@ contract RiskFacetTest is Test {
         );
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
 
@@ -2912,8 +2954,10 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
 
@@ -2967,10 +3011,12 @@ contract RiskFacetTest is Test {
 
         // Slim form: only loanId is indexed (informational/liquidation per
         // EventSourcingAudit §1.4 + §1.5).
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit RiskFacet.LiquidationFallback(loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
 
@@ -3070,8 +3116,10 @@ contract RiskFacetTest is Test {
         // ever reaching our event. recordLogs + topic-0 search is
         // robust to the intervening events.
         vm.recordLogs();
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -3149,9 +3197,11 @@ contract RiskFacetTest is Test {
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(IVaipakamErrors.NonLiquidAsset.selector);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
         vm.clearMockedCalls();
@@ -3189,9 +3239,11 @@ contract RiskFacetTest is Test {
             "nft update fail"
         );
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(bytes("nft update fail"));
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
         vm.clearMockedCalls();
@@ -3227,8 +3279,10 @@ contract RiskFacetTest is Test {
             "swap revert"
         );
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
 
@@ -3278,8 +3332,10 @@ contract RiskFacetTest is Test {
             "swap revert"
         );
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
 
@@ -3339,8 +3395,10 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(IZeroExProxy.swap.selector),
             "swap revert"
         );
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
         (uint256 row, uint256 legacy) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);
@@ -3453,8 +3511,10 @@ contract RiskFacetTest is Test {
         );
         uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
         (uint256 row, uint256 legacy) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);
@@ -3544,9 +3604,11 @@ contract RiskFacetTest is Test {
             "nft update fail"
         );
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectRevert(bytes("nft update fail"));
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
         vm.clearMockedCalls();
@@ -3621,9 +3683,11 @@ contract RiskFacetTest is Test {
         );
 
         // Third-party liquidator triggers liquidation — should SUCCEED
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.prank(randomLiquidator);
         RiskFacet(address(diamond)).triggerLiquidation(
             loanId,
+            sellQuote,
             defaultAdapterCalls()
         );
 
@@ -3676,7 +3740,8 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
             abi.encode(true)
         );
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
 
         // Loan is now Defaulted — partial should reject.

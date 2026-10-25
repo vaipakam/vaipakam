@@ -14,6 +14,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
+import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title  DefaultedRestampTest
@@ -162,6 +163,7 @@ contract DefaultedRestampTest is SetupTest {
     ///      this path; the fixture's own stamp above runs before the
     ///      expectation is armed).
     function _triggerDefault() internal {
+        uint256 sellQuote = defaultQuote(address(diamond), LOAN);
         vm.expectCall(
             address(diamond),
             abi.encodeWithSelector(
@@ -170,7 +172,7 @@ contract DefaultedRestampTest is SetupTest {
             1
         );
         vm.prank(makeAddr("defaultKeeper"));
-        DefaultedFacet(address(diamond)).triggerDefault(LOAN, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, defaultAdapterCalls());
     }
 
     /// @dev The property, at the straddle: the stamp left the pre-default

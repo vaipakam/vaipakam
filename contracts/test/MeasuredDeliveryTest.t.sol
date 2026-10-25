@@ -32,6 +32,7 @@ import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {defaultQuote, liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /// @dev Exposes {LibDelivery.pullExact}, which only libraries reach.
 contract LibDeliveryHarness {
@@ -228,8 +229,9 @@ contract MeasuredDeliveryTest is SetupTest {
     function _enterFallback() internal returns (uint256 row) {
         _pastGrace();
         _failEverySwap();
+        uint256 sellQuote = defaultQuote(address(diamond), LOAN);
         vm.prank(makeAddr("defaultKeeper"));
-        DefaultedFacet(address(diamond)).triggerDefault(LOAN, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, defaultAdapterCalls());
         _swapsFill();
 
         assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.FallbackPending), "fixture: FallbackPending");
@@ -251,8 +253,9 @@ contract MeasuredDeliveryTest is SetupTest {
         _pastGrace();
         _chargesFee(col, bVault);
 
+        uint256 sellQuote = defaultQuote(address(diamond), LOAN);
         vm.prank(makeAddr("defaultKeeper"));
-        DefaultedFacet(address(diamond)).triggerDefault(LOAN, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, defaultAdapterCalls());
 
         assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Defaulted), "the default completed");
         assertEq(_bal(col, address(diamond)), OTHER, "the Diamond's other holdings paid nothing");
@@ -278,8 +281,9 @@ contract MeasuredDeliveryTest is SetupTest {
             abi.encode(uint256(0.9e18))
         );
 
+        uint256 sellQuote = liquidationQuote(address(diamond), LOAN);
         vm.prank(makeAddr("liquidator"));
-        RiskFacet(address(diamond)).triggerLiquidation(LOAN, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(LOAN, sellQuote, defaultAdapterCalls());
 
         assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Defaulted), "the liquidation completed");
         assertEq(_bal(col, address(diamond)), OTHER, "the Diamond's other holdings paid nothing");
@@ -376,8 +380,9 @@ contract MeasuredDeliveryTest is SetupTest {
         address lVault = _vault(lender);
         uint256 lVault0 = _bal(col, lVault);
 
+        uint256 sellQuote = defaultQuote(address(diamond), LOAN);
         vm.prank(makeAddr("defaultKeeper"));
-        DefaultedFacet(address(diamond)).triggerDefault(LOAN, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, defaultAdapterCalls());
 
         assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Defaulted), "the default completed");
         (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(LOAN, true);
@@ -505,7 +510,8 @@ contract MeasuredDeliveryTest is SetupTest {
         address lVault = _vault(lender);
         uint256 lVault0 = _bal(mockERC20, lVault);
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),

@@ -15,6 +15,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title  Vpfi592LenderProceedsTest
@@ -216,7 +217,8 @@ contract Vpfi592LenderProceedsTest is SetupTest {
         // Past the grace boundary.
         vm.warp(block.timestamp + 31 days + 30 days);
 
-        DefaultedFacet(address(diamond)).triggerDefault(LOAN, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), LOAN);
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, defaultAdapterCalls());
 
         // The VPFI collateral handed to the stored lender's vault is reserved
         // under the COLLATERAL asset.
@@ -354,7 +356,8 @@ contract Vpfi592LenderProceedsTest is SetupTest {
         mockOraclePrice(mockERC20, 1e8, 8);
 
         vm.warp(block.timestamp + 31 days + 30 days);
-        DefaultedFacet(address(diamond)).triggerDefault(LOAN, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), LOAN);
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, defaultAdapterCalls());
 
         uint256 reserved = _encumbered(borrower);
         assertGt(reserved, 0, "VPFI borrower surplus reserved against unstake");

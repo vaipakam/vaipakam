@@ -29,6 +29,7 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {defaultQuote, periodicQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /// @title ForcedSalePeriodicTest
 /// @notice #2795 — the periodic-interest auto-liquidation sells through the
@@ -117,8 +118,9 @@ contract ForcedSalePeriodicTest is SetupTest {
     }
 
     function _settle() internal {
+        uint256 sellQuote = periodicQuote(address(diamond), LOAN);
         vm.prank(settler);
-        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(LOAN, _calls());
+        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(LOAN, sellQuote, _calls());
     }
 
     function _bal(address who) internal view returns (uint256) {
@@ -437,7 +439,8 @@ contract ForcedSalePeriodicTest is SetupTest {
         vm.warp(startTs + 90 days + LibVaipakam.gracePeriod(90) + 1);
         mockOraclePrice(mockCollateralERC20, 199 * 1e8, 8);
         adapter.setOutputMultiplierBps(1990);
-        DefaultedFacet(address(diamond)).triggerDefault(LOAN, _calls());
+        uint256 sellQuote = defaultQuote(address(diamond), LOAN);
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, _calls());
 
         (, uint256 colAmount, bool colClaimed) =
             ClaimFacet(address(diamond)).getClaimableAmount(LOAN, false);
@@ -480,7 +483,8 @@ contract ForcedSalePeriodicTest is SetupTest {
             abi.encodeWithSelector(OracleFacet.checkLiquidityOnActiveNetwork.selector, mockCollateralERC20),
             abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
         );
-        DefaultedFacet(address(diamond)).triggerDefault(LOAN, _calls());
+        uint256 sellQuote = defaultQuote(address(diamond), LOAN);
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, _calls());
 
         (address colAsset, uint256 colAmount, ) =
             ClaimFacet(address(diamond)).getClaimableAmount(LOAN, false);

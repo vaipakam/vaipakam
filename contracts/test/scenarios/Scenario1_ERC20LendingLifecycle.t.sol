@@ -36,6 +36,7 @@ import {defaultAdapterCalls} from "../helpers/AdapterCallHelpers.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 
 /**
  * @title Scenario1_ERC20LendingLifecycle
@@ -407,7 +408,8 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         assertTrue(DefaultedFacet(address(diamond)).isLoanDefaultable(loanId), "Loan should be defaultable");
 
         // Step 4: Trigger default (permissionless)
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Verify loan is Defaulted
         loan = LoanFacet(address(diamond)).getLoanDetails(loanId);

@@ -56,8 +56,12 @@ import type { AdapterRoster } from '@vaipakam/lib/swapRoutes';
 // the app reaches the aggregators (through the agent's key-holding proxy,
 // never 0x — see `SlotAskability` there), and the card's standing read.
 export {
+  FORCED_SALE_KIND,
+  forcedSaleQuoteAccepted,
+  forcedSaleQuoteAmount,
   noQuoteReason,
   previewCloseOut,
+  readForcedSalePlan,
   readCloseOutRoster,
   routeMissingAnswers,
   routePosture,
@@ -68,6 +72,7 @@ export {
   type CloseOutRoster,
   type CloseOutRoute,
   type CloseOutSale,
+  type ForcedSalePlan,
   type NoQuoteReason,
   type RoutePosture,
   type SlotAskability,

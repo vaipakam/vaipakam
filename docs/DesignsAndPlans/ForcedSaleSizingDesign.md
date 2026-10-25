@@ -1,8 +1,9 @@
 # Forced-Sale Sizing — Design (#2796, #2795)
 
-Status: **design, approved rule; implementation not started.**
-Owner decisions: 2026-10-25 (recorded below). Delivery: one shared self-call
-host, the periodic settlement (#2795) as its first user.
+Status: **delivered.** The periodic settlement moved onto the shared host in
+#2795; the Health-Factor liquidation (single and split), the time-based
+default and the partial-liquidation charge rule followed in #2796.
+Owner decisions: 2026-10-25 (recorded below).
 
 This builds on a survey of how each forced path sizes and splits a sale
 today, the alternatives weighed, and worked examples, prepared for the owner
@@ -14,6 +15,7 @@ on 2026-10-25. The rule below is the one the owner chose from it.
 | --- | --- | --- |
 | 2026-10-25 01:14 | Where should the extra from a periodic settlement sale go? | **Pay it back to the borrower.** An unflagged current borrower is paid to their wallet; a flagged borrower's extra is held for them in their vault and paid with their claim at loan end. |
 | 2026-10-25 01:26 | Adopt one sell-to-need rule for every forced sale? | **Yes, charges on the debt.** One shared host. The handling fee is 2% of what is owed and the keeper bonus up to 3% of what is owed. Spec lines on the charge base move to the debt. #2795 is the host's first user. |
+| 2026-10-25 (#2796, pending) | How far above the least covering amount may a keeper's quote be? | Asked on a card; the work proceeds on the recommended answer, **up to 2% above** (§3.1a). The other options were an exact quote only and any amount up to all the collateral. |
 | 2026-10-20 (standing) | Liquidation priority | The lender is made whole as far as the position allows; the borrower's share comes second. |
 
 Prelive rule (standing): fresh deploys only, no legacy shims.
@@ -73,6 +75,27 @@ Symbols, all in the loan's lending asset unless stated:
   in full and never executes beyond the slippage cap. (The issue text says
   "minimum output = the need"; the floor of `x` is the need rounded up to
   the least whole collateral unit, so it honours that and the cap together.)
+
+### 3.1a The keeper's quote
+
+Every forced sale is an exact-input swap (#2472): the adapter calldata a
+keeper builds encodes the amount it sells. So each forced-sale entry point
+takes the amount as an argument (`sellAmount`; on the split route, the sum of
+the legs' amounts) and the host checks it against the plan at execution:
+
+- **Covered:** any amount from `x` to `x` plus `QUOTE_MARGIN_BPS` (2%), never
+  above `C`. The debt accrues every second and prices tick between the quote
+  and the block, so a quote for exactly `x` would miss by a few units on
+  almost every call. The margin absorbs that; whatever the extra collateral
+  raises is borrower extra, so the borrower's cost of the margin is the
+  slippage on at most 2% more collateral.
+- **Uncovered:** exactly `C`.
+- Anything else reverts `ForcedSaleQuoteOutOfRange(loanId, quoted, least,
+  most)` before anything moves, and the keeper quotes again.
+  `previewForcedSale` returns both ends (`sell`, `maxSell`).
+
+The adapter floor is the floor of what was actually sold, so a quote above
+`x` only raises the floor.
 
 ### 3.2 Covered and uncovered sales
 
@@ -236,7 +259,8 @@ only on full coverage) are unchanged.
    existing branch.
 2. Decrement the collateral lien by `x` and pull only `x` to the Diamond
    (`LibSanctionedLock.pullToDiamond`, move-out exempt, acts on what
-   arrived). Re-stamp VPFI.
+   arrived). The borrower's VPFI tier is re-stamped once, after the sale
+   settles, when VPFI left or entered the stored borrower's vault.
 3. Sell with failover through the host.
 4. **Filled:** run the waterfall (§3.4), book §4.1. The lien left on the vault
    equals `U`, exactly what `borrowerClaims` names, as after a full
@@ -257,10 +281,10 @@ the event says so.
 
 ### 5.2 Periodic path
 
-As today, minus the buffer arithmetic: decrement the lien by `x`, withdraw
-`x` (`vaultWithdrawDelivered`), sell through the host, reduce
-`loan.collateralAmount` by what left the vault. A failed sale reverts
-`PeriodicSettleSwapFailed` and nothing moves (unchanged).
+The same entry as the terminal paths: decrement the lien by `x`, pull `x` to
+the Diamond, sell through the host, reduce `loan.collateralAmount` by what
+left the vault. A failed sale reverts `PeriodicSettleSwapFailed` and nothing
+moves (unchanged).
 
 ### 5.3 What the lender and borrower can see
 
@@ -293,25 +317,29 @@ path: the lender always receives `R` and the charges together are at most
 The SwapAttemptFacet / TreasuryFeeFacet pattern. `address(this)`-gated, no
 `nonReentrant` of its own (every caller holds the Diamond guard). It carries:
 
-- **`sellToNeed(order)`** — sizes (or takes the uncovered branch), runs the
-  failover through `LibSwap` (each attempt still goes through
-  `SwapAttemptFacet.swapAttempt`), pays the bonus to the caller and the
-  subordinated fee to the treasury (`transferToTreasury`), and returns the
-  outcome: covered, collateral sold, proceeds, lender amount, fee, bonus,
-  borrower extra. On total failure it returns `ok = false` with nothing
-  paid, so each caller keeps its own failure branch (fallback or revert).
-- **`bookTerminal(loanId, outcome)`** — the identical terminal booking the HF
-  single route, the split route and the default share today: treasury
-  interest cut, lender `depositLocked` + `lenderClaims` (+ VPFI encumbrance),
-  borrower rows of §4.1.
-- **`bookPeriodic(loanId, outcome, boundary)`** — pays the lender through
-  `EncumbranceMutateFacet.freezeOrPayActiveLenderResident` (unchanged), credits
-  `interestSettled`, and routes `X` per §4.2.
-- **`tryPayBorrowerWallet(asset, to, amount)`** — the self-called, revertible
+- **`sellToNeed(loanId, kind, sellAmount, adapterCalls, splits, keeper)`** —
+  the one entry for every forced sale. It checks the quote (§3.1a),
+  decrements the lien and pulls the quoted amount, sells (failover through
+  `LibSwap`, each attempt through `SwapAttemptFacet.swapAttempt`; the split
+  route through its legs), pays the bonus (zero for a sanctioned keeper),
+  books the sale and returns the outcome: sold, collateral sold, proceeds,
+  lender amount, fee, bonus, borrower extra and whether it was held.
+  Booking is inside the host, by kind: the periodic kind pays the lender
+  through `EncumbranceMutateFacet.freezeOrPayActiveLenderResident` and credits
+  `interestSettled`; the terminal kinds take the treasury interest cut, credit
+  the lender (`depositLocked` + `lenderClaims`, + VPFI encumbrance) and write
+  the borrower rows of §4.1. The extra is routed per §4.2 (open loan) or
+  held in the surplus row (terminal). On total failure a periodic sale
+  reverts `PeriodicSettleSwapFailed`; a terminal one releases the remaining
+  lien, pulls the rest of the collateral and returns `sold = false` with
+  nothing paid, so the caller enters the fallback (§5.1 step 5).
+- **`payBorrowerWallet(asset, to, amount)`** — the self-called, revertible
   wallet attempt of §4.2.
 - **`previewForcedSale(loanId, kind)`** (view) — `D`, `N`, `x`, the adapter
-  floor and whether the sale is covered, so a keeper builds adapter calldata
-  for exactly `x`.
+  floor, whether the sale is covered and the largest accepted quote, so a
+  keeper builds adapter calldata for an amount the host accepts. It returns
+  an all-zero plan when no sale of that kind is owed (loan not active,
+  grace not over, Health Factor not below 1, nothing owed).
 
 Each caller keeps its preconditions, its pull, its failure branch, its
 terminal transition, NFT status, rewards and its own lifecycle event. The
@@ -358,10 +386,11 @@ change.
 ## 9. Keeper, indexer and app
 
 - **Keepers must quote the sized amount.** Aggregator calldata (0x, 1inch)
-  encodes the sell amount. A keeper that keeps quoting the whole collateral
-  builds calldata for the wrong amount; the attempt fails and, on the terminal
-  paths, every failed route ends in the fallback. So the keeper change
-  (quote `previewForcedSale`'s `x`) must reach a chain no later than the
+  encodes the sell amount, and `triggerLiquidation`, `triggerDefault` and
+  `settlePeriodicInterest` take it as `sellAmount` (§3.1a). A keeper that
+  keeps quoting the whole collateral is refused before anything moves. So
+  the keeper change (read `previewForcedSale`, quote an amount in
+  `[sell, maxSell]`, pass it) must reach a chain no later than the
   contracts. The reference keeper and the hosted keeper belong to the keeper
   thread; this design hands it that requirement and the preview getter.
 - **Keeper incentive shrinks** on healthy loans (the bonus base is the debt,
@@ -426,8 +455,10 @@ partial liquidation charge rule.
 
 1. This design note + spec (docs only).
 2. `ForcedSaleFacet` + generalised sizing + periodic onto the host (#2795).
-3. HF single + split onto the host.
-4. Time-based default onto the host; partial liquidation charge rule.
+3. HF single + split, the time-based default and the partial liquidation
+   charge rule onto the host, together (#2796). One PR, because the quote
+   argument changes all three entry points and the keeper should meet one
+   interface change, not three.
 
 Each PR refreshes its whole family. None reaches a chain before all waves
 are done (standing rule), and the keeper change (§9) lands with or before

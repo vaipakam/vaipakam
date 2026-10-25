@@ -8,9 +8,10 @@ import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
  *         (#2796): `ForcedSaleFacet.previewForcedSale(loanId, kind).sell`,
  *         the least amount the host accepts while the plan holds.
  *
- *         Returns 0 when no sale of that kind is owed (the preview
- *         reverts), so a test that expects the entry point itself to
- *         refuse still reaches that refusal.
+ *         Returns 0 when no sale of that kind is owed (the preview's
+ *         all-zero plan) or the preview reverts (no fresh price), so a test
+ *         that expects the entry point itself to refuse still reaches that
+ *         refusal.
  *
  * @dev Free functions, like `AdapterCallHelpers`, so any test can import
  *      them without changing its inheritance. Read the quote into a local

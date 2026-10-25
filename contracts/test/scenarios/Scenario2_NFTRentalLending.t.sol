@@ -42,6 +42,7 @@ import {ZeroExProxyMock} from "../mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "../mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "../mocks/MockRentableNFT721.sol";
 import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
+import {defaultQuote} from "../helpers/ForcedSaleQuote.sol";
 
 /**
  * @title Scenario2_NFTRentalLending
@@ -500,7 +501,8 @@ contract Scenario2_NFTRentalLending is Test {
         vm.warp(endTime + gracePeriod + 1); // Past grace
 
         // Step 3: Trigger default (permissionless)
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Step 4: Verify loan status = Defaulted
         loan = LoanFacet(address(diamond)).getLoanDetails(loanId);

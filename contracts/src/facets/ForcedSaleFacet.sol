@@ -94,12 +94,12 @@ contract ForcedSaleFacet is IVaipakamErrors {
     }
 
     /// @notice How far above the least covering amount a covered sale's
-    ///         quote may be (2%, owner decision 2026-10-25). It absorbs the
-    ///         interest that accrues and the price ticks between the moment
-    ///         a keeper builds its swap quote and the block that settles it;
-    ///         the extra proceeds go back to the borrower like the rest of
-    ///         the extra, so the borrower's cost is the slippage on at most
-    ///         this much more collateral.
+    ///         quote may be (2%). It absorbs the interest that accrues and
+    ///         the price ticks between the moment a keeper builds its swap
+    ///         quote and the block that settles it; the extra proceeds go
+    ///         back to the borrower like the rest of the extra, so the
+    ///         borrower's cost is the slippage on at most this much more
+    ///         collateral.
     uint256 public constant QUOTE_MARGIN_BPS = 200;
 
     /// @notice The size of a forced sale, computed before anything moves.

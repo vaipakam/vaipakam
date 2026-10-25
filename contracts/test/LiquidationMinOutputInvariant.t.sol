@@ -11,6 +11,7 @@ import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
 import {LibFallback} from "../src/libraries/LibFallback.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
+import {liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title LiquidationMinOutputInvariant
@@ -96,8 +97,9 @@ contract LiquidationMinOutputInvariantTest is RiskFacetTest {
         // on the loan, so this also proves the permissionless property
         // does not grant any caller-controlled input into the swap.
         address randomLiquidator = makeAddr("randomLiquidator");
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.prank(randomLiquidator);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, defaultAdapterCalls());
     }
 
     /// @dev Fuzzed counterpart: regardless of which address initiates the
@@ -152,6 +154,7 @@ contract LiquidationMinOutputInvariantTest is RiskFacetTest {
             (LibVaipakam.BASIS_POINTS - maxSlippageBps)) /
             LibVaipakam.BASIS_POINTS;
 
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectCall(
             mockZeroExProxy,
             abi.encodeWithSelector(
@@ -165,6 +168,6 @@ contract LiquidationMinOutputInvariantTest is RiskFacetTest {
         );
 
         vm.prank(liquidator);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, defaultAdapterCalls());
     }
 }

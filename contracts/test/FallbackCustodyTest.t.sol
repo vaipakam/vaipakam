@@ -30,6 +30,7 @@ import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {defaultQuote, liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title  FallbackCustodyTest
@@ -179,8 +180,9 @@ contract FallbackCustodyTest is CustodyInvariantBase {
 
         LibVaipakam.Loan memory l = _fcLoan(id);
         vm.warp(uint256(l.startTime) + l.durationDays * 1 days + FC_PAST_EVERY_GRACE);
+        uint256 sellQuote = defaultQuote(address(diamond), id);
         vm.recordLogs();
-        DefaultedFacet(address(diamond)).triggerDefault(id, _fcRoute(true));
+        DefaultedFacet(address(diamond)).triggerDefault(id, sellQuote, _fcRoute(true));
         FcMove[] memory moves = _fcMoves(vm.getRecordedLogs(), id);
 
         assertEq(
@@ -1145,7 +1147,8 @@ contract FallbackCustodyTest is CustodyInvariantBase {
     ///      top-up does not cure it unless the cell restores them.
     function _fcLiquidateToFallback(uint256 loanId) internal {
         _fcSetRisk(loanId, FC_HF_LIQUIDATABLE, FC_LTV_LIQUIDATABLE);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, _fcRoute(true));
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, _fcRoute(true));
         assertEq(
             uint8(_fcStatus(loanId)),
             uint8(LibVaipakam.LoanStatus.FallbackPending),
