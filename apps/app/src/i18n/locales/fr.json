@@ -2836,9 +2836,7 @@
       "autoPause": "Durée de la pause automatique",
       "maxOfferDuration": "Durée maximale d'une offre",
       "flagsHeading": "Indicateurs de fonctionnalité",
-      "rangeAmount": "Offres à montant en fourchette",
-      "rangeRate": "Offres à taux en fourchette",
-      "partialFill": "Exécution partielle",
+      "partialFill": "Appariement des ordres (exécution partielle)",
       "tiersHeading": "Paliers de remise VPFI",
       "tiers": "Paliers",
       "tierThreshold": "Seuil du palier {{n}}",
@@ -2919,7 +2917,8 @@
       "autoRefinanceHint": "Désactivé empêche les keepers et l’apparieur d’ordres de finaliser des refinancements. Un emprunteur qui refinance son propre prêt, ou un prêteur qui accepte directement une demande de refinancement, passe toujours.",
       "autoExtendHint": "Désactivé bloque toute prolongation de prêt sur place, y compris celle que l’emprunteur demande directement.",
       "numeraireFeed": "Flux de prix ETH dans la devise de référence",
-      "numeraireFeedHint": "Le flux Chainlink qui cote l’ETH dans la devise de référence. Il change en même temps que la devise de référence."
+      "numeraireFeedHint": "Le flux Chainlink qui cote l’ETH dans la devise de référence. Il change en même temps que la devise de référence.",
+      "partialFillHint": "Désactivé, les apparieurs d'ordres refusent et une offre acceptée n'est exécutée qu'une fois. Activé, une offre à fourchette peut être exécutée en plusieurs appariements. Les offres à fourchette sont toujours disponibles."
     },
     "forcedClose": {
       "title": "Ce prêt est en retard",

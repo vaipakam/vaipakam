@@ -2836,9 +2836,7 @@
       "autoPause": "Dauer der automatischen Pause",
       "maxOfferDuration": "Maximale Angebotsdauer",
       "flagsHeading": "Funktionsschalter",
-      "rangeAmount": "Angebote mit Betragsspanne",
-      "rangeRate": "Angebote mit Zinsspanne",
-      "partialFill": "Teilausführung",
+      "partialFill": "Order-Matching (Teilausführung)",
       "tiersHeading": "VPFI-Rabattstufen",
       "tiers": "Stufen",
       "tierThreshold": "Schwelle für Stufe {{n}}",
@@ -2919,7 +2917,8 @@
       "autoRefinanceHint": "Aus hindert Keeper und den Order-Matcher daran, Refinanzierungen abzuschließen. Ein Kreditnehmer, der seinen eigenen Kredit refinanziert, oder ein Kreditgeber, der eine Refinanzierungsanfrage direkt annimmt, kommt weiterhin durch.",
       "autoExtendHint": "Aus blockiert jede Verlängerung eines Kredits an Ort und Stelle, auch eine, die der Kreditnehmer direkt anfordert.",
       "numeraireFeed": "ETH-Preisfeed in der Referenzwährung",
-      "numeraireFeedHint": "Der Chainlink-Feed, der ETH in der Referenzwährung bewertet. Er ändert sich zusammen mit der Referenzwährung."
+      "numeraireFeedHint": "Der Chainlink-Feed, der ETH in der Referenzwährung bewertet. Er ändert sich zusammen mit der Referenzwährung.",
+      "partialFillHint": "Wenn aus, lehnen die Order-Matcher ab und ein angenommenes Angebot wird einmal ausgeführt. Wenn an, kann ein Angebot mit Spanne über mehrere Matches ausgeführt werden. Angebote mit Spanne sind immer möglich."
     },
     "forcedClose": {
       "title": "Dieses Darlehen ist überfällig",

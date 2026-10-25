@@ -370,12 +370,14 @@ async function chainPosture(atBlock = null) {
     const blockNumber = atBlock ?? (await pub.getBlockNumber({ cacheTime: 0 }));
     const read = (functionName) =>
       pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI_VIEM, functionName, blockNumber });
-    const [paused, autoRefinance, flags] = await Promise.all([
+    // The matching kill-switch from its own getter: `getMasterFlags`, which
+    // carried it as its third value, was retired in #2812.
+    const [paused, autoRefinance, partialFill] = await Promise.all([
       read('paused'),
       read('getAutoRefinanceEnabled'),
-      read('getMasterFlags'),
+      read('getPartialFillEnabled'),
     ]);
-    return { paused, autoRefinance, partialFill: flags[2], blockNumber };
+    return { paused, autoRefinance, partialFill, blockNumber };
   } catch (err) {
     // #2135 — ONLY THE CHAIN DECLINING IS "NOT ESTABLISHED". `null` makes the
     // posture verdict block, which is the honest answer for a dead endpoint

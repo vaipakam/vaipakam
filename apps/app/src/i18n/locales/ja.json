@@ -2836,9 +2836,7 @@
       "autoPause": "自動停止の継続時間",
       "maxOfferDuration": "オファーの最大期間",
       "flagsHeading": "機能フラグ",
-      "rangeAmount": "金額レンジのオファー",
-      "rangeRate": "金利レンジのオファー",
-      "partialFill": "部分約定",
+      "partialFill": "注文マッチング（部分約定）",
       "tiersHeading": "VPFI 割引ティア",
       "tiers": "ティア",
       "tierThreshold": "ティア {{n}} のしきい値",
@@ -2919,7 +2917,8 @@
       "autoRefinanceHint": "オフにすると、キーパーと注文マッチャーによる借り換えの完了が止まります。借り手自身による借り換えや、貸し手による借り換えリクエストの直接受諾は引き続き行えます。",
       "autoExtendHint": "オフにすると、借り手が直接求めるものも含め、ローンのその場での延長はすべてブロックされます。",
       "numeraireFeed": "基準通貨建てETH価格フィード",
-      "numeraireFeedHint": "基準通貨でETHの価格を示すChainlinkフィードです。基準通貨と一緒に変更されます。"
+      "numeraireFeedHint": "基準通貨でETHの価格を示すChainlinkフィードです。基準通貨と一緒に変更されます。",
+      "partialFillHint": "オフのときは注文マッチャーが拒否し、受諾されたオファーは一度だけ約定します。オンのときは、レンジ付きオファーを複数回のマッチングで約定できます。レンジ付きオファー自体は常に利用できます。"
     },
     "forcedClose": {
       "title": "このローンは延滞しています",

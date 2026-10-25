@@ -2836,9 +2836,7 @@
       "autoPause": "Duración de la pausa automática",
       "maxOfferDuration": "Duración máxima de oferta",
       "flagsHeading": "Indicadores de función",
-      "rangeAmount": "Ofertas de importe por rango",
-      "rangeRate": "Ofertas de tipo por rango",
-      "partialFill": "Ejecución parcial",
+      "partialFill": "Emparejamiento de órdenes (ejecución parcial)",
       "tiersHeading": "Niveles de descuento VPFI",
       "tiers": "Niveles",
       "tierThreshold": "Umbral del nivel {{n}}",
@@ -2919,7 +2917,8 @@
       "autoRefinanceHint": "Desactivado impide que los keepers y el emparejador de órdenes completen refinanciaciones. Un prestatario que refinancia su propio préstamo, o un prestamista que acepta directamente una solicitud de refinanciación, sigue adelante.",
       "autoExtendHint": "Desactivado bloquea toda extensión de préstamo en el sitio, incluida la que pide directamente el prestatario.",
       "numeraireFeed": "Feed de precio de ETH en la moneda de referencia",
-      "numeraireFeedHint": "El feed de Chainlink que cotiza ETH en la moneda de referencia. Cambia junto con la moneda de referencia."
+      "numeraireFeedHint": "El feed de Chainlink que cotiza ETH en la moneda de referencia. Cambia junto con la moneda de referencia.",
+      "partialFillHint": "Si está desactivado, los emparejadores de órdenes lo rechazan y una oferta aceptada se ejecuta una sola vez. Si está activado, una oferta con rango puede ejecutarse en varios emparejamientos. Las ofertas con rango están siempre disponibles."
     },
     "forcedClose": {
       "title": "Este préstamo está vencido",

@@ -2836,9 +2836,7 @@
       "autoPause": "自动暂停时长",
       "maxOfferDuration": "报价最长有效期",
       "flagsHeading": "功能开关",
-      "rangeAmount": "区间金额报价",
-      "rangeRate": "区间利率报价",
-      "partialFill": "部分成交",
+      "partialFill": "订单撮合（部分成交）",
       "tiersHeading": "VPFI 折扣等级",
       "tiers": "等级",
       "tierThreshold": "等级 {{n}} 门槛",
@@ -2919,7 +2917,8 @@
       "autoRefinanceHint": "关闭会阻止 keeper 和订单撮合器完成再融资。借款人为自己的贷款再融资，或出借人直接接受再融资请求，仍可进行。",
       "autoExtendHint": "关闭会阻止所有就地展期，包括借款人直接申请的展期。",
       "numeraireFeed": "以参考货币计价的 ETH 价格喂价",
-      "numeraireFeedHint": "以参考货币为 ETH 定价的 Chainlink 喂价。它随参考货币一同更改。"
+      "numeraireFeedHint": "以参考货币为 ETH 定价的 Chainlink 喂价。它随参考货币一同更改。",
+      "partialFillHint": "关闭时，订单撮合程序会拒绝，被接受的报价只成交一次。开启时，带区间的报价可以在多次撮合中成交。带区间的报价本身始终可用。"
     },
     "forcedClose": {
       "title": "这笔贷款已逾期",

@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { readWatchedConfig, screenParticipant, STATE_READS, WATCHED_CONFIG, WATCHED_GETTERS } from './watchedConfig.mjs';
+import { bundleField, readWatchedConfig, screenParticipant, STATE_READS, WATCHED_CONFIG, WATCHED_GETTERS } from './watchedConfig.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const src = (f) => fs.readFileSync(path.join(HERE, f), 'utf8');
@@ -83,19 +83,24 @@ describe('watchedConfig — the one snapshot', () => {
     }
   });
 
+  it('picks a bundle field by its ABI name, and refuses a name the ABI lacks (#2812)', () => {
+    expect(bundleField('maxOfferDurationDays')(Array.from({ length: 13 }, (_, i) => i))).toBe(12);
+    expect(() => bundleField('rangeAmountEnabled')).toThrow(/no output named rangeAmountEnabled/);
+  });
+
   it('reads every key, sharing one call per (getter, args)', async () => {
     const calls = [];
     const read = async (fn, args, block) => {
       calls.push(`${fn}(${args.join(',')})@${block}`);
-      if (fn === 'getMasterFlags') return [false, false, true];
+      if (fn === 'getPartialFillEnabled') return true;
       if (fn === 'getFeesConfig') return [200n, 20n];
-      if (fn === 'getProtocolConfigBundle') return Array.from({ length: 15 }, (_, i) => BigInt(i));
+      if (fn === 'getProtocolConfigBundle') return Array.from({ length: 13 }, (_, i) => BigInt(i));
       if (fn === 'isAssetPaused') return args[0] === '0xC';
       return `${fn}-value`;
     };
     const snap = await readWatchedConfig(read, { principalAsset: '0xP', collateralAsset: '0xC' }, 9n);
     expect(Object.keys(snap).sort()).toEqual(WATCHED_CONFIG.map((e) => e.key).sort());
-    expect(snap).toMatchObject({ partialFill: true, treasuryFeeBps: 200n, maxOfferDurationDays: 14n, principalPaused: false, collateralPaused: true });
+    expect(snap).toMatchObject({ partialFill: true, treasuryFeeBps: 200n, maxOfferDurationDays: 12n, principalPaused: false, collateralPaused: true });
     expect(calls.filter((c) => c.startsWith('getFeesConfig'))).toEqual(['getFeesConfig()@9']);
     expect(calls.every((c) => c.endsWith('@9'))).toBe(true);
   });
@@ -107,9 +112,9 @@ describe('watchedConfig — participants are screened inside the snapshot', () =
   const base = async (fn, args) => {
     if (fn === 'getSanctionsOracle') return ORACLE;
     if (fn === 'isSanctionedAddress') return false;
-    if (fn === 'getMasterFlags') return [false, false, true];
+    if (fn === 'getPartialFillEnabled') return true;
     if (fn === 'getFeesConfig') return [200n, 20n];
-    if (fn === 'getProtocolConfigBundle') return Array.from({ length: 15 }, (_, i) => BigInt(i));
+    if (fn === 'getProtocolConfigBundle') return Array.from({ length: 13 }, (_, i) => BigInt(i));
     return 0n;
   };
   it('adds screen:<label> for each participant, tri-state, with the oracle asked directly', async () => {

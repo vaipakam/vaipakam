@@ -1533,7 +1533,7 @@ const pre = await precondition('reading the preconditions from chain', async () 
   // read as not-paused; here it throws, so an unknown pause state BLOCKS.
   const { principalPaused, collateralPaused } = watched;
   // The form's upper bound on the new length, read where the app reads it
-  // (fees.ts: getProtocolConfigBundle()[14], maxOfferDurationDays).
+  // (fees.ts: the bundle's `maxOfferDurationDays`, by name since #2812).
   const { maxOfferDurationDays } = watched;
   // The risk-terms hash the lender's AcceptTerms must carry (the app reads
   // the same getter, fail-closed). Read before any write so the expected

@@ -919,7 +919,7 @@ export async function readMatchPreviewLive(
  *     the contract still enforces").
  *   - TRANSPORT failure → `null` (fail CLOSED): callers hide/refuse
  *     while the answer is unknown, consistent with the band's
- *     masterFlags posture — retrying a read is free, a doomed
+ *     kill-switch posture — retrying a read is free, a doomed
  *     `matchOffers` costs the matcher gas. */
 export async function readMatchRiskBlockLive(
   publicClient: PublicClient,

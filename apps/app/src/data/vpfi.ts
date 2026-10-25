@@ -25,7 +25,8 @@ import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { signalAware } from '../chain/railHealth';
-import { fetchProtocolConfig, protocolConfigFresh } from './indexer';
+import { fetchFreshConfigValues } from './indexer';
+import { readConfigBundleLive } from './protocol';
 import { copy } from '../content/copy';
 
 export const VPFI_DECIMALS = 18;
@@ -151,25 +152,16 @@ export function useVpfiTierTable(): VpfiTierTable {
       // hooks, and falls back to the live chain read when the
       // snapshot is absent or stale. Fee SETTLEMENT never reads this
       // hook — the contract applies tiers on-chain.
-      const snap = await fetchProtocolConfig(readChain.chainId);
-      const fromSnap =
-        snap && protocolConfigFresh(snap.updatedAt)
-          ? parseTierSlots(snap.bundle[7], snap.bundle[8])
-          : null;
-      const { thresholds, discounts } =
-        fromSnap ??
-        (await (async () => {
-          const bundle = (await publicClient!.readContract({
-            address: readChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'getProtocolConfigBundle',
-          })) as readonly unknown[];
-          return {
-            thresholds: bundle[7] as readonly [bigint, bigint, bigint, bigint],
-            discounts: bundle[8] as readonly [bigint, bigint, bigint, bigint],
-          };
-        })());
-      return { thresholds, discounts };
+      // Both sources carry the two tier lists by NAME, as decimal strings
+      // (#2812), so one parser checks either; a list that is absent or of
+      // another shape is never rendered as a tier table.
+      const snap = await fetchFreshConfigValues(readChain.chainId);
+      const fromSnap = snap ? parseTierSlots(snap.tierThresholds, snap.tierDiscountBps) : null;
+      if (fromSnap) return fromSnap;
+      const live = await readConfigBundleLive(publicClient!, readChain.diamondAddress);
+      const fromChain = parseTierSlots(live.tierThresholds, live.tierDiscountBps);
+      if (!fromChain) throw new Error('the configuration bundle carries no tier table');
+      return fromChain;
     },
   });
 
