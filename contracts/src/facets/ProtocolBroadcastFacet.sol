@@ -339,6 +339,14 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
             return callerFunds;
         }
 
+        // A spaced lane with no caller value cannot be paid this time:
+        // leave it owed without spending a quote on it.
+        uint256 eligibleAt = _budgetEligibleAt(lane, p);
+        if (callerFunds == 0 && block.timestamp < eligibleAt) {
+            emit TierPushDeferred(p.user, dst, p.nonce, TierPushDeferral.Spacing);
+            return callerFunds;
+        }
+
         uint40 computedAt = uint40(block.timestamp);
         uint256 fee;
         uint256 g = gasleft();
@@ -353,7 +361,7 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
 
         bool callerPays = callerFunds >= fee;
         if (!callerPays) {
-            if (block.timestamp < _budgetEligibleAt(lane, p)) {
+            if (block.timestamp < eligibleAt) {
                 emit TierPushDeferred(p.user, dst, p.nonce, TierPushDeferral.Spacing);
                 return callerFunds;
             }
@@ -405,7 +413,7 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
         view
         returns (uint256)
     {
-        if (p.tier < lane.tier || p.bps < lane.bps) return 0;
+        if (lane.sentAt == 0 || p.tier < lane.tier || p.bps < lane.bps) return 0;
         return uint256(lane.sentAt) + LibVaipakam.cfgTierPushSpacingSecEffective();
     }
 
