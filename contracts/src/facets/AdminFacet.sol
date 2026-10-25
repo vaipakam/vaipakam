@@ -940,17 +940,20 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     ///         {unpause}.
     /// @dev WATCHER_ROLE-only — write-only-pause; UNPAUSER_ROLE
     ///      retains the unpause lever, so the worst case for a
-    ///      compromised watcher is a max-window freeze (capped at
-    ///      `MAX_AUTO_PAUSE_SECONDS = 7200`, 2 hours), not
+    ///      compromised watcher is one max-length window (capped at
+    ///      `MAX_AUTO_PAUSE_SECONDS = 7200`, 2 hours) per cooldown, not
     ///      indefinite lockup.
     ///
-    ///      No-op when the protocol is already paused (manual or
-    ///      active auto-pause). This prevents a compromised watcher
-    ///      from chaining repeated calls into an indefinite freeze:
-    ///      the most it can do is set the window once, after which
-    ///      the window auto-clears and any extension would be a
-    ///      separate event the human team can correlate with the
-    ///      attack.
+    ///      Never extends a window: while one is active the call is a
+    ///      no-op. A window that would freeze a live protocol may open
+    ///      only {autoPauseCooldownSeconds} after the end of the last
+    ///      such window (#2744); earlier, the call reverts
+    ///      `LibPausable.AutoPauseCoolingDown(availableAt)`. Without
+    ///      the cooldown a watcher key could open the next window the
+    ///      moment the last one lapsed, and every paused second also
+    ///      moves every open loan's deadlines (#668 / #935). Under the
+    ///      manual pause the window is recorded (a trace for the pause
+    ///      epoch) and neither waits for nor starts a cooldown.
     /// @param reason Free-form string for indexers + alerting; surfaces
     ///               in the `LibPausable.AutoPaused` event so on-call
     ///               can see what triggered.
@@ -969,6 +972,37 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     ///         Frontends use this to render a countdown.
     function pausedUntil() external view returns (uint256) {
         return LibPausable.pausedUntil();
+    }
+
+    /// @notice The gap, in seconds, that must pass after an auto-pause
+    ///         window that froze a live protocol before the watcher may
+    ///         open the next one (#2744). Default 24 hours.
+    function autoPauseCooldownSeconds() external view returns (uint256) {
+        return LibPausable.autoPauseCooldownSeconds();
+    }
+
+    /// @notice The first timestamp at which {autoPause} may freeze a live
+    ///         protocol again: the end of the last window that did, plus
+    ///         the cooldown as it is set now. Zero when no auto-pause has
+    ///         ever frozen a live protocol.
+    function autoPauseAvailableAt() external view returns (uint256) {
+        return LibPausable.autoPauseAvailableAt();
+    }
+
+    /// @notice Set the cooldown between auto-pause windows (#2744).
+    /// @dev    ADMIN_ROLE-only, which the Timelock holds after handover, so
+    ///         the cooldown can be shortened only through a governance
+    ///         proposal and its delay. Bounded inside [1 hour, 7 days]: the
+    ///         floor keeps it from being switched off. Pass 0 to restore the
+    ///         default (24 hours). Takes effect at once, including for the
+    ///         cooldown already running. Emits
+    ///         `LibPausable.AutoPauseCooldownSet`.
+    /// @param newSeconds The new cooldown in seconds, or 0.
+    function setAutoPauseCooldownSeconds(uint32 newSeconds)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibPausable.setAutoPauseCooldownSeconds(newSeconds);
     }
 
     // ─── Per-Asset Pause (governance-controlled reserve pause) ─────────────

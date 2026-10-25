@@ -431,6 +431,18 @@ MAX_AUTO_PAUSE_SECONDS]` (currently bounded so a misfire can't
 disable the safety net or set an indefinite freeze ceiling). Zero
 means use library default.
 
+### Auto-pause cooldown seconds
+
+The gap that must pass after an auto-pause window that froze a live
+protocol before the watcher may open the next one, so a watcher key
+cannot keep the protocol frozen by chaining windows back to back.
+Range **[1 hour, 7 days]**, default **24 hours**; zero means use the
+default. Set by the admin role, which is the Timelock after handover,
+and it applies at once, including to a cooldown already running. A
+window the watcher records while the manual pause is in force neither
+waits for a cooldown nor starts one. `autoPauseAvailableAt()` reports
+when the next window may open.
+
 ## Oracle stack
 
 ### Secondary-oracle max deviation BPS
