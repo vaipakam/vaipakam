@@ -34,9 +34,16 @@
 # (`VITE_INDEXER_ORIGIN`), so the build writes it in place of the second
 # placeholder below, through the same rule the pages use to fetch from it
 # (`src/lib/indexerOrigin.ts`), and fails if it cannot (see
-# packages/lib/src/cspConnectSources.mjs). A script that got onto a page
-# can no longer send what it reads to any other host. (`img-src https:`
-# is a separate directive this lock does not change.)
+# packages/lib/src/cspConnectSources.mjs). `img-src` names only the site
+# itself too: every image the site shows is its own file or a data URI,
+# and an image URL is the other easy way to carry data to a host. So
+# every request type the policy governs (fetch, XHR, WebSocket, beacons,
+# images, fonts, media, frames, workers) reaches only the site and that
+# indexer, and `check-csp-policy.mjs` refuses a policy that names any
+# other destination. What a policy does NOT govern stays open: a script
+# can still navigate the page itself to another address, or trigger a DNS
+# lookup. (The `og:image` absolute URL in index.html is read by link
+# scrapers, not loaded by the page.)
 #
 # `static.cloudflareinsights.com` is DELIBERATELY ABSENT (#1816). If the
 # zone has Web Analytics auto-injection on, Cloudflare inserts its RUM
@@ -62,7 +69,7 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
   Cross-Origin-Opener-Policy: same-origin-allow-popups
   Cross-Origin-Resource-Policy: cross-origin
-  Content-Security-Policy: default-src 'self'; script-src 'self' __INLINE_SCRIPT_HASHES__; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' __CONNECT_SOURCES__; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' __INLINE_SCRIPT_HASHES__; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self' __CONNECT_SOURCES__; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
 
 # SPA entry point — Cloudflare returns this for every non-asset path via
 

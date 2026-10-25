@@ -8,7 +8,8 @@
  * built page's inline boot scripts, no script directive may carry an
  * `unsafe` keyword, and the site may not be framed. Its `connect-src` must
  * be exactly `'self'` plus the placeholder the build replaces with the
- * indexer origin, so no scheme source (`https:`) can creep back in. And the
+ * indexer origin, so no scheme source (`https:`) can creep back in, and no
+ * other directive may name any destination but the site itself. And the
  * committed policy must complete against the real page and the default
  * origin: the boot script is found, and nothing of either placeholder is
  * left.
@@ -68,6 +69,17 @@ if (JSON.stringify(connectSrc) !== JSON.stringify(["'self'", CONNECT_SOURCES_PLA
     `connect-src must be exactly 'self' ${CONNECT_SOURCES_PLACEHOLDER}; found ${connectSrc.join(' ')}`,
   );
 }
+// The whole policy names no destination but the site itself and, in
+// connect-src only, the build's indexer: no other directive may carry a
+// host or a scheme source (`https:`), so an image, font, frame or media
+// request cannot carry what a script read to another host either. `data:`
+// and `blob:` stay on the page.
+const LOCAL_SOURCES = new Set(["'self'", "'none'", 'data:', 'blob:', "'unsafe-inline'"]);
+for (const [name, values] of directives) {
+  if (name === 'script-src' || name === 'connect-src') continue;
+  const remote = values.filter((v) => !LOCAL_SOURCES.has(v));
+  if (remote.length > 0) problems.push(`${name} may name only the site itself; found ${remote.join(' ')}`);
+}
 if (JSON.stringify(directives.get('frame-ancestors')) !== JSON.stringify(["'none'"])) {
   problems.push(`frame-ancestors must be 'none'; found ${(directives.get('frame-ancestors') ?? []).join(' ')}`);
 }
@@ -99,5 +111,5 @@ if (problems.length > 0) {
 }
 console.log(
   `[csp-policy] ok: scripts 'self' plus ${bodies.length} boot-script hash, no unsafe keyword;` +
-    ` connect 'self' plus the build's indexer origin; not frameable`,
+    ` connect 'self' plus the build's indexer origin; every other directive the site itself; not frameable`,
 );
