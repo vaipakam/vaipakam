@@ -592,16 +592,6 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         uint256 sliceReceived = LibSanctionedLock.pullToDiamond(
             LibVaipakam.storageSlot(), loan.borrower, loan.collateralAsset, plan.sell
         );
-        // #658 PR-B — re-stamp the holder's VPFI tier/staking after the
-        // collateral slice leaves the vault (no-op for non-VPFI collateral).
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector,
-                loanId
-            ),
-            bytes4(0)
-        );
-
         (
             uint256 lenderProceeds,
             uint256 borrowerExtra,
@@ -618,6 +608,26 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             ),
             (uint256, uint256, bool, uint256, uint256)
         );
+        // #658 PR-B — re-stamp the stored borrower's VPFI tier/staking once the
+        // settlement has moved VPFI in or out of their vault: the collateral
+        // slice left it (VPFI collateral), or #2795 the borrower's extra was
+        // held in it (VPFI principal). One stamp, after both movements.
+        {
+            address vpfi = LibVaipakam.storageSlot().vpfiToken;
+            if (
+                vpfi != address(0) &&
+                (loan.collateralAsset == vpfi ||
+                    (extraHeld && loan.principalAsset == vpfi))
+            ) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        ConsolidationFacet.restampUserVpfiInternal.selector,
+                        loan.borrower
+                    ),
+                    bytes4(0)
+                );
+            }
+        }
 
         unchecked {
             loan.collateralAmount -= plan.sell;

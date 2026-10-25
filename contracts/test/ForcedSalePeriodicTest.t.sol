@@ -19,6 +19,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
+import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {LibCloseoutFreeze} from "../src/libraries/LibCloseoutFreeze.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -463,5 +464,47 @@ contract ForcedSalePeriodicTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.InvalidLoanStatus.selector);
         ClaimFacet(address(diamond)).claimAsBorrower(LOAN);
+    }
+
+    /// @dev The in-kind default (illiquid collateral) writes only the
+    ///      lender's claim, leaving the borrower's collateral row unwritten.
+    ///      The claim pays the held extra and skips that empty row, rather
+    ///      than withdrawing an unset asset.
+    function test_inKindDefault_heldExtraPaid_emptyCollateralRowSkipped() public {
+        uint256 held = _heldWhileFlaggedThenDelisted();
+
+        vm.warp(startTs + 90 days + LibVaipakam.gracePeriod(90) + 1);
+        // Illiquid collateral takes the in-kind branch (both parties consented).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.checkLiquidityOnActiveNetwork.selector, mockCollateralERC20),
+            abi.encode(LibVaipakam.LiquidityStatus.Illiquid)
+        );
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, _calls());
+
+        (address colAsset, uint256 colAmount, ) =
+            ClaimFacet(address(diamond)).getClaimableAmount(LOAN, false);
+        assertEq(colAsset, address(0), "no borrower collateral row written");
+        assertEq(colAmount, 0);
+
+        uint256 borrower0 = _bal(borrower);
+        vm.prank(borrower);
+        ClaimFacet(address(diamond)).claimAsBorrower(LOAN);
+        assertEq(_bal(borrower) - borrower0, held, "the held extra is paid at the claim");
+    }
+
+    /// @dev On a VPFI-principal loan, holding the extra in the stored
+    ///      borrower's vault re-stamps them, so the VPFI they now hold counts.
+    function test_heldVpfiExtra_restampsTheStoredBorrower() public {
+        _toPeriodEnd(1);
+        vm.prank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
+        _walletRefuses(borrower);
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(ConsolidationFacet.restampUserVpfiInternal.selector, borrower)
+        );
+        _settle();
+        assertGt(_held(), 0);
     }
 }

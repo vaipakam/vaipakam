@@ -171,14 +171,25 @@ library LibCloseoutFreeze {
         LibVaipakam.Storage storage s,
         uint256 loanId
     ) internal view returns (bool) {
-        LibVaipakam.ClaimInfo storage claim = s.borrowerClaims[loanId];
-        if (
-            !claim.claimed &&
-            (claim.amount > 0 || claim.assetType != LibVaipakam.AssetType.ERC20)
-        ) return true;
+        if (collateralLaneOpen(s.borrowerClaims[loanId])) return true;
         LibVaipakam.ClaimInfo storage surplus = s.borrowerSurplusClaims[loanId];
         if (!surplus.claimed && surplus.amount > 0) return true;
         return s.borrowerLifRebate[loanId].rebateAmount > 0;
+    }
+
+    /**
+     * @notice Whether a borrower collateral row still has something to pay:
+     *         unclaimed, and naming an amount or an NFT.
+     * @dev    #2795 — an unwritten row (a close-out that wrote only the
+     *         lender's claim) and a row written at zero are both empty: the
+     *         claim pays nothing from them, so it never withdraws an unset
+     *         asset while paying another lane.
+     */
+    function collateralLaneOpen(
+        LibVaipakam.ClaimInfo storage claim
+    ) internal view returns (bool) {
+        return !claim.claimed &&
+            (claim.amount > 0 || claim.assetType != LibVaipakam.AssetType.ERC20);
     }
 
     /**

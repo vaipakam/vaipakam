@@ -1288,8 +1288,9 @@ contract ClaimFacet is
             if (claim.claimed) revert AlreadyClaimed();
             revert NothingToClaim();
         }
-        // Whether the collateral lane itself is still to be paid.
-        bool payCollateral = !claim.claimed;
+        // Whether the collateral lane itself has something to pay (an empty
+        // or unwritten row is skipped, never withdrawn at zero).
+        bool payCollateral = LibCloseoutFreeze.collateralLaneOpen(claim);
 
         // #998 S10 (#1006) — fail-closed release of sanctioned-LOCKED borrower
         // proceeds (surplus / liened collateral / residual). Mirror of the
