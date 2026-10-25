@@ -176,16 +176,22 @@ contract DefaultedRestampTest is SetupTest {
     }
 
     /// @dev The property, at the straddle: the stamp left the pre-default
-    ///      balance and equals what the vault now tracks (own VPFI only).
-    function _assertStampEqualsTracked() internal view {
+    ///      balance and equals what the vault now tracks: own VPFI plus
+    ///      `kept`, the collateral the default did not take. Since #2796 a
+    ///      covered swap sells only what the debt needs, so the unsold
+    ///      collateral stays in the vault (under the loan's lien, for the
+    ///      borrower's claim); the in-kind route still takes all of it.
+    function _assertStampEqualsTracked(uint256 kept) internal view {
         assertEq(
-            IERC20(vpfi).balanceOf(bVault), OWN_VPFI, "the VPFI collateral left the borrower's vault"
+            IERC20(vpfi).balanceOf(bVault),
+            OWN_VPFI + kept,
+            "the VPFI collateral the default took left the borrower's vault"
         );
-        assertEq(_tracked(), OWN_VPFI, "tracked = own VPFI after the default");
+        assertEq(_tracked(), OWN_VPFI + kept, "tracked = own VPFI + unsold collateral after the default");
         (uint256 dayMin, uint256 dayClose) = _dayMinAndClose();
         assertEq(dayClose, _tracked(), "stamp == tracked after the default");
-        assertEq(dayClose, OWN_VPFI, "stamp left the pre-default balance");
-        assertEq(dayMin, OWN_VPFI, "the day minimum saw the collateral leave");
+        assertEq(dayClose, OWN_VPFI + kept, "stamp left the pre-default balance");
+        assertEq(dayMin, OWN_VPFI + kept, "the day minimum saw the collateral leave");
     }
 
     // -- F18: the swap route ------------------------------------------------
@@ -205,8 +211,13 @@ contract DefaultedRestampTest is SetupTest {
             ClaimFacet(address(diamond)).getClaimableAmount(LOAN, true);
         assertEq(claimAsset, mockCollateralERC20, "fixture: swap route (lender claim in the principal asset)");
         assertGt(claimAmount, 0, "fixture: the swap paid the lender");
+        (address keptAsset, uint256 kept, ) =
+            ClaimFacet(address(diamond)).getClaimableAmount(LOAN, false);
+        assertEq(keptAsset, vpfi, "fixture: the borrower claim is the unsold VPFI collateral");
+        assertGt(kept, 0, "fixture: a covered sale leaves collateral unsold");
+        assertLt(kept, COLLATERAL, "fixture: the sale took some collateral");
 
-        _assertStampEqualsTracked();
+        _assertStampEqualsTracked(kept);
     }
 
     // -- F18b: the in-kind route --------------------------------------------
@@ -227,6 +238,6 @@ contract DefaultedRestampTest is SetupTest {
         assertEq(claimAsset, vpfi, "fixture: in-kind route (lender claim in the VPFI collateral)");
         assertEq(claimAmount, COLLATERAL, "fixture: the whole collateral went to the lender");
 
-        _assertStampEqualsTracked();
+        _assertStampEqualsTracked(0);
     }
 }

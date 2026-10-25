@@ -336,6 +336,9 @@ contract Vpfi592LenderProceedsTest is SetupTest {
         // the INTERNAL LibERC721.ownerOf(lenderTokenId), which vm.mockCall
         // cannot intercept: the token must exist in diamond storage.
         TestMutatorFacet(address(diamond)).mintNFTRaw(l.lender, LENDER_TOKEN_ID);
+        // #2796 — the sell-to-need host holds the borrower's extra for the
+        // CURRENT borrower-position holder, read the same internal way.
+        TestMutatorFacet(address(diamond)).mintNFTRaw(borrower, 8888);
 
         // Fund the borrower vault with the collateral so the swap can withdraw
         // it; fund the diamond with both assets to back the mocked swap flow.

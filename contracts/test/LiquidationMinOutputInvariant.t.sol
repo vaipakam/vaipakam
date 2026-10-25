@@ -22,8 +22,10 @@ import {liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
  *
  * @dev This is the concrete, testable form of the audit finding
  *      "minReceived must be oracle-derived". RiskFacet.triggerLiquidation
- *      takes only a `loanId` — no calldata argument exists for a liquidator
- *      to smuggle a smaller min-output through — but the guarantee only
+ *      takes no min-output argument — the caller names only the loan, the
+ *      amount to sell (which the host checks against the published plan,
+ *      #2796) and the route list, so there is nothing through which to
+ *      smuggle a smaller min-output — but the guarantee only
  *      holds if the on-chain construction of the swap calldata continues
  *      to follow the oracle-derived formula. This test pins that behaviour
  *      so a future refactor can't silently regress it.
@@ -67,11 +69,14 @@ contract LiquidationMinOutputInvariantTest is RiskFacetTest {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(
             loanId
         );
+        // #2796 — the sale offers the plan's amount, read before any
+        // cheatcode is armed; the floor is the oracle value of exactly that.
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         uint256 expectedProceeds = LibFallback.expectedSwapOutput(
             address(diamond),
             loan.collateralAsset,
             loan.principalAsset,
-            loan.collateralAmount
+            sellQuote
         );
         uint256 maxSlippageBps = LibVaipakam.cfgMaxLiquidationSlippageBps();
         uint256 expectedMinOut = (expectedProceeds *
@@ -87,7 +92,7 @@ contract LiquidationMinOutputInvariantTest is RiskFacetTest {
                 IZeroExProxy.swap.selector,
                 loan.collateralAsset,
                 loan.principalAsset,
-                loan.collateralAmount,
+                sellQuote,
                 expectedMinOut,
                 address(diamond)
             )
@@ -97,7 +102,6 @@ contract LiquidationMinOutputInvariantTest is RiskFacetTest {
         // on the loan, so this also proves the permissionless property
         // does not grant any caller-controlled input into the swap.
         address randomLiquidator = makeAddr("randomLiquidator");
-        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.prank(randomLiquidator);
         RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, defaultAdapterCalls());
     }
@@ -143,25 +147,27 @@ contract LiquidationMinOutputInvariantTest is RiskFacetTest {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(
             loanId
         );
+        // #2796 — the sale offers the plan's amount, read before any
+        // cheatcode is armed; the floor is the oracle value of exactly that.
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         uint256 expectedProceeds = LibFallback.expectedSwapOutput(
             address(diamond),
             loan.collateralAsset,
             loan.principalAsset,
-            loan.collateralAmount
+            sellQuote
         );
         uint256 maxSlippageBps = LibVaipakam.cfgMaxLiquidationSlippageBps();
         uint256 expectedMinOut = (expectedProceeds *
             (LibVaipakam.BASIS_POINTS - maxSlippageBps)) /
             LibVaipakam.BASIS_POINTS;
 
-        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectCall(
             mockZeroExProxy,
             abi.encodeWithSelector(
                 IZeroExProxy.swap.selector,
                 loan.collateralAsset,
                 loan.principalAsset,
-                loan.collateralAmount,
+                sellQuote,
                 expectedMinOut,
                 address(diamond)
             )
