@@ -21,6 +21,12 @@
  * pins the boundary itself: non-prose files that name the retired surface and
  * must stay silent.
  *
+ * READER. Since #1732/#1758 the gate reads through the standard parsers
+ * (`packages/lib/src/markdownProse.mjs`), so many comments below name passes of
+ * the hand-written reader it replaced (`tagSpans`, `crossesBlockBoundary`, the
+ * fence walk). They are kept as the history of why each case exists; the
+ * case, not the pass that once got it wrong, is what each fixture pins.
+ *
  * HOW IT WORKS. The checker reads `git ls-files`, so fixtures are staged in a
  * scratch directory inside the repo, the checker is run, and the staging is
  * undone. Nothing is committed and the index is restored even on failure.
@@ -40,7 +46,16 @@ const REPO = join(HERE, '..', '..');
 // `developer-notes.txt` that the run silently removed.
 const DIR = `__excision_selftest__${process.pid}_${Date.now().toString(36)}`;
 
-/** `caught: true` — the gate MUST report this file. `false` — must stay silent. */
+/**
+ * `caught: true` — the gate MUST report this file. `false` — must stay silent.
+ *
+ * `digestSameAs` / `digestDiffersFrom` name another fixture whose digest this
+ * one's must equal or differ from. They pin the fingerprint, which a verdict
+ * cannot: retitling a governing heading leaves a file caught either way, and
+ * whether its digest moves is the whole point (#1758's harness item). A pair
+ * states the property (this edit must move it, that one must not) rather than
+ * a literal hash, which would be unreadable and churn on unrelated changes.
+ */
 const FIXTURES = [
   // --- rendered markup must fuse the words a reader sees as one phrase ---
   {
@@ -735,6 +750,177 @@ const FIXTURES = [
     body: '<div data-operation="buy:adapter"></div>\n',
   },
 
+  // --- #1758: the hand-written reader's grammar gaps, read by the parsers
+  // since the gate moved onto micromark and the parse5 tokenizer. Each was a
+  // reported, reproduced miss or false block. ---
+  {
+    name: 'named-ref-letters.md',
+    caught: false,
+    why: '`&fjlig;` renders the letters fj, which separate the words either side',
+    body: 'Decide what to buy&fjlig;adapter selection follows.\n',
+  },
+  {
+    name: 'named-ref-space.md',
+    caught: true,
+    why: 'every valid reference that renders as space is a space, not only a curated few',
+    body: 'Operators must deploy the VPFI buy&ThickSpace;adapter now.\n',
+  },
+  {
+    name: 'malformed-tag.md',
+    caught: false,
+    why: '`<x @>` is not a tag under CommonMark, so the reader sees it as text',
+    body: 'Decide what to buy<x @>Adapter selection follows.\n',
+  },
+  {
+    name: 'escaped-tag.md',
+    caught: false,
+    why: 'a backslash-escaped tag renders as its own text',
+    body: 'Decide what to buy \\<strong>adapter\\</strong> selection follows.\n',
+  },
+  {
+    name: 'inline-script-body.md',
+    caught: true,
+    why: 'a script body is not rendered, so the words either side of it are one phrase',
+    body: 'Operators must deploy the VPFI buy<script>formatting note</script>adapter now.\n',
+  },
+  {
+    name: 'script-body-scanned.md',
+    caught: true,
+    why: 'a hidden script body is still read, as code',
+    body: '<script>\nconst note = "VPFI buy adapter";\n</script>\n',
+  },
+  {
+    name: 'custom-element-inline.md',
+    caught: true,
+    why: 'a block element is matched by its whole name; `div-inline` renders inline',
+    body: 'Operators must deploy the VPFI buy<div-inline>adapter</div-inline> now.\n',
+  },
+  {
+    name: 'menu-is-block.md',
+    caught: false,
+    why: '`<menu>` is a block element, so it separates the text either side',
+    body: 'Decide what to buy<menu>Adapter selection follows.</menu>\n',
+  },
+  {
+    name: 'td-attribute.md',
+    caught: true,
+    why: 'a table cell tag outside a table keeps its attributes for the tokenizer',
+    body: '<td data-operation="buyOptions">cell</td>\n',
+  },
+  {
+    name: 'html-legacy-ref.md',
+    caught: true,
+    why: 'an HTML block decodes `&nbsp` without its semicolon, as a browser does',
+    body: '<p>Operators must deploy the VPFI buy&nbspadapter now.</p>\n',
+  },
+  {
+    name: 'quoted-heading-boundary.md',
+    caught: false,
+    why: 'a quoted heading is a block of its own',
+    body: 'Decide what to buy\n> # Adapter selection follows\n',
+  },
+  {
+    name: 'setext-single-dash.md',
+    caught: false,
+    why: 'a single `-` under a paragraph is a heading underline, and a heading is a boundary',
+    body: 'Decide what to buy\n-\nAdapter selection follows.\n',
+  },
+  {
+    name: 'not-a-destination.md',
+    caught: false,
+    why: '`[buy](a b)` is not a link, so its parentheses are text the reader sees',
+    body: 'Decide what to [buy](a b)Adapter selection follows.\n',
+  },
+  {
+    name: 'table-cells.md',
+    caught: false,
+    why: 'two table cells are two blocks',
+    body: '| a | b |\n|---|---|\n| Decide what to buy | Adapter selection follows |\n',
+  },
+
+  // --- #1732 and #1758 (harness): the DIGEST, not the verdict. Each pair
+  // differs in one line; `digestDiffersFrom` says that edit must move the
+  // fingerprint, `digestSameAs` that it must not. Every file here is caught
+  // with one mention, so the verdict cannot tell them apart. ---
+  {
+    name: 'digest-retraction.md',
+    caught: true,
+    why: 'base for the governing-sentence pair',
+    body:
+      'This surface was removed in #687-A and must not be\nused again. The notes below\nare kept for the record\nonly, so that readers\nknow the VPFI buy adapter\nonce existed.\n\nUnrelated note, first wording.\n',
+  },
+  {
+    // #1732's reproduction: the sentence that decides whether the mention is a
+    // record or an instruction sits five wrapped lines above it, outside the
+    // two-line window the digest used to hash.
+    name: 'digest-retraction-flipped.md',
+    caught: true,
+    digestDiffersFrom: 'digest-retraction.md',
+    why: 'rewording the governing sentence of the same paragraph moves the digest',
+    body:
+      'This surface remains live and operators must keep\nusing it. The notes below\nare kept for the record\nonly, so that readers\nknow the VPFI buy adapter\nonce existed.\n\nUnrelated note, first wording.\n',
+  },
+  {
+    name: 'digest-retraction-neighbour.md',
+    caught: true,
+    digestSameAs: 'digest-retraction.md',
+    why: 'an edit to a different paragraph does not move the digest',
+    body:
+      'This surface was removed in #687-A and must not be\nused again. The notes below\nare kept for the record\nonly, so that readers\nknow the VPFI buy adapter\nonce existed.\n\nUnrelated note, reworded entirely.\n',
+  },
+  {
+    name: 'digest-task.md',
+    caught: true,
+    why: 'base for the task-box pair',
+    body: '- [x] Retire the VPFI buy adapter.\n',
+  },
+  {
+    name: 'digest-task-unticked.md',
+    caught: true,
+    digestDiffersFrom: 'digest-task.md',
+    why: 'the list item, task box included, is the unit',
+    body: '- [ ] Retire the VPFI buy adapter.\n',
+  },
+  {
+    name: 'digest-row.md',
+    caught: true,
+    why: 'base for the table-row pair',
+    body: '| Contract | Status |\n|---|---|\n| VPFI buy adapter | Removed |\n',
+  },
+  {
+    name: 'digest-row-status.md',
+    caught: true,
+    digestDiffersFrom: 'digest-row.md',
+    why: 'the table row, not only the cell, is the unit',
+    body: '| Contract | Status |\n|---|---|\n| VPFI buy adapter | Live |\n',
+  },
+  {
+    name: 'digest-heading.md',
+    caught: true,
+    why: 'base for the heading pairs',
+    body: '# Historical record\n\n## Notes\n\nThe VPFI buy adapter was deployed here.\n',
+  },
+  {
+    name: 'digest-heading-retitled.md',
+    caught: true,
+    digestDiffersFrom: 'digest-heading.md',
+    why: 'retitling a governing ancestor heading moves the digest',
+    body: '# Current procedure\n\n## Notes\n\nThe VPFI buy adapter was deployed here.\n',
+  },
+  {
+    name: 'digest-quote-scope.md',
+    caught: true,
+    why: 'base for the quoted-heading pair',
+    body: '> ## Historical quoted note\n> Kept as written.\n\nThe VPFI buy adapter was removed.\n',
+  },
+  {
+    name: 'digest-quote-scope-retitled.md',
+    caught: true,
+    digestSameAs: 'digest-quote-scope.md',
+    why: 'a heading inside a quote stops governing when the quote ends',
+    body: '> ## Current quoted note\n> Kept as written.\n\nThe VPFI buy adapter was removed.\n',
+  },
+
   // --- plain text is prose and in scope ---
   {
     name: 'operator-notes.txt',
@@ -822,12 +1008,30 @@ function run() {
   }
 
   const failures = [];
+  // A new file's line carries its digest: `  <path>  (<n> mention(s))   digest <hex>`.
+  const digestOf = (name) => {
+    const line = output.split('\n').find((l) => l.trim().startsWith(`${DIR}/${name} `));
+    const m = line && /digest ([0-9a-f]{12})\b/.exec(line);
+    return m ? m[1] : null;
+  };
   for (const f of all) {
     const reported = output.includes(`${DIR}/${f.name}`);
     if (reported !== f.caught) {
       failures.push(
         `  ${f.name}\n      expected ${f.caught ? 'CAUGHT' : 'clean'}, got ${reported ? 'CAUGHT' : 'clean'}\n      ${f.why}`,
       );
+    }
+    const other = f.digestSameAs ?? f.digestDiffersFrom;
+    if (other) {
+      const mine = digestOf(f.name);
+      const theirs = digestOf(other);
+      const wantSame = f.digestSameAs !== undefined;
+      if (!mine || !theirs || (mine === theirs) !== wantSame) {
+        failures.push(
+          `  ${f.name}\n      expected its digest ${wantSame ? 'EQUAL to' : 'DIFFERENT from'} ${other}'s, ` +
+            `got ${mine ?? 'none'} vs ${theirs ?? 'none'}\n      ${f.why}`,
+        );
+      }
     }
   }
   return { failures, total: all.length };

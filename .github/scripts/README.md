@@ -21,14 +21,18 @@ or a copied number leaves behind text that nothing checks.
    normalization means nothing in code, data or container formats, and applying
    it there produced false positives on a blocking check. Code, app copy in
    source files, shell help text, config and PDFs are therefore NOT checked by
-   it. Matching is on normalized text, so the prose spelling "VPFI buy adapter"
-   is caught alongside the identifier `VpfiBuyAdapter`. Each file's mention count
-   AND a digest of the mentions are pinned in the script, so growth, cleanup,
-   and equal-count substitutions all fail — each with its own message telling
-   you which. Exclusions are directory-level only for genuinely archival trees;
+   it. Markdown is read through the standard parsers (micromark with GFM, and
+   the parse5 tokenizer for the HTML in it; `packages/lib/src/markdownProse.mjs`,
+   #1732 / #1758), and matching is on the normalized text of each rendered
+   block, so the prose spelling "VPFI buy adapter" is caught alongside the
+   identifier `VpfiBuyAdapter` while two separate blocks never fuse. Each file's
+   mention count AND a digest of the blocks holding the mentions (with their
+   headings) are pinned in the script, so growth, cleanup, and equal-count
+   substitutions all fail — each with its own message telling you which. Exclusions are directory-level only for genuinely archival trees;
    anywhere the surrounding tree is still active they are per-file. When it
    fires: read the mention; fix the text if it presents the removed surface as
-   live, or re-pin if it is a deliberate retraction note. Run it with
+   live, or re-pin if it is a deliberate retraction note. Install its parsers
+   once with `pnpm install --filter @vaipakam/lib`, run it with
    `node .github/scripts/check-excision-residue.mjs`, and regenerate the ledger
    with `--write-pins` (which keeps existing reasons — review the diff, and
    treat any reason still reading `UNTRIAGED` as unread).

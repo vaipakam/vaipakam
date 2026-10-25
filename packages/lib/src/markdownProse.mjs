@@ -1,0 +1,604 @@
+/**
+ * Markdown and plain text, read as a reader sees them (#1732, #1758).
+ *
+ * Built for the excision gate (`.github/scripts/check-excision-residue.mjs`),
+ * which asks one question of every prose file: does the text a reader sees
+ * name the removed VPFI buy surface? Answering that needs two things a
+ * line-based scanner can only approximate: which characters are RENDERED, and
+ * which rendered characters sit in the SAME BLOCK. The gate used to answer
+ * both with its own CommonMark subset (fences, code spans, link labels,
+ * containers, Setext underlines, HTML tags), and every review round found
+ * another construct it got wrong. #1732 and #1758 were the standing lists.
+ * This module hands both questions to the standard parsers instead:
+ *
+ *   - Markdown: micromark through `mdast-util-from-markdown`, with GFM
+ *     (tables, task lists, strikethrough, autolink literals, footnotes). It is
+ *     the CommonMark reference implementation for JavaScript, so a construct
+ *     the gate meets is read the way a CommonMark renderer reads it.
+ *   - HTML inside Markdown: the parse5 TOKENIZER, the WHATWG HTML tokenizer.
+ *     The tokenizer and not the tree builder, because the tree builder moves
+ *     or drops tokens (a `<td>` outside a table loses its attributes), and
+ *     the gate needs every tag and every attribute as written.
+ *
+ * WHAT IT RETURNS. A list of SEGMENTS. Each is a run of text plus, for every
+ * UTF-16 unit of it, the source offset it came from, so a match found in the
+ * text can be reported against the file. Text in one segment can be read as
+ * one phrase; text in two segments never can. Three kinds:
+ *
+ *   - `prose`    — rendered text of ONE leaf block: a paragraph, a heading,
+ *                  a single table cell, or the visible text of an HTML block
+ *                  between two block-level elements. Inline formatting,
+ *                  inline HTML tags and comments add nothing to it, so
+ *                  `buy <strong>adapter</strong>` reads as the phrase it
+ *                  renders. Inline code and image alt text are part of it,
+ *                  because a reader sees them. A block-level HTML tag inside
+ *                  a paragraph (`<hr>`, `<p>`, `<td>`) ends one segment and
+ *                  starts the next.
+ *   - `literal`  — code a reader sees verbatim: a fenced or indented code
+ *                  block, and the raw text of HTML elements that are never
+ *                  rendered as markup (`<script>`, `<style>`, `<template>`
+ *                  and the other raw-text elements). One segment per block.
+ *   - `interior` — text a reader does NOT see but that names things: each
+ *                  HTML tag's name and attributes (one segment per tag),
+ *                  each comment, processing instruction or declaration, each
+ *                  link or image destination and title, a code block's info
+ *                  string, a definition's label, destination and title, a
+ *                  full reference's label, a footnote's label. Kept apart so
+ *                  nothing in them fuses with rendered text.
+ *
+ * Each segment also carries its UNIT, the source range the gate fingerprints
+ * when a mention is found in it: the nearest enclosing list item (its own
+ * blocks, not its nested lists), table row or footnote definition, or else
+ * the leaf block itself. A list item and not its paragraph, because the item
+ * carries status the paragraph does not (a task box `[x]`), and a table row
+ * and not its cell, because the row's other cells say what the cell means.
+ * `headingChain(offset)` gives the headings that govern a position: the
+ * nearest heading before it, then each strictly shallower one before that,
+ * up to the first level-one heading. A paragraph that OPENS with bold text
+ * (`**Planned:** …`) counts as a heading below level six, because this
+ * repository writes sub-sections that way.
+ *
+ * Plain text (`format: 'text'`) has no markup: each run of non-blank lines is
+ * one `prose` segment and its own unit, and nothing is a heading.
+ *
+ * WHAT IT DOES NOT DO. It does not decide what a match means; the gate does
+ * (sentence punctuation inside a match, the identifier-only tokens, the
+ * surviving-feature suffixes). It does not read MDX syntax: an `.mdx` file is
+ * read as Markdown, which is how the gate always treated it. It does not
+ * read front matter as metadata.
+ *
+ * Covered by `markdownProse.test.ts` beside this file.
+ */
+import { decodeNamedCharacterReference } from 'decode-named-character-reference';
+import { fromMarkdown } from 'mdast-util-from-markdown';
+import { gfmFromMarkdown } from 'mdast-util-gfm';
+import { gfm } from 'micromark-extension-gfm';
+import { Tokenizer, TokenizerMode } from 'parse5';
+
+/**
+ * HTML elements that separate what a reader sees into different blocks.
+ *
+ * Every element the HTML standard's rendering section displays as a block, a
+ * list item or a table part, matched by WHOLE name, so a custom element such
+ * as `<div-inline>` (which renders inline) is not one. The gate kept a shorter
+ * hand list that missed `menu` and the table parts, and matched names by
+ * prefix (#1758). `<br>` is deliberately absent: a line break inside a
+ * paragraph does not end the paragraph, so `buy<br>adapter` is still one
+ * phrase.
+ */
+export const BLOCK_TAGS = new Set([
+  'address', 'article', 'aside', 'blockquote', 'body', 'caption', 'center',
+  'col', 'colgroup', 'dd', 'details', 'dialog', 'dir', 'div', 'dl', 'dt',
+  'fieldset', 'figcaption', 'figure', 'footer', 'form', 'h1', 'h2', 'h3',
+  'h4', 'h5', 'h6', 'header', 'hgroup', 'hr', 'html', 'legend', 'li',
+  'listing', 'main', 'menu', 'nav', 'ol', 'optgroup', 'option', 'p',
+  'plaintext', 'pre', 'search', 'section', 'summary', 'table', 'tbody', 'td',
+  'tfoot', 'th', 'thead', 'tr', 'ul', 'xmp',
+]);
+
+/**
+ * Elements whose content the HTML tokenizer reads as raw text, and the mode it
+ * reads it in. The HTML tree builder switches the tokenizer into these modes
+ * when it sees the start tag; a bare tokenizer has to be told, or the `<b>` in
+ * `<script>a<b>c</script>` would be read as a tag.
+ */
+const RAW_TEXT_MODES = {
+  script: TokenizerMode.SCRIPT_DATA,
+  style: TokenizerMode.RAWTEXT,
+  xmp: TokenizerMode.RAWTEXT,
+  iframe: TokenizerMode.RAWTEXT,
+  noembed: TokenizerMode.RAWTEXT,
+  noframes: TokenizerMode.RAWTEXT,
+  noscript: TokenizerMode.RAWTEXT,
+  textarea: TokenizerMode.RCDATA,
+  title: TokenizerMode.RCDATA,
+  plaintext: TokenizerMode.PLAINTEXT,
+};
+
+/** Elements whose text is never shown as part of the page. Their text is a
+ *  `literal` segment: scanned, but never fused with rendered prose. */
+const HIDDEN_TEXT = new Set(['script', 'style', 'template', 'noscript', 'iframe', 'noembed', 'noframes']);
+
+/** A character reference as Markdown and HTML both spell it. */
+const CHARACTER_REFERENCE = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z][a-zA-Z0-9]{1,31}));/y;
+
+/** The text a character reference stands for, or `null` if it is not one. */
+function decodeReference(dec, hex, name) {
+  if (name !== undefined) {
+    const out = decodeNamedCharacterReference(name);
+    return out === false ? null : out;
+  }
+  const code = dec !== undefined ? Number(dec) : parseInt(hex, 16);
+  if (!Number.isFinite(code) || code > 0x10ffff) return null;
+  // Both specifications replace NUL and surrogates with U+FFFD.
+  if (code === 0 || (code >= 0xd800 && code <= 0xdfff)) return '�';
+  return String.fromCodePoint(code);
+}
+
+/**
+ * Source offset of every unit of `value`, a parser's reading of
+ * `source.slice(from, to)`.
+ *
+ * Parsers report a position for a whole node, not for each character of its
+ * value, and the value differs from its source: container prefixes (`> `,
+ * list indentation) and delimiters are gone, backslash escapes and character
+ * references are resolved. This walks both in step. Equal characters pair up;
+ * a character reference pairs the text it decodes to with its own offset; an
+ * escape pairs the escaped character with its own; any other source character
+ * is something the parser dropped and is skipped.
+ *
+ * `decoded` says whether the parser resolved references in this value. Code
+ * and raw text are NOT decoded, so `&amp;` in a code block is five characters
+ * of value, and reading it as one reference would push every later character
+ * out of step.
+ *
+ * `fold` compares without case, for HTML tag and attribute names, which the
+ * tokenizer lower-cases.
+ *
+ * The result is exact for everything the gate meets. Where it cannot be (a
+ * value character with no source counterpart), the rest of the value is
+ * assigned to the last source character, which keeps every offset inside the
+ * node: a mention is still reported in the right block.
+ */
+export function alignOffsets(value, source, from, to, { decoded = true, fold = false } = {}) {
+  const out = new Array(value.length);
+  let i = from;
+  let j = 0;
+  const same = (a, b) => a === b || (fold && a.toLowerCase() === b.toLowerCase());
+  while (j < value.length) {
+    if (i >= to) {
+      out[j++] = Math.max(from, to - 1);
+      continue;
+    }
+    const s = source[i];
+    if (decoded && s === '&') {
+      CHARACTER_REFERENCE.lastIndex = i;
+      const m = CHARACTER_REFERENCE.exec(source);
+      if (m && i + m[0].length <= to) {
+        const text = decodeReference(m[1], m[2], m[3]);
+        if (text !== null && value.startsWith(text, j)) {
+          for (let k = 0; k < text.length; k++) out[j++] = i;
+          i += m[0].length;
+          continue;
+        }
+      }
+    }
+    if (same(value[j], s)) {
+      out[j++] = i++;
+      continue;
+    }
+    if (decoded && s === '\\' && i + 1 < to && value[j] === source[i + 1]) {
+      out[j++] = i + 1;
+      i += 2;
+      continue;
+    }
+    i++;
+  }
+  return out;
+}
+
+/**
+ * Collects one leaf block's segments.
+ *
+ * Prose accumulates until something ends it (a block-level HTML tag, or the
+ * end of the block). Literal and interior text become their own segments as
+ * they arrive.
+ */
+class BlockSink {
+  constructor(unit, segments) {
+    this.unit = unit;
+    this.segments = segments;
+    this.text = '';
+    this.map = [];
+    // Open elements whose text is never shown (see HIDDEN_TEXT). Kept on the
+    // block, not per HTML fragment, because inside a paragraph each inline
+    // tag is its own fragment: in `buy<script>note</script>adapter` the
+    // text `note` arrives as Markdown text BETWEEN two fragments, and is
+    // still inside the script for a browser.
+    this.hidden = [];
+  }
+
+  /** Text a reader would see unless an open hidden element holds it. */
+  prose(text, map) {
+    if (this.hidden.length) {
+      this.emit('literal', text, map);
+      return;
+    }
+    this.text += text;
+    for (const o of map) this.map.push(o);
+  }
+
+  breakProse() {
+    if (this.text) this.segments.push({ kind: 'prose', text: this.text, map: this.map, unit: this.unit });
+    this.text = '';
+    this.map = [];
+  }
+
+  emit(kind, text, map) {
+    if (text) this.segments.push({ kind, text, map, unit: this.unit });
+  }
+
+  close() {
+    this.breakProse();
+  }
+}
+
+/**
+ * Tokenize an HTML fragment and route what it contains into `sink`.
+ *
+ * `toFile(k)` turns an offset into `html` into a file offset.
+ */
+function readHtml(html, toFile, sink) {
+  // Character tokens arrive in small pieces (the tokenizer splits on
+  // whitespace and references), and the location it reports for a piece next
+  // to a reference can be off by the reference's length. Pieces are therefore
+  // pooled until the next non-character token and aligned as one run against
+  // the whole source span they cover, which is exact.
+  let run = null;
+  // Whether the current raw-text element's content is undecoded (script,
+  // style: yes; textarea, title: no, those are RCDATA and decode references).
+  const { hidden } = sink;
+  let rawUndecoded = false;
+  const flush = () => {
+    if (!run) return;
+    const map = alignOffsets(run.chars, html, run.start, run.end, { decoded: !rawUndecoded }).map(toFile);
+    sink.prose(run.chars, map);
+    run = null;
+  };
+  const onChars = (t) => {
+    const { startOffset, endOffset } = t.location;
+    if (!run) run = { chars: t.chars, start: startOffset, end: endOffset };
+    else {
+      run.chars += t.chars;
+      run.start = Math.min(run.start, startOffset);
+      run.end = Math.max(run.end, endOffset);
+    }
+  };
+  /**
+   * One `interior` segment from [value, start, end, fold, decoded] pieces.
+   * Names fold case (the tokenizer lower-cases them); attribute values are
+   * decoded, comment and doctype text is not.
+   */
+  const interior = (pieces) => {
+    let text = '';
+    const map = [];
+    for (const [value, start, end, fold, decoded = true] of pieces) {
+      if (!value) continue;
+      if (text) {
+        // A separator between pieces, mapped to the next piece's start, so
+        // `data-a="buy" data-b="adapter"` does not read as one name.
+        text += ' ';
+        map.push(toFile(start));
+      }
+      text += value;
+      for (const o of alignOffsets(value, html, start, end, { fold, decoded })) map.push(toFile(o));
+    }
+    sink.emit('interior', text, map);
+  };
+  const tokenizer = new Tokenizer(
+    { sourceCodeLocationInfo: true },
+    {
+      onCharacter: onChars,
+      onWhitespaceCharacter: onChars,
+      onNullCharacter: onChars,
+      onStartTag(t) {
+        flush();
+        const loc = t.location;
+        const pieces = [[t.tagName, loc.startOffset, loc.endOffset, true]];
+        for (const a of t.attrs) {
+          const at = loc.attrs?.[a.name];
+          const [s, e] = at ? [at.startOffset, at.endOffset] : [loc.startOffset, loc.endOffset];
+          pieces.push([a.name, s, e, true]);
+          // The value is aligned against the same span, after the name.
+          pieces.push([a.value, s + a.name.length, e, false]);
+        }
+        interior(pieces);
+        if (BLOCK_TAGS.has(t.tagName)) sink.breakProse();
+        if (!t.selfClosing && HIDDEN_TEXT.has(t.tagName)) hidden.push(t.tagName);
+        const mode = RAW_TEXT_MODES[t.tagName];
+        if (mode !== undefined && !t.selfClosing) {
+          tokenizer.state = mode;
+          rawUndecoded = mode === TokenizerMode.SCRIPT_DATA || mode === TokenizerMode.RAWTEXT || mode === TokenizerMode.PLAINTEXT;
+        }
+      },
+      onEndTag(t) {
+        flush();
+        rawUndecoded = false;
+        interior([[t.tagName, t.location.startOffset, t.location.endOffset, true]]);
+        if (BLOCK_TAGS.has(t.tagName)) sink.breakProse();
+        const at = hidden.lastIndexOf(t.tagName);
+        if (at !== -1) hidden.length = at;
+      },
+      onComment(t) {
+        // Comments, and everything the HTML tokenizer reads as a bogus
+        // comment: processing instructions, CDATA outside foreign content,
+        // `<!…>` declarations other than DOCTYPE.
+        flush();
+        interior([[t.data, t.location.startOffset, t.location.endOffset, false, false]]);
+      },
+      onDoctype(t) {
+        flush();
+        const { startOffset, endOffset } = t.location;
+        interior(
+          [t.name, t.publicId, t.systemId]
+            .filter((v) => v)
+            .map((v) => [v, startOffset, endOffset, true, false]),
+        );
+      },
+      onEof() {
+        flush();
+      },
+    },
+  );
+  tokenizer.write(html, true);
+}
+
+/** The source span of an mdast node. */
+const span = (node) => [node.position.start.offset, node.position.end.offset];
+
+/**
+ * Read a Markdown document. See the module header for what comes back.
+ */
+function readMarkdown(source) {
+  const tree = fromMarkdown(source, {
+    extensions: [gfm()],
+    mdastExtensions: [gfmFromMarkdown()],
+  });
+  const segments = [];
+  const headings = [];
+
+  /** A value read from `node`'s source span, as file offsets. */
+  const aligned = (value, from, to, opts) => alignOffsets(value, source, from, to, opts);
+
+  const phrasing = (node, sink) => {
+    switch (node.type) {
+      case 'text': {
+        const [s, e] = span(node);
+        sink.prose(node.value, aligned(node.value, s, e));
+        return;
+      }
+      case 'inlineCode': {
+        const [s, e] = span(node);
+        sink.prose(node.value, aligned(node.value, s, e, { decoded: false }));
+        return;
+      }
+      case 'break':
+        sink.prose('\n', [node.position.start.offset]);
+        return;
+      case 'html': {
+        const [s, e] = span(node);
+        const local = aligned(node.value, s, e, { decoded: false });
+        readHtml(node.value, (k) => local[Math.min(k, local.length - 1)] ?? s, sink);
+        return;
+      }
+      case 'image':
+      case 'imageReference': {
+        const [s, e] = span(node);
+        const alt = node.alt ?? '';
+        const altMap = aligned(alt, s, e);
+        sink.prose(alt, altMap);
+        // Destination and title come after the alt text in the source.
+        const after = altMap.length ? altMap[altMap.length - 1] + 1 : s;
+        destination(node, after, e, sink);
+        return;
+      }
+      case 'link':
+      case 'linkReference': {
+        for (const child of node.children) phrasing(child, sink);
+        const [s, e] = span(node);
+        const last = node.children[node.children.length - 1];
+        destination(node, last ? last.position.end.offset : s, e, sink);
+        return;
+      }
+      case 'footnoteReference': {
+        const [s, e] = span(node);
+        sink.emit('interior', node.label ?? '', aligned(node.label ?? '', s, e));
+        return;
+      }
+      default:
+        if (node.children) for (const child of node.children) phrasing(child, sink);
+        else if (typeof node.value === 'string') {
+          const [s, e] = span(node);
+          sink.prose(node.value, aligned(node.value, s, e));
+        }
+    }
+  };
+
+  /** A link's or image's hidden parts: destination, title, and the label of a
+   *  FULL reference (`[text][label]`). A collapsed or shortcut reference's
+   *  label IS its visible text, so it is not read twice. */
+  const destination = (node, from, to, sink) => {
+    // An AUTOLINK (`<https://…>`, `<a@b.c>`, or a GFM `www.…` literal) has no
+    // destination of its own: its URL is its visible text, sometimes with a
+    // `mailto:` or `http://` added. Reading it again would count one mention
+    // twice. Only a link written with brackets starts with `[`.
+    if (node.type === 'link' && source[node.position.start.offset] !== '[') return;
+    let at = from;
+    const parts = [];
+    if (node.referenceType === 'full' && node.label) parts.push(node.label);
+    if (node.url) parts.push(node.url);
+    if (node.title) parts.push(node.title);
+    for (const value of parts) {
+      const map = aligned(value, at, to);
+      sink.emit('interior', value, map);
+      if (map.length) at = map[map.length - 1] + 1;
+    }
+  };
+
+  /** The unit for a leaf block, given the nearest enclosing container. */
+  const unitFor = (leaf, container) => {
+    const [s, e] = span(leaf);
+    if (!container) return { start: s, end: e };
+    if (container.type === 'tableRow') return { start: container.position.start.offset, end: container.position.end.offset };
+    // A list item or footnote definition: its own blocks, NOT its nested
+    // lists. A nested list is its own items' context, and folding fifty
+    // sub-items into one parent's fingerprint would move it on every edit
+    // to any of them.
+    let end = e;
+    for (const child of container.children) {
+      if (child.type !== 'list') end = Math.max(end, child.position.end.offset);
+    }
+    return { start: container.position.start.offset, end };
+  };
+
+  const leaf = (node, container, read) => {
+    const sink = new BlockSink(unitFor(node, container), segments);
+    read(sink);
+    sink.close();
+  };
+
+  /**
+   * `scopeEnd` is where a heading met here stops governing: the end of the
+   * nearest enclosing block quote, list item or footnote. A heading inside a
+   * quote titles the quote, not the prose after it (#1758), so retitling
+   * `> ## Historical note` must not move the fingerprint of a paragraph
+   * below the quote.
+   */
+  const block = (node, container, scopeEnd) => {
+    switch (node.type) {
+      case 'heading': {
+        const [s, e] = span(node);
+        headings.push({ offset: s, scopeEnd, level: node.depth, raw: source.slice(s, e) });
+        leaf(node, container, (sink) => node.children.forEach((c) => phrasing(c, sink)));
+        return;
+      }
+      case 'paragraph': {
+        const first = node.children[0];
+        if (first && first.type === 'strong' && first.position.start.offset === node.position.start.offset) {
+          const [s, e] = span(first);
+          headings.push({ offset: s, scopeEnd, level: 7, raw: source.slice(s, e) });
+        }
+        leaf(node, container, (sink) => node.children.forEach((c) => phrasing(c, sink)));
+        return;
+      }
+      case 'tableCell':
+        leaf(node, container, (sink) => node.children.forEach((c) => phrasing(c, sink)));
+        return;
+      case 'code': {
+        const [s, e] = span(node);
+        leaf(node, container, (sink) => {
+          sink.emit('literal', node.value, aligned(node.value, s, e, { decoded: false }));
+          const info = [node.lang, node.meta].filter((v) => v).join(' ');
+          if (info) sink.emit('interior', info, aligned(info, s, e));
+        });
+        return;
+      }
+      case 'html': {
+        const [s, e] = span(node);
+        const local = aligned(node.value, s, e, { decoded: false });
+        leaf(node, container, (sink) =>
+          readHtml(node.value, (k) => local[Math.min(k, local.length - 1)] ?? s, sink),
+        );
+        return;
+      }
+      case 'definition': {
+        const [s, e] = span(node);
+        leaf(node, container, (sink) => {
+          let at = s;
+          for (const value of [node.label, node.url, node.title]) {
+            if (!value) continue;
+            const map = aligned(value, at, e);
+            sink.emit('interior', value, map);
+            if (map.length) at = map[map.length - 1] + 1;
+          }
+        });
+        return;
+      }
+      case 'footnoteDefinition': {
+        const [s, e] = span(node);
+        leaf(node, node, (sink) => sink.emit('interior', node.label ?? '', aligned(node.label ?? '', s, e)));
+        for (const child of node.children) block(child, node, e);
+        return;
+      }
+      case 'listItem':
+        for (const child of node.children) block(child, node, node.position.end.offset);
+        return;
+      case 'tableRow':
+        for (const child of node.children) block(child, node, scopeEnd);
+        return;
+      case 'blockquote':
+        // A scope for headings, NOT a unit: a quoted banner can run to many
+        // paragraphs, and each is its own.
+        for (const child of node.children) block(child, container, node.position.end.offset);
+        return;
+      default:
+        // root, list, table, and anything a later extension adds: structure
+        // only, read through.
+        if (node.children) for (const child of node.children) block(child, container, scopeEnd);
+    }
+  };
+
+  block(tree, null, Infinity);
+  return { segments, headings };
+}
+
+/** Plain text: each run of non-blank lines is one prose segment and unit. */
+function readText(source) {
+  const segments = [];
+  const re = /[^\r\n]*(?:\r\n|\r|\n|$)/g;
+  let start = -1;
+  let end = -1;
+  const close = () => {
+    if (start === -1) return;
+    const text = source.slice(start, end);
+    const map = Array.from({ length: text.length }, (_, k) => start + k);
+    const unit = { start, end };
+    segments.push({ kind: 'prose', text, map, unit });
+    start = -1;
+  };
+  let m;
+  while ((m = re.exec(source)) && m[0] !== '') {
+    const line = m[0];
+    if (line.trim() === '') close();
+    else {
+      if (start === -1) start = m.index;
+      end = m.index + line.length;
+    }
+  }
+  close();
+  return { segments, headings: [] };
+}
+
+/**
+ * Read a prose document.
+ *
+ * @param {string} source
+ * @param {'markdown' | 'text'} format
+ */
+export function readProse(source, format) {
+  const { segments, headings } = format === 'markdown' ? readMarkdown(source) : readText(source);
+  /** Headings governing `offset`, outermost first. */
+  const headingChain = (offset) => {
+    const chain = [];
+    let deepest = Infinity;
+    for (let k = headings.length - 1; k >= 0; k--) {
+      const h = headings[k];
+      if (h.offset >= offset || h.scopeEnd <= offset || h.level >= deepest) continue;
+      deepest = h.level;
+      chain.push(h.raw);
+      if (h.level === 1) break;
+    }
+    return chain.reverse();
+  };
+  return { segments, headingChain };
+}
