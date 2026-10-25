@@ -7,6 +7,7 @@ import {ZeroExAggregatorAdapter} from "../src/adapters/ZeroExAggregatorAdapter.s
 import {OneInchAggregatorAdapter} from "../src/adapters/OneInchAggregatorAdapter.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {IERC173} from "@diamond-3/interfaces/IERC173.sol";
 
 /**
  * @title DeploySwapAdapters
@@ -71,12 +72,19 @@ import {Deployments} from "./lib/Deployments.sol";
  *             coverage on the testnet trio is 0x + 1inch only — the
  *             keeper-bot's quote orchestrator gracefully degrades to
  *             the available subset).
- *           - Doesn't transfer adapter ownership. The deployer EOA
- *             stays as the adapter owner so it can run
- *             addSwapTarget / removeSwapTarget for the next Settler
- *             rotation. On mainnet this owner gets transferred to
- *             the chain's TimelockController per the Governance
- *             Runbook §6.2 — that's a deliberate post-deploy step.
+ *
+ * @dev    Ownership (#2743). Each adapter is constructed with the
+ *         Diamond's current ERC-173 owner as its owner, never the key
+ *         that sends the deploy. Before the governance handover that is
+ *         the admin, and `Handover.s.sol` moves it to the Timelock with
+ *         every other contract the admin owns (it finds the adapters
+ *         through `getSwapAdapters()`); after the handover it is the
+ *         Timelock already. A Settler rotation (`addSwapTarget` /
+ *         `removeSwapTarget`) is therefore a governance action, and the
+ *         handover gate refuses a registered adapter still owned by
+ *         anyone but the Timelock or the Diamond. While a rotation waits,
+ *         a 0x quote whose Settler is not yet allowed fails that route
+ *         and the swap failover tries the next adapter.
  */
 contract DeploySwapAdapters is Script {
     address private constant DEFAULT_ALLOWANCE_HOLDER =
@@ -123,14 +131,21 @@ contract DeploySwapAdapters is Script {
             console.log("    ", initialSettlers[i]);
         }
 
+        // The adapters' owner is whoever governs the Diamond, read from the
+        // chain rather than from the environment so it cannot name a
+        // different principal from the one the handover moves.
+        address adapterOwner = IERC173(diamond).owner();
+        require(adapterOwner != address(0), "DeploySwapAdapters: the Diamond has no owner");
+        console.log("  Adapter owner:     ", adapterOwner);
+
         vm.startBroadcast(deployerKey);
 
         ZeroExAggregatorAdapter zeroExAdapter =
-            new ZeroExAggregatorAdapter(allowanceHolder, initialSettlers);
+            new ZeroExAggregatorAdapter(adapterOwner, allowanceHolder, initialSettlers);
         console.log("  ZeroExAggregatorAdapter:  ", address(zeroExAdapter));
 
         OneInchAggregatorAdapter oneInchAdapter =
-            new OneInchAggregatorAdapter(oneInchRouter);
+            new OneInchAggregatorAdapter(adapterOwner, oneInchRouter);
         console.log("  OneInchAggregatorAdapter: ", address(oneInchAdapter));
 
         // Register both in the Diamond's swap-adapter chain. Order
@@ -159,11 +174,10 @@ contract DeploySwapAdapters is Script {
         console.log("Done. Diamond.getSwapAdapters() length:", registered.length);
         console.log("");
         console.log("Next steps:");
-        console.log("  - Record the adapter addresses in contracts/deployments/<slug>/addresses.json");
-        console.log("    under `swapAdapters.zeroEx` + `swapAdapters.oneInch` keys (manual edit OK; ");
-        console.log("    or extend lib/Deployments.sol with writer helpers for these in a follow-up).");
-        console.log("  - When 0x ships a new Settler, run:");
-        console.log("    cast send <zeroExAdapter> 'addSwapTarget(address)' <newSettler> --rpc-url $RPC --private-key $DEPLOYER_PRIVATE_KEY");
+        console.log("  - The Diamond's registry (getSwapAdapters) is the record of these adapters;");
+        console.log("    the governance handover and its gate read them from there.");
+        console.log("  - When 0x ships a new Settler, the adapter owner calls");
+        console.log("    addSwapTarget(address) on the 0x adapter (the Timelock, after the handover).");
     }
 
     /// @dev Parses `INITIAL_SETTLERS` env var (comma-separated 0x

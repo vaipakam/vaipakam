@@ -450,6 +450,17 @@
   },
   {
     "type": "error",
+    "name": "TransferAdminCallerNotOwner",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TransferAdminToSelf",
     "inputs": []
   },
