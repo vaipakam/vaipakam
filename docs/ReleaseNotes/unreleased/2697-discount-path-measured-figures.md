@@ -14,11 +14,17 @@ not, the first reason it cannot), the debt the liquidator pays, the
 collateral delivered and the surplus left for the borrower. The figures come
 from one shared rule, which the liquidation itself now charges and seizes by,
 so a reading inside the same transaction is exactly what the liquidation
-does. The FlashLoanLiquidator reads that preview in the liquidating
+does. The one exception is named in the preview's own description: a
+liquidation that first moves the collateral to a new holder of the borrower
+position can seize less when the collateral token delivers less than it
+sends, so there the previewed seizure is an upper bound. The FlashLoanLiquidator reads that preview in the liquidating
 transaction and flash-borrows exactly the debt, takes the loan's assets from
 it rather than from its caller, clears its Diamond allowance after the call,
 and sells exactly the collateral its swap was quoted for. Each run also names
-the least profit it must keep, and the receiver reverts below it.
+the least profit it must keep, and the receiver reverts below it. Each owner
+call now runs at most one liquidation: the receiver commits to the one
+callback it expects and spends that commitment, so a second flash loan opened
+mid-run cannot make it run a swap it was not asked to.
 
 The keeper reads the preview, quotes the swap for the previewed seizure,
 estimates the exact call (which simulates the whole run, including the real

@@ -176,7 +176,8 @@ contract FlashLoanLiquidatorTest is Test {
     // ─── Callback validation ─────────────────────────────────────────
 
     function testExecuteOperationRevertsIfNotInFlight() public {
-        // Direct call to the callback — no flash-loan in-flight.
+        // The provider itself calling back with no run committed.
+        vm.prank(address(aavePool));
         vm.expectRevert(FlashLoanLiquidator.NotInFlight.selector);
         liquidator.executeOperation(
             address(principal),
@@ -195,8 +196,50 @@ contract FlashLoanLiquidatorTest is Test {
         uint256[] memory fees = new uint256[](1);
         fees[0] = 0;
 
+        vm.prank(address(balancerVault));
         vm.expectRevert(FlashLoanLiquidator.NotInFlight.selector);
         liquidator.receiveFlashLoan(toks, amts, fees, "");
+    }
+
+    function testCallbackFromNonProviderReverts() public {
+        vm.prank(attacker);
+        vm.expectRevert(
+            abi.encodeWithSelector(FlashLoanLiquidator.NotFlashLoanProvider.selector, address(aavePool), attacker)
+        );
+        liquidator.executeOperation(address(principal), 1, 0, address(liquidator), "");
+    }
+
+    // ─── #2697 one run per owner call ────────────────────────────────
+
+    /// A nested Balancer loan opened mid-run (Balancer accepts any
+    /// recipient) cannot run a second liquidation with its own calldata.
+    function testNestedBalancerLoanDuringAaveRunIsRefused() public {
+        NestingSwap nester = _nester();
+        nester.arm(NestingSwap.Via.Balancer, abi.encode(uint256(1)));
+        _runAaveVia(nester);
+        assertEq(nester.nestedRevert(), FlashLoanLiquidator.NotInFlight.selector, "nested callback refused");
+    }
+
+    /// Even the run's own parameters, replayed through the same provider,
+    /// are refused: the first callback spent the commitment.
+    function testReplayedCallbackDuringRunIsRefused() public {
+        NestingSwap nester = _nester();
+        nester.arm(NestingSwap.Via.AaveReplay, "");
+        _runAaveVia(nester);
+        assertEq(nester.nestedRevert(), FlashLoanLiquidator.NotInFlight.selector, "replay refused");
+    }
+
+    function _nester() internal returns (NestingSwap nester) {
+        nester = new NestingSwap(liquidator, aavePool, balancerVault, swap, principal);
+        principal.mint(address(nester), 10_000 ether);
+    }
+
+    function _runAaveVia(NestingSwap nester) internal {
+        bytes memory cd = abi.encodeWithSelector(
+            NestingSwap.swap.selector, address(collateral), address(principal), COLLATERAL_SEIZED
+        );
+        vm.prank(owner);
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(nester), address(nester), cd);
     }
 
     // ─── Happy paths ─────────────────────────────────────────────────
@@ -732,5 +775,81 @@ contract MockSwapAggregator {
         // Send buy-token at the configured rate
         uint256 proceeds = (amount * rateMul) / rateDiv;
         IERC20(buy).transfer(msg.sender, proceeds);
+    }
+}
+
+/// A swap route that, mid-run, tries to make the liquidator run a second
+/// callback, records how that attempt reverted, then swaps honestly.
+contract NestingSwap {
+    enum Via { Balancer, AaveReplay }
+
+    FlashLoanLiquidator immutable liquidator;
+    MockAaveV3Pool immutable aave;
+    MockBalancerV2Vault immutable balancer;
+    MockSwapAggregator immutable honest;
+    IERC20 immutable principal;
+    Via via;
+    bytes params;
+    bytes4 public nestedRevert;
+
+    constructor(
+        FlashLoanLiquidator l,
+        MockAaveV3Pool a,
+        MockBalancerV2Vault b,
+        MockSwapAggregator h,
+        IERC20 p
+    ) {
+        liquidator = l;
+        aave = a;
+        balancer = b;
+        honest = h;
+        principal = p;
+    }
+
+    function arm(Via v, bytes calldata p) external {
+        via = v;
+        params = p;
+    }
+
+    function swap(address sell, address buy, uint256 amount) external {
+        bytes memory replay = params;
+        if (via == Via.AaveReplay) {
+            // The run's own params, read back from the outer call.
+            replay = _outerParams();
+        }
+        try this.nest(replay) {
+            nestedRevert = bytes4(0);
+        } catch (bytes memory reason) {
+            nestedRevert = bytes4(reason);
+        }
+        // Then swap at 1.05x, like the honest aggregator.
+        IERC20(sell).transferFrom(msg.sender, address(this), amount);
+        IERC20(buy).transfer(msg.sender, (amount * 105) / 100);
+    }
+
+    function nest(bytes memory p) external {
+        if (via == Via.Balancer) {
+            address[] memory toks = new address[](1);
+            toks[0] = address(principal);
+            uint256[] memory amts = new uint256[](1);
+            amts[0] = 1;
+            balancer.flashLoan(IFlashLoanRecipient(address(liquidator)), toks, amts, p);
+        } else {
+            aave.flashLoanSimple(address(liquidator), address(principal), 1, p, 0);
+        }
+    }
+
+    function _outerParams() private view returns (bytes memory) {
+        return abi.encode(
+            FlashLoanLiquidator.Run({
+                loanId: 42,
+                collateralAsset: honest.sellToken(),
+                sellAmount: 1_050 ether,
+                minProfit: 0,
+                swapTarget: address(this),
+                swapAllowanceTarget: address(this),
+                swapCalldata: abi.encodeWithSelector(this.swap.selector, honest.sellToken(), address(principal), 1_050 ether)
+            })
+        );
     }
 }

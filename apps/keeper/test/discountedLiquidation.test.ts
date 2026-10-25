@@ -141,8 +141,9 @@ describe('planFlashLoanLiquidation', () => {
     const { d, quoted, estimated } = deps();
     const plan = await planFlashLoanLiquidation(d);
     expect(quoted).toEqual([1_050n * 10n ** 18n]);
-    // Estimated with no floor, sent with the fee's worth in USDC (0.30).
-    expect(estimated[0][2]).toBe(0n);
+    // Estimated with no floor, re-simulated and sent with the fee's worth
+    // in USDC (0.30).
+    expect(estimated.map((a) => a[2])).toEqual([0n, 300_000n]);
     expect(plan.kind).toBe('send');
     if (plan.kind !== 'send') return;
     expect(plan.args).toEqual([
@@ -193,6 +194,19 @@ describe('planFlashLoanLiquidation', () => {
     });
     const plan = await planFlashLoanLiquidation(d);
     expect(plan.kind === 'skip' && plan.reason).toMatch(/simulation reverted/);
+  });
+
+  it('skips a run that nets less than its fee, at the floored simulation', async () => {
+    const { d, estimated } = deps({
+      estimateFee: async (args) => {
+        estimated.push(args);
+        if (args[2] > 0n) throw new Error('InsufficientPostSwapBalance(2, 1)');
+        return 10n ** 14n;
+      },
+    });
+    const plan = await planFlashLoanLiquidation(d);
+    expect(plan.kind === 'skip' && plan.reason).toMatch(/does not net its fee of 300000/);
+    expect(estimated.map((a) => a[2])).toEqual([0n, 300_000n]);
   });
 
   it('skips on a chain whose gas cannot be valued, before reading anything', async () => {

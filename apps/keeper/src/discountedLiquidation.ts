@@ -19,9 +19,11 @@
 //     units. Before #2697 it was a fixed 1e18 base units, one token only for
 //     an 18-decimal principal.
 //   - The PROFIT the run must keep is that fee (`minProfit`), enforced by the
-//     FlashLoanLiquidator on-chain. Its gas estimate simulates the whole run,
-//     the real flash-loan fee and the real swap included, so a trade that
-//     would not net its gas reverts in the estimate and is never sent.
+//     FlashLoanLiquidator on-chain. The keeper simulates the run twice: once
+//     with no floor, to measure the fee, and once with the floor, so a trade
+//     that would not net its gas reverts in the simulation, is skipped with
+//     its reason, and is never sent. Each simulation runs the whole trade,
+//     the real flash-loan fee and the real swap included.
 //
 // The decision is a pure function of injected reads (`planFlashLoanLiquidation`)
 // so it can be tested without a chain; keeper.ts supplies the reads.
@@ -191,5 +193,16 @@ export async function planFlashLoanLiquidation(deps: FlashLoanPlanDeps): Promise
   }
   const floor = await deps.minProfit(preview.principalAsset, feeWei);
   if (floor.kind === 'unpriced') return { kind: 'skip', reason: `gas cannot be valued: ${floor.reason}` };
+  // Simulate again WITH the floor: a run that nets something, but less than
+  // its fee, reverts here and is skipped with its reason rather than failing
+  // at submission.
+  try {
+    await deps.estimateFee(args(floor.minProfit));
+  } catch (err) {
+    return {
+      kind: 'skip',
+      reason: `does not net its fee of ${floor.minProfit}: ${summarizeFailure(err, 200)}`,
+    };
+  }
   return { kind: 'send', args: args(floor.minProfit), preview, quote: best, feeWei, minProfit: floor.minProfit };
 }

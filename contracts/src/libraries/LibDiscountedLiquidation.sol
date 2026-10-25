@@ -14,11 +14,22 @@ import {OracleFacet} from "../facets/OracleFacet.sol";
  *         pays, and how much collateral it receives for it (#2697).
  * @dev    Two readers, one rule. The liquidation itself charges and seizes
  *         through here, and so does its preview
- *         ({RiskPreviewFacet.previewDiscountedLiquidation}), so the preview
+ *         ({ForcedSaleFacet.previewDiscountedLiquidation}), so the preview
  *         read in the same block as the liquidation names exactly what the
- *         liquidation then does. A caller that funds the debt up front (a
- *         flash-loan receiver) reads the preview and borrows that figure;
- *         before #2697 it could only guess it.
+ *         liquidation then does, with one exception stated below. A caller
+ *         that funds the debt up front (a flash-loan receiver) reads the
+ *         preview and borrows that figure; before #2697 it could only guess
+ *         it.
+ *
+ *         The exception: when the borrower position NFT has changed hands,
+ *         the liquidation first moves the collateral to the new holder's
+ *         vault, and a collateral token that credits less than it sends
+ *         lowers the pledged amount there (#2440). The debt is unchanged,
+ *         but where the seizure was capped at the pledged collateral, the
+ *         seizure and surplus come out smaller than the preview said. The
+ *         preview cannot know a token's transfer shortfall before the move,
+ *         so a reader must treat its seizure as an upper bound in that case
+ *         and check what it actually received.
  *
  *         THE RULE, with `D` the debt and `d` the collateral's per-tier
  *         discount:

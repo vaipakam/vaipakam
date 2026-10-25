@@ -296,8 +296,9 @@ the discount path until you tell it to.
 > debt. The run's least profit (`minProfit`) is the transaction's whole
 > fee, converted by the Diamond into the principal token's own units, so
 > a 6-decimal and an 18-decimal principal are each priced correctly. The
-> liquidator reverts a run that would keep less, and the keeper's gas
-> estimate simulates that, so an unprofitable run is never sent. Before
+> liquidator reverts a run that would keep less, and the keeper
+> simulates the run with that floor before sending, so an unprofitable
+> run is skipped with its reason and never sent. Before
 > #2697 the debt was the collateral amount and the gas a fixed `1e18`
 > units of the principal; a keeper build older than #2697 must not be
 > armed. On a chain whose gas the keeper cannot value (its wrapped native
@@ -365,7 +366,8 @@ each common skip path):
 | `flash-loan-skip gas cannot be valued: …` | The keeper cannot price this chain's gas, or the Diamond cannot express it in the principal token. | The path cannot run on this chain; legacy branches handle the loan. |
 | `flash-loan dex-direct quotes failed: zeroex,oneinch` then `flash-loan-skip no DEX-direct quote for the seizure` | Both aggregators failed to quote. | Asset isn't well-supported on this chain. Legacy partial/split/atomic falls through automatically. Nothing to do. |
 | `flash-loan-skip unprofitable: quoted proceeds … do not exceed the debt …` | The quote does not even repay the debt. | Healthy skip. |
-| `flash-loan-skip simulation reverted: …` | The exact call's gas estimate reverted, usually `InsufficientPostSwapBalance` (the run would not keep its fees) or `SeizureBelowQuote`. | Healthy skip — nothing was sent. |
+| `flash-loan-skip simulation reverted: …` | The exact call's gas estimate reverted before any profit floor, usually `InsufficientPostSwapBalance` (proceeds do not repay the flash loan and its fee) or `SeizureBelowQuote`. | Healthy skip — nothing was sent. |
+| `flash-loan-skip does not net its fee of …: …` | The run repays the flash loan but would keep less than its own transaction fee, so the floored simulation reverted. | Healthy skip — nothing was sent. |
 | `flash-loan-submit-failed err=…` | Submission reverted on-chain. | Read the revert reason carefully (see [troubleshooting](#troubleshooting)). |
 
 After 1–2 weeks of healthy `submitted-flashloan` entries on the

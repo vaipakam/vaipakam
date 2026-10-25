@@ -43,9 +43,10 @@ interface IDiscountedLiquidationDiamond {
  *         pays it to the Vaipakam DIAMOND at oracle-priced
  *         debt-plus-discount value, receives the borrower's
  *         collateral at the per-tier discount, swaps the collateral
- *         back to principal on an off-chain-ranked DEX, repays the
- *         flash-loan + fee, and forwards the net profit to the
- *         keeper-bot EOA.
+ *         back to principal on an off-chain-ranked DEX and repays the
+ *         flash-loan + fee. The net profit, and any seized collateral
+ *         beyond what the swap sold, stay in this contract as standing
+ *         balance until the OWNER withdraws them.
  *
  * @dev    Phase 3 of `docs/DesignsAndPlans/FlashLoanLiquidationPath.md`.
  *         Deployed per chain (one address per chain) alongside the
@@ -74,18 +75,20 @@ interface IDiscountedLiquidationDiamond {
  *         Reentrancy: each flash-loan provider's callback runs
  *         INSIDE that provider's flash-loan code path, so re-entry
  *         from outside is naturally blocked while the loan is open.
- *         The `_inFlight` flag also blocks a malicious nested
- *         `triggerLiquidationDiscounted` from re-entering one of
- *         our entry points (defence-in-depth — the DIAMOND's
- *         `ReentrancyGuard` already covers this).
+ *         Each entry point commits to ONE callback (the provider plus
+ *         the exact packed parameters) and the first matching callback
+ *         spends it, so a nested flash loan opened mid-run (Balancer V2
+ *         accepts any recipient) cannot run a second liquidation with
+ *         its own swap calldata (#2697). The DIAMOND's
+ *         `ReentrancyGuard` separately blocks a nested trigger.
  *
  *         Security notes:
  *           - Aave V3 + Balancer V2 callbacks validate
  *             `msg.sender` against the configured provider, AND
- *             validate the in-flight flag — both have to align
- *             for the callback to execute. An attacker calling
- *             our `executeOperation` directly will hit the
- *             `_inFlight` guard.
+ *             spend the run commitment — both have to align for
+ *             the callback to execute. A callback with no matching
+ *             commitment (a direct call, a nested or repeated
+ *             loan) reverts `NotInFlight`.
  *           - Swap calldata is provided OFF-CHAIN by the keeper
  *             bot (e.g. 0x v2 / 1inch v6 quote). The contract
  *             validates the post-swap balance covers the
@@ -125,13 +128,18 @@ contract FlashLoanLiquidator is
 
     // ─── Transient state ─────────────────────────────────────────────
 
-    /// @dev In-flight flag — set by the entry-point BEFORE calling
-    ///      the flash-loan provider, validated by the callback,
-    ///      cleared after. Prevents an attacker from invoking
-    ///      `executeOperation` / `receiveFlashLoan` directly with a
-    ///      forged `msg.sender` (the `msg.sender == provider` check
-    ///      already blocks that, but defence-in-depth).
-    bool private _inFlight;
+    /// @dev The ONE callback this contract will run next: the hash of the
+    ///      provider it borrowed from and the exact parameters it packed.
+    ///      Set by the entry point before calling the provider and CONSUMED
+    ///      (zeroed) by the first callback that matches it, so each owner
+    ///      call runs at most one liquidation (#2697). A bare in-flight flag
+    ///      was not enough: Balancer V2 lets anyone name this contract as a
+    ///      flash-loan recipient, so code running mid-run (an aggregator
+    ///      route, a token hook) could open a nested Balancer loan and have
+    ///      the callback run its own swap target and calldata while the flag
+    ///      was still up. A callback with no matching commitment reverts
+    ///      `NotInFlight`.
+    bytes32 private _expectedRun;
 
     /// @dev One run's parameters, packed by {_prepare} and carried through
     ///      the flash-loan provider to {_runLiquidation}.
@@ -150,6 +158,8 @@ contract FlashLoanLiquidator is
     error NotOwner();
     error NotFlashLoanProvider(address expected, address got);
     error WrongInitiator(address expected, address got);
+    /// @dev A provider callback that is not the run the entry point
+    ///      committed to, or a provider that returned without calling back.
     error NotInFlight();
     error ProviderNotConfigured();
     error SwapFailed();
@@ -281,7 +291,7 @@ contract FlashLoanLiquidator is
         (address principalAsset, uint256 debt, bytes memory params) = _prepare(
             loanId, sellAmount, minProfit, swapTarget, swapAllowanceTarget, swapCalldata
         );
-        _inFlight = true;
+        _expectedRun = _runHash(AAVE_V3_POOL, params);
         IAaveV3Pool(AAVE_V3_POOL).flashLoanSimple(
             address(this),
             principalAsset,
@@ -289,7 +299,9 @@ contract FlashLoanLiquidator is
             params,
             0 /* referralCode */
         );
-        _inFlight = false;
+        // The callback consumed the commitment; a provider that returned
+        // without calling back would leave it set, so the run reverts.
+        if (_expectedRun != bytes32(0)) revert NotInFlight();
     }
 
     /// @notice Initiate a flash-loan-funded discount-path
@@ -317,14 +329,14 @@ contract FlashLoanLiquidator is
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = debt;
 
-        _inFlight = true;
+        _expectedRun = _runHash(BALANCER_V2_VAULT, params);
         IBalancerV2Vault(BALANCER_V2_VAULT).flashLoan(
             IFlashLoanRecipient(address(this)),
             tokens,
             amounts,
             params
         );
-        _inFlight = false;
+        if (_expectedRun != bytes32(0)) revert NotInFlight();
     }
 
     /// @dev Read the Diamond's preview, refuse a run the preview already
@@ -372,10 +384,10 @@ contract FlashLoanLiquidator is
         address initiator,
         bytes calldata params
     ) external returns (bool) {
-        if (!_inFlight) revert NotInFlight();
         if (msg.sender != AAVE_V3_POOL) {
             revert NotFlashLoanProvider(AAVE_V3_POOL, msg.sender);
         }
+        _consumeRun(AAVE_V3_POOL, params);
         if (initiator != address(this)) {
             revert WrongInitiator(address(this), initiator);
         }
@@ -398,10 +410,10 @@ contract FlashLoanLiquidator is
         uint256[] memory feeAmounts,
         bytes memory userData
     ) external {
-        if (!_inFlight) revert NotInFlight();
         if (msg.sender != BALANCER_V2_VAULT) {
             revert NotFlashLoanProvider(BALANCER_V2_VAULT, msg.sender);
         }
+        _consumeRun(BALANCER_V2_VAULT, userData);
         // We always flash-loan a single asset — defensive against
         // a Vault that erroneously hands us a different shape.
         if (tokens.length != 1 || amounts.length != 1 || feeAmounts.length != 1) {
@@ -417,6 +429,20 @@ contract FlashLoanLiquidator is
 
         // Balancer V2: push repayment directly to the Vault.
         tokens[0].safeTransfer(BALANCER_V2_VAULT, amounts[0] + feeAmounts[0]);
+    }
+
+    /// @dev The commitment for one run: the provider and the exact params.
+    function _runHash(address provider, bytes memory params) private pure returns (bytes32) {
+        return keccak256(abi.encode(provider, params));
+    }
+
+    /// @dev Accept the callback only if it is the run the entry point
+    ///      committed to, and spend the commitment so no second callback
+    ///      (nested or repeated) can run inside the same owner call.
+    function _consumeRun(address provider, bytes memory params) private {
+        bytes32 expected = _expectedRun;
+        if (expected == bytes32(0) || expected != _runHash(provider, params)) revert NotInFlight();
+        _expectedRun = bytes32(0);
     }
 
     // ─── Shared post-flash-loan logic ────────────────────────────────
