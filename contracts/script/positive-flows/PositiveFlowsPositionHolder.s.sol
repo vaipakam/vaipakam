@@ -9,7 +9,6 @@ import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {PrecloseFacet} from "../../src/facets/PrecloseFacet.sol";
 import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
-import {RevertProbe} from "../lib/RevertProbe.sol";
 
 /**
  * @title PositiveFlowsPositionHolder
@@ -66,10 +65,10 @@ contract PositiveFlowsPositionHolder is PositiveFlowsBase {
         // A borrower-role action from a wallet that neither holds the NFT
         // nor is an approved keeper for its holder is a keeper-authority
         // refusal (LibAuth.requireKeeperFor).
-        _requireRefusedWith(
+        _requireRefused(
             borrower,
             abi.encodeWithSelector(PrecloseFacet.precloseDirect.selector, loanId),
-            IVaipakamErrors.KeeperAccessRequired.selector,
+            abi.encodeWithSelector(IVaipakamErrors.KeeperAccessRequired.selector),
             "PF-163: the opener should no longer be able to preclose (KeeperAccessRequired)"
         );
 
@@ -92,10 +91,10 @@ contract PositiveFlowsPositionHolder is PositiveFlowsBase {
         ClaimFacet(diamond).claimAsLender(loanId);
         vm.stopBroadcast();
 
-        _requireRefusedWith(
+        _requireRefused(
             borrower,
             abi.encodeWithSelector(ClaimFacet.claimAsBorrower.selector, loanId),
-            IVaipakamErrors.NotNFTOwner.selector,
+            abi.encodeWithSelector(IVaipakamErrors.NotNFTOwner.selector),
             "PF-163: the opener should not be able to claim the collateral (NotNFTOwner)"
         );
         (address asset, uint256 amount,,,,,,) = ClaimFacet(diamond).getClaimable(loanId, false);
@@ -139,10 +138,10 @@ contract PositiveFlowsPositionHolder is PositiveFlowsBase {
             "PF-164: the loan should record the current holder as lender after close-out"
         );
 
-        _requireRefusedWith(
+        _requireRefused(
             lender,
             abi.encodeWithSelector(ClaimFacet.claimAsLender.selector, loanId),
-            IVaipakamErrors.NotNFTOwner.selector,
+            abi.encodeWithSelector(IVaipakamErrors.NotNFTOwner.selector),
             "PF-234: the opener should not be able to claim the repayment (NotNFTOwner)"
         );
         (address asset, uint256 amount,,,,,,) = ClaimFacet(diamond).getClaimable(loanId, true);
@@ -161,17 +160,5 @@ contract PositiveFlowsPositionHolder is PositiveFlowsBase {
         vm.startBroadcast(borrowerKey);
         ClaimFacet(diamond).claimAsBorrower(loanId);
         vm.stopBroadcast();
-    }
-
-    // ─── Helpers ──────────────────────────────────────────────────────────
-
-    /// @dev Requires `data`, sent to the Diamond as `caller`, to be refused
-    ///      with the argument-free error `expected`. Runs in the simulation
-    ///      only.
-    function _requireRefusedWith(address caller, bytes memory data, bytes4 expected, string memory failure)
-        internal
-    {
-        (bool ok, bytes memory ret) = RevertProbe.call(caller, diamond, data);
-        require(!ok && ret.length == 4 && bytes4(ret) == expected, failure);
     }
 }

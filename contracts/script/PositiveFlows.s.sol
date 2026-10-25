@@ -11,6 +11,9 @@ import {PositiveFlowsVaultAndVpfi} from "./positive-flows/PositiveFlowsVaultAndV
 import {PositiveFlowsKeeperAutomation} from "./positive-flows/PositiveFlowsKeeperAutomation.s.sol";
 import {PositiveFlowsOperatorAdmin} from "./positive-flows/PositiveFlowsOperatorAdmin.s.sol";
 import {PositiveFlowsPositionHolder} from "./positive-flows/PositiveFlowsPositionHolder.s.sol";
+import {PositiveFlowsLenderIntent} from "./positive-flows/PositiveFlowsLenderIntent.s.sol";
+import {PositiveFlowsSwapToRepay} from "./positive-flows/PositiveFlowsSwapToRepay.s.sol";
+import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
 
 /**
  * @title PositiveFlows
@@ -24,7 +27,7 @@ import {PositiveFlowsPositionHolder} from "./positive-flows/PositiveFlowsPositio
  *
  *         Modules, in run order:
  *           - PositiveFlowsBasicLifecycle: ERC-20, NFT-collateral, rental and
- *             illiquid loans opened, closed and claimed; cancel; preclose.
+ *             illiquid loans opened, closed and claimed; preclose.
  *           - PositiveFlowsAdvancedCredit: partial repay, refinance, range
  *             match and partial fill, preclose options 2 and 3, lender sale
  *             and the sale solvency floor on both sale routes.
@@ -36,6 +39,16 @@ import {PositiveFlowsPositionHolder} from "./positive-flows/PositiveFlowsPositio
  *           - PositiveFlowsPositionHolder: a transferred position NFT moves
  *             its side's authority and proceeds to the new holder (#848
  *             Phase 2).
+ *           - PositiveFlowsLenderIntent: a standing lender intent registered,
+ *             funded, filled by a solver, paused, withdrawn and rolled.
+ *           - PositiveFlowsSwapToRepay: full and partial swap-to-repay
+ *             through a fixed-rate adapter, every share of the proceeds
+ *             accounted for.
+ *           - PositiveFlowsTimed: offer cancel after the cancel cooldown and a
+ *             due periodic-interest checkpoint. These need the chain clock to
+ *             move between two steps, so here they SKIP wherever the wait
+ *             applies and name their staged run,
+ *             `script/positive-flows/run-timed.sh`.
  *         The catalog's cross-chain module is not written: no module
  *         rehearses CCIP, and this runner does not claim to.
  *
@@ -81,13 +94,16 @@ contract PositiveFlows is Script {
     function run() external {
         string memory only = vm.envOr("ONLY_SCENARIO", string(""));
 
-        PositiveFlowsBase[] memory modules = new PositiveFlowsBase[](6);
+        PositiveFlowsBase[] memory modules = new PositiveFlowsBase[](9);
         modules[0] = new PositiveFlowsBasicLifecycle();
         modules[1] = new PositiveFlowsAdvancedCredit();
         modules[2] = new PositiveFlowsVaultAndVpfi();
         modules[3] = new PositiveFlowsKeeperAutomation();
         modules[4] = new PositiveFlowsOperatorAdmin();
         modules[5] = new PositiveFlowsPositionHolder();
+        modules[6] = new PositiveFlowsLenderIntent();
+        modules[7] = new PositiveFlowsSwapToRepay();
+        modules[8] = new PositiveFlowsTimed();
 
         if (bytes(only).length != 0) {
             bool known;

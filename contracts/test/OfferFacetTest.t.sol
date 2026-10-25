@@ -294,10 +294,9 @@ contract OfferFacetTest is Test {
         // must clear the offer-time HF floor under the 1e18 numeraire
         // valuation (#2419). No assertion here depends on the price.
         mockOraclePrice(mockCollateralERC20, 5e8, 8);
-        // #998 S15: a liquid collateral asset needs a non-zero per-asset
-        // init-LTV cap, else `LibOfferBounds` rejects any offer against it at
-        // create (a 0 cap is no-borrow at loan-init). This bespoke diamond does
-        // not cut RiskFacet, so set it via the test mutator.
+        // Pin an explicit 80% per-asset init-LTV ceiling, matching the shared
+        // fixture (an unset row would mean "no extra ceiling", #2696). This
+        // bespoke diamond does not cut RiskFacet, so set it via the test mutator.
         TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(mockERC20, 8000);
         TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(mockCollateralERC20, 8000);
         // #1503 PR-E — accepting a SALE VEHICLE now runs the sale-admission

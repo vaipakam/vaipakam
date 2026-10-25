@@ -114,8 +114,8 @@ contract PositiveFlowsGapFillers is Test {
         AdminFacet(address(diamond)).setallowanceTarget(makeAddr("zeroExAllowance"));
 
         ProfileFacet(address(diamond)).setTradeAllowance("US", "US", true);
-        RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300, 1000);
-        RiskFacet(address(diamond)).updateRiskParams(mockWeth, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300);
+        RiskFacet(address(diamond)).updateRiskParams(mockWeth, 8000, 300);
 
         _mockOracle();
         _onboardActor(lender);

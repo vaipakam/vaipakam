@@ -598,7 +598,7 @@
     "L|vaipakam@229[bytes32]|0|0|bool|buybackValidated[]",
     "L|vaipakam@22[address]|0|0|uint256|assetRiskParams[].loanInitMaxLtvBps",
     "L|vaipakam@22[address]|1|0|uint256|assetRiskParams[].liqBonusBps",
-    "L|vaipakam@22[address]|2|0|uint256|assetRiskParams[].reserveFactorBps",
+    "L|vaipakam@22[address]|2|0|uint256|assetRiskParams[].retiredReserveFactorBps",
     "L|vaipakam@22[address]|3|0|uint256|assetRiskParams[].minPartialBps",
     "L|vaipakam@230[bytes32]|0|0|uint128|buybackConsumedSoFar[]",
     "L|vaipakam@231[bytes32]|0|0|uint128|buybackVpfiDeliveredSoFar[]",

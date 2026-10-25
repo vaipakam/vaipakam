@@ -2506,7 +2506,12 @@ library LibVaipakam {
     struct RiskParams {
         uint256 loanInitMaxLtvBps; // Max LTV in basis points
         uint256 liqBonusBps; // Liquidation Bonus in basis points
-        uint256 reserveFactorBps; // Reserve Factor in basis points
+        // RETIRED (#2696, owner decision 2026-10-25): the per-asset reserve
+        // factor was stored and range-checked but never read by any fee
+        // path; the interest treasury cut is the per-loan
+        // `treasuryFeeBpsAtInit`. Nothing writes this slot any more. It
+        // keeps its position so the mapping value's layout is unchanged.
+        uint256 retiredReserveFactorBps;
         uint256 minPartialBps; // Min partial repay % (e.g., 100 for 1%)
         // NOTE: The per-asset `liqThresholdBps` was retired in PR2 of
         //   the internal-match work (2026-05-14). The liquidation
@@ -2514,6 +2519,21 @@ library LibVaipakam {
         //   LiquidationLtvBps), snapshotted onto each loan as
         //   `Loan.liquidationLtvBpsAtInit` at `initiateLoan`. The HF
         //   formula reads the snapshot — no per-asset value remains.
+    }
+
+    /// @notice The live per-asset risk settings, as `ConfigFacet.getAssetRiskParams`
+    ///         reports them. Carries only the fields something reads, so a
+    ///         retired storage field (`RiskParams.retiredReserveFactorBps`,
+    ///         #2696) is never reported as if it governed anything.
+    /// @dev Raw stored values, with their zero meanings stated:
+    ///      `loanInitMaxLtvBps == 0` is an UNSET ceiling, meaning no extra
+    ///      per-asset ceiling (#2696; {assetInitLtvCeilingBps} reads it as
+    ///      `BASIS_POINTS`); `liqBonusBps == 0` is no per-asset incentive cap;
+    ///      `minPartialBps == 0` is no per-asset partial-repay floor.
+    struct AssetRiskParamsView {
+        uint256 loanInitMaxLtvBps;
+        uint256 liqBonusBps;
+        uint256 minPartialBps;
     }
 
     /// @notice One row of the duration-tiered grace-period table.
@@ -9805,12 +9825,6 @@ library LibVaipakam {
     //   `MAX_TIER_LIQUIDATION_LTV_BPS` and are enforced by
     //   `ConfigFacet.setTierLiquidationLtvBps`.
 
-    /// @dev Bounds for {RiskFacet.updateRiskParams.reserveFactorBps}.
-    ///      Max 50% — `reserveFactor = BASIS_POINTS` (100%) means
-    ///      lender receives 0% interest, defeats the lending
-    ///      product. Existing inline `≤ BASIS_POINTS` is replaced
-    ///      by this tighter cap.
-    uint16 internal constant RISK_PARAMS_RESERVE_FACTOR_BPS_MAX = 5000;
 
     /// @dev Bounds for {ProfileFacet.updateKYCThresholds}. The
     ///      existing inline check enforces `tier0 < tier1`;
@@ -10191,6 +10205,33 @@ library LibVaipakam {
         uint256 liveCapBps
     ) internal pure returns (uint256) {
         return atInit == 0 ? liveCapBps : uint256(atInit);
+    }
+
+    /// @dev #2696 — the per-asset init-LTV ceiling for new borrowing against
+    ///      `asset`, in BPS. The ONE reading of `RiskParams.loanInitMaxLtvBps`
+    ///      every LTV gate, preview and snapshot goes through.
+    ///
+    ///      The per-asset value is an OPTIONAL tightening (the spec's "asset
+    ///      ceiling"): any ERC-20 that passes the liquidity test may back a
+    ///      loan, and a fresh deployment needs no per-asset LTV setting. So an
+    ///      unset row (`0`) means NO per-asset ceiling and returns the full
+    ///      `BASIS_POINTS`; what binds is then the tier cap in the
+    ///      depth-tiered regime, or the admission health-factor floor in the
+    ///      standard one. `updateRiskParams` cannot write `0` (its floor is
+    ///      `RISK_PARAMS_MAX_LTV_BPS_MIN`), so `0` only ever means "never
+    ///      set". Stopping new borrowing against an asset is the remove-only
+    ///      `pauseAsset` lever (and tier 0 in the depth-tiered regime), never
+    ///      an unset row.
+    function assetInitLtvCeilingBps(address asset) internal view returns (uint256) {
+        uint256 ceiling = storageSlot().assetRiskParams[asset].loanInitMaxLtvBps;
+        return ceiling == 0 ? BASIS_POINTS : ceiling;
+    }
+
+    /// @dev #2696 — whether governance has set a per-asset init-LTV ceiling
+    ///      for `asset`. Views report it beside the effective ceiling so an
+    ///      unset row is disclosed as unset rather than as a 100% setting.
+    function assetInitLtvCeilingSet(address asset) internal view returns (bool) {
+        return storageSlot().assetRiskParams[asset].loanInitMaxLtvBps != 0;
     }
 
     /// @dev #957 (#921 item 6) — the treasury-fee BPS a SPECIFIC open loan was

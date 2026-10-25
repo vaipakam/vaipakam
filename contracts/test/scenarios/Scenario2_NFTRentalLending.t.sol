@@ -301,7 +301,7 @@ contract Scenario2_NFTRentalLending is Test {
 
         // Risk params for USDC collateral
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300);
 
         // Create vaults for both parties (must happen before vault approvals)
         lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);

@@ -55,7 +55,7 @@ interface IDiamondForProof {
     // OfferMatchIntentFacet / OfferCreateFacet / RiskFacet / VPFIDiscountFacet / Admin
     function matchIntent(address, address, address, uint256, uint256) external returns (uint256);
     function createOffer(LibVaipakam.CreateOfferParams calldata) external returns (uint256);
-    function updateRiskParams(address, uint256, uint256, uint256) external;
+    function updateRiskParams(address, uint256, uint256) external;
     function depositVPFIToVault(uint256) external;
     function getVPFIToken() external view returns (address);
     function owner() external view returns (address);
@@ -194,8 +194,8 @@ contract PriorityRoutingLiveFork is Test {
         // A zero liquidation bonus, so the fixture never depends on the
         // deployment's incentive cap (Codex #2582 r4); liquidation is not what
         // this proof is about.
-        d.updateRiskParams(lendAsset, 8000, 0, 1000);
-        d.updateRiskParams(collAsset, 8000, 0, 1000);
+        d.updateRiskParams(lendAsset, 8000, 0);
+        d.updateRiskParams(collAsset, 8000, 0);
         vm.stopPrank();
         vm.startPrank(admin);
         // The progressive risk-access gate is an onboarding posture orthogonal to

@@ -51,9 +51,11 @@ import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
  * @dev Part of the Diamond Standard (EIP-2535). Reentrancy-guarded, pausable
  *      (mutating paths only; views are always available).
  *
- *      Per-asset risk parameters (`AssetRiskParams`): loanInitMaxLtvBps,
- *      liqThresholdBps, liqBonusBps, reserveFactorBps, minPartialBps —
- *      updatable by RISK_ADMIN_ROLE.
+ *      Per-asset risk parameters (`AssetRiskParams`): the optional
+ *      init-LTV ceiling `loanInitMaxLtvBps` and the optional liquidator
+ *      incentive ceiling `liqBonusBps`, updatable by RISK_ADMIN_ROLE
+ *      (`minPartialBps` is set through ConfigFacet). The per-asset
+ *      liquidation threshold (#999) and reserve factor (#2696) are retired.
  *
  *      Formulas (liquid assets only; illiquid reverts NonLiquidAsset):
  *        LTV  = (borrowBalanceNumeraire × 10000) / collateralValueNumeraire  [BPS]
@@ -90,16 +92,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///      was retired in favour of per-tier
     ///      `ProtocolConfig.tier{1,2,3}LiquidationLtvBps` +
     ///      `Loan.liquidationLtvBpsAtInit` snapshot.
+    ///      #2696 retired the per-asset reserve factor (nothing read it),
+    ///      so the event no longer carries one.
     /// @param asset The asset address.
-    /// @param loanInitMaxLtvBps New max LTV in basis points.
-    /// @param liqBonusBps New liquidation bonus in basis points.
-    /// @param reserveFactorBps New reserve factor in basis points.
+    /// @param loanInitMaxLtvBps New per-asset init-LTV ceiling in basis points.
+    /// @param liqBonusBps New per-asset liquidator-incentive ceiling in basis points.
     /// @custom:event-category informational/config
     event RiskParamsUpdated(
         address indexed asset,
         uint256 loanInitMaxLtvBps,
-        uint256 liqBonusBps,
-        uint256 reserveFactorBps
+        uint256 liqBonusBps
     );
 
     /// @notice #394 Lever A — emitted when governance retunes the runtime
@@ -328,27 +330,32 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      *      now per-tier (configured via
      *      `ConfigFacet.setTierLiquidationLtvBps`) and snapshotted to
      *      each loan at `initiateLoan` onto `Loan.liquidationLtvBpsAtInit`.
+     *      Both values are OPTIONAL tightenings (#2696). An asset nobody has
+     *      configured is not refused: it has no per-asset LTV ceiling (the
+     *      tier cap or the admission health-factor floor binds; see
+     *      {LibVaipakam.assetInitLtvCeilingBps}) and no per-asset incentive
+     *      ceiling. #2696 also retired the per-asset reserve factor, which no
+     *      fee path ever read; the interest treasury cut is the per-loan
+     *      treasury fee.
      * @param asset The asset address (collateral/lending).
-     * @param loanInitMaxLtvBps Max LTV in bps (e.g., 8000 for 80%).
+     * @param loanInitMaxLtvBps Per-asset init-LTV ceiling in bps (e.g., 8000 for 80%).
+     *        Bounded to [RISK_PARAMS_MAX_LTV_BPS_MIN, BASIS_POINTS]; `BASIS_POINTS`
+     *        is the same as no ceiling.
      * @param liqBonusBps Per-asset ceiling on the dynamic liquidator incentive, in bps.
      *        Must be ≤ MAX_LIQUIDATOR_INCENTIVE_BPS (300 = 3%). The runtime incentive is
      *        still computed as `6% − realized slippage%` capped at 3%; this value only
-     *        lets governance tighten that cap further per asset.
-     * @param reserveFactorBps Reserve factor in bps.
+     *        lets governance tighten that cap further per asset. `0` = no per-asset cap.
      */
     function updateRiskParams(
         address asset,
         uint256 loanInitMaxLtvBps,
-        uint256 liqBonusBps,
-        uint256 reserveFactorBps
+        uint256 liqBonusBps
     ) external onlyRole(LibAccessControl.RISK_ADMIN_ROLE) {
         if (asset == address(0)) revert InvalidAsset();
-        // Setter-range audit (2026-05-02): bounded floors on the
-        // numeric tunables. Previously: maxLtv only `> 0` (allowed
+        // Setter-range audit (2026-05-02): bounded floor on the LTV
+        // ceiling. Previously maxLtv was only `> 0`, which allowed a
         // degenerate `1`-bp setting that disables borrowing for the
-        // asset); reserveFactor only `≤ BASIS_POINTS` (allowed 100%
-        // = lender receives 0% interest). Tightened to credible
-        // ranges; surfaced via `ParameterOutOfRange`.
+        // asset; surfaced via `ParameterOutOfRange`.
         if (
             loanInitMaxLtvBps < LibVaipakam.RISK_PARAMS_MAX_LTV_BPS_MIN ||
             loanInitMaxLtvBps > LibVaipakam.BASIS_POINTS
@@ -364,27 +371,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // and capped at 3% of liquidation proceeds. The stored `liqBonusBps`
         // is a legacy ceiling and must never be configured above that cap.
         if (liqBonusBps > LibVaipakam.cfgMaxLiquidatorIncentiveBps()) revert UpdateNotAllowed();
-        if (reserveFactorBps > LibVaipakam.RISK_PARAMS_RESERVE_FACTOR_BPS_MAX) {
-            revert IVaipakamErrors.ParameterOutOfRange(
-                "reserveFactorBps",
-                reserveFactorBps,
-                0,
-                uint256(LibVaipakam.RISK_PARAMS_RESERVE_FACTOR_BPS_MAX)
-            );
-        }
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RiskParams storage params = s.assetRiskParams[asset];
         params.loanInitMaxLtvBps = loanInitMaxLtvBps;
         params.liqBonusBps = liqBonusBps;
-        params.reserveFactorBps = reserveFactorBps;
 
-        emit RiskParamsUpdated(
-            asset,
-            loanInitMaxLtvBps,
-            liqBonusBps,
-            reserveFactorBps
-        );
+        emit RiskParamsUpdated(asset, loanInitMaxLtvBps, liqBonusBps);
     }
 
     /**

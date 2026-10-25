@@ -1434,8 +1434,8 @@ rotated independently.
 
 **Bounded-range setter discipline.** Every mutable numeric knob has an explicit minimum / maximum
 enforced on-chain through a shared typed range error — there is no unbounded governance setter.
-Examples from the specification: risk parameters (`maxLtvBps` bounded to 10–100%, liquidation
-threshold 15–100% and strictly above max LTV, reserve factor at most 50%), reward grace windows (5
+Examples from the specification: risk parameters (the optional per-asset initiation-LTV ceiling
+bounded to 10–100%, per-tier liquidation thresholds 50–95% in tier order), reward grace windows (5
 minutes to 30 days), interaction caps, oracle staleness and deviation bounds, the loan-admission
 health-factor floor (range-bounded to `[1.2, 2.0]`), and the six-slot grace schedule, whose setter
 rejects wrong row counts, non-monotonic rows, and out-of-bounds values. Multi-value setters such as

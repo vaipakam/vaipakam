@@ -308,10 +308,10 @@ contract WorkflowComplianceAndRejection is Test {
 
         // Risk params for mockUsdc
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(address(mockUsdc), 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(address(mockUsdc), 8000, 300);
         // Risk params for mockWeth (used as distinct collateral asset after SelfCollateralizedOffer invariant)
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(address(mockWeth), 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(address(mockWeth), 8000, 300);
 
         // Mock oracle: mockUsdc = Liquid, $1 price
         mockLiquidity(address(mockUsdc), LibVaipakam.LiquidityStatus.Liquid);

@@ -1278,11 +1278,10 @@ contract SetupTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(
             mockERC20,
             8000,
-            300,
-            1000
+            300
         );
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300
         );
 
         // PR2 of internal-match work (2026-05-14) — per-tier

@@ -301,6 +301,14 @@ contract RedeployFacets is Script {
         // against any target diamond.
         (bytes4[] memory hfToAdd, bytes4[] memory hfToReplace) =
             _partitionByRouting(diamond, _riskAddSelectors());
+        // #2696 — `updateRiskParams` dropped the retired reserve factor, so its
+        // selector changed: the new one is partitioned with the Add set above
+        // (an Add on a pre-#2696 Diamond, a Replace after), and the old one is
+        // Removed wherever it is still routed (empty on a fresh or migrated
+        // Diamond, so the step is idempotent).
+        bytes4[] memory retiredRiskSetter = new bytes4[](1);
+        retiredRiskSetter[0] = FacetSelectors.retiredUpdateRiskParamsSelector();
+        (, bytes4[] memory riskToRemove) = _partitionByRouting(diamond, retiredRiskSetter);
         // #658 — same Add/Replace-by-routing split for the ConsolidationFacet
         // selector set: on a current-version diamond the two #594 standalone
         // entries are already routed (Replace) and the three #658 entries are
@@ -434,6 +442,7 @@ contract RedeployFacets is Script {
 
         uint256 nExtra =
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
+            (riskToRemove.length > 0 ? 1 : 0) +
             (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0) +
             (ewToAdd.length > 0 ? 1 : 0) +
             (ewdToAdd.length > 0 ? 1 : 0) +
@@ -486,6 +495,9 @@ contract RedeployFacets is Script {
         // ProfileFacet + ClaimFacet are partitioned below (not fixed Replaces)
         // because each gained new-and-possibly-unrouted selectors.
         uint256 idx = 9;
+        if (riskToRemove.length > 0) {
+            cuts[idx++] = _remove(riskToRemove);
+        }
         if (hfToReplace.length > 0) {
             cuts[idx++] = _replace(address(riskFacet), hfToReplace);
         }
@@ -661,6 +673,7 @@ contract RedeployFacets is Script {
         console.log("  RiskPreview selectors added: ", rpToAdd.length);
         console.log("  RiskPreview selectors repl.: ", rpToReplace.length);
         console.log("  Retired previewIntent removed:", rpToRemove.length);
+        console.log("  Retired 4-arg updateRiskParams removed:", riskToRemove.length);
         console.log("  RepayPeriodic selectors repl.:", rpsToReplace.length);
         console.log("  EncumbranceMutate repl.:      ", encToReplace.length);
         console.log("  EncumbranceMutate added:      ", encToAdd.length);
@@ -905,25 +918,29 @@ contract RedeployFacets is Script {
         // (where the last 2 are genuinely new and need an `Add`, not `Replace`)
         // are handled by the comprehensive deploy-modernization track, not this
         // same-version bytecode-refresh script.
-        // The 7 selectors a pre-#394 (post-#395) diamond already routes — safe
-        // to Replace. The two #394 HF-floor selectors are NEW and go through
-        // `_riskAddSelectors()` (an Add cut) instead — see the cut wiring above.
-        s = new bytes4[](7);
-        s[0] = RiskFacet.updateRiskParams.selector;
-        s[1] = RiskFacet.calculateLTV.selector;
-        s[2] = RiskFacet.calculateHealthFactor.selector;
-        s[3] = RiskFacet.isCollateralValueCollapsed.selector;
-        s[4] = RiskFacet.triggerLiquidation.selector;
-        s[5] = RiskFacet.triggerPartialLiquidation.selector;
-        s[6] = RiskFacet.triggerLiquidationDiscounted.selector;
+        // The 6 selectors a pre-#394 (post-#395) diamond already routes — safe
+        // to Replace. The two #394 HF-floor selectors and the #2696 three-arg
+        // `updateRiskParams` may be NEW and go through `_riskAddSelectors()`
+        // (partitioned Add/Replace) instead — see the cut wiring above.
+        s = new bytes4[](6);
+        s[0] = RiskFacet.calculateLTV.selector;
+        s[1] = RiskFacet.calculateHealthFactor.selector;
+        s[2] = RiskFacet.isCollateralValueCollapsed.selector;
+        s[3] = RiskFacet.triggerLiquidation.selector;
+        s[4] = RiskFacet.triggerPartialLiquidation.selector;
+        s[5] = RiskFacet.triggerLiquidationDiscounted.selector;
     }
 
-    /// @dev #394 (Codex #647 round-5) — the runtime HF-floor knob selectors,
-    ///      ADDED (not Replaced) because they don't exist on a pre-#394 diamond.
+    /// @dev The RiskFacet selectors that may be unrouted on the target, so they
+    ///      are partitioned by live routing (Add the unrouted, Replace the
+    ///      routed): the #394 (Codex #647 round-5) runtime HF-floor knob, and
+    ///      the #2696 three-argument `updateRiskParams`, whose four-argument
+    ///      predecessor is Removed separately.
     function _riskAddSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = RiskFacet.setMinHealthFactor.selector;
         s[1] = RiskFacet.getMinHealthFactor.selector;
+        s[2] = RiskFacet.updateRiskParams.selector;
     }
 
     /// @dev #658 — RiskSplitLiquidationFacet's single selector, mirrors
