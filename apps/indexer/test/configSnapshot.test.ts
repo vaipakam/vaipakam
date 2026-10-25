@@ -474,6 +474,19 @@ describe('configSnapshot', () => {
     });
     expect(h.reads).toEqual([]);
     expect(h.row()).toMatchObject({ ua: 0, gb: null });
+    // Codex #2822 r1 — an overlapping scan below the mark reads the schedule
+    // as it stood before the change; it must not restore it as current.
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: [],
+      blockNumber: 90n,
+      headBlock: 95n,
+    });
+    expect(h.reads).toContain('getGraceBuckets');
+    expect(h.row()).toMatchObject({ sb: 90, ua: 0, gb: null });
   });
 
   it('force-refreshes a populated row whose grace column is still NULL (Codex #1298 r3)', async () => {
@@ -592,6 +605,60 @@ describe('configSnapshot', () => {
       await refresh(h, ['AutoPaused'], 1_000n);
       expect(h.reads).toEqual([]);
       expect(h.row()).toMatchObject({ ua: 0, pl: null });
+    });
+
+    it('keeps a log a stale mark cleared unknown until a refresh reaches the mark (Codex #2822 r1)', async () => {
+      // A catch-up scan to block 100 saw a pause: the log is cleared and the
+      // row marked stale at 100.
+      const h = refreshHarness();
+      seed(h, '[]', fresh());
+      await refresh(h, ['Paused'], 1_000n);
+      expect(h.row()).toMatchObject({ ua: 0, pl: null });
+      // An overlapping scan that only reached block 90 reads the log as it
+      // stood BEFORE that pause. It must not restore it.
+      await maybeRefreshProtocolConfig({
+        env: h.env,
+        chainId: 84532,
+        client: h.client,
+        diamond: DIAMOND,
+        scannedEventNames: [],
+        blockNumber: 90n,
+        headBlock: 95n,
+      });
+      expect(h.reads).toContain('getPauseIntervals');
+      expect(h.row()).toMatchObject({ sb: 90, ua: 0, pl: null });
+      // A refresh at the mark fills it and clears the mark.
+      await maybeRefreshProtocolConfig({
+        env: h.env,
+        chainId: 84532,
+        client: h.client,
+        diamond: DIAMOND,
+        scannedEventNames: [],
+        blockNumber: 100n,
+        headBlock: 105n,
+      });
+      expect(h.row()?.pl).toBe('[]');
+      expect(h.row()?.ua).not.toBe(0);
+    });
+
+    it('still writes a newer log below a mark set for another setting', async () => {
+      const h = refreshHarness({
+        pauseRead: async () => [[{ start: 10n, end: 20n, pausedBefore: 0n }], 1n],
+      });
+      seed(h, '[]', fresh());
+      // The mark is for a fee change; the log stays populated.
+      await refresh(h, ['FeesConfigSet'], 1_000n);
+      expect(h.row()).toMatchObject({ ua: 0, pl: '[]' });
+      await maybeRefreshProtocolConfig({
+        env: h.env,
+        chainId: 84532,
+        client: h.client,
+        diamond: DIAMOND,
+        scannedEventNames: [],
+        blockNumber: 90n,
+        headBlock: 95n,
+      });
+      expect(JSON.parse(h.row()!.pl!)).toEqual([{ start: '10', end: '20', pausedBefore: '0' }]);
     });
 
     it('force-refreshes a fresh row whose pause column is still NULL', async () => {

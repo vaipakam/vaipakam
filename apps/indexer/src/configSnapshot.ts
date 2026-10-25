@@ -561,9 +561,19 @@ export async function maybeRefreshProtocolConfig(opts: {
          bundle_names_json = excluded.bundle_names_json,
          master_flags_names_json = excluded.master_flags_names_json,
          knob_values_json = excluded.knob_values_json,
+         -- Codex #2822 r1 — a column a stale mark CLEARED (the scan that
+         -- set the mark saw that column's own event) stays NULL until a
+         -- refresh reaches the mark: a read below it predates the event, so
+         -- writing it would restore the known-obsolete value as current. A
+         -- column the mark left populated is not about that event, and a
+         -- newer read of it is written as usual.
          grace_buckets_json = CASE WHEN ?7 = 1 THEN NULL
+           WHEN protocol_config.stale_at_block > excluded.source_block
+             AND protocol_config.grace_buckets_json IS NULL THEN NULL
            ELSE COALESCE(excluded.grace_buckets_json, protocol_config.grace_buckets_json) END,
          pause_intervals_json = CASE WHEN ?12 = 1 THEN NULL
+           WHEN protocol_config.stale_at_block > excluded.source_block
+             AND protocol_config.pause_intervals_json IS NULL THEN NULL
            ELSE COALESCE(excluded.pause_intervals_json, protocol_config.pause_intervals_json) END,
          source_block = excluded.source_block,
          -- Codex #2683 r7 — a refresh read below the block of a governance
