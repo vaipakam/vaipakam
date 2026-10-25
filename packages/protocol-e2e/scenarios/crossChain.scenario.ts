@@ -26,6 +26,7 @@ import { BASE_ID, MIRROR_ID } from '@vaipakam/anvil-harness/mesh';
 import { openLoan, repayInFull } from '@vaipakam/anvil-harness/lending';
 import { protocolMesh } from '../src/fixture';
 import { broadcastDays, closeDays, finalizeDays, REMIT_LANE_CAP } from '../src/rewardMesh';
+import { waitForLane } from '../src/lane';
 
 const DAY = 86_400;
 const HOUR = 3_600;
@@ -85,8 +86,10 @@ async function fundVpfi(who: Party, amount: bigint): Promise<void> {
 }
 
 /** Send `amount` of `token` from `who` on `from` to the same address on the
- *  other chain through the router, at the router's quoted fee. */
+ *  other chain through the router, at the router's quoted fee, once the lane's
+ *  rate limits can carry it (`waitForLane`). */
 async function bridge(from: MeshChain, token: Address, who: Party, amount: bigint): Promise<void> {
+  await waitForLane(m, from, from === m.base ? m.mirror : m.base, amount);
   const router = from.fixture.lane.router;
   const message = {
     receiver: `0x${from.address(who).slice(2).toLowerCase().padStart(64, '0')}` as Hex,
@@ -212,6 +215,7 @@ describe('cross-chain flows on a canonical chain and a mirror', () => {
     expect(await m.mirror.pub.readContract({ address: receiver, abi: PAUSABLE_ABI, functionName: 'paused' })).toBe(true);
 
     const [fee] = await m.base.read<readonly [bigint, bigint]>('quoteRemittanceFee', [MIRROR_ID, owed.map(BigInt)]);
+    await waitForLane(m, m.base, m.mirror, quoted);
     await m.base.diamondWrite('keeper', 'remitRewardBudget', [MIRROR_ID, owed.map(BigInt), REMIT_LANE_CAP], fee);
     const mirrorSupply = await totalSupply(m.mirror, m.fixture.vpfiMirror);
     // The paused receiver refuses it: nothing mints, and the message waits.

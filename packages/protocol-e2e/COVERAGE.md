@@ -27,6 +27,12 @@ pnpm --filter @vaipakam/protocol-e2e run e2e:anvil
   scenario can remit as that party.
 - **Each scenario file starts both nodes from the dumps**, so no file sees
   another's transactions or clock.
+- **Every VPFI crossing first waits for the lane's rate limits**
+  (`src/lane.ts`). Each pool's bucket starts empty when the rate governor sets
+  it and refills at its rate, and a node's clock follows wall time, so a
+  crossing made soon after the build would otherwise pass or fail on how long
+  the build took. The wait reads both buckets and moves the shared clock only
+  as far as the short one needs.
 - `PROTOCOL_E2E_REUSE_FIXTURE=1` keeps an existing fixture instead of
   rebuilding it. That is only safe when the contracts have not changed since
   it was built.

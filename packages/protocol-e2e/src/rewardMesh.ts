@@ -34,6 +34,7 @@ import { BASE_ID, LANE_NATIVE_FEE, MIRROR_ID } from '@vaipakam/anvil-harness/mes
 import type { MeshScenario } from '@vaipakam/anvil-harness/meshScenario';
 import type { RelayedMessage } from '@vaipakam/anvil-harness/ccipLane';
 import { TOKEN_ABI } from '@vaipakam/anvil-harness/scenarioChain';
+import { waitForLane } from './lane';
 
 /** `isDayReadyToFinalize`'s reason for a day already finalized. */
 const ALREADY_FINALIZED = 1;
@@ -101,6 +102,8 @@ export async function remitDays(m: MeshScenario, days: readonly number[]): Promi
   const [quoted] = await m.base.read<readonly [bigint, readonly bigint[]]>('quoteRewardBudget', [MIRROR_ID, dayIds]);
   if (quoted === 0n) throw new Error(`Base quotes no mirror budget for days ${days.join(',')}`);
   const [fee] = await m.base.read<readonly [bigint, bigint]>('quoteRemittanceFee', [MIRROR_ID, dayIds]);
+  // The remittance carries the quoted VPFI over the same rate-limited lane.
+  await waitForLane(m, m.base, m.mirror, quoted);
   const pool = m.base.fixture.artifact.vpfiTokenPool as Address;
   const poolBalance = (): Promise<bigint> =>
     m.base.pub.readContract({ address: m.fixture.vpfiToken, abi: TOKEN_ABI, functionName: 'balanceOf', args: [pool] }) as Promise<bigint>;
