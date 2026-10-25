@@ -5100,6 +5100,51 @@ async function recordLoanParticipant(
     .run();
 }
 
+/**
+ * Insert a `LoanInitiated` row and seed its initiation participants in ONE
+ * D1 batch, so the two land together or not at all (#2221, Codex #2836 r6).
+ *
+ * The seeds may be written only by the pass that writes the row: a replay
+ * recomputes the holders from the MUTABLE offers projection, which a later
+ * Transfer may have advanced, and seeding then would backdate the later
+ * holder to the loan's start (Codex #1139 round-5 P2). That rule used to be
+ * "seed when this INSERT changed a row", checked after the insert committed,
+ * so anything that stopped the handler between the insert and the seeds (a
+ * request refused for want of allowance, a failed statement) left a loan
+ * whose replay could never seed it: its INSERT OR IGNORE then changes
+ * nothing. The batch removes the window. Each seed carries the same rule in
+ * SQL, `WHERE NOT EXISTS` the loan row, and runs BEFORE the insert inside the
+ * transaction, so a first pass seeds and a replay of a committed row does not.
+ * A batch is charged and refused whole (`subrequestBudget.ts`), so a refusal
+ * cannot land between its statements either.
+ *
+ * Returns whether the row was new.
+ */
+async function insertInitiatedLoan(
+  env: Env,
+  chainId: number,
+  loanId: number,
+  insert: D1PreparedStatement,
+  participants: readonly { wallet: string | null | undefined; role: 'lender' | 'borrower' }[],
+  fromAt: number,
+): Promise<boolean> {
+  const seeds: D1PreparedStatement[] = [];
+  for (const { wallet, role } of participants) {
+    const w = participantWallet(wallet);
+    if (w === null) continue;
+    seeds.push(
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO loan_participants
+           (chain_id, loan_id, wallet, role, from_at)
+         SELECT ?, ?, ?, ?, ?
+          WHERE NOT EXISTS (SELECT 1 FROM loans WHERE chain_id = ? AND loan_id = ?)`,
+      ).bind(chainId, loanId, w, role, fromAt, chainId, loanId),
+    );
+  }
+  const results = await env.DB.batch([...seeds, insert]);
+  return (results[results.length - 1]?.meta?.changes ?? 0) > 0;
+}
+
 // Exported for the loan-status-projection unit test (#1293): the HF
 // terminal branches flip `loans.status` off the event alone (no RPC), so a
 // focused test can drive them with a stub client over the sqlite D1 shim.
@@ -5268,7 +5313,7 @@ export async function processLoanLogs(
         // duration from the `LoanInitiatedDetails` event itself, so the
         // initiation terms are backed. The other insert paths leave the
         // DEFAULT 1 for `reverifyInitTerms` to clear against the ledger.
-        const result = await env.DB.prepare(
+        const insert = env.DB.prepare(
           `INSERT OR IGNORE INTO loans
             (chain_id, loan_id, offer_id, status, lender, borrower,
              principal, collateral_amount,
@@ -5323,25 +5368,27 @@ export async function processLoanLogs(
             Number(log.blockNumber),
             blockAt,
             now,
-          )
-          .run();
-        const freshInsert = (result.meta?.changes ?? 0) > 0;
-        if (freshInsert) newLoans++;
+          );
         // #1130 — seed participation from the current-owner projection at
         // init (lenderOwner/borrowerOwner already resolve a pre-accept
-        // offer-NFT buyer above). ONLY when the INSERT actually wrote the
-        // row (Codex #1139 round-5 P2): on a REPLAY (a scan that failed
-        // after a later Transfer landed but before the cursor advanced),
-        // the loans INSERT is ignored, but lenderOwner/borrowerOwner were
-        // recomputed from the MUTABLE offers current-owner projection —
-        // which that later Transfer may have advanced — so seeding here
-        // would backdate the later holder to the loan's original blockAt.
-        // The original pass recorded the true init participants; the
-        // Transfer handler records later holders at their own timestamps.
-        if (freshInsert) {
-          await recordLoanParticipant(env, chainId, loanId, lenderOwner, 'lender', blockAt);
-          await recordLoanParticipant(env, chainId, loanId, borrowerOwner, 'borrower', blockAt);
-        }
+        // offer-NFT buyer above), in the same batch as the row and only by
+        // the pass that writes it (see insertInitiatedLoan): on a REPLAY the
+        // projection may already point at a later holder, and seeding would
+        // backdate them to the loan's original blockAt. The original pass
+        // recorded the true init participants; the Transfer handler records
+        // later holders at their own timestamps.
+        const freshInsert = await insertInitiatedLoan(
+          env,
+          chainId,
+          loanId,
+          insert,
+          [
+            { wallet: lenderOwner, role: 'lender' },
+            { wallet: borrowerOwner, role: 'borrower' },
+          ],
+          blockAt,
+        );
+        if (freshInsert) newLoans++;
         continue;
       }
 
@@ -5410,7 +5457,7 @@ export async function processLoanLogs(
             borrowerOwner = offerRow.creator_current_owner;
           }
         }
-        const result = await env.DB.prepare(
+        const insert = env.DB.prepare(
           `INSERT OR IGNORE INTO loans
             (chain_id, loan_id, offer_id, status, lender, borrower,
              principal, collateral_amount,
@@ -5466,18 +5513,22 @@ export async function processLoanLogs(
             Number(log.blockNumber),
             blockAt,
             now,
-          )
-          .run();
-        const freshInsert = (result.meta?.changes ?? 0) > 0;
-        if (freshInsert) newLoans++;
+          );
         // #1130 — participation seed via the offer-projection resolution
-        // above. Fresh-insert-gated for the same replay reason as the
-        // primary path: on a replay the projection may already point at a
-        // LATER holder, and seeding would backdate them to init blockAt.
-        if (freshInsert) {
-          await recordLoanParticipant(env, chainId, loanId, lenderOwner, 'lender', blockAt);
-          await recordLoanParticipant(env, chainId, loanId, borrowerOwner, 'borrower', blockAt);
-        }
+        // above, written with the row by the pass that writes it, for the
+        // same replay reason as the primary path (insertInitiatedLoan).
+        const freshInsert = await insertInitiatedLoan(
+          env,
+          chainId,
+          loanId,
+          insert,
+          [
+            { wallet: lenderOwner, role: 'lender' },
+            { wallet: borrowerOwner, role: 'borrower' },
+          ],
+          blockAt,
+        );
+        if (freshInsert) newLoans++;
         continue;
       }
 
@@ -5486,7 +5537,7 @@ export async function processLoanLogs(
       // LoanInitiated carries it); init_rate_bps / init_duration_days stay
       // NULL here (the event doesn't carry them) and refreshStubLoans
       // COALESCE-stamps them on heal.
-      const result = await env.DB.prepare(
+      const insert = env.DB.prepare(
         `INSERT OR IGNORE INTO loans
           (chain_id, loan_id, offer_id, status, lender, borrower,
            principal, collateral_amount,
@@ -5511,22 +5562,26 @@ export async function processLoanLogs(
           Number(log.blockNumber),
           blockAt,
           now,
-        )
-        .run();
-      const freshInsert = (result.meta?.changes ?? 0) > 0;
-      if (freshInsert) newLoans++;
+        );
       // #1130 — participation seed from the event parties (all the stub
       // path has). Same-tx mint Transfers can't attribute these (the stub
-      // row's token ids are '0'), so this write is the only seed here.
-      // Fresh-insert-gated like the other two paths (Codex #1139 round-5
-      // P2): the event parties themselves are replay-stable, but gating
-      // keeps all three LoanInitiated paths on one invariant — init
-      // participants are seeded exactly once, by the pass that wrote the
-      // row.
-      if (freshInsert) {
-        await recordLoanParticipant(env, chainId, loanId, lender, 'lender', blockAt);
-        await recordLoanParticipant(env, chainId, loanId, borrower, 'borrower', blockAt);
-      }
+      // row's token ids are '0'), so this write is the only seed here. The
+      // event parties themselves are replay-stable, but the stub path takes
+      // the same one route as the other two (insertInitiatedLoan): init
+      // participants are seeded exactly once, with the row, by the pass
+      // that writes it.
+      const freshInsert = await insertInitiatedLoan(
+        env,
+        chainId,
+        loanId,
+        insert,
+        [
+          { wallet: lender, role: 'lender' },
+          { wallet: borrower, role: 'borrower' },
+        ],
+        blockAt,
+      );
+      if (freshInsert) newLoans++;
     } else if (log.eventName === 'LoanRepaid') {
       // Full repay (or a FallbackPending-cure repay). On-chain this is
       // a transition to Repaid; the indexer's `status = 'active'` guard

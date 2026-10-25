@@ -3041,7 +3041,11 @@ General design requirements:
   The records an unfinished block had already written are visible until the
   next pass completes them, exactly as any pass's writes are visible while the
   pass is still running. Those records are what the chain recorded, and
-  processing the block again changes nothing that was already right. A pass
+  processing the block again changes nothing that was already right. Records
+  that may be written only by the pass that first records an event, such as a
+  new loan's starting lender and borrower, are written together with that
+  event's record or not at all, so a stop can never leave one without the
+  other. A pass
   always finishes at least its first block with events, so no single block can
   hold the index in place. Where a scan stops early, it says so in its log:
   where it stopped, how many blocks it finished and why. Steps that act on what
