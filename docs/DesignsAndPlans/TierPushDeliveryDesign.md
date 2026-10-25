@@ -123,14 +123,16 @@ action. It cannot defer the push.
 
 ### 2.5 Funds
 
-- A protocol-funded send debits the budget by the lane's quoted fee, at the
-  moment it is sent.
+- A protocol-funded send debits the budget by what actually left the
+  Diamond for that lane: the balance before the send minus the balance
+  after it, so any surplus the messenger refunds is never debited.
 - A caller-funded send spends the caller's value and never touches the
   budget.
 - A failed send moves no value. The call reverts inside its try block, so
   the attached value comes back.
-- The messenger refunds any surplus to the Diamond. Base measures what came
-  back and returns it to its source: the budget, or the caller's remainder.
+- The messenger refunds any surplus to the Diamond. Because the debit is
+  measured, that surplus stays with its source: the budget, or the caller's
+  remainder, which is returned at the end of `deliverTierPush`.
   The Diamond keeps no untracked native balance from a tier push.
 - `ProtocolTierBroadcastSent` names the lane, the fee, and whether the caller
   or the budget paid.
