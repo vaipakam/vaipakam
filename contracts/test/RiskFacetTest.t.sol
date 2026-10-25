@@ -2556,32 +2556,30 @@ contract RiskFacetTest is Test {
             abi.encode(true)
         );
 
-        // proceeds (900) < principal (1000) → deeply underwater. Slippage vs the
-        // ~1800 oracle-expected clamps the incentive to 0, so bonus is 0; the
-        // handling fee must be waived (no surplus above debt) and no interest is
-        // recovered (allocated < principal), so the lender receives the FULL 900.
+        // proceeds (900) < principal (1000) → deeply underwater. #2796: at
+        // $0.5 the 1800 collateral is worth 900, so the plan sells all of it
+        // and the swap delivers at the oracle rate (1/2), clearing the
+        // worst-case floor (a route below it is refused and the loan goes in
+        // kind instead). Zero realized slippage → 3% bonus on min(proceeds,
+        // debt) = 27. The handling fee must be waived (nothing left above the
+        // debt) and no interest is recovered (allocated < principal), so the
+        // lender receives EVERY unit after the bonus.
         uint256 proceeds = 900 ether;
-        // #2472 — the proxy mock DELIVERS the stated proceeds: a mocked
-        // `swap` return books proceeds that never arrive, which the
-        // Diamond's delivery check refuses.
-        ZeroExProxyMock(address(mockZeroExProxy)).setFixedOutput(proceeds);
-        deal(
-            mockERC20,
-            address(mockZeroExProxy),
-            IERC20(mockERC20).balanceOf(address(mockZeroExProxy)) + proceeds
-        );
+        mockOraclePrice(mockCollateralERC20, 0.5e8, 8);
+        ZeroExProxyMock(address(mockZeroExProxy)).setRate(1, 2);
         deal(mockERC20, address(diamond), 3000 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
         uint256 sellQuote = liquidationQuote(address(diamond), loanId);
+        assertEq(sellQuote, 1800 ether, "an uncovered sale sells all the collateral");
         RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, defaultAdapterCalls());
 
         (, uint256 lenderAmt, ) = ClaimFacet(address(diamond))
             .getClaimableAmount(loanId, true);
         assertEq(
             lenderAmt,
-            proceeds,
-            "lender receives full proceeds; treasury handling fee waived when underwater"
+            proceeds - (proceeds * 300) / 10_000,
+            "lender receives all proceeds after the bonus; treasury handling fee waived when underwater"
         );
         vm.clearMockedCalls();
     }
