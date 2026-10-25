@@ -25,6 +25,7 @@ import {
     ChainlinkStyleOwnable2StepHarness,
     TokenAdminRegistryStub
 } from "../mocks/GovernanceHarnesses.sol";
+import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 
 /// @dev Exposes the real handover body with an in-memory config, so the test
 ///      runs exactly what `--phase handover` runs without touching the
@@ -511,17 +512,17 @@ contract HandoverGateTest is Test {
     }
 
     function _deployMinDiamond() internal returns (VaipakamDiamond d) {
-        DiamondCutFacet cutFacet = new DiamondCutFacet();
+        DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         d = new VaipakamDiamond(deployer, address(cutFacet));
         HelperTest h = new HelperTest();
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(new OwnershipFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OwnershipFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: h.getOwnershipFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
-            facetAddress: address(new AccessControlFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(AccessControlFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: h.getAccessControlFacetSelectors()
         });

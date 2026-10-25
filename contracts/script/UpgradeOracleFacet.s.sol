@@ -10,6 +10,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
+import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 
 /**
  * @title UpgradeOracleFacet
@@ -60,7 +61,7 @@ contract UpgradeOracleFacet is Script {
             payable(admin).transfer(0.01 ether);
             console.log("Topped up admin with 0.01 ETH");
         }
-        OracleFacet newOracleFacet = new OracleFacet();
+        OracleFacet newOracleFacet = OracleFacet(ArtifactDeploy.deploy(type(OracleFacet).name));
         console.log("New OracleFacet:", address(newOracleFacet));
         vm.stopBroadcast();
 

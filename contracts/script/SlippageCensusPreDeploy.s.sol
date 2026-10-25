@@ -11,6 +11,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 
 /**
  * @title SlippageCensusPreDeploy
@@ -195,10 +196,12 @@ contract SlippageCensusPreDeploy is Script {
         // permissionless `refreshTierLtvCache` call later doesn't need
         // a prank.
         address deployer = msg.sender;
-        DiamondCutFacet cutFacet = new DiamondCutFacet();
-        VaipakamDiamond diamond = new VaipakamDiamond(deployer, address(cutFacet));
-        OracleFacet oracleFacet = new OracleFacet();
-        OracleAdminFacet oracleAdminFacet = new OracleAdminFacet();
+        DiamondCutFacet cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
+        VaipakamDiamond diamond = VaipakamDiamond(
+            payable(ArtifactDeploy.deploy(type(VaipakamDiamond).name, abi.encode(deployer, address(cutFacet))))
+        );
+        OracleFacet oracleFacet = OracleFacet(ArtifactDeploy.deploy(type(OracleFacet).name));
+        OracleAdminFacet oracleAdminFacet = OracleAdminFacet(ArtifactDeploy.deploy(type(OracleAdminFacet).name));
 
         // Cut OracleFacet + OracleAdminFacet selectors.
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);

@@ -30,6 +30,7 @@ import {Deployments} from "./lib/Deployments.sol";
 import {StorageLayoutRecord} from "./lib/StorageLayoutRecord.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
+import {ArtifactDeploy} from "./lib/ArtifactDeploy.sol";
 
 /**
  * @title ReplaceStaleFacets
@@ -108,22 +109,22 @@ contract ReplaceStaleFacets is DeployDiamond {
 
         vm.startBroadcast(deployerKey);
 
-        OfferCreateFacet offerCreateFacet = new OfferCreateFacet();
-        OfferAcceptFacet offerAcceptFacet = new OfferAcceptFacet();
+        OfferCreateFacet offerCreateFacet = OfferCreateFacet(ArtifactDeploy.deploy(type(OfferCreateFacet).name));
+        OfferAcceptFacet offerAcceptFacet = OfferAcceptFacet(ArtifactDeploy.deploy(type(OfferAcceptFacet).name));
         // #1835 — the accept path's borrower-LIF charge now lives on its own
         // host. Deployed alongside because the two are one behaviour across a
         // `crossFacetCall`; see the cut below for why omitting it splits the
         // accept across two builds.
-        OfferAcceptFeeFacet offerAcceptFeeFacet = new OfferAcceptFeeFacet();
-        OracleFacet oracleFacet = new OracleFacet();
-        VaultFactoryFacet vaultFactoryFacet = new VaultFactoryFacet();
-        ConfigFacet configFacet = new ConfigFacet();
-        OracleAdminFacet oracleAdminFacet = new OracleAdminFacet();
+        OfferAcceptFeeFacet offerAcceptFeeFacet = OfferAcceptFeeFacet(ArtifactDeploy.deploy(type(OfferAcceptFeeFacet).name));
+        OracleFacet oracleFacet = OracleFacet(ArtifactDeploy.deploy(type(OracleFacet).name));
+        VaultFactoryFacet vaultFactoryFacet = VaultFactoryFacet(ArtifactDeploy.deploy(type(VaultFactoryFacet).name));
+        ConfigFacet configFacet = ConfigFacet(ArtifactDeploy.deploy(type(ConfigFacet).name));
+        OracleAdminFacet oracleAdminFacet = OracleAdminFacet(ArtifactDeploy.deploy(type(OracleAdminFacet).name));
         // #394 (Codex #647 round-3) — the numeraire / PAD / periodic-interest
         // selectors were carved out of ConfigFacet into NumeraireConfigFacet.
         // They must be cut to THIS facet's address, not ConfigFacet's, or they
         // misroute to ConfigFacet bytecode that no longer implements them.
-        NumeraireConfigFacet numeraireConfigFacet = new NumeraireConfigFacet();
+        NumeraireConfigFacet numeraireConfigFacet = NumeraireConfigFacet(ArtifactDeploy.deploy(type(NumeraireConfigFacet).name));
         // #1649 — #1503 gave the sale branch of `OfferAcceptFacet.acceptOffer`
         // (the binding check for a resting sale listing) a cross-facet call to
         // `RiskPreviewFacet.saleAdmission`, a NEW selector. Refreshing
@@ -132,25 +133,25 @@ contract ReplaceStaleFacets is DeployDiamond {
         // `FunctionDoesNotExist` through the fallback — new code live and
         // broken. Deploy the classifier's host alongside; its selectors are
         // partitioned by live routing below.
-        RiskPreviewFacet riskPreviewFacet = new RiskPreviewFacet();
+        RiskPreviewFacet riskPreviewFacet = RiskPreviewFacet(ArtifactDeploy.deploy(type(RiskPreviewFacet).name));
         // #1649 — the read side of the same change. Refreshing the accept path
         // alone leaves `previewAccept` on bytecode that does not know about the
         // sale block, so it quotes an accept as fine and the transaction
         // reverts — the preview/accept divergence #1503 exists to remove.
-        OfferPreviewFacet offerPreviewFacet = new OfferPreviewFacet();
+        OfferPreviewFacet offerPreviewFacet = OfferPreviewFacet(ArtifactDeploy.deploy(type(OfferPreviewFacet).name));
         // #2440 — the refreshed borrower-LIF charge (OfferAcceptFeeFacet) moves
         // the treasury's cut by a self-call into this host. A Diamond from
         // before #2440 routes no such selector, so refreshing the fee facet
         // without it would revert every fee-bearing accept
         // `FunctionDoesNotExist`. Deployed alongside; partitioned below.
-        TreasuryFeeFacet treasuryFeeFacet = new TreasuryFeeFacet();
+        TreasuryFeeFacet treasuryFeeFacet = TreasuryFeeFacet(ArtifactDeploy.deploy(type(TreasuryFeeFacet).name));
         // #2419 — the valuation host. The refreshed offer facets and
         // RiskPreviewFacet value through it by self-call (LibRiskMath), and
         // OfferAcceptFacet values its KYC comparison through it. The target
         // already routes it ({_requireNumeraireValueRule}); deployed
         // alongside so the host matches the refreshed callers, and
         // partitioned below.
-        NumeraireValueFacet numeraireValueFacet = new NumeraireValueFacet();
+        NumeraireValueFacet numeraireValueFacet = NumeraireValueFacet(ArtifactDeploy.deploy(type(NumeraireValueFacet).name));
 
         console.log("OfferFacet:          ", address(offerCreateFacet));
         console.log("OfferAcceptFacet:    ", address(offerAcceptFacet));
