@@ -27,7 +27,8 @@
  * Each step throws, naming what did not land, rather than leaving a later
  * assertion to fail for a reason it does not state.
  */
-import type { Address, Hex } from 'viem';
+import { BaseError, ContractFunctionRevertedError, type Address, type Hex } from 'viem';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { d6Chunk, d6Leaves, d6Proof, d6Root, fundedDaysFromBits } from '@vaipakam/lib/d6Wire';
 import { BASE_ID, LANE_NATIVE_FEE, MIRROR_ID } from '@vaipakam/anvil-harness/mesh';
 import type { MeshScenario } from '@vaipakam/anvil-harness/meshScenario';
@@ -117,6 +118,54 @@ export async function remitDays(m: MeshScenario, days: readonly number[]): Promi
   const packetHash = one('IngressPacketRecorded').args.packetHash as Hex;
   const batchId = one('TransportBatchAdmitted').args.batchId as Hex;
   return { quoted, baseLocked, relayed: relayed[0], packetHash, batchId };
+}
+
+/** A contract refusal, decoded: the error's name and its arguments. */
+export interface Refusal {
+  name: string;
+  args: readonly unknown[];
+}
+
+/** The decoded revert inside `err`, or `undefined` for any other failure. */
+export function refusalOf(err: unknown): Refusal | undefined {
+  if (!(err instanceof BaseError)) return undefined;
+  const reverted = err.walk((e) => e instanceof ContractFunctionRevertedError);
+  if (!(reverted instanceof ContractFunctionRevertedError) || !reverted.data) return undefined;
+  return { name: reverted.data.errorName, args: (reverted.data.args ?? []) as readonly unknown[] };
+}
+
+/**
+ * How Base refuses a remittance of `days`, on the fee quote and on the send
+ * alike (they share one rule), or `null` for each that would go through.
+ * Nothing is sent: the send is simulated.
+ */
+export async function remitRefusals(
+  m: MeshScenario,
+  days: readonly number[],
+): Promise<{ quote: Refusal | null; send: Refusal | null }> {
+  const dayIds = days.map(BigInt);
+  const attempt = async (run: () => Promise<unknown>): Promise<Refusal | null> => {
+    try {
+      await run();
+      return null;
+    } catch (err) {
+      const refusal = refusalOf(err);
+      if (!refusal) throw err;
+      return refusal;
+    }
+  };
+  const quote = await attempt(() => m.base.read('quoteRemittanceFee', [MIRROR_ID, dayIds]));
+  const send = await attempt(() =>
+    m.base.pub.simulateContract({
+      address: m.base.diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'remitRewardBudget',
+      args: [MIRROR_ID, dayIds, REMIT_LANE_CAP],
+      value: LANE_NATIVE_FEE * 10n,
+      account: m.base.address('keeper'),
+    } as never),
+  );
+  return { quote, send };
 }
 
 /** Step 5: index a delivery's epoch on the mirror. Returns the days indexed. */

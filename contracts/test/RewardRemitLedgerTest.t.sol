@@ -599,13 +599,24 @@ contract RewardRemitLedgerTest is SetupTest {
         assertGt(perDay[0], 0, "day1 funds");
         assertEq(perDay[1], 2e18, "day2 clamped");
 
-        (, uint256 feeTotal) = remit.quoteRemittanceFee(CHAIN_ARB, both);
-        assertEq(feeTotal, quoted, "fee-quote total == quote");
+        assertEq(quoted, perDay[0] + perDay[1], "the budget quote sums the plan");
 
+        // Both days carry VPFI, so the list is refused on the fee quote and
+        // the send alike (#2821); each day is sent on its own.
+        bytes memory refusal = abi.encodeWithSelector(IVaipakamErrors.TransportDayFanoutExceeded.selector, 2, 1);
+        vm.expectRevert(refusal);
+        remit.quoteRemittanceFee(CHAIN_ARB, both);
+        vm.expectRevert(refusal);
         remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, both, 1e24);
-        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
-        assertEq(r.total, quoted, "send == quote");
-        assertEq(r.dayIds.length, 2, "both days closed");
+
+        for (uint256 d = 1; d <= 2; ++d) {
+            (, uint256 feeTotal) = remit.quoteRemittanceFee(CHAIN_ARB, _days(d));
+            assertEq(feeTotal, perDay[d - 1], "fee-quote total == the plan's day");
+            remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(d), 1e24);
+            LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(d);
+            assertEq(r.total, perDay[d - 1], "send == quote");
+            assertEq(r.dayIds.length, 1, "the day closed");
+        }
     }
 
     /// @dev Codex r6 — the 69M guard is NET of outstanding armed-fresh

@@ -307,10 +307,9 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
         (uint256 counted, uint256 uncounted) = _rlens().getDeliveredFreshPosition();
         assertEq(counted, countedBefore, "nothing counted into the delivered ledger");
         assertEq(uncounted - uncountedBefore, 10e18, "the whole delivery is uncounted, as an untyped one is");
-        // Beside the index, the kept list is still empty, so 3c-1's gate declines to read it (contested until
-        // the index is whole: a list it cannot read is withheld, never admitted).
+        // Unindexed, and multi-day: a 20-day batch is withheld for good (#2821), whatever its index.
         assertEq(
-            _gates(h), LibRewardCustody.GATE_UNINDEXED | LibRewardCustody.GATE_CONTESTED, "unindexed, and withheld until the list is whole"
+            _gates(h), LibRewardCustody.GATE_UNINDEXED | LibRewardCustody.GATE_MULTI_DAY, "unindexed, and multi-day"
         );
         assertGt(_rlens().getReceivedRemit(REMITTER, 11).receivedAt, 0, "the receipt is written");
     }
@@ -328,7 +327,7 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
         assertEq(_rlens().getIngressPacket(h).chunksIndexed, 3, "both bits set");
         assertEq(_indexed(h), 20, "whole");
         assertTrue((_gates(h) & LibRewardCustody.GATE_UNINDEXED) == 0, "the index gate is down");
-        assertTrue((_gates(h) & LibRewardCustody.GATE_NECESSITY) != 0, "its other days have not arrived: the necessity tier");
+        assertEq(_gates(h), LibRewardCustody.GATE_MULTI_DAY, "whole, and withheld for listing 20 days (#2821)");
         assertEq(_epoch().getTransportBatchDays(h).length, 20, "the kept list is whole");
         for (uint256 d = 1; d <= 20; ++d) {
             (, , uint256 total, ) = _epoch().getTransportDayBatches(d, 0, 4);

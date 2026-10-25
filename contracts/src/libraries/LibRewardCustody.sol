@@ -1826,44 +1826,44 @@ library LibRewardCustody {
 
     // ─── The transport epochs (#1566 PR 3b) ──────────────────────────────────
 
-    /// @notice The largest `dayIds` fan-out the canonical chain will build a
-    ///         remittance for.
-    /// @dev    #1566 transport epochs PR 3b. The cap exists because
-    ///         RETIREMENT writes one index update per member day: a list that
-    ///         fit the source transaction can exceed the DESTINATION's block
-    ///         gas limit when that happens, leaving the exhausted batch parked
-    ///         at the front of every member cursor forever. "Wire-bounded" is
-    ///         not a bound — the remitter supplies any nonempty list.
+    /// @notice How many FUNDED days one remittance may carry: ONE (#2821).
+    /// @dev    A remittance lands on the mirror as one transport epoch whose
+    ///         balance funds every day it lists, so a draw for one listed day
+    ///         is contested by the others. The mirror could only settle that
+    ///         by withholding the epoch while more than one listed day is
+    ///         open, and a mirror day closes only when every reward entry
+    ///         covering it has claimed past it: an entry spanning two listed
+    ///         days needs the epoch to pay the first day, and the first day
+    ///         paid to free the epoch, so it is never paid. Any loan open
+    ///         across a multi-day remittance carries such an entry. One funded
+    ///         day per send leaves no epoch to contest, so the rule is applied
+    ///         where the epoch is made rather than resolved where it is spent,
+    ///         and the mirror withholds a wider epoch for good
+    ///         ({GATE_MULTI_DAY}). A backlog drains one funded day per send. A day that only CLOSES (moves no
+    ///         VPFI) is outside the bound: the send trims the destination list
+    ///         to the funded days, so a close-only day never reaches it.
     ///
-    ///         32 is a month of daily rows, which covers the lane's real
-    ///         shapes, and it sizes the operations that WALK a batch's member
-    ///         days: retirement clears at most 32, and `TRANSPORT_INDEX_PAGE`
-    ///         below mirrors this constant so one materialization call indexes
-    ///         at most 32. ADMISSION is not one of those operations and is not
-    ///         what this cap sizes — it writes the compact batch row and no
-    ///         per-day membership, for any batch, which is why every batch is
-    ///         indexed afterwards.
-    ///
-    ///         It is enforced at DISPATCH and NOT at ingress. A transport
-    ///         payload is immutable once sent, so a receive-side refusal
-    ///         retries the same over-cap message forever; the receiver instead
-    ///         ADMITS any transport-authentic packet, an over-cap one through
-    ///         the compact admission below.
-    uint256 internal constant TRANSPORT_DAY_FANOUT_CAP = 32;
+    ///         It is enforced at DISPATCH ({requireRemittableFanout}, on the
+    ///         send and on its fee quote) and NOT at ingress. A transport
+    ///         payload is immutable once sent, so a receive-side refusal would
+    ///         retry the same message forever; the receiver ADMITS any
+    ///         transport-authentic packet, and a wider one, which only a source
+    ///         breaking this rule could send, is withheld for good.
+    uint256 internal constant TRANSPORT_DAY_FANOUT_CAP = 1;
 
     /// @notice How many member days one materialization call indexes.
-    /// @dev    #1566 transport epochs PR 3b — sized to the same per-call
-    ///         storage cost `TRANSPORT_DAY_FANOUT_CAP` bounds a delivery to,
-    ///         so ANY batch is indexed by repeating a call that is known to
-    ///         fit rather than by a caller guessing a page size. A within-cap
+    /// @dev    #1566 transport epochs PR 3b — a per-call storage bound, so ANY
+    ///         admitted batch is indexed by repeating a call that is known to
+    ///         fit rather than by a caller guessing a page size. A one-day
     ///         batch takes exactly one such call; it does not skip the step,
-    ///         because admission writes no membership for any batch.
+    ///         because admission writes no membership for any batch. The same
+    ///         page sizes the park's walk of a batch's listed days.
     uint256 internal constant TRANSPORT_INDEX_PAGE = 32;
 
     /// @notice #1566 transport epochs PR 3b-ii-A — how many of a day's indexed
     ///         epochs one coverage read, and the draw that follows it, scans.
-    /// @dev    Twice the fan-out cap, so a day funded by one remittance a day
-    ///         for two months is still read in one window. Past it the read
+    /// @dev    A ceiling on the scan, well above the epochs a day funded one
+    ///         day per remittance carries. Past it the read
     ///         reports the cap HIT and the day primitive DEFERS the day rather
     ///         than pull era/live funding for a residual that unseen epochs
     ///         may cover — transport-first is not optional (§5c). 3b-ii-A
@@ -1972,7 +1972,7 @@ library LibRewardCustody {
     }
 
     /// @dev The ONE writer of a batch's per-day membership — the inverse index,
-    ///      the kept list the gates read (3c-1) and the day's arrival-ordered
+    ///      the kept list the park reads and the day's arrival-ordered
     ///      link — called for every day of every proven chunk (3d-1).
     function _indexBatchDay(
         LibVaipakam.Storage storage s,
@@ -2429,8 +2429,8 @@ library LibRewardCustody {
         emit TransportRemainderDebited(batchId, amount, left);
     }
 
-    /// @notice #1566 transport epochs PR 3b — the day-list fan-out bound, in
-    ///         ONE place.
+    /// @notice The funded-day bound of a remittance ({TRANSPORT_DAY_FANOUT_CAP},
+    ///         one day since #2821), in ONE place.
     /// @dev    Called by the remittance SEND and by its fee QUOTE (Codex #2232
     ///         r1). The quote is documented as a faithful dry run of the send,
     ///         and a bound that lived only on the send let it price a batch the
@@ -2487,25 +2487,16 @@ library LibRewardCustody {
         ///      it — a recycled-only epoch counted toward a fresh ask. Bounding
         ///      each leg by its own figure, and both by the joint figure, is the
         ///      exact feasibility test for two legs sharing balances.
-        uint256 ordinaryFresh;
-        uint256 ordinaryRecycled;
-        /// @dev 3c-1 — the necessity tier's rooms (epochs with an unarrived listed
-        ///      day): served only for the shortfall the live sources leave.
-        uint256 necessityFresh;
-        uint256 necessityRecycled;
+        uint256 freshCapacity;
+        uint256 recycledCapacity;
         /// @dev What the window held that the plan WITHHELD, by named reason
         ///      (Codex #2276 r26 P1, both):
         ///
-        ///      - `withheldContested` — epochs listing more than one day. A draw
-        ///        on such an epoch is contested whenever another listed day
-        ///        carries a known unmet obligation, and the spec refuses a
-        ///        contested draw until the contested-allocation machinery
-        ///        lands (3c, #2318). Neither the listed days nor a per-day
-        ///        unmet-obligation figure is readable here, so the plan cannot
-        ///        tell a contested draw from an uncontested one and withholds
-        ///        every shared epoch. That errs toward the obligation not yet
-        ///        claimed: nothing is spent, the balance stays whole for 3c's
-        ///        matching, and a day it would have paid defers.
+        ///      - `withheldMultiDay` — epochs listing more than one day
+        ///        ({GATE_MULTI_DAY}). The canonical chain never sends one
+        ///        (#2821); the figure exists so one that arrives anyway is
+        ///        visible rather than silently uncounted. Nothing is spent
+        ///        from it.
         ///      - `withheldUnattested` — epochs whose packet's split is not yet
         ///        attested. A leg is typed once, by the caps it is drawn under;
         ///        drawing before the caps are known typed legs that a later
@@ -2515,12 +2506,12 @@ library LibRewardCustody {
         ///        epoch becomes drawable when its attestation lands.
         ///
         ///      The two figures OVERLAP (Codex #2276 r27 P2): each is the balance
-        ///      withheld for that reason, so an unattested shared epoch counts in
+        ///      withheld for that reason, so an unattested multi-day epoch counts in
         ///      both and neither figure ever hides a pending cause.
         ///
         ///      A withheld epoch still occupies its window slot: the scan stays
         ///      bounded, and the day's cursor passes only exhausted epochs.
-        uint256 withheldContested;
+        uint256 withheldMultiDay;
         uint256 withheldUnattested;
         /// @dev The window ended before the index did: unseen epochs may hold
         ///      coverage this plan could not see.
@@ -2573,8 +2564,8 @@ library LibRewardCustody {
     ///         the day's OLDEST live epochs, whoever indexed them and in
     ///         whatever order (r5 P1: a caller-ordered prefix would let a
     ///         materializer decide what a bounded window sees). Within the
-    ///         window every planned epoch lists this one day (a shared epoch is
-    ///         withheld — see `withheldContested`), so they are spent OLDEST
+    ///         window every planned epoch lists this one day (a multi-day epoch is
+    ///         withheld — see `withheldMultiDay`), so they are spent OLDEST
     ///         ARRIVAL FIRST, the batch id breaking ties. The window is at most
     ///         `TRANSPORT_DRAW_SCAN_CAP` entries, so the sort is bounded, and
     ///         everything beyond it is newer than everything in it.
@@ -2592,7 +2583,7 @@ library LibRewardCustody {
     ///         classified and what its own draws already took — and
     ///         {splitTransportTakes} never assigns a leg past it. An
     ///         epoch whose packet is unattested, or that lists more than one
-    ///         day, is WITHHELD and counted by reason (see `withheldContested`).
+    ///         day, is WITHHELD and counted by reason (see `withheldMultiDay`).
     ///
     ///         Storage is the ONLY input (A2-iii): the preview that once
     ///         mirrored planned draws through an overlay is gone — a preview
@@ -2620,26 +2611,18 @@ library LibRewardCustody {
             uint256 bal = b.balance;
             if (bal != 0 && b.indexedDays == b.dayCount) {
                 uint8 gates = batchGates(s, node, b);
-                if ((gates & (GATE_UNATTESTED | GATE_CONTESTED)) != 0) {
+                if ((gates & (GATE_UNATTESTED | GATE_MULTI_DAY)) != 0) {
                     // Each reason counted on its own (Codex #2276 r27 P2): a
                     // reader asking whether an attestation is pending must not
-                    // be told no because the epoch is also contested.
+                    // be told no because the epoch also lists several days.
                     if ((gates & GATE_UNATTESTED) != 0) plan.withheldUnattested += bal;
-                    if ((gates & GATE_CONTESTED) != 0) plan.withheldContested += bal;
+                    if ((gates & GATE_MULTI_DAY) != 0) plan.withheldMultiDay += bal;
                 } else {
                     (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal);
-                    // Arrival order within a tier; the necessity tier sorts after
-                    // every ordinary epoch (3c-1), so the prefix-first allocator
-                    // draws it only for what the ordinary tier cannot cover.
+                    // Arrival order.
                     uint256 key = uint256(s.ingressPackets[node].arrivedAt);
-                    if ((gates & GATE_NECESSITY) != 0) {
-                        key |= NECESSITY_TIER_BIT;
-                        plan.necessityFresh += fr < bal ? fr : bal;
-                        plan.necessityRecycled += rr < bal ? rr : bal;
-                    } else {
-                        plan.ordinaryFresh += fr < bal ? fr : bal;
-                        plan.ordinaryRecycled += rr < bal ? rr : bal;
-                    }
+                    plan.freshCapacity += fr < bal ? fr : bal;
+                    plan.recycledCapacity += rr < bal ? rr : bal;
                     // The batch id is the final tie-break, so the plan's
                     // order is a function of the SET in the window and not
                     // of the order it was scanned in (Codex #2276 r9 P1) —
@@ -3019,46 +3002,27 @@ library LibRewardCustody {
     ///      before those days were indexed (Codex #2276 r1). Either state is
     ///      PENDING to a record — remembered and re-checked, never passed
     ///      (Codex #2308 r4). A batch listing more than one day is WITHHELD
-    ///      until the contested-allocation machinery (3c): staging from it is
-    ///      the contested draw the plan refuses, so it is never staged — and
-    ///      never pending either ({_pendingCandidate}), since nothing before
-    ///      3c makes it stageable.
+    ///      for good ({GATE_MULTI_DAY}): it is never staged, and never pending
+    ///      either ({_pendingCandidate}), since nothing makes it stageable.
     function stageable(LibVaipakam.Storage storage s, bytes32 batchId) internal view returns (bool) {
         return batchGates(s, batchId, s.transportBatches[batchId]) == 0;
     }
 
-    // ── 3c-1 — the two allocation gates (#2318, the design text as written) ──
+    // ── The allocation gates ──
     /// @dev The packet's split is not attested: a leg would be typed by caps not yet known.
     uint8 internal constant GATE_UNATTESTED = 1;
     /// @dev The batch's membership is not fully indexed.
     uint8 internal constant GATE_UNINDEXED = 2;
-    /// @dev CONTESTED: another ARRIVED listed day carries an obligation not proven
-    ///      terminated (the per-day closure proof's stamp is the fact read), or the
-    ///      list is too wide or unknown to read on a hot path.
-    uint8 internal constant GATE_CONTESTED = 4;
-    /// @dev NECESSITY: a listed day whose broadcast has not arrived — the batch is
-    ///      drawn LAST, only for the shortfall the live sources leave.
-    uint8 internal constant GATE_NECESSITY = 8;
-    /// @dev The sort-key bit that places the necessity tier after every ordinary epoch.
-    uint256 internal constant NECESSITY_TIER_BIT = 1 << 255;
-
-    /// @notice Whether day `d`'s broadcast has arrived on this chain: an ARMED day is
-    ///         funded by its governor day-pool stamp; a pre-arming day by the known
-    ///         global interest for it (the schedule prices it once that is set).
-    function dayArrived(LibVaipakam.Storage storage s, uint256 d) internal view returns (bool) {
-        uint256 armedFrom = s.governorCommitArmedFromDay;
-        if (armedFrom != 0 && d >= armedFrom) return s.dayPoolStamp[d].stamped;
-        return s.knownGlobalSet[d];
-    }
+    /// @dev The batch lists more than one day (#2821). Its balance funds every
+    ///      listed day at once, so a draw for one of them is contested by the
+    ///      others, and a reward entry spanning two of them could never be
+    ///      paid from it. The canonical chain never sends one
+    ///      ({TRANSPORT_DAY_FANOUT_CAP}); one that arrives anyway is admitted,
+    ///      counted as withheld, and never drawn, staged or pending.
+    uint8 internal constant GATE_MULTI_DAY = 4;
 
     /// @notice The gates a batch is admitted to a day's draw through, as flags (0 =
-    ///         ordinary). Day-agnostic on purpose: the day being drawn for is
-    ///         always arrived and still open, so "more than one arrived listed day
-    ///         not proven closed" is exactly "another arrived day with an unmet
-    ///         obligation", and "any unarrived listed day" is the necessity rule.
-    ///         Reads O(dayCount) for a multi-day batch, bounded by the fan-out cap;
-    ///         a wider list, or one not kept, is withheld as contested rather than
-    ///         read on a hot path.
+    ///         drawable). O(1): no gate reads the batch's listed days.
     function batchGates(LibVaipakam.Storage storage s, bytes32 batchId, LibVaipakam.TransportBatch storage b)
         internal
         view
@@ -3067,21 +3031,7 @@ library LibRewardCustody {
         if (!s.ingressPackets[batchId].attested) flags |= GATE_UNATTESTED;
         uint256 n = b.dayCount;
         if (b.indexedDays != n) flags |= GATE_UNINDEXED;
-        if (n <= 1) return flags;
-        if (n > TRANSPORT_DAY_FANOUT_CAP) return flags | GATE_CONTESTED;
-        uint256[] storage listed = s.transportBatchDays[batchId];
-        if (listed.length != n) return flags | GATE_CONTESTED;
-        uint256 openArrived;
-        for (uint256 i; i < n; ) {
-            uint256 d = listed[i];
-            if (!dayArrived(s, d)) {
-                flags |= GATE_NECESSITY;
-            } else if (!s.dayObligationsClosed[d]) {
-                unchecked { ++openArrived; }
-            }
-            unchecked { ++i; }
-        }
-        if (openArrived > 1) flags |= GATE_CONTESTED;
+        if (n > TRANSPORT_DAY_FANOUT_CAP) flags |= GATE_MULTI_DAY;
     }
 
     /// @notice Whether the record under nonce key `nk` may stage from `batchId`
@@ -3423,10 +3373,11 @@ library LibRewardCustody {
     ///      record and re-checked, never planned: a candidate a scan passed
     ///      without disposing of would be lost to the record, since neither
     ///      an attestation nor a completing page changes the list's length or
-    ///      its late generation (Codex #2308 r2, r4). A SHARED epoch is not
-    ///      pending (Codex #2276 r26): it is withheld until 3c, so the scan
-    ///      passes it as it passes an exhausted one, and a day holding many
-    ///      of them never fills the record's page of pending re-checks.
+    ///      its late generation (Codex #2308 r2, r4). A MULTI-DAY epoch is not
+    ///      pending (Codex #2276 r26): it is withheld for good
+    ///      ({GATE_MULTI_DAY}), so the scan passes it as it passes an exhausted
+    ///      one, and a day holding many of them never fills the record's page
+    ///      of pending re-checks.
     function _pendingCandidate(LibVaipakam.Storage storage s, bytes32 node) private view returns (bool) {
         LibVaipakam.TransportBatch storage b = s.transportBatches[node];
         return b.balance != 0 && b.dayCount == 1 && !stageable(s, node);
@@ -3826,18 +3777,18 @@ library LibRewardCustody {
     )
         internal
         view
-        returns (uint256 available, bool capHit, uint256 withheldContested, uint256 withheldUnattested)
+        returns (uint256 available, bool capHit, uint256 withheldMultiDay, uint256 withheldUnattested)
     {
         if (s.transportBatchesByDay[dayId].length == 0) return (0, false, 0, 0);
         TransportDrawPlan memory plan =
             planTransportDraw(s, dayId);
-        return (plan.available, plan.capHit, plan.withheldContested, plan.withheldUnattested);
+        return (plan.available, plan.capHit, plan.withheldMultiDay, plan.withheldUnattested);
     }
 
     /// @notice The ONE batch at `dayId`'s cursor — the first node after the
     ///         day's consumption cursor — as the two leg rooms a draw could
     ///         take from it right now, or zeros where that node is exhausted,
-    ///         not yet whole, withheld (shared or unattested) or absent.
+    ///         not yet whole, withheld (multi-day or unattested) or absent.
     /// @dev    Row 13's static coverage read (A2-iii; design question 10): the
     ///         expiry clock, the lens's armed-need view and the conservative
     ///         preview may not run a settlement, and may not scan either — a
@@ -3847,19 +3798,6 @@ library LibRewardCustody {
     ///         executable. Never over-counts: both rooms are each cap net of
     ///         classification, consumption and staging ({_capRooms}), and the
     ///         two together are bounded by the balance, fresh first.
-    /// @notice 3c-1 — a day's plannable rooms by tier: ordinary, and the necessity
-    ///         tier (epochs with an unarrived listed day, served only for a shortfall).
-    function transportTiersForDay(LibVaipakam.Storage storage s, uint256 dayId)
-        internal
-        view
-        returns (uint256 ordinary, uint256 necessity)
-    {
-        if (s.transportBatchesByDay[dayId].length == 0) return (0, 0);
-        TransportDrawPlan memory plan = planTransportDraw(s, dayId);
-        ordinary = plan.ordinaryFresh + plan.ordinaryRecycled;
-        necessity = plan.necessityFresh + plan.necessityRecycled;
-    }
-
     function cursorBatchRooms(LibVaipakam.Storage storage s, uint256 dayId)
         internal
         view
@@ -3870,7 +3808,7 @@ library LibRewardCustody {
         if (node == bytes32(0)) return (0, 0);
         LibVaipakam.TransportBatch storage b = s.transportBatches[node];
         uint256 bal = b.balance;
-        if (bal == 0 || batchGates(s, node, b) != 0) return (0, 0); // 3c-1: ordinary only
+        if (bal == 0 || batchGates(s, node, b) != 0) return (0, 0);
         (fr, rr) = _capRooms(s, node, b, bal);
         if (fr + rr > bal) rr = bal > fr ? bal - fr : 0;
     }
@@ -3907,18 +3845,14 @@ library LibRewardCustody {
         uint256 liveF = q.poolFresh < q.deliveredCap ? q.poolFresh : q.deliveredCap;
         uint256 sF = needFresh > liveF ? needFresh - liveF : 0;
         uint256 sR = q.needRecycled > q.bucket ? q.needRecycled - q.bucket : 0;
-        // Each leg bounded by the ordinary tier's capacity FOR THAT LEG as well
-        // as by the joint figure (Codex #2276): see `ordinaryFresh`.
-        // 3c-1 — the SHORTFALL (what live funding and the bucket leave) may draw
-        // both tiers; the allocator's prefix-first order spends the ordinary
-        // tier before the necessity tier reaches it. The "more" phase below —
-        // transport-first beyond the shortfall — is ordinary only.
-        uint256 tf = _min3(sF, avail, plan.ordinaryFresh + plan.necessityFresh);
+        // Each leg bounded by the plan's capacity FOR THAT LEG as well as by
+        // the joint figure (Codex #2276): see `freshCapacity`.
+        uint256 tf = _min3(sF, avail, plan.freshCapacity);
         avail -= tf;
-        uint256 tr = _min3(sR, avail, plan.ordinaryRecycled + plan.necessityRecycled);
+        uint256 tr = _min3(sR, avail, plan.recycledCapacity);
         avail -= tr;
-        uint256 ordLeftF = plan.ordinaryFresh > tf ? plan.ordinaryFresh - tf : 0;
-        uint256 ordLeftR = plan.ordinaryRecycled > tr ? plan.ordinaryRecycled - tr : 0;
+        uint256 leftF = plan.freshCapacity - tf;
+        uint256 leftR = plan.recycledCapacity - tr;
         if (avail != 0) {
             // The residual: whichever leg's own shortfall the mandatory draws
             // left larger takes the rest first, fresh first on ties, then the
@@ -3935,15 +3869,15 @@ library LibRewardCustody {
             uint256 moreF = needFresh - tf;
             uint256 moreR = q.needRecycled - tr;
             if (dR > dF) {
-                uint256 a = _min3(moreR, avail, ordLeftR);
+                uint256 a = _min3(moreR, avail, leftR);
                 tr += a;
                 avail -= a;
-                tf += _min3(moreF, avail, ordLeftF);
+                tf += _min3(moreF, avail, leftF);
             } else {
-                uint256 a = _min3(moreF, avail, ordLeftF);
+                uint256 a = _min3(moreF, avail, leftF);
                 tf += a;
                 avail -= a;
-                tr += _min3(moreR, avail, ordLeftR);
+                tr += _min3(moreR, avail, leftR);
             }
         }
         // The rule's totals, then the ONE split that realizes them against
