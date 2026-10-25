@@ -133,6 +133,10 @@
       "types": "./src/activityParticipants.ts",
       "default": "./src/activityParticipants.ts"
     },
+    "./cspConnectSources": {
+      "types": "./src/cspConnectSources.d.mts",
+      "default": "./src/cspConnectSources.mjs"
+    },
     "./cspScriptHashes": {
       "types": "./src/cspScriptHashes.d.mts",
       "default": "./src/cspScriptHashes.mjs"
