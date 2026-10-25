@@ -1,4 +1,4 @@
-## Keeper — the "delivery not whole" alert counts from when the keeper found it (PR #TBD)
+## Keeper — the "delivery not whole" alert counts from when the keeper found it (PR #2797)
 
 The keeper warns the operators when a reward-budget delivery that has reached a mirror is still not fully indexed or proven. It allowed ten minutes from the delivery's arrival. On Arbitrum Sepolia the first two batch deliveries were indexed 8.8 and 9.4 minutes after they arrived, one slow scan away from a false alarm. BNB Testnet's took 4.4 minutes.
 
