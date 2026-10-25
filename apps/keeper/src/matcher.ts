@@ -55,6 +55,7 @@ import {
   RiskPreviewFacetABI,
   AdminFacetABI,
   LenderIntentFacetABI,
+  ClaimFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import type { PassTick } from './passSchedule';
@@ -68,7 +69,7 @@ import {
   type KeeperContext,
 } from './keeper';
 import { reportSendError } from './submissionQueue';
-import { ROLL_MIN_VALUE_TO_GAS, judgeRollValue } from './rollGasFloor';
+import { ROLL_MIN_VALUE_TO_GAS, estimateRollFeeWei, judgeRollValue, rollUnpricedReason } from './rollGasFloor';
 
 // `getActiveOffersCount` / `getActiveOffersPaginated` live on
 // MetricsFacet; `getOffer` on OfferCancelFacet post the EIP-170 facet
@@ -265,36 +266,51 @@ const MATCH_ERR_COLLATERAL_BELOW = 6;
  *  after the probe at the smallest legal fill. */
 export const INTENT_SIZE_DOWN_MAX_PROBES = 6;
 
+/** The refusals a probe can meet only because its fill is too SMALL (#2760).
+ *  The search starts from a larger fill `hi` that passed every gate the preview
+ *  runs before the match core, so at a smaller fill these name a low-end limit:
+ *  `IntentError.BelowMinFill` (9, the intent's minimum fill),
+ *  `CollateralUnresolvable` (14, which past `hi` can only be the required
+ *  collateral rounding to zero), `SliceCollateralBelowFloor` (18, the
+ *  create-time collateral floor) and `MatchError.AmountNoOverlap` (4, below the
+ *  borrower's minimum amount, since `hi` overlapped). Every OTHER refusal is
+ *  read as too big: the gates `hi` never reached (the risk gate, the accept
+ *  gate's KYC tier, the solver's capacity) refuse larger fills, never only
+ *  smaller ones. */
+const INTENT_ERR_LOW_END = new Set<number>([9, 14, 18]);
+const MATCH_ERR_AMOUNT_NO_OVERLAP = 4;
+
 /** What one `previewIntent` probe says about the fill size it was sent (#2760).
  *
  *  - `ok`: the fill is viable.
- *  - `tooBig`: refused `CollateralBelowRequired`. That refusal is monotone in
- *    the fill: the collateral the slice requires never falls as the fill grows,
- *    while what the borrower can post is fixed, so every larger fill is refused
- *    the same way.
- *  - `belowWindow`: refused for any other reason. The search only starts after
- *    the larger fill `hi` passed every gate the preview runs before the match
- *    core and failed only on collateral, so a smaller fill refused elsewhere has
- *    met a low-end limit (a floor or a minimum that rounds against a dust fill),
- *    and the search moves up. If the refusal is in fact size-independent, the
- *    search spends its bounded probes and returns nothing.
+ *  - `belowWindow`: refused only because the fill is too small (see
+ *    {@link INTENT_ERR_LOW_END}); the search moves up.
+ *  - `tooBig`: refused for any other reason, and the search moves down. A
+ *    collateral refusal is monotone in the fill (the collateral the slice
+ *    requires never falls as the fill grows, while what the borrower can post is
+ *    fixed), and so are the later gates `hi` never reached. A refusal that is in
+ *    fact size-independent drives the search down to `lo`, where it ends.
  *  - `unread`: the preview read itself failed. It says nothing about the size,
  *    so the search stops with what it has. */
 export type IntentProbeVerdict = 'ok' | 'tooBig' | 'belowWindow' | 'unread';
 
-export function intentProbeVerdict(p: Pick<IntentPreview, 'ok' | 'matchError'> | null): IntentProbeVerdict {
+export function intentProbeVerdict(
+  p: Pick<IntentPreview, 'ok' | 'intentError' | 'matchError'> | null,
+): IntentProbeVerdict {
   if (!p) return 'unread';
   if (p.ok) return 'ok';
-  return p.matchError === MATCH_ERR_COLLATERAL_BELOW ? 'tooBig' : 'belowWindow';
+  if (INTENT_ERR_LOW_END.has(p.intentError)) return 'belowWindow';
+  if (p.intentError === 0 && p.matchError === MATCH_ERR_AMOUNT_NO_OVERLAP) return 'belowWindow';
+  return 'tooBig';
 }
 
 /** The largest viable fill in `[lo, hi)`, given that `hi` was refused for
  *  collateral (#2760, Codex #748 r4–r6). It probes `lo` first: when the viable
  *  fill is a small fraction of `hi`, a search that starts in the middle could
- *  spend every probe above it. A `lo` refused for collateral proves no fill in
- *  the range is viable (see {@link IntentProbeVerdict}). A `lo` refused for any
- *  other reason does NOT: a dust fill can fail on rounding where a larger one
- *  passes, so the search goes on above it. Then a bisection keeps the largest
+ *  spend every probe above it. A `lo` refused as too big proves no fill in the
+ *  range is viable (see {@link IntentProbeVerdict}). A `lo` refused as too
+ *  small does NOT: a dust fill can fail on rounding where a larger one passes,
+ *  so the search goes on above it. Then a bisection keeps the largest
  *  viable fill seen, moving down on `tooBig` and up on `ok` or `belowWindow`.
  *
  *  `probe` returns null once the caller's preview budget is spent; the search
@@ -1356,6 +1372,15 @@ async function runIntentRollPass(
 
   const rollable = await listRollableLoans(ctx, overBudget, run);
   if (rollable.length === 0) return;
+  // #2760 item 3 — a chain whose fee the keeper cannot value gets no rolls at
+  // all: say it once and leave the loans to their owners.
+  const unpriced = rollUnpricedReason(ctx.chainId);
+  if (unpriced) {
+    console.log(
+      `[matcher] chain=${ctx.chainId} roll pass: not rolling, ${unpriced}; owners can roll or claim their loans themselves`,
+    );
+    return;
+  }
 
   let submits = submitsUsed;
   let rolled = 0;
@@ -1371,13 +1396,13 @@ async function runIntentRollPass(
       logKeepersPausedOnce(ctx);
       return;
     }
-    // #2760 item 3 — the keeper pays this roll's gas and earns nothing back,
-    // so it rolls only when the amount is worth its gas (see rollGasFloor.ts).
-    // The estimate is also where an undelegated owner first shows: it reverts
-    // `KeeperAccessRequired` before anything is signed.
-    let gasUnits: bigint;
+    // #2760 item 3 — the keeper pays this roll's whole fee and earns nothing
+    // back, so it rolls only when the amount is worth that fee (see
+    // rollGasFloor.ts). The estimate is also where an undelegated owner first
+    // shows: it reverts `KeeperAccessRequired` before anything is signed.
+    let feeWei: bigint;
     try {
-      gasUnits = await ctx.client.estimateContractGas({
+      feeWei = await estimateRollFeeWei(ctx.client, ctx.chainId, {
         address: ctx.diamond,
         abi: MATCHER_ABI,
         functionName: 'rollIntentLoan',
@@ -1389,9 +1414,27 @@ async function runIntentRollPass(
         unauthorizedOwners.add(loan.owner.toLowerCase());
       } else {
         console.log(
-          `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: gas estimate failed: ${String(err).slice(0, 200)}`,
+          `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: fee estimate failed: ${String(err).slice(0, 200)}`,
         );
       }
+      continue;
+    }
+    // The roll re-lends the lender's recorded claim (principal plus interest),
+    // not the original fill the registry row reports, so that is what is valued.
+    let rolledAmount: bigint;
+    try {
+      const [, amount, claimed] = (await ctx.client.readContract({
+        address: ctx.diamond,
+        abi: ClaimFacetABI as Abi,
+        functionName: 'getClaimableAmount',
+        args: [loan.loanId, true],
+      })) as readonly [Address, bigint, boolean];
+      if (claimed) continue; // already paid out: nothing left to roll
+      rolledAmount = amount;
+    } catch (err) {
+      console.log(
+        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: claim read failed: ${String(err).slice(0, 200)}`,
+      );
       continue;
     }
     const verdict = await judgeRollValue(
@@ -1399,8 +1442,8 @@ async function runIntentRollPass(
       ctx.diamond,
       ctx.chainId,
       loan.lendingAsset,
-      loan.amount,
-      gasUnits,
+      rolledAmount,
+      feeWei,
     );
     if (verdict.kind === 'gasUnpriced') {
       // The same for every loan on this chain this run: say it once and stop.

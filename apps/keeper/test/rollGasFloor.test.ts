@@ -6,7 +6,10 @@ import { describe, expect, it } from 'vitest';
 import type { Address } from 'viem';
 import {
   ROLL_MIN_VALUE_TO_GAS,
+  estimateRollFeeWei,
   judgeRollValue,
+  rollFeeModel,
+  rollUnpricedReason,
   rollWorthItsGas,
   wrappedNativeToken,
 } from '../src/rollGasFloor';
@@ -27,6 +30,46 @@ describe('wrappedNativeToken', () => {
   });
 });
 
+describe('rollFeeModel', () => {
+  it('charges OP-stack chains their L1 data fee, and knows no model for an unlisted chain', () => {
+    for (const id of [8453, 84532, 10, 11155420]) expect(rollFeeModel(id)).toBe('opStack');
+    for (const id of [1, 11155111, 137, 42161, 421614]) expect(rollFeeModel(id)).toBe('gasOnly');
+    expect(rollFeeModel(97)).toBeNull();
+    expect(rollFeeModel(999_999)).toBeNull();
+  });
+  it('names why a chain cannot be valued', () => {
+    expect(rollUnpricedReason(84532)).toBeNull();
+    expect(rollUnpricedReason(97)).toMatch(/wrapped native token/);
+  });
+});
+
+describe('estimateRollFeeWei', () => {
+  const request = {
+    address: DIAMOND,
+    abi: [] as never,
+    functionName: 'rollIntentLoan',
+    args: [1n],
+    account: { address: DIAMOND, type: 'json-rpc' } as never,
+  };
+  it('is gas times price where the chain charges nothing else', async () => {
+    const c = { estimateContractGas: async () => 50_000n, getGasPrice: async () => 3n };
+    expect(await estimateRollFeeWei(c as never, 421614, request)).toBe(150_000n);
+  });
+  it('refuses a chain whose fee model is unknown instead of returning the gas alone', async () => {
+    const c = { estimateContractGas: async () => 50_000n, getGasPrice: async () => 3n };
+    await expect(estimateRollFeeWei(c as never, 97, request)).rejects.toThrow(/fee model/);
+  });
+  it('passes the estimate revert through, so an undelegated owner is still recognised', async () => {
+    const c = {
+      estimateContractGas: async () => {
+        throw new Error('reverted: KeeperAccessRequired');
+      },
+      getGasPrice: async () => 1n,
+    };
+    await expect(estimateRollFeeWei(c as never, 1, request)).rejects.toThrow(/KeeperAccessRequired/);
+  });
+});
+
 describe('rollWorthItsGas', () => {
   it('needs the rolled value to be at least 100x the gas value', () => {
     expect(ROLL_MIN_VALUE_TO_GAS).toBe(100n);
@@ -38,14 +81,10 @@ describe('rollWorthItsGas', () => {
 
 /** A client whose Diamond values `asset` at `perUnit` numeraire per base unit
  *  (or throws), recording each valuation call. */
-function client(values: Record<string, bigint | 'throw'>, gasPrice: bigint | 'throw' = 2n) {
+function client(values: Record<string, bigint | 'throw'>) {
   const calls: { asset: string; units: bigint; roundUp: boolean }[] = [];
   return {
     calls,
-    getGasPrice: async () => {
-      if (gasPrice === 'throw') throw new Error('rpc down');
-      return gasPrice;
-    },
     readContract: async (req: { args: readonly [Address, bigint, boolean] }) => {
       const [asset, units, roundUp] = req.args;
       calls.push({ asset: asset.toLowerCase(), units, roundUp });
@@ -59,10 +98,10 @@ function client(values: Record<string, bigint | 'throw'>, gasPrice: bigint | 'th
 describe('judgeRollValue', () => {
   const values = { [WETH_BASE_SEPOLIA]: 1n, [USDC.toLowerCase()]: 1n };
 
-  it('rolls when the amount is worth 100x its gas, rounding the gas up and the amount down', async () => {
+  it('rolls when the amount is worth 100x its fee, rounding the fee up and the amount down', async () => {
     const c = client(values);
-    // gas = 50_000 units x 2 wei = 100_000; amount = 10_000_000 >= 100 x 100_000.
-    const v = await judgeRollValue(c as never, DIAMOND, 84532, USDC, 10_000_000n, 50_000n);
+    // fee = 100_000 wei; amount = 10_000_000 >= 100 x 100_000.
+    const v = await judgeRollValue(c as never, DIAMOND, 84532, USDC, 10_000_000n, 100_000n);
     expect(v).toEqual({ kind: 'worth', rolledValue: 10_000_000n, gasValue: 100_000n });
     expect(c.calls).toEqual([
       { asset: WETH_BASE_SEPOLIA, units: 100_000n, roundUp: true },
@@ -71,7 +110,7 @@ describe('judgeRollValue', () => {
   });
 
   it('declines a dust roll', async () => {
-    const v = await judgeRollValue(client(values) as never, DIAMOND, 84532, USDC, 9_999_999n, 50_000n);
+    const v = await judgeRollValue(client(values) as never, DIAMOND, 84532, USDC, 9_999_999n, 100_000n);
     expect(v.kind).toBe('dust');
   });
 
@@ -80,10 +119,7 @@ describe('judgeRollValue', () => {
     expect(v.kind).toBe('gasUnpriced');
   });
 
-  it('cannot value gas when the gas price or the wrapped token price is unreadable', async () => {
-    expect((await judgeRollValue(client(values, 'throw') as never, DIAMOND, 84532, USDC, 1n, 1n)).kind).toBe(
-      'gasUnpriced',
-    );
+  it('cannot value gas when the wrapped token price is unreadable', async () => {
     expect(
       (await judgeRollValue(client({ [USDC.toLowerCase()]: 1n }) as never, DIAMOND, 84532, USDC, 1n, 1n)).kind,
     ).toBe('gasUnpriced');

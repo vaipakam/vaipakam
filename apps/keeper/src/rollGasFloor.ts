@@ -10,16 +10,23 @@
  * comparison in the protocol uses. A loan the keeper declines is not stuck: its
  * owner can still roll it, or claim it, themselves.
  *
- * The gas is paid in the chain's native coin, which the Diamond does not price
+ * The cost valued is the roll's WHOLE fee, as each chain charges it (see
+ * {@link rollFeeModel}): on an OP-stack chain that is the execution gas plus
+ * the separately charged L1 data fee and any operator fee. A chain whose fee
+ * model this keeper does not know gets no figure, rather than the execution
+ * gas alone, which would understate it.
+ *
+ * The fee is paid in the chain's native coin, which the Diamond does not price
  * directly, so it is valued through the chain's WRAPPED native token: one wei
- * of gas cost is one base unit of the wrapped token (both 18 decimals). Where
- * this keeper does not know a chain's wrapped native token, or the Diamond
- * cannot price it, no roll is worth its gas as far as the keeper can tell, and
- * the pass says so instead of rolling unpriced.
+ * of fee is one base unit of the wrapped token (both 18 decimals). Where this
+ * keeper does not know a chain's wrapped native token or fee model, or the
+ * Diamond cannot price the token, no roll is worth its gas as far as the keeper
+ * can tell, and the pass says so instead of rolling unpriced.
  */
 import { NumeraireValueFacetABI } from '@vaipakam/contracts/abis';
 import { getDeployment } from '@vaipakam/contracts/deployments';
-import type { Abi, Address, PublicClient } from 'viem';
+import type { Abi, Account, Address, PublicClient } from 'viem';
+import { estimateContractTotalFee } from 'viem/op-stack';
 
 /** The rolled amount must be worth at least this many times the roll's gas. */
 export const ROLL_MIN_VALUE_TO_GAS = 100n;
@@ -53,6 +60,57 @@ export function wrappedNativeToken(chainId: number): Address | null {
   return OTHER_GAS_TOKENS[chainId] ?? null;
 }
 
+/** How a chain charges for a transaction, as far as this keeper knows.
+ *
+ *  - `gasOnly`: the fee is the gas used times the gas price. Ethereum and
+ *    Polygon PoS charge nothing else; Arbitrum charges for its L1 data in L2
+ *    gas, which its gas estimate already includes.
+ *  - `opStack`: the execution gas, plus an L1 data fee and (from Isthmus) an
+ *    operator fee that the gas estimate leaves out.
+ *  - null: unknown, so no roll here can be valued. */
+export type RollFeeModel = 'gasOnly' | 'opStack';
+const FEE_MODELS: Readonly<Record<number, RollFeeModel>> = {
+  1: 'gasOnly', // Ethereum
+  11155111: 'gasOnly', // Ethereum Sepolia
+  137: 'gasOnly', // Polygon PoS
+  42161: 'gasOnly', // Arbitrum One (L1 data is in the gas estimate)
+  421614: 'gasOnly', // Arbitrum Sepolia
+  8453: 'opStack', // Base
+  84532: 'opStack', // Base Sepolia
+  10: 'opStack', // Optimism
+  11155420: 'opStack', // OP Sepolia
+};
+
+export function rollFeeModel(chainId: number): RollFeeModel | null {
+  return FEE_MODELS[chainId] ?? null;
+}
+
+/** Why no roll on `chainId` can be valued, or null when one can. */
+export function rollUnpricedReason(chainId: number): string | null {
+  if (!wrappedNativeToken(chainId)) return 'no wrapped native token is known for this chain';
+  if (!rollFeeModel(chainId)) return "this chain's transaction fee model is not known to the keeper";
+  return null;
+}
+
+/** The roll's whole fee in wei under the chain's fee model. Throws what the
+ *  estimate throws (an undelegated owner's revert among them), and throws on a
+ *  chain whose fee model is unknown rather than returning the gas alone. */
+export async function estimateRollFeeWei(
+  client: PublicClient,
+  chainId: number,
+  request: { address: Address; abi: Abi; functionName: string; args: readonly unknown[]; account: Account },
+): Promise<bigint> {
+  const model = rollFeeModel(chainId);
+  if (model === 'opStack') {
+    return estimateContractTotalFee(client as never, request as never);
+  }
+  if (model === 'gasOnly') {
+    const [gas, price] = await Promise.all([client.estimateContractGas(request as never), client.getGasPrice()]);
+    return gas * price;
+  }
+  throw new Error(`no transaction fee model is known for chain ${chainId}`);
+}
+
 /** Pure rule: is a roll worth `rolledValue` worth its `gasValue`? Both are
  *  1e18 numeraire. */
 export function rollWorthItsGas(rolledValue: bigint, gasValue: bigint): boolean {
@@ -67,16 +125,16 @@ export type RollValueVerdict =
   /** The keeper cannot value this loan's lending asset; other loans may differ. */
   | { kind: 'assetUnpriced'; reason: string };
 
-/** Value a roll of `amount` of `lendingAsset` against `gasUnits` of gas at the
- *  chain's current gas price. The rolled amount rounds DOWN and the gas UP, so
- *  a borderline roll is declined rather than paid for. */
+/** Value a roll of `amount` of `lendingAsset` against its whole fee, `feeWei`
+ *  (from {@link estimateRollFeeWei}). The rolled amount rounds DOWN and the fee
+ *  UP, so a borderline roll is declined rather than paid for. */
 export async function judgeRollValue(
-  client: Pick<PublicClient, 'readContract' | 'getGasPrice'>,
+  client: Pick<PublicClient, 'readContract'>,
   diamond: Address,
   chainId: number,
   lendingAsset: Address,
   amount: bigint,
-  gasUnits: bigint,
+  feeWei: bigint,
 ): Promise<RollValueVerdict> {
   const gasToken = wrappedNativeToken(chainId);
   if (!gasToken) return { kind: 'gasUnpriced', reason: 'no wrapped native token is known for this chain' };
@@ -89,10 +147,9 @@ export async function judgeRollValue(
     }) as Promise<bigint>;
   let gasValue: bigint;
   try {
-    const gasPrice = await client.getGasPrice();
-    gasValue = await value(gasToken, gasUnits * gasPrice, true);
+    gasValue = await value(gasToken, feeWei, true);
   } catch (err) {
-    return { kind: 'gasUnpriced', reason: `the gas cost could not be valued: ${String(err).slice(0, 120)}` };
+    return { kind: 'gasUnpriced', reason: `the fee could not be valued: ${String(err).slice(0, 120)}` };
   }
   let rolledValue: bigint;
   try {

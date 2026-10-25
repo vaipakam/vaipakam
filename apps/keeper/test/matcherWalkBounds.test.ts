@@ -67,11 +67,21 @@ describe('groupByCreator', () => {
 });
 
 describe('intentProbeVerdict', () => {
-  it('reads a collateral refusal as too big and any other refusal as below the window', () => {
+  it('reads only the low-end refusals as below the window, and every other refusal as too big', () => {
     expect(intentProbeVerdict(null)).toBe('unread');
-    expect(intentProbeVerdict({ ok: true, matchError: 0 })).toBe('ok');
-    expect(intentProbeVerdict({ ok: false, matchError: 6 })).toBe('tooBig');
-    expect(intentProbeVerdict({ ok: false, matchError: 0 })).toBe('belowWindow');
+    expect(intentProbeVerdict({ ok: true, intentError: 0, matchError: 0 })).toBe('ok');
+    // Low end: BelowMinFill, CollateralUnresolvable (rounds to zero),
+    // SliceCollateralBelowFloor, and AmountNoOverlap (below the borrower's minimum).
+    for (const intentError of [9, 14, 18]) {
+      expect(intentProbeVerdict({ ok: false, intentError, matchError: 0 })).toBe('belowWindow');
+    }
+    expect(intentProbeVerdict({ ok: false, intentError: 0, matchError: 4 })).toBe('belowWindow');
+    // Collateral, the risk gate, the accept gate (KYC tier), capacity: too big.
+    expect(intentProbeVerdict({ ok: false, intentError: 0, matchError: 6 })).toBe('tooBig');
+    expect(intentProbeVerdict({ ok: false, intentError: 0, matchError: 9 })).toBe('tooBig');
+    expect(intentProbeVerdict({ ok: false, intentError: 20, matchError: 0 })).toBe('tooBig');
+    expect(intentProbeVerdict({ ok: false, intentError: 22, matchError: 0 })).toBe('tooBig');
+    expect(intentProbeVerdict({ ok: false, intentError: 0, matchError: 0 })).toBe('tooBig');
   });
 });
 
@@ -131,6 +141,28 @@ describe('searchIntentFill', () => {
       fill === 10n ? { verdict: 'ok' as const, preview: fill } : { verdict: 'unread' as const, preview: fill },
     );
     expect(unread?.fill).toBe(10n);
+  });
+
+  it('an upper-bound refusal past the collateral gate moves the search down (Codex #2807 r1)', async () => {
+    // Collateral covers fills up to 700, the accept gate's KYC tier only up to
+    // 200: the largest viable fill is 200, not lo.
+    const sent: bigint[] = [];
+    const r = await searchIntentFill(
+      10n,
+      1000n,
+      async (fill) => {
+        sent.push(fill);
+        const p =
+          fill > 700n
+            ? { ok: false, intentError: 0, matchError: 6 }
+            : fill > 200n
+              ? { ok: false, intentError: 20, matchError: 0 }
+              : { ok: true, intentError: 0, matchError: 0 };
+        return { verdict: intentProbeVerdict(p), preview: fill };
+      },
+      20,
+    );
+    expect(r?.fill).toBe(200n);
   });
 
   it('an empty range sends nothing', async () => {
