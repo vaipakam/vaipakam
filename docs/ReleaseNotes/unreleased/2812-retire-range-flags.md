@@ -1,4 +1,4 @@
-## Thread — Retire the dead range flags (PR #<n>)
+## Thread — Retire the dead range flags (PR #2839)
 
 Ranged offers are now always on, and the three flags that claimed to switch
 them off are gone. The two range master flags (one for ranged amounts, one for
