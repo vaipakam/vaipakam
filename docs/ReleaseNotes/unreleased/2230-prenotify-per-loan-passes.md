@@ -1,4 +1,4 @@
-## Thread — the payment reminder lane remembers what each pass examined, loan by loan (PR #<n>)
+## Thread — the payment reminder lane remembers what each pass examined, loan by loan (PR #2845)
 
 The agent's periodic-interest reminder lane works through the loans whose payment deadline is inside the reminder window, nearest deadline first, within a bounded allowance per run. Until now it remembered how far it had got as a single place in that order. A loan that appeared in front of that place waited for the whole pass to wrap round, even when its deadline was the nearest of all. That could be a loan the index had only just found, or a period that had just come into the window. Re-checking the front of the window on every run would not fix that, because loans that are examined but never reminded (nobody to tell, an opt-out, a loan the chain rejects) would then hold the allowance on every run (#2230).
 
