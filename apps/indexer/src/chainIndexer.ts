@@ -5686,9 +5686,38 @@ export async function processLoanLogs(
       // current-owner together so the read routes attribute the loan to the new
       // borrower (and not the exited one). The mint Transfer for the new id is a
       // no-op until this write lands; this write is the authoritative one.
+      //
+      // #2808 (Codex #2822 r3 P1) — the handover also RE-ORIGINATES the
+      // term: `PrecloseFacet` sets the incoming borrower's collateral amount
+      // and token id, rate, duration and `startTime = block.timestamp`. The
+      // row's term is what the loan routes date the loan by (start + duration
+      // + pause credit since start), so leaving the exiting borrower's term
+      // here served a wrong due date as `available` and credited pauses from
+      // before the new term began. The event carries no start time and a
+      // block timestamp here may be the wall-clock sentinel, so the term is
+      // read from the chain, pinned to the event's block — the same
+      // absolute-value read `SwapToRepayPartialExecuted` makes, so a re-scan
+      // writes the same values. Any RPC error passes through and the pass
+      // retries: nothing else repairs an Active row's term.
+      const transferredLoanId = Number(a.loanId as bigint);
+      const term = (await client.readContract({
+        address: diamond,
+        abi: DIAMOND_LOAN_DETAILS_ABI,
+        functionName: 'getLoanDetails',
+        args: [BigInt(transferredLoanId)],
+        blockNumber: log.blockNumber,
+      })) as {
+        collateralAmount: bigint;
+        collateralTokenId: bigint;
+        interestRateBps: bigint;
+        durationDays: bigint;
+        startTime: bigint;
+      };
       const obligationMoved = await env.DB.prepare(
         `UPDATE loans
             SET borrower = ?, borrower_token_id = ?, borrower_current_owner = ?,
+                collateral_amount = ?, collateral_token_id = ?,
+                interest_rate_bps = ?, duration_days = ?, start_time = ?,
                 updated_at = ?
           WHERE chain_id = ? AND loan_id = ?`,
       )
@@ -5696,9 +5725,14 @@ export async function processLoanLogs(
           String(a.newBorrower as string).toLowerCase(),
           String(a.newBorrowerTokenId as bigint),
           String(a.newBorrower as string).toLowerCase(),
+          term.collateralAmount.toString(),
+          term.collateralTokenId.toString(),
+          Number(term.interestRateBps),
+          Number(term.durationDays),
+          Number(term.startTime),
           Math.floor(Date.now() / 1000),
           chainId,
-          Number(a.loanId as bigint),
+          transferredLoanId,
         )
         .run();
       // RPC read-diet PR 0 — the borrower side changed hands (burn +
@@ -5712,7 +5746,7 @@ export async function processLoanLogs(
       await recordLoanParticipant(
         env,
         chainId,
-        Number(a.loanId as bigint),
+        transferredLoanId,
         String(a.newBorrower as string),
         'borrower',
         blockTimestamps.get(log.blockNumber) ?? now,

@@ -20,6 +20,13 @@ reminder whose deadline a pause moved says by how much and why. Contracts
 deployed before the loan clock have never moved a deadline, so on those
 chains (the current testnets until their next refresh) nothing changes.
 
+Dating a loan from its own start also needed the indexer's copy of that start
+to be right. When a borrower hands an obligation to a replacement borrower,
+the loan stays open but starts a new term: new collateral, rate, duration and
+start time. The indexer used to record only the new borrower and keep the old
+term, so it would have dated the loan from the exiting borrower's term. It now
+reads the new term from the chain at the handover and records it.
+
 The periodic-interest reminders now spend one more request per chain per
 run, so a run reaches one loan fewer before its allowance runs out. The
 reminder window is days wide, so a loan left for a later run is still
