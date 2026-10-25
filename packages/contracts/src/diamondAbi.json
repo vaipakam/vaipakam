@@ -1428,6 +1428,7 @@
 {"type":"error","name":"InvalidPartialLiqSizing","inputs":[]},
 {"type":"error","name":"InvalidRateModelDeviation","inputs":[]},
 {"type":"error","name":"NotWatcherOrAdmin","inputs":[]},
+{"type":"error","name":"PauseIntervalOutOfRange","inputs":[{"name":"index","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"RateModelNotContract","inputs":[]},
 {"type":"error","name":"SwapAdapterAlreadyRegistered","inputs":[]},
 {"type":"error","name":"SwapAdapterNotRegistered","inputs":[]},

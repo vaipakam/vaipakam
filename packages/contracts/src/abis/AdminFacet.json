@@ -3314,6 +3314,17 @@
   },
   {
     "type": "error",
+    "name": "PauseIntervalOutOfRange",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "PeriodicInterestDisabled",
     "inputs": []
   },
