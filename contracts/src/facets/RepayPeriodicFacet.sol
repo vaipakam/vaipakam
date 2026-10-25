@@ -466,10 +466,16 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     ///         {PeriodicSettleSwapFailed} when every swap adapter
     ///         reverts (settler retries with fresh quote).
     /// @param loanId Loan whose period is closing.
+    /// @param sellAmount The collateral amount the try-list's quotes were
+    ///        built for. Ignored on the just-stamp path. On auto-liquidate it
+    ///        must lie between `previewForcedSale(loanId, PeriodicSettlement)`'s
+    ///        `sell` and `maxSell` at the block it settles in, else the call
+    ///        reverts `ForcedSaleQuoteOutOfRange` and nothing moves.
     /// @param adapterCalls Caller-ranked swap try-list. Ignored on the
     ///        just-stamp path; required (non-empty) on auto-liquidate.
     function settlePeriodicInterest(
         uint256 loanId,
+        uint256 sellAmount,
         LibSwap.AdapterCall[] calldata adapterCalls
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -517,24 +523,26 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         if (adapterCalls.length == 0) {
             revert IVaipakamErrors.PeriodicSettleSwapPathRequired(loanId, shortfall);
         }
-        _autoLiquidatePeriodShortfall(loan, loanId, shortfall, boundary, adapterCalls);
+        _autoLiquidatePeriodShortfall(loan, loanId, shortfall, boundary, sellAmount, adapterCalls);
     }
 
     /// @dev Auto-liquidate path body, factored out to keep the public
     ///      entry under the IR-stack budget. See `settlePeriodicInterest`
     ///      for the surrounding contract.
     ///
-    ///      #2795 — the sale is sized, sold and divided by the shared
-    ///      forced-sale host ({ForcedSaleFacet}): the least collateral whose
-    ///      worst-case proceeds cover the shortfall plus the largest charges,
-    ///      the lender paid at most the shortfall, the extra back to the
-    ///      borrower. This facet keeps the preconditions, the consolidation,
-    ///      the lien and the vault withdrawal, the checkpoint and its event.
+    ///      #2795 / #2796 — the sale is sized, pulled, sold and divided by the
+    ///      shared forced-sale host ({ForcedSaleFacet.sellToNeed}): the least
+    ///      collateral whose worst-case proceeds cover the shortfall plus the
+    ///      largest charges (the keeper's quoted amount, within the host's
+    ///      margin), the lender paid at most the shortfall, the extra back to
+    ///      the borrower. This facet keeps the preconditions, the
+    ///      consolidation, the checkpoint and its event.
     function _autoLiquidatePeriodShortfall(
         LibVaipakam.Loan storage loan,
         uint256 loanId,
         uint256 shortfall,
         uint256 boundary,
+        uint256 sellAmount,
         LibSwap.AdapterCall[] calldata adapterCalls
     ) private {
         // T-090 v1.1 (#389) §5.8 layer 2 — same force-cancel-on-
@@ -562,76 +570,28 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             ),
             bytes4(0)
         );
-        // #2795 — size the sale to need, on the consolidated position. The sale
+        // #2795 — size, sell and divide on the consolidated position. The sale
         // cannot proceed without a price, so a missing or stale feed reverts
-        // here with the reader's own error before anything moves.
-        ForcedSaleFacet.ForcedSalePlan memory plan = abi.decode(
-            LibFacet.crossFacetStaticCall(
-                abi.encodeCall(
-                    ForcedSaleFacet.previewForcedSale,
-                    (loanId, ForcedSaleFacet.ForcedSaleKind.PeriodicSettlement)
-                ),
-                bytes4(0)
-            ),
-            (ForcedSaleFacet.ForcedSalePlan)
-        );
-
-        // #407 PR 4 round-1 Codex P1 #1 (2026-06-12) — decrement the
-        // lien by the slice sold. Loan stays Active after the slice swap, so a
-        // release would leave the residual collateral unprotected.
-        _decrementLienAtPeriodicAutoLiq(loanId, plan.sell);
-
-        // #2440 — a forced close-out acts on what arrived: the vault gives up
-        // the whole slice (its tracked balance and the loan's collateral fall
-        // by `plan.sell`), and the sale uses what reached the Diamond, so a
-        // short delivery is never made up from the Diamond's other balance.
-        // #2795 — pulled under the forced close-out move-out exemption, the
-        // same pull the liquidation and default paths use: this settlement is
-        // a Tier-2 close-out that pays the lender, so a sanctions-flagged
-        // borrower must not block it (their extra is held, see the host).
-        uint256 sliceReceived = LibSanctionedLock.pullToDiamond(
-            LibVaipakam.storageSlot(), loan.borrower, loan.collateralAsset, plan.sell
-        );
-        (
-            uint256 lenderProceeds,
-            uint256 borrowerExtra,
-            bool extraHeld,
-            uint256 bonus,
-            uint256 handlingFee
-        ) = abi.decode(
+        // inside the host with the reader's own error before anything moves;
+        // every route failing reverts {PeriodicSettleSwapFailed}.
+        ForcedSaleFacet.ForcedSaleOutcome memory out = abi.decode(
             LibFacet.crossFacetCallReturn(
                 abi.encodeCall(
-                    ForcedSaleFacet.settlePeriodicSale,
-                    (loanId, plan, sliceReceived, adapterCalls, msg.sender)
+                    ForcedSaleFacet.sellToNeed,
+                    (
+                        loanId,
+                        ForcedSaleFacet.ForcedSaleKind.PeriodicSettlement,
+                        sellAmount,
+                        adapterCalls,
+                        new LibSwap.SplitCall[](0),
+                        msg.sender
+                    )
                 ),
                 bytes4(0)
             ),
-            (uint256, uint256, bool, uint256, uint256)
+            (ForcedSaleFacet.ForcedSaleOutcome)
         );
-        // #658 PR-B — re-stamp the stored borrower's VPFI tier/staking once the
-        // settlement has moved VPFI in or out of their vault: the collateral
-        // slice left it (VPFI collateral), or #2795 the borrower's extra was
-        // held in it (VPFI principal). One stamp, after both movements.
-        {
-            address vpfi = LibVaipakam.storageSlot().vpfiToken;
-            if (
-                vpfi != address(0) &&
-                (loan.collateralAsset == vpfi ||
-                    (extraHeld && loan.principalAsset == vpfi))
-            ) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        ConsolidationFacet.restampUserVpfiInternal.selector,
-                        loan.borrower
-                    ),
-                    bytes4(0)
-                );
-            }
-        }
 
-        unchecked {
-            loan.collateralAmount -= plan.sell;
-        }
         // The checkpoint advances on any payout. A sale that could not cover
         // the shortfall leaves the difference owed (only what arrived was
         // credited to `interestSettled`), and the event states both figures.
@@ -640,30 +600,13 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             loanId,
             boundary,
             shortfall,
-            plan.sell,
-            lenderProceeds,
-            bonus,
-            handlingFee,
-            borrowerExtra,
-            extraHeld,
+            sellAmount,
+            out.lenderPaid,
+            out.keeperBonus,
+            out.handlingFee,
+            out.borrowerExtra,
+            out.borrowerExtraHeld,
             msg.sender
-        );
-    }
-
-    /// @dev #407 PR 4 round-1 (2026-06-12) — cross-facet lien decrement
-    ///      used only by `_autoLiquidatePeriodShortfall`. Moved here
-    ///      alongside its sole caller during the Issue #66 facet split;
-    ///      the cross-facet call is inlined (rather than re-sharing the
-    ///      `_callEncumb2` helper RepayFacet used to carry; #1566 slice 2
-    ///      deleted it with its last caller, the fallback-cure re-lien).
-    function _decrementLienAtPeriodicAutoLiq(uint256 loanId, uint256 consumed) private {
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                EncumbranceMutateFacet.decrementCollateralLien.selector,
-                loanId,
-                consumed
-            ),
-            bytes4(0)
         );
     }
 

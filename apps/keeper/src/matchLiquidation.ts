@@ -10,8 +10,12 @@
  * branch reverts `NoEnabledSwapRoute`, or the priority window refuses the
  * external path.
  *
+ * The sale size (#2796) is passed as 0. The match returns before the size
+ * is read, and with an empty list a call that does not match cannot sell
+ * at all, so no size is ever judged on this send.
+ *
  * So when no venue quotes, the liquidator previews
- * `triggerLiquidation(loanId, [])` and sends it only when the preview
+ * `triggerLiquidation(loanId, 0, [])` and sends it only when the preview
  * affirmatively shows the match: the call succeeds and the Diamond emits
  * `InternalMatchExecuted` with this loan as its first leg, which is how the
  * auto-dispatch reports it. A preview the node cannot run, a revert, or a
@@ -34,7 +38,7 @@ import { attemptErrorReason, keeperTxPending, sendInSubmissionSlot } from './kee
 
 const RISK_ABI: Abi = RiskFacetABI as Abi;
 
-/** What the chain says `triggerLiquidation(loanId, [])` would do now. */
+/** What the chain says `triggerLiquidation(loanId, 0, [])` would do now. */
 export type MatchPreview =
   /** It succeeds, and the Diamond reports a match with this loan as leg A. */
   | 'match'
@@ -45,7 +49,7 @@ export type MatchPreview =
 
 /** The empty-list `triggerLiquidation` this pass sends, encoded once. */
 function emptyListLiquidation(loanId: bigint): Hex {
-  return encodeFunctionData({ abi: RISK_ABI, functionName: 'triggerLiquidation', args: [loanId, []] });
+  return encodeFunctionData({ abi: RISK_ABI, functionName: 'triggerLiquidation', args: [loanId, 0n, []] });
 }
 
 /** Simulate the empty-list liquidation at `blockNumber` and read its logs. */

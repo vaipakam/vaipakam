@@ -16,6 +16,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
+import {liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title InternalMatchAutoDispatch.t.sol
@@ -301,8 +302,9 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         address keeper = makeAddr("keeperEOA");
         LibSwap.AdapterCall[] memory noCalls = new LibSwap.AdapterCall[](0);
 
+        uint256 sellQuote = liquidationQuote(address(diamond), LOAN_A);
         vm.prank(keeper);
-        RiskFacet(address(diamond)).triggerLiquidation(LOAN_A, noCalls);
+        RiskFacet(address(diamond)).triggerLiquidation(LOAN_A, sellQuote, noCalls);
 
         // Auto-dispatch settled both loans internally.
         assertEq(

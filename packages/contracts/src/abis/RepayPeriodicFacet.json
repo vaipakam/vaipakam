@@ -90,6 +90,11 @@
         "internalType": "uint256"
       },
       {
+        "name": "sellAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "adapterCalls",
         "type": "tuple[]",
         "internalType": "struct LibSwap.AdapterCall[]",

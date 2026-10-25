@@ -15,6 +15,7 @@ import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {periodicQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /// @title PeriodicInterestSettleTest
 /// @notice T-034 PR2 — coverage for the settle entry point (just-stamp +
@@ -207,21 +208,24 @@ contract PeriodicInterestSettleTest is SetupTest {
         vm.prank(owner);
         NumeraireConfigFacet(address(diamond)).setPeriodicInterestEnabled(false);
         vm.warp(startTs + 30 days + 1 days + 1);
+        uint256 sellQuote = periodicQuote(address(diamond), loanId);
         vm.expectRevert(IVaipakamErrors.PeriodicInterestDisabled.selector);
-        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, _emptyAdapterCalls());
+        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, sellQuote, _emptyAdapterCalls());
     }
 
     function testSettle_RevertsBeforeGraceEnd() public {
         vm.warp(startTs + 30 days); // exactly at boundary, before grace
+        uint256 sellQuote = periodicQuote(address(diamond), loanId);
         vm.expectPartialRevert(IVaipakamErrors.PeriodicSettleNotDue.selector);
-        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, _emptyAdapterCalls());
+        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, sellQuote, _emptyAdapterCalls());
     }
 
     function testSettle_RevertsAtGraceBoundaryMinusOne() public {
         // One second BEFORE grace ends — still NotDue.
         vm.warp(startTs + 30 days + 1 days - 1);
+        uint256 sellQuote = periodicQuote(address(diamond), loanId);
         vm.expectPartialRevert(IVaipakamErrors.PeriodicSettleNotDue.selector);
-        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, _emptyAdapterCalls());
+        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, sellQuote, _emptyAdapterCalls());
     }
 
     function testSettle_AllowedAtGraceBoundaryExact() public {
@@ -229,8 +233,9 @@ contract PeriodicInterestSettleTest is SetupTest {
         // strictly-less-than). With empty calls + shortfall > 0 we land
         // on SwapPathRequired — proves the time gate cleared.
         vm.warp(startTs + 30 days + 1 days);
+        uint256 sellQuote = periodicQuote(address(diamond), loanId);
         vm.expectPartialRevert(IVaipakamErrors.PeriodicSettleSwapPathRequired.selector);
-        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, _emptyAdapterCalls());
+        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, sellQuote, _emptyAdapterCalls());
     }
 
     function testSettle_RevertsForNoneCadence() public {
@@ -269,15 +274,17 @@ contract PeriodicInterestSettleTest is SetupTest {
         _signAndAcceptOffer(borrower, borrowerPk, offerId);
         uint256 noneLoanId = 2;
         vm.warp(block.timestamp + 30 days + 2 days);
+        uint256 sellQuote = periodicQuote(address(diamond), noneLoanId);
         vm.expectPartialRevert(IVaipakamErrors.PeriodicSettleNotApplicable.selector);
-        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(noneLoanId, _emptyAdapterCalls());
+        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(noneLoanId, sellQuote, _emptyAdapterCalls());
     }
 
     function testSettle_RevertsWithEmptyAdapterCallsOnShortfall() public {
         vm.warp(startTs + 30 days + 1 days + 1);
         // Borrower hasn't paid → shortfall > 0 → empty calls list rejected.
+        uint256 sellQuote = periodicQuote(address(diamond), loanId);
         vm.expectPartialRevert(IVaipakamErrors.PeriodicSettleSwapPathRequired.selector);
-        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, _emptyAdapterCalls());
+        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, sellQuote, _emptyAdapterCalls());
     }
 
     // ─── settlePeriodicInterest just-stamp path (shortfall == 0) ─────────────
@@ -346,8 +353,9 @@ contract PeriodicInterestSettleTest is SetupTest {
         vm.warp(startTs + 30 days + 1 days);
 
         address bot = makeAddr("bot");
+        uint256 sellQuote = periodicQuote(address(diamond), loanId);
         vm.prank(bot);
-        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, _emptyAdapterCalls());
+        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, sellQuote, _emptyAdapterCalls());
 
         LibVaipakam.Loan memory after_ = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(after_.lastPeriodicInterestSettledAt, SafeCast.toUint64(startTs + 30 days));

@@ -19,6 +19,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {defaultQuote, liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title  FallbackPartialLegCureTest
@@ -144,7 +145,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
     /// @notice (a) Partial leg, then a cure by top-up: the loan is Active with
     ///         lien == collateralAmount == the vault's encumbrance aggregate
     ///         and tracked balance; a later HF drop then liquidates it through
-    ///         the paying venue, which receives exactly collateralAmount.
+    ///         the paying venue, which receives exactly the amount the plan sells.
     /// @dev    WHY: this is the #2448 sequence. Before S2b the cure re-liened
     ///         the short snapshot sum, and the liquidation's withdraw of
     ///         `collateralAmount` reverted `WithdrawWouldUnderflowLien`.
@@ -157,15 +158,16 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
         uint256 c = _plCureByTopUp(f);
 
         _plSetRisk(f.a, PL_HF_LIQUIDATABLE, PL_LTV_LIQUIDATABLE);
+        uint256 sellQuote = liquidationQuote(address(diamond), f.a);
         vm.prank(plLiquidator);
-        RiskFacet(address(diamond)).triggerLiquidation(f.a, _plRoute(false));
+        RiskFacet(address(diamond)).triggerLiquidation(f.a, sellQuote, _plRoute(false));
 
         assertEq(
             uint8(_plStatus(f.a)),
             uint8(LibVaipakam.LoanStatus.Defaulted),
             "the swap liquidation closed the cured loan"
         );
-        _plAssertSoldExactly(f.a, c, f.diamondWeth0);
+        _plAssertSoldExactly(f.a, c, sellQuote, f.diamondWeth0);
     }
 
     /// @notice (a2) The same cured loan liquidated through the REVERTING
@@ -182,8 +184,9 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
         uint256 c = _plCureByTopUp(f);
 
         _plSetRisk(f.a, PL_HF_LIQUIDATABLE, PL_LTV_LIQUIDATABLE);
+        uint256 sellQuote = liquidationQuote(address(diamond), f.a);
         vm.prank(plLiquidator);
-        RiskFacet(address(diamond)).triggerLiquidation(f.a, _plRoute(true));
+        RiskFacet(address(diamond)).triggerLiquidation(f.a, sellQuote, _plRoute(true));
 
         assertEq(
             uint8(_plStatus(f.a)),
@@ -194,7 +197,7 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
     }
 
     /// @notice (a3) The cured loan defaults at grace end through the paying
-    ///         venue, which receives exactly collateralAmount.
+    ///         venue, which receives exactly the amount the plan sells.
     /// @dev    WHY: #2448's `triggerDefault` revert. The time-based default
     ///         releases the lien and withdraws `collateralAmount` like the HF
     ///         liquidation, through its own facet, so it is pinned on its own.
@@ -206,15 +209,16 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
 
         LibVaipakam.Loan memory l = _plLoan(f.a);
         vm.warp(uint256(l.startTime) + l.durationDays * 1 days + PL_PAST_EVERY_GRACE);
+        uint256 sellQuote = defaultQuote(address(diamond), f.a);
         vm.prank(plLiquidator);
-        DefaultedFacet(address(diamond)).triggerDefault(f.a, _plRoute(false));
+        DefaultedFacet(address(diamond)).triggerDefault(f.a, sellQuote, _plRoute(false));
 
         assertEq(
             uint8(_plStatus(f.a)),
             uint8(LibVaipakam.LoanStatus.Defaulted),
             "the time-based default closed the cured loan"
         );
-        _plAssertSoldExactly(f.a, c, f.diamondWeth0);
+        _plAssertSoldExactly(f.a, c, sellQuote, f.diamondWeth0);
     }
 
     /// @notice (a4) The cured loan's default through the REVERTING venue
@@ -230,8 +234,9 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
 
         LibVaipakam.Loan memory l = _plLoan(f.a);
         vm.warp(uint256(l.startTime) + l.durationDays * 1 days + PL_PAST_EVERY_GRACE);
+        uint256 sellQuote = defaultQuote(address(diamond), f.a);
         vm.prank(plLiquidator);
-        DefaultedFacet(address(diamond)).triggerDefault(f.a, _plRoute(true));
+        DefaultedFacet(address(diamond)).triggerDefault(f.a, sellQuote, _plRoute(true));
 
         assertEq(
             uint8(_plStatus(f.a)),
@@ -461,7 +466,8 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
     ///      top-up does not cure it unless the cell restores them.
     function _plLiquidateToFallback(uint256 loanId) internal {
         _plSetRisk(loanId, PL_HF_LIQUIDATABLE, PL_LTV_LIQUIDATABLE);
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, _plRoute(true));
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, _plRoute(true));
         assertEq(
             uint8(_plStatus(loanId)),
             uint8(LibVaipakam.LoanStatus.FallbackPending),
@@ -575,19 +581,34 @@ contract FallbackPartialLegCureTest is CustodyInvariantBase {
     }
 
     /// @dev After a forced close through the paying venue: the venue received
-    ///      exactly `c` of WETH, the borrower's vault released all of it, no
-    ///      lien or encumbrance survives, and the Diamond kept none.
-    function _plAssertSoldExactly(uint256 loanId, uint256 c, uint256 diamond0) internal view {
+    ///      exactly `sold` of WETH (since #2796 the amount the plan sells, not
+    ///      the whole pledge), the borrower's vault released exactly that, the
+    ///      unsold `c - sold` stays there pledged under the loan's lien for the
+    ///      borrower's claim (lien, encumbrance and tracked balance all equal
+    ///      it), and the Diamond kept none.
+    function _plAssertSoldExactly(uint256 loanId, uint256 c, uint256 sold, uint256 diamond0)
+        internal
+        view
+    {
         address owner_ = _plLoan(loanId).borrower;
+        assertGt(sold, 0, "fixture: the sale sold something");
+        assertLe(sold, c, "fixture: the sale sold at most the pledge");
         assertEq(
             _plBal(weth, address(workingAdapter)),
-            VENUE_FLOAT + c,
-            "the paying venue received exactly collateralAmount"
+            VENUE_FLOAT + sold,
+            "the paying venue received exactly the amount sold"
         );
-        assertEq(_plBal(weth, _plVault(owner_)), 0, "the vault released all of it");
-        assertEq(_plTracked(owner_, weth), 0, "and tracks none of it");
-        assertEq(_plLien(loanId), 0, "no lien survives");
-        assertEq(MetricsFacet(address(diamond)).getEncumbered(owner_, weth, 0), 0, "nothing stays encumbered");
+        assertEq(_plBal(weth, _plVault(owner_)), c - sold, "the vault released exactly the amount sold");
+        assertEq(_plTracked(owner_, weth), c - sold, "and tracks only the unsold collateral");
+        assertEq(_plLien(loanId), c - sold, "the lien is exactly the unsold collateral");
+        assertEq(
+            MetricsFacet(address(diamond)).getEncumbered(owner_, weth, 0),
+            c - sold,
+            "only the unsold collateral stays encumbered"
+        );
+        (address keptAsset, uint256 kept, ) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        assertEq(keptAsset, weth, "the borrower claim is the unsold collateral");
+        assertEq(kept, c - sold, "the borrower claim is exactly the unsold collateral");
         assertEq(_plBal(weth, address(diamond)), diamond0, "the Diamond kept none of it");
     }
 

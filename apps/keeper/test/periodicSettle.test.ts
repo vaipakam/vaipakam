@@ -3,8 +3,9 @@
  *
  * Like the grace-default pass it is a sequence of refusals with one send at
  * the end. Each refusal test asserts that NOTHING was written, not just the
- * outcome tag, and the sale tests assert the route was quoted for exactly the
- * contract's `sell` (#2795): a quote for any other amount fails every route.
+ * outcome tag, and the sale tests assert the route was quoted for, and the
+ * call sent with, the middle of the range the contract accepts (#2795,
+ * #2796): a size outside `[sell, maxSell]` reverts the call.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import { armHeldFence } from './helpers/epochFence';
@@ -46,8 +47,17 @@ const LIQUID: GraceLoan = {
   lenderTokenId: 7n,
 };
 
-const NO_SALE: ForcedSalePlan = { debt: 0n, need: 0n, sell: 0n, floor: 0n, covered: false };
-const SALE: ForcedSalePlan = { debt: 100n, need: 105n, sell: 4n * 10n ** 16n, floor: 106n, covered: true };
+const NO_SALE: ForcedSalePlan = { debt: 0n, need: 0n, sell: 0n, floor: 0n, covered: false, maxSell: 0n };
+const SALE: ForcedSalePlan = {
+  debt: 100n,
+  need: 105n,
+  sell: 4n * 10n ** 16n,
+  floor: 106n,
+  covered: true,
+  maxSell: 4n * 10n ** 16n + 2_000n,
+};
+/** `forcedSaleQuoteAmount(SALE)`: the middle of `[sell, maxSell]`. */
+const QUOTED = SALE.sell + 1_000n;
 
 function revertWith(errorName: string): Error {
   const inner = { name: 'ContractFunctionRevertedError', data: { errorName } };
@@ -147,18 +157,21 @@ describe('attemptPeriodicSettle', () => {
     const out = await attemptPeriodicSettle(h.deps, LOAN_ID);
     expect(out).toMatchObject({ kind: 'submitted', path: 'stamp', sell: 0n, calls: 0 });
     expect(h.quotedFor).toEqual([]);
-    expect(h.writes).toEqual([{ functionName: 'settlePeriodicInterest', args: [LOAN_ID, []] }]);
+    expect(h.writes).toEqual([{ functionName: 'settlePeriodicInterest', args: [LOAN_ID, 0n, []] }]);
   });
 
-  it('quotes a shortfall sale for exactly the contract-sized amount, never the whole collateral', async () => {
+  it('quotes a shortfall sale at the middle of the contract-sized range, never the whole collateral', async () => {
     const h = harness({ plans: [SALE], calls: 2 });
     const out = await attemptPeriodicSettle(h.deps, LOAN_ID);
-    expect(out).toMatchObject({ kind: 'submitted', path: 'sale', sell: SALE.sell, calls: 2 });
-    expect(h.quotedFor).toEqual([SALE.sell]);
+    expect(out).toMatchObject({ kind: 'submitted', path: 'sale', sell: QUOTED, calls: 2 });
+    expect(h.quotedFor).toEqual([QUOTED]);
     expect(h.quotedFor[0]).not.toBe(LIQUID.collateralAmount);
     expect(h.writes).toHaveLength(1);
     expect(h.writes[0].functionName).toBe('settlePeriodicInterest');
-    expect((h.writes[0].args[1] as unknown[]).length).toBe(2);
+    // The call carries the size the route was quoted for.
+    expect(h.writes[0].args[1]).toBe(QUOTED);
+    expect((h.writes[0].args[2] as unknown[]).length).toBe(2);
+    expect(h.simulations[0].args[1]).toBe(QUOTED);
     // The plan is read again at the gate's block, and the simulation runs there.
     expect(h.planBlocks).toEqual([undefined, 100n]);
     expect(h.simulations).toHaveLength(1);
@@ -184,11 +197,27 @@ describe('attemptPeriodicSettle', () => {
     expect(h.writes).toEqual([]);
   });
 
-  it('refuses when the plan moved between the quote and the gate', async () => {
-    const moved = { ...SALE, sell: SALE.sell + 1n };
+  it('still sends when the range moved but the quote is inside it', async () => {
+    const moved = { ...SALE, debt: SALE.debt + 1n, sell: SALE.sell + 1n };
     const h = harness({ plans: [SALE, moved] });
     const out = await attemptPeriodicSettle(h.deps, LOAN_ID);
-    expect(out.kind).toBe('skipped');
+    expect(out).toMatchObject({ kind: 'submitted', path: 'sale', sell: QUOTED });
+  });
+
+  it('refuses when the range moved past the quote between the quote and the gate', async () => {
+    const moved = { ...SALE, sell: QUOTED + 1n, maxSell: QUOTED + 3_000n };
+    const h = harness({ plans: [SALE, moved] });
+    const out = await attemptPeriodicSettle(h.deps, LOAN_ID);
+    expect(out.kind === 'skipped' && out.reason).toBe(
+      `gate:quote-out-of-range quoted=${QUOTED} range=[${moved.sell},${moved.maxSell}]`,
+    );
+    expect(h.simulations).toEqual([]);
+    expect(h.writes).toEqual([]);
+  });
+
+  it('refuses when a stamp became a sale between the read and the gate', async () => {
+    const h = harness({ plans: [NO_SALE, SALE] });
+    const out = await attemptPeriodicSettle(h.deps, LOAN_ID);
     expect(out.kind === 'skipped' && out.reason).toMatch(/^gate:plan-changed/);
     expect(h.simulations).toEqual([]);
     expect(h.writes).toEqual([]);

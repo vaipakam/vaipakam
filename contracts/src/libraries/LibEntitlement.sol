@@ -587,4 +587,28 @@ library LibEntitlement {
             LibVaipakam.storageSlot().assetRiskParams[collateralAsset].liqBonusBps;
         if (assetCapBps != 0 && incentiveBps > assetCapBps) incentiveBps = assetCapBps;
     }
+
+    /// @notice #2796 — a partial liquidation's split of its proceeds into
+    ///         what it repays and the charges on that repayment.
+    /// @dev    The keeper chooses the fraction sold, so the slice is not
+    ///         sized to a debt; the charges are taken on what the slice
+    ///         repays instead of on the proceeds alongside it:
+    ///         `repaid = ⌊P·BPS / (BPS + b + f)⌋`, `bonus = ⌊b·repaid / BPS⌋`,
+    ///         `fee = P − repaid − bonus`. Then `fee ≥ ⌊f·repaid / BPS⌋` (the
+    ///         rounding goes to the treasury), the lender always receives
+    ///         `repaid`, and the charges never exceed `(f + b)·repaid` plus
+    ///         rounding.
+    /// @param proceeds  `P`: what the slice raised.
+    /// @param bonusBps  `b`: the keeper's execution-quality rate
+    ///                  ({liquidatorIncentiveBps}).
+    /// @param feeBps    `f`: the handling-fee rate.
+    function chargesOnRepaid(uint256 proceeds, uint256 bonusBps, uint256 feeBps)
+        internal
+        pure
+        returns (uint256 repaid, uint256 bonus, uint256 fee)
+    {
+        repaid = (proceeds * LibVaipakam.BASIS_POINTS) / (LibVaipakam.BASIS_POINTS + bonusBps + feeBps);
+        bonus = (repaid * bonusBps) / LibVaipakam.BASIS_POINTS;
+        fee = proceeds - repaid - bonus;
+    }
 }

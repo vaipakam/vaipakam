@@ -103,6 +103,7 @@ FACETS=(
   "MetricsFacet"      # getActiveLoansCount, getActiveLoansPaginated, getActiveOffersCount, getActiveOffersPaginated, getMatchEligibleLoans (internal-match detector)
   "RiskFacet"         # calculateHealthFactor, triggerLiquidation
   "RiskMatchLiquidationFacet" # triggerInternalMatchLiquidation — moved here from RiskFacet in the #66 EIP-170 split
+  "ForcedSaleFacet"   # #2796 — previewForcedSale: the sale-size range triggerLiquidation accepts
   "LoanFacet"         # getLoanDetails
   "OfferCreateFacet"  # createOffer / getUserVault
   "OfferAcceptFacet"  # acceptOffer / acceptOfferInternal

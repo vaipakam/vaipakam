@@ -5,9 +5,15 @@
  * (HF < 1). Both are permissionless, both sell the collateral through a
  * registered swap venue, and both are accounted here to the wei — including
  * the liquidator's bonus, which comes off the top before the lender is paid.
+ *
+ * #2796 — a forced sale sells only what settling the loan needs. Each close
+ * quotes the amount from the contract's published plan (`previewForcedSale`)
+ * and the rows assert that exactly that much was sold, that the rest stays
+ * pledged in the borrower's vault, and that it goes back with the borrower's
+ * claim.
  */
 import { DIAMOND, MOCKS, TREASURY, VENUE_ROUTE, WETH, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, claimAndExpect, delta, dynamicIncentiveBps, expectPosition, forcedCloseWaterfall, lateFee, mint, openLoan, perSecondInterest, positionOf, read, snapshot, vaultAddressFor, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
+import { ABIS, FORCED_SALE_KIND, STATUS, claimAndExpect, forcedSaleQuote, delta, dynamicIncentiveBps, expectPosition, forcedCloseWaterfall, lateFee, mint, openLoan, perSecondInterest, positionOf, read, snapshot, vaultAddressFor, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { MOCK_ADAPTER_ABI, repriceFaucetAsset, sendAsOwner, setFeedUsd, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -20,16 +26,16 @@ import { cannotContinue, check, expectEq, expectLedger, observe, expectRefusal, 
  * handling-charge rate, the loan's stamped treasury fee, the debt accrued by
  * the second to the close block, and the late fee from the loan's own term.
  */
-async function expectForcedClose(id, name, loan, receipt, before, after, collateral, lending) {
+async function expectForcedClose(id, name, loan, receipt, before, after, collateral, lending, quoted) {
   const at = BigInt((await pub.getBlock({ blockNumber: receipt.blockNumber })).timestamp);
   const start = BigInt(loan.interestAccrualStart || loan.startTime);
   const endTime = BigInt(loan.startTime) + BigInt(loan.durationDays) * 86_400n;
   const sold = before['collateral.borrowerVault'] - after['collateral.borrowerVault'];
-  // A forced close sells the WHOLE pledged collateral: checked before `sold`
-  // feeds the waterfall, so a partial withdrawal cannot become the baseline
-  // every other expectation is derived from.
-  check(`${id}.sold`, 'the forced close sells the whole pledged collateral', sold === loan.collateralAmount,
-    `sold=${f18(sold)} pledged=${f18(loan.collateralAmount)}`);
+  // A forced close sells EXACTLY the amount it was quoted (#2796): checked
+  // before `sold` feeds the waterfall, so an over- or under-sale cannot
+  // become the baseline every other expectation is derived from.
+  check(`${id}.sold`, 'the forced close sells exactly the quoted amount and leaves the rest pledged', sold === quoted,
+    `sold=${f18(sold)} quoted=${f18(quoted)} pledged=${f18(loan.collateralAmount)}`);
   const proceeds = before['lending.venue'] - after['lending.venue'];
   const [handlingBps] = await read(ABIS.config, 'getLiquidationConfig');
   const incentiveBps = await dynamicIncentiveBps(collateral, lending, sold, proceeds);
@@ -51,7 +57,7 @@ async function expectForcedClose(id, name, loan, receipt, before, after, collate
     'lending.treasury': w.treasury,
     'lending.borrowerVault': w.borrower,
   }, `proceeds=${f18(proceeds)} debt=${f18(loan.principal + interest + fee)} (interest ${f18(interest)} + late fee ${f18(fee)}) incentive=${incentiveBps}bps handling=${handlingBps}bps`);
-  return w;
+  return { ...w, incentiveBps, unsold: loan.collateralAmount - sold, debt: loan.principal + interest + fee };
 }
 
 export async function run() {
@@ -93,7 +99,10 @@ export async function run() {
 
   // A forced close that cannot route the collateral REFUSES rather than
   // guessing a settlement — the try-list has to name an enabled venue.
-  const noRoute = await simulate(DIAMOND, ABIS.defaulted, 'triggerDefault', [loanId, []], outsider.address);
+  // Quoted inside the plan's range, so the probe reaches the route check
+  // rather than stopping at `ForcedSaleQuoteOutOfRange`.
+  const { sellAmount: probeQuote } = await forcedSaleQuote(loanId, FORCED_SALE_KIND.TimeBasedDefault);
+  const noRoute = await simulate(DIAMOND, ABIS.defaulted, 'triggerDefault', [loanId, probeQuote, []], outsider.address);
   expectRefusal('A3.4', 'a forced close with an empty swap try-list is refused, not silently mis-settled', noRoute, 'NoEnabledSwapRoute');
 
   // Seed the venue's output float — the mock pays out of its own balance.
@@ -102,7 +111,11 @@ export async function run() {
   const preDefault = await read(ABIS.loan, 'getLoanDetails', [loanId]);
   const preDefaultPos = await positionOf(loanId);
   const beforeDefault = await snapshot(tokens, holders);
-  const defaultReceipt = await tx(outsider, { address: DIAMOND, abi: ABIS.defaulted, functionName: 'triggerDefault', args: [loanId, VENUE_ROUTE] }, 'triggerDefault');
+  const { plan: defaultPlan, sellAmount: defaultQuote } = await forcedSaleQuote(loanId, FORCED_SALE_KIND.TimeBasedDefault);
+  check('A3.4b', 'past grace the default publishes a sale plan that covers the debt, and the quote lies inside its accepted range',
+    defaultPlan.covered && defaultQuote >= defaultPlan.sell && defaultQuote <= defaultPlan.maxSell && defaultQuote < preDefault.collateralAmount,
+    `plan sell=${f18(defaultPlan.sell)} maxSell=${f18(defaultPlan.maxSell)} covered=${defaultPlan.covered} quote=${f18(defaultQuote)} pledged=${f18(preDefault.collateralAmount)}`);
+  const defaultReceipt = await tx(outsider, { address: DIAMOND, abi: ABIS.defaulted, functionName: 'triggerDefault', args: [loanId, defaultQuote, VENUE_ROUTE] }, 'triggerDefault');
   const afterDefault = await snapshot(tokens, holders);
   const defaulted = await read(ABIS.loan, 'getLoanDetails', [loanId]);
   const d = delta(beforeDefault, afterDefault);
@@ -118,32 +131,31 @@ export async function run() {
   // The spec's DYNAMIC keeper incentive (shared by the HF and time-based
   // paths): the max-liquidation-slippage budget minus the slippage actually
   // realized against the oracle, capped by the global incentive cap and any
-  // per-asset cap — taken off the top of the proceeds. Not the loan's stamped
-  // fallback split, which merely happens to be the same 300 bps here.
-  const sold = beforeDefault['collateral.borrowerVault'] - afterDefault['collateral.borrowerVault'];
+  // per-asset cap — taken off the top of the proceeds, as a share of the debt
+  // the sale settles (#2796). Not the loan's stamped fallback split, which
+  // merely happens to be the same 300 bps here.
   const bonus = afterDefault['lending.liquidator'] - beforeDefault['lending.liquidator'];
-  const bonusBps = await dynamicIncentiveBps(collateral, lending, sold, proceeds);
-  expectEq('A3.6', 'the caller earns the dynamic keeper incentive, taken off the top of the proceeds',
-    bonus, (proceeds * bonusBps) / 10_000n, `${bonusBps}bps of ${f18(proceeds)} of swap proceeds`);
-  await expectForcedClose('A3.6b', 'the time-based default settles exactly per the spec\'s waterfall: keeper first, lender (net of the treasury fee on recovered interest and late fee), the subordinated handling charge, the borrower\'s residual',
-    preDefault, defaultReceipt, beforeDefault, afterDefault, collateral, lending);
-  // A forced close sells the WHOLE collateral, so nothing is left to
-  // encumber and the lien reads released (amount 0). The recorded collateral
-  // amount is the loan's original term and stays as it was on a terminal
-  // close; the NFTs stay with their holders, who claim through them next.
-  await expectPosition('A3.6c', 'the time-based default changes the position exactly: status Defaulted, both position NFTs "Loan Liquidated" because the collateral was sold, the lien released because all of it was — NFT holders and recorded terms unchanged',
-    loanId, preDefaultPos, { status: STATUS.Defaulted, ...bothNfts(NFT_STATUS.LoanLiquidated), lienReleased: true, lienAmount: 0n });
+  const defaultW = await expectForcedClose('A3.6b', 'the time-based default settles exactly per the spec\'s waterfall: keeper first, lender (net of the treasury fee on recovered interest and late fee), the subordinated handling charge, the borrower\'s extra',
+    preDefault, defaultReceipt, beforeDefault, afterDefault, collateral, lending, defaultQuote);
+  expectEq('A3.6', 'the caller earns the dynamic keeper incentive on the debt, taken off the top of the proceeds',
+    bonus, defaultW.bonus, `${defaultW.incentiveBps}bps of the debt ${f18(defaultW.debt)} (proceeds ${f18(proceeds)})`);
+  // The sale takes only what the debt needs, so the rest of the collateral
+  // stays pledged: the lien falls by exactly what was sold and is NOT
+  // released. The recorded collateral amount is the loan's original term;
+  // the NFTs stay with their holders, who claim through them next.
+  await expectPosition('A3.6c', 'the time-based default changes the position exactly: status Defaulted, both position NFTs "Loan Liquidated" because collateral was sold, the lien lowered to the unsold collateral — NFT holders and recorded terms unchanged',
+    loanId, preDefaultPos, { status: STATUS.Defaulted, ...bothNfts(NFT_STATUS.LoanLiquidated), lienReleased: false, lienAmount: defaultW.unsold });
 
   // Each side's claim must move exactly the share the default credited to
   // that side's vault out to that side's wallet — both legs, and nothing else
   // (not the Diamond, not the treasury, not the other side). Any collateral
   // the sale did not take goes back with the borrower's claim.
-  const unsold = preDefault.collateralAmount - sold;
+  const unsold = defaultW.unsold;
   let claimPos = await positionOf(loanId);
   for (const [side, fn, acct] of [['lender', 'claimAsLender', lender], ['borrower', 'claimAsBorrower', borrower]]) {
     const credited = afterDefault[`lending.${side}Vault`] - beforeDefault[`lending.${side}Vault`];
-    if (credited <= 0n) cannotContinue(`A3.7.${side}`, `the default credited the ${side} nothing to claim`);
     const residual = side === 'borrower' ? unsold : 0n;
+    if (credited <= 0n && residual === 0n) cannotContinue(`A3.7.${side}`, `the default credited the ${side} nothing to claim`);
     const before = await snapshot(tokens, holders);
     const r = await tx(acct, { address: DIAMOND, abi: ABIS.claim, functionName: fn, args: [loanId] }, fn);
     const after = await snapshot(tokens, holders);
@@ -189,7 +201,10 @@ export async function run() {
   await repriceFaucetAsset(tliq, Number(probePrice) / 1e18);
   const midHf = await read(ABIS.risk, 'calculateHealthFactor', [hfLoan]);
   const midRoutable = await read(ABIS.oracle, 'checkLiquidity', [collateral]);
-  const midSim = await simulate(DIAMOND, ABIS.risk, 'triggerLiquidation', [hfLoan, VENUE_ROUTE], outsider.address);
+  // A healthy loan has no sale plan (`sell` 0), so the probe quotes 0 and the
+  // health-factor guard is what answers it.
+  const { sellAmount: midQuote } = await forcedSaleQuote(hfLoan, FORCED_SALE_KIND.HealthFactor);
+  const midSim = await simulate(DIAMOND, ABIS.risk, 'triggerLiquidation', [hfLoan, midQuote, VENUE_ROUTE], outsider.address);
   // In band by construction; routable only if the seeded pool carries the
   // move — which is the file's envelope, not a protocol property.
   requireEnvelope('seeded pool depth', Number(midRoutable) === 0,
@@ -231,7 +246,8 @@ export async function run() {
   const preLiq = await read(ABIS.loan, 'getLoanDetails', [hfLoan]);
   const preLiqPos = await positionOf(hfLoan);
   const beforeLiq = await snapshot(tokens, holders);
-  const liqReceipt = await tx(outsider, { address: DIAMOND, abi: ABIS.risk, functionName: 'triggerLiquidation', args: [hfLoan, VENUE_ROUTE] }, 'triggerLiquidation');
+  const { plan: liqPlan, sellAmount: liqQuote } = await forcedSaleQuote(hfLoan, FORCED_SALE_KIND.HealthFactor);
+  const liqReceipt = await tx(outsider, { address: DIAMOND, abi: ABIS.risk, functionName: 'triggerLiquidation', args: [hfLoan, liqQuote, VENUE_ROUTE] }, 'triggerLiquidation');
   const afterLiq = await snapshot(tokens, holders);
   const liquidated = await read(ABIS.loan, 'getLoanDetails', [hfLoan]);
   const liqProceeds = beforeLiq['lending.venue'] - afterLiq['lending.venue'];
@@ -240,26 +256,28 @@ export async function run() {
   check('A3.12', 'HF<1 liquidation is permissionless, ends the loan Defaulted, and settles from the swap proceeds, every unit accounted',
     String(liquidated.status) === String(STATUS.Defaulted) && liqProceeds > 0n && liqLanded === liqProceeds,
     `caller=outsider gas=${liqReceipt.gasUsed} status=${liquidated.status} proceeds=${f18(liqProceeds)}`);
-  await expectForcedClose('A3.12b', 'the underwater HF liquidation settles exactly per the waterfall: keeper first, the lender takes the rest and the loss, no handling charge',
-    preLiq, liqReceipt, beforeLiq, afterLiq, collateral, lending);
-  await expectPosition('A3.12c', 'the HF liquidation changes the position exactly: status Defaulted, both position NFTs "Loan Liquidated", the lien released because the whole collateral was sold — NFT holders and recorded terms unchanged',
-    hfLoan, preLiqPos, { status: STATUS.Defaulted, ...bothNfts(NFT_STATUS.LoanLiquidated), lienReleased: true, lienAmount: 0n });
+  // Whether all the collateral covers the debt is the plan's to say: a
+  // covered plan sells only what the debt needs and pays the lender in full;
+  // an uncovered one sells everything and the lender bears the loss.
+  const liqW = await expectForcedClose('A3.12b', 'the HF liquidation settles exactly per the waterfall: keeper first, the lender up to the debt, the subordinated handling charge, the borrower\'s extra',
+    preLiq, liqReceipt, beforeLiq, afterLiq, collateral, lending, liqQuote);
+  await expectPosition('A3.12c', 'the HF liquidation changes the position exactly: status Defaulted, both position NFTs "Loan Liquidated", the lien lowered to the unsold collateral — NFT holders and recorded terms unchanged',
+    hfLoan, preLiqPos, { status: STATUS.Defaulted, ...bothNfts(NFT_STATUS.LoanLiquidated), lienReleased: false, lienAmount: liqW.unsold });
 
   // The HF path writes its OWN claim records (RiskFacet, not DefaultedFacet),
-  // so its claims are exercised in their own right. Underwater: the lender
-  // was credited everything after the keeper, the borrower nothing.
+  // so its claims are exercised in their own right.
   {
     const lenderCredit = afterLiq['lending.lenderVault'] - beforeLiq['lending.lenderVault'];
     const borrowerCredit = afterLiq['lending.borrowerVault'] - beforeLiq['lending.borrowerVault'];
-    await claimAndExpect({
-      id: 'A3.12d', who: 'lender', account: lender, fn: 'claimAsLender', loanId: hfLoan, tokens, holders,
-      before: await positionOf(hfLoan),
-      moves: { 'lending.lenderVault': -lenderCredit, 'lending.lenderEOA': lenderCredit },
-      // The borrower has nothing to claim, so the lender's claim is the LAST
-      // one and settles the loan; the borrower's NFT is left as it was.
-      changes: { lenderNftOwner: null, status: STATUS.Settled },
-    });
-    check('A3.12e', 'an underwater HF liquidation credits the borrower nothing', borrowerCredit === 0n, `borrowerCredit=${f18(borrowerCredit)}`);
+    const borrowerClaims = liqW.borrower > 0n || liqW.unsold > 0n;
+    if (liqPlan.covered) {
+      check('A3.12e', 'a covered HF liquidation pays the lender the whole debt first (net only of the treasury fee on recovered interest)',
+        liqW.allocated === liqW.debt, `lender gross=${f18(liqW.allocated)} net=${f18(liqW.lender)} debt=${f18(liqW.debt)}`);
+    } else {
+      check('A3.12e', 'an uncovered HF liquidation sells all the collateral and credits the borrower nothing',
+        liqW.unsold === 0n && borrowerCredit === 0n, `unsold=${f18(liqW.unsold)} borrowerCredit=${f18(borrowerCredit)}`);
+    }
+    await claimAndExpectClose('A3.12d', hfLoan, { lenderCredit, borrowerCredit, unsold: liqW.unsold, borrowerClaims, tokens, holders });
   }
 
   // leave the fork on the deployment's seeded prices
@@ -291,7 +309,8 @@ export async function run() {
   const preCrash = await read(ABIS.loan, 'getLoanDetails', [crashLoan]);
   const preCrashPos = await positionOf(crashLoan);
   const beforeCrash = await snapshot(tokens, holders);
-  const crashReceipt = await tx(outsider, { address: DIAMOND, abi: ABIS.risk, functionName: 'triggerLiquidation', args: [crashLoan, VENUE_ROUTE] }, 'triggerLiquidation(collateral drawdown)');
+  const { sellAmount: crashQuote } = await forcedSaleQuote(crashLoan, FORCED_SALE_KIND.HealthFactor);
+  const crashReceipt = await tx(outsider, { address: DIAMOND, abi: ABIS.risk, functionName: 'triggerLiquidation', args: [crashLoan, crashQuote, VENUE_ROUTE] }, 'triggerLiquidation(collateral drawdown)');
   const afterCrash = await snapshot(tokens, holders);
   const crashed = await read(ABIS.loan, 'getLoanDetails', [crashLoan]);
   const crashProceeds = beforeCrash['lending.venue'] - afterCrash['lending.venue'];
@@ -302,38 +321,49 @@ export async function run() {
     crashProceeds > 0n && crashLanded === crashProceeds,
     `tLIQ $2,000 -> $${crashDollars} (derived; feed + pool spot) checkLiquidity=${stillRoutable} HF=${f18(crashHf)} gas=${crashReceipt.gasUsed} ` +
     `status=${crashed.status} proceeds=${f18(crashProceeds)}`);
-  // Whether this close leaves the borrower a surplus depends on the loan's
+  // Whether this close leaves the borrower an extra depends on the loan's
   // stamped threshold and the live incentive and handling rates, so the row
   // does not assume one: the waterfall computed from the specification says
-  // which, and the claim sequence below follows it.
-  const crashW = await expectForcedClose('A3.13b', 'the collateral-drawdown liquidation settles exactly per the waterfall: keeper, lender net of the interest fee, the handling charge, and the borrower\'s residual when the specification leaves one',
-    preCrash, crashReceipt, beforeCrash, afterCrash, collateral, lending);
-  await expectPosition('A3.13c', 'the drawdown liquidation changes the position exactly: status Defaulted, both position NFTs "Loan Liquidated", the lien released because the whole collateral was sold — NFT holders and recorded terms unchanged',
-    crashLoan, preCrashPos, { status: STATUS.Defaulted, ...bothNfts(NFT_STATUS.LoanLiquidated), lienReleased: true, lienAmount: 0n });
+  // which, and the claim sequence below follows it, together with whatever
+  // collateral the sale did not take.
+  const crashW = await expectForcedClose('A3.13b', 'the collateral-drawdown liquidation settles exactly per the waterfall: keeper, lender net of the interest fee, the handling charge, and the borrower\'s extra when the specification leaves one',
+    preCrash, crashReceipt, beforeCrash, afterCrash, collateral, lending, crashQuote);
+  await expectPosition('A3.13c', 'the drawdown liquidation changes the position exactly: status Defaulted, both position NFTs "Loan Liquidated", the lien lowered to the unsold collateral — NFT holders and recorded terms unchanged',
+    crashLoan, preCrashPos, { status: STATUS.Defaulted, ...bothNfts(NFT_STATUS.LoanLiquidated), lienReleased: false, lienAmount: crashW.unsold });
 
-  // Claims follow the computed waterfall. With a borrower residual both sides
-  // hold a claim and the second one settles the loan; with none the lender's
-  // claim is the only one and settles it alone — the same closure rule A3.12d
-  // exercises for the underwater case.
-  {
-    const lenderCredit = afterCrash['lending.lenderVault'] - beforeCrash['lending.lenderVault'];
-    const borrowerCredit = afterCrash['lending.borrowerVault'] - beforeCrash['lending.borrowerVault'];
-    const surplus = crashW.borrower > 0n;
-    let pos = await positionOf(crashLoan);
-    pos = await claimAndExpect({
-      id: 'A3.13d', who: 'lender', account: lender, fn: 'claimAsLender', loanId: crashLoan, tokens, holders, before: pos,
-      moves: { 'lending.lenderVault': -lenderCredit, 'lending.lenderEOA': lenderCredit },
-      changes: surplus ? { lenderNftOwner: null } : { lenderNftOwner: null, status: STATUS.Settled },
+  await claimAndExpectClose('A3.13d', crashLoan, {
+    lenderCredit: afterCrash['lending.lenderVault'] - beforeCrash['lending.lenderVault'],
+    borrowerCredit: afterCrash['lending.borrowerVault'] - beforeCrash['lending.borrowerVault'],
+    unsold: crashW.unsold,
+    borrowerClaims: crashW.borrower > 0n || crashW.unsold > 0n,
+    tokens, holders,
+  });
+}
+
+/**
+ * The claims after a forced close, in order: the lender sweeps their credit;
+ * when the borrower holds a claim (an extra in the lending asset, or
+ * collateral the sale did not take) they sweep both, and the second claim
+ * settles the loan; with none, the lender's claim alone settles it.
+ */
+async function claimAndExpectClose(id, loanId, { lenderCredit, borrowerCredit, unsold, borrowerClaims, tokens, holders }) {
+  let pos = await positionOf(loanId);
+  pos = await claimAndExpect({
+    id: `${id}.lender`, who: 'lender', account: lender, fn: 'claimAsLender', loanId, tokens, holders, before: pos,
+    moves: { 'lending.lenderVault': -lenderCredit, 'lending.lenderEOA': lenderCredit },
+    changes: borrowerClaims ? { lenderNftOwner: null } : { lenderNftOwner: null, status: STATUS.Settled },
+  });
+  if (borrowerClaims) {
+    await claimAndExpect({
+      id: `${id}.borrower`, who: 'borrower', account: borrower, fn: 'claimAsBorrower', loanId, tokens, holders, before: pos,
+      moves: {
+        'lending.borrowerVault': -borrowerCredit, 'lending.borrowerEOA': borrowerCredit,
+        'collateral.borrowerVault': -unsold, 'collateral.borrowerEOA': unsold,
+      },
+      changes: { borrowerNftOwner: null, status: STATUS.Settled },
     });
-    if (surplus) {
-      await claimAndExpect({
-        id: 'A3.13e', who: 'borrower', account: borrower, fn: 'claimAsBorrower', loanId: crashLoan, tokens, holders, before: pos,
-        moves: { 'lending.borrowerVault': -borrowerCredit, 'lending.borrowerEOA': borrowerCredit },
-        changes: { borrowerNftOwner: null, status: STATUS.Settled },
-      });
-    } else {
-      check('A3.13e', 'with no residual under the specification\'s waterfall, the borrower is credited nothing and the lender\'s claim alone settles the loan',
-        borrowerCredit === 0n, `computed residual=0 borrowerCredit=${f18(borrowerCredit)}`);
-    }
+  } else {
+    check(`${id}.borrower`, 'with nothing left for the borrower, the borrower is credited nothing and the lender\'s claim alone settles the loan',
+      borrowerCredit === 0n, `borrowerCredit=${f18(borrowerCredit)}`);
   }
 }

@@ -29,6 +29,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
+import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /// @title VPFIDiscountFacetTest
 /// @notice Exercises the borrower VPFI discount mechanism end-to-end
@@ -1505,8 +1506,9 @@ contract VPFIDiscountFacetTest is SetupTest {
         uint256 diamondVpfiBefore = vpfiToken.balanceOf(address(diamond));
 
         // Lender calls triggerDefault — triggers forfeitBorrowerLif.
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(lender);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         (uint256 rebate, uint256 held2) = ClaimFacet(address(diamond))
             .getBorrowerLifRebate(loanId);

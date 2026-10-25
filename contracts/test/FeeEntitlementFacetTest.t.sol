@@ -38,6 +38,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
+import {defaultQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title  FeeEntitlementFacetTest
@@ -1433,7 +1434,8 @@ contract FeeEntitlementFacetTest is SetupTest {
         // ── Replay 1: no stake, no consent — the undiscounted baseline. ──
         vm.warp(block.timestamp + 33 days + 3);
         uint256 tBefore = IERC20(mockERC20).balanceOf(treasuryRecipient);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         uint256 baseTreasury = IERC20(mockERC20).balanceOf(treasuryRecipient) - tBefore;
         (, uint256 baseClaim, ) =
             ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
@@ -1468,7 +1470,8 @@ contract FeeEntitlementFacetTest is SetupTest {
         );
 
         tBefore = IERC20(mockERC20).balanceOf(treasuryRecipient);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote2 = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote2, defaultAdapterCalls());
         uint256 heldTreasury = IERC20(mockERC20).balanceOf(treasuryRecipient) - tBefore;
         (, uint256 heldClaim, ) =
             ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);

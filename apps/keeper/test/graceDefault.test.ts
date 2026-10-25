@@ -91,7 +91,23 @@ interface Scene {
   defaultable?: boolean | null;
   /** The pass's run deadline; defaults to one no test reaches. */
   notAfterMs?: number;
+  /** `previewForcedSale(loanId, TimeBasedDefault)` as read on each call, in
+   *  order (the last one repeats): the early read, then the gate's. */
+  plans?: (Plan | 'revert')[];
 }
+
+interface Plan {
+  debt: bigint;
+  need: bigint;
+  sell: bigint;
+  floor: bigint;
+  covered: boolean;
+  maxSell: bigint;
+}
+
+/** A covered default: the contract accepts 1000..1020; its middle is 1010. */
+const PLAN: Plan = { debt: 900n, need: 950n, sell: 1000n, floor: 940n, covered: true, maxSell: 1020n };
+const NO_SALE: Plan = { debt: 0n, need: 0n, sell: 0n, floor: 0n, covered: false, maxSell: 0n };
 
 const SIGNED: Hex = '0x02f86b0182';
 
@@ -100,12 +116,23 @@ function harness(scene: Scene) {
   const previews: unknown[] = [];
   let loanReads = 0;
   const loans = scene.loans ?? [LIQUID];
+  let planReads = 0;
+  const plans = scene.plans ?? [PLAN];
+  const planBlocks: (bigint | undefined)[] = [];
   const client = {
     getBlockNumber: async () => 100n,
     getTransactionCount: async (args: { blockTag: string }) =>
       args.blockTag === 'pending' ? 7 + (scene.unmined ?? 0) : 7,
-    readContract: async (args: { functionName: string }) => {
+    readContract: async (args: { functionName: string; args?: readonly unknown[]; blockNumber?: bigint }) => {
       switch (args.functionName) {
+        case 'previewForcedSale': {
+          expect(args.args).toEqual([LOAN_ID, 3]); // TimeBasedDefault
+          planBlocks.push(args.blockNumber);
+          const p = plans[Math.min(planReads, plans.length - 1)];
+          planReads += 1;
+          if (p === 'revert') throw new Error('execution reverted: PriceSourcesDisagree');
+          return p;
+        }
         case 'getLoanDetails': {
           const l = loans[Math.min(loanReads, loans.length - 1)];
           loanReads += 1;
@@ -169,14 +196,16 @@ function harness(scene: Scene) {
     },
   } as unknown as WalletClient;
   const routes: GraceLoan[] = [];
+  const routeSizes: bigint[] = [];
   const deps: GraceDefaultDeps = {
     client,
     wallet,
     diamond: DIAMOND,
     chainId: 84532,
     notAfterMs: scene.notAfterMs ?? Number.MAX_SAFE_INTEGER,
-    buildRoute: async (loan) => {
+    buildRoute: async (loan, sellAmount) => {
       routes.push(loan);
+      routeSizes.push(sellAmount);
       const n = scene.calls ?? 1;
       return {
         ranked: [],
@@ -188,14 +217,14 @@ function harness(scene: Scene) {
       } as unknown as ServerOrchestrationResult;
     },
   };
-  return { deps, writes, previews, routes };
+  return { deps, writes, previews, routes, routeSizes, planBlocks };
 }
 
 describe('attemptGraceDefault', () => {
   it('reports a lost broadcast as unconfirmed, naming the locally computed hash', async () => {
     const h = harness({ ending: 'sale', calls: 1, broadcast: 'lost' });
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
-    expect(out).toMatchObject({ kind: 'unconfirmed', tx: keccak256(SIGNED), preview: 'sale', calls: 1 });
+    expect(out).toMatchObject({ kind: 'unconfirmed', tx: keccak256(SIGNED), preview: 'sale', calls: 1, sellAmount: 1010n });
     expect(h.writes).toHaveLength(1);
   });
 
@@ -218,13 +247,87 @@ describe('attemptGraceDefault', () => {
   it('submits triggerDefault with the quoted try-list when the preview is a sale', async () => {
     const h = harness({ ending: 'sale', calls: 2 });
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
-    expect(out).toEqual({ kind: 'submitted', tx: keccak256(SIGNED), preview: 'sale', calls: 2 });
+    expect(out).toEqual({ kind: 'submitted', tx: keccak256(SIGNED), preview: 'sale', calls: 2, sellAmount: 1010n });
     expect(h.routes).toEqual([LIQUID]);
     expect(h.writes).toHaveLength(1);
-    const w = h.writes[0] as { functionName: string; args: [bigint, unknown[]] };
+    const w = h.writes[0] as { functionName: string; args: [bigint, bigint, unknown[]] };
     expect(w.functionName).toBe('triggerDefault');
     expect(w.args[0]).toBe(LOAN_ID);
-    expect(w.args[1]).toHaveLength(2);
+    expect(w.args[1]).toBe(1010n);
+    expect(w.args[2]).toHaveLength(2);
+  });
+
+  it('quotes only what the debt needs: the middle of the range the contract accepts (#2796)', async () => {
+    const h = harness({ ending: 'sale', calls: 1 });
+    await attemptGraceDefault(h.deps, LOAN_ID);
+    // Not the whole collateral: the route is built for 1010 of it.
+    expect(h.routeSizes).toEqual([1010n]);
+    expect(LIQUID.collateralAmount).not.toBe(1010n);
+    // Read once to size the quote, then again at the gate's block.
+    expect(h.planBlocks).toEqual([undefined, 100n]);
+    const sim = JSON.stringify(h.previews[0], (_, v) => (typeof v === 'bigint' ? v.toString() : v));
+    expect(sim.length).toBeGreaterThan(0);
+  });
+
+  it('does not send a quote the range has left by the gate (#2796)', async () => {
+    // The debt accrued past the quote: at the gate the least accepted is 1011.
+    const h = harness({ ending: 'sale', calls: 1, plans: [PLAN, { ...PLAN, sell: 1011n, maxSell: 1031n }] });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toEqual({ kind: 'skipped', reason: 'gate:quote-out-of-range quoted=1010 range=[1011,1031]' });
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('sends an ERC-20 default the contract routes off the sale with 0 and an empty list (#2796)', async () => {
+    // An unpriced pair or an in-kind loan: the plan is all zero and the
+    // gate's preview shows the no-swap ending.
+    const h = harness({ ending: 'other', plans: [NO_SALE] });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toEqual({ kind: 'submitted', tx: keccak256(SIGNED), preview: 'other', calls: 0, sellAmount: 0n });
+    expect(h.routes).toHaveLength(0);
+    expect((h.writes[0] as { args: [bigint, bigint, unknown[]] }).args.slice(1)).toEqual([0n, []]);
+    // Read once to decide, and again at the gate.
+    expect(h.planBlocks).toEqual([undefined, 100n]);
+  });
+
+  it('skips a no-sale default the preview cannot show succeeding (refused, not due) (#2796)', async () => {
+    const h = harness({ ending: null, plans: [NO_SALE] });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect((out as { reason: string }).reason).toMatch(/^preview=unknown calls=0/);
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('skips when the route moved from a sale to none between the reads (#2796)', async () => {
+    const h = harness({ ending: 'sale', calls: 1, plans: [PLAN, NO_SALE] });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toEqual({ kind: 'skipped', reason: 'gate:plan-changed (sells true->false)' });
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('skips when the route moved from none to a sale between the reads (#2796)', async () => {
+    const h = harness({ ending: 'other', plans: [NO_SALE, PLAN] });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toEqual({ kind: 'skipped', reason: 'gate:plan-changed (sells false->true)' });
+    expect(h.routes).toHaveLength(0);
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('sends nothing when the plan read reverts (a distrusted price) (#2796)', async () => {
+    const h = harness({ ending: 'sale', calls: 1, plans: ['revert'] });
+    await expect(attemptGraceDefault(h.deps, LOAN_ID)).rejects.toThrow(/PriceSourcesDisagree/);
+    expect(h.routes).toHaveLength(0);
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('an uncovered default quotes the whole collateral, its one accepted amount (#2796)', async () => {
+    const whole = LIQUID.collateralAmount;
+    const h = harness({
+      ending: 'sale',
+      calls: 1,
+      plans: [{ ...PLAN, covered: false, sell: whole, maxSell: whole }],
+    });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toMatchObject({ kind: 'submitted', sellAmount: whole });
+    expect(h.routeSizes).toEqual([whole]);
   });
 
   it('does NOT send a route that would fall into the full-collateral fallback', async () => {
@@ -246,9 +349,11 @@ describe('attemptGraceDefault', () => {
     const nft: GraceLoan = { ...LIQUID, collateralAssetType: 1 };
     const h = harness({ loans: [nft], ending: 'other' });
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
-    expect(out).toEqual({ kind: 'submitted', tx: keccak256(SIGNED), preview: 'other', calls: 0 });
+    expect(out).toEqual({ kind: 'submitted', tx: keccak256(SIGNED), preview: 'other', calls: 0, sellAmount: 0n });
     expect(h.routes).toHaveLength(0);
-    expect((h.writes[0] as { args: [bigint, unknown[]] }).args[1]).toEqual([]);
+    // Nothing is sold, so the size is 0 and no plan was read.
+    expect((h.writes[0] as { args: [bigint, bigint, unknown[]] }).args.slice(1)).toEqual([0n, []]);
+    expect(h.planBlocks).toEqual([]);
   });
 
   it('quotes nothing for a rental (non-ERC-20 principal)', async () => {
@@ -439,9 +544,10 @@ describe('the in-kind role (#2487) — the liquidator closing a loan no venue qu
     const out = await attemptCloseOut(h.deps, LOAN_ID, 'in-kind');
     expect(out).toMatchObject({ kind: 'submitted', preview: 'other', calls: 0 });
     expect(h.routes).toHaveLength(0);
-    const w = h.writes[0] as { functionName: string; args: [bigint, unknown[]] };
+    const w = h.writes[0] as { functionName: string; args: [bigint, bigint, unknown[]] };
     expect(w.functionName).toBe('triggerDefault');
-    expect(w.args[1]).toEqual([]);
+    expect(w.args[1]).toBe(0n);
+    expect(w.args[2]).toEqual([]);
   });
 
   it('leaves a loan above the line to the grace-default pass', async () => {

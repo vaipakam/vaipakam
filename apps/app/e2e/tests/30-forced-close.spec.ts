@@ -29,12 +29,12 @@
  *  It also DRIVES the close-out (#2463): the fixture registers the
  *  testnet `MockSwapAdapter` and records it in the deployment bundle, so
  *  the app builds a one-venue route from the Diamond's own adapter list
- *  and sends `triggerDefault(loanId, [route])`. The chain must then show
+ *  and sends `triggerDefault(loanId, sellAmount, [route])`. The chain must then show
  *  the loan no longer Active.
  *
  *  What this does NOT cover, and the attempt that established why: the
  *  in-kind SUBMIT path, the case where the app sends
- *  `triggerDefault(loanId, [])`. Reaching it needs unpriced collateral.
+ *  `triggerDefault(loanId, 0, [])`. Reaching it needs unpriced collateral.
  *  A test
  *  posting against `MOCKS.illiquidToken` got as far as the LENDER
  *  successfully publishing the offer, then failed on CI at the

@@ -19,6 +19,7 @@ import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
+import {liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title SanctionsOracleTest
@@ -271,6 +272,7 @@ contract SanctionsOracleTest is RiskFacetTest {
         m.setFlagged(sanctionedWallet, true);
 
         LibSwap.AdapterCall[] memory empty = new LibSwap.AdapterCall[](0);
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.prank(sanctionedWallet);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -278,7 +280,7 @@ contract SanctionsOracleTest is RiskFacetTest {
                 sanctionedWallet
             )
         );
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, empty);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, empty);
     }
 
     // ─── Tier-2 ALLOW carve-out (the "lender recovers" invariant) ─────────

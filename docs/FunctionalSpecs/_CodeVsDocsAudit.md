@@ -1323,12 +1323,11 @@ that rule now, under "Forced Sales Sell Only What the Debt Needs" and the
 charge, periodic-settlement and Proceeds Distribution lines it touches. The
 design record is `docs/DesignsAndPlans/ForcedSaleSizingDesign.md`.
 
-**What the code does until the implementation lands.** The Health-Factor
+**What the code did until the implementation landed.** The Health-Factor
 liquidation (single and split route) and the liquid branch of the time-based
-default sell the whole collateral and take both charges as shares of the
-proceeds. Partial liquidation takes its charges as shares of the proceeds
-alongside the repayment. Each of those is now a divergence from the stated
-intent, not a defect in the spec.
+default sold the whole collateral and took both charges as shares of the
+proceeds. Partial liquidation took its charges as shares of the proceeds
+alongside the repayment.
 
 **The periodic auto-liquidation follows the rule (#2795).** It sells through
 the shared forced-sale host: the sale is sized to the missed interest plus
@@ -1338,5 +1337,16 @@ borrower's vault for the claim when the holder is flagged or the wallet
 payment fails. The fixed buffer and the slippage notice that went with it are
 gone.
 
-**Status:** open for the remaining routes. Next: the Health-Factor routes,
-then the time-based default and the partial-liquidation charge rule (#2796).
+**Every route follows the rule (#2796).** The Health-Factor liquidation on
+the single and split route and the liquid branch of the time-based default
+sell through the same host: the least covering amount, charges on the debt,
+the fee only after the lender, the unsold collateral left pledged in the
+borrower's vault for the borrower's claim and the extra held there with it.
+When every route fails the whole collateral still enters the in-kind
+fallback. Partial liquidation takes its incentive and handling charge as
+shares of the amount repaid. The caller names the amount sold and the host
+accepts it only inside the published range (the spec's quote line), a detail
+the code needed because every sale is an exact-input swap.
+
+**Status:** resolved — the code follows the stated intent on every forced-sale
+path. The 2% quote margin is the owner's decision of 2026-10-25.

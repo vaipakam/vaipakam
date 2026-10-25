@@ -28,6 +28,11 @@
         "internalType": "uint256"
       },
       {
+        "name": "sellAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "adapterCalls",
         "type": "tuple[]",
         "internalType": "struct LibSwap.AdapterCall[]",
@@ -241,97 +246,6 @@
       }
     ],
     "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SwapAdapterAttempted",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapterIdx",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapter",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "success",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SwapAdapterSucceeded",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapterIdx",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapter",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "outputAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SwapAllAdaptersFailed",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "AdapterIndexOutOfRange",
-    "inputs": [
-      {
-        "name": "adapterIdx",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "registeredCount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -2232,23 +2146,7 @@
   },
   {
     "type": "error",
-    "name": "NoEnabledSwapRoute",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "NoInteractionRewardsToClaim",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NoSwapAdaptersConfigured",
     "inputs": []
   },
   {
@@ -4809,22 +4707,6 @@
         "name": "status",
         "type": "uint8",
         "internalType": "uint8"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SwapAttemptHostMissing",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TokenDecimalsUnreadable",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
       }
     ]
   },

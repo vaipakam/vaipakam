@@ -2,30 +2,23 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
-import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
-import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
-import {LibFallback} from "../libraries/LibFallback.sol";
-import {LibEntitlement} from "../libraries/LibEntitlement.sol";
-import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
-import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
-import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
-import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
+import {ForcedSaleFacet} from "./ForcedSaleFacet.sol";
 
 /**
  * @title RiskSplitLiquidationFacet
@@ -44,11 +37,11 @@ import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
  *         (~75 bytes) would have tipped it over. Rather than shave unrelated
  *         logic to fit, the whole split-route entry point lives here in its
  *         own facet so the `swapWithSplit` inline lands in fresh headroom.
- *         The function is a verbatim relocation — identical pre-checks,
- *         distribution, and lifecycle to {RiskFacet.triggerLiquidation}; the
- *         shared seconds-precise debt accrual is
- *         {LibEntitlement.currentBorrowBalance}. All facets share Diamond
- *         storage via {LibVaipakam}, so the move needs no storage migration.
+ *         Identical pre-checks and lifecycle to
+ *         {RiskFacet.triggerLiquidation}; the sale itself — its size, the
+ *         lien, the pull and the division of the proceeds — is the one
+ *         forced-sale rule on {ForcedSaleFacet} (#2796), which both routes
+ *         share. All facets share Diamond storage via {LibVaipakam}.
  */
 contract RiskSplitLiquidationFacet is
     DiamondReentrancyGuard,
@@ -97,17 +90,21 @@ contract RiskSplitLiquidationFacet is
      *         path is {RiskFacet.triggerLiquidation} (failover), which
      *         handles soft-failure cleanly.
      *
-     *         The entire post-swap distribution (dynamic incentive,
-     *         tiered-KYC, treasury / lender / borrower-surplus split,
-     *         lifecycle transition Active→Defaulted, VPFI forfeit,
-     *         interaction-rewards close, NFT-status updates,
-     *         `HFLiquidationTriggered` event) is identical to
-     *         {RiskFacet.triggerLiquidation}.
+     *         The sale is sized to the debt and divided by the shared
+     *         forced-sale rule ({ForcedSaleFacet.sellToNeed}), exactly as
+     *         on {RiskFacet.triggerLiquidation}; the tiered-KYC check, the
+     *         Active→Defaulted transition, the VPFI forfeit, the
+     *         interaction-rewards close, the NFT-status updates and the
+     *         `HFLiquidationTriggered` event are identical too.
      *
      * @param loanId   Loan being liquidated. Must be Active with HF<1.
-     * @param splits   The split spec — `sum(splitAmount) == loan.collateralAmount`,
-     *                 each `adapterIdx` ∈ `[0, swapAdapters.length)`, each
-     *                 `data` the keeper-supplied per-adapter calldata.
+     * @param splits   The split spec. `sum(splitAmount)` is the collateral
+     *                 sold and must lie between
+     *                 `previewForcedSale(loanId, HealthFactorSplitLiquidation)`'s
+     *                 `sell` and `maxSell` at the settling block
+     *                 (`ForcedSaleQuoteOutOfRange` otherwise); each
+     *                 `adapterIdx` ∈ `[0, swapAdapters.length)`, each `data`
+     *                 the keeper-supplied per-adapter calldata.
      */
     function triggerLiquidationSplit(
         uint256 loanId,
@@ -129,17 +126,6 @@ contract RiskSplitLiquidationFacet is
         if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoan();
         // T-086 step 10 — clear any active prepay listing before liquidation.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
-        // #407 PR 4 (T-407-B) — release the borrower's collateral lien before
-        // the vault withdraw drains the collateral asset. Same cross-facet
-        // call {RiskFacet} makes via its private `_releaseLienAtLiquidation`
-        // wrapper; inlined here since that wrapper stayed in RiskFacet.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                EncumbranceMutateFacet.releaseCollateralLien.selector,
-                loanId
-            ),
-            bytes4(0)
-        );
         if (!OracleFacet(address(this)).sequencerHealthy()) {
             revert SequencerUnhealthy();
         }
@@ -178,174 +164,47 @@ contract RiskSplitLiquidationFacet is
             }
         }
 
-        // Withdraw collateral to Diamond for the split swap. #821 (Codex #832 r3
-        // P1) — move-out-exempt so a borrower flagged after init doesn't brick
-        // the split liquidation (collateral pushed OUT to the already-screened
-        // swap recipients).
-        // #2440 — a forced close-out acts on what arrived: the loan's collateral
-        // becomes what reached the Diamond, and the split must sum to that
-        // figure. A short delivery is never made up from the Diamond's other
-        // balance. Splits sized for the recorded amount revert on the sum
-        // check, whose `SplitSumMismatch(sum, inputAmount)` names the figure
-        // that arrived; legs quoted for that figure settle, and the
-        // single-route liquidation sells what arrived either way. The legs are
-        // NOT rescaled here: a split leg is an aggregator quote for a fixed
-        // amount and is held to spend exactly its `splitAmount`, so a rescaled
-        // leg would revert in the adapter instead.
-        loan.collateralAmount = LibSanctionedLock.pullToDiamond(
-            LibVaipakam.storageSlot(),
-            loan.borrower,
-            loan.collateralAsset,
-            loan.collateralAmount
-        );
-        // #658 (Codex #680 P2) — the eager consolidation stamped the holder at
-        // the full pre-liquidation VPFI balance; re-stamp after the withdrawal
-        // above so the holder can't retain tier/staking credit for VPFI that
-        // already left. Internal-only ConsolidationFacet entry; no-op for
-        // non-VPFI collateral.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector,
-                loanId
+        // #2796 — the forced-sale host sizes the sale to the debt and sells
+        // exactly the sum of the legs, which must lie in the plan's accepted
+        // range (the least collateral whose worst-case proceeds cover the
+        // debt plus the largest charges, up to the host's margin above it).
+        // It lowers the collateral lien by that sum and pulls it under the
+        // move-out exemption (#821), so the collateral the sale leaves stays
+        // liened in the borrower's vault for their claim. The split is atomic
+        // (`LibSwap.swapWithSplit`): a sum mismatch with what arrived (#2440:
+        // legs are fixed aggregator quotes and are never rescaled), any leg
+        // revert, a governance-disabled venue (#633) or a total below the
+        // floor of what was sold reverts the whole call — there is no
+        // fallback on this route; {RiskFacet.triggerLiquidation} is the
+        // failover retry. The proceeds are divided by the shared rule:
+        // keeper bonus, the lender's debt in full, the 2% handling fee on the
+        // debt subordinated to the lender, the rest held for the borrower.
+        uint256 quoted;
+        for (uint256 i; i < splits.length; ++i) quoted += splits[i].splitAmount;
+        ForcedSaleFacet.ForcedSaleOutcome memory out = abi.decode(
+            LibFacet.crossFacetCallReturn(
+                abi.encodeCall(
+                    ForcedSaleFacet.sellToNeed,
+                    (
+                        loanId,
+                        ForcedSaleFacet.ForcedSaleKind.HealthFactorSplitLiquidation,
+                        quoted,
+                        new LibSwap.AdapterCall[](0),
+                        splits,
+                        msg.sender
+                    )
+                ),
+                bytes4(0)
             ),
-            bytes4(0)
+            (ForcedSaleFacet.ForcedSaleOutcome)
         );
-
-        // Oracle-derived total minOutputAmount — same formula as the failover
-        // path. swapWithSplit enforces it on the *total* (not per-leg) so
-        // leg-asymmetric outcomes don't pessimistically fail.
-        uint256 expectedProceeds = LibFallback.expectedSwapOutput(
-            address(this),
-            loan.collateralAsset,
-            loan.principalAsset,
-            loan.collateralAmount
-        );
-        uint256 maxSlippageBps = LibVaipakam.cfgMaxLiquidationSlippageBps();
-        uint256 minOutputAmount = (expectedProceeds *
-            (LibVaipakam.BASIS_POINTS - maxSlippageBps)) /
-            LibVaipakam.BASIS_POINTS;
-
-        // The split swap. Reverts on sum mismatch, any leg revert, a
-        // governance-disabled venue (#633), or total < minOutputAmount — no
-        // soft-failure return path.
-        uint256 proceeds = LibSwap.swapWithSplit(
-            loanId,
-            loan.collateralAsset,
-            loan.principalAsset,
-            loan.collateralAmount,
-            minOutputAmount,
-            address(this),
-            splits
-        );
-
-        // Calculate debt — identical to {RiskFacet.triggerLiquidation}. #915 —
-        // `currentBorrowBalance` nets `interestSettled` (periodic-settled interest).
-        uint256 lateFee = LibVaipakam.calculateLateFee(loanId);
-        uint256 totalDebt = LibEntitlement.currentBorrowBalance(loan) + lateFee;
-        uint256 interestPortion = totalDebt - loan.principal;
-
-        // Dynamic liquidator incentive — identical curve to the single-route
-        // path via {LibEntitlement.liquidatorIncentiveBps} (L-h #1010).
-        uint256 bonus = (proceeds *
-            LibEntitlement.liquidatorIncentiveBps(loan.collateralAsset, proceeds, expectedProceeds))
-            / LibVaipakam.BASIS_POINTS;
-        if (bonus > proceeds) bonus = proceeds;
 
         // Tiered-KYC check for the liquidator — identical to {RiskFacet.triggerLiquidation}:
         // the bonus valued through the one shared rule, rounded down (#2419).
         uint256 bonusNumeraire = NumeraireValueFacet(address(this))
-            .getNumeraireValue(loan.principalAsset, bonus, false);
+            .getNumeraireValue(loan.principalAsset, out.keeperBonus, false);
         if (!ProfileFacet(address(this)).meetsKYCRequirement(msg.sender, bonusNumeraire))
             revert KYCRequired();
-
-        if (bonus > 0) {
-            // #2440 — a bonus books nobody by what arrives (LibDelivery
-            // outcome 3); refused only if it cost the Diamond more than it sent.
-            LibDelivery.pushOut(loan.principalAsset, msg.sender, bonus);
-        }
-
-        // Waterfall (L-g #1009) — identical to {RiskFacet.triggerLiquidation}:
-        // bonus first, full lender recovery next, 2% treasury handling fee
-        // SUBORDINATED to lender recovery (taken only from surplus above debt),
-        // borrower keeps the residual.
-        uint256 afterBonus = proceeds - bonus;
-        uint256 allocated = afterBonus > totalDebt ? totalDebt : afterBonus;
-        uint256 surplusAfterDebt = afterBonus - allocated;
-        uint256 handlingFee = (proceeds * LibVaipakam.cfgLiquidationHandlingFeeBps())
-            / LibVaipakam.BASIS_POINTS;
-        if (handlingFee > surplusAfterDebt) handlingFee = surplusAfterDebt;
-        uint256 borrowerSurplus = surplusAfterDebt - handlingFee;
-
-        uint256 treasuryInterestFee;
-        uint256 lenderProceeds;
-        if (allocated > loan.principal) {
-            uint256 interestRecovered = allocated - loan.principal;
-            if (interestRecovered > interestPortion) interestRecovered = interestPortion;
-            (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRecovered);
-            // #1383 — same rule as the atomic and discounted liquidation paths.
-            // Keyed on the CURRENT position-NFT holder; `lenderProceeds` is a
-            // residual of the cut, so only the treasury term moves.
-            (, treasuryInterestFee) = LibLenderYieldFeeHost.resolve(
-                loanId,
-                LibERC721.ownerOf(loan.lenderTokenId),
-                interestRecovered,
-                treasuryInterestFee
-            );
-            lenderProceeds = allocated - treasuryInterestFee;
-        } else {
-            lenderProceeds = allocated;
-        }
-
-        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
-        LibFacet.transferToTreasury(loan.principalAsset, handlingFee + treasuryInterestFee);
-        // #821 — vault-lock the lender's share through the receive-side exemption
-        // so a flagged stored lender doesn't brick the liquidation; the proceeds
-        // park locked behind the claim-side freeze (self-guards a zero amount).
-        // #2440 — the claim names what the vault received.
-        lenderProceeds = LibSanctionedLock.depositLocked(
-            s, loan.lender, loanId, loan.principalAsset, lenderProceeds
-        );
-        // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
-        // recorded centrally at the `Defaulted` transition (via
-        // `EncumbranceMutateFacet.terminalize`).
-        s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
-            asset: loan.principalAsset,
-            amount: lenderProceeds,
-            assetType: LibVaipakam.AssetType.ERC20,
-            tokenId: 0,
-            quantity: 0,
-            claimed: false
-        });
-        // #592 — reserve VPFI lender proceeds against the unstake path until
-        // the current holder claims; ClaimFacet releases. No-op for non-VPFI.
-        if (loan.principalAsset == s.vpfiToken) {
-            LibEncumbrance.encumberLenderProceeds(
-                loanId, loan.lender, loan.principalAsset, lenderProceeds
-            );
-        }
-        if (borrowerSurplus > 0) {
-            // #2440 — the claim names what the vault received.
-            borrowerSurplus = LibSanctionedLock.depositLocked(
-                s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
-            );
-            // #998 S10 (#1006 / #1132) — both holders' fail-closed markers are
-            // recorded centrally at the `Defaulted` transition (terminalize).
-            // #661 — reserve a VPFI surplus against the unstake path until the
-            // current borrower-position holder claims it. No-op for non-VPFI.
-            if (loan.principalAsset == s.vpfiToken) {
-                LibEncumbrance.encumberBorrowerProceeds(
-                    loanId, loan.borrower, loan.principalAsset, borrowerSurplus
-                );
-            }
-        }
-        s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
-            asset: loan.principalAsset,
-            amount: borrowerSurplus,
-            assetType: LibVaipakam.AssetType.ERC20,
-            tokenId: 0,
-            quantity: 0,
-            claimed: borrowerSurplus == 0
-        });
 
         // Close loan + VPFI forfeit + rewards + NFT status — identical.
         // #1132 (S10 central enforcement) — route through the
@@ -381,6 +240,6 @@ contract RiskSplitLiquidationFacet is
             ),
             NFTStatusUpdateFailed.selector
         );
-        emit HFLiquidationTriggered(loanId, msg.sender, proceeds);
+        emit HFLiquidationTriggered(loanId, msg.sender, out.proceeds);
     }
 }

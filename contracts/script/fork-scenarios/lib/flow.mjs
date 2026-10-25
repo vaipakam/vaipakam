@@ -32,6 +32,10 @@ import {
 import { simulate } from './errors.mjs';
 import { nameRevert } from './selectors.mjs';
 import { check, expectLedger, requireEnvelope } from './report.mjs';
+// #2796 — the one quoting rule (the middle of the plan's accepted range), the
+// same plain-Node copy the app's live drives use; its own test pins it to
+// `forcedSaleQuoteAmount` in `@vaipakam/lib/routeBuilder`.
+import { quoteFromPlan } from '../../../../apps/app/e2e/live/forcedSaleQuote.mjs';
 
 export const ZERO = '0x0000000000000000000000000000000000000000';
 export const BYTES32_ZERO = `0x${'0'.repeat(64)}`;
@@ -65,7 +69,26 @@ export const ABIS = {
   oracle: abi('OracleFacet'),
   nft: abi('VaipakamNFTFacet'),
   loupe: abi('DiamondLoupeFacet'),
+  forcedSale: abi('ForcedSaleFacet'),
 };
+
+/** `ForcedSaleFacet.ForcedSaleKind`: which forced sale a plan is for. */
+export const FORCED_SALE_KIND = { Periodic: 0, HealthFactor: 1, HealthFactorSplit: 2, TimeBasedDefault: 3 };
+
+/**
+ * #2796 — every forced sale sells only what settling the loan needs, at an
+ * amount the caller names. The contract publishes the plan
+ * (`previewForcedSale`: the least covering amount `sell`, the largest it
+ * accepts `maxSell`, and whether even all the collateral covers the debt);
+ * a sale quoted outside that range is refused before anything moves. This
+ * returns the plan and the amount the scenario quotes from it (0 when the
+ * plan sells nothing: no sale due, or a default that takes a route with no
+ * sale).
+ */
+export async function forcedSaleQuote(loanId, kind) {
+  const plan = await read(ABIS.forcedSale, 'previewForcedSale', [loanId, kind]);
+  return { plan, sellAmount: quoteFromPlan(plan) };
+}
 
 export const read = (facetAbi, functionName, args = []) =>
   pub.readContract({ address: DIAMOND, abi: facetAbi, functionName, args });
@@ -401,29 +424,32 @@ export function lateFee(principal, endTime, at) {
 }
 
 /**
- * The spec's forced-close proceeds waterfall ("Proceeds Distribution"):
- * the keeper incentive first; then the lender, up to principal + interest +
- * late fee, less the treasury's fee on the recovered interest and late fee;
- * then the 2% handling charge, SUBORDINATED — taken only from what is left
- * above the lender's full recovery; the borrower keeps the rest. On an
- * underwater close the handling charge is zero and the lender bears the loss.
+ * The spec's forced-close proceeds waterfall ("Proceeds Distribution", the
+ * sell-to-need rule of #2796): the keeper incentive first, on the debt the
+ * sale settles (on the proceeds when they fall short of it); then the
+ * lender, up to the debt (principal + interest + late fee), less the
+ * treasury's fee on the recovered interest and late fee; then the handling
+ * charge on the debt, SUBORDINATED — taken only from what is left after the
+ * lender's full recovery; the borrower keeps the rest of the proceeds. The
+ * collateral the sale did not take stays the borrower's. On an underwater
+ * close the handling charge is zero and the lender bears the loss.
  */
 export function forcedCloseWaterfall({ proceeds, incentiveBps, handlingBps, treasuryFeeBps, principal, interest, fee }) {
-  let bonus = (proceeds * BigInt(incentiveBps)) / 10_000n;
-  if (bonus > proceeds) bonus = proceeds;
-  const afterBonus = proceeds - bonus;
   const debt = principal + interest + fee;
-  const allocated = afterBonus > debt ? debt : afterBonus;
-  const surplus = afterBonus - allocated;
-  let handling = (proceeds * BigInt(handlingBps)) / 10_000n;
-  if (handling > surplus) handling = surplus;
+  const base = proceeds < debt ? proceeds : debt;
+  const bonus = (base * BigInt(incentiveBps)) / 10_000n;
+  let rest = proceeds - bonus;
+  const allocated = rest < debt ? rest : debt;
+  rest -= allocated;
+  const handlingDue = (debt * BigInt(handlingBps)) / 10_000n;
+  const handling = rest < handlingDue ? rest : handlingDue;
   let interestFee = 0n;
   if (allocated > principal) {
     let recovered = allocated - principal;
     if (recovered > interest + fee) recovered = interest + fee;
     interestFee = (recovered * BigInt(treasuryFeeBps)) / 10_000n;
   }
-  return { bonus, lender: allocated - interestFee, treasury: handling + interestFee, borrower: surplus - handling };
+  return { bonus, allocated, lender: allocated - interestFee, treasury: handling + interestFee, borrower: rest - handling };
 }
 
 // ---------------------------------------------------------------------------

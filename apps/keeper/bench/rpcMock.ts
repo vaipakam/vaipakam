@@ -764,7 +764,7 @@ function answer(
             abi: DIAMOND_ABI_VIEM,
             data: (data ?? '0x') as `0x${string}`,
           });
-          return functionName === 'triggerDefault' && (args?.[1] as unknown[]).length === 0;
+          return functionName === 'triggerDefault' && (args?.[2] as unknown[]).length === 0;
         } catch {
           return false;
         }

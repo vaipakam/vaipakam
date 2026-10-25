@@ -32,6 +32,7 @@ import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {defaultQuote, liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /// @dev Exposes {LibDelivery.pullExact}, which only libraries reach.
 contract LibDeliveryHarness {
@@ -93,6 +94,10 @@ contract MeasuredDeliveryTest is SetupTest {
 
     address internal col;
     address internal bVault;
+    /// @dev The amount {_enterFallback}'s default offered (#2796): the host
+    ///      pulls that much first and, when every route fails, the unsold rest
+    ///      in a second hop, so a charging token is charged on each pull.
+    uint256 internal fallbackSell;
 
     function setUp() public {
         setupHelper();
@@ -228,8 +233,10 @@ contract MeasuredDeliveryTest is SetupTest {
     function _enterFallback() internal returns (uint256 row) {
         _pastGrace();
         _failEverySwap();
+        uint256 sellQuote = defaultQuote(address(diamond), LOAN);
+        fallbackSell = sellQuote;
         vm.prank(makeAddr("defaultKeeper"));
-        DefaultedFacet(address(diamond)).triggerDefault(LOAN, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, defaultAdapterCalls());
         _swapsFill();
 
         assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.FallbackPending), "fixture: FallbackPending");
@@ -244,25 +251,28 @@ contract MeasuredDeliveryTest is SetupTest {
 
     /// @notice A liquid time-based default whose collateral withdrawal lands
     ///         short sells only what reached the Diamond.
-    /// @dev    Kills: the default selling the recorded collateral, which draws
-    ///         the shortfall out of `OTHER`.
+    /// @dev    Kills: the default selling the amount it offered, which draws
+    ///         the shortfall out of `OTHER`. Since #2796 the sale offers the
+    ///         plan's amount; the rest stays in the vault for the borrower.
     function test_LiquidDefault_SellsOnlyWhatArrived() public {
         _scaffold(true);
         _pastGrace();
         _chargesFee(col, bVault);
 
+        uint256 sellQuote = defaultQuote(address(diamond), LOAN);
         vm.prank(makeAddr("defaultKeeper"));
-        DefaultedFacet(address(diamond)).triggerDefault(LOAN, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, defaultAdapterCalls());
 
         assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Defaulted), "the default completed");
+        assertLt(sellQuote, COLLATERAL, "fixture: a covered sale offers less than the collateral");
         assertEq(_bal(col, address(diamond)), OTHER, "the Diamond's other holdings paid nothing");
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(LOAN).collateralAmount,
-            _less(COLLATERAL),
-            "the loan's collateral is what arrived"
+            (COLLATERAL - sellQuote) + _less(sellQuote),
+            "the loan's collateral is the unsold rest plus what arrived"
         );
-        assertEq(_bal(col, bVault), 0, "the vault gave up the whole collateral");
-        assertEq(_tracked(borrower, col), 0, "and its tracked balance with it");
+        assertEq(_bal(col, bVault), COLLATERAL - sellQuote, "the vault gave up exactly the amount offered");
+        assertEq(_tracked(borrower, col), COLLATERAL - sellQuote, "and its tracked balance with it");
     }
 
     /// @notice An HF liquidation whose collateral withdrawal lands short sells
@@ -278,13 +288,15 @@ contract MeasuredDeliveryTest is SetupTest {
             abi.encode(uint256(0.9e18))
         );
 
+        uint256 sellQuote = liquidationQuote(address(diamond), LOAN);
         vm.prank(makeAddr("liquidator"));
-        RiskFacet(address(diamond)).triggerLiquidation(LOAN, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(LOAN, sellQuote, defaultAdapterCalls());
 
         assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Defaulted), "the liquidation completed");
+        assertLt(sellQuote, COLLATERAL, "fixture: a covered sale offers less than the collateral");
         assertEq(_bal(col, address(diamond)), OTHER, "the Diamond's other holdings paid nothing");
-        assertEq(_bal(col, bVault), 0, "the vault gave up the whole collateral");
-        assertEq(_tracked(borrower, col), 0, "and its tracked balance with it");
+        assertEq(_bal(col, bVault), COLLATERAL - sellQuote, "the vault gave up exactly the amount offered");
+        assertEq(_tracked(borrower, col), COLLATERAL - sellQuote, "and its tracked balance with it");
     }
 
     /// @notice When every swap route fails, the fallback custody the producer
@@ -299,7 +311,13 @@ contract MeasuredDeliveryTest is SetupTest {
 
         uint256 row = _enterFallback();
 
-        assertEq(row, _less(_less(COLLATERAL)), "the row is what came back through both hops");
+        // Out in two charged pulls (the amount offered, then the unsold rest
+        // once every route failed), back in one charged deposit.
+        assertEq(
+            row,
+            _less(_less(fallbackSell) + _less(COLLATERAL - fallbackSell)),
+            "the row is what came back through both hops"
+        );
         assertEq(_bal(col, address(diamond)), OTHER, "the Diamond's other holdings paid nothing");
         assertEq(_tracked(borrower, col), row, "the tracked balance is the vault's real balance");
         assertEq(
@@ -316,7 +334,11 @@ contract MeasuredDeliveryTest is SetupTest {
         _scaffold(true);
         _chargesFee(col, bVault);
         uint256 row = _enterFallback();
-        assertEq(row, _less(COLLATERAL), "fixture: only the vault's own transfers are charged");
+        assertEq(
+            row,
+            _less(fallbackSell) + _less(COLLATERAL - fallbackSell),
+            "fixture: only the vault's own transfers (the two pulls) are charged"
+        );
 
         vm.prank(address(diamond));
         (bool ok, ) = FallbackCustodyFacet(address(diamond)).retryFallbackSwap(LOAN, defaultAdapterCalls());
@@ -376,8 +398,9 @@ contract MeasuredDeliveryTest is SetupTest {
         address lVault = _vault(lender);
         uint256 lVault0 = _bal(col, lVault);
 
+        uint256 sellQuote = defaultQuote(address(diamond), LOAN);
         vm.prank(makeAddr("defaultKeeper"));
-        DefaultedFacet(address(diamond)).triggerDefault(LOAN, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, sellQuote, defaultAdapterCalls());
 
         assertEq(uint8(_status()), uint8(LibVaipakam.LoanStatus.Defaulted), "the default completed");
         (, uint256 claim, ) = ClaimFacet(address(diamond)).getClaimableAmount(LOAN, true);
@@ -505,7 +528,8 @@ contract MeasuredDeliveryTest is SetupTest {
         address lVault = _vault(lender);
         uint256 lVault0 = _bal(mockERC20, lVault);
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),

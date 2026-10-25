@@ -100,12 +100,12 @@ describe('attemptMatchLiquidation', () => {
     const h = harness({});
     const out = await attemptMatchLiquidation(h.deps, LOAN_ID);
     expect(out).toEqual({ kind: 'submitted', tx: keccak256(SIGNED) });
-    expect(h.writes).toEqual([{ functionName: 'triggerLiquidation', args: [LOAN_ID, []] }]);
+    expect(h.writes).toEqual([{ functionName: 'triggerLiquidation', args: [LOAN_ID, 0n, []] }]);
     // The preview simulated that same call, at a pinned block.
     expect(h.previews).toHaveLength(1);
     expect(h.previews[0].blockNumber).toBe(100n);
     const simulated = decodeFunctionData({ abi: RiskFacetABI as Abi, data: h.previews[0].calls[0].data });
-    expect(simulated).toEqual({ functionName: 'triggerLiquidation', args: [LOAN_ID, []] });
+    expect(simulated).toEqual({ functionName: 'triggerLiquidation', args: [LOAN_ID, 0n, []] });
   });
 
   it('sends nothing unless the preview affirmatively shows a match', async () => {

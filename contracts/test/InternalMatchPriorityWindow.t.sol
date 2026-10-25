@@ -9,6 +9,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
 
 /**
  * @title InternalMatchPriorityWindow.t.sol
@@ -121,7 +122,8 @@ contract InternalMatchPriorityWindowTest is SetupTest {
         // External should NOT revert with InternalMatchOnlyBand.
         // Catch the downstream revert with try/catch and assert
         // the selector doesn't match the gate's error.
-        try RiskFacet(address(diamond)).triggerLiquidation(LOAN_ID, _adapterCalls()) {
+        uint256 sellQuote = liquidationQuote(address(diamond), LOAN_ID);
+        try RiskFacet(address(diamond)).triggerLiquidation(LOAN_ID, sellQuote, _adapterCalls()) {
             // If somehow it succeeds in test env, that's also fine —
             // means the gate didn't fire.
         } catch (bytes memory reason) {
@@ -147,6 +149,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
             abi.encode(uint256(8_600))
         );
 
+        uint256 sellQuote = liquidationQuote(address(diamond), LOAN_ID);
         vm.expectRevert(
             abi.encodeWithSelector(
                 RiskFacet.InternalMatchOnlyBand.selector,
@@ -154,7 +157,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
                 uint256(8_700)
             )
         );
-        RiskFacet(address(diamond)).triggerLiquidation(LOAN_ID, _adapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(LOAN_ID, sellQuote, _adapterCalls());
     }
 
     function test_killSwitchOn_ltvAtWindowCeiling_externalOpens() public {
@@ -170,7 +173,8 @@ contract InternalMatchPriorityWindowTest is SetupTest {
             abi.encode(uint256(8_700))
         );
 
-        try RiskFacet(address(diamond)).triggerLiquidation(LOAN_ID, _adapterCalls()) {}
+        uint256 sellQuote = liquidationQuote(address(diamond), LOAN_ID);
+        try RiskFacet(address(diamond)).triggerLiquidation(LOAN_ID, sellQuote, _adapterCalls()) {}
         catch (bytes memory reason) {
             // safe: no SafeCast variant for bytes-target casts; this is the
             // standard `bytes4(<bytes-error-payload>)` selector-extraction
@@ -196,7 +200,8 @@ contract InternalMatchPriorityWindowTest is SetupTest {
             abi.encode(uint256(9_500))
         );
 
-        try RiskFacet(address(diamond)).triggerLiquidation(LOAN_ID, _adapterCalls()) {}
+        uint256 sellQuote = liquidationQuote(address(diamond), LOAN_ID);
+        try RiskFacet(address(diamond)).triggerLiquidation(LOAN_ID, sellQuote, _adapterCalls()) {}
         catch (bytes memory reason) {
             // safe: no SafeCast variant for bytes-target casts; this is the
             // standard `bytes4(<bytes-error-payload>)` selector-extraction
@@ -225,6 +230,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
             abi.encode(uint256(8_900))
         );
 
+        uint256 sellQuote = liquidationQuote(address(diamond), LOAN_ID);
         vm.expectRevert(
             abi.encodeWithSelector(
                 RiskFacet.InternalMatchOnlyBand.selector,
@@ -232,7 +238,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
                 uint256(9_000)
             )
         );
-        RiskFacet(address(diamond)).triggerLiquidation(LOAN_ID, _adapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(LOAN_ID, sellQuote, _adapterCalls());
     }
 
     /// @notice #395 (Codex r3 P2) — `triggerPartialLiquidation` must defer to

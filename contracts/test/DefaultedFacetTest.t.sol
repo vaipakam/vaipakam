@@ -56,6 +56,7 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
+import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
@@ -93,6 +94,7 @@ import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {defaultQuote, liquidationQuote, forcedSalePlan} from "./helpers/ForcedSaleQuote.sol";
 
 contract DefaultedFacetTest is Test {
     VaipakamDiamond diamond;
@@ -224,7 +226,7 @@ contract DefaultedFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -385,6 +387,15 @@ contract DefaultedFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
+        });
+        // #2795 / #2796 - every forced sale (the periodic settlement, the HF
+        // liquidation and the time-based default) runs through a self-call
+        // into ForcedSaleFacet, so a hand-built Diamond that cuts any seller
+        // must cut this host too.
+        cuts[25] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ForcedSaleFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getForcedSaleFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -735,28 +746,34 @@ contract DefaultedFacetTest is Test {
             loanId
         );
 
-        // ZeroExProxyMock rate is 11/10 → proceeds = collateralAmount * 11 / 10
-        uint256 expectedProceeds = ((loan.collateralAmount * 11) / 10);
+        // #2796 — the sale offers the plan's amount. At $0.5 the whole
+        // collateral cannot cover the debt plus charges, so the plan sells all
+        // of it. ZeroExProxyMock rate is 11/10 → proceeds = sold * 11 / 10.
+        ForcedSaleFacet.ForcedSalePlan memory plan = forcedSalePlan(
+            address(diamond), loanId, ForcedSaleFacet.ForcedSaleKind.HealthFactorLiquidation
+        );
+        uint256 sellQuote = plan.sell;
+        uint256 expectedProceeds = (sellQuote * 11) / 10;
+        assertGe(expectedProceeds, plan.debt, "fixture: proceeds still cover the debt");
 
-        // Call triggerLiquidation (contract constructs swap calldata internally
-        // with the oracle-derived minOutputAmount = expected * 94%).
         vm.expectEmit(true, true, false, true);
         emit RiskFacet.HFLiquidationTriggered(
             loanId,
             address(this), // msg.sender,
             expectedProceeds
         );
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, defaultAdapterCalls());
 
         // Assert loan status Defaulted
         loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
 
         // Assert proceeds distributed: liqBonus to liquidator, debt to lender, surplus to borrower.
-        // The mock swap delivers exactly expectedProceeds (zero realized
-        // slippage), so the dynamic incentive clamps to the 3% README cap.
+        // The mock swap delivers above the oracle value (zero realized
+        // slippage), so the dynamic incentive clamps to the 3% README cap,
+        // taken on the debt since #2796 (the proceeds cover it here).
         uint256 incentiveBps = LibVaipakam.MAX_LIQUIDATOR_INCENTIVE_BPS;
-        uint256 bonus = (expectedProceeds * incentiveBps) / BASIS_POINTS;
+        uint256 bonus = (plan.debt * incentiveBps) / BASIS_POINTS;
         // Bonus sent directly to liquidator (msg.sender = address(this))
         assertEq(IERC20(loan.principalAsset).balanceOf(address(this)), bonus);
         // Verify lender claim recorded correctly (includes treasury fee deduction)
@@ -772,6 +789,18 @@ contract DefaultedFacetTest is Test {
         assertEq(IERC20(loan.principalAsset).balanceOf(lenderVault), claimAmount);
         // Verify lender got at least principal (shouldn't lose principal when proceeds cover it)
         assertTrue(claimAmount >= loan.principal, "Lender should get at least principal back");
+    }
+
+    /// @dev #2796 — the default's sale plan exists exactly when the default
+    ///      sells ({LibDefaultRoute}): for the unpriced fallback, an in-kind
+    ///      move or a refused default the preview returns the all-zero plan,
+    ///      read here without a try/catch so a revert fails the test.
+    function _assertNoDefaultSalePlan(uint256 loanId) internal view {
+        ForcedSaleFacet.ForcedSalePlan memory plan =
+            forcedSalePlan(address(diamond), loanId, ForcedSaleFacet.ForcedSaleKind.TimeBasedDefault);
+        assertEq(plan.debt, 0, "no-sale default: plan debt");
+        assertEq(plan.sell, 0, "no-sale default: plan sell");
+        assertEq(plan.maxSell, 0, "no-sale default: plan maxSell");
     }
 
     function testTriggerDefaultLiquidCollateral() public {
@@ -812,10 +841,11 @@ contract DefaultedFacetTest is Test {
         deal(mockERC20, address(diamond), 3000 ether);
         deal(mockCollateralERC20, address(diamond), 3000 ether);
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(lender);
         vm.expectEmit(true, false, false, true);
         emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // riskAndTermsConsentFromBoth = true
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(
             loanId
@@ -893,8 +923,9 @@ contract DefaultedFacetTest is Test {
         uint256 tBefore = IERC20(mockERC20).balanceOf(treasuryEoa);
         uint256 lBefore = lv == address(0) ? 0 : IERC20(mockERC20).balanceOf(lv);
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(lender);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
         toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - tBefore;
@@ -1016,8 +1047,9 @@ contract DefaultedFacetTest is Test {
         deal(mockERC20, address(diamond), 3000 ether);
         deal(mockCollateralERC20, address(diamond), 3000 ether);
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(lender);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // (1) Park threading: the marker recorded the flagged current holder.
         assertEq(
@@ -1088,8 +1120,9 @@ contract DefaultedFacetTest is Test {
         deal(mockERC20, address(diamond), 3000 ether);
         deal(mockCollateralERC20, address(diamond), 3000 ether);
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(lender);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         assertEq(
             TestMutatorFacet(address(diamond)).getSanctionsFrozenClaimant(loanId, true),
@@ -1142,8 +1175,9 @@ contract DefaultedFacetTest is Test {
         // open, but the holder is in the registry → `mustFreezeParty` freezes.
         m.setRevertOnRead(true);
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(lender);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Marker recorded despite the outage (the load-bearing assertion).
         assertEq(
@@ -1191,8 +1225,9 @@ contract DefaultedFacetTest is Test {
         deal(mockERC20, address(diamond), 3000 ether);
         deal(mockCollateralERC20, address(diamond), 3000 ether);
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(lender);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Self-heal: the clean read cleared the stale registry bit + no marker.
         assertFalse(
@@ -1246,8 +1281,9 @@ contract DefaultedFacetTest is Test {
         );
         uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(lender);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(
@@ -1312,10 +1348,14 @@ contract DefaultedFacetTest is Test {
         uint256 grace = LibVaipakam.gracePeriod(30);
         vm.warp(endTime + grace + 1);
 
+        // #2796 — a default that takes no sale publishes no sale plan (and
+        // needs no price to say so), so the quote is 0 and the try-list unread.
+        _assertNoDefaultSalePlan(loanId);
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(lender);
         vm.expectEmit(true, false, false, true);
         emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // riskAndTermsConsentFromBoth = true
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Claim model: collateral stays in borrower's vault; lender claim is recorded
         (address claimAsset, uint256 claimAmount, bool claimed) =
@@ -1348,10 +1388,11 @@ contract DefaultedFacetTest is Test {
         uint256 grace = LibVaipakam.gracePeriod(30);
         vm.warp(endTime + grace + 1);
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(lender);
         vm.expectEmit(true, false, false, true);
         emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted); // riskAndTermsConsentFromBoth = true
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Check NFT user reset
         assertEq(IERC4907(mockNft721).userOf(1), address(0));
@@ -1394,9 +1435,10 @@ contract DefaultedFacetTest is Test {
             0
         );
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(lender);
         vm.expectRevert(DefaultedFacet.NotDefaultedYet.selector);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
     }
 
     function testTriggerDefaultRequiresKYCForHighValue() public {
@@ -1420,9 +1462,10 @@ contract DefaultedFacetTest is Test {
         // Downgrade lender KYC to Tier0 (no KYC) — loan principal > $1k triggers KYC check
         ProfileFacet(address(diamond)).updateKYCTier(lender, LibVaipakam.KYCTier.Tier0);
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
     }
 
     function testIsLoanDefaultable() public {
@@ -1465,7 +1508,8 @@ contract DefaultedFacetTest is Test {
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
             abi.encode(uint256(0.5e18))
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Now the loan is Defaulted (not Active) — should return false
         assertFalse(DefaultedFacet(address(diamond)).isLoanDefaultable(loanId));
@@ -1483,11 +1527,13 @@ contract DefaultedFacetTest is Test {
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
             abi.encode(uint256(0.5e18))
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Try to trigger default again on the now-Defaulted loan
+        uint256 sellQuote2 = defaultQuote(address(diamond), loanId);
         vm.expectRevert(IVaipakamErrors.InvalidLoanStatus.selector);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote2, defaultAdapterCalls());
     }
 
     /// @dev Tests triggerDefault with liquid collateral where isCollateralValueCollapsed returns true
@@ -1509,9 +1555,13 @@ contract DefaultedFacetTest is Test {
         );
         // collateral is liquid (mockERC20), consent=true, LTV-collapsed=true
         // → should take the illiquid/collapsed path (else-if branch)
+        // #2796 — a default that takes no sale publishes no sale plan (and
+        // needs no price to say so), so the quote is 0 and the try-list unread.
+        _assertNoDefaultSalePlan(loanId);
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -1542,8 +1592,12 @@ contract DefaultedFacetTest is Test {
 
         // Now: Illiquid collateral AND riskAndTermsConsentFromBoth=false → LiquidationFailed
         // (Neither the liquid swap branch nor the illiquid+consent branch is taken)
+        // #2796 — a default that takes no sale publishes no sale plan (and
+        // needs no price to say so), so the quote is 0 and the try-list unread.
+        _assertNoDefaultSalePlan(loanId);
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(IVaipakamErrors.LiquidationFailed.selector);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1565,8 +1619,9 @@ contract DefaultedFacetTest is Test {
             abi.encodeWithSelector(VaultFactoryFacet.getOrCreateUserVault.selector),
             "mock revert"
         );
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(bytes("mock revert"));
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1588,8 +1643,9 @@ contract DefaultedFacetTest is Test {
             abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
             "mock revert"
         );
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(bytes("mock revert"));
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1607,8 +1663,9 @@ contract DefaultedFacetTest is Test {
             abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
             "mock revert"
         );
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert();
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1626,8 +1683,9 @@ contract DefaultedFacetTest is Test {
             abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector),
             "mock revert"
         );
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(bytes("mock revert"));
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1644,8 +1702,9 @@ contract DefaultedFacetTest is Test {
             abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
             "mock revert"
         );
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(bytes("mock revert"));
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1672,9 +1731,10 @@ contract DefaultedFacetTest is Test {
             abi.encode(true)
         );
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, false);
         emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -1695,7 +1755,8 @@ contract DefaultedFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
 
         // Default should succeed without attempting vaultWithdrawERC721/ERC1155
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -1726,8 +1787,9 @@ contract DefaultedFacetTest is Test {
             "vault fail"
         );
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(bytes("vault fail"));
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1759,8 +1821,9 @@ contract DefaultedFacetTest is Test {
             "prepay fail"
         );
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(bytes("prepay fail"));
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1792,8 +1855,9 @@ contract DefaultedFacetTest is Test {
             "nft fail"
         );
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(bytes("nft fail"));
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1818,8 +1882,9 @@ contract DefaultedFacetTest is Test {
             "first nft fail"
         );
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(bytes("first nft fail"));
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -1845,6 +1910,7 @@ contract DefaultedFacetTest is Test {
 
         // Pilot — primary-key-only payload + companion state-change event
         // LoanFallbackPending fires in the same tx (EventSourcingAudit §1.4 + §1.5).
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit DefaultedFacet.LiquidationFallback(loanId);
         vm.expectEmit(true, true, false, true);
@@ -1854,7 +1920,7 @@ contract DefaultedFacetTest is Test {
             true,
             LibVaipakam.LoanStatus.FallbackPending
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
@@ -1889,6 +1955,10 @@ contract DefaultedFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
+        // #2796 — a default that takes no sale publishes no sale plan (and
+        // needs no price to say so), so the quote is 0 and the try-list unread.
+        _assertNoDefaultSalePlan(loanId);
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectCall(
             address(ZeroExProxyMock(mockZeroExProxy)),
             abi.encodeWithSelector(IZeroExProxy.swap.selector),
@@ -1901,7 +1971,7 @@ contract DefaultedFacetTest is Test {
             true,
             LibVaipakam.LoanStatus.FallbackPending
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
@@ -1943,6 +2013,10 @@ contract DefaultedFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
+        // #2796 — a default that takes no sale publishes no sale plan (and
+        // needs no price to say so), so the quote is 0 and the try-list unread.
+        _assertNoDefaultSalePlan(loanId);
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectCall(
             address(ZeroExProxyMock(mockZeroExProxy)),
             abi.encodeWithSelector(IZeroExProxy.swap.selector),
@@ -1955,7 +2029,7 @@ contract DefaultedFacetTest is Test {
             false,
             LibVaipakam.LoanStatus.FallbackPending
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
@@ -1984,12 +2058,13 @@ contract DefaultedFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectCall(
             address(ZeroExProxyMock(mockZeroExProxy)),
             abi.encodeWithSelector(IZeroExProxy.swap.selector),
             0
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
@@ -2031,12 +2106,13 @@ contract DefaultedFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectCall(
             address(ZeroExProxyMock(mockZeroExProxy)),
             abi.encodeWithSelector(IZeroExProxy.swap.selector),
             0
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.FallbackPending));
@@ -2063,12 +2139,13 @@ contract DefaultedFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectCall(
             address(ZeroExProxyMock(mockZeroExProxy)),
             abi.encodeWithSelector(IZeroExProxy.swap.selector),
             0
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -2100,13 +2177,14 @@ contract DefaultedFacetTest is Test {
             abi.encodeWithSelector(OracleFacet.checkLiquidityOnActiveNetwork.selector, mockCollateralERC20),
             abi.encodeWithSelector(OracleFacet.OraclePriceDivergence.selector)
         );
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectCall(
             address(diamond),
             abi.encodeWithSelector(OracleFacet.checkLiquidityOnActiveNetwork.selector, mockCollateralERC20),
             0
         );
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -2132,7 +2210,8 @@ contract DefaultedFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Check borrower has a surplus claim
         (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
@@ -2170,7 +2249,8 @@ contract DefaultedFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -2183,11 +2263,19 @@ contract DefaultedFacetTest is Test {
         assertGt(lenderAmt, 0, "lender recovers from swap proceeds");
 
         // Borrower keeps the recoverable surplus — the §790/§774 entitlement the
-        // old whole-collateral-in-kind branch destroyed.
+        // old whole-collateral-in-kind branch destroyed. Since #2796 that is
+        // two rows: the collateral the sale did not take (the borrower claim,
+        // in the collateral asset) and the proceeds beyond the debt and the
+        // charges (the surplus row, in the principal asset).
         (address borrowerAsset, uint256 borrowerAmt,) =
             ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
-        assertEq(borrowerAsset, mockERC20, "borrower surplus in principal asset");
+        assertEq(borrowerAsset, mockCollateralERC20, "borrower keeps the unsold collateral");
+        assertEq(borrowerAmt, 2000 ether - sellQuote, "unsold collateral = pledged - sold");
         assertGt(borrowerAmt, 0, "borrower must retain recoverable surplus (C1 fix)");
+        (address surplusAsset, uint256 surplusAmt,) =
+            ClaimFacet(address(diamond)).getBorrowerSurplusClaim(loanId);
+        assertEq(surplusAsset, mockERC20, "proceeds extra held in the principal asset");
+        assertGt(surplusAmt, 0, "proceeds beyond the debt and charges are the borrower's");
         vm.clearMockedCalls();
     }
 
@@ -2214,7 +2302,8 @@ contract DefaultedFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Lender gets whatever proceeds there were (loss-bearing)
         (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
@@ -2236,7 +2325,8 @@ contract DefaultedFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -2262,10 +2352,11 @@ contract DefaultedFacetTest is Test {
         );
         vm.warp(block.timestamp + 33 days + 3);
         MockVaultWithdraw.deliversAll(address(diamond));
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(
             abi.encodeWithSelector(LibSwap.NoEnabledSwapRoute.selector, loanId)
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, emptyAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, emptyAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -2293,8 +2384,9 @@ contract DefaultedFacetTest is Test {
 
         address keeper = makeAddr("defaultKeeper");
         uint256 balBefore = ERC20Mock(mockERC20).balanceOf(keeper);
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(keeper);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         assertGt(
             ERC20Mock(mockERC20).balanceOf(keeper) - balBefore,
@@ -2333,8 +2425,9 @@ contract DefaultedFacetTest is Test {
         ProfileFacet(address(diamond)).setSanctionsOracle(address(sancList));
 
         uint256 balBefore = ERC20Mock(mockERC20).balanceOf(sanctionedKeeper);
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(sanctionedKeeper);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Default completed but the sanctioned caller earned nothing.
         assertEq(
@@ -2371,7 +2464,8 @@ contract DefaultedFacetTest is Test {
         // Mock vaultWithdrawERC721 to succeed
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC721.selector), abi.encode(true));
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -2399,7 +2493,8 @@ contract DefaultedFacetTest is Test {
         // Mock vaultWithdrawERC1155 to succeed
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC1155.selector), abi.encode(true));
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -2429,7 +2524,8 @@ contract DefaultedFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Lender gets all proceeds (loss-bearing), no treasury fee
         (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
@@ -2470,8 +2566,9 @@ contract DefaultedFacetTest is Test {
             "vault fail"
         );
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(bytes("vault fail"));
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -2497,7 +2594,8 @@ contract DefaultedFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -2531,7 +2629,8 @@ contract DefaultedFacetTest is Test {
         vm.warp(block.timestamp + 33 days + 3);
 
         // Should NOT revert with KYCRequired because illiquid principal is valued at $0
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -2568,7 +2667,8 @@ contract DefaultedFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -2594,8 +2694,9 @@ contract DefaultedFacetTest is Test {
 
         // prepayAmount = 100*30 = 3000 ether, price $1 → $3000 > KYC threshold $2000
         // With Tier0 KYC, should revert
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Restore
         ProfileFacet(address(diamond)).updateKYCTier(lender, LibVaipakam.KYCTier.Tier2);
@@ -2629,7 +2730,8 @@ contract DefaultedFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Verify borrower surplus is large (since proceeds >> totalDebt)
         (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
@@ -2662,8 +2764,9 @@ contract DefaultedFacetTest is Test {
             "vault fail"
         );
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(bytes("vault fail"));
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -2693,7 +2796,8 @@ contract DefaultedFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId), abi.encode(uint256(0)));
 
         // This should trigger liquidation which sets loan to Defaulted, then the outer `if (loan.status != Defaulted)` is false
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -2721,7 +2825,8 @@ contract DefaultedFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Verify borrower got surplus
         (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
@@ -2757,7 +2862,8 @@ contract DefaultedFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -2788,6 +2894,7 @@ contract DefaultedFacetTest is Test {
 
         // Pilot — primary-key-only payload + companion state-change event
         // LoanFallbackPending fires in the same tx (EventSourcingAudit §1.4 + §1.5).
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit DefaultedFacet.LiquidationFallback(loanId);
         vm.expectEmit(true, true, false, true);
@@ -2797,7 +2904,7 @@ contract DefaultedFacetTest is Test {
             true,
             LibVaipakam.LoanStatus.FallbackPending
         );
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Loan should be defaulted via fallback
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -2828,7 +2935,8 @@ contract DefaultedFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -2854,8 +2962,9 @@ contract DefaultedFacetTest is Test {
 
         vm.warp(block.timestamp + 33 days + 3);
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(IVaipakamErrors.LiquidationFailed.selector);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         // Restore
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
@@ -2871,28 +2980,36 @@ contract DefaultedFacetTest is Test {
         uint256 grace = LibVaipakam.gracePeriod(30);
         vm.warp(endTime + grace + 1);
 
-        // Mock swap to return low proceeds directly (below principal)
-        uint256 lowProceeds = 500 ether;
-        // #2472 — the proxy mock DELIVERS the stated proceeds: a mocked
-        // `swap` return books proceeds that never arrive, which the
-        // Diamond's delivery check refuses.
-        ZeroExProxyMock(address(mockZeroExProxy)).setFixedOutput(lowProceeds);
-        deal(
-            mockERC20,
-            address(mockZeroExProxy),
-            IERC20(mockERC20).balanceOf(address(mockZeroExProxy)) + lowProceeds
+        // #2796 — the collateral is worth too little to cover the debt: at
+        // $0.5 the 2000 pledged is worth 1000, below principal plus interest
+        // and charges, so the plan sells ALL of it. The swap delivers at the
+        // oracle rate (1/2), which clears the worst-case floor; a route
+        // delivering below the floor would be refused and the loan would go
+        // to the in-kind fallback instead.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encode(5e7, 8)
         );
-        deal(mockERC20, address(diamond), 2000 ether + lowProceeds);
-        deal(mockCollateralERC20, address(diamond), 2000 ether + lowProceeds);
+        ZeroExProxyMock(address(mockZeroExProxy)).setRate(1, 2);
+        deal(mockERC20, address(diamond), 2000 ether);
+        deal(mockCollateralERC20, address(diamond), 2000 ether);
 
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        ForcedSaleFacet.ForcedSalePlan memory plan = forcedSalePlan(
+            address(diamond), loanId, ForcedSaleFacet.ForcedSaleKind.TimeBasedDefault
+        );
+        assertFalse(plan.covered, "fixture: the whole collateral cannot cover the debt");
+        assertEq(plan.sell, 2000 ether, "an uncovered sale sells all the collateral");
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, plan.sell, defaultAdapterCalls());
 
-        // Verify: no borrower surplus (proceeds < principal)
+        // Verify: nothing left for the borrower (all collateral sold, proceeds < debt)
         (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
-        assertEq(borrowerAmt, 0, "No surplus when proceeds < principal");
+        assertEq(borrowerAmt, 0, "No collateral left when every unit was sold");
+        (, uint256 surplusAmt,) = ClaimFacet(address(diamond)).getBorrowerSurplusClaim(loanId);
+        assertEq(surplusAmt, 0, "No surplus when proceeds < principal");
 
         // Verify lender got less than principal (loss)
         (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
@@ -2925,7 +3042,8 @@ contract DefaultedFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -2957,8 +3075,9 @@ contract DefaultedFacetTest is Test {
             "nft update fail"
         );
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(bytes("nft update fail"));
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -2991,7 +3110,8 @@ contract DefaultedFacetTest is Test {
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
@@ -3014,8 +3134,9 @@ contract DefaultedFacetTest is Test {
         deal(mockCollateralERC20, address(diamond), 50000 ether);
         vm.mockCallRevert(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetRentalUser.selector), "set user fail");
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(bytes("set user fail"));
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
@@ -3080,10 +3201,11 @@ contract DefaultedFacetTest is Test {
         assertGt(i, 0, "precondition: interest accrued");
         assertGt(l, 0, "precondition: a late fee is due");
 
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectEmit(true, true, false, true);
         emit LibOwedAtDefault.OwedAtDefaultRecorded(loanId, mockERC20, p, i, l, false);
         vm.prank(lender);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
 
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
@@ -3113,7 +3235,8 @@ contract DefaultedFacetTest is Test {
         uint256 interest = (loan.principal * loan.interestRateBps * 10 days) / (365 days * BASIS_POINTS);
         assertGt(interest, 0, "precondition: interest accrued");
 
-        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, sellQuote, defaultAdapterCalls());
 
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
@@ -3131,8 +3254,9 @@ contract DefaultedFacetTest is Test {
             10 ether, 1500 ether, 30, 1, 1
         );
         vm.warp(block.timestamp + 30 days + LibVaipakam.gracePeriod(30) + 1);
+        uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(lender);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
             uint8(LibVaipakam.LoanStatus.Defaulted),

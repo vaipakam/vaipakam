@@ -234,11 +234,16 @@ library LibCloseoutFreeze {
     }
 
     /**
-     * @notice #2795 — hold a borrower's extra from a forced sale on an OPEN
-     *         loan (the periodic-interest settlement), when it cannot be paid
-     *         to the holder's wallet: the holder is flagged
-     *         ({LibSanctionedLock.mustFreezeParty}), or the wallet payment was
-     *         refused. The tokens are on the Diamond.
+     * @notice #2795 / #2796 — hold a borrower's extra from a forced sale in
+     *         the stored borrower's vault for the claim. The tokens are on the
+     *         Diamond. Two callers, both in `ForcedSaleFacet`:
+     *         - an OPEN loan (the periodic-interest settlement), when the
+     *           extra cannot be paid to the holder's wallet: the holder is
+     *           flagged ({LibSanctionedLock.mustFreezeParty}), or the wallet
+     *           payment was refused;
+     *         - a TERMINAL sale (Health-Factor liquidation, time-based
+     *           default), where the extra always waits for
+     *           `ClaimFacet.claimAsBorrower` beside the unsold collateral.
      * @dev    Credited into the STORED borrower's vault (it always exists),
      *         added to the surplus row (whose writer records a flagged holder
      *         as the fail-closed claimant), and reserved against the stored
@@ -251,7 +256,7 @@ library LibCloseoutFreeze {
      *         reservation name what the vault received.
      * @return credited What the stored borrower's vault received.
      */
-    function parkActiveBorrowerExtra(
+    function holdBorrowerExtra(
         LibVaipakam.Storage storage s,
         uint256 loanId,
         LibVaipakam.Loan storage loan,

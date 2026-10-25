@@ -72,9 +72,13 @@ import {
 import {
   agentQuoteOrigin,
   buildCloseOutRoute,
+  FORCED_SALE_KIND,
+  forcedSaleQuoteAccepted,
+  forcedSaleQuoteAmount,
   noQuoteReason,
   type RoutePosture,
   previewCloseOut,
+  readForcedSalePlan,
   readRouteStanding,
   routeMissingAnswers,
 } from '../data/closeOutRoute';
@@ -935,10 +939,11 @@ export function ForcedCloseCard({
   const submittable =
     canSubmitFromApp(readiness, routeAvailability) && !holdingAfterSubmit;
 
-  /** The try-list for THIS confirm (#2463): the loan's collateral as the
-   *  chain holds it now, and the Diamond's adapter list as it stands now,
-   *  quoted now. Returns the calls, or the sentence to show instead —
-   *  never an empty list, which the contract would refuse. */
+  /** The try-list for THIS confirm (#2463): the amount the sale must sell
+   *  as the chain plans it now (#2796, `previewForcedSale`), and the
+   *  Diamond's adapter list as it stands now, quoted now. Returns the
+   *  calls, or the sentence to show instead — never an empty list, which
+   *  the contract would refuse. */
   async function findCloseOutRoute(): Promise<
     | { calls: readonly AdapterCall[]; quotedAmount: bigint; missingAnswers: boolean }
     | { message: string }
@@ -949,7 +954,7 @@ export function ForcedCloseCard({
     let standing;
     let sale;
     try {
-      const [loan, fresh] = await Promise.all([
+      const [loan, plan, fresh] = await Promise.all([
         publicClient.readContract({
           address: routeDiamond,
           abi: DIAMOND_ABI_VIEM,
@@ -960,6 +965,14 @@ export function ForcedCloseCard({
           principalAsset: Address;
           collateralAmount: bigint;
         }>,
+        // The sale sells only what the debt needs (#2796), and the
+        // contract accepts a quote inside the plan's range only.
+        readForcedSalePlan({
+          client: publicClient,
+          diamond: routeDiamond,
+          loanId: BigInt(loanId),
+          kind: FORCED_SALE_KIND.TimeBasedDefault,
+        }),
         readRouteStanding({
           client: publicClient,
           diamond: routeDiamond,
@@ -969,10 +982,14 @@ export function ForcedCloseCard({
         }),
       ]);
       standing = fresh;
+      const sellAmount = forcedSaleQuoteAmount(plan);
+      // No sale is due by the plan: the loan changed under the card (it
+      // is no longer past grace and open, or nothing is owed).
+      if (sellAmount === null) return { message: copy.forcedClose.routeEndingChanged };
       sale = {
         sellToken: loan.collateralAsset,
         buyToken: loan.principalAsset,
-        sellAmount: loan.collateralAmount,
+        sellAmount,
       };
     } catch {
       return { message: copy.forcedClose.routeRosterFailed };
@@ -1134,6 +1151,7 @@ export function ForcedCloseCard({
           diamond: routeDiamond,
           account: address,
           loanId: BigInt(loanId),
+          sellAmount: quotedAmount ?? 0n,
           calls: adapterCalls,
         });
         if (preview === 'fallback') {
@@ -1150,7 +1168,7 @@ export function ForcedCloseCard({
           address: walletChain!.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'triggerDefault',
-          args: [BigInt(loanId), adapterCalls],
+          args: [BigInt(loanId), quotedAmount ?? 0n, adapterCalls],
           account: address,
         });
       }
@@ -1163,12 +1181,12 @@ export function ForcedCloseCard({
       //  - The sale hold of this lender position, again. The chain already
       //    keeps a sale and this close-out apart (#2078, see the first
       //    check above); this is the shared rule's last read.
-      //  - The collateral the quotes were made for. `triggerDefault` sells
-      //    the loan's LIVE collateral, but an aggregator's calldata is for
-      //    the quoted amount. Since #2472 the chain refuses an attempt that
-      //    sells less than it was offered and tries the next route, so a
-      //    route quoted before a top-up ends in the fallback rather than a
-      //    sale; refusing here says so before anything is spent.
+      //  - The amount the quotes were made for. An aggregator's calldata is
+      //    for the quoted amount, and `triggerDefault` refuses an amount
+      //    outside the plan's range before anything moves (#2796). The
+      //    range moves with the debt, the prices and the collateral, so a
+      //    quote that has left it is refused here, with the reason, before
+      //    the wallet is asked.
       //
       // Judged only once both are in, so no network await sits between
       // either read and the write. What stays uncovered is the blocks
@@ -1183,33 +1201,28 @@ export function ForcedCloseCard({
           return;
         }
       }
-      const [lateSaleBlock, liveCollateral] = await Promise.all([
+      const [lateSaleBlock, livePlan] = await Promise.all([
         preSubmitBlock(gateBlock),
         quotedAmount !== null && publicClient && routeDiamond
-          ? (
-              publicClient.readContract({
-                address: routeDiamond,
-                abi: DIAMOND_ABI_VIEM,
-                functionName: 'getLoanDetails',
-                args: [BigInt(loanId)],
-                blockNumber: gateBlock,
-              }) as Promise<{ collateralAmount: bigint }>
-            ).then(
-              (loan) => loan.collateralAmount,
-              () => 'unread' as const,
-            )
+          ? readForcedSalePlan({
+              client: publicClient,
+              diamond: routeDiamond,
+              loanId: BigInt(loanId),
+              kind: FORCED_SALE_KIND.TimeBasedDefault,
+              blockNumber: gateBlock,
+            }).catch(() => 'unread' as const)
           : Promise.resolve(null),
       ]);
       if (lateSaleBlock) {
         setError(lateSaleBlock);
         return;
       }
-      if (liveCollateral === 'unread') {
+      if (livePlan === 'unread') {
         setError(copy.forcedClose.routeRosterFailed);
         return;
       }
-      if (liveCollateral !== null && liveCollateral !== quotedAmount) {
-        setError(copy.forcedClose.routeCollateralChanged);
+      if (livePlan !== null && quotedAmount !== null && !forcedSaleQuoteAccepted(livePlan, quotedAmount)) {
+        setError(copy.forcedClose.routeSaleSizeChanged);
         return;
       }
       // STAMP ON THE HASH, NOT ON THE RECEIPT (round 47 P1).
@@ -1272,7 +1285,7 @@ export function ForcedCloseCard({
         return;
       }
 
-      await write('triggerDefault', [BigInt(loanId), adapterCalls], {
+      await write('triggerDefault', [BigInt(loanId), quotedAmount ?? 0n, adapterCalls], {
         onSubmitted: (hash) => {
           const record = { at: Date.now(), hash };
           setSubmissions((prev) => ({ ...prev, [key]: record }));
