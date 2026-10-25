@@ -176,13 +176,20 @@ export function compareRendered(expected, rendered) {
  * One series at a time: walks the page runs side by side (a lender and a
  * borrower list) interleave, so the caller separates them first.
  */
+/** A cursor as text: a request carries it as a query string, while a response
+ *  may return it as a number (the loan lists do), so the two are compared
+ *  as text. Absent and null are the same "no cursor". */
+function cursorKey(c) {
+  return c === null || c === undefined ? null : String(c);
+}
+
 export function lastChain(responses) {
   let start = -1;
-  for (let i = 0; i < responses.length; i++) if (responses[i].before === null) start = i;
+  for (let i = 0; i < responses.length; i++) if (cursorKey(responses[i].before) === null) start = i;
   if (start === -1) return null;
   const walk = responses.slice(start);
   for (let i = 1; i < walk.length; i++) {
-    if (walk[i].before !== walk[i - 1].nextBefore) return null;
+    if (cursorKey(walk[i].before) !== cursorKey(walk[i - 1].nextBefore)) return null;
   }
   return walk;
 }
@@ -208,7 +215,7 @@ export function lastScan(responses) {
     chainIds: [...new Set(scan.map((p) => p.chainId))],
     events: scan.flatMap((p) => p.events),
     pages: scan.length,
-    reachedEnd: scan[scan.length - 1].nextBefore === null,
+    reachedEnd: cursorKey(scan[scan.length - 1].nextBefore) === null,
   };
 }
 

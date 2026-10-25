@@ -170,10 +170,15 @@ function watchIndexer(page) {
   const failures = [];
   let lastStart = Date.now();
   let inFlight = 0;
-  const kindOf = (raw) => {
+  // The page's own data requests only (fetch / XHR), never a document
+  // navigation: the site's `/activity` route shares the feed's pathname, and
+  // its HTML is not an indexer answer.
+  const kindOf = (req) => {
+    const type = req.resourceType();
+    if (type !== 'fetch' && type !== 'xhr') return null;
     let u;
     try {
-      u = new URL(raw);
+      u = new URL(req.url());
     } catch {
       return null;
     }
@@ -184,20 +189,20 @@ function watchIndexer(page) {
     return null;
   };
   page.on('request', (req) => {
-    if (!kindOf(req.url())) return;
+    if (!kindOf(req)) return;
     inFlight += 1;
     lastStart = Date.now();
   });
   const finished = (req) => {
-    if (kindOf(req.url())) inFlight = Math.max(0, inFlight - 1);
+    if (kindOf(req)) inFlight = Math.max(0, inFlight - 1);
   };
   page.on('requestfailed', (req) => {
-    if (!kindOf(req.url())) return;
+    if (!kindOf(req)) return;
     finished(req);
     failures.push(`${req.url().slice(0, 200)} — ${req.failure()?.errorText ?? 'failed'}`);
   });
   page.on('response', (res) => {
-    const k = kindOf(res.url());
+    const k = kindOf(res.request());
     if (!k) return;
     const read = (async () => {
       let json = null;

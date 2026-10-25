@@ -179,6 +179,14 @@ describe('lastChain', () => {
       { before: 'y', nextBefore: null },
     ]);
   });
+  it('matches a numeric response cursor to the string the next request carries', () => {
+    const walk = lastChain([
+      { before: null, nextBefore: 123 },
+      { before: '123', nextBefore: 45 },
+      { before: '45', nextBefore: null },
+    ]);
+    expect(walk).toHaveLength(3);
+  });
   it('is null when the walk breaks or never started', () => {
     expect(
       lastChain([
