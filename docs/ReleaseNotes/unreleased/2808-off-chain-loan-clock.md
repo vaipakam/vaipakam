@@ -1,4 +1,4 @@
-## Thread — Off-chain deadlines follow the loan clock (PR #<n>)
+## Thread — Off-chain deadlines follow the loan clock (PR #2822)
 
 Since the D2 pause change (#668 / #935), a pause moves every open loan's due
 date and grace end later by the time the protocol spent paused since the loan
