@@ -369,18 +369,28 @@ emergency rollback if a bad schedule was pushed by mistake.
 
 ### Per-asset risk parameters
 
-(`updateRiskParams`):
+(`RiskFacet.updateRiskParams(asset, loanInitMaxLtvBps, liqBonusBps)`,
+`RISK_ADMIN_ROLE`). Both values are **optional tightenings** (#2696). An
+asset nobody has configured still backs liquid loans: its new borrowing
+is bounded by the loan-admission health-factor floor against its tier
+liquidation threshold and, where depth-tiered LTV is on, by its tier's
+maximum initiation LTV. `OracleFacet.getAssetRiskProfile` says whether a
+ceiling is set; `ConfigFacet.getAssetRiskParams` reports the raw values.
 
-- `maxLtvBps`: range **[10%, 100%]**. The 10% floor prevents a
-  compromised admin from setting a degenerate `maxLtv = 1` that
-  effectively disables borrowing for that asset.
-- `liqThresholdBps`: range **[15%, 100%]**, must also be `> maxLtvBps`.
-  The 15% absolute floor prevents misconfigs even if `maxLtvBps` is
-  set near its own floor.
-- `liqBonusBps`: ≤ `cfgMaxLiquidatorIncentiveBps()` (chain-level cap).
-- `reserveFactorBps`: range **[0%, 50%]**. The 50% ceiling prevents a
-  compromised admin from setting `reserveFactor = 100%` (lender
-  receives 0% interest, defeats the lending product).
+- `loanInitMaxLtvBps` — the per-asset initiation-LTV ceiling: range
+  **[10%, 100%]**. When set, the effective cap is the lower of it and
+  the tier cap. It cannot be set to zero (the 10% floor stops a
+  compromised admin from disabling borrowing on an asset), so a ceiling,
+  once set, can be loosened to 100% but not cleared.
+- `liqBonusBps` — the per-asset liquidator-incentive cap: ≤
+  `cfgMaxLiquidatorIncentiveBps()` (chain-level cap). Zero means no
+  per-asset cap beyond the chain-level one.
+
+Two knobs this setter used to take are retired: the per-asset
+liquidation threshold (#999 — thresholds are per tier, set with
+`setTierLiquidationLtvBps`) and the per-asset reserve factor (#2696 —
+no fee path ever read it; the interest treasury cut is the per-loan
+treasury fee fixed at initiation).
 
 ### Notification fee (per loan-side)
 

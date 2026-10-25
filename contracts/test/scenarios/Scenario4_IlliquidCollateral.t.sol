@@ -227,9 +227,9 @@ contract Scenario4_IlliquidCollateral is Test {
 
         // Risk params
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockUsdc, 8000, 300);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockIlliquid, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockIlliquid, 8000, 300);
 
         // Mock oracle: USDC = Liquid, ILLIQUID = Illiquid
         // During offer creation we need both to be illiquid to avoid MixedCollateralNotAllowed.

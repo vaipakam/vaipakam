@@ -805,7 +805,7 @@ contract RiskPreviewFacet {
             return (3, uint256(loan.liquidationLtvBpsAtInit), curLiqLtv);
         }
 
-        uint256 curCap = st.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps;
+        uint256 curCap = LibVaipakam.assetInitLtvCeilingBps(loan.collateralAsset);
         if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
             uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
             if (tierCap < curCap) curCap = tierCap;

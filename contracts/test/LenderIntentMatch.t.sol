@@ -677,8 +677,8 @@ contract LenderIntentMatchTest is SetupTest {
 
     // ── #1104 — no-borrow (effective-tier-0) collateral floor ──
     //
-    // A collateral that admits NO borrow at loan-init (per-asset
-    // `loanInitMaxLtvBps == 0`, or effective-tier-0 under depth-tiering) can
+    // A collateral that admits NO borrow at loan-init (effective-tier-0 under
+    // depth-tiering; an unset per-asset ceiling is NOT no-borrow, #2696) can
     // never back a loan, yet `minCollateralForLending` returns a FINITE
     // HF-derived floor for it — so a floor-ONLY slice check would pass the
     // preview and only fail later in the match core with a different reason.
@@ -695,10 +695,17 @@ contract LenderIntentMatchTest is SetupTest {
         _fundIntent(PRINCIPAL);
         address b = _newBorrower("bNoBorrow");
         uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
-        // Demote the collateral to no-borrow AFTER the borrower offer is posted.
-        TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(
-            mockCollateralERC20, 0
+        // Demote the collateral to no-borrow AFTER the borrower offer is posted:
+        // depth-tiered LTV on, and the collateral measured at tier 0.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20
+            ),
+            abi.encode(uint8(0))
         );
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
 
         LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
         assertFalse(r.ok, "preview !ok for no-borrow collateral");
@@ -720,7 +727,7 @@ contract LenderIntentMatchTest is SetupTest {
     // ── #1115 P2 — risk gate precedes the collateral floor ──
     //
     // When the #671 risk-access gate is ON and a slice fails BOTH the risk gate
-    // (under-tiered lender) AND the no-borrow collateral floor, the live
+    // (under-tiered lender) AND the collateral floor, the live
     // `matchIntent` reverts with the RISK reason: `_createOfferSetup` runs
     // `assertActorMayTransact` BEFORE `assertOfferBounds`. The preview must
     // therefore report the risk block first, not the floor — otherwise #1104's
@@ -753,9 +760,10 @@ contract LenderIntentMatchTest is SetupTest {
         );
         vm.prank(owner);
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
-        // Also fail the no-borrow floor, so BOTH failures coincide.
+        // Also fail the collateral floor, so BOTH failures coincide: a 10%
+        // per-asset ceiling puts the 50%-LTV slice below its floor.
         TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(
-            mockCollateralERC20, 0
+            mockCollateralERC20, 1000
         );
 
         // Preview reports the RISK block first (not the floor), and the stale
@@ -810,11 +818,13 @@ contract LenderIntentMatchTest is SetupTest {
         vm.prank(owner);
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
         // Arm the LENDER to BroadLiquid so its risk gate PASSES; the borrower
-        // stays default-tier (under-tiered). Fail the floor too.
+        // stays default-tier (under-tiered). Fail the floor too, with a 10%
+        // ceiling (#2696: an unset ceiling, 0, is no ceiling, so it no longer
+        // fails the floor).
         vm.prank(lender);
         RiskAccessFacet(address(diamond)).setVaultRiskTier(1); // BroadLiquid
         TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(
-            mockCollateralERC20, 0
+            mockCollateralERC20, 1000
         );
 
         // Lender passes risk; the borrower gate is NOT consulted for a

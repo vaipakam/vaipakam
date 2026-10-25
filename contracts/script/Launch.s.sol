@@ -709,9 +709,10 @@ contract Launch is Script {
     /// @dev What the readiness checks do NOT cover, stated so a green list
     ///      is never read as "ready to lend" (owner decision 2026-10-23).
     function _printNotChecked() internal pure {
-        console.log("  [NOT A CHECK] per-asset risk parameters - no deploy phase sets them and no asset list exists");
-        console.log("    to check; until governance sets them, every ERC-20 collateral has a zero LTV cap and");
-        console.log("    liquid loans are refused (illiquid/NFT loans are not). Tracked in #2696.");
+        console.log("  [NOT A CHECK] per-asset risk parameters - optional tightenings, and no declared asset list");
+        console.log("    exists to check intended values against. An asset with none set backs liquid loans up to");
+        console.log("    the health-factor floor (and its tier cap when depth-tiered LTV is on), with no extra");
+        console.log("    per-asset LTV ceiling or liquidator-bonus cap (#2696).");
     }
 
     function _printTimelockProposal(

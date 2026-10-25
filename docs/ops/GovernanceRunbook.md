@@ -637,13 +637,15 @@ even for the gap between the deploy and the handover.
    lane (`--skip-vpfi`, testnets) has both CCIP checks met as not
    applicable, and the step says so.
 
-   **Not among the checks: per-asset risk parameters.** No deploy phase sets
-   them and there is no declared asset list for a check to read, so a
-   Diamond can pass every check with each ERC-20 collateral at a zero LTV
-   cap, refusing every liquid loan (illiquid/NFT loans still work). The step
-   prints this as `[NOT A CHECK]`. Until #2696 adds asset onboarding,
-   governance sets them through Timelock proposals (`updateRiskParams`
-   works while the Diamond is paused) before scheduling the launch.
+   **Not among the checks: per-asset risk parameters.** They are optional
+   tightenings (#2696): an asset with none set still backs liquid loans,
+   bounded by the health-factor floor and, with depth-tiered LTV on, by its
+   tier cap. There is no declared asset list for a check to read intended
+   values against, so a Diamond can pass every check with no per-asset
+   ceiling set anywhere. The step prints this as `[NOT A CHECK]`. Where
+   governance wants an asset tighter than that, it sets the ceiling through
+   a Timelock proposal (`updateRiskParams` works while the Diamond is
+   paused) before scheduling the launch.
 3. It prints the Timelock `scheduleBatch(...)` call. The operation is ONE
    call, `diamond.launch(epoch, gate, gateCall)`, where `gateCall` is
    `LaunchGate.assertReady(diamond, declared, handover)`. The governance

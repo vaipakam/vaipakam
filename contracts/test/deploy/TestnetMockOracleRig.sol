@@ -165,10 +165,10 @@ abstract contract TestnetMockOracleRig is Test, DeployTestnetMocks {
         paa[0] = address(weth);
         ConfigFacet(address(diamond)).setPaaAssets(paa);
 
-        RiskFacet(address(diamond)).updateRiskParams(address(tLIQ), 8000, 300, 1000);
-        RiskFacet(address(diamond)).updateRiskParams(address(mUSDC), 8000, 300, 1000);
-        RiskFacet(address(diamond)).updateRiskParams(address(mWETH), 8000, 300, 1000);
-        RiskFacet(address(diamond)).updateRiskParams(address(weth), 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(address(tLIQ), 8000, 300);
+        RiskFacet(address(diamond)).updateRiskParams(address(mUSDC), 8000, 300);
+        RiskFacet(address(diamond)).updateRiskParams(address(mWETH), 8000, 300);
+        RiskFacet(address(diamond)).updateRiskParams(address(weth), 8000, 300);
 
         // The registered liquidation venue, priced from the same snapshot
         // the feeds carry — as DeployTestnetMocks wires it.

@@ -411,9 +411,9 @@ contract EarlyWithdrawalFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300);
         TestMutatorFacet(address(diamond)).setTierLiquidationLtvBpsAllRaw(8500, 8500, 8500);
 
         mockLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
@@ -4910,7 +4910,7 @@ contract EarlyWithdrawalFacetTest is Test {
         mockPrice(otherToken, 1e8, 8);
         address nlVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
         vm.prank(newLender); ERC20(otherToken).approve(nlVault, type(uint256).max);
-        vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 300, 1000);
+        vm.prank(owner); RiskFacet(address(diamond)).updateRiskParams(otherToken, 8000, 300);
 
         vm.prank(newLender);
         uint256 wrongColl = OfferCreateFacet(address(diamond)).createOffer(
@@ -7778,7 +7778,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // first, so instead shrink the cap to just under the live LTV: the
         // position is unchanged and healthy, only the admission bar moved.
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 4000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 4000, 300);
         LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         ld.initLtvCapBpsAtInit = 4000; // compatible with current, still under live LTV
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);

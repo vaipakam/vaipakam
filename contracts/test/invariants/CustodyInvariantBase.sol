@@ -131,7 +131,7 @@ abstract contract CustodyInvariantBase is SetupTest {
         VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
         mockOracleLiquidity(vpfi, LibVaipakam.LiquidityStatus.Liquid);
         mockOraclePrice(vpfi, 1e8, 8);
-        RiskFacet(address(diamond)).updateRiskParams(vpfi, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(vpfi, 8000, 300);
     }
 
     function _deployCustodyVenues() private {

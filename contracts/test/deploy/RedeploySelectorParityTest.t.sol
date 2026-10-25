@@ -164,6 +164,19 @@ contract RedeploySelectorParityTest is Test {
         );
     }
 
+    /// @dev #2696 — `updateRiskParams` dropped the retired reserve factor, so the
+    ///      four-argument selector `RedeployFacets` Removes must be GONE from
+    ///      RiskFacet's compiled surface, and the three-argument one present.
+    function test_RetiredUpdateRiskParamsSelector_IsGone() public view {
+        bytes4[] memory abiSels = _abiSelectorsExcept("RiskFacet", bytes4(0));
+        bytes4 retired = FacetSelectors.retiredUpdateRiskParamsSelector();
+        assertFalse(_contains(abiSels, retired), "the 4-arg updateRiskParams must not be compiled");
+        assertTrue(
+            _contains(abiSels, bytes4(keccak256("updateRiskParams(address,uint256,uint256)"))),
+            "the 3-arg updateRiskParams is the live setter"
+        );
+    }
+
     /// @dev #1221 — the keeper action bitmask widened uint8→uint16, changing the
     ///      selectors of `approveKeeper`/`setKeeperActions`. `RedeployFacets`
     ///      Removes the OLD uint8 selectors from a pre-widen diamond. Pin the

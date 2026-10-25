@@ -222,9 +222,9 @@ contract PartialWithdrawalFacetTest is Test {
         ProfileFacet(address(diamond)).updateKYCTier(borrower, LibVaipakam.KYCTier.Tier2);
 
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300);
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300);
         TestMutatorFacet(address(diamond)).setTierLiquidationLtvBpsAllRaw(8500, 8500, 8500);
 
         mockLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
@@ -393,11 +393,11 @@ contract PartialWithdrawalFacetTest is Test {
         // Set risk params: loanInitMaxLtvBps=1000 (10% — the new T-033 floor;
         // previously used 100 (1%) but the audit floor rejects that
         // as a degenerate setting). liqThresholdBps must be > maxLtv
-        // and ≥ the 1500-floor; liqBonus + reserveFactor unchanged.
+        // and ≥ the 1500-floor; liqBonus unchanged.
         // With principal=1000, collateral_after=1770:
         //   LTV ≈ 56.5% > loanInitMaxLtvBps=10% → LTVExceeded still triggers.
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 1000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 1000, 300);
 
         // Set principal = 1000 ether; collateral = 1800 ether via mutator.
         // After withdrawal of 30: LTV = 1000/1770 * 10000 ≈ 5650 → LTVExceeded.
@@ -422,7 +422,7 @@ contract PartialWithdrawalFacetTest is Test {
 
         // Restore risk params
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300);
         TestMutatorFacet(address(diamond)).setTierLiquidationLtvBpsAllRaw(8500, 8500, 8500);
     }
 

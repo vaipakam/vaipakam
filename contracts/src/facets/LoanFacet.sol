@@ -812,10 +812,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         );
         if (!ltvSuccess) revert LTVCalculationFailed();
         uint256 ltv = abi.decode(ltvResult, (uint256));
-        uint256 loanInitMaxLtvBps = LibVaipakam
-            .storageSlot()
-            .assetRiskParams[collateralAsset]
-            .loanInitMaxLtvBps;
+        uint256 loanInitMaxLtvBps = LibVaipakam.assetInitLtvCeilingBps(collateralAsset);
         bool tieredOn = LibVaipakam.cfgDepthTieredLtvEnabled();
 
         if (tieredOn) {
@@ -1229,10 +1226,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             // tier cap); non-tiered ⇒ the per-asset cap. Post-admission
             // withdrawal / cure enforce this snapshot so the tier buffer can't
             // be shed later (the branch-aware HF snapshot alone doesn't bound LTV).
-            uint256 assetCap = LibVaipakam
-                .storageSlot()
-                .assetRiskParams[loan.collateralAsset]
-                .loanInitMaxLtvBps;
+            uint256 assetCap = LibVaipakam.assetInitLtvCeilingBps(loan.collateralAsset);
             if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
                 uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
                 if (tierCap < assetCap) assetCap = tierCap;
