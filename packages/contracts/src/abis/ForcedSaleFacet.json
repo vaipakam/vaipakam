@@ -120,11 +120,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "boundary",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
         "name": "adapterCalls",
         "type": "tuple[]",
         "internalType": "struct LibSwap.AdapterCall[]",
