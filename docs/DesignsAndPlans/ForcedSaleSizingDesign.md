@@ -115,8 +115,12 @@ With realized proceeds `P`:
 4. **Borrower extra** `X = P − B − L − F`.
 
 On a covered sale `P ≥ N ≥ D + F + B`, so steps 1–3 pay `B = b × D`,
-`L = D` and `F = f × D` in full and `X ≥ 0` is the upside above the worst case
-— the slippage that did not happen. The borrower pays the realized slippage
+`L = D` and `F = f × D` in full, and `X ≥ 0` has three parts: the slippage
+that did not happen (`P` above the floor), the part of the largest bonus not
+paid (`(bMax − b) × D`; at the slippage cap `b = 0`, so the whole reserved
+bonus comes back), and the rounding in `N` and in the sizing. With 1,000 owed
+and a sale filled exactly at the floor, `P = 1,050`: keeper 0, lender 1,000,
+treasury 20, borrower 30. The borrower pays the realized slippage
 plus at most `(f + bMax) × D`, never charges on collateral the debt did not
 need.
 
@@ -144,9 +148,21 @@ The same claim shape the voluntary full swap-to-repay already uses, which
   `depositLocked` (a forced flow acts on what arrived) and recorded in
   `borrowerSurplusClaims` for the current holder, VPFI-encumbered as today.
   `claimAsBorrower` pays it as the second lane it already reads.
-- A covered sale that sells exactly all of `C` leaves `U = 0`: the
-  collateral row is written as already claimed, exactly as today's
-  zero-surplus row.
+- A covered sale that sells exactly all of `C` leaves `U = 0`. The
+  collateral row is then written with amount 0 and **not** claimed, the
+  way the full swap-to-repay already writes it, so `claimAsBorrower` stays
+  reachable for the surplus lane. It is written claimed only when the
+  borrower has nothing at all to take: no unsold collateral and no pending
+  surplus row (a held periodic extra from earlier in the loan counts).
+- **Root rule at the claim.** A held periodic extra can exist before any
+  terminal writes the collateral row, and today `claimAsBorrower` refuses
+  `AlreadyClaimed` on the collateral row's flag before it reads the surplus
+  lane. So the claim pays each lane on its own flag: a claimed or empty
+  collateral row never blocks a pending surplus row, and the call refuses
+  only when every lane is empty or claimed. `claimAsLender` already keeps
+  the loan out of Settled while a surplus row is pending; the two rules
+  together mean no terminal writer can strand the borrower's extra,
+  whichever path closed the loan.
 
 ### 4.2 Periodic settlement (the loan stays Active)
 
@@ -385,7 +401,9 @@ Periodic (#2795, first PR):
 
 - Zero slippage: lender gets exactly `S`, fee `2% S`, bonus `3% S`, borrower
   extra `> 0` paid to the wallet.
-- Slippage at the cap: lender exactly `S`, bonus 0, extra about 0.
+- Filled exactly at the floor: lender exactly `S`, fee `2% S`, bonus 0,
+  borrower extra = the unused bonus reserve `bMax × S` plus the sizing
+  rounding.
 - Output below the floor on every route: revert, nothing moves.
 - Collateral below the need: sells everything, `covered = false`, the
   waterfall pays the lender first and the unpaid part stays owed.
@@ -397,7 +415,9 @@ Periodic (#2795, first PR):
 - `interestSettled` rises by what the lender received, never above `S`.
 
 HF single/split and default (later PRs): covered sale leaves `U` liened and
-claimable; extra in the surplus row; uncovered sale matches today's
+claimable; a covered sale that sells all of `C` with an extra is paid by
+`claimAsBorrower` (surplus-only claim), and a loan whose collateral row is
+claimed still pays a pending held periodic extra; extra in the surplus row; uncovered sale matches today's
 waterfall with the fee subordinated; all-routes-fail enters the fallback with
 the whole collateral on the Diamond; sanctioned default caller earns no bonus;
 partial liquidation charge rule.
