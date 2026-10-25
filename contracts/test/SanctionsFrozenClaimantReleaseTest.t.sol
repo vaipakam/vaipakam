@@ -173,6 +173,10 @@ contract SanctionsFrozenClaimantReleaseTest is SetupTest {
         TestMutatorFacet(address(diamond)).setSanctionsFrozenClaimant(
             LOAN_ID, false, frozenParty
         );
+        // A borrower lane with something to pay, so the claim reaches the S10
+        // gate: an empty side refuses `NothingToClaim` before any screen
+        // (#2795, each lane on its own flag).
+        TestMutatorFacet(address(diamond)).setBorrowerClaimAmountRaw(LOAN_ID, 1 ether);
         m.setRevertOnRead(true);
 
         vm.prank(cleanTransferee);
