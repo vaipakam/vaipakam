@@ -89,7 +89,9 @@ abstract contract DiamondFacetNames {
     ///      97 → 98 with `NotificationFeeFacet` (#2769 — the paid-notification
     ///      charge and the wallet's consent to it, moved off LoanFacet and
     ///      ProfileFacet).
-    function cutFacetNames() internal pure returns (string[98] memory) {
+    ///      98 → 99 with `ForcedSaleFacet` (#2795 — the one forced-sale rule:
+    ///      sized to the debt, lender first; self-called by RepayPeriodicFacet).
+    function cutFacetNames() internal pure returns (string[99] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -212,6 +214,8 @@ abstract contract DiamondFacetNames {
             "NumeraireValueFacet",
             // #2769 - the paid-notification fee host (charge + consent).
             "NotificationFeeFacet",
+            // #2795 - the forced-sale host (sizing, sale, lender-first split).
+            "ForcedSaleFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",

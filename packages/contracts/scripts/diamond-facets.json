@@ -27,6 +27,7 @@
     "TreasuryFeeFacet",
     "NumeraireValueFacet",
     "NotificationFeeFacet",
+    "ForcedSaleFacet",
     "IntentDispatchFacet",
     "AutoLifecycleFacet",
     "EncumbranceMutateFacet",

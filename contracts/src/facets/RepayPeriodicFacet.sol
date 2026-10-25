@@ -4,16 +4,15 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
-import {LibDelivery} from "../libraries/LibDelivery.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
+import {ForcedSaleFacet} from "./ForcedSaleFacet.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
-import {LibFallback} from "../libraries/LibFallback.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -86,23 +85,31 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     );
 
     /// @notice Emitted when {settlePeriodicInterest} sold collateral to
-    ///         cover a period's shortfall. Mirrors the existing HF-
-    ///         liquidation split (slippage-driven liquidator bonus,
-    ///         flat 2% treasury handling fee, lender gets the rest)
-    ///         per docs/FunctionalSpecs/ProjectDetailsREADME.md
-    ///         §"Equivalent Collateral Transfer for Liquid Asset
-    ///         during Abnormal Periods".
+    ///         cover a period's shortfall. The sale is sized to need and
+    ///         divided by the shared forced-sale rule ({ForcedSaleFacet},
+    ///         which also emits {ForcedSaleFacet.ForcedSaleSettled} with the
+    ///         need, the proceeds and whether the sale was covered): keeper
+    ///         bonus first, the lender at most the shortfall, the handling fee
+    ///         subordinated to the lender, the rest to the borrower.
     /// @param loanId The loan whose collateral was partially sold.
     /// @param periodEndAt Timestamp of the period boundary that closed.
     /// @param shortfall The interest shortfall that triggered the sale.
-    /// @param collateralSold Amount of collateral asset withdrawn from
-    ///        the borrower's vault and offered to the swap try-list.
-    /// @param lenderProceeds Principal-asset amount credited to the
-    ///        lender's vault as the period's interest payment.
-    /// @param settlerBonus Principal-asset amount paid to `msg.sender`
-    ///        as the slippage-driven incentive.
-    /// @param treasuryShare Principal-asset amount paid to treasury as
-    ///        the 2% liquidation handling fee.
+    /// @param collateralSold Collateral withdrawn from the borrower's vault
+    ///        and sold.
+    /// @param lenderProceeds What the lender received (or was held for a
+    ///        frozen lender holder) as the period's interest, at most the
+    ///        shortfall. Below the shortfall only when the sale could not
+    ///        cover it; the difference stays owed.
+    /// @param settlerBonus Lending-asset amount paid to `msg.sender` as the
+    ///        execution-quality incentive (at most 3% of the shortfall).
+    /// @param treasuryShare Handling fee to the treasury (2% of the
+    ///        shortfall, subordinated to the lender).
+    /// @param borrowerExtra What the sale raised above the lender's
+    ///        interest and the charges, returned to the borrower.
+    /// @param borrowerExtraHeld True when `borrowerExtra` was held in the
+    ///        borrower's vault for their claim at loan end (a flagged holder,
+    ///        or a wallet payment that could not complete) instead of paid to
+    ///        the borrower-position holder's wallet.
     /// @param settler `msg.sender` of the settle call.
     /// @custom:event-category state-change/loan-mutation
     event PeriodicInterestAutoLiquidated(
@@ -113,21 +120,9 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         uint256 lenderProceeds,
         uint256 settlerBonus,
         uint256 treasuryShare,
+        uint256 borrowerExtra,
+        bool borrowerExtraHeld,
         address indexed settler
-    );
-
-    /// @notice Informational. Emitted alongside
-    ///         {PeriodicInterestAutoLiquidated} when the realized swap
-    ///         output came in BELOW the shortfall after the standard
-    ///         3% bonus + 2% handling fee — i.e. lender got less than
-    ///         the interest they were owed despite the swap clearing
-    ///         the slippage gate. Off-chain monitors may aggregate
-    ///         this to spot DEX-side regression.
-    /// @custom:event-category informational/liquidation
-    event PeriodicSlippageOverBuffer(
-        uint256 indexed loanId,
-        uint256 expectedShortfall,
-        uint256 actualLenderProceeds
     );
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors).
@@ -522,17 +517,22 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         if (adapterCalls.length == 0) {
             revert IVaipakamErrors.PeriodicSettleSwapPathRequired(loanId, shortfall);
         }
-        _autoLiquidatePeriodShortfall(loan, loanId, expected, paid, shortfall, boundary, adapterCalls);
+        _autoLiquidatePeriodShortfall(loan, loanId, shortfall, boundary, adapterCalls);
     }
 
     /// @dev Auto-liquidate path body, factored out to keep the public
     ///      entry under the IR-stack budget. See `settlePeriodicInterest`
     ///      for the surrounding contract.
+    ///
+    ///      #2795 — the sale is sized, sold and divided by the shared
+    ///      forced-sale host ({ForcedSaleFacet}): the least collateral whose
+    ///      worst-case proceeds cover the shortfall plus the largest charges,
+    ///      the lender paid at most the shortfall, the extra back to the
+    ///      borrower. This facet keeps the preconditions, the consolidation,
+    ///      the lien and the vault withdrawal, the checkpoint and its event.
     function _autoLiquidatePeriodShortfall(
         LibVaipakam.Loan storage loan,
         uint256 loanId,
-        uint256 expected,
-        uint256 paid,
         uint256 shortfall,
         uint256 boundary,
         LibSwap.AdapterCall[] calldata adapterCalls
@@ -562,222 +562,92 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             ),
             bytes4(0)
         );
-        // Sell-amount sizing: aim for `shortfall × (1 + slippageCap)` of
-        // collateral so the swap clears even in the worst-case slippage
-        // scenario. If the loan's remaining collateral is smaller, sell
-        // the entire collateral balance — the lender absorbs the
-        // slippage on top. Settler still gets paid the slippage-driven
-        // bonus on whatever proceeds came in. The cover is the collateral
-        // NEEDED for the shortfall, rounded up, so a small shortfall is
-        // never sized to nothing. The sale cannot proceed without a price,
-        // so the rate comes from the ordinary reader (a missing or stale
-        // feed reverts with its own error before anything moves), and the
-        // same reading quotes the sale below.
-        uint256 maxSlippageBps = LibVaipakam.cfgMaxLiquidationSlippageBps();
-        LibFallback.Rate memory rate = LibFallback.oracleRate(
-            address(this),
-            loan.collateralAsset,
-            loan.principalAsset
-        );
-        uint256 cover = LibFallback.toCollateral(rate, shortfall, Math.Rounding.Ceil);
-        // Add the slippage cap as an over-sell buffer (e.g. 6% extra
-        // collateral so net proceeds clear `shortfall` after worst-
-        // case slippage). Numeric over-flow safe — collateral amounts
-        // are bounded.
-        uint256 toSell = (cover *
-            (LibVaipakam.BASIS_POINTS + maxSlippageBps)) /
-            LibVaipakam.BASIS_POINTS;
-        if (toSell > loan.collateralAmount) {
-            toSell = loan.collateralAmount;
-        }
-
-        // #407 PR 4 round-1 Codex P1 #1 (2026-06-12) — decrement the
-        // lien by the periodic-interest shortfall slice. Loan stays
-        // Active after the slice swap, so a release would leave the
-        // residual collateral unprotected.
-        _decrementLienAtPeriodicAutoLiq(loanId, toSell);
-
-        // Withdraw collateral to Diamond for swap (mirrors the HF-
-        // liquidation withdraw shape). #2440 — a forced close-out acts on
-        // what arrived: the vault gives up the whole slice (its tracked
-        // balance and the loan's collateral fall by `toSell`), and the quote
-        // and the sale use what reached the Diamond, so a short delivery is
-        // never made up from the Diamond's other balance.
-        uint256 sliceReceived = LibFacet.vaultWithdrawDelivered(
-            loan.borrower,
-            loan.collateralAsset,
-            address(this),
-            toSell,
-            VaultWithdrawFailed.selector
-        );
-        // #658 PR-B — re-stamp the holder's VPFI tier/staking after the
-        // collateral slice leaves the vault (no-op for non-VPFI collateral).
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector,
-                loanId
-            ),
-            bytes4(0)
-        );
-
-        uint256 expectedProceeds = LibFallback.toPrincipal(rate, sliceReceived);
-        uint256 minOutput = (expectedProceeds *
-            (LibVaipakam.BASIS_POINTS - maxSlippageBps)) /
-            LibVaipakam.BASIS_POINTS;
-
-        (bool ok, uint256 proceeds, ) = LibSwap.swapWithFailover(
-            loanId,
-            loan.collateralAsset,
-            loan.principalAsset,
-            sliceReceived,
-            minOutput,
-            address(this),
-            adapterCalls
-        );
-        if (!ok) {
-            revert IVaipakamErrors.PeriodicSettleSwapFailed(loanId);
-        }
-
-        // Slippage-driven settler bonus mirrors RiskFacet.triggerLiquidation:
-        //   incentiveBps = max(0, slippageCap - realizedSlippageBps), capped
-        //   at maxLiquidatorIncentiveBps (3%).
-        uint256 realizedSlippageBps;
-        if (proceeds < expectedProceeds) {
-            realizedSlippageBps = ((expectedProceeds - proceeds) *
-                LibVaipakam.BASIS_POINTS) / expectedProceeds;
-            if (realizedSlippageBps > maxSlippageBps) {
-                realizedSlippageBps = maxSlippageBps;
-            }
-        }
-        uint256 maxIncentiveBps = LibVaipakam.cfgMaxLiquidatorIncentiveBps();
-        uint256 incentiveBps = maxSlippageBps - realizedSlippageBps;
-        if (incentiveBps > maxIncentiveBps) {
-            incentiveBps = maxIncentiveBps;
-        }
-        uint256 bonus = (proceeds * incentiveBps) / LibVaipakam.BASIS_POINTS;
-        // Treasury 2% handling fee — same constant as HF-liquidation.
-        uint256 handlingFee = (proceeds *
-            LibVaipakam.cfgLiquidationHandlingFeeBps()) /
-            LibVaipakam.BASIS_POINTS;
-        if (bonus + handlingFee > proceeds) {
-            handlingFee = proceeds - bonus;
-        }
-        uint256 lenderProceeds = proceeds - bonus - handlingFee;
-
-        // Pay out: settler bonus → msg.sender, treasury → treasury,
-        // lender → lender's vault (bookkeeping mirrors PartialRepaid
-        // accounting on the lender side).
-        if (bonus > 0) {
-            // #2440 — a bonus books nobody by what arrives (LibDelivery
-            // outcome 3); refused only if it cost the Diamond more than it sent.
-            LibDelivery.pushOut(loan.principalAsset, msg.sender, bonus);
-        }
-        // #2440 — measured, accrued as it arrived (TreasuryFeeFacet).
-        LibFacet.transferToTreasury(loan.principalAsset, handlingFee);
-        if (lenderProceeds > 0) {
-            // #658 PR-B (Codex #685 P1) — route to the CURRENT lender-position
-            // holder, not the stale `loan.lender`: the eager consolidation above
-            // is Tier2 skip-not-block, so it can leave `loan.lender` stale (e.g.
-            // a `_isExcludedLive` lender exclusion), and this is a DIRECT payout.
-            //
-            // #998 S10 (#1006) Class B — the proceeds sit in the Diamond (just
-            // swapped). Pay the current holder inline when clean, or FREEZE
-            // fail-closed (park into the stored lender's vault + `heldForLender` +
-            // encumber + marker) when the holder is registry-flagged. Hosted on
-            // `EncumbranceMutateFacet` so the registry-aware freeze machinery stays
-            // out of this EIP-170-tight facet; the host resolves `ownerOf` itself.
-            //
-            // #2440 — `lenderProceeds` becomes what the host reports, so the
-            // `interestSettled` credit, the over-buffer signal and the event
-            // below name tokens the lender actually has. A payout to the
-            // holder's WALLET is refused unless it arrived in full (a wallet
-            // reading is trusted only to refuse: its owner could forward the
-            // tokens on mid-transfer and be paid again); a frozen holder's
-            // share credited to the stored lender's VAULT acts on what arrived
-            // there, and the difference stays in the borrower's obligation.
-            lenderProceeds = abi.decode(LibFacet.crossFacetCallReturn(
-                abi.encodeWithSelector(
-                    EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
-                    loanId,
-                    loan.principalAsset,
-                    lenderProceeds,
-                    // #1503 item 28 — the lender is paid through the boundary of
-                    // the period being settled here. Passed BEFORE
-                    // `advanceCheckpoint` below moves the checkpoint onto the
-                    // next period, so this is the boundary just satisfied and
-                    // not the one still owed.
-                    //
-                    // FULL COVERAGE ONLY (Codex #1801 r4 P1). An earlier revision
-                    // moved the mark in lockstep with the checkpoint, on the
-                    // reasoning that a lagging mark re-forfeits the whole period.
-                    // That was wrong in the direction that costs the protocol: the
-                    // checkpoint advances on ANY payout, so a single wei of
-                    // `lenderProceeds` would close the entire period's forfeiture
-                    // window — largest exactly when collateral is nearly exhausted
-                    // and the payout is smallest. The seller would collect the
-                    // unpaid remainder through their sale proceeds while the buyer
-                    // can still collect it later through repayment: the same
-                    // interest, paid twice, out of treasury's share.
-                    //
-                    // "Paid through this boundary" has to mean the boundary was
-                    // PAID. A partial payout leaves the difference in the
-                    // borrower's obligation (see the `interestSettled` credit
-                    // below, which deliberately credits only what arrived), so the
-                    // window stays open over it and the seller forfeits it — the
-                    // conservative direction, and the honest one.
-                    //
-                    // #668 / #935 (Codex #2809 r2 P1) — the paid-through point is
-                    // the UNMOVED period end ({LibPeriodicInterest.deliveredThroughAt}),
-                    // not `boundary`: `boundary` carries the pause credit and is
-                    // the payment deadline, while the shortfall covered here is
-                    // one interval of interest, so a paused stretch stays unpaid.
-                    lenderProceeds >= shortfall
-                        ? LibPeriodicInterest.deliveredThroughAt(loan)
-                        : 0
+        // #2795 — size the sale to need, on the consolidated position. The sale
+        // cannot proceed without a price, so a missing or stale feed reverts
+        // here with the reader's own error before anything moves.
+        ForcedSaleFacet.ForcedSalePlan memory plan = abi.decode(
+            LibFacet.crossFacetStaticCall(
+                abi.encodeCall(
+                    ForcedSaleFacet.previewForcedSale,
+                    (loanId, ForcedSaleFacet.ForcedSaleKind.PeriodicSettlement)
                 ),
                 bytes4(0)
-            ), (uint256));
-            // #408 / #410 / #413 (2026-06-12) — credit
-            // `interestSettled` by the interest just forwarded to the
-            // lender so a later full repay / preclose nets the
-            // accumulator against the gross floor. Mirrors the
-            // partial-repay accrual credit in `repayPartial`.
-            //
-            // Note: when slippage forces `lenderProceeds < shortfall`,
-            // we credit only what the lender ACTUALLY received — the
-            // borrower's gross obligation is unchanged, so the
-            // shortfall stays uncredited and the borrower pays the
-            // difference at the next settlement.
-            loan.interestSettled += lenderProceeds;
+            ),
+            (ForcedSaleFacet.ForcedSalePlan)
+        );
+
+        // #407 PR 4 round-1 Codex P1 #1 (2026-06-12) — decrement the
+        // lien by the slice sold. Loan stays Active after the slice swap, so a
+        // release would leave the residual collateral unprotected.
+        _decrementLienAtPeriodicAutoLiq(loanId, plan.sell);
+
+        // #2440 — a forced close-out acts on what arrived: the vault gives up
+        // the whole slice (its tracked balance and the loan's collateral fall
+        // by `plan.sell`), and the sale uses what reached the Diamond, so a
+        // short delivery is never made up from the Diamond's other balance.
+        // #2795 — pulled under the forced close-out move-out exemption, the
+        // same pull the liquidation and default paths use: this settlement is
+        // a Tier-2 close-out that pays the lender, so a sanctions-flagged
+        // borrower must not block it (their extra is held, see the host).
+        uint256 sliceReceived = LibSanctionedLock.pullToDiamond(
+            LibVaipakam.storageSlot(), loan.borrower, loan.collateralAsset, plan.sell
+        );
+        (
+            uint256 lenderProceeds,
+            uint256 borrowerExtra,
+            bool extraHeld,
+            uint256 bonus,
+            uint256 handlingFee
+        ) = abi.decode(
+            LibFacet.crossFacetCallReturn(
+                abi.encodeCall(
+                    ForcedSaleFacet.settlePeriodicSale,
+                    (loanId, plan, sliceReceived, adapterCalls, msg.sender)
+                ),
+                bytes4(0)
+            ),
+            (uint256, uint256, bool, uint256, uint256)
+        );
+        // #658 PR-B — re-stamp the stored borrower's VPFI tier/staking once the
+        // settlement has moved VPFI in or out of their vault: the collateral
+        // slice left it (VPFI collateral), or #2795 the borrower's extra was
+        // held in it (VPFI principal). One stamp, after both movements.
+        {
+            address vpfi = LibVaipakam.storageSlot().vpfiToken;
+            if (
+                vpfi != address(0) &&
+                (loan.collateralAsset == vpfi ||
+                    (extraHeld && loan.principalAsset == vpfi))
+            ) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        ConsolidationFacet.restampUserVpfiInternal.selector,
+                        loan.borrower
+                    ),
+                    bytes4(0)
+                );
+            }
         }
 
         unchecked {
-            loan.collateralAmount -= toSell;
+            loan.collateralAmount -= plan.sell;
         }
-        // Even if `lenderProceeds < shortfall` (rare — DEX cleared the
-        // slippage gate but lender absorbed the bonus + handling
-        // hit), advance the checkpoint anyway. The auto-liquidate
-        // event records the actual amounts so off-chain reconcilers
-        // can spot lender shortfalls.
-        if (lenderProceeds < shortfall) {
-            emit PeriodicSlippageOverBuffer(loanId, shortfall, lenderProceeds);
-        }
+        // The checkpoint advances on any payout. A sale that could not cover
+        // the shortfall leaves the difference owed (only what arrived was
+        // credited to `interestSettled`), and the event states both figures.
         LibPeriodicInterest.advanceCheckpoint(loan);
         emit PeriodicInterestAutoLiquidated(
             loanId,
             boundary,
             shortfall,
-            toSell,
+            plan.sell,
             lenderProceeds,
             bonus,
             handlingFee,
+            borrowerExtra,
+            extraHeld,
             msg.sender
         );
-        // `expected` and `paid` are unused in the event — captured for
-        // future-proofing the function signature without changing the
-        // event ABI. Suppressed via the assignment below to silence
-        // the unused-warning lint without inflating gas.
-        expected; paid;
     }
 
     /// @dev #407 PR 4 round-1 (2026-06-12) — cross-facet lien decrement

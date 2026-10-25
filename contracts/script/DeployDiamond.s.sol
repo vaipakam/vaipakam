@@ -100,6 +100,7 @@ import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../src/facets/NotificationFeeFacet.sol";
+import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -433,6 +434,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #2769 - the paid-notification fee: the billing role's charge and the
         // wallet's own consent to it, moved off LoanFacet and ProfileFacet.
         NotificationFeeFacet notificationFeeFacet = NotificationFeeFacet(ArtifactDeploy.deploy(type(NotificationFeeFacet).name));
+        // #2795 - the forced-sale host: size a forced sale to the debt, sell it,
+        // split the proceeds lender first. Self-called by RepayPeriodicFacet.
+        ForcedSaleFacet forcedSaleFacet = ForcedSaleFacet(ArtifactDeploy.deploy(type(ForcedSaleFacet).name));
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             RewardCompensationDispatchFacet(ArtifactDeploy.deploy(type(RewardCompensationDispatchFacet).name));
         RewardCommitmentFacet rewardCommitmentFacet = RewardCommitmentFacet(ArtifactDeploy.deploy(type(RewardCommitmentFacet).name));
@@ -470,7 +474,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](98);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](99);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -563,6 +567,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[95] = _buildCut(address(treasuryFeeFacet), _getTreasuryFeeSelectors());
         cuts[96] = _buildCut(address(numeraireValueFacet), _getNumeraireValueSelectors());
         cuts[97] = _buildCut(address(notificationFeeFacet), _getNotificationFeeSelectors());
+        cuts[98] = _buildCut(address(forcedSaleFacet), _getForcedSaleSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1247,6 +1252,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("treasuryFeeFacet", address(treasuryFeeFacet));
         Deployments.writeFacet("numeraireValueFacet", address(numeraireValueFacet));
         Deployments.writeFacet("notificationFeeFacet", address(notificationFeeFacet));
+        Deployments.writeFacet("forcedSaleFacet", address(forcedSaleFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -1963,7 +1969,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         offer-principal-lock impl PR adds the lock create /
     ///         decrement / release surface.
     function _getEncumbranceMutateFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](23);
+        s = new bytes4[](24);
         s[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         // #407 PR 4 round-1 (2026-06-12) — decrement/increment cross-
         // facet entries used by active-loan slice flows + addCollateral.
@@ -2002,6 +2008,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[21] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
         // #2342 r1 — permissionless backfill / re-derive entry.
         s[22] = EncumbranceMutateFacet.refreshTierExclusion.selector;
+        // #2795 — pay a held borrower extra out on an obligation handover
+        // (PrecloseFacet EIP-170 host).
+        s[23] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.
@@ -3424,6 +3433,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      cuts.
     function _getNotificationFeeSelectors() internal pure returns (bytes4[] memory s) {
         s = FacetSelectors.notificationFee();
+    }
+
+    /// @dev #2795 - the forced-sale host. Returns the ONE list in
+    ///      `FacetSelectors.forcedSale()`, which `RedeployFacets` also cuts.
+    function _getForcedSaleSelectors() internal pure returns (bytes4[] memory s) {
+        s = FacetSelectors.forcedSale();
     }
 
     /// @dev 3b-ii-B (#1566) — the per-day closure proof.

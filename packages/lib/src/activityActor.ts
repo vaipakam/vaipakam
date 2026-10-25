@@ -120,6 +120,11 @@ const ACTIVITY_ACTOR: ReadonlyMap<string, ActorRead> = new Map<string, ActorRead
   // T-034 PR2 — settler / advancer is the meaningful actor.
   ['PeriodicInterestSettled', arg('settler')],
   ['PeriodicInterestAutoLiquidated', arg('settler')],
+  // #2795 — the forced-sale breakdown is filed under whoever submitted the
+  // sale (and received the bonus); a held extra paid on a handover under
+  // the exiting holder it was paid to.
+  ['ForcedSaleSettled', arg('keeper')],
+  ['BorrowerHeldExtraPaid', arg('to')],
   ['RepayPartialPeriodAdvanced', arg('advancedBy')],
   ['VPFIDepositedToVault', arg('user')],
   ['VPFIWithdrawnFromVault', arg('user')],

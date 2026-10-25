@@ -334,6 +334,8 @@ FACETS=(
   "NumeraireValueFacet"
   # #2769 -- the paid-notification fee host (charge + consent).
   "NotificationFeeFacet"
+  # #2795 -- the forced-sale host RepayPeriodicFacet self-calls.
+  "ForcedSaleFacet"
   "RiskSplitLiquidationFacet"
   "SwapToRepayFacet"
   "SwapToRepayPartialFacet"

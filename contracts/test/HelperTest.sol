@@ -1140,7 +1140,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](23);
+        selectors = new bytes4[](24);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
         selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
@@ -1174,6 +1174,9 @@ contract HelperTest {
         selectors[21] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
         // #2342 r1 — permissionless backfill / re-derive entry.
         selectors[22] = EncumbranceMutateFacet.refreshTierExclusion.selector;
+        // #2795 — pay a held borrower extra out on an obligation handover
+        // (PrecloseFacet EIP-170 host).
+        selectors[23] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.
@@ -2742,6 +2745,12 @@ contract HelperTest {
     /// `FacetSelectors.notificationFee()` (the same one `DeployDiamond` cuts).
     function getNotificationFeeFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = FacetSelectors.notificationFee();
+    }
+
+    /// #2795 - the forced-sale host. Returns the ONE list in
+    /// `FacetSelectors.forcedSale()` (the same one `DeployDiamond` cuts).
+    function getForcedSaleFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = FacetSelectors.forcedSale();
     }
 
     /// 3b-ii-B (#1566) — the per-day closure proof. Mirrors `DeployDiamond._getRewardClosureSelectors`.

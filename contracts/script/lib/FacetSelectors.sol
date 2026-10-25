@@ -14,6 +14,7 @@ import {SwapAttemptFacet} from "../../src/facets/SwapAttemptFacet.sol";
 import {TreasuryFeeFacet} from "../../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../../src/facets/NumeraireValueFacet.sol";
 import {NotificationFeeFacet} from "../../src/facets/NotificationFeeFacet.sol";
+import {ForcedSaleFacet} from "../../src/facets/ForcedSaleFacet.sol";
 
 /**
  * @title  FacetSelectors
@@ -263,7 +264,7 @@ library FacetSelectors {
         s[3] = RepayPeriodicFacet.settlePeriodicInterest.selector;
     }
 
-    /// @notice Full external selector surface of {EncumbranceMutateFacet} (19).
+    /// @notice Full external selector surface of {EncumbranceMutateFacet} (24).
     ///
     /// @dev    #1503 item 28, and the other half of {repayPeriodic}: this facet
     ///         hosts `freezeOrPayActiveLenderResident`, which performs the write
@@ -277,7 +278,7 @@ library FacetSelectors {
     ///         selector routed would keep a live entry point whose callers pass
     ///         one argument too few.
     function encumbranceMutate() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](23);
+        s = new bytes4[](24);
         s[0] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
         s[1] = EncumbranceMutateFacet.createOfferPrincipalLien.selector;
         s[2] = EncumbranceMutateFacet.decrementCollateralLien.selector;
@@ -301,6 +302,7 @@ library FacetSelectors {
         s[20] = EncumbranceMutateFacet.syncTierExclusion.selector;
         s[21] = EncumbranceMutateFacet.terminalize.selector;
         s[22] = EncumbranceMutateFacet.terminalizeFromAny.selector;
+        s[23] = EncumbranceMutateFacet.payHeldBorrowerExtra.selector;
     }
 
     /// @notice #1503 item 28 — the RETIRED 3-argument
@@ -414,8 +416,9 @@ library FacetSelectors {
     /// @notice Full external selector surface of {SwapAttemptFacet} (1).
     ///
     /// @dev    #2472. Every facet that sells through `LibSwap`'s failover —
-    ///         `RiskFacet`, `DefaultedFacet`, `RepayPeriodicFacet` and
-    ///         `FallbackCustodyFacet` among the ones `RedeployFacets` refreshes
+    ///         `RiskFacet`, `DefaultedFacet`, `ForcedSaleFacet` (the periodic
+    ///         settlement's sale, #2795) and `FallbackCustodyFacet` among the
+    ///         ones `RedeployFacets` refreshes
     ///         — runs each attempt by self-calling this selector. A curated
     ///         refresh of those WITHOUT this facet installs code whose every
     ///         attempt finds no host; `LibSwap` refuses that by name
@@ -500,5 +503,26 @@ library FacetSelectors {
         s[0] = NumeraireValueFacet.getNumeraireValue.selector;
         s[1] = NumeraireValueFacet.getAmountForNumeraireValue.selector;
         s[2] = NumeraireValueFacet.getLiquidNumeraireValue.selector;
+    }
+
+    /// @notice Full external selector surface of {ForcedSaleFacet} (3).
+    ///
+    /// @dev    #2795. The one forced-sale rule: size the sale to the debt,
+    ///         sell it, and split the proceeds lender first. `RepayPeriodicFacet`
+    ///         (the periodic-interest settlement) reads the plan and settles
+    ///         through these selectors by self-call, so a curated refresh of it
+    ///         WITHOUT this facet reverts `FunctionDoesNotExist` on every
+    ///         periodic settlement that has to sell. `RedeployFacets` therefore
+    ///         cuts it from this list.
+    ///
+    ///         The ONLY copy of the list, as for {swapAttempt}:
+    ///         `DeployDiamond` (`_getForcedSaleSelectors`) and `HelperTest`
+    ///         (`getForcedSaleFacetSelectors`) return it, and
+    ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
+    function forcedSale() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = ForcedSaleFacet.previewForcedSale.selector;
+        s[1] = ForcedSaleFacet.settlePeriodicSale.selector;
+        s[2] = ForcedSaleFacet.payBorrowerWallet.selector;
     }
 }
