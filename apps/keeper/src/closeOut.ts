@@ -37,6 +37,17 @@
  * with the app), re-reads the range at the gate's block, and refuses a
  * quote that has left it. An empty-list close sells nothing and passes 0,
  * which an in-kind branch ignores.
+ *
+ * The same kind-3 plan also says whether the default sells at all: it is
+ * all zero whenever the contract's one route rule (`LibDefaultRoute`) sends
+ * the loan anywhere but the sale route — an unpriced pair (the unpriced
+ * fallback), an illiquid or collapsed loan (in kind), a refused one, or one
+ * not yet due. Such a loan is sent with 0 and an empty list, and the gate's
+ * preview decides: an in-kind or unpriced-fallback close succeeds there, a
+ * refused or not-due one reverts and is skipped. A plan whose answer flips
+ * between the first read and the gate's (sale to none, or none to sale)
+ * means the route moved, and the attempt is skipped. A plan read that
+ * reverts (a distrusted price) skips, as the default itself would revert.
  */
 
 import {
@@ -179,18 +190,24 @@ export async function attemptCloseOut(
   let calls: readonly AdapterCall[] = [];
   let routeNote = '';
   let sellAmount = 0n;
-  const sells = role === 'grace' && swappable;
-  if (sells) {
+  // Only a grace attempt on an ERC-20 pair can sell, so only it reads the
+  // plan; whether it then sells is the plan's answer.
+  const readsPlan = role === 'grace' && swappable;
+  let planSells = false;
+  if (readsPlan) {
     // The contract sizes the sale; the quote is built for an amount inside
-    // the range it accepts. No sale due by its reckoning is not this
-    // attempt's to second-guess.
+    // the range it accepts. A plan that sells nothing is a default by
+    // another route, sent with 0 and the empty list for the gate's preview
+    // to judge.
     const plan = await readForcedSalePlan({ client, diamond, loanId, kind: FORCED_SALE_KIND.TimeBasedDefault });
     const quoted = forcedSaleQuoteAmount(plan);
-    if (quoted === null) return { kind: 'skipped', reason: 'plan-sells-nothing' };
-    sellAmount = quoted;
-    const route = await deps.buildRoute(loan, sellAmount);
-    calls = route.calls;
-    if (route.failed.length > 0) routeNote = ` (failed: ${route.failed.join(',')})`;
+    if (quoted !== null) {
+      planSells = true;
+      sellAmount = quoted;
+      const route = await deps.buildRoute(loan, sellAmount);
+      calls = route.calls;
+      if (route.failed.length > 0) routeNote = ` (failed: ${route.failed.join(',')})`;
+    }
   }
 
   // THE FINAL GATE, pinned to one fresh block: the owner rule, the sale
@@ -212,7 +229,7 @@ export async function attemptCloseOut(
     saleVerdict(client, diamond, loanId, loan.lenderTokenId, keeper, gateBlock),
     readLoan(client, diamond, loanId, gateBlock),
     previewCloseOutDetail({ client, diamond, account: keeper, loanId, sellAmount, calls, blockNumber: gateBlock }),
-    sells
+    readsPlan
       ? readForcedSalePlan({ client, diamond, loanId, kind: FORCED_SALE_KIND.TimeBasedDefault, blockNumber: gateBlock })
       : Promise.resolve(null),
   ]);
@@ -228,9 +245,17 @@ export async function attemptCloseOut(
     return { kind: 'skipped', reason: 'gate:collateral-changed' };
   }
 
+  // The route moved between the reads: a sale became a no-sale default or
+  // the reverse, so what was built is the wrong call.
+  if (latePlan !== null && (forcedSaleQuoteAmount(latePlan) !== null) !== planSells) {
+    return {
+      kind: 'skipped',
+      reason: `gate:plan-changed (sells ${planSells}->${!planSells})`,
+    };
+  }
   // The range moves with accrual and price; a quote that has left it would
   // revert `ForcedSaleQuoteOutOfRange`, so it is quoted again next run.
-  if (latePlan !== null && !forcedSaleQuoteAccepted(latePlan, sellAmount)) {
+  if (latePlan !== null && planSells && !forcedSaleQuoteAccepted(latePlan, sellAmount)) {
     return {
       kind: 'skipped',
       reason: `gate:quote-out-of-range quoted=${sellAmount} range=[${latePlan.sell},${latePlan.maxSell}]`,

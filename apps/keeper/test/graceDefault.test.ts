@@ -93,7 +93,7 @@ interface Scene {
   notAfterMs?: number;
   /** `previewForcedSale(loanId, TimeBasedDefault)` as read on each call, in
    *  order (the last one repeats): the early read, then the gate's. */
-  plans?: Plan[];
+  plans?: (Plan | 'revert')[];
 }
 
 interface Plan {
@@ -130,6 +130,7 @@ function harness(scene: Scene) {
           planBlocks.push(args.blockNumber);
           const p = plans[Math.min(planReads, plans.length - 1)];
           planReads += 1;
+          if (p === 'revert') throw new Error('execution reverted: PriceSourcesDisagree');
           return p;
         }
         case 'getLoanDetails': {
@@ -276,10 +277,43 @@ describe('attemptGraceDefault', () => {
     expect(h.writes).toHaveLength(0);
   });
 
-  it('builds no route when the contract says no sale is due (#2796)', async () => {
-    const h = harness({ ending: 'sale', calls: 1, plans: [NO_SALE] });
+  it('sends an ERC-20 default the contract routes off the sale with 0 and an empty list (#2796)', async () => {
+    // An unpriced pair or an in-kind loan: the plan is all zero and the
+    // gate's preview shows the no-swap ending.
+    const h = harness({ ending: 'other', plans: [NO_SALE] });
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
-    expect(out).toEqual({ kind: 'skipped', reason: 'plan-sells-nothing' });
+    expect(out).toEqual({ kind: 'submitted', tx: keccak256(SIGNED), preview: 'other', calls: 0, sellAmount: 0n });
+    expect(h.routes).toHaveLength(0);
+    expect((h.writes[0] as { args: [bigint, bigint, unknown[]] }).args.slice(1)).toEqual([0n, []]);
+    // Read once to decide, and again at the gate.
+    expect(h.planBlocks).toEqual([undefined, 100n]);
+  });
+
+  it('skips a no-sale default the preview cannot show succeeding (refused, not due) (#2796)', async () => {
+    const h = harness({ ending: null, plans: [NO_SALE] });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect((out as { reason: string }).reason).toMatch(/^preview=unknown calls=0/);
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('skips when the route moved from a sale to none between the reads (#2796)', async () => {
+    const h = harness({ ending: 'sale', calls: 1, plans: [PLAN, NO_SALE] });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toEqual({ kind: 'skipped', reason: 'gate:plan-changed (sells true->false)' });
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('skips when the route moved from none to a sale between the reads (#2796)', async () => {
+    const h = harness({ ending: 'other', plans: [NO_SALE, PLAN] });
+    const out = await attemptGraceDefault(h.deps, LOAN_ID);
+    expect(out).toEqual({ kind: 'skipped', reason: 'gate:plan-changed (sells false->true)' });
+    expect(h.routes).toHaveLength(0);
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('sends nothing when the plan read reverts (a distrusted price) (#2796)', async () => {
+    const h = harness({ ending: 'sale', calls: 1, plans: ['revert'] });
+    await expect(attemptGraceDefault(h.deps, LOAN_ID)).rejects.toThrow(/PriceSourcesDisagree/);
     expect(h.routes).toHaveLength(0);
     expect(h.writes).toHaveLength(0);
   });
