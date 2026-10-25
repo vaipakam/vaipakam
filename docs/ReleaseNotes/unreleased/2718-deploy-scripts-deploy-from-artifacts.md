@@ -1,9 +1,9 @@
-## Thread — Deploy scripts create facets from their built artifacts (PR #<n>)
+## Thread — Deploy scripts create facets from their built artifacts (PR #2793)
 
 The Diamond build and refresh scripts (the fresh deploy, the all-facets
 refresh, the curated refreshes, the oracle upgrade, the risk-terms migration
 and the slippage census) now create every facet, the Diamond itself and the
-two cross-chain implementations the refresh replaces from the creation code
+three cross-chain implementations the refresh replaces from the creation code
 Foundry already wrote for them, instead of compiling that code into the
 script. What goes on chain does not change: the same code, from the same
 sender, at the same address, broadcast as the same contract-creation
