@@ -60,115 +60,6 @@
     "anonymous": false
   },
   {
-    "type": "event",
-    "name": "SanctionedProceedsLocked",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "recipient",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "asset",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SwapAdapterAttempted",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapterIdx",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapter",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "success",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SwapAdapterSucceeded",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapterIdx",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapter",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "outputAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "AdapterIndexOutOfRange",
-    "inputs": [
-      {
-        "name": "adapterIdx",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "registeredCount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
     "type": "error",
     "name": "AlreadyLaunched",
     "inputs": []
@@ -1344,11 +1235,6 @@
   },
   {
     "type": "error",
-    "name": "EmptySplitList",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "EnforcedPause",
     "inputs": []
   },
@@ -2068,11 +1954,6 @@
   {
     "type": "error",
     "name": "NoInteractionRewardsToClaim",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NoSwapAdaptersConfigured",
     "inputs": []
   },
   {
@@ -4231,38 +4112,6 @@
   },
   {
     "type": "error",
-    "name": "SplitMinOutputUnderfilled",
-    "inputs": [
-      {
-        "name": "totalOutput",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minOutputAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SplitSumMismatch",
-    "inputs": [
-      {
-        "name": "sum",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "inputAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "StagingCommitmentMismatch",
     "inputs": [
       {
@@ -4655,74 +4504,6 @@
         "name": "status",
         "type": "uint8",
         "internalType": "uint8"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SwapInputSpendMismatch",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapterIdx",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "spent",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "inputAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SwapOutputShortDelivered",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapterIdx",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "received",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "reported",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SwapVenuePaused",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TokenDecimalsUnreadable",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
       }
     ]
   },
