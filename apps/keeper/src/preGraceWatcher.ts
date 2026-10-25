@@ -10,11 +10,15 @@
  *      expected).
  *   3. Read `LoanFacet.getLoanDetails` for `startTime`,
  *      `durationDays`, `status`. Skip non-Active loans.
- *   4. Compute `endTime = startTime + durationDays * 86400`. If the
- *      loan is more than `PRE_GRACE_WINDOW_SECONDS` from endTime,
- *      skip — too early to warn. If `block.timestamp >= endTime`,
- *      skip — the loan is already past its natural end (the
- *      separate `runLiquidator` / default flow handles those).
+ *   4. Compute `endTime`, the EFFECTIVE due date on the loan clock
+ *      (#2808): `startTime + durationDays` days, moved later by the
+ *      protocol's paused time since the start, from one pause-log read
+ *      per chain. A log that does not read skips the chain this tick; a
+ *      pause in force holds every warning, since the dates are still
+ *      moving. If the loan is more than `PRE_GRACE_WINDOW_SECONDS` from
+ *      endTime, skip — too early to warn. If now is at or past endTime,
+ *      skip — the loan is already past its due date (the separate
+ *      `runLiquidator` / default flow handles those).
  *   5. Resolve the borrower-NFT owner via `ERC721.ownerOf`.
  *      Look up their subscription in the `user_thresholds` table —
  *      same row the HF watcher uses. If they haven't subscribed,
@@ -72,6 +76,8 @@ import {
 } from './db';
 import { batchedRead } from './batchRead';
 import { AlertDelivery } from './alertDelivery';
+import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { loanMaturity, pauseInForceAt, readPauseLog, type PauseLog } from '@vaipakam/lib/loanClock';
 
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
@@ -244,6 +250,29 @@ async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): 
 
   const nowSec = Math.floor(Date.now() / 1000);
 
+  // #2808 — the warning names the time left to the EFFECTIVE due date on the
+  // loan clock (#668 / #935): the original one moved later by the paused
+  // time since the loan's start. One pause-log read serves every loan on the
+  // chain. When it does not read, no loan's due date is known, so the chain
+  // is skipped this tick and says why; while a pause is in force the dates
+  // are still moving, so warnings are held until it ends, as the indexer's
+  // and the agent's reminders are.
+  let pauseLog: PauseLog;
+  try {
+    pauseLog = await readPauseLog({ client: publicClient, diamond });
+  } catch (err) {
+    console.warn(
+      `[keeper] preGraceWatcher skipped chain=${chain.id}: pause log unread, so no due date is known: ${describeFailure(err)}`,
+    );
+    return;
+  }
+  if (pauseInForceAt(pauseLog, BigInt(nowSec))) {
+    console.log(
+      `[keeper] preGraceWatcher held chain=${chain.id}: the protocol is paused, so every due date is still moving`,
+    );
+    return;
+  }
+
   // BATCHED IN THREE STAGES, not three sequential reads per loan (#1896).
   //
   // This loop used to call `getAutoRefinanceCaps`, then `getLoanDetails`, then
@@ -313,8 +342,8 @@ async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): 
     }
     const loan = r.result as LoanDetails;
     if (loan.status !== 0 /* Active */) return;
-    const endTime = Number(loan.startTime + loan.durationDays * 86400n);
-    if (endTime <= nowSec) return; // already past natural end
+    const endTime = Number(loanMaturity(loan, pauseLog, BigInt(nowSec)));
+    if (endTime <= nowSec) return; // already past its due date
     if (endTime - nowSec > PRE_GRACE_WINDOW_SECONDS) return; // too early
     // T-092 #547 — viable-counterparty pre-check. When the offer book scan
     // succeeded (lenderOffers !== null) AND a compatible lender offer exists for

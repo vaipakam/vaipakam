@@ -21,6 +21,14 @@
       "types": "./src/periodicEligibility.ts",
       "default": "./src/periodicEligibility.ts"
     },
+    "./loanClock": {
+      "types": "./src/loanClock.ts",
+      "default": "./src/loanClock.ts"
+    },
+    "./loanClockSnapshot": {
+      "types": "./src/loanClockSnapshot.ts",
+      "default": "./src/loanClockSnapshot.ts"
+    },
     "./d6Wire": {
       "types": "./src/d6Wire.ts",
       "default": "./src/d6Wire.ts"

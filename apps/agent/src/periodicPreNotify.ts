@@ -45,6 +45,13 @@ import {
 import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { batchCalls, encodeBatchCalls } from '@vaipakam/lib/multicall';
 import { isRpcIdentityVerified, verifyRpcChainIdentity } from '@vaipakam/lib/rpcIdentity';
+import {
+  PauseLogTooLongError,
+  describePauseCredit,
+  pausedSecondsBetween,
+  readPauseLog,
+  type PauseLog,
+} from '@vaipakam/lib/loanClock';
 
 const DEFAULT_PRE_NOTIFY_DAYS = 3;
 const SECONDS_PER_DAY = 86_400;
@@ -199,16 +206,28 @@ const PERIODIC_CONFIG_ABI = NumeraireConfigFacetABI;
  *
  * A SECOND read rather than folded into the config bundle, because the two
  * live on different facets and there is no getter carrying both. It costs one
- * more request per chain per tick — one of the four chain reads in
+ * more request per chain per tick — one of the five chain reads in
  * `CHAIN_OPENING_REQUESTS_AFTER_IDENTITY`.
  */
 const PAUSE_ABI = AdminFacetABI;
+
+/**
+ * The pause log is read in ONE request (#2808): the lane's budget prices the
+ * read at one, so it asks for up to this many intervals in a single page and
+ * refuses a longer log rather than paging past its allowance. The log grows by
+ * one entry per pause, so this is years of emergencies; a chain past it says
+ * so every tick and sends nothing, rather than reading a truncated log as
+ * fewer pauses and naming a deadline earlier than the chain's.
+ */
+const PAUSE_LOG_SINGLE_READ = 1_024n;
 
 interface LoanRow {
   loan_id: number;
   chain_id: number;
   lender: string;
   borrower: string;
+  /** The loan's start, which the pause credit is counted from (#2808). */
+  start_time: number;
   periodic_interest_cadence: number;
   last_period_settled_at: number;
   period_pre_notified_at: number;
@@ -236,8 +255,9 @@ interface TickBudget {
 /**
  * What one chain still needs AFTER its identity is settled.
  *
- * FOUR CHAIN READS — the head, the config (lead time + periodic switch), the
- * pause, and one batched status read — AND FOUR D1 CALLS: the indexer cursor,
+ * FIVE CHAIN READS — the head, the pause, the pause log (#2808), the config
+ * (lead time + periodic switch), and one batched status read — AND FOUR D1
+ * CALLS: the indexer cursor,
  * this lane's stored scan position, the candidate query, and the write that
  * saves the position again (#2213 r27 `4016129218`). The D1 half was missing
  * from this number for as long as the budget believed D1 was free.
@@ -254,7 +274,7 @@ interface TickBudget {
  * this test runs after the verdict, where the probe has already charged
  * itself or not.
  */
-export const CHAIN_OPENING_REQUESTS_AFTER_IDENTITY = 8;
+export const CHAIN_OPENING_REQUESTS_AFTER_IDENTITY = 9;
 
 export async function runPeriodicPreNotify(env: Env): Promise<void> {
   const chains = getChainConfigs(env).filter(
@@ -495,11 +515,11 @@ async function preNotifyChain(
   // stopped there, which leaves the paused-but-enabled deployment sending
   // exactly the instruction that fix exists to prevent.
   //
-  // It is also the worse case of the two. A global pause is an emergency, and
-  // it closes ORDINARY REPAYMENT as well — so the borrower told to pay before
-  // their collateral is sold has no route at all, not even the fallback they
-  // would otherwise reach for. Telling someone to act during the one window
-  // where they cannot is the failure this lane must never produce.
+  // It is also the worse case of the two. A global pause is an emergency:
+  // settlement is closed, and the loan clock (#668 / #935) is moving every
+  // deadline later for as long as it lasts, so no date this lane could name
+  // is final. Ordinary repayment stays open during a pause, but a reminder
+  // that names a deadline still moving is not one this lane may send.
   //
   // Pinned to the same head as everything else, and unreadable is treated as
   // paused, for the reason the config read already is: not knowing whether
@@ -534,9 +554,38 @@ async function preNotifyChain(
     console.warn(
       `[periodicPreNotify] chain=${chain.name}: not pre-notifying — the ` +
         `diamond is PAUSED, so settlement reverts before the periodic switch ` +
-        `is read, and ordinary repayment is closed too. A borrower told to ` +
-        `pay now would have no route at all. Nothing is stamped; reminders ` +
-        `resume when it is unpaused.`,
+        `is read, and every deadline is still moving later while the pause ` +
+        `lasts. Nothing is stamped; reminders resume, against the moved ` +
+        `deadlines, when it is unpaused.`,
+    );
+    return;
+  }
+
+  // THE PAUSE LOG, AT THE SAME HEAD (#2808). A period's payment deadline is
+  // its unmoved end plus the protocol's paused time since the loan started
+  // (`LibPeriodicInterest.periodEndAt`, the D2 loan clock), so the window this
+  // lane works in and the date it names both need the log. A Diamond without
+  // the loan clock answers an empty log, definitively: its deadlines never
+  // move. A failed read is not that, and sends nothing.
+  budget.remaining -= 1; // the pause-log read below
+  let pauseLog: PauseLog;
+  try {
+    pauseLog = await readPauseLog({
+      client,
+      diamond: chain.diamond as Address,
+      blockNumber: head,
+      pageSize: PAUSE_LOG_SINGLE_READ,
+      maxPages: 1,
+    });
+  } catch (err) {
+    console.warn(
+      `[periodicPreNotify] chain=${chain.name}: not pre-notifying — ` +
+        (err instanceof PauseLogTooLongError
+          ? `the pause log has ${err.total} entries, more than the ` +
+            `${err.limit} this lane reads in its one request, `
+          : `could not read the pause log (${describeFailure(err)}), `) +
+        `so how far past their original dates the payment deadlines have ` +
+        `moved is unknown. Nothing is stamped; a later tick asks again.`,
     );
     return;
   }
@@ -621,7 +670,7 @@ async function preNotifyChain(
   // bounded explicitly.
   budget.remaining -= 1; // the candidate query — D1 is a subrequest
   const rows = await env.DB.prepare(
-    `SELECT loan_id, chain_id, lender, borrower,
+    `SELECT loan_id, chain_id, lender, borrower, start_time,
             periodic_interest_cadence, last_period_settled_at,
             period_pre_notified_at
      FROM loans
@@ -633,7 +682,7 @@ async function preNotifyChain(
     .bind(chain.id)
     .all<LoanRow>();
 
-  const due = candidatesInWindow(rows.results ?? [], now, windowSec);
+  const due = candidatesInWindow(rows.results ?? [], now, windowSec, pauseLog);
   if (due.length === 0) return;
 
   // TWO LIMITS, NOT ONE (#2213 r6 `4012464544`). Round 5 took a single slice
@@ -732,7 +781,10 @@ async function preNotifyChain(
       break;
     }
 
-    const outcome = await messageBatch(env, chain, batch, states, budget, now);
+    const outcome = await messageBatch(env, chain, batch, states, budget, now, {
+      pauseLog,
+      windowSec,
+    });
     reminded += outcome.reminded;
     unreached += outcome.unreached;
     noRoute += outcome.noRoute;
@@ -925,6 +977,9 @@ async function messageBatch(
   states: (LoanState | null)[],
   budget: TickBudget,
   now: number,
+  /** The pause log read at this tick's head, and the lead-time window — what
+   *  the chain's own start needs to re-derive each deadline (#2808). */
+  clock: { pauseLog: PauseLog; windowSec: number },
 ): Promise<{
   consumed: number;
   reminded: number;
@@ -971,7 +1026,7 @@ async function messageBatch(
         refusedRails, transientRails, pushUnconfigured, tgUnconfigured,
       };
     }
-    const { row, nextCheckpoint, secsUntil } = batch[i]!;
+    const { row, nextCheckpoint } = batch[i]!;
 
     // ASK THE CHAIN BEFORE SAYING SOMETHING THAT CANNOT BE TAKEN BACK
     // (#2213 r3 `4011960593`). `status = 'active'` above is STORED state, and
@@ -1060,17 +1115,44 @@ async function messageBatch(
       continue;
     }
 
-    const daysUntil = Math.max(1, Math.ceil(secsUntil / SECONDS_PER_DAY));
+    // THE DEADLINE THE MESSAGE NAMES IS THE CHAIN'S (#2808): the period's
+    // unmoved end plus the paused time since the start the CHAIN holds, not
+    // the stored one. The window above used the stored start to choose
+    // candidates; the sentence the borrower reads is recomputed from the
+    // answer the eligibility rule just accepted.
+    const pauseCredit = pausedSecondsBetween(
+      clock.pauseLog,
+      BigInt(detail.startTime),
+      BigInt(now),
+    );
+    const chainSecsUntil = nextCheckpoint + Number(pauseCredit) - now;
+    if (chainSecsUntil <= 0 || chainSecsUntil > clock.windowSec) {
+      // The chain's start is not the stored one — the indexer has not yet
+      // caught up with a re-originated term — and the deadline it gives falls
+      // outside the window the stored row was chosen by. The chain's answer
+      // wins: no reminder this tick, nothing stamped, and the stored row
+      // settles the question once the indexer catches up.
+      console.warn(
+        `[periodicPreNotify] chain=${chain.name} loan=${row.loan_id}: the ` +
+          `chain's loan start (${detail.startTime}) is not the stored one ` +
+          `(${row.start_time}), and the payment deadline it gives is ` +
+          (chainSecsUntil <= 0 ? 'already past' : 'outside the reminder window') +
+          ` — no reminder sent. Nothing is stamped, so a later tick reconsiders.`,
+      );
+      checkpointLag += 1;
+      continue;
+    }
+    const daysUntil = Math.max(1, Math.ceil(chainSecsUntil / SECONDS_PER_DAY));
 
     // Push to BOTH counterparties — borrower first (they need to
     // act), then lender (courtesy). Each lookup is a single D1
     // query; subscribers usually overlap with HF-watcher rows so
     // the table is hot in cache.
     const borrowerOutcome = await pushIfSubscribed(
-      env, chain, row, row.borrower, daysUntil, 'borrower', budget,
+      env, chain, row, row.borrower, daysUntil, pauseCredit, 'borrower', budget,
     );
     const lenderOutcome = await pushIfSubscribed(
-      env, chain, row, row.lender, daysUntil, 'lender', budget,
+      env, chain, row, row.lender, daysUntil, pauseCredit, 'lender', budget,
     );
     // THREE OUTCOMES, COUNTED SEPARATELY (#2213 r10 `4013087415`).
     // "Reminded" is a claim about a person having been told, so it needs a
@@ -1726,7 +1808,15 @@ function explainVerdict(
 /** A loan inside the notification window, with the arithmetic already done. */
 interface DueLoan {
   row: LoanRow;
+  /**
+   * The period's UNMOVED end — the period's identity, which the de-dup stamp,
+   * the chain's eligibility rule and the resume key are all written in. Never
+   * moved by a pause, so a pause between ticks cannot make the stored key name
+   * a different period (#2808).
+   */
   nextCheckpoint: number;
+  /** Seconds to the payment DEADLINE: the unmoved end plus the loan's pause
+   *  credit (`LibPeriodicInterest.periodEndAt`). */
   secsUntil: number;
 }
 
@@ -1747,14 +1837,29 @@ interface DueLoan {
  * mirrors `LibVaipakam.intervalDays`, and a second copy of it written as a
  * SQL `CASE` is a copy that drifts the first time the enum grows a member —
  * silently, because a mis-ordered query still returns rows.
+ *
+ * THE WINDOW IS THE MOVED DEADLINE, THE ORDER IS THE UNMOVED END (#2808).
+ * Whether a loan is due soon is a question about the deadline the chain
+ * enforces, which the loan clock moves by the paused time since the loan
+ * started. The ORDER stays on the period's unmoved end, because the stored
+ * resume key is written in it and a key in deadline terms would shift under
+ * every pause between ticks. Two loans with different credits can therefore
+ * be taken slightly out of deadline order; every loan in the window is still
+ * reached, which is what the order is for.
  */
-function candidatesInWindow(rows: LoanRow[], now: number, windowSec: number): DueLoan[] {
+function candidatesInWindow(
+  rows: LoanRow[],
+  now: number,
+  windowSec: number,
+  pauseLog: PauseLog,
+): DueLoan[] {
   const due: DueLoan[] = [];
   for (const row of rows) {
     const ivlDays = periodicIntervalDays(row.periodic_interest_cadence);
     if (ivlDays === 0) continue;
     const nextCheckpoint = row.last_period_settled_at + ivlDays * SECONDS_PER_DAY;
-    const secsUntil = nextCheckpoint - now;
+    const credit = Number(pausedSecondsBetween(pauseLog, BigInt(row.start_time), BigInt(now)));
+    const secsUntil = nextCheckpoint + credit - now;
     // Window: 0 < secsUntil <= preNotifyDays. We DON'T pre-notify after the
     // boundary has already passed (a settler can fire any moment) — that's
     // the SETTLEMENT lane's territory, separate from this PRE-notify lane.
@@ -1776,7 +1881,10 @@ function candidatesInWindow(rows: LoanRow[], now: number, windowSec: number): Du
  * without a second call: the answer was already in hand and simply not looked
  * at.
  */
-type LoanState = PeriodicLoanState;
+type LoanState = PeriodicLoanState & {
+  /** The start the chain counts the pause credit from (#2808). */
+  startTime: bigint;
+};
 
 /**
  * Read every candidate's state in ONE call.
@@ -2006,6 +2114,7 @@ async function pushIfSubscribed(
   loan: LoanRow,
   wallet: string,
   daysUntil: number,
+  pauseCredit: bigint,
   role: 'borrower' | 'lender',
   budget: TickBudget,
 ): Promise<DeliveryOutcome> {
@@ -2064,10 +2173,19 @@ async function pushIfSubscribed(
     role === 'borrower'
       ? `Loan #${loan.loan_id} — ${cadenceLabel} interest due in ${daysUntil} day${daysUntil === 1 ? '' : 's'}`
       : `Your borrower's interest payment due in ${daysUntil} day${daysUntil === 1 ? '' : 's'}`;
+  // A MOVED DEADLINE IS SAID, NEVER IMPLIED (#2808). When the protocol was
+  // paused while this loan was open, the deadline above is later than the
+  // loan's original schedule by exactly that paused time, and the message
+  // says so — a reader comparing it with the schedule they agreed to would
+  // otherwise see a date that matches nothing they were told.
+  const moved =
+    pauseCredit > 0n
+      ? ` This deadline is ${describePauseCredit(pauseCredit)} later than the loan's original schedule, because the protocol was paused for that long while the loan was open.`
+      : '';
   const body =
     role === 'borrower'
-      ? `Pay this period's accrued interest before the deadline to avoid an automatic collateral sale during the grace window.`
-      : `Loan #${loan.loan_id}'s ${cadenceLabel.toLowerCase()} interest checkpoint is approaching. If the borrower misses the deadline, a permissionless settler can sell collateral to cover the shortfall.`;
+      ? `Pay this period's accrued interest before the deadline to avoid an automatic collateral sale during the grace window.${moved}`
+      : `Loan #${loan.loan_id}'s ${cadenceLabel.toLowerCase()} interest checkpoint is approaching. If the borrower misses the deadline, a permissionless settler can sell collateral to cover the shortfall.${moved}`;
   // FRONTEND_ORIGIN is a CSV allow-list — interpolating it whole
   // produced a malformed URL the moment it grew past one entry. Deep
   // links use the FIRST origin (the primary app by convention). Path
