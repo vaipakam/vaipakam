@@ -1,4 +1,4 @@
-## Thread — Shared two-chain Anvil harness (PR #<n>)
+## Thread — Shared two-chain Anvil harness (PR #2818)
 
 The two-chain Anvil setup the keeper's reward scenarios use (#2516) moved
 out of the keeper app and into the shared Anvil harness package, together
