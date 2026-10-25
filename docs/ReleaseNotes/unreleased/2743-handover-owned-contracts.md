@@ -1,4 +1,4 @@
-## Thread — The handover moves every owned contract, and Diamond ownership needs the owner (PR #TBD)
+## Thread — The handover moves every owned contract, and Diamond ownership needs the owner (PR #2844)
 
 Two gaps in the governance handover are closed. First, the all-in-one
 admin transfer could move the Diamond's ownership for any holder of the
