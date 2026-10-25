@@ -1788,7 +1788,10 @@ ionice -c 2 -n 0 forge script script/PositiveFlows.s.sol \
 # Positive, timed — the flows whose second step must wait (offer cancel after
 # the cancel cooldown, a due periodic-interest checkpoint). The runner above
 # SKIPs them; this runs their open stage, steps the Anvil clock past the time
-# the open stage records, and runs their settle stage (Anvil only):
+# the open stage records, runs their settle stage, and then the read-only
+# finish stage that removes the open-run record once the chain shows nothing
+# it names is still open (Anvil only). If a broadcast stops part-way the
+# record stays; run the script's settle() and then finish() again:
 ionice -c 2 -n 0 bash script/positive-flows/run-timed.sh
 
 # Partial — 7 UI-testable midpoint states (offer states, partial repay,

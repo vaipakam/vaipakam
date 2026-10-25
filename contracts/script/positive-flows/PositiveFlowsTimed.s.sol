@@ -11,6 +11,7 @@ import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
+import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {NumeraireConfigFacet} from "../../src/facets/NumeraireConfigFacet.sol";
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {Deployments} from "../lib/Deployments.sol";
@@ -25,27 +26,42 @@ import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
  *
  *         A forge script cannot step the clock between its own transactions:
  *         `vm.warp` moves the simulation only, and the broadcast mines every
- *         transaction at the chain's own time. So these run in TWO STAGES,
- *         each its own `forge script` invocation, with the clock stepped in
- *         between:
+ *         transaction at the chain's own time. So these run in STAGES, each
+ *         its own `forge script` invocation, with the clock stepped between
+ *         the first two:
  *
  *           1. `open()` builds the fixture, opens each scenario's position,
  *              shows the step that must wait is refused while it waits, and
  *              records the fixture, the positions and the earliest moment the
  *              second stage may run in `deployments/<slug>/positive-flows-timed.json`.
  *           2. `settle()` refuses to run before that moment, binds the first
- *              stage's mocks again, checks every recorded position is still
- *              there, completes each scenario, restores what the first stage
- *              changed, and deletes the record.
+ *              stage's mocks again, completes whatever the chain shows is
+ *              still open, and restores what the first stage changed. It
+ *              keeps the record.
+ *           3. `finish()` sends nothing. It reads the chain, and removes the
+ *              record only once nothing the record names is still open and
+ *              nothing the first stage changed is still changed.
  *
- *         `script/positive-flows/run-timed.sh` runs both on a local Anvil and
- *         steps its clock in between. On any other chain the operator runs the
- *         two stages by hand and waits out the real time, which for PF-116 is
- *         a month. The state file is written and deleted only by a
- *         `--broadcast` run, so a dry run of either stage changes nothing.
+ *         THE RECORD IS A POINTER, NOT THE AUTHORITY. Forge runs a script's
+ *         whole simulation, and writes its files, before it broadcasts
+ *         anything, so a record says what a stage MEANT to send, not what
+ *         landed. Every stage therefore reads each position's state from the
+ *         chain before acting on it: `settle()` skips, and says so, a
+ *         position that is not open there (an earlier settle closed it, or
+ *         the open never landed) and resumes a half-closed one, and only the
+ *         read-only `finish()` may remove the record. A broadcast that fails
+ *         part-way through either stage leaves the record in place: run
+ *         `settle()` again, then `finish()`, and `finish()` also clears a
+ *         record whose open never landed.
+ *
+ *         `script/positive-flows/run-timed.sh` runs all three on a local Anvil
+ *         and steps its clock. On any other chain the operator runs the
+ *         stages by hand and waits out the real time, which for PF-116 is a
+ *         month. `open()` writes the record only on a `--broadcast` run, so a
+ *         dry run of it changes nothing.
  *
  *         In the one-pass runner ({PositiveFlows}, or `run()`), a scenario
- *         whose wait applies says SKIP and names the two-stage run. The cancel
+ *         whose wait applies says SKIP and names the staged run. The cancel
  *         cooldown applies only while partial fills are on, so PF-045 and
  *         PF-046 run in one pass where they are off.
  *
@@ -94,21 +110,21 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
     // ─── One-pass run ─────────────────────────────────────────────────────
 
     /// @dev Runs a scenario in one pass where its wait does not apply, and
-    ///      skips it, naming the two-stage run, where it does.
+    ///      skips it, naming the staged run, where it does.
     function _runScenario(uint256 index) internal override {
         if (index == 2) {
             return _skip("a periodic checkpoint is due a month after the loan starts;"
-                " run the two-stage run (script/positive-flows/run-timed.sh)");
+                " use the staged run (script/positive-flows/run-timed.sh)");
         }
         if (_cancelCooldownApplies()) {
             return _skip("the 5-minute cancel cooldown applies (partial fills on);"
-                " run the two-stage run (script/positive-flows/run-timed.sh)");
+                " use the staged run (script/positive-flows/run-timed.sh)");
         }
         _openScenario(index);
         _settleScenario(index);
     }
 
-    // ─── Two-stage run ────────────────────────────────────────────────────
+    // ─── Staged run ───────────────────────────────────────────────────────
 
     /// @notice Stage 1: open every scenario (or the one `ONLY_SCENARIO`
     ///         names) and record what the second stage needs.
@@ -119,9 +135,9 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         }
         string memory path = Deployments.namedPath(STATE_FILE);
         require(!vm.exists(path), string.concat(
-            "PositiveFlowsTimed: ", path, " already records an open run. Run the settle stage, or, if that",
-            " run's broadcast never landed, delete the file (and restore the periodic-interest switch if it",
-            " records periodicSwitchWasOn=false) before opening again"
+            "PositiveFlowsTimed: ", path, " already records an open run. Run settle() and then finish(),",
+            " which removes the record once the chain shows nothing it names is still open (also when that",
+            " run's open never landed)"
         ));
 
         _beginModule("open");
@@ -130,8 +146,9 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         _writeState(path);
     }
 
-    /// @notice Stage 2: complete every scenario the first stage opened,
-    ///         restore what it changed, and delete its record.
+    /// @notice Stage 2: complete whatever the first stage opened that the
+    ///         chain shows is still open, and restore what it changed. Keeps
+    ///         the record; {finish} removes it once the chain confirms.
     function settle() external returns (uint256 passed, uint256 skipped) {
         string memory path = Deployments.namedPath(STATE_FILE);
         require(vm.exists(path), string.concat(
@@ -147,16 +164,31 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         _attachFixture(f);
         (passed, skipped) = _runEach("", _settleScenario, "settle");
 
-        if (periodicLoanId != 0 && !periodicSwitchWasOn) {
+        if (_periodicSwitchStillChanged()) {
             _setPeriodicSwitch(false);
             console.log("Periodic-interest switch restored to off");
         }
-        if (vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) {
-            vm.removeFile(path);
-            console.log("Open-run record deleted:", path);
-        } else {
-            console.log("Dry run: the open-run record is kept:", path);
-        }
+        console.log("The record is kept until finish() confirms the chain:", path);
+    }
+
+    /// @notice Stage 3: remove the record once the chain shows that nothing
+    ///         it names is still open and the periodic-interest switch is
+    ///         back where the first stage found it. Sends no transaction, so
+    ///         run it without `--broadcast`, after the settle stage's
+    ///         broadcast has landed. Refuses, keeping the record and naming
+    ///         what is still open, otherwise.
+    function finish() external {
+        string memory path = Deployments.namedPath(STATE_FILE);
+        require(vm.exists(path), string.concat("PositiveFlowsTimed: no open run is recorded at ", path));
+        _beginModule("finish");
+        _readState(path);
+        string memory open = _stillOpen();
+        require(bytes(open).length == 0, string.concat(
+            "PositiveFlowsTimed: the record is kept, because the chain still shows", open,
+            ". Run the settle stage, then finish() again"
+        ));
+        vm.removeFile(path);
+        console.log("Nothing the record names is still open on the chain; record removed:", path);
     }
 
     function _openScenario(uint256 index) internal {
@@ -166,19 +198,68 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         else revert("PositiveFlowsTimed: no scenario at index");
     }
 
+    /// @dev Acts only on what the chain shows is still open: see "THE RECORD
+    ///      IS A POINTER" in the contract notice.
     function _settleScenario(uint256 index) internal {
         if (index == 0) {
             if (lenderOfferId == 0) return _skip("not opened by the open stage");
+            if (!_offerStillOpen(lenderOfferId, lender)) return _skip(NOT_OPEN_ON_CHAIN);
             _cancelLenderOffer();
         } else if (index == 1) {
             if (borrowerOfferId == 0) return _skip("not opened by the open stage");
+            if (!_offerStillOpen(borrowerOfferId, borrower)) return _skip(NOT_OPEN_ON_CHAIN);
             _cancelBorrowerOffer();
         } else if (index == 2) {
             if (periodicLoanId == 0) return _skip("not opened by the open stage");
+            if (!_periodicLoanStillOpen()) return _skip(NOT_OPEN_ON_CHAIN);
             _settlePeriodicLoan();
         } else {
             revert("PositiveFlowsTimed: no scenario at index");
         }
+    }
+
+    string private constant NOT_OPEN_ON_CHAIN =
+        "the recorded position is not open on this chain: an earlier settle closed it, or the open never landed";
+
+    /// @dev What the chain shows is still open of the record, as a list for a
+    ///      refusal; empty when nothing is.
+    function _stillOpen() internal view returns (string memory open) {
+        if (lenderOfferId != 0 && _offerStillOpen(lenderOfferId, lender)) {
+            open = _listed(open, string.concat("PF-045's lender offer ", vm.toString(lenderOfferId), " open"));
+        }
+        if (borrowerOfferId != 0 && _offerStillOpen(borrowerOfferId, borrower)) {
+            open = _listed(open, string.concat("PF-046's borrower offer ", vm.toString(borrowerOfferId), " open"));
+        }
+        if (periodicLoanId != 0 && _periodicLoanStillOpen()) {
+            open = _listed(open, string.concat("PF-116's loan ", vm.toString(periodicLoanId), " not settled"));
+        }
+        if (_periodicSwitchStillChanged()) {
+            open = _listed(open, "the periodic-interest switch still on");
+        }
+    }
+
+    function _listed(string memory list, string memory item) internal pure returns (string memory) {
+        return bytes(list).length == 0 ? string.concat(" ", item) : string.concat(list, "; ", item);
+    }
+
+    /// @dev An offer of this run's `creator` that no one has accepted. A slot
+    ///      whose creator is someone else is not this run's: the open that
+    ///      recorded the id never landed, and the id went to another offer.
+    function _offerStillOpen(uint256 offerId, address creator) internal view returns (bool) {
+        LibVaipakam.Offer memory o = OfferCancelFacet(diamond).getOffer(offerId);
+        return o.creator == creator && !o.accepted;
+    }
+
+    /// @dev This run's loan (its borrower is the fixture's), not yet settled.
+    function _periodicLoanStillOpen() internal view returns (bool) {
+        LibVaipakam.Loan memory l = LoanFacet(diamond).getLoanDetails(periodicLoanId);
+        return l.borrower == borrower && l.status != LibVaipakam.LoanStatus.Settled;
+    }
+
+    /// @dev The first stage turned the switch on, and it is still on.
+    function _periodicSwitchStillChanged() internal view returns (bool) {
+        return periodicLoanId != 0 && !periodicSwitchWasOn
+            && NumeraireConfigFacet(diamond).getPeriodicInterestEnabled();
     }
 
     // ─── PF-045 / PF-046 ──────────────────────────────────────────────────
@@ -250,10 +331,8 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
 
     function _requireOpenOffer(uint256 offerId, address creator, string memory id) internal view {
         LibVaipakam.Offer memory o = OfferCancelFacet(diamond).getOffer(offerId);
-        require(o.creator == creator && !o.accepted && o.amountFilled == 0, string.concat(
-            id, ": the recorded offer is not open on this chain, so the open stage's broadcast did not land",
-            " as recorded"
-        ));
+        require(o.creator == creator && !o.accepted && o.amountFilled == 0,
+            string.concat(id, ": the offer should be open, with nothing of it filled"));
     }
 
     // ─── PF-116 ───────────────────────────────────────────────────────────
@@ -312,17 +391,35 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         _noteDue(graceEndsAt);
     }
 
+    /// @dev Three steps, each taken only while the chain shows it is still
+    ///      owed, so a settle stage whose broadcast stopped part-way resumes
+    ///      where it stopped: the checkpoint settle, the full repayment, and
+    ///      each side's claim. The scenario PASSES only when this run settled
+    ///      the checkpoint, the step it exists for. Otherwise it closes the
+    ///      loan out and reports a SKIP that says why: an earlier settle run
+    ///      settled the checkpoint (and checked its accounting then), or the
+    ///      loan was repaid before any run settled it.
+    function _settlePeriodicLoan() internal {
+        LibVaipakam.Loan memory l = LoanFacet(diamond).getLoanDetails(periodicLoanId);
+        bool settledEarlier = l.lastPeriodicInterestSettledAt > l.startTime;
+        bool settledHere = l.status == LibVaipakam.LoanStatus.Active && !settledEarlier;
+        if (settledHere) _settleCheckpoint(l);
+        if (l.status == LibVaipakam.LoanStatus.Active) _repayInFull(borrowerKey, periodicLoanId);
+        require(LoanFacet(diamond).getLoanDetails(periodicLoanId).status == LibVaipakam.LoanStatus.Repaid,
+            "PF-116: the loan should be repaid before its claims");
+        _claimUnclaimed(periodicLoanId);
+        if (settledHere) return;
+        _skip(settledEarlier
+            ? "the checkpoint was settled, and its accounting checked, by an earlier settle run; this run closed the loan out"
+            : "the loan was repaid before any settle run settled its checkpoint; this run closed it out");
+    }
+
     /// @dev Every unit of the sale is accounted for: the settler's bonus,
     ///      the treasury's handling fee and the lender's share add up to
     ///      exactly what the swap returned, the lender's share covers the
     ///      period's interest and is credited against the loan's interest,
     ///      and the loan's collateral falls by exactly what was sold.
-    function _settlePeriodicLoan() internal {
-        LibVaipakam.Loan memory before = LoanFacet(diamond).getLoanDetails(periodicLoanId);
-        require(before.status == LibVaipakam.LoanStatus.Active && before.borrower == borrower, string.concat(
-            "PF-116: the recorded loan is not active on this chain, so the open stage's broadcast did not land",
-            " as recorded"
-        ));
+    function _settleCheckpoint(LibVaipakam.Loan memory before) internal {
         (,,, uint256 expected,, uint256 shortfall, bool canSettleNow) =
             RepayPeriodicFacet(diamond).previewPeriodicSettle(periodicLoanId);
         require(canSettleNow && shortfall == expected && shortfall > 0,
@@ -335,10 +432,25 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         vm.stopBroadcast();
         _requireSettleAccounted(before, b0, _balances(adapter), shortfall);
         _removeFixedRateAdapter(adapter);
+    }
 
-        // Close out: the repayment nets the interest already settled.
-        _repayInFull(borrowerKey, periodicLoanId);
-        _claimBoth(lenderKey, borrowerKey, periodicLoanId);
+    /// @dev Each side claims if it has not yet; the loan then settles.
+    function _claimUnclaimed(uint256 loanId) internal {
+        (,, bool lenderClaimed) = ClaimFacet(diamond).getClaimableAmount(loanId, true);
+        if (!lenderClaimed) {
+            vm.startBroadcast(lenderKey);
+            ClaimFacet(diamond).claimAsLender(loanId);
+            vm.stopBroadcast();
+        }
+        (,, bool borrowerClaimed) = ClaimFacet(diamond).getClaimableAmount(loanId, false);
+        if (!borrowerClaimed) {
+            vm.startBroadcast(borrowerKey);
+            ClaimFacet(diamond).claimAsBorrower(loanId);
+            vm.stopBroadcast();
+        }
+        require(LoanFacet(diamond).getLoanDetails(loanId).status == LibVaipakam.LoanStatus.Settled,
+            "PF-116: the loan should settle once both sides have claimed");
+        console.log("Both parties claimed for loanId:", loanId);
     }
 
     /// @dev The balances PF-116's settle moves, read before and after it.

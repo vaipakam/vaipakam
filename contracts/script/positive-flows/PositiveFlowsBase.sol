@@ -337,7 +337,7 @@ abstract contract PositiveFlowsBase is Script {
 
     /// @dev Binds the mocks a staged run's first stage deployed
     ///      ({fixtureAddresses}) and points the Diamond at them again. A
-    ///      module run between the two stages re-points the Diamond at its
+    ///      module run between its stages re-points the Diamond at its
     ///      own mocks, so the second stage cannot assume the Diamond still
     ///      reads the first stage's; every write in {_pointDiamond} is
     ///      idempotent, so pointing it again is safe either way. The mock

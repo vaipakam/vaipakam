@@ -47,7 +47,7 @@ import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
  *           - PositiveFlowsTimed: offer cancel after the cancel cooldown and a
  *             due periodic-interest checkpoint. These need the chain clock to
  *             move between two steps, so here they SKIP wherever the wait
- *             applies and name their two-stage run,
+ *             applies and name their staged run,
  *             `script/positive-flows/run-timed.sh`.
  *         The catalog's cross-chain module is not written: no module
  *         rehearses CCIP, and this runner does not claim to.

@@ -62,8 +62,8 @@ Existing positive script coverage:
 | `contracts/script/positive-flows/PositiveFlowsPositionHolder.s.sol` | A transferred borrower or lender position NFT: the new holder acts and claims, the opener is refused, and the loan's recorded party follows the NFT at close-out. | No keeper action by a new holder's keeper. |
 | `contracts/script/positive-flows/PositiveFlowsLenderIntent.s.sol` | A standing lender intent registered, funded, filled by a solver, paused with capital reserved, withdrawn, and a repaid intent loan rolled back into capital; each step checked against the owner view and the keeper feed. | No keeper-authorised (`requiresKeeperAuth`) intent, and no roll by a delegated keeper. |
 | `contracts/script/positive-flows/PositiveFlowsSwapToRepay.s.sol` | Full and partial swap-to-repay through a fixed-rate adapter the scenario registers and removes, with the proceeds split checked unit for unit. | No failover across several adapters, and no aggregator route quoted off-chain. |
-| `contracts/script/positive-flows/PositiveFlowsTimed.s.sol` | The flows whose second step must wait: offer cancel after the cancel cooldown (PF-045, PF-046), and a due Monthly periodic-interest checkpoint covered by a collateral sale, with the lender, settler and treasury shares checked unit for unit (PF-116). Run in two stages, `open()` then `settle()`; `script/positive-flows/run-timed.sh` runs both on a local Anvil and steps its clock in between. | In the one-pass runner these SKIP wherever the wait applies (always for PF-116; for the cancels, while partial fills are on), and say to use the two-stage run. Off Anvil the operator runs the stages by hand and waits out the real time, a month for PF-116. PF-117 (settle-first before refinance or default) is not scripted. |
-| `contracts/script/PositiveFlows.s.sol` | Runner: every module above, in order; `ONLY_SCENARIO=<id>` runs one scenario. | Smoke suite, not full catalog (the header says so). The timed flows SKIP here and name their two-stage run. No cross-chain module exists yet. Every module refuses any chain but a local Anvil unless `POSITIVE_FLOWS_ALLOW_CHAIN_ID` names it, because the fixture re-points the Diamond's oracle and sanctions oracle at its own mocks. Runs green on Anvil 31337 (#848) only with `--disable-block-gas-limit` (a script's whole run is one simulated frame) and from a freshly mined block; both are stated in its header. |
+| `contracts/script/positive-flows/PositiveFlowsTimed.s.sol` | The flows whose second step must wait: offer cancel after the cancel cooldown (PF-045, PF-046), and a due Monthly periodic-interest checkpoint covered by a collateral sale, with the lender, settler and treasury shares checked unit for unit (PF-116). Run in stages: `open()`, then `settle()` once the wait is over, then the read-only `finish()`, which removes the open-run record only once the chain shows nothing it names is still open. `settle()` acts only on what the chain shows is still open, so it resumes after a broadcast that stopped part-way. `script/positive-flows/run-timed.sh` runs all three on a local Anvil and steps its clock. | In the one-pass runner these SKIP wherever the wait applies (always for PF-116; for the cancels, while partial fills are on), and say to use the staged run. Off Anvil the operator runs the stages by hand and waits out the real time, a month for PF-116. PF-117 (settle-first before refinance or default) is not scripted. |
+| `contracts/script/PositiveFlows.s.sol` | Runner: every module above, in order; `ONLY_SCENARIO=<id>` runs one scenario. | Smoke suite, not full catalog (the header says so). The timed flows SKIP here and name their staged run. No cross-chain module exists yet. Every module refuses any chain but a local Anvil unless `POSITIVE_FLOWS_ALLOW_CHAIN_ID` names it, because the fixture re-points the Diamond's oracle and sanctions oracle at its own mocks. Runs green on Anvil 31337 (#848) only with `--disable-block-gas-limit` (a script's whole run is one simulated frame) and from a freshly mined block; both are stated in its header. |
 | `contracts/script/PartialFlows.s.sol` | UI-testable midpoint states. | Important for app QA, but not terminal positive coverage. |
 
 ## Script Module Map
@@ -113,9 +113,9 @@ to these ids in `contracts/script/positive-flows/PositiveFlowsBase.sol`.
 | PF-074 | LenderIntent | PF-074, PF-073 |
 | PF-118 | SwapToRepay | PF-118, PF-112, PF-113 |
 | PF-119 | SwapToRepay | PF-119, PF-114 |
-| PF-045 | Timed | PF-040, PF-045 (two-stage run while partial fills are on) |
-| PF-046 | Timed | PF-041, PF-046 (two-stage run while partial fills are on) |
-| PF-116 | Timed | PF-116, PF-110, PF-112, PF-113 (two-stage run) |
+| PF-045 | Timed | PF-040, PF-045 (staged run while partial fills are on) |
+| PF-046 | Timed | PF-041, PF-046 (staged run while partial fills are on) |
+| PF-116 | Timed | PF-116, PF-110, PF-112, PF-113 (staged run) |
 
 The retired lifecycle suite's scenario 8 (a lender selling into a buy offer)
 walked the same flow as PF-230 and is not carried twice.
@@ -206,7 +206,7 @@ walked the same flow as PF-230 and is not carried twice.
 | PF-113 | Basic | Borrower claims collateral / surplus after proper close. | Borrower payout transfers; borrower claim closes/burns as appropriate. | scripted | Keep. |
 | PF-114 | Advanced | Partial repay on opted-in loan. | Principal decreases; loan remains active; interest accounting remains coherent. | scripted | Keep. |
 | PF-115 | Advanced | Partial repay then full close with no dust. | Loan terminal and claims exact remaining amounts. | unit/integration | Add script assertion. |
-| PF-116 | Advanced | Periodic interest checkpoint settles when due. | Period interest paid, treasury/lender shares recorded, loan remains active. | unit/integration, scripted | `PositiveFlowsTimed` two-stage run: the shortfall path (collateral sold through a fixed-rate adapter). The just-stamp path (period already paid) is not scripted. |
+| PF-116 | Advanced | Periodic interest checkpoint settles when due. | Period interest paid, treasury/lender shares recorded, loan remains active. | unit/integration, scripted | `PositiveFlowsTimed` staged run: the shortfall path (collateral sold through a fixed-rate adapter). The just-stamp path (period already paid) is not scripted. |
 | PF-117 | Advanced | Periodic interest settle-first protection before refinance/default. | Overdue checkpoint is settled or blocks unsafe path according to spec. | unit/integration | not ordinary script. |
 | PF-118 | Advanced | Borrower full swap-to-repay. | Collateral swaps to principal and loan closes atomically. | scripted | Keep. Only the sized collateral is sold; the lender's and treasury's shares equal the debt, the surplus reaches the borrower, and the unsold collateral is the borrower's claim. |
 | PF-119 | Advanced | Borrower partial swap-to-repay. | Principal reduces, collateral/settlement waterfall reconciles. | scripted | Keep. Lender, treasury and borrower shares add up to the proceeds; the run's interest share is 0 because no whole day has accrued on a fresh Anvil loan. |
@@ -408,7 +408,7 @@ counterpart.
 5. Add periodic-interest and swap-to-repay positive tests/scripts using a harness
    that can control time and deterministic swap outcomes. **Done for
    swap-to-repay (PF-118, PF-119), with a fixed-rate adapter, and for a due
-   periodic checkpoint (PF-116) through `PositiveFlowsTimed`'s two-stage run.**
+   periodic checkpoint (PF-116) through `PositiveFlowsTimed`'s staged run.**
 6. Add interaction-reward claim script coverage that replaces the old staking
    reward mental model. (PF-120 / PF-259, with the cross-chain rehearsal in item
    8, sit with the VPFI rewards work, not with #848.)

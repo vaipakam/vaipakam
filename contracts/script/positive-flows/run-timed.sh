@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 #
-# run-timed.sh — the two-stage positive-flows run on a local Anvil (#848).
+# run-timed.sh — the staged positive-flows run on a local Anvil (#848).
 #
 # Runs PositiveFlowsTimed's open stage, steps the Anvil clock past the moment
-# the open stage recorded, and runs its settle stage. The scenarios are the
+# the open stage recorded, runs its settle stage, and then its read-only
+# finish stage, which removes the record once the chain shows nothing it
+# names is still open. The scenarios are the
 # positive flows whose second step must wait: an offer cancel after the cancel
 # cooldown (PF-045, PF-046) and a due periodic-interest checkpoint (PF-116).
 # See script/positive-flows/PositiveFlowsTimed.s.sol for what each stage does
@@ -15,11 +17,13 @@
 #   ONLY_SCENARIO=PF-116 bash script/positive-flows/run-timed.sh
 #
 # Anvil only: the clock step is `evm_increaseTime`, which a live chain does not
-# offer. On a rehearsal chain run the two stages by hand
-# (`--sig "open()"`, then `--sig "settle()"` once the recorded time has
-# passed); the settle stage refuses to run early and says when it is due.
+# offer. On a rehearsal chain run the stages by hand: `--sig "open()"` and,
+# once the recorded time has passed, `--sig "settle()"` (both with
+# --broadcast), then `--sig "finish()"` without --broadcast. The settle stage
+# refuses to run early and says when it is due. If a broadcast stops
+# part-way, the record stays: run settle() again, then finish().
 #
-# Extra arguments are passed to both `forge script` calls.
+# Extra arguments are passed to every `forge script` call.
 
 set -euo pipefail
 
@@ -45,7 +49,7 @@ if [ "$chain_id" != "31337" ]; then
 fi
 
 if [ -e "$STATE_FILE" ]; then
-  echo "run-timed.sh: $STATE_FILE already records an open run; settle it or delete it first" >&2
+  echo "run-timed.sh: $STATE_FILE already records an open run; run its settle() and finish() stages first" >&2
   exit 1
 fi
 
@@ -53,6 +57,12 @@ run_stage() {   # $1 = the stage's function signature; rest = extra forge args
   local sig="$1"; shift
   forge script "$TARGET" --sig "$sig" --rpc-url "$RPC" \
     --broadcast --slow --disable-block-gas-limit "$@"
+}
+
+# The finish stage sends nothing, so it runs without --broadcast, and after
+# the settle stage's broadcast has landed: it reads the chain, not a plan.
+finish_stage() {
+  forge script "$TARGET" --sig "finish()" --rpc-url "$RPC" "$@"
 }
 
 # A fresh block: the simulation runs at the latest block's time, and an idle
@@ -77,3 +87,6 @@ cast rpc evm_mine --rpc-url "$RPC" >/dev/null
 
 echo "== settle stage =="
 run_stage "settle()" "$@"
+
+echo "== finish stage =="
+finish_stage "$@"
