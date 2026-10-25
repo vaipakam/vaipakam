@@ -105,6 +105,30 @@
   },
   {
     "type": "function",
+    "name": "quoteRemitDayStatuses",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "statuses",
+        "type": "uint8[]",
+        "internalType": "enum RewardRemittanceFacet.RemitDayStatus[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "quoteRemittanceFee",
     "inputs": [
       {

@@ -233,21 +233,22 @@ recoverable back-pressure — not a fund-loss event.
 > an opened claim gate with no funding behind it is exactly the user-visible
 > revert this section exists to prevent.
 >
-> **Then resolve any `finalized day(s) neither remitted nor closed` warning —
-> the warning itself is not a blocker; an unresolved ID is.** That line lists
-> days the pass cannot classify: each is either an obligation still gated —
-> awaiting its commitment report, or unbacked — or a day that gave that mirror
-> no slice at all. The pass deliberately does NOT guess between them: guessing
-> "owed" would hold coverage below `A/A` on every tick for a zero-budget day
-> and put the stand-down permanently out of reach, and guessing "settled"
-> would hide a real obligation.
+> **Then resolve any `finalized day(s) still owed and not closeable` warning
+> (#2760).** Base reports the send's own verdict for each day
+> (`quoteRemitDayStatuses`), so this line lists only days that are still owed,
+> each with its reason: awaiting its commitment report, recycled backing short,
+> or remit-ineligible (funded by the manual-budget path). A day that gave the
+> mirror no slice is not listed. Any listed day keeps that mirror out of the
+> `C` count until it closes, so `C = A` now also means no gated obligation is
+> left at the source.
 >
-> A zero-budget day is **never closed by anything**, so its ID keeps appearing
-> for as long as it stays in the scan window. Requiring the warning to vanish
-> would therefore recreate exactly the permanent false-red the reporting
-> exists to avoid. The rule is per ID, not per line: **stand down once every
-> warned ID has been checked and found to carry no obligation; any ID that is
-> a gated obligation keeps coverage manual until it clears.**
+> On a Diamond deployed before #2760 the pass keeps its earlier line,
+> `finalized day(s) neither remitted nor closed`, which cannot tell a gated
+> obligation from a zero-budget day. There the rule is per ID: **stand down
+> once every warned ID has been checked and found to carry no obligation; any
+> ID that is a gated obligation keeps coverage manual until it clears.** A
+> zero-budget day is never closed by anything, so on that build its ID keeps
+> appearing for as long as it stays in the scan window.
 > This matters most in exactly the incident this section is written for:
 > if a finalized day is broadcast and you leave a mirror's claim gate open
 > expecting the keeper to fund it, nothing will, and users hit the claim
