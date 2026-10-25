@@ -114,12 +114,37 @@ A user who wants a raise on a mirror sooner pays for it with
 ### 2.4 Gas starvation cannot buy a skipped push
 
 A caller could try to make a push fail on purpose by giving the transaction
-just enough gas for the action and not for the send. The send would then
-fail inside its try block and the action would land. After every caught quote
-or send failure, Base checks the gas that remains. If less than 1/63 of what
-the call was given is left, the failure was the 63/64 rule, not the lane, so
-the whole transaction reverts. A deliberate gas shortfall can only fail the
-action. It cannot defer the push.
+just enough gas for the action and not for the delivery. The call to the
+messenger, or a call nested inside it (the CCIP adapter, the router), would
+then run out of gas inside the try block, and the action would land with the
+lane deferred.
+
+Base closes this before each call, not after it. Every call to the messenger
+is made only when the facet holds enough gas that the call is sure to receive
+a fixed floor:
+
+| Call | Floor |
+| --- | --- |
+| Destination list | 100,000 |
+| A lane's quote | 300,000 |
+| A lane's send | 1,000,000 |
+
+Each floor is several times what the call costs through the reward
+messenger, the adapter and the router. With less gas in hand, the whole
+action reverts (`TierPushOutOfGas`) before the call is made. All gas is
+forwarded, not capped, so a call that costs more than expected still
+succeeds when the caller supplied enough.
+
+A failure the call does return is therefore the lane's own, at any depth.
+An earlier draft checked the gas left after a failure instead (under 1/63 of
+the call's gas meant starvation). That misses a failure deep in the call
+chain: each nested frame keeps its own 1/64 reserve, and those reserves leave
+the facet with more than 1/63 when an inner call is the one that ran out
+(Codex #2853 round 1).
+
+The floors are gas an action must carry while a lane is owed, not gas it
+spends. A floor set too low never blocks a push; it only weakens the
+guarantee. Raising one is a facet refresh.
 
 ### 2.5 Funds
 

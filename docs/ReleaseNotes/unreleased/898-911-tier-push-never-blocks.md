@@ -6,7 +6,7 @@ A tier push now never makes the user's action fail. Base's own tier is current a
 
 The protocol budget pays at once for a lowered tier and for a lane's first push. It pays for any other change, such as a raised tier, at most once per lane per spacing window: one day by default, settable by the admin between one hour and seven days. That limit bounds what the consent-toggle loop can drain. Anyone who wants an owed push delivered sooner can pay its fee themselves. Caller-paid delivery has no spacing limit, and any unspent value goes back to the caller.
 
-A transaction cannot skip a push by withholding gas. A push that fails because the call ran out of gas reverts the whole action.
+A transaction cannot skip a push by withholding gas. Base attempts each lane only with a fixed amount of gas in hand, well above what the delivery needs, and reverts the whole action otherwise. A lane that fails has therefore failed on its own.
 
 Each user's per-lane delivery state is publicly readable. A budget-paid send debits only what actually left the contract. The messenger's tier send is now one lane at a time, and it refuses a chain that is not on its destination list.
 

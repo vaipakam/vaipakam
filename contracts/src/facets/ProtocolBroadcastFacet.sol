@@ -68,9 +68,13 @@ interface IVPFIDiscountAccumulatorInternal {
  *     protocol budget pays a push that lowers the lane's tier or bps at
  *     once, and any other push at most once per spacing window per lane,
  *     which bounds what tier churn can drain.
- *   - GAS. A quote or send that failed because the call ran out of gas
- *     reverts the whole transaction: starving the call can fail the user's
- *     action, never skip its push.
+ *   - GAS. Each call to the messenger (the destination list, a lane's
+ *     quote, a lane's send) is made only with at least a fixed gas floor in
+ *     hand, well above what the call needs; with less, the whole action
+ *     reverts {TierPushOutOfGas} before the call. A caller therefore cannot
+ *     tune the transaction's gas so that the call, or any call nested inside
+ *     it, runs out: a failure it does return is the lane's own. Starving the
+ *     call can fail the user's action, never skip its push.
  *   - FUNDS. A budget-paid send debits exactly what left the Diamond (the
  *     fee less any refund the messenger returned); a caller-paid send never
  *     touches the budget, and the caller's unspent value is returned.
@@ -109,6 +113,25 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
         uint40 expiry;
         uint16 version;
     }
+
+    // ─── Gas floors ─────────────────────────────────────────────────────
+
+    /// @notice Gas a call to the messenger is sure to receive, per call kind
+    ///         (see {_requireGas}). Each is several times what the call
+    ///         costs through the reward messenger, the CCIP adapter and the
+    ///         router, so it must be raised (by a facet refresh) only if CCIP
+    ///         itself grows far more expensive. Too low a floor never blocks
+    ///         a push; it only weakens the guarantee that a failure was the
+    ///         lane's own. They are the gas a tier-pushing action must carry
+    ///         while a lane is owed, not gas it spends.
+    uint256 internal constant LIST_GAS_FLOOR = 100_000;
+    /// @notice See {LIST_GAS_FLOOR}.
+    uint256 internal constant QUOTE_GAS_FLOOR = 300_000;
+    /// @notice See {LIST_GAS_FLOOR}.
+    uint256 internal constant SEND_GAS_FLOOR = 1_000_000;
+    /// @dev The cost of the CALL itself that the 63/64 rule is applied
+    ///      after: base, cold-account and value-transfer charges, rounded up.
+    uint256 private constant CALL_OVERHEAD_GAS = 20_000;
 
     // ─── Events ─────────────────────────────────────────────────────────
 
@@ -160,9 +183,9 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
 
     /// @notice External invocation by a non-self caller.
     error OnlyInternal(address caller);
-    /// @notice A quote or send failed with too little gas left to tell a
-    ///         failed lane from a starved call; the whole action reverts so a
-    ///         push can never be skipped by withholding gas.
+    /// @notice Less than the fixed gas floor was left for a call to the
+    ///         messenger; the whole action reverts so a push can never be
+    ///         skipped by withholding gas.
     error TierPushOutOfGas();
     /// @notice {deliverTierPush} on a chain that does not originate pushes
     ///         (not canonical, or no messenger configured).
@@ -195,7 +218,7 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         writes land. Commits a new push when the user's resolved
     ///         tuple changed, then delivers every owed lane it can.
     /// @dev    Never reverts on a lane, the budget or the destination list;
-    ///         only {TierPushOutOfGas} (a starved call) escapes.
+    ///         only {TierPushOutOfGas} (too little gas for a call) escapes.
     function protocolBroadcastTierUpdate(address user) external {
         if (msg.sender != address(this)) revert OnlyInternal(msg.sender);
 
@@ -303,11 +326,10 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
         bool announce
     ) private returns (uint256) {
         uint256[] memory dsts;
-        uint256 g = gasleft();
+        _requireGas(LIST_GAS_FLOOR);
         try IVaipakamRewardMessengerOutbound(msgr).getBroadcastDestinations() returns (uint256[] memory d) {
             dsts = d;
         } catch {
-            _requireNotStarved(g);
             if (announce) emit TierPushDeferred(p.user, 0, p.nonce, TierPushDeferral.Destinations);
             return callerFunds;
         }
@@ -349,12 +371,11 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
 
         uint40 computedAt = uint40(block.timestamp);
         uint256 fee;
-        uint256 g = gasleft();
+        _requireGas(QUOTE_GAS_FLOOR);
         try m.quoteSendTierUpdateTo(dst, p.user, p.tier, p.bps, computedAt, p.nonce, p.expiry, p.version)
         returns (uint256 q) {
             fee = q;
         } catch {
-            _requireNotStarved(g);
             emit TierPushDeferred(p.user, dst, p.nonce, TierPushDeferral.Quote);
             return callerFunds;
         }
@@ -372,7 +393,7 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
         }
 
         uint256 before = address(this).balance;
-        g = gasleft();
+        _requireGas(SEND_GAS_FLOOR);
         try m.sendTierUpdateTo{value: fee}(
             dst, p.user, p.tier, p.bps, computedAt, p.nonce, p.expiry, p.version, payable(address(this))
         ) {
@@ -389,7 +410,6 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
             lane.sentAt = computedAt;
             emit ProtocolTierBroadcastSent(p.user, dst, p.tier, p.bps, p.nonce, cost, callerPays);
         } catch {
-            _requireNotStarved(g);
             emit TierPushDeferred(p.user, dst, p.nonce, TierPushDeferral.Send);
         }
         return callerFunds;
@@ -417,11 +437,19 @@ contract ProtocolBroadcastFacet is DiamondReentrancyGuard, DiamondPausable {
         return uint256(lane.sentAt) + LibVaipakam.cfgTierPushSpacingSecEffective();
     }
 
-    /// @dev After a caught failure: a call left with under 1/63 of the gas
-    ///      it started with ran out of gas (the 63/64 rule), not a lane
-    ///      failure, so the whole transaction reverts.
-    function _requireNotStarved(uint256 gasAtCall) private view {
-        if (gasleft() < gasAtCall / 63) revert TierPushOutOfGas();
+    /// @dev Revert unless the next call to the messenger is sure to receive
+    ///      at least `floor` gas. The call forwards all but 1/64 of what is
+    ///      left after its own cost (up to the value-transfer and cold-access
+    ///      charges, covered by `CALL_OVERHEAD_GAS`), so holding
+    ///      `floor * 64 / 63 + CALL_OVERHEAD_GAS` guarantees the callee
+    ///      `floor`. The floors sit well above what each call needs through
+    ///      the messenger, its CCIP adapter and the router, so a failure the
+    ///      call returns cannot be one the caller induced by tuning gas, at
+    ///      any depth of the call (Codex #2853 r1 P1). All gas is forwarded,
+    ///      not capped: a call that costs more than expected still succeeds
+    ///      when the caller supplied enough.
+    function _requireGas(uint256 floor) private view {
+        if (gasleft() < (floor * 64) / 63 + CALL_OVERHEAD_GAS) revert TierPushOutOfGas();
     }
 
     // ─── Budget admin ──────────────────────────────────────────────────

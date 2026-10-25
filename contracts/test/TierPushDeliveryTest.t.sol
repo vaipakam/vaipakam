@@ -16,7 +16,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {MockCcipRouter} from "./mocks/MockCcipRouter.sol";
 
 /// @dev A messenger stand-in whose quote burns every unit of gas it is
-///      given: the shape of a starved call, which must revert the action.
+///      given: a lane that fails on its own, however much gas it gets.
 contract GasBurningTierMessenger {
     function getBroadcastDestinations() external pure returns (uint256[] memory d) {
         d = new uint256[](1);
@@ -43,7 +43,8 @@ contract GasBurningTierMessenger {
 ///         user's action fail. Each broadcast lane is delivered on its own
 ///         and stays owed when it cannot go out; the protocol budget pays a
 ///         lowered tier at once and anything else once per spacing window;
-///         anyone may pay to deliver an owed lane; a starved call reverts.
+///         anyone may pay to deliver an owed lane; too little gas for a
+///         call reverts the action.
 contract TierPushDeliveryTest is SetupTest {
     VPFIToken internal vpfiToken;
     MockCcipRouter internal router;
@@ -280,15 +281,49 @@ contract TierPushDeliveryTest is SetupTest {
 
     // ─── Gas ────────────────────────────────────────────────────────────
 
-    function test_StarvedQuote_RevertsTheAction() public {
+    /// @dev A lane whose own call runs out of the gas it was given is the
+    ///      lane's failure, not the caller's: with ample gas the action lands
+    ///      and the lane is deferred.
+    function test_GasBurningLane_IsDeferred_ActionLands() public {
         _reachTierOne();
         GasBurningTierMessenger burner = new GasBurningTierMessenger();
         RewardReporterFacet(address(diamond)).setRewardMessenger(address(burner));
-        // A bounded gas budget keeps the burner's loop short; the burner
-        // takes 63/64 of whatever reaches it either way.
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ProtocolBroadcastFacet.TierPushDeferred(
+            user, MIRROR_A, 2, ProtocolBroadcastFacet.TierPushDeferral.Quote
+        );
         vm.prank(user);
-        vm.expectRevert(ProtocolBroadcastFacet.TierPushOutOfGas.selector);
-        VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault{gas: 5_000_000}(STAKE + 1);
+        VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault{gas: 30_000_000}(STAKE + 1);
+        assertEq(IERC20(address(vpfiToken)).balanceOf(user), STAKE + 1, "unstake landed");
+    }
+
+    /// @dev Codex #2853 r1 P1. Through the real reward messenger, CCIP adapter
+    ///      and router, sweep the gas a downgrading unstake carries: at every
+    ///      limit it either reverts or delivers the downgrade on both lanes.
+    ///      No limit lands the action with a lane left owed, so no nested
+    ///      call can be starved into a deferral. The guard is what refuses
+    ///      the low limits, not a raw out-of-gas somewhere else.
+    function test_GasSweep_DowngradeIsNeverSkipped() public {
+        _reachTierOne();
+        bytes memory data = abi.encodeCall(VPFIDiscountFacet.withdrawVPFIFromVault, (STAKE + 1));
+        uint256 landed;
+        uint256 guarded;
+        for (uint256 g = 150_000; g <= 3_000_000; g += 15_000) {
+            uint256 snap = vm.snapshotState();
+            vm.prank(user);
+            (bool ok, bytes memory ret) = address(diamond).call{gas: g}(data);
+            if (ok) {
+                ++landed;
+                (uint64 nonce,,,,,) = pb.getTierPushStatus(user);
+                assertEq(_lane(MIRROR_A).delivered.nonce, nonce, "lane A delivered");
+                assertEq(_lane(MIRROR_B).delivered.nonce, nonce, "lane B delivered");
+            } else if (ret.length >= 4 && bytes4(ret) == ProtocolBroadcastFacet.TierPushOutOfGas.selector) {
+                ++guarded;
+            }
+            vm.revertToState(snap);
+        }
+        assertGt(landed, 0, "ample gas lands the unstake");
+        assertGt(guarded, 0, "the gas floor refuses the tight limits");
     }
 
     // ─── Admin ──────────────────────────────────────────────────────────
