@@ -13,7 +13,7 @@
  *    That is worth observing rather than trusting.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, approveDiamond, acceptOffer, claimAndExpect, createOffer, creationFields, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
+import { ABIS, STATUS, approveDiamond, acceptOffer, claimAndExpect, createOffer, creationFields, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { cannotContinue, check, expectEq, expectLedger, expectRefusal } from '../lib/report.mjs';
@@ -223,8 +223,8 @@ export async function run() {
         // the collateral's lien now secures the replacement loan.
         // Its lien is RELEASED (amount 0): the collateral's encumbrance moved to
         // the replacement below rather than being duplicated or left behind.
-        await expectPosition('A6.10b', 'the ORIGINAL position after refinance: status Repaid, both receipts still with their holders, its lien released because it moved to the replacement',
-          oldLoanId, oldPos, { status: STATUS.Repaid, lienReleased: true, lienAmount: 0n });
+        await expectPosition('A6.10b', 'the ORIGINAL position after refinance: status Repaid on the loan and both its receipts, which stay with their holders, its lien released because it moved to the replacement',
+          oldLoanId, oldPos, { status: STATUS.Repaid, ...bothNfts(NFT_STATUS.LoanRepaid), lienReleased: true, lienAmount: 0n });
         await expectPosition('A6.10c', 'the REPLACEMENT position in full: new lender and its NFT, the same borrower and collateral, the collateral\'s lien retagged to it',
           newLoanId, null, {
             // The terms are the tagged offer's, read back from the chain; the fee

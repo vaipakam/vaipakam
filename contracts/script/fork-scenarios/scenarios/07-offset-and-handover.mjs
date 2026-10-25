@@ -10,7 +10,7 @@
  * for a manual second step is waiting for something that already happened.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, ANY, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, claimAndExpect, createOffer, creationFields, delta, expectPosition, positionNftOwner, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
+import { ABIS, ANY, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, claimAndExpect, createOffer, creationFields, delta, expectPosition, positionNftOwner, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees, bothNfts, NFT_STATUS, NFT_LOCK } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -77,9 +77,18 @@ export async function run() {
     // on its own.
     const vehicle = await read(ABIS.offerCancel, 'getOffer', [offsetOfferId]);
     // Posting the offset is an OFFER: the original position must be exactly
-    // as it was — compared against a snapshot taken BEFORE the post.
-    await expectPosition('A7.2d', 'posting the offset offer leaves the original position exactly as it was',
-      loanId, prePostPos, {});
+    // as it was — compared against a snapshot taken BEFORE the post — except
+    // that the live offset link locks the borrower position NFT (spec: a
+    // preclose offset link locks the borrower NFT, and the lock releases on
+    // cancel or settlement).
+    await expectPosition('A7.2d', 'posting the offset offer leaves the original position exactly as it was, except that the borrower position NFT is now locked for the offset link',
+      loanId, prePostPos, { borrowerNftLock: NFT_LOCK.PrecloseOffset });
+    // The lock is a transfer lock: while the link is live the borrower cannot
+    // move the NFT the link is bound to. The holder sending their own token
+    // to a plain wallet is refused by nothing else.
+    const lockedMove = await simulate(DIAMOND, ABIS.nft, 'transferFrom',
+      [borrower.address, outsider.address, stillOpen.borrowerTokenId], borrower.address);
+    expectRefusal('A7.2e', 'while the offset link is live the borrower position NFT cannot be transferred', lockedMove, 'ERC721Locked');
     // The vehicle is a LENDER offer, so posting it escrows its principal —
     // from the exiting borrower's wallet into their own vault — and moves
     // nothing else.
@@ -143,8 +152,8 @@ export async function run() {
     // incoming borrower, on the vehicle's terms, with the exiting borrower as
     // its lender (they posted a lender-side offer) and each side holding its
     // position NFT.
-    await expectPosition('A7.3c', 'the ORIGINAL position after the offset: status Repaid, its collateral still liened for the claim, nothing else changed',
-      loanId, offsetPosBefore, { status: STATUS.Repaid });
+    await expectPosition('A7.3c', 'the ORIGINAL position after the offset: status Repaid on the loan and both position NFTs, the offset lock released, its collateral still liened for the claim, nothing else changed',
+      loanId, offsetPosBefore, { status: STATUS.Repaid, ...bothNfts(NFT_STATUS.LoanRepaid), borrowerNftLock: NFT_LOCK.None });
     const outsiderActiveAfter = (await read(ABIS.metrics, 'getUserActiveLoans', [outsider.address])).map(String);
     const createdIds = outsiderActiveAfter.filter((id) => !outsiderActiveBefore.includes(id));
     check('A7.3d', 'the offset fill creates exactly one replacement loan for the incoming borrower',

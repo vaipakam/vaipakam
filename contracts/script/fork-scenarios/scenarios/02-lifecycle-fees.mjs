@@ -8,7 +8,7 @@
  * repay leaves standing until the borrower claims.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, approveDiamond, createOffer, acceptOffer, delta, expectPosition, lifSplit, liveFees, mint, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, approveDiamond, createOffer, acceptOffer, delta, expectPosition, lifSplit, liveFees, mint, positionOf, read, snapshot, vaultAddressFor, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { cannotContinue, check, expectEq, expectLedger } from '../lib/report.mjs';
 
@@ -128,8 +128,8 @@ export async function run() {
 
   const repaid = await read(ABIS.loan, 'getLoanDetails', [loanId]);
   expectEq('A2.12', 'the loan terminalizes to Repaid', repaid.status, STATUS.Repaid);
-  await expectPosition('A2.12b', 'the repay changes ONLY the status: both position NFTs, the recorded terms and the whole collateral lien are exactly as they were',
-    loanId, opened, { status: STATUS.Repaid });
+  await expectPosition('A2.12b', 'the repay changes ONLY the status, on the loan and on both position NFTs ("Loan Repaid"): their holders, the recorded terms and the whole collateral lien are exactly as they were',
+    loanId, opened, { status: STATUS.Repaid, ...bothNfts(NFT_STATUS.LoanRepaid) });
   const afterRepayPos = await positionOf(loanId);
 
   // --- the collateral lien outlives the repay

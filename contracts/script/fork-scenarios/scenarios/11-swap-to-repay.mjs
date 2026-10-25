@@ -10,7 +10,7 @@
  * start it.
  */
 import { DIAMOND, ERC20, MOCKS, TREASURY, VENUE_ROUTE, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, claimAndExpect, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, claimAndExpect, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { cannotContinue, check, expectLedger, expectRefusal, requireEnvelope } from '../lib/report.mjs';
@@ -120,8 +120,8 @@ export async function run() {
         'lending.borrowerEOA': raised - payoff,
       }, `payoff=${f18(payoff)} interest=${f18(interestDue)} raised=${f18(raised)} surplusToWallet=${f18(raised - payoff)}`);
 
-    await expectPosition('A11.6c', 'the full swap changes the position exactly: status Repaid, the lien down to the unsold collateral — NFTs and recorded terms unchanged',
-      loanId, fullPos, { status: STATUS.Repaid, lienAmount: fullPos.lienAmount - sold });
+    await expectPosition('A11.6c', 'the full swap changes the position exactly: status Repaid on the loan and both position NFTs, the lien down to the unsold collateral — NFT holders and recorded terms unchanged',
+      loanId, fullPos, { status: STATUS.Repaid, ...bothNfts(NFT_STATUS.LoanRepaid), lienAmount: fullPos.lienAmount - sold });
 
     // What was NOT sold is still the borrower's collateral, released to claim.
     const lien = await read(ABIS.metrics, 'getLoanCollateralLien', [loanId]);

@@ -15,11 +15,11 @@
  * contract path, not an interface gap.
  */
 import { ADMIN, DIAMOND, ERC20, MOCKS, TREASURY, VENUE_ROUTE, borrower, chainNow, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, approveDiamond, delta, expectPosition, mint, offerParams, openLoan, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, approveDiamond, delta, expectPosition, mint, offerParams, openLoan, positionOf, read, snapshot, vaultAddressFor, STATUS, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { sendAs, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { cannotContinue, check, expectLedger, observe, expectRefusal, requireEnvelope } from '../lib/report.mjs';
+import { cannotContinue, check, expectEq, expectLedger, observe, expectRefusal, requireEnvelope } from '../lib/report.mjs';
 import { dynamicIncentiveBps } from '../lib/flow.mjs';
 
 const MONTHLY = 1;
@@ -188,7 +188,7 @@ async function runPeriodic(initial) {
   const colMoved = Object.keys(afterAuto).filter((k) => k.startsWith('collateral.') && afterAuto[k] !== beforeAuto[k]);
   const colLegOk = afterAuto['collateral.venue'] - beforeAuto['collateral.venue'] === sold &&
     colMoved.every((k) => k === 'collateral.venue' || k === 'collateral.borrowerVault');
-  check('A9.11', 'an unpaid period is closed by selling exactly the collateral the specification sizes — the shortfall at the oracle plus the configured max-slippage buffer — the loan stays Active, the settler earns the dynamic incentive and the treasury its handling charge on the proceeds, the lender is covered, and every unit is accounted',
+  check('A9.11', 'an unpaid period is closed by selling exactly the collateral TODAY\'S CODE sizes — the shortfall at the oracle plus the configured max-slippage buffer, a rule the owner decision of 2026-10-25 replaces with sell-to-need and charges on the debt (#2795, #2796) — the loan stays Active, the settler earns the dynamic incentive and the treasury its handling charge on the proceeds, the lender is covered, and every unit is accounted',
     String(autoLoan.status) === '0' && colLegOk && sold === specSale &&
     loan.collateralAmount - autoLoan.collateralAmount === sold &&
     toSettler === (proceeds * settlerBps) / 10_000n &&
@@ -229,6 +229,49 @@ async function runPeriodic(initial) {
 
   const twice = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [loanId, VENUE_ROUTE], outsider.address);
   expectRefusal('A9.12', 'the same period cannot be settled twice', twice, 'PeriodicSettleNotDue');
+
+  // Closing the auto-settled loan (#2332 item 4). The specification credits
+  // interest already forwarded to the lender through a periodic
+  // auto-liquidation against the interest due, so it is never charged to the
+  // borrower — or paid to the lender — a second time. This loan carries
+  // full-term interest and has had no partial repayment, so the interest due
+  // at a repay inside the term is the full term's simple interest; the
+  // borrower pays that, net of what A9.11 booked as interest settled, plus
+  // the principal, and every unit of it reaches the lender and the treasury.
+  {
+    const settled = await read(ABIS.loan, 'getLoanDetails', [loanId]);
+    const closePos = await positionOf(loanId);
+    const fullTerm = (settled.principal * BigInt(settled.interestRateBps) * BigInt(settled.durationDays)) / (365n * 10_000n);
+    const credited = BigInt(settled.interestSettled);
+    const interestDue = fullTerm > credited ? fullTerm - credited : 0n;
+    const quoted = await read(ABIS.repay, 'calculateRepaymentAmount', [loanId]);
+    const quote = Array.isArray(quoted) ? quoted[0] : quoted;
+    expectEq('A9.15', 'after an auto-settlement the payoff quote is the principal plus the full-term interest LESS the interest already settled to the lender',
+      quote, settled.principal + interestDue,
+      `fullTerm=${f18(fullTerm)} settled=${f18(credited)} principal=${f18(settled.principal)}`);
+    await mint(borrower, lending, '200000');
+    await approveDiamond(borrower, lending);
+    const beforeClose = await snapshot(tokens, holders);
+    const closeReceipt = await tx(borrower, { address: DIAMOND, abi: ABIS.repay, functionName: 'repayLoan', args: [loanId] }, 'repayLoan(after auto-settlement)');
+    const afterClose = await snapshot(tokens, holders);
+    const paidIn = beforeClose['lending.borrowerEOA'] - afterClose['lending.borrowerEOA'];
+    const toLenderSide = (afterClose['lending.lenderEOA'] - beforeClose['lending.lenderEOA']) +
+      (afterClose['lending.lenderVault'] - beforeClose['lending.lenderVault']);
+    const toTreasuryOnClose = afterClose['lending.treasury'] - beforeClose['lending.treasury'];
+    const elsewhere = Object.keys(afterClose).filter((k) => afterClose[k] !== beforeClose[k] &&
+      !['lending.borrowerEOA', 'lending.lenderEOA', 'lending.lenderVault', 'lending.treasury'].includes(k));
+    check('A9.16', 'the close charges the settled days once: the borrower pays the principal plus the full-term interest less the interest already settled, and exactly that reaches the lender and the treasury, nothing else moving',
+      paidIn === settled.principal + interestDue && toLenderSide + toTreasuryOnClose === paidIn && elsewhere.length === 0,
+      `gas=${closeReceipt.gasUsed} paid=${f18(paidIn)} want ${f18(settled.principal + interestDue)} lender=${f18(toLenderSide)} treasury=${f18(toTreasuryOnClose)} other=${elsewhere.join(',') || 'none'}`);
+    // The treasury's share of the remaining interest is a split the
+    // specification does not fix for a loan whose earlier interest was
+    // settled by a sale (that sale paid a handling charge, not the interest
+    // fee), so it is recorded rather than asserted.
+    observe('A9.16b', 'the treasury\'s share at the close of an auto-settled loan, against the stamped fee on the interest charged at the close',
+      `treasury=${f18(toTreasuryOnClose)} stampedFeeOnRemainingInterest=${f18((interestDue * BigInt(settled.treasuryFeeBpsAtInit)) / 10_000n)} (${settled.treasuryFeeBpsAtInit}bps of ${f18(interestDue)})`);
+    await expectPosition('A9.16c', 'the close changes the position to Repaid, on the loan and both position NFTs; the settled-interest record and the rest stand as they were',
+      loanId, closePos, { status: STATUS.Repaid, ...bothNfts(NFT_STATUS.LoanRepaid) });
+  }
 
   // Voluntary path: a second loan whose borrower pays the period themselves.
   // A partial repayment charges ALL interest accrued to now (whole days,

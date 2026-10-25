@@ -10,7 +10,7 @@
  * vault custody. Each of those is asserted below against what the chain did.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, acceptStoredOffer, approveDiamond, delta, expectPosition, mint, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, acceptStoredOffer, approveDiamond, delta, expectPosition, mint, positionOf, read, snapshot, vaultAddressFor, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -164,8 +164,8 @@ export async function run() {
       'prepay.treasury': toTreasury,
     }, `daysUsed=${daysUsed} usedRent=${f18(usedRent)} treasury=${f18(toTreasury)}`);
 
-  await expectPosition('A10.6c', 'the early close changes the rental position exactly as stated, against the pre-close snapshot',
-    loanId, preClosePos, { status: STATUS.Repaid });
+  await expectPosition('A10.6c', 'the early close changes the rental position exactly as stated, against the pre-close snapshot: status Repaid on the loan and both position NFTs',
+    loanId, preClosePos, { status: STATUS.Repaid, ...bothNfts(NFT_STATUS.LoanRepaid) });
   // Claims — each side withdraws exactly its independently computed share,
   // spends its position NFT, and with both claimed the rental settles.
   let rentalPos = await positionOf(loanId);
