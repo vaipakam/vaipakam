@@ -1,4 +1,4 @@
-## Thread — liquidations and defaults sell only what the debt needs (PR #TBD)
+## Thread — liquidations and defaults sell only what the debt needs (PR #2834)
 
 A Health-Factor liquidation (single route and split route) and the liquid
 branch of a time-based default now sell only as much collateral as settling
