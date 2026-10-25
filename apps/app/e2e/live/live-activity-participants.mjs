@@ -46,7 +46,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPublicClient, http, isAddress } from 'viem';
+import { http, isAddress } from 'viem';
 import {
   CHAINS,
   LiveSetupError,
@@ -56,6 +56,7 @@ import {
   exitWithVerdict,
   indexerOrigin,
   launch,
+  livePublicClient,
   precondition,
   requireSiteUrl,
 } from './driver.mjs';
@@ -138,7 +139,7 @@ async function readFeed(chainId) {
  *  (an EOA whose code is the 0xef0100 designator). */
 async function walletsAmong(chainId, addresses) {
   const { chain, rpc } = CHAINS[chainId];
-  const pub = createPublicClient({ chain, transport: http(rpc) });
+  const pub = livePublicClient({ chain, transport: http(rpc) });
   const out = new Set();
   for (const address of addresses) {
     const code = await pub.getCode({ address });

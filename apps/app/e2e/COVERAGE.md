@@ -411,6 +411,28 @@ Which failures are preconditions, driver by driver:
   of this is pinned by `e2e/live/watchPageRpc.test.mjs` — this helper was
   wrong seven times, each time in a way that read as correct, so it is
   unit-tested rather than trusted.
+- **A drive's own chain read in a shape this build does not describe
+  (#2841)** — BLOCKED, whatever exit the drive then takes. viem decodes a
+  static-output answer by position and ignores trailing data, so against a
+  Diamond whose facet is not the build under review a tuple read gives a
+  neighbouring field without an error, and a drive would use it in a
+  PASS/FAIL check. Every drive therefore makes its public client with
+  `livePublicClient` (`driver.mjs`), whose `readContract` and `multicall`
+  apply the app's answer-shape rule (`@vaipakam/lib/staticReturn`, loaded
+  through tsx): an answer to a static-output getter of any other length is
+  not decoded, the read throws `LiveShapeMismatchError`, and the reason is
+  recorded. A process `exit` listener in the driver applies that record, so
+  a drive's catch that swallows the error, a PASS or FAIL it reaches after
+  it, or an uncaught throw all end BLOCKED with the reason (a malformed page
+  request still outranks it as FAIL, and an UNDETERMINED exit stands with
+  the reason added, since it also says the drive wrote to the chain). Applied at the exit rather than in
+  each drive's catch because the drives have dozens of exits and their
+  catches classify failures differently. Dynamic-output reads, simulations
+  and the injected wallet's forwarding of the page's own requests are
+  outside the rule: their length is not fixed, or they decode nothing for
+  the drive. Pinned by `shapeCheckedClient.test.mjs` (same value and error
+  as viem wherever the shape matches) and `liveClients.test.mjs` (the exit
+  rule in a child process, and no drive constructing another client).
 - **Cleanup capacity, for any drive that MUTATES shared chain state** —
   reserved BEFORE the mutation, not discovered after it, and read at the
   PENDING block so an aborted earlier run's un-mined spend counts. Asset
