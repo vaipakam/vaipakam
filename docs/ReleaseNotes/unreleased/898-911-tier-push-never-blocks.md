@@ -1,4 +1,4 @@
-## Thread — A tier push never blocks staking, unstaking or a loan start (PR #<n>)
+## Thread — A tier push never blocks staking, unstaking or a loan start (PR #2853)
 
 On Base, every action that changes a user's VPFI standing also sends their new discount tier to the mirror chains. That includes stake, unstake, loan start, the fee paths at settlement, consolidation and the tier poke. Until now that send was all or nothing, and it ran inside the user's own transaction. So the action failed whenever the send could not go out: the protocol's broadcast budget was empty, one destination lane was down or paused, or no destination was configured. Anyone could drain the budget cheaply by switching their discount consent off and on and poking their tier. Once it was empty, every unstake that lowered a tier failed until an operator topped it up. A single dead lane froze tier-changing actions for everyone.
 
