@@ -70,5 +70,6 @@
   "0070_protocol_config_knobs.sql",
   "0071_loans_placed_tenor_indexes.sql",
   "0072_protocol_config_pause_log.sql",
+  "0073_loans_prenotify_examined.sql",
   "0074_protocol_config_bundle_unread.sql"
 ]

@@ -1,9 +1,12 @@
 /**
  * Consent state — persisted in localStorage and applied to Google Consent
- * Mode v2 via `gtag('consent', 'update', ...)`. The inline `<head>` block
- * in `index.html` sets all tracking categories to `denied` before the
- * gtag loader runs; this module is what flips them back on after the
- * user makes a choice in the banner.
+ * Mode v2 via `gtag('consent', 'update', ...)`. This site loads no Google
+ * tag today, so `applyConsent` finds no `gtag` and does nothing; the
+ * choice is still recorded. If analytics is added, an inline `<head>`
+ * block in `index.html` sets every tracking category to `denied` before
+ * the loader runs (the build allows that block by its hash, #43, and the
+ * loader's origin is added to `public/_headers` deliberately), and this
+ * module is what flips them back on after the user makes a choice.
  *
  * Only the five tracking categories are surfaced to the user; the two
  * essential categories (`functionality_storage`, `security_storage`) are

@@ -106,6 +106,13 @@ const CLASSIFICATION = {
       'is born here: a cleared row restarts the scan at the nearest deadline, ' +
       'which re-reads rather than skips',
   },
+  prenotify_pass: {
+    class: 'replay-derived',
+    reason:
+      'pre-notify pass record — the pass in progress and when it began (#2230). ' +
+      'Nothing is born here: a cleared row makes the lane begin a new pass, ' +
+      'numbered above every mark, which re-examines rather than skips',
+  },
   loan_participants: { class: 'replay-derived', reason: 'append-only chain history (#1450 r31)' },
   notifications: {
     class: 'replay-derived',
