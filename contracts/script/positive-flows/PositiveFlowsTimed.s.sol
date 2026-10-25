@@ -74,6 +74,13 @@ import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
  *         setting it changes, with the value it found, so a first stage that
  *         stops part-way leaves nothing `settle()` cannot close or restore and
  *         `finish()` cannot check. Fixture, runner and ids: {PositiveFlowsBase}.
+ *
+ *         ONLY THE OPEN STAGE CREATES OR CHANGES ANYTHING. `settle()` only
+ *         closes what the record names and restores what it records as
+ *         changed, so a settle broadcast that stops part-way leaves nothing
+ *         the record does not already name. That is why PF-116's settlement
+ *         adapter is registered by the open stage, a month before it is used,
+ *         and not by the settle stage that sells through it.
  */
 contract PositiveFlowsTimed is PositiveFlowsBase {
     /// @dev PF-116's principal: twice the fixture's loan, so its value sits
@@ -87,7 +94,7 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
     uint256 private constant PERIODIC_DURATION_DAYS = 60;
 
     string private constant STATE_FILE = "positive-flows-timed.json";
-    uint256 private constant STATE_VERSION = 2;
+    uint256 private constant STATE_VERSION = 3;
 
     // ── What the first stage opened (0 = not opened) ─────────────────────
     uint256 private lenderOfferId;
@@ -103,6 +110,10 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
     ///      open that stops in between leaves it lowered.
     uint256 private finerCadenceThresholdWas;
     bool private finerCadenceThresholdLowered;
+    /// @dev The fixed-rate adapter PF-116's settle sells through. The open
+    ///      stage registers it, before the loan's offer, so a loan on the
+    ///      chain means the adapter is too; the settle stage removes it.
+    FixedRateSwapAdapter private settlementAdapter;
     /// @dev The earliest timestamp at which every opened scenario can settle.
     uint256 private settleAfter;
 
@@ -185,6 +196,10 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
             _restoreFinerCadenceThreshold();
             console.log("Finer-cadence principal threshold restored to", finerCadenceThresholdWas);
         }
+        if (_settlementAdapterStillRegistered()) {
+            _removeFixedRateAdapter(settlementAdapter);
+            console.log("Settlement adapter removed from the swap list:", address(settlementAdapter));
+        }
         console.log("The record is kept until finish() confirms the chain:", path);
     }
 
@@ -260,6 +275,9 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         if (_finerCadenceThresholdStillChanged()) {
             open = _listed(open, "the finer-cadence principal threshold still lowered");
         }
+        if (_settlementAdapterStillRegistered()) {
+            open = _listed(open, "PF-116's settlement adapter still on the swap list");
+        }
     }
 
     function _listed(string memory list, string memory item) internal pure returns (string memory) {
@@ -284,6 +302,10 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
     function _periodicSwitchStillChanged() internal view returns (bool) {
         return periodicLoanId != 0 && !periodicSwitchWasOn
             && NumeraireConfigFacet(diamond).getPeriodicInterestEnabled();
+    }
+
+    function _settlementAdapterStillRegistered() internal view returns (bool) {
+        return address(settlementAdapter) != address(0) && _isSwapAdapter(address(settlementAdapter));
     }
 
     /// @dev The first stage lowered the threshold, and it is not back.
@@ -391,6 +413,11 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         // A finer cadence than None needs the principal's value at or above
         // the threshold. Lower it for this loan's creation only, and put it
         // back once the loan carries its cadence ({_restoreFinerCadenceThreshold}).
+        // The adapter the settle stage sells through, registered first: the
+        // broadcast lands in order, so if the loan exists, so does this.
+        (settlementAdapter,) = _registerFixedRateAdapter();
+        console.log("Settlement adapter registered:", address(settlementAdapter));
+
         finerCadenceThresholdWas = NumeraireConfigFacet(diamond).getMinPrincipalForFinerCadence();
         finerCadenceThresholdLowered = finerCadenceThresholdWas > PERIODIC_PRINCIPAL_NUMERAIRE;
         if (finerCadenceThresholdLowered) {
@@ -476,13 +503,15 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         require(canSettleNow && shortfall == expected && shortfall > 0,
             "PF-116: the checkpoint should be due, with the whole period's interest unpaid");
 
-        (FixedRateSwapAdapter adapter, LibSwap.AdapterCall[] memory route) = _registerFixedRateAdapter();
+        require(_isSwapAdapter(address(settlementAdapter)),
+            "PF-116: the open stage's settlement adapter should still be on the Diamond's swap list");
+        FixedRateSwapAdapter adapter = settlementAdapter;
+        LibSwap.AdapterCall[] memory route = _swapRouteFor(address(adapter));
         Balances memory b0 = _balances(adapter);
         vm.startBroadcast(newLenderKey);
         RepayPeriodicFacet(diamond).settlePeriodicInterest(periodicLoanId, route);
         vm.stopBroadcast();
         _requireSettleAccounted(before, b0, _balances(adapter), shortfall);
-        _removeFixedRateAdapter(adapter);
     }
 
     /// @dev Each side claims if it has not yet; the loan then settles.
@@ -577,8 +606,11 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         uint256 moved = uint256(afterLoan.lastPeriodicInterestSettledAt) - uint256(before.lastPeriodicInterestSettledAt);
         require(moved == LibVaipakam.PERIODIC_INTERVAL_MONTHLY_DAYS * 1 days,
             "PF-116: the checkpoint should move on by exactly one period");
-        (,,,,,, bool canSettleNow) = RepayPeriodicFacet(diamond).previewPeriodicSettle(periodicLoanId);
-        require(!canSettleNow, "PF-116: the next checkpoint should not be due yet");
+        // The next checkpoint may already be due, if the settle stage ran
+        // after its grace too (from about day 61). The scenario settles one
+        // checkpoint and then closes the loan, so that is stated, not refused.
+        (,,,,,, bool nextDue) = RepayPeriodicFacet(diamond).previewPeriodicSettle(periodicLoanId);
+        if (nextDue) console.log("The next checkpoint is due as well; the full repayment covers it");
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────
@@ -622,6 +654,7 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         vm.serializeBool(k, "periodicSwitchWasOn", periodicSwitchWasOn);
         vm.serializeUint(k, "finerCadenceThresholdWas", finerCadenceThresholdWas);
         vm.serializeBool(k, "finerCadenceThresholdLowered", finerCadenceThresholdLowered);
+        vm.serializeAddress(k, "settlementAdapter", address(settlementAdapter));
         vm.serializeAddress(k, "usdc", f.usdc);
         vm.serializeAddress(k, "weth", f.weth);
         vm.serializeAddress(k, "illiquidToken", f.illiquidToken);
@@ -656,6 +689,7 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         periodicSwitchWasOn = vm.parseJsonBool(json, ".periodicSwitchWasOn");
         finerCadenceThresholdWas = vm.parseJsonUint(json, ".finerCadenceThresholdWas");
         finerCadenceThresholdLowered = vm.parseJsonBool(json, ".finerCadenceThresholdLowered");
+        settlementAdapter = FixedRateSwapAdapter(vm.parseJsonAddress(json, ".settlementAdapter"));
         f = FixtureAddresses({
             usdc: vm.parseJsonAddress(json, ".usdc"),
             weth: vm.parseJsonAddress(json, ".weth"),

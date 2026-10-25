@@ -644,8 +644,30 @@ abstract contract PositiveFlowsBase is Script {
         vm.stopBroadcast();
         address[] memory adapters = AdminFacet(diamond).getSwapAdapters();
         require(adapters[adapters.length - 1] == address(adapter), "the adapter should be appended to the swap list");
-        route = new LibSwap.AdapterCall[](1);
-        route[0] = LibSwap.AdapterCall({adapterIdx: adapters.length - 1, data: ""});
+        route = _swapRouteFor(address(adapter));
+    }
+
+    /// @dev Whether `adapter` is on the Diamond's swap list now.
+    function _isSwapAdapter(address adapter) internal view returns (bool) {
+        address[] memory adapters = AdminFacet(diamond).getSwapAdapters();
+        for (uint256 i = 0; i < adapters.length; i++) {
+            if (adapters[i] == adapter) return true;
+        }
+        return false;
+    }
+
+    /// @dev A route naming only `adapter`, at its index in the swap list as
+    ///      it stands now. The index is read, not remembered: other runs add
+    ///      and remove adapters, so it can move between a staged run's stages.
+    function _swapRouteFor(address adapter) internal view returns (LibSwap.AdapterCall[] memory route) {
+        address[] memory adapters = AdminFacet(diamond).getSwapAdapters();
+        for (uint256 i = 0; i < adapters.length; i++) {
+            if (adapters[i] != adapter) continue;
+            route = new LibSwap.AdapterCall[](1);
+            route[0] = LibSwap.AdapterCall({adapterIdx: i, data: ""});
+            return route;
+        }
+        revert("the adapter is not on the Diamond's swap list");
     }
 
     function _removeFixedRateAdapter(FixedRateSwapAdapter adapter) internal {
