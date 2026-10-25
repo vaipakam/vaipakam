@@ -49,6 +49,7 @@
  * the one shipped with the build, and the tooltip says so.
  */
 import { useSyncExternalStore } from 'react';
+import { indexerOrigin } from '../lib/indexerOrigin';
 
 /**
  * Vite replaces `import.meta.env.VITE_*` at build time, but this module
@@ -60,25 +61,10 @@ import { useSyncExternalStore } from 'react';
  */
 const env = (import.meta as { env?: Record<string, string | undefined> }).env;
 
-/**
- * The published indexer origin. Overridable for previews.
- *
- * Trailing slashes are stripped, and that is not cosmetic. The Worker
- * dispatches on `/^\/config\/(\d+)$/`, so an origin configured as
- * `https://host/` would build `https://host//config/84532`, miss the
- * route, and 404 — after which this file's own fallback quietly serves
- * bundled defaults. The site would look fine and simply never be live,
- * with no error anywhere and a tooltip correctly reporting the values as
- * bundled. A misconfiguration that presents as "working, just not live"
- * is one nobody goes looking for.
- *
- * `apps/app/src/data/indexer.ts` normalises for the same reason;
- * this strips one-or-more so a doubled slash cannot slip through either.
- */
-const INDEXER_ORIGIN = (env?.VITE_INDEXER_ORIGIN ?? 'https://indexer.vaipakam.com').replace(
-  /\/+$/,
-  '',
-);
+/** The published indexer origin, overridable for previews. The rule (default,
+ *  trailing slashes) is `indexerOrigin`'s, shared with the build script and
+ *  the build's Content-Security-Policy (#43). */
+const INDEXER_ORIGIN = indexerOrigin(env?.VITE_INDEXER_ORIGIN);
 
 /**
  * Which deployment the public pages quote. The docs state one set of

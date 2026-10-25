@@ -304,6 +304,7 @@ Page integrity requirements:
 - the public website never turns text into code at run time, and its content policy says so
 - every page the website ships, including the pre-rendered page for each route and language, must carry only scripts its own content policy allows; a build that would ship a page whose policy blocks its own script must stop instead
 - the public website connects no wallet and embeds no frame, and it must not be shown inside another site's frame
+- the public website may send network requests only to its own address and to the indexer it reads published protocol figures from, as configured for that build. Any other destination is refused, so a script that got onto a page cannot send what it reads elsewhere. A build whose policy cannot name its own data source must stop instead of shipping
 - the content policy names only what the website actually loads. A service the website does not use, such as an analytics loader or a web-font host, is not allowed in advance; it is added deliberately when it is introduced, through the consent pipeline where consent applies
 - this narrows what an injected script can do on the website. It does not protect against a compromised deployment, which serves its own policy, or against software on the visitor's own device such as a browser extension, and the website does not claim otherwise
 

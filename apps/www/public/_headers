@@ -28,10 +28,15 @@
 #     Safe-App support; a marketing page has no reason to be framed, and
 #     `frame-ancestors 'none'` stops it being framed for clickjacking.
 #
-# The permissive `https:` on `connect-src` / `img-src` stays for now. The
-# site's one data read is the indexer's published protocol-config snapshot,
-# whose origin is build configuration; locking `connect-src` to it is still
-# open on #43, together with the connected app's.
+# THE CONNECT POLICY (#43). `connect-src` is `'self'` plus the one other
+# origin the site reads: the indexer whose published protocol-config
+# snapshot the pages quote. That origin is build configuration
+# (`VITE_INDEXER_ORIGIN`), so the build writes it in place of the second
+# placeholder below, through the same rule the pages use to fetch from it
+# (`src/lib/indexerOrigin.ts`), and fails if it cannot (see
+# packages/lib/src/cspConnectSources.mjs). A script that got onto a page
+# can no longer send what it reads to any other host. (`img-src https:`
+# is a separate directive this lock does not change.)
 #
 # `static.cloudflareinsights.com` is DELIBERATELY ABSENT (#1816). If the
 # zone has Web Analytics auto-injection on, Cloudflare inserts its RUM
@@ -57,7 +62,7 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
   Cross-Origin-Opener-Policy: same-origin-allow-popups
   Cross-Origin-Resource-Policy: cross-origin
-  Content-Security-Policy: default-src 'self'; script-src 'self' __INLINE_SCRIPT_HASHES__; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' https:; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' __INLINE_SCRIPT_HASHES__; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' __CONNECT_SOURCES__; frame-src 'none'; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
 
 # SPA entry point — Cloudflare returns this for every non-asset path via
 
