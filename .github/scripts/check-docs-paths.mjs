@@ -109,6 +109,10 @@ const REMOVED_DIRS = [
   ['apps/defi/', 'retired in #1854 — the connected app is `apps/app/`; note Analytics and the Protocol Console were NOT ported (#1959), so cite git history for those'],
   ['apps/alpha01/', 'prototype deleted in #1854 — cite git history'],
   ['apps/alpha/', 'prototype deleted in #1854 — cite git history'],
+  // #2538 — the alpha01 prototype's orchestration package, orphaned by
+  // #1854 and deleted once nothing had adopted it. `apps/app` carries the
+  // one shipping copy of what it duplicated.
+  ['packages/defi-client/', 'deleted in #2538 (orphaned since #1854) — the shipping code is in `apps/app/`; cite git history'],
 ];
 
 const TRACKED = new Set(trackedFiles());
