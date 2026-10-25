@@ -46,10 +46,10 @@
  *                  full reference's label, a footnote's label. Kept apart so
  *                  nothing in them fuses with rendered text.
  *
- * Each segment also carries its UNIT, the source range the gate fingerprints
+ * Each segment also carries its UNIT, the source ranges the gate fingerprints
  * when a mention is found in it: the nearest enclosing list item (its own
- * blocks, not its nested lists), table row or footnote definition, or else
- * the leaf block itself. A list item and not its paragraph, because the item
+ * blocks, one range each, so a nested list between two of them is left out),
+ * table row or footnote definition, or else the leaf block itself. A list item and not its paragraph, because the item
  * carries status the paragraph does not (a task box `[x]`), and a table row
  * and not its cell, because the row's other cells say what the cell means.
  * `headingChain(offset)` gives the headings that govern a position: the
@@ -205,17 +205,30 @@ export function alignOffsets(value, source, from, to, { decoded = true, fold = f
  * they arrive.
  */
 class BlockSink {
-  constructor(unit, segments) {
+  constructor(unit, segments, source, leafEnd) {
     this.unit = unit;
     this.segments = segments;
+    this.source = source;
+    this.leafEnd = leafEnd;
     this.text = '';
     this.map = [];
     // Open elements whose text is never shown (see HIDDEN_TEXT). Kept on the
     // block, not per HTML fragment, because inside a paragraph each inline
     // tag is its own fragment: in `buy<script>note</script>adapter` the
-    // text `note` arrives as Markdown text BETWEEN two fragments, and is
-    // still inside the script for a browser.
+    // text `note` arrives BETWEEN two fragments, and is still inside the
+    // script for a browser.
     this.hidden = [];
+    // Inside a paragraph, where an unrendered element's raw text began (the
+    // end of its opening tag), or null. Its contents are read as that raw
+    // source, not as the Markdown nodes micromark made of it: a script's
+    // text is not emphasis, and `&ThickSpace;` in it is not a space.
+    this.rawFrom = null;
+  }
+
+  /** Raw source [from, to) as one literal segment. */
+  raw(from, to) {
+    const text = this.source.slice(from, to);
+    this.emit('literal', text, Array.from({ length: text.length }, (_, k) => from + k));
   }
 
   /** Text a reader would see unless an open hidden element holds it. */
@@ -239,6 +252,10 @@ class BlockSink {
   }
 
   close() {
+    // An unrendered element left open at the end of a paragraph holds the
+    // rest of it.
+    if (this.rawFrom !== null) this.raw(this.rawFrom, this.leafEnd);
+    this.rawFrom = null;
     this.breakProse();
   }
 }
@@ -371,6 +388,13 @@ function readMarkdown(source) {
   const aligned = (value, from, to, opts) => alignOffsets(value, source, from, to, opts);
 
   const phrasing = (node, sink) => {
+    // Inside an unrendered element (`<script>…</script>` in a paragraph) only
+    // HTML matters, to find where the element closes; the text is read raw
+    // when it does.
+    if (sink.rawFrom !== null && node.type !== 'html') {
+      if (node.children) for (const child of node.children) phrasing(child, sink);
+      return;
+    }
     switch (node.type) {
       case 'text': {
         const [s, e] = span(node);
@@ -388,7 +412,13 @@ function readMarkdown(source) {
       case 'html': {
         const [s, e] = span(node);
         const local = aligned(node.value, s, e, { decoded: false });
+        const open = sink.hidden.length;
         readHtml(node.value, (k) => local[Math.min(k, local.length - 1)] ?? s, sink);
+        if (!open && sink.hidden.length) sink.rawFrom = e;
+        else if (open && !sink.hidden.length && sink.rawFrom !== null) {
+          sink.raw(sink.rawFrom, s);
+          sink.rawFrom = null;
+        }
         return;
       }
       case 'image':
@@ -445,24 +475,34 @@ function readMarkdown(source) {
     }
   };
 
-  /** The unit for a leaf block, given the nearest enclosing container. */
+  /**
+   * The unit for a leaf block, given the nearest enclosing container: a
+   * `start` (where governing headings are looked up from) and the source
+   * `ranges` the fingerprint covers.
+   */
   const unitFor = (leaf, container) => {
     const [s, e] = span(leaf);
-    if (!container) return { start: s, end: e };
-    if (container.type === 'tableRow') return { start: container.position.start.offset, end: container.position.end.offset };
+    if (!container) return { start: s, ranges: [[s, e]] };
+    if (container.type === 'tableRow') {
+      const row = span(container);
+      return { start: row[0], ranges: [row] };
+    }
     // A list item or footnote definition: its own blocks, NOT its nested
     // lists. A nested list is its own items' context, and folding fifty
     // sub-items into one parent's fingerprint would move it on every edit
-    // to any of them.
-    let end = e;
-    for (const child of container.children) {
-      if (child.type !== 'list') end = Math.max(end, child.position.end.offset);
-    }
-    return { start: container.position.start.offset, end };
+    // to any of them. So the ranges are the item's own blocks, one each,
+    // with any nested list between two of them left out; the item's marker
+    // and task box sit on its first block's first line.
+    const start = container.position.start.offset;
+    const ranges = container.children.filter((c) => c.type !== 'list').map(span);
+    if (!ranges.length) ranges.push([s, e]);
+    // From the item's own start, so its marker and task box are in it.
+    ranges[0] = [start, ranges[0][1]];
+    return { start, ranges };
   };
 
   const leaf = (node, container, read) => {
-    const sink = new BlockSink(unitFor(node, container), segments);
+    const sink = new BlockSink(unitFor(node, container), segments, source, node.position.end.offset);
     read(sink);
     sink.close();
   };
@@ -496,10 +536,18 @@ function readMarkdown(source) {
         return;
       case 'code': {
         const [s, e] = span(node);
+        // A FENCED block's body starts on the line after its opening fence,
+        // and its info string is on that line. Each is read against its own
+        // range: read against the whole block, a body that repeats the info
+        // string (```buyOptions / buyOptions) mapped onto the fence line, and
+        // two mentions merged into one.
+        const fenced = /^ {0,3}(?:`{3,}|~{3,})/.test(source.slice(s, e));
+        const firstLineEnd = fenced ? source.slice(s, e).search(/\r\n|\r|\n|$/) + s : s;
+        const bodyFrom = fenced ? Math.min(e, firstLineEnd + (source.startsWith('\r\n', firstLineEnd) ? 2 : 1)) : s;
         leaf(node, container, (sink) => {
-          sink.emit('literal', node.value, aligned(node.value, s, e, { decoded: false }));
+          sink.emit('literal', node.value, aligned(node.value, bodyFrom, e, { decoded: false }));
           const info = [node.lang, node.meta].filter((v) => v).join(' ');
-          if (info) sink.emit('interior', info, aligned(info, s, e));
+          if (info) sink.emit('interior', info, aligned(info, s, firstLineEnd));
         });
         return;
       }
@@ -562,7 +610,7 @@ function readText(source) {
     if (start === -1) return;
     const text = source.slice(start, end);
     const map = Array.from({ length: text.length }, (_, k) => start + k);
-    const unit = { start, end };
+    const unit = { start, ranges: [[start, end]] };
     segments.push({ kind: 'prose', text, map, unit });
     start = -1;
   };

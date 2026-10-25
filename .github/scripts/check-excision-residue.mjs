@@ -603,9 +603,9 @@ function lineOf(starts, offset) {
  * THE DIGEST. The count alone is defeated by an offsetting edit: remove one
  * pinned mention, add another, total unchanged. So each mention contributes a
  * UNIT to a digest: the raw source lines of the block that holds it — the
- * whole list item (task box included, nested lists excluded), table row or
- * footnote, or else the paragraph, heading, cell or code block itself —
- * preceded by the headings that govern it (`headingChain`). Units are sorted
+ * list item's own blocks (task box included, nested-list lines left out),
+ * the table row or footnote, or else the paragraph, heading, cell or code
+ * block itself — preceded by the headings that govern it (`headingChain`). Units are sorted
  * and hashed, so moving a mention without rewording it is invisible, while
  * rewording its block or retitling a governing heading moves the digest.
  *
@@ -681,7 +681,14 @@ function scanFile(path) {
   const lines = text.split(/\r\n|\r|\n/);
   const units = kept
     .map(({ unit }) => {
-      const block = lines.slice(lineOf(starts, unit.start), lineOf(starts, Math.max(unit.start, unit.end - 1)) + 1);
+      // Every line any of the unit's ranges touches, once each and in order.
+      // A list item's ranges skip its nested lists, so their lines are not
+      // part of the parent's fingerprint.
+      const at = new Set();
+      for (const [from, to] of unit.ranges) {
+        for (let l = lineOf(starts, from); l <= lineOf(starts, Math.max(from, to - 1)); l++) at.add(l);
+      }
+      const block = [...at].sort((a, b) => a - b).map((l) => lines[l]);
       return [...headingChain(unit.start), ...block]
         .map((l) => l.replace(/\r/g, '').replace(/[ \t]+$/gm, ''))
         .join('\n');

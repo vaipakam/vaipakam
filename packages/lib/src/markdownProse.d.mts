@@ -7,8 +7,9 @@ export interface ProseSegment {
   text: string;
   /** Source offset of every UTF-16 unit of `text`. */
   map: number[];
-  /** Source range the gate fingerprints for a mention found here. */
-  unit: { start: number; end: number };
+  /** What the gate fingerprints for a mention found here: the source
+   *  `ranges` it hashes, and the `start` its governing headings precede. */
+  unit: { start: number; ranges: Array<[number, number]> };
 }
 
 export const BLOCK_TAGS: Set<string>;

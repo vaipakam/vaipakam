@@ -80,6 +80,21 @@ describe('readProse — segments', () => {
     expect(texts(source, 'interior')).toEqual(['sh title']);
   });
 
+  it('maps a fenced body to its own lines, not to an info string that repeats it', () => {
+    const source = '```buyOptions\nbuyOptions\n```\n';
+    const { segments } = md(source);
+    const body = segments.find((s) => s.kind === 'literal')!;
+    const info = segments.find((s) => s.kind === 'interior')!;
+    expect(body.map[0]).toBe(source.indexOf('\nbuyOptions') + 1);
+    expect(info.map[0]).toBe(3);
+  });
+
+  it('reads an inline script as its raw source, not as Markdown', () => {
+    expect(texts('a<script>b&ThickSpace;c *d*</script>e\n', 'literal')).toEqual(['b&ThickSpace;c *d*']);
+    expect(texts('a<script>b&ThickSpace;c *d*</script>e\n', 'prose')).toEqual(['ae']);
+    expect(texts('a<script>left *open\n', 'literal')).toEqual(['left *open']);
+  });
+
   it('keeps unrendered script text out of the prose, inline or in a block', () => {
     expect(texts('a<script>note</script>b\n', 'prose')).toEqual(['ab']);
     expect(texts('a<script>note</script>b\n', 'literal')).toEqual(['note']);
@@ -119,13 +134,18 @@ describe('readProse — segments', () => {
 describe('readProse — units', () => {
   const unitText = (source: string, needle: string) => {
     const segment = md(source).segments.find((s) => s.text.includes(needle))!;
-    return source.slice(segment.unit.start, segment.unit.end);
+    return segment.unit.ranges.map(([from, to]) => source.slice(from, to)).join('|');
   };
 
   it('fingerprints a list item, task box included, without its nested list', () => {
     const source = '- [x] Retire it.\n  More text.\n  - nested one\n  - nested two\n';
     expect(unitText(source, 'Retire')).toBe('- [x] Retire it.\n  More text.');
     expect(unitText(source, 'nested two')).toBe('- nested two');
+  });
+
+  it('leaves out a nested list that sits between two of the item\'s own blocks', () => {
+    const source = '- Parent first.\n  - child\n\n  Parent last.\n';
+    expect(unitText(source, 'Parent first')).toBe('- Parent first.|Parent last.');
   });
 
   it('fingerprints a table row, not just its cell', () => {

@@ -49,6 +49,8 @@ const DIR = `__excision_selftest__${process.pid}_${Date.now().toString(36)}`;
 /**
  * `caught: true` — the gate MUST report this file. `false` — must stay silent.
  *
+ * `mentions`, where given, is the count the gate must report for the file.
+ *
  * `digestSameAs` / `digestDiffersFrom` name another fixture whose digest this
  * one's must equal or differ from. They pin the fingerprint, which a verdict
  * cannot: retitling a governing heading leaves a file caught either way, and
@@ -832,6 +834,25 @@ const FIXTURES = [
     body: 'Decide what to [buy](a b)Adapter selection follows.\n',
   },
   {
+    name: 'inline-script-entity.md',
+    caught: false,
+    why: 'a script inside a paragraph is read as its raw source, where a reference is not decoded',
+    body: 'Decide what to buy<script>buy&ThickSpace;adapter</script> selection follows.\n',
+  },
+  {
+    name: 'inline-script-emphasis.md',
+    caught: true,
+    why: 'a script inside a paragraph is one raw run, not split by the emphasis Markdown would see',
+    body: 'Notes<script>VPFI buy*adapter*</script> follow.\n',
+  },
+  {
+    name: 'fence-info-repeats-body.md',
+    caught: true,
+    mentions: 2,
+    why: 'a fenced body that repeats its info string is a second mention, not the same one',
+    body: '```buyOptions\nbuyOptions\n```\n',
+  },
+  {
     name: 'table-cells.md',
     caught: false,
     why: 'two table cells are two blocks',
@@ -880,6 +901,19 @@ const FIXTURES = [
     digestDiffersFrom: 'digest-task.md',
     why: 'the list item, task box included, is the unit',
     body: '- [ ] Retire the VPFI buy adapter.\n',
+  },
+  {
+    name: 'digest-nested.md',
+    caught: true,
+    why: 'base for the nested-list pair',
+    body: '- The VPFI buy adapter was removed.\n  - child note, first wording\n\n  Kept for the record.\n',
+  },
+  {
+    name: 'digest-nested-child-edited.md',
+    caught: true,
+    digestSameAs: 'digest-nested.md',
+    why: "a nested list between a parent item's own blocks is not part of the parent's fingerprint",
+    body: '- The VPFI buy adapter was removed.\n  - child note, reworded entirely\n\n  Kept for the record.\n',
   },
   {
     name: 'digest-row.md',
@@ -1016,6 +1050,14 @@ function run() {
   };
   for (const f of all) {
     const reported = output.includes(`${DIR}/${f.name}`);
+    if (f.mentions !== undefined) {
+      const line = output.split('\n').find((l) => l.trim().startsWith(`${DIR}/${f.name} `));
+      const m = line && /\((\d+) mention/.exec(line);
+      const got = m ? Number(m[1]) : 0;
+      if (got !== f.mentions) {
+        failures.push(`  ${f.name}\n      expected ${f.mentions} mention(s), got ${got}\n      ${f.why}`);
+      }
+    }
     if (reported !== f.caught) {
       failures.push(
         `  ${f.name}\n      expected ${f.caught ? 'CAUGHT' : 'clean'}, got ${reported ? 'CAUGHT' : 'clean'}\n      ${f.why}`,
