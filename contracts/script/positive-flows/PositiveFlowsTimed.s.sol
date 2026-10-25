@@ -1,0 +1,505 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.29;
+
+import {console} from "forge-std/console.sol";
+import {VmSafe} from "forge-std/Vm.sol";
+import {PositiveFlowsBase} from "./PositiveFlowsBase.sol";
+import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {LibSwap} from "../../src/libraries/LibSwap.sol";
+import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
+import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
+import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
+import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
+import {LoanFacet} from "../../src/facets/LoanFacet.sol";
+import {NumeraireConfigFacet} from "../../src/facets/NumeraireConfigFacet.sol";
+import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
+import {Deployments} from "../lib/Deployments.sol";
+import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
+
+/**
+ * @title PositiveFlowsTimed
+ * @notice The positive flows that need the chain clock to move between two of
+ *         their steps (#848 Phase 2): cancelling an unaccepted offer after the
+ *         cancel cooldown (PF-045, PF-046), and a periodic-interest checkpoint
+ *         settled once it is due (PF-116).
+ *
+ *         A forge script cannot step the clock between its own transactions:
+ *         `vm.warp` moves the simulation only, and the broadcast mines every
+ *         transaction at the chain's own time. So these run in TWO STAGES,
+ *         each its own `forge script` invocation, with the clock stepped in
+ *         between:
+ *
+ *           1. `open()` builds the fixture, opens each scenario's position,
+ *              shows the step that must wait is refused while it waits, and
+ *              records the fixture, the positions and the earliest moment the
+ *              second stage may run in `deployments/<slug>/positive-flows-timed.json`.
+ *           2. `settle()` refuses to run before that moment, binds the first
+ *              stage's mocks again, checks every recorded position is still
+ *              there, completes each scenario, restores what the first stage
+ *              changed, and deletes the record.
+ *
+ *         `script/positive-flows/run-timed.sh` runs both on a local Anvil and
+ *         steps its clock in between. On any other chain the operator runs the
+ *         two stages by hand and waits out the real time, which for PF-116 is
+ *         a month. The state file is written and deleted only by a
+ *         `--broadcast` run, so a dry run of either stage changes nothing.
+ *
+ *         In the one-pass runner ({PositiveFlows}, or `run()`), a scenario
+ *         whose wait applies says SKIP and names the two-stage run. The cancel
+ *         cooldown applies only while partial fills are on, so PF-045 and
+ *         PF-046 run in one pass where they are off.
+ *
+ *         What the first stage changes until the second restores it: when the
+ *         periodic-interest switch is off, PF-116 turns it on, and it stays on
+ *         until `settle()` turns it off again. The finer-cadence principal
+ *         threshold is lowered for the loan's creation only and restored
+ *         within the first stage. Fixture, runner and ids: {PositiveFlowsBase}.
+ */
+contract PositiveFlowsTimed is PositiveFlowsBase {
+    /// @dev PF-116's principal: twice the fixture's loan, so its value sits
+    ///      clearly above the lowest finer-cadence threshold governance may set.
+    uint256 private constant PERIODIC_PRINCIPAL = 2 * LOAN_AMOUNT;
+    /// @dev The same principal in numeraire units (1e18-scaled USD at $1 per USDC).
+    uint256 private constant PERIODIC_PRINCIPAL_NUMERAIRE = 2_000e18;
+    uint256 private constant PERIODIC_COLLATERAL = 2 * COLLATERAL_AMOUNT;
+    /// @dev Longer than the 30-day Monthly interval, which must be strictly
+    ///      shorter than the loan.
+    uint256 private constant PERIODIC_DURATION_DAYS = 60;
+
+    string private constant STATE_FILE = "positive-flows-timed.json";
+    uint256 private constant STATE_VERSION = 1;
+
+    // ── What the first stage opened (0 = not opened) ─────────────────────
+    uint256 private lenderOfferId;
+    uint256 private borrowerOfferId;
+    uint256 private periodicLoanId;
+    bool private periodicSwitchWasOn;
+    /// @dev The earliest timestamp at which every opened scenario can settle.
+    uint256 private settleAfter;
+
+    function moduleName() public pure override returns (string memory) {
+        return "PositiveFlowsTimed";
+    }
+
+    function scenarios() public pure override returns (Scenario[] memory list) {
+        list = new Scenario[](3);
+        list[0] = Scenario("PF-045", "Creator cancels an unaccepted lender offer after the cancel cooldown",
+            "PF-040, PF-045");
+        list[1] = Scenario("PF-046", "Creator cancels an unaccepted borrower offer after the cancel cooldown",
+            "PF-041, PF-046");
+        list[2] = Scenario("PF-116", "A due periodic-interest checkpoint is settled from collateral; the loan stays active",
+            "PF-116, PF-110, PF-112, PF-113");
+    }
+
+    // ─── One-pass run ─────────────────────────────────────────────────────
+
+    /// @dev Runs a scenario in one pass where its wait does not apply, and
+    ///      skips it, naming the two-stage run, where it does.
+    function _runScenario(uint256 index) internal override {
+        if (index == 2) {
+            return _skip("a periodic checkpoint is due a month after the loan starts;"
+                " run the two-stage run (script/positive-flows/run-timed.sh)");
+        }
+        if (_cancelCooldownApplies()) {
+            return _skip("the 5-minute cancel cooldown applies (partial fills on);"
+                " run the two-stage run (script/positive-flows/run-timed.sh)");
+        }
+        _openScenario(index);
+        _settleScenario(index);
+    }
+
+    // ─── Two-stage run ────────────────────────────────────────────────────
+
+    /// @notice Stage 1: open every scenario (or the one `ONLY_SCENARIO`
+    ///         names) and record what the second stage needs.
+    function open() external returns (uint256 passed, uint256 skipped) {
+        string memory only = vm.envOr("ONLY_SCENARIO", string(""));
+        if (bytes(only).length != 0 && !hasScenario(only)) {
+            revert(string.concat(moduleName(), ": unknown ONLY_SCENARIO ", only));
+        }
+        string memory path = Deployments.namedPath(STATE_FILE);
+        require(!vm.exists(path), string.concat(
+            "PositiveFlowsTimed: ", path, " already records an open run. Run the settle stage, or, if that",
+            " run's broadcast never landed, delete the file (and restore the periodic-interest switch if it",
+            " records periodicSwitchWasOn=false) before opening again"
+        ));
+
+        _beginModule("open");
+        _deployFixture();
+        (passed, skipped) = _runEach(only, _openScenario, "open");
+        _writeState(path);
+    }
+
+    /// @notice Stage 2: complete every scenario the first stage opened,
+    ///         restore what it changed, and delete its record.
+    function settle() external returns (uint256 passed, uint256 skipped) {
+        string memory path = Deployments.namedPath(STATE_FILE);
+        require(vm.exists(path), string.concat(
+            "PositiveFlowsTimed: no open run is recorded at ", path, "; run the open stage first"
+        ));
+        _beginModule("settle");
+        FixtureAddresses memory f = _readState(path);
+        require(block.timestamp >= settleAfter, string.concat(
+            "PositiveFlowsTimed: too early to settle. The chain is at ", vm.toString(block.timestamp),
+            " and the open run is due at ", vm.toString(settleAfter),
+            ". On a local Anvil, script/positive-flows/run-timed.sh steps the clock; elsewhere, wait"
+        ));
+        _attachFixture(f);
+        (passed, skipped) = _runEach("", _settleScenario, "settle");
+
+        if (periodicLoanId != 0 && !periodicSwitchWasOn) {
+            _setPeriodicSwitch(false);
+            console.log("Periodic-interest switch restored to off");
+        }
+        if (vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) {
+            vm.removeFile(path);
+            console.log("Open-run record deleted:", path);
+        } else {
+            console.log("Dry run: the open-run record is kept:", path);
+        }
+    }
+
+    function _openScenario(uint256 index) internal {
+        if (index == 0) _openLenderOffer();
+        else if (index == 1) _openBorrowerOffer();
+        else if (index == 2) _openPeriodicLoan();
+        else revert("PositiveFlowsTimed: no scenario at index");
+    }
+
+    function _settleScenario(uint256 index) internal {
+        if (index == 0) {
+            if (lenderOfferId == 0) return _skip("not opened by the open stage");
+            _cancelLenderOffer();
+        } else if (index == 1) {
+            if (borrowerOfferId == 0) return _skip("not opened by the open stage");
+            _cancelBorrowerOffer();
+        } else if (index == 2) {
+            if (periodicLoanId == 0) return _skip("not opened by the open stage");
+            _settlePeriodicLoan();
+        } else {
+            revert("PositiveFlowsTimed: no scenario at index");
+        }
+    }
+
+    // ─── PF-045 / PF-046 ──────────────────────────────────────────────────
+
+    /// @dev The Diamond refuses a cancel within `MIN_OFFER_CANCEL_DELAY` of
+    ///      an offer's creation while partial fills are on and nothing of the
+    ///      offer is filled. `OfferFacetCancelCooldownTest` covers the gate's
+    ///      edges; these scenarios show it holds, then lets go, on a chain.
+    function _cancelCooldownApplies() internal view returns (bool) {
+        (, , bool partialFillOn) = ConfigFacet(diamond).getMasterFlags();
+        return partialFillOn;
+    }
+
+    function _openLenderOffer() internal {
+        lenderOfferId = _createLenderOffer(lenderKey);
+        _requireCooldownHolds(lender, lenderOfferId, "PF-045");
+    }
+
+    function _openBorrowerOffer() internal {
+        vm.startBroadcast(borrowerKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        borrowerOfferId = OfferCreateFacet(diamond).createOffer(_borrowerOfferStandard());
+        vm.stopBroadcast();
+        console.log("Borrower offer created:", borrowerOfferId);
+        _requireCooldownHolds(borrower, borrowerOfferId, "PF-046");
+    }
+
+    /// @dev Where the cooldown applies, the creator's cancel is refused now,
+    ///      and the scenario becomes due when the cooldown ends.
+    function _requireCooldownHolds(address creator, uint256 offerId, string memory id) internal {
+        uint256 dueAt = OfferCancelFacet(diamond).getOffer(offerId).createdAt + LibVaipakam.MIN_OFFER_CANCEL_DELAY;
+        if (_cancelCooldownApplies()) {
+            _requireRefused(
+                creator,
+                abi.encodeWithSelector(OfferCancelFacet.cancelOffer.selector, offerId),
+                abi.encodeWithSelector(OfferCancelFacet.CancelCooldownActive.selector),
+                string.concat(id, ": a cancel inside the cooldown should be refused (CancelCooldownActive)")
+            );
+            console.log("Cancel refused inside the cooldown; due at", dueAt);
+        }
+        _noteDue(dueAt);
+    }
+
+    function _cancelLenderOffer() internal {
+        _requireOpenOffer(lenderOfferId, lender, "PF-045");
+        uint256 before = usdc.balanceOf(lender);
+        vm.startBroadcast(lenderKey);
+        OfferCancelFacet(diamond).cancelOffer(lenderOfferId);
+        vm.stopBroadcast();
+        require(usdc.balanceOf(lender) - before == LOAN_AMOUNT,
+            "PF-045: the cancel should return exactly the locked principal");
+        require(OfferCancelFacet(diamond).getOffer(lenderOfferId).creator == address(0),
+            "PF-045: the cancelled offer should be gone");
+        console.log("Lender offer cancelled; principal returned:", LOAN_AMOUNT);
+    }
+
+    function _cancelBorrowerOffer() internal {
+        _requireOpenOffer(borrowerOfferId, borrower, "PF-046");
+        uint256 before = weth.balanceOf(borrower);
+        vm.startBroadcast(borrowerKey);
+        OfferCancelFacet(diamond).cancelOffer(borrowerOfferId);
+        vm.stopBroadcast();
+        require(weth.balanceOf(borrower) - before == COLLATERAL_AMOUNT,
+            "PF-046: the cancel should return exactly the locked collateral");
+        require(OfferCancelFacet(diamond).getOffer(borrowerOfferId).creator == address(0),
+            "PF-046: the cancelled offer should be gone");
+        console.log("Borrower offer cancelled; collateral returned:", COLLATERAL_AMOUNT);
+    }
+
+    function _requireOpenOffer(uint256 offerId, address creator, string memory id) internal view {
+        LibVaipakam.Offer memory o = OfferCancelFacet(diamond).getOffer(offerId);
+        require(o.creator == creator && !o.accepted && o.amountFilled == 0, string.concat(
+            id, ": the recorded offer is not open on this chain, so the open stage's broadcast did not land",
+            " as recorded"
+        ));
+    }
+
+    // ─── PF-116 ───────────────────────────────────────────────────────────
+
+    /// @dev A Monthly-cadence loan. Nothing is paid toward its first period,
+    ///      so when the checkpoint is due the whole period's interest is a
+    ///      shortfall, and a permissionless settler covers it by selling
+    ///      collateral through the fixture's fixed-rate adapter.
+    function _openPeriodicLoan() internal {
+        periodicSwitchWasOn = NumeraireConfigFacet(diamond).getPeriodicInterestEnabled();
+        if (!periodicSwitchWasOn) {
+            _setPeriodicSwitch(true);
+            console.log("Periodic-interest switch turned on; the settle stage turns it off again");
+        }
+        // A finer cadence than None needs the principal's value at or above
+        // the threshold. Lower it for this loan's creation only, and put it
+        // back once the loan carries its cadence. A threshold left at the
+        // library default is restored as 0, which is how the setter writes
+        // "use the default".
+        uint256 threshold = NumeraireConfigFacet(diamond).getMinPrincipalForFinerCadence();
+        bool lowered = threshold > PERIODIC_PRINCIPAL_NUMERAIRE;
+        if (lowered) _setFinerCadenceThreshold(LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR);
+
+        LibVaipakam.CreateOfferParams memory offer = _lenderOfferStandard();
+        offer.amount = PERIODIC_PRINCIPAL;
+        offer.amountMax = PERIODIC_PRINCIPAL;
+        offer.collateralAmount = PERIODIC_COLLATERAL;
+        offer.collateralAmountMax = PERIODIC_COLLATERAL;
+        offer.durationDays = PERIODIC_DURATION_DAYS;
+        offer.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Monthly;
+        vm.startBroadcast(lenderKey);
+        usdc.approve(diamond, PERIODIC_PRINCIPAL);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(offer);
+        vm.stopBroadcast();
+        periodicLoanId = _acceptAs(borrowerKey, offerId, address(weth), PERIODIC_COLLATERAL);
+        if (lowered) {
+            _setFinerCadenceThreshold(
+                threshold == LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_DEFAULT ? 0 : threshold
+            );
+        }
+        console.log("Monthly-cadence loan initiated:", periodicLoanId);
+
+        (uint8 cadence, uint256 periodEndAt, uint256 graceEndsAt,,,, bool canSettleNow) =
+            RepayPeriodicFacet(diamond).previewPeriodicSettle(periodicLoanId);
+        require(cadence == uint8(LibVaipakam.PeriodicInterestCadence.Monthly) && !canSettleNow,
+            "PF-116: the loan should carry a Monthly cadence that is not yet due");
+        _requireRefused(
+            newLender,
+            abi.encodeWithSelector(
+                RepayPeriodicFacet.settlePeriodicInterest.selector, periodicLoanId, new LibSwap.AdapterCall[](0)
+            ),
+            abi.encodeWithSelector(IVaipakamErrors.PeriodicSettleNotDue.selector, periodicLoanId, periodEndAt, graceEndsAt),
+            "PF-116: a settle before the checkpoint and its grace should be refused (PeriodicSettleNotDue)"
+        );
+        console.log("Settle refused before the checkpoint; due at", graceEndsAt);
+        _noteDue(graceEndsAt);
+    }
+
+    /// @dev Every unit of the sale is accounted for: the settler's bonus,
+    ///      the treasury's handling fee and the lender's share add up to
+    ///      exactly what the swap returned, the lender's share covers the
+    ///      period's interest and is credited against the loan's interest,
+    ///      and the loan's collateral falls by exactly what was sold.
+    function _settlePeriodicLoan() internal {
+        LibVaipakam.Loan memory before = LoanFacet(diamond).getLoanDetails(periodicLoanId);
+        require(before.status == LibVaipakam.LoanStatus.Active && before.borrower == borrower, string.concat(
+            "PF-116: the recorded loan is not active on this chain, so the open stage's broadcast did not land",
+            " as recorded"
+        ));
+        (,,, uint256 expected,, uint256 shortfall, bool canSettleNow) =
+            RepayPeriodicFacet(diamond).previewPeriodicSettle(periodicLoanId);
+        require(canSettleNow && shortfall == expected && shortfall > 0,
+            "PF-116: the checkpoint should be due, with the whole period's interest unpaid");
+
+        (FixedRateSwapAdapter adapter, LibSwap.AdapterCall[] memory route) = _registerFixedRateAdapter();
+        Balances memory b0 = _balances(adapter);
+        vm.startBroadcast(newLenderKey);
+        RepayPeriodicFacet(diamond).settlePeriodicInterest(periodicLoanId, route);
+        vm.stopBroadcast();
+        _requireSettleAccounted(before, b0, _balances(adapter), shortfall);
+        _removeFixedRateAdapter(adapter);
+
+        // Close out: the repayment nets the interest already settled.
+        _repayInFull(borrowerKey, periodicLoanId);
+        _claimBoth(lenderKey, borrowerKey, periodicLoanId);
+    }
+
+    /// @dev The balances PF-116's settle moves, read before and after it.
+    struct Balances {
+        uint256 adapterWeth;
+        uint256 adapterUsdc;
+        uint256 lender;
+        uint256 settler;
+        uint256 treasury;
+    }
+
+    function _balances(FixedRateSwapAdapter adapter) internal view returns (Balances memory) {
+        return Balances({
+            adapterWeth: weth.balanceOf(address(adapter)),
+            adapterUsdc: usdc.balanceOf(address(adapter)),
+            lender: usdc.balanceOf(lender),
+            settler: usdc.balanceOf(newLender),
+            treasury: _treasuryUsdc()
+        });
+    }
+
+    /// @dev What the settle moved, from the balances before and after it.
+    struct Moved {
+        uint256 sold;
+        uint256 proceeds;
+        uint256 lenderIn;
+        uint256 settlerIn;
+        uint256 treasuryIn;
+    }
+
+    function _requireSettleAccounted(
+        LibVaipakam.Loan memory before,
+        Balances memory b0,
+        Balances memory b1,
+        uint256 shortfall
+    ) internal view {
+        Moved memory m = Moved({
+            sold: b1.adapterWeth - b0.adapterWeth,
+            proceeds: b0.adapterUsdc - b1.adapterUsdc,
+            lenderIn: b1.lender - b0.lender,
+            settlerIn: b1.settler - b0.settler,
+            treasuryIn: b1.treasury - b0.treasury
+        });
+        LibVaipakam.Loan memory afterLoan = LoanFacet(diamond).getLoanDetails(periodicLoanId);
+        _requireSaleSplit(before, afterLoan, m, shortfall);
+        _requireCheckpointAdvanced(before, afterLoan, m.lenderIn);
+        console.log("Shortfall / collateral sold (WETH) / proceeds:", shortfall, m.sold, m.proceeds);
+        console.log("Lender / settler bonus / treasury fee:", m.lenderIn, m.settlerIn, m.treasuryIn);
+    }
+
+    function _requireSaleSplit(
+        LibVaipakam.Loan memory before,
+        LibVaipakam.Loan memory afterLoan,
+        Moved memory m,
+        uint256 shortfall
+    ) internal pure {
+        require(before.collateralAmount - afterLoan.collateralAmount == m.sold && m.sold > 0,
+            "PF-116: the loan's collateral should fall by exactly what was sold");
+        require(m.lenderIn + m.settlerIn + m.treasuryIn == m.proceeds,
+            "PF-116: the lender, settler and treasury shares should add up to the proceeds");
+        require(m.lenderIn >= shortfall, "PF-116: the lender's share should cover the period's interest");
+        require(m.treasuryIn > 0, "PF-116: the treasury should take its handling fee");
+    }
+
+    function _requireCheckpointAdvanced(
+        LibVaipakam.Loan memory before,
+        LibVaipakam.Loan memory afterLoan,
+        uint256 lenderIn
+    ) internal view {
+        require(afterLoan.status == LibVaipakam.LoanStatus.Active, "PF-116: the loan should stay Active");
+        require(afterLoan.interestSettled - before.interestSettled == lenderIn,
+            "PF-116: the lender's share should be credited against the loan's interest");
+        uint256 moved = uint256(afterLoan.lastPeriodicInterestSettledAt) - uint256(before.lastPeriodicInterestSettledAt);
+        require(moved == LibVaipakam.PERIODIC_INTERVAL_MONTHLY_DAYS * 1 days,
+            "PF-116: the checkpoint should move on by exactly one period");
+        (,,,,,, bool canSettleNow) = RepayPeriodicFacet(diamond).previewPeriodicSettle(periodicLoanId);
+        require(!canSettleNow, "PF-116: the next checkpoint should not be due yet");
+    }
+
+    // ─── Helpers ──────────────────────────────────────────────────────────
+
+    function _noteDue(uint256 dueAt) internal {
+        if (dueAt > settleAfter) settleAfter = dueAt;
+    }
+
+    function _setPeriodicSwitch(bool on) internal {
+        vm.startBroadcast(adminKey);
+        NumeraireConfigFacet(diamond).setPeriodicInterestEnabled(on);
+        vm.stopBroadcast();
+    }
+
+    function _setFinerCadenceThreshold(uint256 value) internal {
+        vm.startBroadcast(adminKey);
+        NumeraireConfigFacet(diamond).setMinPrincipalForFinerCadence(value);
+        vm.stopBroadcast();
+    }
+
+    /// @dev Writes the open-run record, on a `--broadcast` run only: a dry
+    ///      run opened nothing on the chain, so recording it would make the
+    ///      next real open refuse and the next settle act on positions that
+    ///      do not exist.
+    function _writeState(string memory path) internal {
+        if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) {
+            console.log("Dry run: no open-run record written");
+            return;
+        }
+        FixtureAddresses memory f = fixtureAddresses();
+        string memory k = "positiveFlowsTimed";
+        vm.serializeUint(k, "version", STATE_VERSION);
+        vm.serializeUint(k, "chainId", block.chainid);
+        vm.serializeAddress(k, "diamond", diamond);
+        vm.serializeUint(k, "openedAt", block.timestamp);
+        vm.serializeUint(k, "settleAfter", settleAfter);
+        vm.serializeUint(k, "lenderOfferId", lenderOfferId);
+        vm.serializeUint(k, "borrowerOfferId", borrowerOfferId);
+        vm.serializeUint(k, "periodicLoanId", periodicLoanId);
+        vm.serializeBool(k, "periodicSwitchWasOn", periodicSwitchWasOn);
+        vm.serializeAddress(k, "usdc", f.usdc);
+        vm.serializeAddress(k, "weth", f.weth);
+        vm.serializeAddress(k, "illiquidToken", f.illiquidToken);
+        vm.serializeAddress(k, "illiquidLending", f.illiquidLending);
+        vm.serializeAddress(k, "nft721", f.nft721);
+        vm.serializeAddress(k, "nft1155", f.nft1155);
+        vm.serializeAddress(k, "sanctions", f.sanctions);
+        vm.serializeAddress(k, "registry", f.registry);
+        vm.serializeAddress(k, "wethFeed", f.wethFeed);
+        vm.serializeAddress(k, "univ3", f.univ3);
+        string memory json = vm.serializeAddress(k, "pool", f.pool);
+        vm.writeJson(json, path);
+        console.log("Open-run record written:", path);
+        console.log("Settle no earlier than:", settleAfter);
+    }
+
+    /// @dev Reads the open-run record into this run, refusing one written for
+    ///      another chain, another Diamond or another version of this file.
+    function _readState(string memory path) internal returns (FixtureAddresses memory f) {
+        string memory json = vm.readFile(path);
+        require(vm.parseJsonUint(json, ".version") == STATE_VERSION,
+            "PositiveFlowsTimed: the open-run record is from another version of this script");
+        require(vm.parseJsonUint(json, ".chainId") == block.chainid,
+            "PositiveFlowsTimed: the open-run record is for another chain");
+        require(vm.parseJsonAddress(json, ".diamond") == diamond,
+            "PositiveFlowsTimed: the open-run record is for another Diamond");
+        settleAfter = vm.parseJsonUint(json, ".settleAfter");
+        lenderOfferId = vm.parseJsonUint(json, ".lenderOfferId");
+        borrowerOfferId = vm.parseJsonUint(json, ".borrowerOfferId");
+        periodicLoanId = vm.parseJsonUint(json, ".periodicLoanId");
+        periodicSwitchWasOn = vm.parseJsonBool(json, ".periodicSwitchWasOn");
+        f = FixtureAddresses({
+            usdc: vm.parseJsonAddress(json, ".usdc"),
+            weth: vm.parseJsonAddress(json, ".weth"),
+            illiquidToken: vm.parseJsonAddress(json, ".illiquidToken"),
+            illiquidLending: vm.parseJsonAddress(json, ".illiquidLending"),
+            nft721: vm.parseJsonAddress(json, ".nft721"),
+            nft1155: vm.parseJsonAddress(json, ".nft1155"),
+            sanctions: vm.parseJsonAddress(json, ".sanctions"),
+            registry: vm.parseJsonAddress(json, ".registry"),
+            wethFeed: vm.parseJsonAddress(json, ".wethFeed"),
+            univ3: vm.parseJsonAddress(json, ".univ3"),
+            pool: vm.parseJsonAddress(json, ".pool")
+        });
+        console.log("Open run recorded at", vm.parseJsonUint(json, ".openedAt"), "; due at", settleAfter);
+    }
+}

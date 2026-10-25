@@ -1785,6 +1785,12 @@ cast rpc evm_mine --rpc-url http://localhost:8545
 ionice -c 2 -n 0 forge script script/PositiveFlows.s.sol \
   --rpc-url http://localhost:8545 --broadcast --slow --disable-block-gas-limit
 
+# Positive, timed — the flows whose second step must wait (offer cancel after
+# the cancel cooldown, a due periodic-interest checkpoint). The runner above
+# SKIPs them; this runs their open stage, steps the Anvil clock past the time
+# the open stage records, and runs their settle stage (Anvil only):
+ionice -c 2 -n 0 bash script/positive-flows/run-timed.sh
+
 # Partial — 7 UI-testable midpoint states (offer states, partial repay,
 # collateral doubled, keeper enabled, refinance offer posted, stray token,
 # dual claimable):

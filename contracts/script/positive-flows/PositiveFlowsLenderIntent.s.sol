@@ -14,7 +14,6 @@ import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
-import {RevertProbe} from "../lib/RevertProbe.sol";
 
 /**
  * @title PositiveFlowsLenderIntent
@@ -101,15 +100,12 @@ contract PositiveFlowsLenderIntent is PositiveFlowsBase {
         _requireOwnerRow(false, MAX_EXPOSURE - LOAN_AMOUNT, LOAN_AMOUNT,
             "PF-071: a paused intent should stay listed with its reserved capital");
         require(!_inKeeperFeed(), "PF-071: a paused intent should leave the keeper feed");
-        (bool ok, bytes memory ret) = RevertProbe.call(
+        _requireRefused(
             lender,
-            diamond,
             abi.encodeWithSelector(
                 LenderIntentFacet.fundLenderIntent.selector, address(usdc), address(weth), LOAN_AMOUNT
-            )
-        );
-        require(
-            !ok && ret.length == 4 && bytes4(ret) == LenderIntentFacet.LenderIntentNotActive.selector,
+            ),
+            abi.encodeWithSelector(LenderIntentFacet.LenderIntentNotActive.selector),
             "PF-071: a paused intent should refuse new capital (LenderIntentNotActive)"
         );
         console.log("Intent paused with capital reserved:", MAX_EXPOSURE - LOAN_AMOUNT);

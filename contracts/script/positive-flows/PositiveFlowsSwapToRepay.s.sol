@@ -8,8 +8,6 @@ import {LibSwap} from "../../src/libraries/LibSwap.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
-import {AdminFacet} from "../../src/facets/AdminFacet.sol";
-import {TreasuryFacet} from "../../src/facets/TreasuryFacet.sol";
 import {SwapToRepayFacet} from "../../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayPartialFacet} from "../../src/facets/SwapToRepayPartialFacet.sol";
 import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
@@ -21,8 +19,9 @@ import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
  *         the loan in one transaction, in full (PF-118) or in part (PF-119).
  *
  *         The swap goes through a {FixedRateSwapAdapter} the scenario
- *         deploys and registers for its own run, priced at the fixture's
- *         oracle rate, so the proceeds are known before the call. Each
+ *         deploys and registers for its own run
+ *         ({PositiveFlowsBase-_registerFixedRateAdapter}), priced at the
+ *         fixture's oracle rate, so the proceeds are known before the call. Each
  *         scenario then accounts for every unit of them: the lender's share,
  *         the treasury's share and the borrower's surplus must add up to
  *         exactly what the swap returned, and the collateral that was not
@@ -46,11 +45,12 @@ contract PositiveFlowsSwapToRepay is PositiveFlowsBase {
     }
 
     function _runScenario(uint256 index) internal override {
-        LibSwap.AdapterCall[] memory route = _registerAdapter();
+        LibSwap.AdapterCall[] memory route;
+        (adapter, route) = _registerFixedRateAdapter();
         if (index == 0) _swapToRepayFull(route);
         else if (index == 1) _swapToRepayPartial(route);
         else revert("PositiveFlowsSwapToRepay: no scenario at index");
-        _removeAdapter();
+        _removeFixedRateAdapter(adapter);
     }
 
     // ─── PF-118 ───────────────────────────────────────────────────────────
@@ -153,40 +153,5 @@ contract PositiveFlowsSwapToRepay is PositiveFlowsBase {
         vm.stopBroadcast();
         loanId = _acceptAs(borrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
         console.log("Loan initiated:", loanId);
-    }
-
-    /// @dev Deploys the adapter at the fixture's oracle price, funds it with
-    ///      the lending asset, and appends it to the Diamond's swap list.
-    ///      Returns a route that names only it.
-    function _registerAdapter() internal returns (LibSwap.AdapterCall[] memory route) {
-        vm.startBroadcast(deployerKey);
-        adapter = new FixedRateSwapAdapter(vm.addr(deployerKey), diamond);
-        // 1e18 WETH at WETH_PRICE_E8 (8 decimals) buys that many 6-decimal USDC.
-        adapter.setRate(address(weth), address(usdc), uint256(WETH_PRICE_E8) * 1e6 / 1e8, 1e18);
-        usdc.mint(address(adapter), 10 * LOAN_AMOUNT);
-        vm.stopBroadcast();
-
-        vm.startBroadcast(adminKey);
-        AdminFacet(diamond).addSwapAdapter(address(adapter));
-        vm.stopBroadcast();
-        address[] memory adapters = AdminFacet(diamond).getSwapAdapters();
-        require(adapters[adapters.length - 1] == address(adapter), "the adapter should be appended to the swap list");
-        route = new LibSwap.AdapterCall[](1);
-        route[0] = LibSwap.AdapterCall({adapterIdx: adapters.length - 1, data: ""});
-    }
-
-    function _removeAdapter() internal {
-        vm.startBroadcast(adminKey);
-        AdminFacet(diamond).removeSwapAdapter(address(adapter));
-        vm.stopBroadcast();
-    }
-
-    /// @dev The treasury's USDC, under either topology: what the Diamond
-    ///      records as held when it is its own treasury, otherwise the
-    ///      external treasury's wallet balance.
-    function _treasuryUsdc() internal view returns (uint256) {
-        address treasury = AdminFacet(diamond).getTreasury();
-        if (treasury == diamond) return TreasuryFacet(diamond).getTreasuryBalance(address(usdc));
-        return usdc.balanceOf(treasury);
     }
 }

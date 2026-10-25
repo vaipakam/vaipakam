@@ -18,10 +18,15 @@ import {RepayFacet} from "../../src/facets/RepayFacet.sol";
 import {OracleAdminFacet} from "../../src/facets/OracleAdminFacet.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
 import {RiskFacet} from "../../src/facets/RiskFacet.sol";
+import {AdminFacet} from "../../src/facets/AdminFacet.sol";
+import {TreasuryFacet} from "../../src/facets/TreasuryFacet.sol";
+import {LibSwap} from "../../src/libraries/LibSwap.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "../mocks/MockChainlinkRegistry.sol";
 import {MockUniswapV3Factory, MockUniswapV3Pool} from "../mocks/MockUniswapV3.sol";
 import {Deployments} from "../lib/Deployments.sol";
 import {MockPoolPricing} from "../lib/MockPoolPricing.sol";
+import {FixedRateSwapAdapter} from "../mocks/FixedRateSwapAdapter.sol";
+import {RevertProbe} from "../lib/RevertProbe.sol";
 
 /**
  * @title PositiveFlowsBase
@@ -129,6 +134,27 @@ abstract contract PositiveFlowsBase is Script {
     /// @dev The mock USDC/WETH pool, kept so a feed move can re-price its spot
     ///      in the same step.
     MockUniswapV3Pool internal mockPoolRef;
+    /// @dev The mock feed registry and v3 factory the Diamond is pointed at,
+    ///      kept so {_pointDiamond} can point it at them again on attach.
+    MockChainlinkRegistry internal registryRef;
+    MockUniswapV3Factory internal univ3Ref;
+
+    /// @dev Every mock the fixture deploys, by address: what a staged run
+    ///      records after its first stage and binds again in its second
+    ///      ({_attachFixture}).
+    struct FixtureAddresses {
+        address usdc;
+        address weth;
+        address illiquidToken;
+        address illiquidLending;
+        address nft721;
+        address nft1155;
+        address sanctions;
+        address registry;
+        address wethFeed;
+        address univ3;
+        address pool;
+    }
 
     // ── Sizing ──────────────────────────────────────────────────────────
     // Chosen so every scenario's debt and collateral sit well above dust
@@ -201,14 +227,31 @@ abstract contract PositiveFlowsBase is Script {
     function runSelected(string memory only) public returns (uint256 passed, uint256 skipped) {
         if (bytes(only).length != 0 && !hasScenario(only)) return (0, 0);
 
+        _beginModule("");
+        _deployFixture();
+        return _runEach(only, _runScenario, "");
+    }
+
+    /// @dev Everything a module does before its fixture: the chain guard, the
+    ///      actors, the Diamond, and the module's header line. `stage` names a
+    ///      staged run's stage in that header (empty for a one-pass run).
+    function _beginModule(string memory stage) internal {
         _requireRehearsalChain();
         _loadEnv();
         diamond = Deployments.readDiamond();
         console.log("");
-        console.log(string.concat("=== ", moduleName(), " ==="));
+        console.log(string.concat("=== ", moduleName(), _stageSuffix(stage), " ==="));
         console.log("Diamond:    ", diamond);
-        _deployFixture();
+    }
 
+    /// @dev Runs `step` for every scenario (`only` empty) or the one `only`
+    ///      names, logging each one's id, title, flows and outcome, and
+    ///      counting a {_skip} as a skip, never as a pass. `step` is
+    ///      {_runScenario} for a one-pass run, or one stage of a staged one.
+    function _runEach(string memory only, function(uint256) internal step, string memory stage)
+        internal
+        returns (uint256 passed, uint256 skipped)
+    {
         Scenario[] memory list = scenarios();
         for (uint256 i = 0; i < list.length; i++) {
             if (bytes(only).length != 0 && !_eq(list[i].id, only)) continue;
@@ -216,7 +259,7 @@ abstract contract PositiveFlowsBase is Script {
             console.log("");
             console.log(string.concat(tag, list[i].title));
             console.log(string.concat(tag, "  flows: ", list[i].flows));
-            _runScenario(i);
+            step(i);
             if (bytes(_skipReason).length != 0) {
                 console.log(string.concat(tag, "SKIP ", _skipReason));
                 delete _skipReason;
@@ -228,8 +271,12 @@ abstract contract PositiveFlowsBase is Script {
         }
 
         console.log("");
-        console.log(string.concat("=== ", moduleName(), ": ", vm.toString(passed), " passed, ",
-            vm.toString(skipped), " skipped ==="));
+        console.log(string.concat("=== ", moduleName(), _stageSuffix(stage), ": ", vm.toString(passed),
+            " passed, ", vm.toString(skipped), " skipped ==="));
+    }
+
+    function _stageSuffix(string memory stage) private pure returns (string memory) {
+        return bytes(stage).length == 0 ? "" : string.concat(" (", stage, " stage)");
     }
 
     /// @dev Marks the running scenario as skipped, with the reason the log
@@ -284,6 +331,63 @@ abstract contract PositiveFlowsBase is Script {
     ///      that set names this fixture's WETH (#856, #848). The illiquid
     ///      tokens get neither a feed nor a pool, so they classify Illiquid.
     function _deployFixture() internal {
+        _deployMocks();
+        _pointDiamond();
+    }
+
+    /// @dev Binds the mocks a staged run's first stage deployed
+    ///      ({fixtureAddresses}) and points the Diamond at them again. A
+    ///      module run between the two stages re-points the Diamond at its
+    ///      own mocks, so the second stage cannot assume the Diamond still
+    ///      reads the first stage's; every write in {_pointDiamond} is
+    ///      idempotent, so pointing it again is safe either way. The mock
+    ///      feeds report the block's own timestamp, so a clock step between
+    ///      the stages leaves no price stale.
+    function _attachFixture(FixtureAddresses memory f) internal {
+        usdc = ERC20Mock(f.usdc);
+        weth = ERC20Mock(f.weth);
+        illiquidToken = ERC20Mock(f.illiquidToken);
+        illiquidLending = ERC20Mock(f.illiquidLending);
+        nft721 = ERC4907Mock(f.nft721);
+        nft1155 = ERC1155RentableMock(f.nft1155);
+        sanctions = MockSanctionsList(f.sanctions);
+        registryRef = MockChainlinkRegistry(f.registry);
+        wethFeedRef = MockChainlinkFeed(f.wethFeed);
+        univ3Ref = MockUniswapV3Factory(f.univ3);
+        mockPoolRef = MockUniswapV3Pool(f.pool);
+        for (uint256 i = 0; i < 11; i++) {
+            require(_fixtureAddressAt(f, i).code.length != 0,
+                "positive flows: a recorded fixture address has no code on this chain");
+        }
+        console.log("Fixture attached: the first stage's mocks.");
+        _pointDiamond();
+    }
+
+    /// @dev The fixture this run deployed or attached, by address.
+    function fixtureAddresses() public view returns (FixtureAddresses memory) {
+        return FixtureAddresses({
+            usdc: address(usdc),
+            weth: address(weth),
+            illiquidToken: address(illiquidToken),
+            illiquidLending: address(illiquidLending),
+            nft721: address(nft721),
+            nft1155: address(nft1155),
+            sanctions: address(sanctions),
+            registry: address(registryRef),
+            wethFeed: address(wethFeedRef),
+            univ3: address(univ3Ref),
+            pool: address(mockPoolRef)
+        });
+    }
+
+    function _fixtureAddressAt(FixtureAddresses memory f, uint256 i) private pure returns (address) {
+        address[11] memory all = [f.usdc, f.weth, f.illiquidToken, f.illiquidLending, f.nft721, f.nft1155,
+            f.sanctions, f.registry, f.wethFeed, f.univ3, f.pool];
+        return all[i];
+    }
+
+    /// @dev Deploys the module's own mocks and mints to every participant.
+    function _deployMocks() private {
         // ── Mocks and mints (deployer) ───────────────────────────────────
         // Every deploy is here, before any scenario: forge's broadcast
         // pre-check must see each token's CREATE before a later call
@@ -321,19 +425,23 @@ abstract contract PositiveFlowsBase is Script {
         illiquidLending.mint(lender, 10_000e18);
         illiquidLending.mint(borrower, 10_000e18);
 
-        MockChainlinkRegistry registry = new MockChainlinkRegistry();
+        registryRef = new MockChainlinkRegistry();
         MockChainlinkFeed usdcFeed = new MockChainlinkFeed(USDC_PRICE_E8, 8);
-        MockChainlinkFeed wethFeed = new MockChainlinkFeed(WETH_PRICE_E8, 8);
-        wethFeedRef = wethFeed;
-        registry.setFeed(address(usdc), USD_DENOMINATION, address(usdcFeed));
-        registry.setFeed(address(weth), USD_DENOMINATION, address(wethFeed));
+        wethFeedRef = new MockChainlinkFeed(WETH_PRICE_E8, 8);
+        registryRef.setFeed(address(usdc), USD_DENOMINATION, address(usdcFeed));
+        registryRef.setFeed(address(weth), USD_DENOMINATION, address(wethFeedRef));
 
-        MockUniswapV3Factory univ3 = new MockUniswapV3Factory();
-        mockPoolRef = MockUniswapV3Pool(univ3.createPool(
+        univ3Ref = new MockUniswapV3Factory();
+        mockPoolRef = MockUniswapV3Pool(univ3Ref.createPool(
             address(usdc), address(weth), 3000, _mockPoolSqrtPriceX96At(uint256(WETH_PRICE_E8)), 1e24
         ));
         vm.stopBroadcast();
+    }
 
+    /// @dev Points the Diamond at the bound mocks: oracle, PAA set, risk
+    ///      parameters, sanctions oracle, KYC tiers and countries, and funds
+    ///      every participant's gas. Every write is idempotent.
+    function _pointDiamond() private {
         // ── Role-gated config and gas (admin) ────────────────────────────
         vm.startBroadcast(adminKey);
         // 0.05 ETH covers a full module on an L2 or a local Anvil.
@@ -342,11 +450,11 @@ abstract contract PositiveFlowsBase is Script {
         _fundIfNeeded(newLender, 0.05 ether);
         _fundIfNeeded(newBorrower, 0.05 ether);
 
-        OracleAdminFacet(diamond).setChainlinkRegistry(address(registry));
+        OracleAdminFacet(diamond).setChainlinkRegistry(address(registryRef));
         OracleAdminFacet(diamond).setUsdChainlinkDenominator(USD_DENOMINATION);
         OracleAdminFacet(diamond).setWethContract(address(weth));
-        OracleAdminFacet(diamond).setEthUsdFeed(address(wethFeed));
-        OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3));
+        OracleAdminFacet(diamond).setEthUsdFeed(address(wethFeedRef));
+        OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3Ref));
         address[] memory paa = new address[](1);
         paa[0] = address(weth);
         ConfigFacet(diamond).setPaaAssets(paa);
@@ -512,6 +620,69 @@ abstract contract PositiveFlowsBase is Script {
         ClaimFacet(diamond).claimAsBorrower(loanId);
         vm.stopBroadcast();
         console.log("Both parties claimed for loanId:", loanId);
+    }
+
+    /// @dev Deploys a {FixedRateSwapAdapter} priced at the fixture's oracle
+    ///      rate, funds it with the lending asset, and appends it to the
+    ///      Diamond's swap list. Returns it and a route that names only it.
+    ///      Because it sells at the oracle rate, a scenario knows a swap's
+    ///      proceeds before it calls. Remove it with {_removeFixedRateAdapter}
+    ///      before the scenario ends.
+    function _registerFixedRateAdapter()
+        internal
+        returns (FixedRateSwapAdapter adapter, LibSwap.AdapterCall[] memory route)
+    {
+        vm.startBroadcast(deployerKey);
+        adapter = new FixedRateSwapAdapter(vm.addr(deployerKey), diamond);
+        // 1e18 WETH at WETH_PRICE_E8 (8 decimals) buys that many 6-decimal USDC.
+        adapter.setRate(address(weth), address(usdc), uint256(WETH_PRICE_E8) * 1e6 / 1e8, 1e18);
+        usdc.mint(address(adapter), 10 * LOAN_AMOUNT);
+        vm.stopBroadcast();
+
+        vm.startBroadcast(adminKey);
+        AdminFacet(diamond).addSwapAdapter(address(adapter));
+        vm.stopBroadcast();
+        address[] memory adapters = AdminFacet(diamond).getSwapAdapters();
+        require(adapters[adapters.length - 1] == address(adapter), "the adapter should be appended to the swap list");
+        route = new LibSwap.AdapterCall[](1);
+        route[0] = LibSwap.AdapterCall({adapterIdx: adapters.length - 1, data: ""});
+    }
+
+    function _removeFixedRateAdapter(FixedRateSwapAdapter adapter) internal {
+        vm.startBroadcast(adminKey);
+        AdminFacet(diamond).removeSwapAdapter(address(adapter));
+        vm.stopBroadcast();
+    }
+
+    /// @dev The treasury's USDC, under either topology: what the Diamond
+    ///      records as held when it is its own treasury, otherwise the
+    ///      external treasury's wallet balance.
+    function _treasuryUsdc() internal view returns (uint256) {
+        address treasury = AdminFacet(diamond).getTreasury();
+        if (treasury == diamond) return TreasuryFacet(diamond).getTreasuryBalance(address(usdc));
+        return usdc.balanceOf(treasury);
+    }
+
+    /// @dev Requires `data`, sent to the Diamond as `caller`, to be refused
+    ///      with exactly `expectedRevert` (an error's selector and arguments;
+    ///      `abi.encodeWithSelector(E.selector)` for an argument-free one).
+    ///      Probed in the simulation only ({RevertProbe}), so the refusal
+    ///      neither aborts the broadcast nor spends a nonce the chain never
+    ///      sees; it still runs the deployed bytecode against chain state.
+    function _requireRefused(address caller, bytes memory data, bytes memory expectedRevert, string memory failure)
+        internal
+    {
+        (bool ok, bytes memory ret) = RevertProbe.call(caller, diamond, data);
+        require(!ok && keccak256(ret) == keccak256(expectedRevert), failure);
+    }
+
+    /// @dev {_requireRefused} on the error's selector alone, for an error
+    ///      whose arguments the scenario cannot know in advance.
+    function _requireRefusedWithSelector(address caller, bytes memory data, bytes4 selector, string memory failure)
+        internal
+    {
+        (bool ok, bytes memory ret) = RevertProbe.call(caller, diamond, data);
+        require(!ok && ret.length >= 4 && bytes4(ret) == selector, failure);
     }
 
     function _eq(string memory a, string memory b) internal pure returns (bool) {

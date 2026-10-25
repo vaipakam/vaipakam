@@ -22,7 +22,6 @@ import {RiskFacet} from "../../src/facets/RiskFacet.sol";
 import {EarlyWithdrawalFacet} from "../../src/facets/EarlyWithdrawalFacet.sol";
 import {EarlyWithdrawalDirectFacet} from "../../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {LibSaleSolvency} from "../../src/libraries/LibSaleSolvency.sol";
-import {RevertProbe} from "../lib/RevertProbe.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
 import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
@@ -309,11 +308,10 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         request.interestRateBpsMax = capRateBps + 100;
         request.fillMode = LibVaipakam.FillMode.Aon;
         request.refinanceTargetLoanId = oldLoanId;
-        (bool ok, bytes memory ret) = RevertProbe.call(
-            borrower, diamond, abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, request)
-        );
-        require(
-            !ok && ret.length == 4 && bytes4(ret) == LibAutoRefinanceCheck.RefinanceRateExceedsCap.selector,
+        _requireRefused(
+            borrower,
+            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, request),
+            abi.encodeWithSelector(LibAutoRefinanceCheck.RefinanceRateExceedsCap.selector),
             "PF-215: a request priced above the caps should be refused (RefinanceRateExceedsCap)"
         );
 
@@ -328,13 +326,10 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         // Gate 2: the matcher is refused while the switch is off.
         bool switchWasOn = AdminFacet(diamond).getAutoRefinanceEnabled();
         if (switchWasOn) _setAutoRefinance(false);
-        (ok, ret) = RevertProbe.call(
+        _requireRefused(
             newBorrower,
-            diamond,
-            abi.encodeWithSelector(OfferMatchFacet.matchOffers.selector, lenderOfferId, requestId)
-        );
-        require(
-            !ok && ret.length == 4 && bytes4(ret) == LibOfferMatchExecute.RefinanceTaggedOfferNotMatchable.selector,
+            abi.encodeWithSelector(OfferMatchFacet.matchOffers.selector, lenderOfferId, requestId),
+            abi.encodeWithSelector(LibOfferMatchExecute.RefinanceTaggedOfferNotMatchable.selector),
             "PF-215: with the switch off the matcher should be refused (RefinanceTaggedOfferNotMatchable)"
         );
         console.log("Matcher refused while auto-refinance is off");
@@ -1000,17 +995,13 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
         // revert neither aborts the broadcast nor spends a nonce the chain
         // never sees — it still executes the real deployed bytecode against
         // real chain state, which is the thing being verified.
-        (bool ok, bytes memory ret) = RevertProbe.call(
+        _requireRefusedWithSelector(
             newLender,
-            diamond,
             abi.encodeWithSelector(
                 EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector, loanId, buyOfferId
-            )
-        );
-        require(!ok, "PF-230-floor: a sub-floor position must NOT be sellable");
-        require(
-            bytes4(ret) == LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
-            "PF-230-floor: refused, but not for the solvency reason"
+            ),
+            LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
+            "PF-230-floor: a sub-floor position must be refused for the solvency reason (SalePositionBelowSolvencyFloor)"
         );
         console.log("Sub-floor sale refused with SalePositionBelowSolvencyFloor");
 
@@ -1126,17 +1117,13 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
 
         // Probed in the simulation only (`RevertProbe`), as in PF-230-floor; still the
         // real deployed bytecode against real chain state.
-        (bool ok, bytes memory ret) = RevertProbe.call(
+        _requireRefusedWithSelector(
             vm.addr(lenderKey),
-            diamond,
             abi.encodeWithSelector(
                 OfferAcceptFacet.acceptOffer.selector, saleOfferId, _ts26, _ssig26
-            )
-        );
-        require(!ok, "PF-231: a sub-floor listing must NOT be acceptable");
-        require(
-            bytes4(ret) == LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
-            "PF-231: refused, but not for the solvency reason"
+            ),
+            LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
+            "PF-231: a sub-floor listing must be refused for the solvency reason (SalePositionBelowSolvencyFloor)"
         );
         console.log("Sub-floor listing accept refused with SalePositionBelowSolvencyFloor");
 
