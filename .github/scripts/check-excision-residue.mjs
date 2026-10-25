@@ -52,27 +52,58 @@
  * identifiers — prose spellings are the majority of this residue, not an edge
  * case.
  *
- * ── SCOPE IS AN EXCLUDE LIST ──────────────────────────────────────────────
+ * ── SCOPE: PROSE FILES, THEN AN EXCLUDE LIST ─────────────────────────────
  *
- * Everything tracked is in scope except what EXCLUDED_PREFIXES names. Only
- * genuinely ARCHIVAL trees are excluded wholesale — release notes, older docs,
- * findings, ADRs — because every document in them is a dated record and naming
- * the removed surface is their job. Active trees are excluded FILE BY FILE:
- * `docs/internal/` and `docs/TestScopes/` were once excluded whole, which hid
- * a security questionnaire giving a third-party scanner present-tense
- * instructions for the removed adapter, and a test matrix listing it as current
- * coverage. Excluding a tree because part of it is historical hides the live
- * text in the rest.
+ * The gate reads PROSE FILES ONLY: the Markdown family and plain text
+ * (`PROSE_EXTENSIONS`). That is an owner decision (2026-10-16, #1734), and it
+ * is the root fix for a cluster of issues, not a convenience.
  *
- * It is worth knowing what this replaced, because the earlier reasoning is
- * seductive and wrong. The first version listed the directories to CHECK —
- * live source, deploy scripts, operator config, runbooks, user-facing copy,
- * specs — on the theory that a narrow scope is what makes a ratchet cheap
- * enough to keep. What a narrow scope actually did was omit `SECURITY.md`,
- * which described the removed contracts as live components of the cross-chain
- * system, plus `contracts/RUNBOOK.md` and `contracts/.env.example`. An include
- * list can only cover the files someone thought of, and residue nobody thought
- * of is the entire category this gate exists for. Do not narrow it back.
+ * WHY. The gate's premise is that a reader sees words, so dropping case and
+ * punctuation and joining the file into one string finds every way of writing
+ * a dead name. That premise holds for documentation. It does not hold for
+ * source code, structured data or container formats, and applying it there
+ * produced a false positive on every round of review: `buy + adapter` in
+ * JavaScript, two separate JSON string values, a PNG text chunk, PDF strings
+ * from different pages. Each was answered with another boundary rule or
+ * another decoder (JSON escapes, JSX, PDF streams, Office XML), and each rule
+ * defined the next edge (#1730, #1731, #1734, #1758). Knowing that `+`
+ * separates operands, or which bytes of a PDF a reader sees, is a parser per
+ * language, and this gate was growing one by patches. Scoping to the files
+ * where the premise is true ends that by construction.
+ *
+ * THE FALSE-POSITIVE DIRECTION IS A DESIGN CONSTRAINT. This check blocks
+ * merges, so a rule that fires on clean text stops honest work, while a rule
+ * that misses a mention leaves coverage at what it was. Weigh any new rule
+ * against that: a proposal that closes a false negative by adding a way for
+ * clean prose to fail needs a stronger reason than the miss it closes.
+ *
+ * WHAT IS NOT COVERED, stated rather than implied. A dead name written in a
+ * file that is not prose is outside this gate: code and its comments, app copy
+ * strings in `.ts`/`.tsx`, shell help text, `.env.example`, JSON and other
+ * config, SQL, CSV, and documents in container formats (PDF, Office). For code
+ * identifiers the compiler is the better check, since the removed contracts,
+ * selectors and errors no longer exist to compile against. For prose inside
+ * those files nothing automated replaces this gate; review is what catches it.
+ * The ledger entries those files carried when the scope changed are listed on
+ * #1728, so the debt they recorded is not lost with them.
+ *
+ * Within the prose files, everything tracked is in scope except what
+ * EXCLUDED_PREFIXES names. Only genuinely ARCHIVAL trees are excluded
+ * wholesale — release notes, older docs, findings, ADRs — because every
+ * document in them is a dated record and naming the removed surface is their
+ * job. Active trees are excluded FILE BY FILE: `docs/internal/` and
+ * `docs/TestScopes/` were once excluded whole, which hid a security
+ * questionnaire giving a third-party scanner present-tense instructions for
+ * the removed adapter, and a test matrix listing it as current coverage.
+ * Excluding a tree because part of it is historical hides the live text in
+ * the rest.
+ *
+ * An earlier version listed the directories to CHECK instead, and that list
+ * omitted `SECURITY.md`, which described the removed contracts as live
+ * components of the cross-chain system. A list of directories can only cover
+ * the ones someone thought of. The file-type scope is different in kind: it
+ * is a test on the path's extension, not a list of places, so a new document
+ * anywhere in the tree is covered without anyone thinking of it.
  *
  * ── WHEN THIS FAILS ───────────────────────────────────────────────────────
  *
@@ -91,32 +122,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { inflateRawSync, inflateSync } from 'node:zlib';
 
-/**
- * Signature test for formats whose bytes are not prose in any sense.
- *
- * RASTER IMAGES AND FONTS ONLY. `%PDF` and the ZIP container behind
- * docx/xlsx were briefly here and are NOT: those are DOCUMENTS, carrying the
- * operator- and user-facing guidance this gate exists to police, and this repo
- * tracks PDFs today (the OpenZeppelin audit reports). Exempting them opened a
- * hole a PDF runbook could walk through — a live "deploy the buy adapter"
- * instruction in one was caught before that change and passed after it. A
- * format earns a place here only if NOTHING a reader sees can be recovered
- * from its bytes; where text is merely encoded rather than absent, the answer
- * is to extract it, not to skip the file.
- *
- * Reads the first bytes rather than trusting the extension, and is NOT the
- * retired "any NUL means binary" rule — that one let a document exempt itself
- * from this gate with a single stray byte.
- */
-const BINARY_SIGNATURES = [
-  [0x89, 0x50, 0x4e, 0x47], // PNG
-  [0xff, 0xd8, 0xff], // JPEG
-  [0x47, 0x49, 0x46, 0x38], // GIF8
-  [0x77, 0x4f, 0x46, 0x46], // wOFF
-  [0x77, 0x4f, 0x46, 0x32], // wOF2
-];
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -133,11 +139,12 @@ const SELF = fileURLToPath(import.meta.url);
  * an identifier.
  *
  * This matters more than it looks. The first version of this gate matched
- * exact case-sensitive identifiers and reported GREEN while
- * `contracts/script/deploy-chain.sh` and `deploy-mainnet.sh` presented the
- * removed receiver and adapter as current deployment components — because
- * they spell them "buy receiver" and "buy adapter". A gate that only sees
- * code spellings does not cover prose, and prose is where this residue lives.
+ * exact case-sensitive identifiers and reported GREEN while two deploy
+ * scripts presented the removed receiver and adapter as current deployment
+ * components — because they spell them "buy receiver" and "buy adapter". A
+ * gate that only sees code spellings does not cover prose, and prose is where
+ * this residue lives. (Those scripts are shell files, outside the prose scope
+ * since #1734; the lesson about spellings holds for every document.)
  *
  * Normalization also joins the whole file into one string before matching, so
  * a phrase broken across a line boundary is still found.
@@ -305,19 +312,6 @@ const DEAD_TOKEN_RECORDS = DEAD_TOKENS.map((t) =>
 );
 
 /**
- * Scope is an EXCLUDE list, not an include list.
- *
- * The first version listed the directories to check, and that list omitted
- * `SECURITY.md` — which described the removed contracts as live CCIP
- * components — along with `contracts/RUNBOOK.md` and `contracts/.env.example`.
- * An include list cannot cover a file nobody thought of, and the whole point
- * of this gate is the residue nobody thought of. So: everything tracked is in
- * scope unless it is excluded here.
- *
- * Excluded because a mention there is CORRECT — these directories record that
- * the surface once existed, which is their job:
- */
-/**
  * Character references, resolved to the characters a reader actually sees.
  *
  * Three passes need this and they must agree, because a disagreement is
@@ -424,42 +418,14 @@ const EXCLUDED_PREFIXES = [
  *                count is a known debt, not an endorsement.
  */
 const PINNED = new Map([
-  [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "fdcbec2821b2"]],
-  [".github/scripts/check-excision-residue.selftest.mjs", [28, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "39d667741801"]],
+  [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples — digest re-pinned #1734: both mentions unchanged; the scope paragraph above them was rewritten for the prose-only scope", "bd141fc1fd73"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "79390720e2fe"]],
   ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3edc0988a8d9"]],
   ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09e46e416b30"]],
   ["apps/agent/README.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "0ef57050c5e9"]],
-  ["apps/agent/src/env.ts", [5, "RETRACTION — the RPC-breadth note explaining #687-A removed the watchdog that justified it", "3ad9215c9233"]],
-  ["apps/agent/src/index.ts", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09f233130776"]],
-  ["apps/agent/wrangler.jsonc", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "16989d142f84"]],
-  ["apps/indexer/migrations/0024_purge_retired_vpfi_events.sql", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d8782675d6b1"]],
   ["apps/www/src/content/whitepaper/Whitepaper.en.md", [3, "LIVE-TEXT — user-facing; verify against the §8 supersede banner before raising", "0d1fb72ff2d8"]],
-  ["apps/www/src/pages/BuyVPFIMarketing.tsx", [1, "LIVE-TEXT — user-facing marketing surface; the most legally sensitive entry here", "b59bd95c0660"]],
-  ["contracts/.env.example", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "dfa880f61164"]],
-  ["contracts/.gas-snapshot", [17, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "cd5853c00406"]],
   ["contracts/RUNBOOK.md", [18, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "e874f90656ff"]],
   ["contracts/deployments/CCIP-INFRA-ADDRESSES.md", [4, "HISTORICAL — deployed-address record", "025166244bba"]],
-  ["contracts/foundry.toml", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f4c66b17ce66"]],
-  ["contracts/script/AnvilNewPositiveFlows.s.sol", [1, "RETRACTION — removed-step note", "05abc1c31c8e"]],
-  ["contracts/script/ConfigureCcip.s.sol", [3, "RETRACTION — removed-step note", "3e71b78fbcf8"]],
-  ["contracts/script/DeployCrosschain.s.sol", [6, "RETRACTION — removed-deploy-target notes", "40a135c2bf8f"]],
-  ["contracts/script/DeployDiamond.s.sol", [8, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "478444039e75"]],
-  ["contracts/script/SetInteractionLaunch.s.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b52d6cd78b2d"]],
-  ["contracts/script/deploy-chain.sh", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "dcb632c8fc29"]],
-  ["contracts/script/deploy-mainnet.sh", [3, "#884 — LOWERED 5→3: the launch no longer runs ConfigureVPFIBuy, so the help text that named it in the configure phase is gone. The 3 that remain describe the OPT-IN (--configure-vpfi-peg) path — digest re-pinned #1938: the two #884 mentions are unchanged and still describe ConfigureVPFIBuy as the OPT-IN discount-peg step, not the removed buy surface; the context moved because the .env load block was rewritten beside them", "8e2cf2c5c406"]],
-  ["contracts/script/deploy-testnet.sh", [4, "#884 — LOWERED 6→4: same as the mainnet wrapper; the configure-phase help no longer lists ConfigureVPFIBuy. The 4 that remain are the retraction note plus the opt-in description", "7b774cb4a5ab"]],
-  ["contracts/script/lint-event-categories.js", [2, "RETRACTION — removed-event note", "e20e16731165"]],
-  ["contracts/script/predeploy-check.sh", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "83ef9c13d3f3"]],
-  ["contracts/src/crosschain/CcipMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "8b891b7af78f"]],
-  ["contracts/src/crosschain/GuardianPausable.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c3fcb0bba813"]],
-  ["contracts/src/crosschain/ICrossChainMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c013114dcc36"]],
-  ["contracts/src/facets/OracleAdminFacet.sol", [1, "RETRACTION — #1726 corrected the natspec that cited the adapter as a safety enforcer", "7c945dfc822b"]],
-  ["contracts/src/facets/VPFIDiscountFacet.sol", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "5e55ca2e8246"]],
-  ["contracts/src/libraries/LibKeeperReward.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c2eb45565824"]],
-  ["contracts/src/libraries/LibVaipakam.sol", [2, "RETRACTION — replaces the dangling storage-struct header that labelled sequencer slots — digest re-pinned #2419: both mentions are unchanged and still retract the removed surface; the context moved because the rounding-policy header and the dust-floor notes in the same file were rewritten for the 1e18 numeraire scale", "c775200e920a"]],
-  ["contracts/test/CcipDeploymentRehearsalTest.t.sol", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "8ec41b19f570"]],
-  ["contracts/test/mocks/MockCrossChainMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "54536afa88ba"]],
   ["docs/DesignsAndPlans/BorrowerPlatformFeeResearch.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "0b2df05b7d0a"]],
   ["docs/DesignsAndPlans/CloudflareStagingDeployPlan.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "68d7c258ecf9"]],
   ["docs/DesignsAndPlans/CrossChainRewardSystem.md", [8, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "db8ac858db48"]],
@@ -485,7 +451,6 @@ const PINNED = new Map([
   ["docs/internal/RiskCommitteeSignOffQuestionnaire.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "48e800ec4569"]],
   ["docs/internal/SecurityScanQuestionnaire.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9bd9487effb2"]],
   ["docs/internal/WethChainSafetyAudit-2026-05-14.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09b634ef7230"]],
-  ["docs/internal/batch5-unsafe-typecast-triage.csv", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "023e9b4fd22a"]],
   ["docs/ops/AnalyticsLabelRegistration.md", [3, "HISTORICAL — label registry rows", "0284187b3cbb"]],
   ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "ba2802d042ea"]],
   ["docs/ops/BaseSepoliaDeploy.md", [31, "LIVE-TEXT — known debt, PLUS a #884 retraction banner on §4 (+5). The banner is why the count rose: it names the removed knobs (VPFI_BUY_GLOBAL_CAP / _PER_WALLET_CAP / _ENABLED, getVPFIBuyConfig, DeployVPFIBuyReceiver) in order to tell an operator they no longer exist, and to stop §4's hand-invocation of ConfigureVPFIBuy walking around the peg gate. The residue BELOW the banner is untouched and still debt", "10b5b32f287c"]],
@@ -494,11 +459,6 @@ const PINNED = new Map([
   ["docs/ops/DeploymentRunbook.md", [46, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner. #884 LOWERED 47→46: the configure-phase prose no longer lists ConfigureVPFIBuy as a launch child", "529ea61a6eba"]],
   ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "967c59306dff"]],
   ["docs/ops/VPFITokenRotationRunbook.md", [1, "HISTORICAL — rotation-scope note", "a3516730a6f5"]],
-  ["docs/ops/tenderly-paste/Diamond-full.json", [45, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "9256252cfcc1"]],
-  ["ops/offchain-data-warm/wrangler.jsonc", [1, "RETRACTION — notes the excised surface in a coverage comment", "5f91cb0ab0b5"]],
-  ["packages/contracts/src/abis/index.ts", [2, "RETRACTION — removed-ABI notes in the barrel", "4358e3667e43"]],
-  ["packages/contracts/src/chain-config.ts", [2, "RETRACTION — removed-key note", "b0b59696db74"]],
-  ["packages/contracts/src/deployments.ts", [1, "RETRACTION — removed-key note on the typed loader", "b08c4de23ba5"]],
 ]);
 
 /**
@@ -526,19 +486,17 @@ const PINNED = new Map([
  */
 const EXCLUSION_CARVEOUTS = [
   'docs/ReleaseNotes/unreleased/',
-  // ACTIVE TOOLING, not a dated record. The directory exclusion exists because
-  // an assembled note is history; `assemble.sh` is a script an operator runs
-  // today, and a live instruction added to it would have been exempt purely
-  // because of where it sits.
-  'docs/ReleaseNotes/assemble.sh',
+  // `docs/ReleaseNotes/assemble.sh` was carved out here too, as active tooling
+  // inside an archival tree. It is a shell script, so the prose scope leaves it
+  // out by type; a carveout for a file the gate cannot read would be dead.
 ];
 
 function isExcluded(file) {
   // Directory carveouts match by PREFIX, file carveouts by EQUALITY — the same
   // split `isExcluded` already makes one line below. Treating every carveout as
-  // a prefix meant `assemble.sh` also re-included any sibling whose name merely
-  // STARTS with it, so `assemble.sh-history.md` — an archival record, exempt by
-  // design — was reported as new live-scope residue.
+  // a prefix re-included any sibling whose name merely STARTS with a carved-out
+  // file, so an archival record named after it was reported as new live-scope
+  // residue.
   if (EXCLUSION_CARVEOUTS.some((p) => (p.endsWith('/') ? file.startsWith(p) : file === p)))
     return false;
   return EXCLUDED_PREFIXES.some((p) =>
@@ -562,7 +520,28 @@ const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], {
   encoding: 'utf8',
 }).trim();
 
-/** Tracked files, from git — the whole tree, minus EXCLUDED_PREFIXES. */
+/**
+ * The Markdown family, in ONE place.
+ *
+ * This spelling had drifted into three copies and adding `.mdc` to two of
+ * them left the third — link and autolink parsing — still treating the file
+ * as plain text. That is the fourth "fixed one path, left its twin" defect on
+ * this gate, so the shape is now shared rather than repeated. `.markdown` is
+ * the standard long spelling and `.mdc` a Markdown rule file; leaving either
+ * out let the same content skip the Markdown handling by extension alone.
+ */
+const MARKDOWN_EXTENSIONS = /\.(?:mdc?|mdx|markdown)$/i;
+
+/**
+ * The prose file types: the gate's whole scope. See "SCOPE" in the header.
+ *
+ * The Markdown family plus plain text, and nothing else. A test on the path
+ * and nothing more, on purpose: deciding what a file IS from its content
+ * would be the kind of inference the scope exists to stop making.
+ */
+const PROSE_EXTENSIONS = /\.(?:mdc?|mdx|markdown|txt)$/i;
+
+/** Tracked prose files, from git, minus EXCLUDED_PREFIXES. */
 function inScopeFiles() {
   // `-s` so each entry carries its MODE. Submodules appear in `git ls-files` as
   // gitlinks (mode 160000) whose path is a directory on disk, so reading one
@@ -590,31 +569,12 @@ function inScopeFiles() {
     // tree and is not prose this gate can attribute to a file.
     if (mode === '120000') continue;
     const file = entry.slice(tab + 1);
-    if (!isExcluded(file)) files.push(file);
+    if (PROSE_EXTENSIONS.test(file) && !isExcluded(file)) files.push(file);
   }
   return files;
 }
 
-/** Files where inline markup can split a phrase a reader sees as one. */
-// `.markdown` alongside `.md`: it is the standard long spelling, and leaving it
-// out meant a contributor could evade the whole-tree ratchet by extension alone
-// — the same content caught in a `.md` went through the plain-text path and its
-// inline formatting stayed between the words.
-/**
- * The Markdown family, in ONE place.
- *
- * This spelling had drifted into three copies and adding `.mdc` to two of
- * them left the third — link and autolink parsing — still treating the file
- * as plain text. That is the fourth "fixed one path, left its twin" defect on
- * this gate, so the shape is now shared rather than repeated.
- */
-const MARKDOWN_EXTENSIONS = /\.(?:mdc?|mdx|markdown)$/i;
 
-// `.mdc` is a Markdown RULE file — the tree tracks one under
-// `contracts/lib/chainlink-local/.cursor/rules/`. Absent from this list it
-// was scanned as plain text, so its inline HTML was never stripped and a
-// visible phrase could hide behind a `<strong>` the reader does not see.
-const MARKUP_EXTENSIONS = /\.(tsx|jsx|html|htm|md|mdc|mdx|markdown|svg)$/i;
 
 
 /**
@@ -734,56 +694,6 @@ function linkClosePositions(text, literalAt) {
     bangBefore = c === '!';
   }
   return closes;
-}
-
-/**
- * A `.jsonc` prefix with its comments removed, for string-parity counting.
- *
- * Scans rather than regex-replaces, because the two constructs are mutually
- * exclusive and only a scan can tell them apart: a `//` inside a string value
- * is data, and a `"` inside a comment is not a delimiter. Escapes are honoured
- * so `"\\""` does not read as a close.
- */
-function jsoncCodeOnly(src) {
-  let out = '';
-  let inString = false;
-  for (let i = 0; i < src.length; i++) {
-    const c = src[i];
-    if (inString) {
-      out += c;
-      if (c === '\\') {
-        i++;
-        continue;
-      }
-      if (c === '"') inString = false;
-      continue;
-    }
-    if (c === '"') {
-      inString = true;
-      out += c;
-      continue;
-    }
-    if (c === '/' && src[i + 1] === '/') {
-      // CR, LF and CRLF all end the comment. Searching only for LF made a
-      // CR-only file's first `//` swallow the entire rest of the prefix, so
-      // every structural quote after it went uncounted and the parity failed
-      // toward GREEN — the direction a gate must never fail in. Same lesson
-      // as the CR-only line splitting two rounds back, one construct over.
-      let nl = i + 2;
-      while (nl < src.length && src[nl] !== '\n' && src[nl] !== '\r') nl++;
-      if (nl >= src.length) break;
-      i = nl - 1;
-      continue;
-    }
-    if (c === '/' && src[i + 1] === '*') {
-      const end = src.indexOf('*/', i + 2);
-      if (end === -1) break;
-      i = end + 1;
-      continue;
-    }
-    out += c;
-  }
-  return out;
 }
 
 /**
@@ -1032,9 +942,8 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
   // interior as much as the document's body, since `data-x="buyOpti&#111;ns"`
   // resolves to the dead identifier in any renderer. Passing `''` as the path
   // to suppress the first had been silently suppressing the second.
-  const skipTags = MARKUP_EXTENSIONS.test(sourcePath || '');
+  const skipTags = MARKDOWN_EXTENSIONS.test(sourcePath || '');
   const isMdSource = MARKDOWN_EXTENSIONS.test(sourcePath || '');
-  const isJsonSource = /\.jsonc?$/i.test(sourcePath || '');
   const decodeRefs = skipTags || sourcePath === TAG_INTERIOR;
   const TAG = /^<\/?[a-zA-Z][^<>]*>/;
   const tagSpans = [];
@@ -1100,9 +1009,8 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
       // has ONE destination whose text contains a literal `)`, and treating the
       // escaped one as the terminator ended the destination early — the
       // leftover `b)` stayed in the stream and wedged the label apart from the
-      // word after it, so a rendered mention went unreported. Same shape as the
-      // quoted-`>` case on the Office side: a delimiter inside a quoted or
-      // escaped context is data, not structure.
+      // word after it, so a rendered mention went unreported. A delimiter inside a
+      // quoted or escaped context is data, not structure.
       let depth = 0;
       let j = i + 1;
       for (; j < text.length; j++) {
@@ -1149,27 +1057,6 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
         i = j;
         continue;
       }
-    }
-    // JSON STRING ESCAPES. `{"operatorMessage":"Deploy the buy\u0020adapter"}`
-    // renders as one phrase naming the dead surface, but the raw source spells
-    // the space as the letters `u0020`, which the normalizer kept — wedging
-    // text between the words instead of separating them. Decode to what the
-    // consumer sees; a non-\u escape emits nothing, which separates rather than
-    // joins, the conservative direction.
-    if (isJsonSource && text[i] === '\\' && i + 1 < text.length) {
-      const u = /^\\u([0-9a-fA-F]{4})/.exec(text.slice(i, i + 6));
-      if (u) {
-        for (const c of String.fromCharCode(parseInt(u[1], 16)).toLowerCase()) {
-          if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
-            out.push(c);
-            if (withMap) map.push(i);
-          }
-        }
-        i += 5;
-        continue;
-      }
-      i += 1;
-      continue;
     }
     if (skipTags && text[i] === '<' && !(fencedOffsets && fencedOffsets(i))) {
       // MARKDOWN AUTOLINKS are VISIBLE text, not invisible markup. `<https://…>`
@@ -1546,8 +1433,9 @@ function lineOf(starts, offset) {
  * The digest's job is to notice when an existing mention is REWRITTEN — a
  * retraction turned back into live guidance. An earlier version hashed a fixed
  * 40 normalized characters either side of the token, which was too tight to do
- * that job: in `packages/contracts/src/deployments.ts`, flipping "were removed"
- * to "remain deployed" and "no longer exist" to "continue to exist" left both
+ * that job: in a typed-loader comment (a source file, in scope at the time),
+ * flipping "were removed" to "remain deployed" and "no longer exist" to
+ * "continue to exist" left both
  * count and digest unchanged, because the words carrying the meaning sat
  * outside the window. Character windows are the wrong unit — a mention's status
  * lives in its sentence, and in comment blocks that sentence is wrapped across
@@ -1572,630 +1460,12 @@ const DIGEST_CONTEXT_LINES = 2;
  * side, normalized; units are sorted then hashed, so moving a mention within a
  * file without changing its wording is invisible while rewording is not.
  */
-/**
- * Reader-visible text from a PDF.
- *
- * Removing the `%PDF` exemption made PDFs *look* covered while only
- * uncompressed content was ever readable: real PDFs Flate-compress their
- * content streams, so a runbook whose page says "deploy the buy adapter"
- * decoded, as UTF-8, to compressed bytes with no such phrase in them. The gate
- * reported success on a document that plainly names a removed surface.
- *
- * Inflates each `/FlateDecode` stream and keeps the string literals a page
- * actually draws — `(...)` for literal strings, `<...>` for hex ones. The
- * drawing OPERATORS around them are dropped: `BT`, `Tj`, `ET` and friends are
- * not words a reader sees, and letting them into the stream would fuse them
- * with real text and manufacture matches.
- *
- * Best-effort by design. A stream that will not inflate is skipped rather than
- * failing the run — a damaged or unusually-encoded PDF must not take CI down —
- * and object streams / non-Flate filters are not decoded, so this raises
- * coverage without claiming to be a PDF parser. See #1734 for the standing
- * question of whether this gate should target prose only.
- */
-/** Per-stream inflation budget. Generous for real page text, far below what a
- *  decompression bomb needs to exhaust a runner. */
-const MAX_INFLATED_BYTES = 32 * 1024 * 1024;
-
-/**
- * Decode a PDF literal string's escapes.
- *
- * The SOURCE spelling is not what the page draws. `(the VPFI buy\\040adapter)`
- * renders with a space between the two words, but the raw slice normalized to
- * `buy040adapter` and the mention went unreported — the digits of an octal
- * escape are alphanumeric, so the normalizer keeps them and they wedge the
- * phrase apart. Same class as `renderRefs` on the markup side: every check that
- * decides what a word IS has to read the rendered stream.
- */
-function decodePdfLiteral(raw) {
-  const SIMPLE = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '(': '(', ')': ')', '\\': '\\' };
-  let out = '';
-  for (let i = 0; i < raw.length; i++) {
-    if (raw[i] !== '\\') {
-      out += raw[i];
-      continue;
-    }
-    const c = raw[++i];
-    if (c === undefined) break;
-    // A backslash before a newline is a line CONTINUATION: both vanish, and
-    // the two halves of the word are drawn adjacent.
-    if (c === '\n') continue;
-    if (c === '\r') {
-      if (raw[i + 1] === '\n') i++;
-      continue;
-    }
-    if (c >= '0' && c <= '7') {
-      let oct = c;
-      while (oct.length < 3 && raw[i + 1] >= '0' && raw[i + 1] <= '7') oct += raw[++i];
-      out += String.fromCharCode(parseInt(oct, 8));
-      continue;
-    }
-    // An unrecognized escape drops the backslash and keeps the character.
-    out += SIMPLE[c] ?? c;
-  }
-  return out;
-}
-
-function extractPdfText(buf) {
-  const out = [];
-  // Cumulative across the FILE. `maxOutputLength` resets on every call, so a
-  // PDF carrying many individually-under-limit streams could still drive total
-  // allocation into the hundreds of megabytes and kill this blocking job — the
-  // per-stream bound alone did not close the case it was added for.
-  let inflatedTotal = 0;
-  const marker = Buffer.from('stream');
-  const endMarker = Buffer.from('endstream');
-  let at = 0;
-  while (at < buf.length) {
-    const s0 = buf.indexOf(marker, at);
-    if (s0 === -1) break;
-    // Dictionary immediately before the stream keyword declares the filter.
-    const dict = buf.subarray(Math.max(0, s0 - 400), s0).toString('latin1');
-    // Data start: the EOL that must follow the `stream` keyword.
-    // EXACTLY ONE EOL sequence — CRLF or LF — as the spec requires after the
-    // `stream` keyword. Consuming a RUN of them ate the stream's own first
-    // byte when the data itself began with a newline, which shifted the
-    // declared `/Length` endpoint off the terminator, failed the validation
-    // below, and dropped back to the `endstream`-scan this fix exists to
-    // replace. A rule that is right for the delimiter and wrong for the data
-    // is how the fallback got re-entered on exactly the files it was written
-    // for.
-    let dataAt = s0 + marker.length;
-    if (buf[dataAt] === 0x0d && buf[dataAt + 1] === 0x0a) dataAt += 2;
-    else if (buf[dataAt] === 0x0d || buf[dataAt] === 0x0a) dataAt += 1;
-    // The body is DELIMITED BY ITS DECLARED `/Length`, not by the first
-    // `endstream` byte-string inside it. Stream data is arbitrary bytes and may
-    // spell `endstream` itself — a content stream opening with the valid PDF
-    // comment `% endstream` truncated the body to nothing, and everything the
-    // page actually drew went unread. `indexOf` is kept only as the fallback
-    // for a stream whose dictionary carries no usable `/Length` (an indirect
-    // reference, or a malformed file), and the declared length is trusted only
-    // when the bytes it points at really are followed by the terminator.
-    const declared = /\/Length\s+(\d{1,10})(?!\s+\d+\s+R)\b/.exec(dict);
-    let e0 = -1;
-    if (declared) {
-      const end = dataAt + Number(declared[1]);
-      const after = buf.subarray(end, end + 20).toString('latin1');
-      if (end <= buf.length && /^[\r\n\s]*endstream/.test(after)) e0 = end;
-    }
-    if (e0 === -1) e0 = buf.indexOf(endMarker, dataAt);
-    if (e0 === -1) break;
-    let body = buf.subarray(dataAt, e0);
-    if (/\/FlateDecode/.test(dict)) {
-      const remaining = MAX_INFLATED_BYTES - inflatedTotal;
-      if (remaining <= 0) break; // budget spent; stop reading this file
-      try {
-        // BOUNDED. `inflateSync` with no limit lets a small, highly compressible
-        // stream expand without end — a few KB of tracked PDF could allocate
-        // hundreds of megabytes and kill the runner, taking a BLOCKING workflow
-        // down rather than taking the best-effort skip this path intends. Node
-        // rejects the stream once it exceeds the budget, which lands in the
-        // catch below like any other undecodable stream.
-        body = inflateSync(body, { maxOutputLength: remaining });
-        inflatedTotal += body.length;
-      } catch {
-        // A FAILED attempt consumed the remaining budget — it may have failed
-        // precisely because it hit the cap, and crediting nothing let a file of
-        // many oversized streams retry the whole remainder on each. Round 19
-        // fixed exactly this on the Office path and I did not carry it here;
-        // that is the third time in this PR one twin was fixed and the other
-        // left, after the extension check and the read-as-text fallback.
-        inflatedTotal += remaining;
-        at = buf.indexOf(endMarker, e0);
-        if (at === -1) break;
-        at += endMarker.length;
-        continue;
-      }
-    }
-    const content = body.toString('latin1');
-    // BALANCED nesting, not "up to the first `)`". A PDF literal string may
-    // contain unescaped parentheses so long as they balance, and
-    // `(Operators (must) deploy the VPFI buy adapter)` is one string — the
-    // regex stopped at the inner `)` and extracted `Operators (must`, which is
-    // NON-EMPTY, so the fallback that reads the container as text never fired
-    // and the drawn phrase went unread. A partial decode is worse than none:
-    // it looks like success.
-    for (let k = 0; k < content.length; k++) {
-      // `%` starts a COMMENT that runs to end of line, and its text is not
-      // content — an unmatched `(` in one was read as opening a literal string,
-      // the balance walk then ran to EOF, and `break` abandoned every real
-      // string after it. Comment punctuation poisoning the rest of the stream
-      // is the same failure the balanced walk was added to fix, from the other
-      // direction.
-      if (content[k] === '%') {
-        // PDF end-of-line is CR, LF or CRLF — looking only for LF left a
-        // CR-terminated comment swallowing the rest of the stream, which is the
-        // same failure the comment skip was added to prevent.
-        let nl = k + 1;
-        while (nl < content.length && content[nl] !== '\n' && content[nl] !== '\r') nl++;
-        if (nl >= content.length) break;
-        k = nl;
-        continue;
-      }
-      if (content[k] !== '(') continue;
-      let depth = 1;
-      let m = k + 1;
-      for (; m < content.length && depth > 0; m++) {
-        if (content[m] === '\\') m++;
-        else if (content[m] === '(') depth++;
-        else if (content[m] === ')') depth--;
-      }
-      if (depth !== 0) break; // unterminated string; nothing further is sound
-      out.push(decodePdfLiteral(content.slice(k + 1, m - 1)));
-      k = m - 1;
-    }
-    for (const m of content.matchAll(/<([0-9A-Fa-f\s]+)>/g)) {
-      const hex = m[1].replace(/\s+/g, '');
-      if (hex.length % 2 === 0 && hex.length >= 2) {
-        out.push(Buffer.from(hex, 'hex').toString('latin1'));
-      }
-    }
-    at = buf.indexOf(endMarker, e0);
-    if (at === -1) break;
-    at += endMarker.length;
-  }
-  return out.join(' ');
-}
-
-/**
- * Office Open XML (`.docx` / `.xlsx` / `.pptx`) is a ZIP of deflated XML. The
- * rendered sentence exists only inside those compressed parts, so reading the
- * container's bytes as text sees nothing — a tracked document reading "deploy
- * the VPFI buy adapter" passed a gate that claims whole-tree coverage.
- *
- * This is the same blindness the PDF path exists to remove, arriving by a
- * different route: ZIP was deliberately taken OUT of the binary-signature
- * exemption earlier in this PR so these files would not be skipped. They were
- * not skipped — they were read as noise, which is worse, because the ledger
- * recorded a count that looked like coverage.
- *
- * Every XML part under the format's own content directory is decoded, plus the
- * document properties. NOT a whitelist of conventional filenames: OOXML names
- * its main part through the package relationships, so `word/guidance.xml` is a
- * conforming document body and a fixed `word/document.xml` list walked straight
- * past it. Reading one part too many costs a little markup noise, which the
- * scan's own boundary rules already handle; reading one too few is a silent
- * exemption for any document that declines to use the default name.
- */
-const OFFICE_TEXT_PARTS = /^(?:(?:word|xl|ppt)\/(?!.*_rels\/).*\.xml|docProps\/[^/]+\.xml)$/;
-
-/**
- * Extensions that may claim the Office container path.
- *
- * The signature alone is not enough, for the same reason `isRecognizedBinary`
- * requires one: a prefix is claimable by any file. A tracked `.md` beginning
- * with `PK\x03\x04` had its whole body replaced by this decoder's output —
- * empty, since there is no central directory — and the gate scanned nothing.
- * A performance shortcut that any file can opt into is a bypass.
- */
-// Every OOXML package shape, not the three headline ones. `.ppsx` was added
-// last round and `.sldx` missed in the same breath — each omission is a
-// whole-tree bypass by file extension, which is the fifth of that class in this
-// PR, so the list is written to cover the format family rather than the
-// spellings that happened to come to mind.
-const OFFICE_EXTENSIONS =
-  /\.(?:doc|dot)[xm]$|\.(?:xls|xlt)[xm]$|\.(?:ppt|pps|pot|sld)[xm]$|\.(?:xlam|ppam)$/i;
-
-/**
- * Same rule for PDFs, and it is the same oversight: the Office signature check
- * was added this round without applying it to the path it was copied from. A
- * `.md` beginning `%PDF` had its whole body replaced by `extractPdfText`'s
- * output — empty, since there are no streams — and the gate scanned nothing.
- */
-const PDF_EXTENSION = /\.pdf$/i;
-
-/**
- * Decode one XML part, honouring its encoding.
- *
- * A UTF-16 part decoded as UTF-8 keeps a NUL between every markup character,
- * so `</w:p>` no longer matches the boundary regex below and two paragraphs
- * fuse into a mention the reader never sees. BOM first, then the BOM-less
- * shape: an XML part must begin with `<`, so a NUL beside that first byte
- * names the width and the endianness on its own.
- */
-function decodeXmlPart(buf) {
-  const utf16le = (b) => b.toString('utf16le');
-  const swapped = (b) => {
-    if (b.length % 2) b = b.subarray(0, b.length - 1);
-    const c = Buffer.from(b);
-    c.swap16();
-    return c.toString('utf16le');
-  };
-  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return utf16le(buf.subarray(2));
-  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) return swapped(buf.subarray(2));
-  if (buf.length >= 2 && buf[0] === 0x3c && buf[1] === 0x00) return utf16le(buf);
-  if (buf.length >= 2 && buf[0] === 0x00 && buf[1] === 0x3c) return swapped(buf);
-  return buf.toString('utf8');
-}
-
-const CDATA = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
-
-/**
- * The OOXML namespaces whose paragraph / cell / break elements are block
- * boundaries, and the local names that are.
- *
- * By NAMESPACE, not by prefix. `w:` and `a:` are conventional, not required —
- * an XML prefix is an alias a document declares for itself, so a conforming
- * part is free to bind WordprocessingML to `x:` and write `<x:p>`. A literal
- * QName list stopped recognizing paragraphs there, fused two of them, and
- * BLOCKED a clean document.
- */
-const OFFICE_BLOCK_NS = [
-  'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
-  'http://schemas.openxmlformats.org/drawingml/2006/main',
-  'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
-];
-/** Block-level local names. NOT `tab`: a tab inside a paragraph is inline
- *  whitespace, the same call the space already gets. */
-const OFFICE_BLOCK_LOCAL = new Set(['p', 'tc', 'tr', 'si', 'c', 'row', 'br', 'cr']);
-/** Reader-visible attributes — a drawing's accessibility description is read
- *  aloud by assistive technology, so it is text even though it lives in a tag.
- *  BOTH quote characters: XML permits either, and matching only `"` silently
- *  exempted the single-quoted spelling of the same accessibility text. */
-const OFFICE_ALT_TEXT = /\b(?:descr|title|alt)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
-
-/**
- * Prefixes this part binds to a block-bearing namespace, plus the default.
- *
- * Collected from every `xmlns` declaration in the part rather than the root
- * element alone, because a declaration is scoped to its element and OOXML
- * parts do sometimes redeclare deeper down. Over-collecting is safe here: a
- * prefix bound to a block namespace ANYWHERE in the part is a prefix whose
- * `p` means paragraph.
- */
-function officeBlockBindings(tag) {
-  const added = new Map();
-  for (const m of tag.matchAll(/xmlns(?::([A-Za-z_][\w.-]*))?\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
-    added.set(m[1] ?? '', OFFICE_BLOCK_NS.includes(m[2] ?? m[3]));
-  }
-  return added;
-}
-
-/**
- * Remove Office XML markup, keeping what the reader sees.
- *
- * A forward walk, NOT `replace(/<[^>]*>/g, …)`, for two reasons that turn out
- * to be the same reason. The regex ends a tag at the first `>`, so
- * `title="1 > 0"` closes early and the rest of the attribute is emitted as
- * text; this walk tracks quoting and ends the tag where the tag ends. And a
- * one-pass regex strip of `<…>` is what CodeQL reports as incomplete
- * multi-character sanitization — correctly, in the sense that the pass CAN
- * leave bracket-shaped text behind. Nothing here reaches an HTML sink (the
- * output feeds the token normalizer), so it is not the injection the query
- * names, but the underlying observation is right and the walk has neither
- * problem.
- *
- * Iterating the regex to a fixed point is NOT the alternative: this file
- * already learned, in the markup path, that doing so splices leftover
- * fragments into tags the document never contained and fails clean files.
- */
-function stripOfficeTags(text) {
-  // A binding is SCOPED to the element that declares it. Flattening every
-  // `xmlns` in the part into one set let a prefix bound to WordprocessingML
-  // inside one element keep that meaning after the element closed — so an
-  // `<e:p/>` belonging to an ignorable-extension namespace was read as a
-  // paragraph, inserted a boundary that no reader sees, and separated two
-  // visible runs of a real mention. Prefix bindings are a stack, so this walks
-  // one.
-  //
-  // The stack is seeded with the conventional prefixes ONLY when the part
-  // declares no block namespace at all: it then tells us nothing about its
-  // bindings, the local name is the only evidence there is, and guessing in
-  // that direction can only ADD boundaries — the missing boundary is the
-  // failure that blocks a clean document.
-  const declaresBlockNs = /xmlns(?::[A-Za-z_][\w.-]*)?\s*=\s*(?:"|')(?:[^"']*)(?:"|')/.test(text)
-    ? OFFICE_BLOCK_NS.some((uri) => text.includes(uri))
-    : false;
-  const scopes = [new Map()];
-  const lookup = (prefix) => {
-    for (let k = scopes.length - 1; k >= 0; k--) {
-      const v = scopes[k].get(prefix);
-      if (v !== undefined) return v;
-    }
-    return !declaresBlockNs; // no binding information anywhere in this part
-  };
-  const isBlockTag = (tag, prefix, local) =>
-    OFFICE_BLOCK_LOCAL.has(local) && lookup(prefix ?? '');
-
-  let out = '';
-  let i = 0;
-  for (;;) {
-    const lt = text.indexOf('<', i);
-    if (lt === -1) {
-      out += text.slice(i);
-      break;
-    }
-    out += text.slice(i, lt);
-    // Constructs with their OWN terminator, handled before the quoted-tag walk.
-    // A comment is not a tag and does not end at its first `>`: the walk read
-    // `<!-- A > B -->` as ending after `A >` and emitted ` B -->` as visible
-    // text, whose `B` landed between two words and broke the phrase. Same
-    // shape as the quoted-`>` bug this walk was written to fix, one construct
-    // over.
-    const special = [
-      ['<!--', '-->'],
-      ['<![CDATA[', ']]>'],
-      ['<?', '?>'],
-    ].find(([open]) => text.startsWith(open, lt));
-    if (special) {
-      const close = text.indexOf(special[1], lt + special[0].length);
-      // Unterminated: the rest of the part is inside the construct and the
-      // reader sees none of it.
-      if (close === -1) break;
-      i = close + special[1].length;
-      continue;
-    }
-    let j = lt + 1;
-    let quote = '';
-    for (; j < text.length; j++) {
-      const c = text[j];
-      if (quote) {
-        if (c === quote) quote = '';
-      } else if (c === '"' || c === "'") {
-        quote = c;
-      } else if (c === '>') {
-        break;
-      }
-    }
-    if (j >= text.length) {
-      // Unterminated `<`. Emit the remainder as text minus the stray bracket
-      // rather than dropping it — a truncated part is exactly where a mention
-      // would hide, and discarding the tail would be a silent exemption.
-      out += text.slice(lt + 1);
-      break;
-    }
-    const tag = text.slice(lt, j + 1);
-    const shape = /^<(\/?)(?:([A-Za-z_][\w.-]*):)?([A-Za-z_][\w.-]*)/.exec(tag);
-    const closing = shape ? shape[1] === '/' : false;
-    const selfClosing = /\/>$/.test(tag);
-    // Push BEFORE classifying, so an element's own declarations govern its own
-    // name — `<e:p xmlns:e="…wordprocessingml…"/>` binds `e` for itself.
-    if (shape && !closing) scopes.push(officeBlockBindings(tag));
-    if (shape && isBlockTag(tag, shape[2], shape[3])) {
-      out += '\n\n';
-    } else {
-      for (const m of tag.matchAll(OFFICE_ALT_TEXT)) out += ` ${m[1] ?? m[2]} `;
-    }
-    if (shape && !closing && selfClosing) scopes.pop();
-    if (shape && closing && scopes.length > 1) scopes.pop();
-    i = j + 1;
-  }
-  return out;
-}
-
-function extractOfficeText(buf) {
-  // Locate the End Of Central Directory record by scanning back from the tail;
-  // the comment field is variable-length, so the signature is not at a fixed
-  // offset. Bounded to the maximum comment size plus the record itself.
-  //
-  // The signature is NOT sufficient on its own — the archive comment is
-  // arbitrary bytes and may contain `PK\x05\x06`. Accepting the first match
-  // found reads a comment's embedded bytes as the record, and a forged one
-  // declaring zero entries turned a real document into zero parts scanned. A
-  // genuine EOCD's comment ends exactly at EOF and its central directory
-  // starts on a central-directory signature; check both before believing it.
-  const EOCD_SIG = 0x06054b50;
-  let eocd = -1;
-  let entryCount = 0;
-  let cdOffset = 0;
-  const from = Math.max(0, buf.length - (0xffff + 22));
-  for (let i = buf.length - 22; i >= from; i--) {
-    if (buf.readUInt32LE(i) !== EOCD_SIG) continue;
-    if (i + 22 + buf.readUInt16LE(i + 20) !== buf.length) continue;
-    const count = buf.readUInt16LE(i + 10);
-    const off = buf.readUInt32LE(i + 16);
-    const size = buf.readUInt32LE(i + 12);
-    // The central directory must lie wholly before this record and start on a
-    // central-directory signature. `count > 0` is part of the test, not an
-    // optimization: the decoy that motivated this declared ZERO entries, which
-    // skips every consistency check that reads the directory and so passes any
-    // validation that treats an empty directory as vacuously fine. An archive
-    // that really holds no entries holds no document either, so demanding one
-    // costs nothing.
-    if (count === 0 || off + size > i || off + 4 > buf.length) continue;
-    if (buf.readUInt32LE(off) !== 0x02014b50) continue;
-    eocd = i;
-    entryCount = count;
-    cdOffset = off;
-    break;
-  }
-  // `null`, not `''` — the caller falls back to reading the bytes as text.
-  // Returning an empty string would make an unparseable container scan as an
-  // empty file, which is the same silent exemption the extension check above
-  // exists to close.
-  if (eocd === -1) return null;
-  let p = cdOffset;
-  const out = [];
-  // Cumulative across the FILE, exactly as the PDF path bounds itself: a
-  // per-entry limit alone lets an archive of many individually-small parts
-  // drive total allocation without bound, which on a BLOCKING job is a denial
-  // of the gate rather than a skipped file.
-  let inflatedTotal = 0;
-  for (let n = 0; n < entryCount; n++) {
-    if (p + 46 > buf.length || buf.readUInt32LE(p) !== 0x02014b50) break;
-    const method = buf.readUInt16LE(p + 10);
-    const compSize = buf.readUInt32LE(p + 20);
-    const uncompSize = buf.readUInt32LE(p + 24);
-    const nameLen = buf.readUInt16LE(p + 28);
-    const extraLen = buf.readUInt16LE(p + 30);
-    const commentLen = buf.readUInt16LE(p + 32);
-    const localOff = buf.readUInt32LE(p + 42);
-    const name = buf.subarray(p + 46, p + 46 + nameLen).toString('utf8');
-    p += 46 + nameLen + extraLen + commentLen;
-    if (!OFFICE_TEXT_PARTS.test(name)) continue;
-    // The local header repeats the name/extra lengths, and they need NOT match
-    // the central directory's — the data offset must be computed from the local
-    // record or the read starts mid-header.
-    if (localOff + 30 > buf.length || buf.readUInt32LE(localOff) !== 0x04034b50) continue;
-    const lNameLen = buf.readUInt16LE(localOff + 26);
-    const lExtraLen = buf.readUInt16LE(localOff + 28);
-    const dataAt = localOff + 30 + lNameLen + lExtraLen;
-    if (dataAt + compSize > buf.length) continue;
-    let xml = buf.subarray(dataAt, dataAt + compSize);
-    if (method === 8) {
-      const remaining = MAX_INFLATED_BYTES - inflatedTotal;
-      if (remaining <= 0) break; // budget spent; stop reading this file
-      // The budget is charged on what the inflation ACTUALLY produced, never
-      // on the header's `uncompSize`. That field is attacker-controlled: an
-      // archive can declare 1 byte and expand to megabytes, and charging the
-      // declaration let a file allocate far past the stated cap while the
-      // counter barely moved. `maxOutputLength` still bounds each individual
-      // part, so the two together bound both the step and the total.
-      //
-      // On FAILURE the remaining budget is consumed outright. A part that
-      // threw did real work — it may have thrown precisely because it exceeded
-      // the cap — and crediting nothing let an archive of many oversized parts
-      // retry the whole remaining budget on each in turn. Bounding attempts,
-      // not just completions, is what makes "cumulative" true.
-      try {
-        // Raw deflate — ZIP stores no zlib header.
-        xml = inflateRawSync(xml, { maxOutputLength: remaining });
-        inflatedTotal += xml.length;
-      } catch {
-        inflatedTotal += remaining;
-        continue; // undecodable part; treat like any other unreadable stream
-      }
-    } else if (method === 0) {
-      // STORED parts cost memory too. They took this path without charging
-      // anything, and because a central directory may point several entries at
-      // the SAME local header, ~40 aliases of one stored part turned a 1 MiB
-      // archive into ~40 MiB of retained text — past the stated cap while the
-      // counter read zero. Uncompressed data has no expansion ratio, which is
-      // why it looked safe; the aliasing is what makes it not.
-      const remaining = MAX_INFLATED_BYTES - inflatedTotal;
-      if (remaining <= 0) break;
-      // A POSITIVE remainder is not permission to admit a part of any size.
-      // The deflate path is capped by `maxOutputLength`; the stored path had
-      // only this emptiness test, so two aliases of one 20 MiB stored part
-      // both passed it and retained ~40 MiB against a 32 MiB cap. Charge the
-      // budget out and stop rather than truncating: a half-read XML part
-      // decodes into misleading text, and a partial decode that looks like
-      // success is the failure this file has hit before.
-      if (xml.length > remaining) {
-        inflatedTotal += remaining;
-        break;
-      }
-      inflatedTotal += xml.length;
-    } else {
-      continue; // stored or deflate only; anything else is not ours to decode
-    }
-    // BLOCK elements first, inline runs second — the same inline-vs-block
-    // distinction `crossesBlockBoundary` already draws for HTML, because it is
-    // the same question: does the reader see one phrase or two?
-    //
-    // Word splits a single WORD across runs at arbitrary points — a spell-check
-    // marker or a formatting change turns `buyRequest` into
-    // `<w:t>buy</w:t></w:r><w:r><w:t>Request</w:t>` — so a run boundary is
-    // nothing on the page and must delete to nothing, or a dead identifier
-    // typed into a document escapes the gate by however Word happened to
-    // segment it. A paragraph, table cell, line break or shared-string
-    // boundary IS something on the page, so it becomes a blank line, which is
-    // the boundary rule the scan already applies to every other format.
-    // Blanket-replacing every tag with a space got the second right and the
-    // first wrong; deleting every tag does the reverse.
-    //
-    // `w:tab` is NOT in that list, though it once was. A tab inside a paragraph
-    // is inline whitespace — the reader sees "buy<TAB>adapter" as two words on
-    // one line, exactly as they see "buy adapter" — and treating it as a block
-    // break discarded a visible mention. It is the same call the space already
-    // gets, one character over.
-    //
-    // The spreadsheet side needs `</c>` and `</row>`: a worksheet using inline
-    // strings puts each cell's text in its own element, and with no boundary
-    // between them two unrelated cells fused into a mention no cell contains.
-    out.push(
-      renderRefs(
-        // CDATA is reader-visible text wearing markup's brackets. Unwrap it
-        // FIRST, neutralising the angle brackets it may contain so the tag
-        // walk below cannot re-read its contents as elements — otherwise a
-        // paragraph written as CDATA was deleted whole.
-        stripOfficeTags(
-          decodeXmlPart(xml).replace(CDATA, (_m, inner) =>
-            // Angle brackets neutralised so the tag walk cannot re-read the
-            // contents as elements, AND ampersands too — XML does not expand
-            // character references inside CDATA, so `&#32;` there is four
-            // visible characters and not a space. Letting the outer
-            // `renderRefs` decode it fused two words a reader sees held apart
-            // by the literal `&#32;`, and BLOCKED a clean document. The
-            // unwrapping has to carry the "this was literal" fact with it.
-            inner.replace(/[<>&]/g, ' '),
-          ),
-        ),
-      ),
-    );
-  }
-  // Parts are separate documents (a header is not the body). Same reasoning as
-  // the block elements above.
-  return out.join('\n\n');
-}
-
-function isRecognizedBinary(path) {
-  let head;
-  try {
-    head = readFileSync(join(REPO_ROOT, path)).subarray(0, 8);
-  } catch {
-    // Unreadable is handled by scanFile's fail-closed path; never claim binary.
-    return false;
-  }
-  // Signature AND extension. A prefix alone is claimable by any file: a tracked
-  // `.md` beginning with `GIF8` took the exemption and skipped the scan
-  // entirely, which turns this performance shortcut into a bypass anyone can
-  // opt into. Requiring the extension to agree means a document cannot dress
-  // itself as an image.
-  if (!/\.(png|jpe?g|gif|woff2?)$/i.test(path)) return false;
-  return BINARY_SIGNATURES.some((sig) => sig.every((byte, i) => head[i] === byte));
-}
-
 function scanFile(path) {
   let text;
   try {
     // Resolved against REPO_ROOT, not the process CWD — `path` is a
     // repo-root-relative ledger key.
-    const raw = readFileSync(join(REPO_ROOT, path));
-    // A PDF's bytes are a container, not prose — decode what it draws.
-    const head4 = raw.subarray(0, 4);
-    // `PK\x03\x04` AND an Office extension — signature alone is claimable by
-    // any file, and the decoder's output REPLACES the source text, so a `.md`
-    // that opens with those four bytes would otherwise be scanned as the empty
-    // string. Same rule, same reason, as `isRecognizedBinary` below. A file
-    // that passes both and still holds no usable central directory returns
-    // `null` and falls through to being read as text.
-    const officeText =
-      OFFICE_EXTENSIONS.test(path) &&
-      head4[0] === 0x50 &&
-      head4[1] === 0x4b &&
-      head4[2] === 0x03 &&
-      head4[3] === 0x04
-        ? extractOfficeText(raw)
-        : null;
-    // `null` when the container yields nothing usable, so the bytes are read as
-    // text rather than as the empty string — a decoder that finds no content is
-    // not evidence that the file has none.
-    const pdfText =
-      PDF_EXTENSION.test(path) && head4.toString('latin1') === '%PDF'
-        ? extractPdfText(raw) || null
-        : null;
-    text = pdfText ?? officeText ?? raw.toString('utf8');
+    text = readFileSync(join(REPO_ROOT, path), 'utf8');
   } catch (err) {
     // FAIL CLOSED. Returning "no hits" here treated an unreadable file exactly
     // like a clean one, which is a complete exemption for any path that cannot
@@ -2209,68 +1479,34 @@ function scanFile(path) {
     );
   }
 
-  // Recognized BINARY FORMATS, by signature. An image's bytes are not prose:
-  // a PNG whose `tEXt` chunk happens to hold `buy` as a keyword and `adapter`
-  // as its value had the NUL field separator discarded like any other
-  // non-alphanumeric byte, fused into the dead token, and failed an asset-only
-  // change on a field no reader ever sees.
-  //
-  // Keyed on the FORMAT SIGNATURE, deliberately NOT on "contains a NUL" — that
-  // rule is the total bypass described below, and reintroducing it is exactly
-  // what this must not do. A file that really is a PNG cannot also be the
-  // documentation this gate reads, so the exemption cannot be claimed by text.
-  // The signature is read from the RAW BYTES: `text` has already been decoded
-  // as UTF-8, which mangles the very bytes being tested.
-  if (isRecognizedBinary(path)) return { hits: 0, digest: '' };
-
-  // NO binary early-return ON NUL BYTES. An earlier version bailed out on the first NUL
-  // byte, which made a single NUL a COMPLETE bypass: a document with a live
-  // deploy instruction plus one NUL was exempt from the gate entirely, and any
-  // UTF-16 text file took that path naturally. Normalization discards NUL along
-  // with every other non-alphanumeric byte, so scanning real binaries costs a
-  // little time and finds nothing — the right trade against a silent hole.
+  // NO early-return ON NUL BYTES. An earlier version bailed out on the first
+  // NUL, which made a single NUL a COMPLETE bypass: a document with a live
+  // deploy instruction plus one NUL was exempt from the gate entirely.
+  // Normalization discards NUL along with every other non-alphanumeric byte,
+  // so a stray one costs nothing and hides nothing.
 
   // CHEAP EXACT PRE-FILTER. Normalize without building the offset map and bail
   // if no token is present. Same normalization, so this is not a heuristic and
   // adds no bypass — it only skips the expensive per-character map build for
-  // files that cannot match.
+  // files that cannot match. It ignores `notFollowedBy` on purpose: a guarded
+  // token still needs the full pass to decide, and this only short-circuits
+  // files where NO token appears at all.
   //
-  // It exists because removing the binary early-return (correctly — a single NUL
-  // was a total exemption) meant reading and normalizing every tracked file,
-  // including ~56 MB of PNGs and vendored libraries. I described that as
-  // costing "a little time" without measuring it; it was 8-10 s, which is not
-  // a little for a gate on every PR. With this pre-filter: ~3.7 s, same result
-  // (82 files / 455 mentions), over 5,743 tracked files including ~56 MB of
-  // images and vendored libraries.
-  //
-  // The pre-filter deliberately ignores `notFollowedBy`: a guarded token still
-  // needs the full pass to decide, and this only short-circuits files where NO
-  // token appears at all. Conservative in the safe direction.
-  // Must use the SAME normalization as the real scan. It previously called the
-  // plain `normalize`, which is not tag-aware, so in markup files it
+  // It must use the SAME normalization as the real scan. It once called the
+  // plain `normalize`, which is not tag-aware, so in Markdown it
   // short-circuited before the tag-aware pass could run — silently defeating
-  // that fix. A second implementation of the same transform is a second thing
-  // to drift, which is why pin-writing was folded into this file earlier; the
-  // pre-filter had reintroduced exactly that.
-  // `withMap: false` — same transform, no per-character offset array. ONE
-  // implementation with the map made optional, rather than a second
-  // normalizer that can drift from it (which is precisely what the previous
-  // cheap path did, silently defeating the markup fix in every .tsx file).
-  // For NON-markup files tag-skipping is a no-op by definition, so the native
-  // regex gives a provably identical string far faster than the per-character
-  // loop; markup files take the loop. Same transform either way.
+  // that fix. `withMap: false` is the same transform with no per-character
+  // offset array: one implementation with the map made optional, rather than a
+  // second normalizer that can drift from it. For plain text tag-skipping is a
+  // no-op by definition, so the native regex gives a provably identical string
+  // far faster than the per-character loop; Markdown takes the loop.
   const lines = text.split(/\r\n|\r|\n/);
   const starts = lineStarts(text);
   const { inFence, delimiter: fenceDelimiter } = computeFences(lines);
-  // Fences, inline code spans and indented code blocks are MARKDOWN
-  // constructs. `.tsx`, `.jsx`, `.html` and `.svg` are in MARKUP_EXTENSIONS
-  // because inline tags can split a phrase there, not because they parse
-  // Markdown — a backtick in TSX is a template literal or plain text. Applying
-  // the code-span exemption to them meant a staged TSX file rendering
-  // `` `<p>`buy <strong>adapter</strong>`</p>` `` kept its inner tags out of the
-  // stripper, so the phrase a user sees never fused and the gate stayed green.
-  // `.mdc` too — a Markdown rule file gets the fence, boundary and container
-  // treatment its `.md` sibling gets, not just tag stripping.
+  // Fences, inline code spans, indented code blocks and inline HTML are
+  // MARKDOWN constructs, and a plain-text file has none of them: a backtick or
+  // an angle bracket in a `.txt` is just a character. `.mdc` and `.mdx` get the
+  // fence, boundary and container treatment their `.md` sibling gets.
   const isMarkdown = MARKDOWN_EXTENSIONS.test(path);
   /**
    * Offset -> "are angle brackets here LITERAL rather than markup?"
@@ -2429,23 +1665,16 @@ function scanFile(path) {
   };
 
   const cheap = (() => {
-    // JSON takes the per-character loop too, not the fast regex. The regex is
-    // only "provably identical" for formats where the loop does nothing extra,
-    // and that stopped being true once the loop learned to decode JSON string
-    // escapes: `"buy\u0020adapter"` renders as one phrase, but the regex path
-    // keeps the literal letters `u0020` between the words, finds no token, and
-    // returns before the decode can run. The file is then never scanned at all.
-    //
-    // This is the drift this pre-filter's own comments warn about — a second
-    // implementation of the transform that silently stops matching the first.
-    // Whenever the loop learns to render something, this condition has to let
-    // the affected format reach it.
-    if (!MARKUP_EXTENSIONS.test(path) && !/\.jsonc?$/i.test(path))
-      return normalize(text);
+    // Plain text takes the native regex: the per-character loop does nothing
+    // extra there, so the two strings are identical. Whenever the loop learns
+    // to render something, this condition has to let the affected format
+    // reach it — a second implementation of the transform that silently stops
+    // matching the first is the drift this pre-filter must not reintroduce.
+    if (!MARKDOWN_EXTENSIONS.test(path)) return normalize(text);
     // The pre-filter must see everything the full scan can match, or it
     // short-circuits a file the scan would have flagged. Tag interiors are now
     // a second stream (see below), and a document that carries a dead
-    // identifier ONLY inside tags — `<vpfi-buy-adapter>` in an HTML file —
+    // identifier ONLY inside tags — `<vpfi-buy-adapter>` as raw HTML in a document —
     // normalizes to the empty string here. Appending the tag texts can fuse
     // tokens across tags that the real scan would not, but a pre-filter may
     // only err toward doing MORE work: a false positive costs one file's scan,
@@ -2497,7 +1726,7 @@ function scanFile(path) {
     // reached through formatting instead of through an entity.
     const readGap = (from, to) =>
       renderRefs(
-        MARKUP_EXTENSIONS.test(path) && !literalAt(from)
+        MARKDOWN_EXTENSIONS.test(path) && !literalAt(from)
           ? stripRecognizedTags(from, to)
           : text.slice(from, to),
       );
@@ -2509,7 +1738,7 @@ function scanFile(path) {
     // fixed the inline case had to keep this distinction, which is the same one
     // `crossesBlockBoundary` itself draws.
     if (
-      MARKUP_EXTENSIONS.test(path) &&
+      MARKDOWN_EXTENSIONS.test(path) &&
       !literalAt(map[end - 1] + 1) &&
       /<\s*\/?\s*(?:hr|p|div|section|article|aside|nav|main|header|footer|figure|figcaption|blockquote|pre|table|thead|tbody|tr|td|th|ul|ol|li|dl|dt|dd|h[1-6]|form|fieldset|details|summary|address)\b/i.test(
         text.slice(map[end - 1] + 1, map[end]),
@@ -2594,24 +1823,11 @@ function scanFile(path) {
     // rejected the match before this runs.
     const from = map[a];
     const to = identifierSpanEnd(map[b]);
-    let seen = renderRefs(
-      !inTagInterior && MARKUP_EXTENSIONS.test(path) && !literalAt(from)
+    const seen = renderRefs(
+      !inTagInterior && MARKDOWN_EXTENSIONS.test(path) && !literalAt(from)
         ? stripRecognizedTags(from, to)
         : text.slice(from, to),
     );
-    // …and JSON escapes decoded, for the fourth time in the same shape. The
-    // normalizer already decodes `\u0073` to `s` — that is how the candidate is
-    // found — but this validation re-sliced the UNDECODED source, saw a
-    // backslash and four hex digits, and rejected the span as non-identifier.
-    // `{"operation":"buyOption\u0073"}` is read by every JSON consumer as the
-    // exact retired getter, and the encoding bought an exemption. Every check
-    // that decides what a word IS has to read the rendered stream: entities,
-    // tags, PDF escapes, and this.
-    if (/\.jsonc?$/i.test(path)) {
-      seen = seen.replace(/\\u([0-9a-fA-F]{4})/g, (_m, h) =>
-        String.fromCharCode(parseInt(h, 16)),
-      );
-    }
     return /^[A-Za-z0-9_-]+$/.test(seen);
   };
 
@@ -2632,10 +1848,6 @@ function scanFile(path) {
       text.slice(lastOffset, lastOffset + 40),
     );
     if (ref) return lastOffset + ref[0].length;
-    // …and the same for a JSON `\uXXXX`, whose decoded character also maps back
-    // to the escape's opening backslash. Without this the span was cut one
-    // character into the escape and the validation below saw a lone `\`.
-    if (/^\\u[0-9a-fA-F]{4}/.test(text.slice(lastOffset, lastOffset + 6))) return lastOffset + 6;
     return lastOffset + 1;
   }
 
@@ -2673,11 +1885,11 @@ function scanFile(path) {
    *     pasted into a doc as a code sample
    *   - a fenced-block DELIMITER line — see below
    *
-   * Newlines alone are never boundaries: `GuardianPausable.sol:16` wraps
-   * "the buy\n *         adapter/receiver" and is a real mention.
+   * Newlines alone are never boundaries: a sentence wrapped as "the buy\n
+   * adapter" across two lines is one phrase and a real mention.
    *
    * The structural rules apply to `.mdx` as well as `.md`. MDX is in
-   * MARKUP_EXTENSIONS and is Markdown, but the flag here tested `.md` only, so
+   * MARKDOWN_EXTENSIONS and is Markdown, but the flag here tested `.md` only, so
    * an `.mdx` document with "Decide what to buy" followed by a
    * `# Adapter selection follows` heading had no boundary between them and the
    * gate BLOCKED a clean file.
@@ -2729,47 +1941,7 @@ function scanFile(path) {
     // boundary rules from throwing it away one step later.
     if (inTagInterior) return false;
 
-    // In JSON, separate string values are separate pieces of text and never
-    // render as one phrase. The normalizer drops the punctuation between them,
-    // so `["Decide what to buy", "Adapter selection follows"]` fused into
-    // `buyadapter` and failed a clean file. A span lying inside ONE string
-    // literal cannot contain an UNESCAPED quote; one that does has crossed out
-    // of it. The escape matters: `"…buy \"adapter\" before cutover."` is a
-    // single valid value that renders as one phrase naming the dead surface,
-    // and counting its escaped quotes as boundaries discarded a real mention.
-    // Drop backslash escapes before looking, so only structural quotes remain.
-    if (/\.jsonc?$/i.test(path)) {
-      if (span.replace(/\\[\s\S]/g, '').includes('"')) return true;
-      // …but the ABSENCE of a quote does not prove the span is inside one. In
-      // `.jsonc` it can be ordinary COMMENT prose, and round 19's unconditional
-      // return skipped the sentence rules there — reporting
-      // `// Decide what to buy: Adapter selection follows.` as a mention. The
-      // exemption is for string VALUES, so it has to establish that it is in
-      // one: the nearest structural quote before the span must be an opening
-      // one.
-      // Quotes inside a COMMENT cannot open a JSON string, so counting every
-      // raw `"` before the span let one comment flip the parity and hand the
-      // span back to the prose rules — silencing a real configuration
-      // spelling. Comments are stripped with a scan that itself tracks string
-      // state, because a `//` inside a string value is data, not a comment.
-      const before = jsoncCodeOnly(text.slice(0, map[a]));
-      const quotes = (before.match(/"/g) || []).length;
-      if (quotes % 2 === 0) {
-        // Even number of quotes before it ⇒ NOT inside a string literal.
-        // Fall through to the prose rules below.
-      } else {
-      // A JSON STRING VALUE IS NOT A SENTENCE. Having established the span lies
-      // within ONE literal, the prose punctuation rules below must not run on
-      // it: `{"operation":"buy:adapter"}` names the dead identifier exactly as
-      // `buy-adapter` does, and the `:` read as a sentence ender discarded it
-      // while the hyphenated spelling was caught. This is the same call the
-      // tag-interior stream already makes one branch down, for the identical
-      // `data-operation="buy:adapter"` — the two paths disagreed about the same
-      // string.
-        return false;
-      }
-    }
-    if (MARKUP_EXTENSIONS.test(path) && !literalAt(from)) {
+    if (MARKDOWN_EXTENSIONS.test(path) && !literalAt(from)) {
       // Comments FIRST and by the same rule as the normalizer, which now skips
       // them. Leaving them in re-broke the case they were skipped for: the `!`
       // in `<!--` is a sentence ender, so `buy <!-- note --> adapter` fused in
@@ -2807,28 +1979,22 @@ function scanFile(path) {
       // invisible; the character it stands for is not.
       span = renderRefs(span);
     }
-    // CJK terminators alongside their ASCII equivalents. `apps/alpha02/src/
-    // i18n/locales/{ja,ko}.json` are tracked and scanned, and a full-width `。`
+    // CJK terminators alongside their ASCII equivalents. A full-width `。`
     // ends a sentence exactly as `.` does — normalization drops it, so a
-    // rendered "…buy。Adapter…" would fuse into a mention and block a clean
-    // localized file. No such adjacency exists in those bundles today (they
-    // carry none of the tokens), so this is future-proofing rather than a live
-    // fix — but it can only ever PREVENT a false block, never hide a mention.
+    // rendered "…buy。Adapter…" in a translated document would fuse into a
+    // mention and block a clean file. Future-proofing rather than a live fix,
+    // but it can only ever PREVENT a false block, never hide a mention.
     if (/[.!?;:|]/.test(span)) return true;
     if (/[。！？；：]/.test(span)) return true;
     // CR, LF and CRLF — a blank line is a blank line whatever ends it.
     if (/[\r\n][ \t]*[\r\n]/.test(span)) return true;
     const firstLine = lineOf(starts, from);
     const lastLine = lineOf(starts, to);
-    // BOTH structural rules are markdown-only and fence-excluded. `#` is a
-    // heading in Markdown and a COMMENT everywhere else: applying the heading
-    // rule globally silenced `deploy-mainnet.sh:831`, which wraps "the buy\n
-    // # receiver (canonical) or mirror VPFI + buy adapter" across shell comment
-    // lines — live text presenting the removed components as current deploy
-    // steps, and the very residue this gate was built to catch. Same trap as
-    // the `*` list marker inside a fenced Solidity comment, one round earlier:
-    // a character that means "new block" in Markdown means "continuation" in
-    // code.
+    // BOTH structural rules are markdown-only and fence-excluded. `#` and `*`
+    // mean "new block" in Markdown and nothing in plain text, and applying the
+    // heading rule outside Markdown once silenced a real wrapped mention in a
+    // shell comment (code files were in scope then). Inside a fence they are
+    // code, not structure.
     if (isMarkdown) {
       for (let i = firstLine + 1; i <= lastLine; i++) {
         // A fence delimiter is itself the boundary: the span jumped over a
@@ -3060,9 +2226,9 @@ function scanFile(path) {
       // Markdown. The underline must not itself be a list marker or a thematic
       // break with spaces, so require a run of three or more.
       // MARKDOWN ONLY. Without this guard the rule fired on every extension,
-      // and `---` is a document separator in YAML — so `status: historical`
-      // above one was read as a level-2 heading governing a mention further
-      // down the file, and editing an unrelated earlier document moved the
+      // and a `---` line in plain text (YAML was in scope then, where it
+      // separates documents) was read as a level-2 heading governing a mention
+      // further down the file, so editing an unrelated earlier line moved the
       // digest. That direction is worse than the miss it fixes: a false BLOCK
       // on an ordinary edit trains people to re-pin without reading, which is
       // the one habit that would make this whole gate worthless.
