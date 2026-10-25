@@ -121,6 +121,16 @@ export function applyConnectSources(headers, sources) {
   return headers.replace(CONNECT_SOURCES_PLACEHOLDER, origins.join(' '));
 }
 
+/** `file`'s text, or `null` when it does not exist (any other error throws). */
+function readIfPresent(file) {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return null;
+    throw e;
+  }
+}
+
 /**
  * The Vite plugin a surface uses: after Vite writes the client output, it
  * writes `sources()` into the built `_headers` in place of the placeholder,
@@ -140,14 +150,18 @@ export function cspConnectSourcesPlugin(options) {
     apply: 'build',
     writeBundle(output) {
       const outDir = output.dir;
-      if (!outDir || !fs.existsSync(path.join(outDir, 'index.html'))) return;
+      if (!outDir) return;
+      // Each file's absence is handled from the read itself, never from a
+      // separate existence check, so what is completed and written is
+      // exactly what was read.
+      if (readIfPresent(path.join(outDir, 'index.html')) === null) return;
       const headersFile = path.join(outDir, '_headers');
-      if (!fs.existsSync(headersFile)) {
+      const headers = readIfPresent(headersFile);
+      if (headers === null) {
         this.error(
           `[csp] ${headersFile} is missing` + (options.missingHeadersHint ? `; ${options.missingHeadersHint}` : '.'),
         );
       }
-      const headers = fs.readFileSync(headersFile, 'utf8');
       const completed = applyConnectSources(headers, options.sources());
       fs.writeFileSync(headersFile, completed);
       console.log(`[csp] connect-src allows ${policyConnectSources(completed).join(' ')}`);
