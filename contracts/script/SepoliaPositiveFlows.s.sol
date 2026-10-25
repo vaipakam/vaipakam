@@ -27,6 +27,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {MockPoolPricing} from "./lib/MockPoolPricing.sol";
 
 /**
  * @title SepoliaPositiveFlows
@@ -156,8 +157,12 @@ contract SepoliaPositiveFlows is Script {
 
         // ── Mock oracle infra (deployed by deployer) ────────────────────
         MockChainlinkRegistry mockRegistry = new MockChainlinkRegistry();
-        MockChainlinkFeed usdcFeed = new MockChainlinkFeed(1e8, 8);       // $1.00
-        MockChainlinkFeed wethFeed = new MockChainlinkFeed(2000e8, 8);    // $2000.00
+        // One price per asset, read by the feed AND the pool below, so the
+        // two sources the liquidity classifier compares cannot drift apart.
+        int256 usdcPriceE8 = 1e8;     // $1.00
+        int256 wethPriceE8 = 2000e8;  // $2000.00
+        MockChainlinkFeed usdcFeed = new MockChainlinkFeed(usdcPriceE8, 8);
+        MockChainlinkFeed wethFeed = new MockChainlinkFeed(wethPriceE8, 8);
         address usdDenom = 0x0000000000000000000000000000000000000348;    // Chainlink Denominations.USD
         // Register feeds for liquid mock tokens only (illiquid tokens have NO feed → naturally Illiquid)
         mockRegistry.setFeed(address(usdc), usdDenom, address(usdcFeed));
@@ -166,11 +171,21 @@ contract SepoliaPositiveFlows is Script {
         // Mock v3-style AMM factory + mUsdc/mWETH 0.3% pool. OracleFacet
         // looks up pools via `factory.getPool(tokenA, tokenB, fee)` (no
         // CREATE2 derivation), so any ABI-compatible mock works. Pool
-        // liquidity is set well above the MIN_LIQUIDITY_PAD floor so
-        // mUsdc and mWETH classify Liquid; illiquidToken/illiquidLending
-        // have no pool registered and classify Illiquid naturally.
+        // liquidity is deep enough for the floor-slippage probe, and the
+        // spot is priced to AGREE with the two feeds above (#848, as
+        // {AnvilNewPositiveFlows} has since #856): OracleFacet's
+        // value-balance guard refuses a pool whose feed-valued reserves do
+        // not balance. The raw 1:1 spot this used to carry is wildly off
+        // for a $1 6-dec / $2000 18-dec pair, so mUsdc classified Illiquid
+        // and every USDC loan here was silently an illiquid-principal loan,
+        // which a lender sale refuses (`SaleLegUnpriceable`).
+        // illiquidToken/illiquidLending have no pool registered and
+        // classify Illiquid naturally.
         MockUniswapV3Factory univ3Factory = new MockUniswapV3Factory();
-        uint160 mockSqrtPriceX96 = 79228162514264337593543950336; // 2^96 ≈ price 1
+        uint160 mockSqrtPriceX96 = MockPoolPricing.sqrtPriceX96(
+            address(usdc), uint256(usdcPriceE8), usdc.decimals(),
+            address(weth), uint256(wethPriceE8), weth.decimals()
+        );
         univ3Factory.createPool(address(usdc), address(weth), 3000, mockSqrtPriceX96, 1e24);
         console.log("MockUniswapV3Factory:", address(univ3Factory));
 
@@ -200,7 +215,14 @@ contract SepoliaPositiveFlows is Script {
         OracleAdminFacet(diamond).setWethContract(address(weth));
         OracleAdminFacet(diamond).setEthUsdFeed(address(wethFeed));
         OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3Factory));
-        console.log("Oracle configured: registry, feeds set");
+        // #848 — route the depth probe over THIS fixture's mock WETH, so it
+        // discovers the mUsdc/mWETH pool (the same reasoning
+        // {AnvilNewPositiveFlows} records under #856: a quote set naming any
+        // other asset finds no mock pool, and mUsdc reads Illiquid).
+        address[] memory paa = new address[](1);
+        paa[0] = address(weth);
+        ConfigFacet(diamond).setPaaAssets(paa);
+        console.log("Oracle configured: registry, feeds, pool, PAA set");
 
         // Configure risk parameters for mock tokens
         // maxLtvBps=8000 (80%), liqThreshold=8500 (85%), liqBonus=500 (5%), reserveFactor=1000 (10%)

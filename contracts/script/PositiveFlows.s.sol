@@ -13,8 +13,16 @@ import {AnvilNewPositiveFlows} from "./AnvilNewPositiveFlows.s.sol";
  *         original lifecycle suite (`SepoliaPositiveFlows.s.sol`,
  *         15 scenarios) and the newer-features suite
  *         (`AnvilNewPositiveFlows.s.sol`, 18 scenarios) into a single
- *         entry point that exercises every protocol surface end-to-end
- *         on whatever chain the operator points it at.
+ *         entry point. It is a SMOKE suite over the lifecycle backbone and
+ *         a set of newer surfaces, not the full catalog: what it does not
+ *         cover is listed in `docs/TestScopes/PositiveFlowCoverage.md`.
+ *
+ *         Chain-agnostic in ADDRESSING only. Both halves re-point the target
+ *         Diamond's oracle (Chainlink registry, v3 factory, PAA quote set)
+ *         at mock venues they deploy themselves, so pointing this at a
+ *         shared testnet Diamond replaces that chain's live price sources.
+ *         Run it against a local Anvil, or a Diamond deployed for the
+ *         rehearsal.
  *
  *         The two halves cover disjoint surface areas:
  *
@@ -76,6 +84,31 @@ import {AnvilNewPositiveFlows} from "./AnvilNewPositiveFlows.s.sol";
  *         themselves once their `run()` executes. The visible on-chain
  *         effect is the union of the two children's broadcasts in
  *         order; no extra deploy txns are emitted by the wrapper.
+ *
+ *         How to run it (#848 — both flags are REQUIRED, and neither is a
+ *         workaround for a contract fault):
+ *
+ *             forge script script/PositiveFlows.s.sol \
+ *               --rpc-url <rpc> --broadcast --slow --disable-block-gas-limit
+ *
+ *         `--disable-block-gas-limit`: this composition runs every scenario
+ *         inside ONE simulated call frame, `run()`, so the frame's gas is the
+ *         SUM of all 33 scenarios (~215M). Forge caps a simulated call at the
+ *         chain's block gas limit (30M on a default Anvil), so without the
+ *         flag the frame runs dry part-way through Phase A and the next
+ *         heavy call fails out-of-gas inside a nested read — reported as
+ *         whatever error that call's caller maps an out-of-gas to (measured:
+ *         `LoanInitiationFailed()` in Phase A scenario 8). The flag lifts the
+ *         cap for the SIMULATION only; each broadcast transaction is still
+ *         estimated and sent on its own, far below any block limit.
+ *
+ *         A FRESH block on Anvil: simulation runs at the latest block's
+ *         timestamp, while each broadcast transaction is mined at the
+ *         wall-clock time. On an Anvil left idle (or restored with
+ *         `evm_revert`) the latest block can be hours old, so a signed accept
+ *         whose deadline is one hour past the simulated time arrives expired
+ *         (`AcceptDeadlineExpired`). Run `cast rpc evm_mine` first. A live
+ *         chain mines continuously and does not need it.
  */
 contract PositiveFlows is Script {
     function run() external {
