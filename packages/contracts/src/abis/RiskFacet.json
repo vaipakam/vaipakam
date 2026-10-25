@@ -188,11 +188,6 @@
         "name": "liqBonusBps",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "reserveFactorBps",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -403,12 +398,6 @@
       },
       {
         "name": "liqBonusBps",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "reserveFactorBps",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
