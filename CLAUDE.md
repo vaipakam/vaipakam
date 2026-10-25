@@ -1271,7 +1271,10 @@ The cross-chain code lives in `contracts/src/crosschain/`:
 
 **Pause lever**: every cross-chain contract carries `GuardianPausable` —
 guardian-or-owner `pause()`, owner-only `unpause()`, on both the send and
-receive paths. A paused inbound reverts; CCIP records it as a failed
+receive paths. Since #937 the canonical `VPFIToken` does too; its guardian is
+wired by `ConfigureCcip._setGuardians` while ADMIN still owns the token, and
+the handover gate refuses a canonical chain whose token guardian is not the
+Pauser Safe. A paused inbound reverts; CCIP records it as a failed
 message, manually re-executable once unpaused, so nothing is lost.
 
 **Chain scope (Phase 1)**: Ethereum, Base, Polygon, Arbitrum, Optimism.

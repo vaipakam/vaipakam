@@ -135,7 +135,9 @@ the admin EOA:
    the Timelock as the VPFI CCT administrator.
 
 The cross-chain contracts' guardian (the Pauser Safe) is set earlier, by
-`ConfigureCcip`, while the admin EOA still owns them.
+`ConfigureCcip`, while the admin EOA still owns them. Since #937 that
+includes the canonical `vpfiToken` on Base; if the admin no longer owns a
+reused token, `ConfigureCcip` says so and the token's owner sets it.
 
 After this the Diamond is fully Timelock-controlled. Any further admin
 action is Governance-Safe-proposed, waits 48h, and can be cancelled by
@@ -238,6 +240,7 @@ timelock.MIN_DELAY_FLOOR()                      >= 172800  // any non-testnet ch
 // VPFIToken (canonical only)
 Ownable2Step(vpfiToken).owner()                 == timelock
 Ownable2Step(vpfiToken).pendingOwner()          == address(0)
+GuardianPausable(vpfiToken).guardian()          == pauserSafe   // #937
 
 // EVERY cross-chain target `Handover.s.sol` transfers — not only the
 // GuardianPausable ones. `_transferCrossChainOwnership` covers: ccipMessenger,
