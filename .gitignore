@@ -92,6 +92,11 @@ contracts/deployments/*/storage-layout.anchor.prior-rehearsal.*.json
 # timestamped subdirectory under .archive/<ISO-8601>/ before wiping.
 # Forensic value only; rebuilds on every --fresh redeploy.
 contracts/deployments/*/.archive/
+# The open-run record of the staged positive-flows run (#848): written by
+# `PositiveFlowsTimed.open()` and removed by its read-only `finish()` once the
+# chain shows nothing it names is still open.
+# It names positions on one rehearsal chain and is meaningless elsewhere.
+contracts/deployments/*/positive-flows-timed.json
 
 .vscode/
 
