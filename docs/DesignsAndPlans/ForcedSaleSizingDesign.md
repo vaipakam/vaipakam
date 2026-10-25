@@ -339,7 +339,14 @@ The SwapAttemptFacet / TreasuryFeeFacet pattern. `address(this)`-gated, no
   floor, whether the sale is covered and the largest accepted quote, so a
   keeper builds adapter calldata for an amount the host accepts. It returns
   an all-zero plan when no sale of that kind is owed (loan not active,
-  grace not over, Health Factor not below 1, nothing owed).
+  grace not over, Health Factor not below 1, nothing owed). For the
+  time-based default it also returns the all-zero plan, without needing a
+  price, when the default would take a route that sells nothing: the
+  unpriced fallback, an in-kind move (illiquid, or a value collapse) or a
+  refusal. One route rule decides this for the default and the preview
+  alike (`LibDefaultRoute`), so the plan exists exactly when the default
+  sells, and a keeper sends a no-sale default with no quote and an empty
+  try-list (#2834 review).
 
 Each caller keeps its preconditions, its pull, its failure branch, its
 terminal transition, NFT status, rewards and its own lifecycle event. The

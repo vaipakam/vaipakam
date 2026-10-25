@@ -209,14 +209,16 @@ runs half of it on old code:
   OracleFacet carries, to tell a missing price (the lender takes all the
   collateral) from a distrusted one (the close-out refuses). It is inlined into
   FallbackCustodyFacet (the fallback entry), RiskFacet (the discounted
-  liquidation), ClaimFacet (the backstop par check) and DefaultedFacet (the
-  liquid time-based default's priced-pair route, #2419); find the set again with
-  a grep for `tryOracleRate`, `collateralEquivalent`, `principalEquivalent` and
+  liquidation), ClaimFacet (the backstop par check), and DefaultedFacet and
+  ForcedSaleFacet through `LibDefaultRoute` (the time-based default's route
+  rule, which the default acts on and the sale preview reads, #2419 / #2796);
+  find the set again with a grep for `tryOracleRate`, `LibDefaultRoute`,
+  `collateralEquivalent`, `principalEquivalent` and
   `computeFallbackEntitlements`, not from this list. Any of them refreshed onto
   a Diamond whose OracleFacet predates #666 reverts `FunctionDoesNotExist` on
   that path (a hard revert, never a misread price). `RefreshAllFacetsInPlace`
-  carries all five and `UpgradeOracleFacet` adds the selector; `RedeployFacets`
-  carries the four consumers but not OracleFacet, so it refuses such a Diamond
+  carries all six and `UpgradeOracleFacet` adds the selector; `RedeployFacets`
+  carries the five consumers but not OracleFacet, so it refuses such a Diamond
   (`PredatesOraclePriceStatus`) and the oracle is refreshed first.
 
 - **NumeraireValueFacet + every facet that values an amount in the numeraire

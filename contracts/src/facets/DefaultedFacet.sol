@@ -7,7 +7,6 @@ import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
-import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
@@ -31,6 +30,7 @@ import {ForcedSaleFacet} from "./ForcedSaleFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
+import {LibDefaultRoute} from "../libraries/LibDefaultRoute.sol";
 
 /**
  * @title DefaultedFacet
@@ -321,100 +321,38 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // match above owned its own lien adjustment (Codex #571 P1: an early
         // release would strand a partial match's residual unprotected).
 
-        // Execution routing (README §1): liquidation depends on whether the
-        // live network exposes a swap path for the collateral. When the
-        // active-network check returns Illiquid we drop into the full-
-        // collateral-transfer branch below instead of attempting a swap.
-        //
-        // #2419 — for a loan liquid on both legs at origination the PAIR is
-        // probed first (`tryOracleRate`), BEFORE the live classifier: when a
-        // leg has no usable price the route is already the unpriced fallback
-        // (see the route note below), whatever the other leg says — the
-        // missing-price rule wins over a distrusted other leg (owner
-        // decision 2026-10-22, #666) — so the classifier, which refuses a
-        // distrusted collateral price, is not consulted. A priced pair with a
-        // distrusted leg reverts inside the probe (#666).
-        bool liquidLoan =
-            loan.assetType == LibVaipakam.AssetType.ERC20 &&
-            loan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
-            loan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid;
-        bool unpricedPair;
-        if (liquidLoan) {
-            (bool pairPriced, ) = LibFallback.tryOracleRate(
-                address(this), loan.collateralAsset, loan.principalAsset
-            );
-            unpricedPair = !pairPriced;
-        }
-        // The live market check is read only where it can change the route:
-        // a loan liquid at origination whose pair is priced. An unpriced pair
-        // needs no market check, and a loan that began illiquid on either leg
-        // defaults in kind whatever the check would say, so neither consults
-        // the classifier (which refuses a distrusted collateral price, #666).
-        LibVaipakam.LiquidityStatus liquidity = (liquidLoan && !unpricedPair)
-            ? OracleFacet(address(this)).checkLiquidityOnActiveNetwork(loan.collateralAsset)
-            : LibVaipakam.LiquidityStatus.Illiquid;
-
         // Terminal NFT status for this default — README §7: "Loan Defaulted" or
         // "Loan Liquidated". Each branch below sets the appropriate label.
         LibVaipakam.LoanPositionStatus terminalStatus =
             LibVaipakam.LoanPositionStatus.LoanDefaulted;
 
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
-            // #1192 (Pass-2 C1) — decide the liquid-collateral route on a
-            // genuine LTV>110% value collapse ONLY, not on plain HF<1.
-            // Previously this keyed on `isCollateralValueCollapsed`
-            // (ltv>110% || hf<1), which handed the lender the ENTIRE liquid
-            // collateral in-kind — zero swap attempts, no borrower residual —
-            // for any HF<1 loan, even one whose collateral still covers the
-            // lender ceiling. Spec §774/§790/§1373: an HF<1-but-covered loan
-            // (collateral between debt and debt/liqThreshold, LTV still ≤110%)
-            // must attempt the swap/split waterfall (Path A) so the lender is
-            // capped at their entitlement and the borrower keeps the
-            // recoverable surplus; a swap that can't execute safely then routes
-            // to the oracle-aware three-way fallback
-            // (`FallbackCustodyFacet.enterFallback`), which itself gives the lender
-            // the whole collateral only when the split can't be priced
-            // (oracle-dead) or the collateral is insufficient. Only query for
-            // liquid collateral — illiquid loans have no oracle and
-            // `calculateLTV` reverts IlliquidLoanNoRiskMath.
-            //
-            // #2419 — which route a default takes is decided first by what
-            // the loan WAS at origination (`loan.collateralLiquidity` /
-            // `loan.principalLiquidity`), then by what can be done now:
-            //  - A loan liquid on both legs at origination is the only kind
-            //    risk math and a sale apply to (`calculateLTV` refuses any
-            //    other with IlliquidLoanNoRiskMath). Its PAIR must be priced:
-            //    the LTV read and the sale floor value both legs, and the
-            //    shared valuation rule refuses a missing or zero price. When
-            //    the pair cannot be priced (`tryOracleRate`: a missing or zero
-            //    price, or unreadable decimals, on either leg) the default skips the LTV read and the
-            //    swap and enters the fallback directly, exactly as a failed
-            //    swap would — a sale with no oracle floor is not attempted,
-            //    the default still completes (lender first), and the
-            //    fallback's unpriced split gives the lender the collateral
-            //    while the loan stays curable. This holds whatever the live
-            //    probe says: a missing collateral price makes it report the
-            //    collateral Illiquid, which alone would send a loan never
-            //    consented as illiquid to `LiquidationFailed`. A priced pair
-            //    on liquid collateral takes the swap route, or the in-kind
-            //    route on a genuine value collapse.
-            //  - A loan that began illiquid on either leg was consented as
-            //    illiquid and defaults in kind (the branch below), whatever
-            //    the live probe says now; it never reaches risk math.
-            // A DISTRUSTED price reverts the whole default instead (#666:
-            // refuse and retry once the feeds agree), except where the other
-            // leg has no usable price at all, where the unpriced route wins.
-            // `liquidLoan` / `unpricedPair` were settled above, and with them
-            // `liquidity`: Liquid only for a priced loan liquid at origination
-            // whose collateral the live check still finds liquid, Illiquid for
-            // every other loan.
-            bool isLtvCollapsed;
-            if (liquidity == LibVaipakam.LiquidityStatus.Liquid) {
-                isLtvCollapsed = RiskFacet(address(this)).calculateLTV(loanId)
-                    > LibVaipakam.cfgVolatilityLtvThresholdBps();
-            }
+            // Execution routing (README §1) — #2796: the route is decided by
+            // the one rule {LibDefaultRoute.erc20Route}, which
+            // `ForcedSaleFacet.previewForcedSale` reads too, so the published
+            // sale plan exists exactly when this default sells. In short:
+            //  - #2419: what the loan WAS at origination decides first. Only a
+            //    loan liquid on both legs at origination can sell, and its
+            //    PAIR must be priced (the sale floor values both legs). When a
+            //    leg has no usable price the default skips the LTV read and
+            //    the swap and enters the fallback directly, exactly as a
+            //    failed swap would: a sale with no oracle floor is not
+            //    attempted, the default still completes (lender first), and
+            //    the fallback's unpriced split gives the lender the
+            //    collateral while the loan stays curable. A DISTRUSTED price
+            //    reverts the whole default instead (#666: refuse and retry
+            //    once the feeds agree).
+            //  - #1192 (Pass-2 C1): a priced pair on collateral the live check
+            //    still finds liquid sells, and moves in kind only on a genuine
+            //    LTV>110% value collapse, never on plain HF<1, so an
+            //    HF<1-but-covered loan keeps the borrower's recoverable
+            //    surplus (spec §774/§790/§1373).
+            //  - A loan consented as illiquid (or whose collateral the live
+            //    check finds illiquid) moves in kind when both parties
+            //    consented, and is refused otherwise.
+            LibDefaultRoute.Route route = LibDefaultRoute.erc20Route(loan);
 
-            if (unpricedPair) {
+            if (route == LibDefaultRoute.Route.UnpricedFallback) {
                 // #2419 — see the route note above: no price, no sale. The
                 // whole collateral goes to the Diamond (#821: move-out exempt,
                 // so a borrower flagged after init never bricks the default;
@@ -437,7 +375,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 return;
             }
 
-            if (liquidity == LibVaipakam.LiquidityStatus.Liquid && !isLtvCollapsed) {
+            if (route == LibDefaultRoute.Route.Sale) {
                 // Time-based default with liquid collateral: sell without an
                 // HF check — the README treats non-repayment after grace as a
                 // separate default trigger regardless of collateral health.
@@ -479,12 +417,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 }
                 // Liquid-collateral DEX liquidation succeeded → "Loan Liquidated".
                 terminalStatus = LibVaipakam.LoanPositionStatus.LoanLiquidated;
-            } else if (
-                ((liquidity == LibVaipakam.LiquidityStatus.Liquid &&
-                    isLtvCollapsed) ||
-                    (liquidity == LibVaipakam.LiquidityStatus.Illiquid &&
-                        loan.riskAndTermsConsentFromBoth))
-            ) {
+            } else if (route == LibDefaultRoute.Route.InKind) {
                 // Illiquid or value collapsed: Move collateral from borrower's vault to lender's vault
                 // so ClaimFacet.claimAsLender can withdraw from lender's vault consistently.
                 // The whole collateral moves, so the lien goes first (it

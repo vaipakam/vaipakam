@@ -24,6 +24,13 @@ The liquidation, default and periodic-settlement calls each gained that one
 argument; on the split route the amount is the sum of the legs. Keepers must
 read the plan and quote within it before these contracts reach a chain.
 
+A time-based default that will not sell publishes no plan. When the loan's
+prices are missing (it enters the fallback without a sale), when its
+collateral moves to the lender in kind, or when the default is refused, the
+plan is empty and needs no price, and the default is sent with no amount.
+The default and the plan read the same route rule, so a plan exists exactly
+when the default sells.
+
 Partial liquidation keeps the keeper's choice of how much to sell, but its
 incentive and handling charge are now shares of the amount repaid rather than
 of the proceeds taken alongside it, so the lender receives every unit the

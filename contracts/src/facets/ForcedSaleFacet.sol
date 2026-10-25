@@ -16,6 +16,7 @@ import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
+import {LibDefaultRoute} from "../libraries/LibDefaultRoute.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
@@ -239,16 +240,21 @@ contract ForcedSaleFacet is IVaipakamErrors {
      *         aggregator quote encodes the sell amount, and a sale only ever
      *         sells the amount it was quoted for. Quoting a little above
      *         `sell` leaves room for the interest that accrues before the
-     *         block. Needs a fresh price on both assets; without one this
-     *         reverts with the price reader's own error, as the sale itself
-     *         would. Returns an all-zero plan when no sale of this kind is
+     *         block. A sale that will run needs a fresh price on both
+     *         assets; without one this reverts with the price reader's own
+     *         error, as the sale itself would (a default is the exception:
+     *         its unpriced pair takes the fallback, below). Returns an all-zero plan when no sale of this kind is
      *         due now: the loan is not Active; periodic — nothing is owed,
      *         or the settlement is not yet allowed (the period's grace is not
      *         over, periodic interest is off, the loan has no cadence);
      *         Health-Factor — the loan is healthy; default — its grace
-     *         period has not ended. The caller's other gates (the sequencer,
-     *         the collateral's live liquidity, the internal-match window, a
-     *         value collapse on default) still apply.
+     *         period has not ended, or the default would take a route that
+     *         sells nothing ({LibDefaultRoute}: an unpriced pair entering
+     *         the fallback, an in-kind move, a refused default), so a caller
+     *         sends that default with no quote and an empty try-list. The
+     *         caller's other gates (the sequencer, the internal-match
+     *         window) still apply. A distrusted price reverts, as the
+     *         default itself would (#666).
      */
     function previewForcedSale(uint256 loanId, ForcedSaleKind kind)
         external
@@ -334,8 +340,14 @@ contract ForcedSaleFacet is IVaipakamErrors {
     function _due(LibVaipakam.Loan storage loan, ForcedSaleKind kind) private view returns (bool) {
         if (loan.status != LibVaipakam.LoanStatus.Active) return false;
         if (kind == ForcedSaleKind.TimeBasedDefault) {
+            // A default sells only on its sale route (#2796): the plan exists
+            // exactly when `triggerDefault` would sell, by the one rule both
+            // read. The unpriced fallback, the in-kind move and a refused
+            // default sell nothing, so they need no quote and no price here.
             return block.timestamp >
-                LibLoanClock.maturity(loan) + LibVaipakam.gracePeriod(loan.durationDays);
+                LibLoanClock.maturity(loan) + LibVaipakam.gracePeriod(loan.durationDays) &&
+                loan.assetType == LibVaipakam.AssetType.ERC20 &&
+                LibDefaultRoute.erc20Route(loan) == LibDefaultRoute.Route.Sale;
         }
         if (kind == ForcedSaleKind.PeriodicSettlement) return true;
         return RiskFacet(address(this)).calculateHealthFactor(loan.id) < LibVaipakam.HF_SCALE;

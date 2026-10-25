@@ -791,6 +791,18 @@ contract DefaultedFacetTest is Test {
         assertTrue(claimAmount >= loan.principal, "Lender should get at least principal back");
     }
 
+    /// @dev #2796 — the default's sale plan exists exactly when the default
+    ///      sells ({LibDefaultRoute}): for the unpriced fallback, an in-kind
+    ///      move or a refused default the preview returns the all-zero plan,
+    ///      read here without a try/catch so a revert fails the test.
+    function _assertNoDefaultSalePlan(uint256 loanId) internal view {
+        ForcedSaleFacet.ForcedSalePlan memory plan =
+            forcedSalePlan(address(diamond), loanId, ForcedSaleFacet.ForcedSaleKind.TimeBasedDefault);
+        assertEq(plan.debt, 0, "no-sale default: plan debt");
+        assertEq(plan.sell, 0, "no-sale default: plan sell");
+        assertEq(plan.maxSell, 0, "no-sale default: plan maxSell");
+    }
+
     function testTriggerDefaultLiquidCollateral() public {
         // Create loan with liquid collateral
         uint256 loanId = createAndAcceptOffer(
@@ -1336,6 +1348,9 @@ contract DefaultedFacetTest is Test {
         uint256 grace = LibVaipakam.gracePeriod(30);
         vm.warp(endTime + grace + 1);
 
+        // #2796 — a default that takes no sale publishes no sale plan (and
+        // needs no price to say so), so the quote is 0 and the try-list unread.
+        _assertNoDefaultSalePlan(loanId);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.prank(lender);
         vm.expectEmit(true, false, false, true);
@@ -1540,6 +1555,9 @@ contract DefaultedFacetTest is Test {
         );
         // collateral is liquid (mockERC20), consent=true, LTV-collapsed=true
         // → should take the illiquid/collapsed path (else-if branch)
+        // #2796 — a default that takes no sale publishes no sale plan (and
+        // needs no price to say so), so the quote is 0 and the try-list unread.
+        _assertNoDefaultSalePlan(loanId);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectEmit(true, false, false, true);
         emit DefaultedFacet.LoanDefaulted(loanId, true, LibVaipakam.LoanStatus.Defaulted);
@@ -1574,6 +1592,9 @@ contract DefaultedFacetTest is Test {
 
         // Now: Illiquid collateral AND riskAndTermsConsentFromBoth=false → LiquidationFailed
         // (Neither the liquid swap branch nor the illiquid+consent branch is taken)
+        // #2796 — a default that takes no sale publishes no sale plan (and
+        // needs no price to say so), so the quote is 0 and the try-list unread.
+        _assertNoDefaultSalePlan(loanId);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectRevert(IVaipakamErrors.LiquidationFailed.selector);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
@@ -1934,6 +1955,9 @@ contract DefaultedFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
+        // #2796 — a default that takes no sale publishes no sale plan (and
+        // needs no price to say so), so the quote is 0 and the try-list unread.
+        _assertNoDefaultSalePlan(loanId);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectCall(
             address(ZeroExProxyMock(mockZeroExProxy)),
@@ -1989,6 +2013,9 @@ contract DefaultedFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         uint256 diamondCol0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
 
+        // #2796 — a default that takes no sale publishes no sale plan (and
+        // needs no price to say so), so the quote is 0 and the try-list unread.
+        _assertNoDefaultSalePlan(loanId);
         uint256 sellQuote = defaultQuote(address(diamond), loanId);
         vm.expectCall(
             address(ZeroExProxyMock(mockZeroExProxy)),

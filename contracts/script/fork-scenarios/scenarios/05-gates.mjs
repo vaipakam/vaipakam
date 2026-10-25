@@ -8,7 +8,7 @@
  * inventing one from a price it does not have.
  */
 import { ADMIN, DIAMOND, ERC20, MOCKS, OWNER, POSTURE, VENUE_ROUTE, borrower, f18, lender, outsider, parseUnits, pub, rpc, tx } from '../lib/chain.mjs';
-import { ABIS, approveDiamond, acceptOffer, createOffer, mint, offerParams, read } from '../lib/flow.mjs';
+import { ABIS, FORCED_SALE_KIND, approveDiamond, acceptOffer, createOffer, forcedSaleQuote, mint, offerParams, read } from '../lib/flow.mjs';
 import { sendAs, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { check, observe, expectRefusal, requireEnvelope } from '../lib/report.mjs';
@@ -82,7 +82,10 @@ async function runGates() {
   const loan = await read(ABIS.loan, 'getLoanDetails', [loanId]);
   const graceSeconds = Number(await read(ABIS.config, 'getEffectiveGraceSeconds', [loanId]));
   await warpDays(Number(loan.durationDays) + graceSeconds / 86_400 + 1);
-  const tier2Default = await simulate(DIAMOND, ABIS.defaulted, 'triggerDefault', [loanId, VENUE_ROUTE], outsider.address);
+  // Quoted from the published plan (#2796): a sale quoted outside its range is
+  // refused before the sanctions posture is even reached.
+  const { sellAmount: tier2Quote } = await forcedSaleQuote(loanId, FORCED_SALE_KIND.TimeBasedDefault);
+  const tier2Default = await simulate(DIAMOND, ABIS.defaulted, 'triggerDefault', [loanId, tier2Quote, VENUE_ROUTE], outsider.address);
   check('A5.5b', 'Tier-2 triggerDefault stays OPEN under a blanket flag — a flagged caller can still force-close a defaulted loan',
     tier2Default.ok, tier2Default.ok ? 'simulates clean, past term + grace' : tier2Default.name);
 
