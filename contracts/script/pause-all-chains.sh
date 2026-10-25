@@ -232,7 +232,11 @@ list_pause_targets() {
   # the sweep could report full containment while the repatriation channel's
   # endpoint-local pause was never engaged or verified. Role-scoped keys —
   # each chain carries exactly one; the emptiness check skips the other.
-  for KEY in diamond rewardMessenger vpfiOftAdapter vpfiMirror \
+  # #937 — the canonical `vpfiToken` (Base only) is GuardianPausable too, so
+  # the Pauser Safe can freeze it like the mirror tokens. Before #937 its
+  # pause() was owner-only and a Pauser-Safe call would have reverted, which
+  # is why it was left out.
+  for KEY in diamond rewardMessenger vpfiOftAdapter vpfiMirror vpfiToken \
              ccipMessenger buybackRemittanceReceiver rewardRemittanceReceiver \
              vpfiReturnSender vpfiReturnReceiver; do
     local ADDR=$(jq -r --arg k "$KEY" '.[$k] // empty' "$addr_file" 2>/dev/null)

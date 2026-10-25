@@ -62,6 +62,7 @@ import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulato
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 import {FeeOnTransferERC20Mock} from "./mocks/FeeOnTransferERC20Mock.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title EarlyWithdrawalFacetTest
@@ -217,42 +218,42 @@ contract EarlyWithdrawalFacetTest is Test {
         ERC20Mock(mockCollateralERC20).mint(newLender, 100000 ether);
         ERC20Mock(mockCollateralERC20).mint(borrower,  100000 ether);
 
-        cutFacet = new DiamondCutFacet();
+        cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond  = new VaipakamDiamond(owner, address(cutFacet));
-        offerCreateFacet = new OfferCreateFacet();
-        offerAcceptFacet = new OfferAcceptFacet();
-        offerPreviewFacet = new OfferPreviewFacet();
-        offerMutateFacet = new OfferMutateFacet();
-        offerMatchFacet = new OfferMatchFacet();
-        offerCancelFacet = new OfferCancelFacet();
-        profileFacet = new ProfileFacet();
-        oracleFacet = new OracleFacet();
-        nftFacet = new VaipakamNFTFacet();
-        vaultFacet = new VaultFactoryFacet();
-        loanFacet = new LoanFacet();
-        riskFacet = new RiskFacet();
-        repayFacet = new RepayFacet();
-        defaultFacet = new DefaultedFacet();
-        adminFacet = new AdminFacet();
-        claimFacet = new ClaimFacet();
-        addCollateralFacet = new AddCollateralFacet();
-        earlyFacet = new EarlyWithdrawalFacet();
-        earlyFacetDirect = new EarlyWithdrawalDirectFacet();
-        accessControlFacet = new AccessControlFacet();
+        offerCreateFacet = OfferCreateFacet(ArtifactDeploy.deploy(type(OfferCreateFacet).name));
+        offerAcceptFacet = OfferAcceptFacet(ArtifactDeploy.deploy(type(OfferAcceptFacet).name));
+        offerPreviewFacet = OfferPreviewFacet(ArtifactDeploy.deploy(type(OfferPreviewFacet).name));
+        offerMutateFacet = OfferMutateFacet(ArtifactDeploy.deploy(type(OfferMutateFacet).name));
+        offerMatchFacet = OfferMatchFacet(ArtifactDeploy.deploy(type(OfferMatchFacet).name));
+        offerCancelFacet = OfferCancelFacet(ArtifactDeploy.deploy(type(OfferCancelFacet).name));
+        profileFacet = ProfileFacet(ArtifactDeploy.deploy(type(ProfileFacet).name));
+        oracleFacet = OracleFacet(ArtifactDeploy.deploy(type(OracleFacet).name));
+        nftFacet = VaipakamNFTFacet(ArtifactDeploy.deploy(type(VaipakamNFTFacet).name));
+        vaultFacet = VaultFactoryFacet(ArtifactDeploy.deploy(type(VaultFactoryFacet).name));
+        loanFacet = LoanFacet(ArtifactDeploy.deploy(type(LoanFacet).name));
+        riskFacet = RiskFacet(ArtifactDeploy.deploy(type(RiskFacet).name));
+        repayFacet = RepayFacet(ArtifactDeploy.deploy(type(RepayFacet).name));
+        defaultFacet = DefaultedFacet(ArtifactDeploy.deploy(type(DefaultedFacet).name));
+        adminFacet = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
+        claimFacet = ClaimFacet(ArtifactDeploy.deploy(type(ClaimFacet).name));
+        addCollateralFacet = AddCollateralFacet(ArtifactDeploy.deploy(type(AddCollateralFacet).name));
+        earlyFacet = EarlyWithdrawalFacet(ArtifactDeploy.deploy(type(EarlyWithdrawalFacet).name));
+        earlyFacetDirect = EarlyWithdrawalDirectFacet(ArtifactDeploy.deploy(type(EarlyWithdrawalDirectFacet).name));
+        accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
         // #671 phase 2 (Codex #729 r4) — ConfigFacet (gate master switch) +
         // RiskAccessFacet (tier/consent setters + previewOfferAcceptBlock) are
         // needed by the buyer-side risk-gate tests for the direct sale path.
-        ConfigFacet configFacet = new ConfigFacet();
-        RiskAccessFacet riskAccessFacet = new RiskAccessFacet();
+        ConfigFacet configFacet = ConfigFacet(ArtifactDeploy.deploy(type(ConfigFacet).name));
+        RiskAccessFacet riskAccessFacet = RiskAccessFacet(ArtifactDeploy.deploy(type(RiskAccessFacet).name));
         // #1104 — RiskPreviewFacet hosts previewOfferAcceptBlock /
         // acceptMidTierAckPair / previewCreatorBlock the buyer-side gate tests read.
-        RiskPreviewFacet riskPreviewFacet = new RiskPreviewFacet();
+        RiskPreviewFacet riskPreviewFacet = RiskPreviewFacet(ArtifactDeploy.deploy(type(RiskPreviewFacet).name));
         // #1503 PR-A (Codex #1505 r1 P2) — MetricsFacet hosts
         // getUserPositionOffers, which the teardown position-NFT-cleanup test
         // reads to prove a torn-down vehicle drops out of the open-position view.
-        MetricsFacet metricsFacet = new MetricsFacet();
+        MetricsFacet metricsFacet = MetricsFacet(ArtifactDeploy.deploy(type(MetricsFacet).name));
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](36);
         cuts[25] = IDiamondCut.FacetCut({
@@ -292,7 +293,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // cut it or every ERC-20 accept reverts FunctionDoesNotExist at the
         // self-call, with the accept facet itself looking perfectly fine.
         cuts[30] = IDiamondCut.FacetCut({
-            facetAddress: address(new OfferAcceptFeeFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OfferAcceptFeeFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferAcceptFeeFacetSelectors()
         });
@@ -315,22 +316,22 @@ contract EarlyWithdrawalFacetTest is Test {
         // internal entry, and the observable stamp lives behind the T-087
         // accumulator facet; cut both so the restamp is real here rather
         // than the minimal-fixture silent no-op.
-        cuts[27] = IDiamondCut.FacetCut({facetAddress: address(new ConsolidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getConsolidationFacetSelectors()});
-        cuts[28] = IDiamondCut.FacetCut({facetAddress: address(new VPFIDiscountAccumulatorFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()});
+        cuts[27] = IDiamondCut.FacetCut({facetAddress: ArtifactDeploy.deploy(type(ConsolidationFacet).name), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getConsolidationFacetSelectors()});
+        cuts[28] = IDiamondCut.FacetCut({facetAddress: ArtifactDeploy.deploy(type(VPFIDiscountAccumulatorFacet).name), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()});
         // #1503 item 12 — the reward-migration hook is ATOMIC with the sale
         // settlement now, so `transferLenderRewardEntry` must be routed here:
         // an unrouted selector is exactly the deploy-drift failure the hook
         // bubbles, and it would fail every sale-success test in this file.
         // With the interaction program unconfigured (no launch timestamp) the
         // routed call is a no-op early-return, matching production-before-launch.
-        cuts[29] = IDiamondCut.FacetCut({facetAddress: address(new InteractionRewardsFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getInteractionRewardsFacetSelectors()});
+        cuts[29] = IDiamondCut.FacetCut({facetAddress: ArtifactDeploy.deploy(type(InteractionRewardsFacet).name), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getInteractionRewardsFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
-        cuts[16] = IDiamondCut.FacetCut({facetAddress: address(new RiskMatchLiquidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
+        cuts[16] = IDiamondCut.FacetCut({facetAddress: ArtifactDeploy.deploy(type(RiskMatchLiquidationFacet).name), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
         // #569 (2026-06-13) — encumbrance mutate facet for lien wires.
         cuts[18] = IDiamondCut.FacetCut({
-            facetAddress: address(new EncumbranceMutateFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(EncumbranceMutateFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()
         });
@@ -339,7 +340,7 @@ contract EarlyWithdrawalFacetTest is Test {
         cuts[22] = IDiamondCut.FacetCut({facetAddress: address(offerMatchFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferMatchFacetSelectors()});
         // #1219 (S-4) — the keeper routes charge capacity through a self-call into
         // this facet once a curve is set; the route cells below set one.
-        cuts[31] = IDiamondCut.FacetCut({facetAddress: address(new ServiceCapacityFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getServiceCapacityFacetSelectors()});
+        cuts[31] = IDiamondCut.FacetCut({facetAddress: ArtifactDeploy.deploy(type(ServiceCapacityFacet).name), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getServiceCapacityFacetSelectors()});
 
         // #1566 S2a - RiskFacet, DefaultedFacet and ClaimFacet reach the
         // fallback custody flows (entry, retry swap, in-kind distribution)
@@ -348,7 +349,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // cut this host too, or a failed-swap liquidation or default and the
         // fallback claim revert FunctionDoesNotExist at that self-call.
         cuts[32] = IDiamondCut.FacetCut({
-            facetAddress: address(new FallbackCustodyFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(FallbackCustodyFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
         });
@@ -358,7 +359,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // of them must cut this host too, or every attempt is refused
         // SwapAttemptHostMissing.
         cuts[33] = IDiamondCut.FacetCut({
-            facetAddress: address(new SwapAttemptFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(SwapAttemptFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSwapAttemptFacetSelectors()
         });
@@ -368,7 +369,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // hand-built Diamond that cuts any of them must cut this host too, or
         // the fee reverts FunctionDoesNotExist at that self-call.
         cuts[34] = IDiamondCut.FacetCut({
-            facetAddress: address(new TreasuryFeeFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(TreasuryFeeFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
         });
@@ -376,7 +377,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // through NumeraireValueFacet by self-call, so a hand-built Diamond
         // that cuts any of them must cut this host too.
         cuts[35] = IDiamondCut.FacetCut({
-            facetAddress: address(new NumeraireValueFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
         });

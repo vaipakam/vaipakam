@@ -6,8 +6,8 @@ preclosesses, defaults, liquidates, and probes the sanctions / KYC / illiquid
 gates — accounting every movement of value to the wei.
 
 It exists alongside, not instead of, the Solidity flow scripts
-(`AnvilNewPositiveFlows.s.sol` and siblings, catalogued in
-[`docs/TestScopes/AdvancedUserGuideTestMatrix.md`](../../../docs/TestScopes/AdvancedUserGuideTestMatrix.md)).
+(`PositiveFlows.s.sol` and its modules under `script/positive-flows/`, catalogued
+in [`docs/TestScopes/PositiveFlowCoverage.md`](../../../docs/TestScopes/PositiveFlowCoverage.md)).
 Those are the canonical on-chain flows and they need `forge`. This driver
 answers a different question — *does the deployment that is live right now
 behave as documented* — and it needs only Node, because it reads the
@@ -174,9 +174,15 @@ so a run certifies exactly this, for every step a row is written about:
    parties' wallets and vaults, the Diamond, the treasury, the venue, any
    third party): every watched balance change equals the spec-derived map.
 2. **The whole position**: every field `getLoanDetails` returns, both
-   position-NFT holders, and every field of the collateral lien — each
-   changed to the stated value or exactly as it was (`expectPosition`), and
-   every claim through `claimAndExpect`.
+   position NFTs, and every field of the collateral lien — each changed to
+   the stated value or exactly as it was (`expectPosition`), and every claim
+   through `claimAndExpect`. For each position NFT that means its holder, the
+   position status it records, its transfer lock, and its binding: that the
+   token names this loan and its own side, and that its holder's enumerated
+   token list contains it. So a sale, handover or refinance that mints a
+   correctly owned token pointing at another loan or role fails, and so does
+   a live sale or offset link that leaves the NFT transferable (each such
+   window is also probed with a transfer, refused `ERC721Locked`).
 3. **Refusals by name**, with the probe set up so only the guard under test
    can refuse.
 4. **No configurable number written in**: read from the chain or derived
@@ -192,11 +198,37 @@ a fixed shape, which is itself an envelope: the shared `createOffer` /
 refusal is a broken flow or a refusal the scenario asserts on. Every step's
 position check compares against a snapshot taken BEFORE that step.
 
-**Not verified, and tracked in #2332**: position-NFT metadata and the
-reverse position index; position locks while a sale or offset link is live;
-and whether interest booked by a periodic settlement is credited when that
-loan later closes. A finding in one
-of those is a follow-up for #2332, not a gap in what a run claims.
+A periodic auto-settlement is followed through to the loan's close (A9.15,
+A9.16): the payoff and the borrower's payment are the principal plus the
+interest due LESS the interest the settlement already booked, so settled days
+are never charged twice. The treasury's share of that close is recorded, not
+asserted (A9.16b): the specification does not fix the fee basis for a loan
+whose earlier interest was paid by a sale.
+
+**Checked as today's code, not as the intended rule**: how much collateral a
+periodic auto-settlement sells. A9.11 checks the code's current rule: the
+shortfall at the oracle plus the max-slippage buffer, with the settler bonus
+and the handling charge taken from the proceeds. The owner decided on
+2026-10-25 to replace it, for every forced sale, with sell-to-need:
+- sell the least collateral whose worst-case proceeds cover the debt plus the
+  charges;
+- take the charges on the debt;
+- return the extra proceeds and the unsold collateral to the borrower.
+
+That change is #2795 (periodic) and #2796 (the shared rule). Once a chain
+carries it, A9.11 is rewritten to assert the new rule. Until then a pass on
+A9.11 means the chain still runs the old rule, not that the rule is the
+intended one.
+
+**Read from the specification, where it is not explicit**: the specification
+names "Loan Initiated" at the fill, "Loan Defaulted" or "Loan Liquidated"
+after a forced close, and "Loan Closed" then burned on each side's claim. It
+does not name the status between a repayment and the claims, which the
+scenarios state as "Loan Repaid". Nor does it say which forced-close path
+records which of its two names; every forced close here sells the collateral,
+and the chain records "Loan Liquidated" for all of them, the time-based
+default included. Both readings are logged in
+`docs/FunctionalSpecs/_CodeVsDocsAudit.md`.
 
 ## Adding a scenario
 

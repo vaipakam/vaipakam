@@ -29,6 +29,7 @@ import {ERC1155Mock} from "./mocks/ERC1155Mock.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title VaultFactoryFacetTest
@@ -66,14 +67,14 @@ contract VaultFactoryFacetTest is Test {
         MockRentableNFT721(mockNft721).mint(user1, 1);
         MockRentableNFT721(mockNft721).mint(user1, 2);
 
-        cutFacet = new DiamondCutFacet();
+        cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cutFacet));
-        vaultFacet = new VaultFactoryFacet();
-        adminFacet = new AdminFacet();
-        offerCreateFacet = new OfferCreateFacet();
-        offerAcceptFacet = new OfferAcceptFacet();
-        offerCancelFacet = new OfferCancelFacet();
-        accessControlFacet = new AccessControlFacet();
+        vaultFacet = VaultFactoryFacet(ArtifactDeploy.deploy(type(VaultFactoryFacet).name));
+        adminFacet = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
+        offerCreateFacet = OfferCreateFacet(ArtifactDeploy.deploy(type(OfferCreateFacet).name));
+        offerAcceptFacet = OfferAcceptFacet(ArtifactDeploy.deploy(type(OfferAcceptFacet).name));
+        offerCancelFacet = OfferCancelFacet(ArtifactDeploy.deploy(type(OfferCancelFacet).name));
+        accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
@@ -103,14 +104,14 @@ contract VaultFactoryFacetTest is Test {
         // cut it or every ERC-20 accept reverts FunctionDoesNotExist at the
         // self-call, with the accept facet itself looking perfectly fine.
         cuts[7] = IDiamondCut.FacetCut({
-            facetAddress: address(new OfferAcceptFeeFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(OfferAcceptFeeFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferAcceptFeeFacetSelectors()
         });
         // #2440 — that charge moves the treasury's cut through a self-call into
         // the treasury fee host, so it needs its cut too.
         cuts[8] = IDiamondCut.FacetCut({
-            facetAddress: address(new TreasuryFeeFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(TreasuryFeeFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getTreasuryFeeFacetSelectors()
         });
@@ -118,7 +119,7 @@ contract VaultFactoryFacetTest is Test {
         // through NumeraireValueFacet by self-call, so a hand-built Diamond
         // that cuts any of them must cut this host too.
         cuts[9] = IDiamondCut.FacetCut({
-            facetAddress: address(new NumeraireValueFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
         });
@@ -160,7 +161,7 @@ contract VaultFactoryFacetTest is Test {
 
     function testInitializeRevertsNonOwner() public {
         // Deploy a fresh diamond (not yet initialized)
-        AccessControlFacet acFacet = new AccessControlFacet();
+        AccessControlFacet acFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         VaipakamDiamond d2 = new VaipakamDiamond(owner, address(cutFacet));
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
         cuts[0] = IDiamondCut.FacetCut({

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {RefinanceFacet} from "./RefinanceFacet.sol";
@@ -879,9 +880,7 @@ contract OfferAcceptFacet is
                     revert InvalidOffer();
                 }
                 if (
-                    block.timestamp >=
-                    uint256(saleLoan.startTime) +
-                        uint256(saleLoan.durationDays) * 1 days
+                    block.timestamp >= LibLoanClock.maturity(saleLoan)
                 ) revert SaleLoanPastMaturity();
                 // #1503 PR-E (design item 11) — the BINDING solvency
                 // admission floor. `createLoanSaleOffer` checks it too, but

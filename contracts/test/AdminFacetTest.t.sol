@@ -11,6 +11,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title AdminFacetTest
@@ -37,10 +38,10 @@ contract AdminFacetTest is Test {
         zeroExProxy = makeAddr("zeroExProxy");
         allowanceTarget = makeAddr("allowanceTarget");
 
-        cutFacet = new DiamondCutFacet();
+        cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cutFacet));
-        adminFacet = new AdminFacet();
-        accessControlFacet = new AccessControlFacet();
+        adminFacet = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
+        accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         helperTest = new HelperTest();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);

@@ -18,6 +18,7 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title InteractionRewardsInvariant
@@ -43,26 +44,26 @@ contract InteractionRewardsInvariant is Test {
     function setUp() public {
         address owner = address(this);
 
-        DiamondCutFacet cut = new DiamondCutFacet();
+        DiamondCutFacet cut = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cut));
 
         HelperTest helper = new HelperTest();
 
-        AccessControlFacet ac = new AccessControlFacet();
-        AdminFacet admin = new AdminFacet();
-        VPFITokenFacet vpfiFacet = new VPFITokenFacet();
-        InteractionRewardsFacet interaction = new InteractionRewardsFacet();
+        AccessControlFacet ac = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
+        AdminFacet admin = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
+        VPFITokenFacet vpfiFacet = VPFITokenFacet(ArtifactDeploy.deploy(type(VPFITokenFacet).name));
+        InteractionRewardsFacet interaction = InteractionRewardsFacet(ArtifactDeploy.deploy(type(InteractionRewardsFacet).name));
         // #1306 follow-up — the read-only getters this harness reads
         // (getInteractionPoolPaidOut / getInteractionCurrentDay) moved to the
         // lens facet; cut it into this standalone diamond too.
-        InteractionRewardsLensFacet interactionLens = new InteractionRewardsLensFacet();
+        InteractionRewardsLensFacet interactionLens = InteractionRewardsLensFacet(ArtifactDeploy.deploy(type(InteractionRewardsLensFacet).name));
         TestMutatorFacet mutator = new TestMutatorFacet();
         // #1351 slice 2c (Codex #1404 r5) — the claim entry points moved out of
         // InteractionRewardsFacet into their own facet for EIP-170 headroom.
         // Cut it in, or `claim()` below hits `FunctionDoesNotExist`, the handler
         // swallows it, and the paidOut/balance invariants silently stop
         // exercising the claim path at all.
-        RewardClaimFacet rewardClaim = new RewardClaimFacet();
+        RewardClaimFacet rewardClaim = RewardClaimFacet(ArtifactDeploy.deploy(type(RewardClaimFacet).name));
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](8);
         cuts[0] = IDiamondCut.FacetCut({
@@ -101,7 +102,7 @@ contract InteractionRewardsInvariant is Test {
             functionSelectors: helper.getRewardClaimFacetSelectors()
         });
         cuts[7] = IDiamondCut.FacetCut({
-            facetAddress: address(new RewardHorizonSweepFacet()),
+            facetAddress: ArtifactDeploy.deploy(type(RewardHorizonSweepFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getRewardHorizonSweepFacetSelectors()
         });

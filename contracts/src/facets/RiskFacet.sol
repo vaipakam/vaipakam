@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
@@ -806,8 +807,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // Calculate debt: principal + net accrued interest + late fees (README §7).
         // #915 (M7) — `currentBorrowBalance` nets `interestSettled` so periodic-
         // settled interest is not double-counted in the liquidation debt.
-        uint256 endTime = loan.startTime + loan.durationDays * 1 days;
-        uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
+        uint256 lateFee = LibVaipakam.calculateLateFee(loanId);
         uint256 totalDebt = LibEntitlement.currentBorrowBalance(loan) + lateFee;
         uint256 interestPortion = totalDebt - loan.principal;
 
@@ -1090,7 +1090,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // loan matures, late fees apply and the cleaner close-out is
         // full liquidation or time-based default. Excludes late-fee
         // accounting from this path entirely (safe simplification).
-        uint256 endTime = loan.startTime + loan.durationDays * 1 days;
+        uint256 endTime = LibLoanClock.maturity(loan);
         if (block.timestamp >= endTime) {
             revert PartialAfterMaturity(endTime, block.timestamp);
         }
@@ -1590,9 +1590,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // the stack frame before the settlement below (viaIR budget).
         uint256 totalDebt;
         {
-            uint256 lateFee = LibVaipakam.calculateLateFee(
-                loanId, loan.startTime + loan.durationDays * 1 days
-            );
+            uint256 lateFee = LibVaipakam.calculateLateFee(loanId);
             totalDebt = LibEntitlement.currentBorrowBalance(loan) + lateFee;
         }
         uint256 interestPortion = totalDebt - loan.principal;
@@ -1814,7 +1812,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     //     LibVaipakam.Loan storage loan = s.loans[loanId];
     //     if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoan();
 
-    //     uint256 endTime = loan.startTime + loan.durationDays * 1 days;
+    //     uint256 endTime = LibLoanClock.maturity(loan);
     //     uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
 
     //     // Check HF < 1e18

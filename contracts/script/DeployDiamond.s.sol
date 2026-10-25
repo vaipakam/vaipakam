@@ -1402,7 +1402,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](50);
+        s = new bytes4[](52);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -1466,6 +1466,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[48] = AdminFacet.unpauseIfPauseEpoch.selector;
         // #945 — the gated first unpause (the launch).
         s[49] = AdminFacet.launch.selector;
+        // #668 / #935 — the pause-interval log the loan clock reads.
+        s[50] = AdminFacet.pausedSecondsAt.selector;
+        s[51] = AdminFacet.getPauseIntervals.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
@@ -1849,11 +1852,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getLoanSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = LoanFacet.initiateLoan.selector;
         s[1] = LoanFacet.getLoanDetails.selector;
         s[2] = LoanFacet.getLoanConsents.selector;
         // `markNotifBilled` moved to NotificationFeeFacet in #2769.
+        // #668 / #935 — a loan's deadlines with the global pause credit.
+        s[3] = LoanFacet.getLoanDeadlines.selector;
     }
 
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {

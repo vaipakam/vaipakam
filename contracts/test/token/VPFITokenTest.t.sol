@@ -6,6 +6,8 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VPFIToken} from "../../src/token/VPFIToken.sol";
 import {IVPFIToken} from "../../src/interfaces/IVPFIToken.sol";
 import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
+import {GuardianPausable} from "../../src/crosschain/GuardianPausable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 /// @title VPFITokenTest
 /// @notice Phase 2 Token core coverage. Verifies the Phase 2 tokenomics
@@ -22,6 +24,7 @@ contract VPFITokenTest is Test {
     address internal constant MINTER = address(0xBEEF);
     address internal constant ALICE = address(0xA1);
     address internal constant BOB = address(0xB0B);
+    address internal constant GUARDIAN = address(0x6A2D);
 
     event MinterUpdated(address indexed previousMinter, address indexed newMinter);
     event Minted(address indexed to, uint256 amount);
@@ -189,10 +192,64 @@ contract VPFITokenTest is Test {
 
     // ─── Pause controls ──────────────────────────────────────────────────────
 
-    function testPauseOnlyByOwner() public {
+    /// @dev A caller that is neither the guardian nor the owner is refused
+    ///      by name (#937).
+    function testPauseRefusesStranger() public {
         vm.prank(ALICE);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(GuardianPausable.NotGuardianOrOwner.selector, ALICE));
         token.pause();
+    }
+
+    /// @dev #937 — the guardian slot starts empty; installing one is
+    ///      owner-only and emits the rotation.
+    function testGuardianStartsUnsetAndOnlyOwnerSetsIt() public {
+        assertEq(token.guardian(), address(0), "no guardian until one is installed");
+
+        vm.prank(ALICE);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, ALICE));
+        token.setGuardian(GUARDIAN);
+
+        vm.expectEmit(true, true, false, false, address(token));
+        emit GuardianPausable.GuardianUpdated(address(0), GUARDIAN);
+        vm.prank(OWNER);
+        token.setGuardian(GUARDIAN);
+        assertEq(token.guardian(), GUARDIAN);
+    }
+
+    /// @dev #937 — the guardian (the Pauser Safe) freezes the token without
+    ///      the Timelock, but cannot lift the freeze: only the owner can.
+    function testGuardianPausesOwnerUnpauses() public {
+        vm.prank(OWNER);
+        token.setGuardian(GUARDIAN);
+
+        vm.prank(GUARDIAN);
+        token.pause();
+        assertTrue(token.paused(), "guardian paused");
+
+        vm.prank(MINTER);
+        vm.expectRevert();
+        token.mint(ALICE, 1 ether);
+
+        vm.prank(GUARDIAN);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, GUARDIAN));
+        token.unpause();
+
+        vm.prank(OWNER);
+        token.unpause();
+        assertFalse(token.paused(), "owner unpaused");
+    }
+
+    /// @dev The two-step ownership survives the GuardianPausable MRO: a
+    ///      transfer only proposes, and the pending owner must accept.
+    function testOwnershipStaysTwoStep() public {
+        vm.prank(OWNER);
+        token.transferOwnership(ALICE);
+        assertEq(token.owner(), OWNER, "transfer only proposes");
+        assertEq(token.pendingOwner(), ALICE);
+
+        vm.prank(ALICE);
+        token.acceptOwnership();
+        assertEq(token.owner(), ALICE);
     }
 
     function testPauseBlocksMint() public {

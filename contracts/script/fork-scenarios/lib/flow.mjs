@@ -452,7 +452,47 @@ const LOAN_FIELDS = (() => {
   return comps.map((c) => c.name);
 })();
 const LIEN_FIELDS = ['lienUser', 'lienAsset', 'lienTokenId', 'lienAmount', 'lienAssetType', 'lienReleased'];
-export const POSITION_FIELDS = [...LOAN_FIELDS, 'lenderNftOwner', 'borrowerNftOwner', ...LIEN_FIELDS];
+
+/**
+ * What each position NFT carries beyond its holder (#2332 items 1 and 2):
+ *
+ * - `…NftStatus`: the position status the token records (`NFT_STATUS`);
+ * - `…NftLock`: the transfer lock a live sale or offset link puts on it
+ *   (`NFT_LOCK`);
+ * - `…NftBinding`: `'ok'` when the token names THIS loan, the side it stands
+ *   for, and its holder's enumerated token list contains it — otherwise the
+ *   first of those that is wrong. A sale, handover or refinance that minted a
+ *   correctly owned token pointing at another loan or the other role, or that
+ *   left the holder→positions index stale, changes this field.
+ *
+ * A token that does not exist (burned, never minted) carries none of them, so
+ * all three read `null` with its holder; a step that burns a token states only
+ * `…NftOwner: null` and the rest follow (`expectPosition`).
+ */
+const NFT_SIDE_FIELDS = (side) => [`${side}NftOwner`, `${side}NftStatus`, `${side}NftLock`, `${side}NftBinding`];
+export const POSITION_FIELDS = [...LOAN_FIELDS, ...NFT_SIDE_FIELDS('lender'), ...NFT_SIDE_FIELDS('borrower'), ...LIEN_FIELDS];
+
+/**
+ * The position statuses a position NFT records, by the specification's names:
+ * a loan's NFTs read "Loan Initiated" from the fill, "Loan Defaulted" or
+ * "Loan Liquidated" after a forced close, and are "Loan Closed" and burned as
+ * their side is claimed. Indices are the `LoanPositionStatus` enum's.
+ */
+export const NFT_STATUS = {
+  None: 0, OfferCreated: 1, LoanInitiated: 2, LoanRepaid: 3, LoanDefaulted: 4,
+  LoanLiquidated: 5, LoanClosed: 6, LoanFallbackPending: 7,
+};
+
+/** Both position NFTs recording `status` — the shape every terminal step states. */
+export const bothNfts = (status) => ({ lenderNftStatus: status, borrowerNftStatus: status });
+
+/**
+ * Why a position NFT is transfer-locked. The specification locks the lender
+ * NFT while a lender sale offer is live and the borrower NFT while a preclose
+ * offset link or a prepay collateral listing is live; each lock releases on
+ * cancel or settlement. Indices are `LibERC721.LockReason`'s.
+ */
+export const NFT_LOCK = { None: 0, PrecloseOffset: 1, EarlyWithdrawalSale: 2, PrepayCollateralListing: 3, SwapToRepayIntent: 4 };
 
 /**
  * The only fields a created position may leave unstated: the identifiers the
@@ -479,6 +519,11 @@ export async function creationFields(receipt, offerId, durationDays, acceptor, {
     interestPaidSinceLastPeriod: 0n, interestSettled: 0n,
     lenderDiscountAccAtInit: 0n, borrowerDiscountAccAtInit: 0n,
     matcher: acceptor, lenderNotifBilled: false, borrowerNotifBilled: false, riskAndTermsConsentFromBoth: true,
+    // Both position NFTs: "Loan Initiated" from the fill, unlocked, and each
+    // naming this loan and its own side.
+    lenderNftStatus: NFT_STATUS.LoanInitiated, borrowerNftStatus: NFT_STATUS.LoanInitiated,
+    lenderNftLock: NFT_LOCK.None, borrowerNftLock: NFT_LOCK.None,
+    lenderNftBinding: 'ok', borrowerNftBinding: 'ok',
   };
 }
 
@@ -502,14 +547,44 @@ async function nftOwner(tokenId) {
 }
 export const positionNftOwner = nftOwner;
 
+/**
+ * One side's position NFT as the chain records it: its holder, status, lock
+ * and binding (see `NFT_SIDE_FIELDS`), or all four `null` when the token does
+ * not exist. The binding reads the token's own record (`getNFTPositionSummary`,
+ * the same one `tokenURI` renders) and walks the holder's enumerated tokens, so
+ * both directions of the token↔position link are checked.
+ */
+async function nftSide(side, tokenId, loanId) {
+  const owner = await nftOwner(tokenId);
+  const out = { [`${side}NftOwner`]: owner };
+  if (owner === null) {
+    return { ...out, [`${side}NftStatus`]: null, [`${side}NftLock`]: null, [`${side}NftBinding`]: null };
+  }
+  const summary = await read(ABIS.metrics, 'getNFTPositionSummary', [tokenId]);
+  const held = await read(ABIS.nft, 'balanceOf', [owner]);
+  let indexed = false;
+  for (let i = 0n; i < held && !indexed; i++) {
+    indexed = (await read(ABIS.nft, 'tokenOfOwnerByIndex', [owner, i])) === tokenId;
+  }
+  const binding = String(summary.loanId) !== String(loanId) ? `names loan ${summary.loanId}`
+    : summary.isLender !== (side === 'lender') ? `carries the ${summary.isLender ? 'lender' : 'borrower'} role`
+      : !indexed ? `missing from its holder's ${held} enumerated tokens`
+        : 'ok';
+  return {
+    ...out,
+    [`${side}NftStatus`]: Number(await read(ABIS.nft, 'nftStatusOf', [tokenId])),
+    [`${side}NftLock`]: Number(await read(ABIS.nft, 'positionLock', [tokenId])),
+    [`${side}NftBinding`]: binding,
+  };
+}
+
 /** The position as the chain reports it now. */
 export async function positionOf(loanId) {
   const l = await read(ABIS.loan, 'getLoanDetails', [loanId]);
   const lien = await read(ABIS.metrics, 'getLoanCollateralLien', [loanId]);
   const out = {};
   for (const k of LOAN_FIELDS) out[k] = typeof l[k] === 'number' ? l[k] : lower(l[k]);
-  Object.assign(out, {
-    lenderNftOwner: await nftOwner(l.lenderTokenId), borrowerNftOwner: await nftOwner(l.borrowerTokenId),
+  Object.assign(out, await nftSide('lender', l.lenderTokenId, loanId), await nftSide('borrower', l.borrowerTokenId, loanId), {
     lienUser: lower(lien.user), lienAsset: lower(lien.asset), lienTokenId: lien.tokenId,
     lienAmount: lien.amount, lienAssetType: Number(lien.assetType), lienReleased: lien.released,
   });
@@ -563,6 +638,12 @@ export async function expectPosition(id, name, loanId, before, changes) {
   }
   const want = before ? { ...before } : Object.fromEntries(CHAIN_ASSIGNED_AT_CREATION.map((k) => [k, ANY]));
   for (const [k, v] of Object.entries(changes)) want[k] = lower(v);
+  // A burned token carries no status, lock or binding: stating its holder as
+  // `null` states the rest, unless the step names them itself.
+  for (const side of ['lender', 'borrower']) {
+    if (changes[`${side}NftOwner`] !== null) continue;
+    for (const k of NFT_SIDE_FIELDS(side).slice(1)) if (!(k in changes)) want[k] = null;
+  }
   const after = await positionOf(loanId);
   const wrong = POSITION_FIELDS.filter((k) => want[k] !== ANY && String(after[k]) !== String(want[k]))
     .map((k) => `${k}: got ${after[k]} want ${want[k]}`);

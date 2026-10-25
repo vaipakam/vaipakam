@@ -520,6 +520,25 @@ contract ConfigureCcip is Script {
                 "Guardian set on messenger / reward / buybackReceiver / returnReceiver:",
                 c.guardian
             );
+            // #937 — the canonical `VPFIToken` is GuardianPausable too, so
+            // the Pauser Safe can freeze it without the Timelock's delay.
+            // `setGuardian` is owner-only. On a fresh deploy the token's
+            // owner is ADMIN, which broadcasts here. A REUSED token may
+            // already belong to the Timelock; then this pass cannot set it
+            // and says so, and the handover gate refuses the chain until
+            // the owner has set it (`HandoverPlan` flags the token as a
+            // guardian target).
+            address tokenOwner = IOwner(c.localToken).owner();
+            if (tokenOwner == c.admin) {
+                GuardianPausable(c.localToken).setGuardian(c.guardian);
+                console.log("Guardian set on canonical VPFIToken:", c.guardian);
+            } else {
+                console.log("VPFIToken guardian: NOT SET - the broadcasting admin is not the token owner.");
+                console.log("  VPFI token:  ", c.localToken);
+                console.log("  token owner: ", tokenOwner);
+                console.log("  The token owner must call setGuardian(", c.guardian, ");");
+                console.log("  the handover gate refuses this chain until it does.");
+            }
         }
     }
 

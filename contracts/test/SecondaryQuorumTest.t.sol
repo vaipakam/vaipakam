@@ -13,6 +13,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title SecondaryQuorumTest
@@ -80,12 +81,12 @@ contract SecondaryQuorumTest is Test {
         mockApi3 = makeAddr("api3");
         mockDia = makeAddr("dia");
 
-        cutFacet = new DiamondCutFacet();
+        cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cutFacet));
-        oracleFacet = new OracleFacet();
-        oracleAdminFacet = new OracleAdminFacet();
-        adminFacet = new AdminFacet();
-        accessControlFacet = new AccessControlFacet();
+        oracleFacet = OracleFacet(ArtifactDeploy.deploy(type(OracleFacet).name));
+        oracleAdminFacet = OracleAdminFacet(ArtifactDeploy.deploy(type(OracleAdminFacet).name));
+        adminFacet = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
+        accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         helperTest = new HelperTest();
 
         // Phase 7b.2 — OracleAdminFacet now has 11 selectors:

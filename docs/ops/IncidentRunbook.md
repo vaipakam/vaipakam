@@ -432,7 +432,8 @@ See `PauseGatingTest` for the canonical list.
 **Cross-chain contracts pause separately.** `AdminFacet.pause()` only freezes
 the Diamond's own facets. The stand-alone `GuardianPausable` cross-chain
 contracts — `CcipMessenger`, the buyback receiver, the mirror
-`RewardRemittanceReceiver` (#776), the mirror VPFI token — are frozen with
+`RewardRemittanceReceiver` (#776), the mirror VPFI token and, on Base, the
+canonical VPFI token (#937) — are frozen with
 `contracts/script/pause-all-chains.sh` (guardian-signed), which enumerates all of them.
 Run it alongside the Diamond pause to freeze the Base→mirror reward-budget
 ingress too; the receiver can be kept paused while other CCIP channels resume.
@@ -1152,7 +1153,9 @@ case-sensitivity trap between the two guards.
 > `ccipMessenger`, `buybackRemittanceReceiver`,
 > `rewardRemittanceReceiver` and the #1568 C2 vpfi-return channel
 > endpoints (`vpfiReturnSender` / `vpfiReturnReceiver`) alongside the
-> mirror token.
+> mirror token and, on Base, the canonical `vpfiToken` (#937). Freezing
+> the canonical token stops every VPFI movement on Base, the Diamond's own
+> VPFI flows included; only the Timelock can lift it.
 >
 > `contracts/RUNBOOK.md` §10 describes the pause MECHANICS, but its list is
 > itself stale: it names the removed `VpfiBuyAdapter` / `VpfiBuyReceiver`

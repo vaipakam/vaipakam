@@ -9,6 +9,7 @@ import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {HelperTest} from "../HelperTest.sol";
+import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title ConfigBoundsInvariant
@@ -42,12 +43,12 @@ contract ConfigBoundsInvariant is Test {
     function setUp() public {
         address owner = address(this);
 
-        DiamondCutFacet cut = new DiamondCutFacet();
+        DiamondCutFacet cut = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cut));
 
         HelperTest helper = new HelperTest();
-        AccessControlFacet ac = new AccessControlFacet();
-        ConfigFacet cfg = new ConfigFacet();
+        AccessControlFacet ac = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
+        ConfigFacet cfg = ConfigFacet(ArtifactDeploy.deploy(type(ConfigFacet).name));
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](2);
         cuts[0] = IDiamondCut.FacetCut({

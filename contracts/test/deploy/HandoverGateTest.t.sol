@@ -13,6 +13,7 @@ import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
 import {VaipakamTimelock} from "../../src/governance/VaipakamTimelock.sol";
+import {VPFIToken} from "../../src/token/VPFIToken.sol";
 import {HelperTest} from "../HelperTest.sol";
 
 import {Handover} from "../../script/Handover.s.sol";
@@ -20,7 +21,6 @@ import {HandoverGate} from "../../script/HandoverGate.s.sol";
 import {HandoverPlan} from "../../script/lib/HandoverPlan.sol";
 import {
     CrossChainGuardianHarness,
-    OwnableERC20Stub,
     PlainOwnable2StepHarness,
     ChainlinkStyleOwnable2StepHarness,
     TokenAdminRegistryStub
@@ -75,7 +75,9 @@ contract HandoverGateTest is Test {
     CrossChainGuardianHarness internal messenger;
     PlainOwnable2StepHarness internal rateGovernor;
     ChainlinkStyleOwnable2StepHarness internal tokenPool;
-    OwnableERC20Stub internal vpfiToken;
+    /// @dev The REAL canonical token behind a proxy: since #937 the gate
+    ///      reads its `guardian()`, which a stub would only imitate.
+    VPFIToken internal vpfiToken;
     TokenAdminRegistryStub internal cctRegistry;
 
     HandoverGate internal gate;
@@ -86,6 +88,7 @@ contract HandoverGateTest is Test {
         bool extraKeeper; // admin grants KEEPER_ROLE to `stranger` before handover
         bool extraProposer; // the Timelock is deployed with a second proposer
         bool wrongGuardian; // the messenger's guardian is not the Pauser Safe
+        bool noTokenGuardian; // the canonical VPFIToken's guardian was never set (#937)
         bool skipMessengerAccept; // the Timelock never accepts the messenger
         bool skipPoolAccept; // the Timelock never accepts the CCIP pool
         bool skipCctAccept; // the Timelock never accepts the CCT administrator
@@ -210,6 +213,16 @@ contract HandoverGateTest is Test {
         t.wrongGuardian = true;
         (string[] memory failures,) = _evaluate(_build(t));
         _assertContains(failures, "ccipMessenger: guardian() is");
+    }
+
+    /// @notice #937 — the canonical token is GuardianPausable, so a handover
+    ///         that leaves its guardian unset fails the gate: after the
+    ///         handover only the Timelock could pause it.
+    function test_CanonicalTokenWithoutGuardian_Fails() public {
+        Twist memory t = _none();
+        t.noTokenGuardian = true;
+        (string[] memory failures,) = _evaluate(_build(t));
+        _assertContains(failures, "vpfiToken: guardian() is");
     }
 
     /// @notice A log range that starts after the deploy (a wrong
@@ -418,7 +431,13 @@ contract HandoverGateTest is Test {
         );
         rateGovernor = new PlainOwnable2StepHarness(admin);
         tokenPool = new ChainlinkStyleOwnable2StepHarness(admin);
-        vpfiToken = new OwnableERC20Stub(admin);
+        vpfiToken = VPFIToken(
+            address(
+                new ERC1967Proxy(
+                    address(new VPFIToken()), abi.encodeCall(VPFIToken.initialize, (admin, admin, admin))
+                )
+            )
+        );
         cctRegistry = new TokenAdminRegistryStub();
         cctRegistry.seed(address(vpfiToken), admin);
         cctRegistry.setPool(address(vpfiToken), address(tokenPool));
@@ -426,6 +445,7 @@ contract HandoverGateTest is Test {
 
         vm.startPrank(admin);
         messenger.setGuardian(t.wrongGuardian ? stranger : pauserSafe);
+        if (!t.noTokenGuardian) vpfiToken.setGuardian(pauserSafe);
         if (t.extraRootHolder) ac.grantRole(HandoverPlan.DEFAULT_ADMIN_ROLE, stranger);
         if (t.extraKeeper) ac.grantRole(LibAccessControl.KEEPER_ROLE, stranger);
         vm.stopPrank();
@@ -478,7 +498,7 @@ contract HandoverGateTest is Test {
         t[2] = HandoverPlan.Target(
             "vpfiPoolRateGovernor", address(rateGovernor), HandoverPlan.OwnableKind.OpenZeppelin, true, false
         );
-        t[3] = HandoverPlan.Target("vpfiToken", address(vpfiToken), HandoverPlan.OwnableKind.OpenZeppelin, true, false);
+        t[3] = HandoverPlan.Target("vpfiToken", address(vpfiToken), HandoverPlan.OwnableKind.OpenZeppelin, true, true);
     }
 
     function _accept(address target, bytes memory data) internal {

@@ -187,7 +187,6 @@ contract ForcedSaleFacet is IVaipakamErrors {
         uint256 loanId,
         ForcedSalePlan calldata plan,
         uint256 received,
-        uint256 boundary,
         LibSwap.AdapterCall[] calldata adapterCalls,
         address settler
     )
@@ -207,14 +206,17 @@ contract ForcedSaleFacet is IVaipakamErrors {
         // clean or held fail-closed when flagged (#998 S10 Class B). The
         // paid-through mark moves only on full coverage of the shortfall
         // (Codex #1801 r4 P1): a partial payout leaves the window open over
-        // what is still owed.
+        // what is still owed. The mark is the UNMOVED period end
+        // ({LibPeriodicInterest.deliveredThroughAt}, #668 / #935), not the
+        // payment deadline: the deadline carries the pause credit, while the
+        // shortfall covered here is one interval of interest.
         lenderPaid = LibCloseoutFreeze.freezeOrPayActiveLenderResident(
             s,
             loanId,
             loan,
             loan.principalAsset,
             sp.lender,
-            sp.lender >= plan.debt ? boundary : 0
+            sp.lender >= plan.debt ? LibPeriodicInterest.deliveredThroughAt(loan) : 0
         );
         // #2795 — credit exactly what the lender received, never more than the
         // shortfall: the extra above it is the borrower's, not prepaid interest.

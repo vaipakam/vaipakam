@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
@@ -179,15 +180,13 @@ contract PrecloseFacet is
     ///      paths (`precloseDirect`, offset completion), matching
     ///      {RepayFacet.repayLoan}. Reverts strictly past the grace window so a
     ///      late borrower can't route around the late-fee penalty (and the
-    ///      DefaultedFacet resolution) via an early-close door; returns `endTime`
-    ///      (the fixed origination maturity) so the caller computes the late fee
-    ///      off the SAME reference. `private` so the gate is one JUMP target, not
+    ///      DefaultedFacet resolution) via an early-close door. The grace end
+    ///      is the effective one ({LibLoanClock.graceEnd}), moved by any global
+    ///      pause since the loan started (#668 / #935); the late fee reads the
+    ///      same clock. `private` so the gate is one JUMP target, not
     ///      inlined at each call site — this facet is EIP-170-maxed (#1124).
-    function _assertWithinGrace(
-        LibVaipakam.Loan storage loan
-    ) private view returns (uint256 endTime) {
-        endTime = uint256(loan.startTime) + uint256(loan.durationDays) * LibVaipakam.ONE_DAY;
-        if (block.timestamp > endTime + LibVaipakam.gracePeriod(loan.durationDays)) {
+    function _assertWithinGrace(LibVaipakam.Loan storage loan) private view {
+        if (block.timestamp > LibLoanClock.graceEnd(loan)) {
             revert RepaymentPastGracePeriod();
         }
     }
@@ -226,10 +225,10 @@ contract PrecloseFacet is
             revert LoanNotActive();
 
         // Pass-2 A1/D5 (#1189) — block a strictly-post-grace preclose (parity
-        // with repayLoan; post-grace resolution goes through DefaultedFacet) and
-        // capture the fixed maturity so each asset branch below charges the same
-        // late-fee penalty when the close lands in the grace window.
-        uint256 endTime = _assertWithinGrace(loan);
+        // with repayLoan; post-grace resolution goes through DefaultedFacet).
+        // Each asset branch below prices the late fee off the same loan clock
+        // ({LibLoanClock}) when the close lands in the grace window.
+        _assertWithinGrace(loan);
 
         // #998 S10 (#1006, Codex r1 P1) — record the fail-closed frozen-claimant
         // markers for BOTH sides up front (branch-independent): precloseDirect is
@@ -294,7 +293,7 @@ contract PrecloseFacet is
             // the grace window (0 within term), so a late borrower pays the same
             // penalty repayLoan charges. `computePreclose` splits `interest +
             // lateFee` and folds it into `treasuryShare`/`lenderShare`/`lenderDue`.
-            uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
+            uint256 lateFee = LibVaipakam.calculateLateFee(loanId);
             LibSettlement.ERC20Settlement memory plan = LibSettlement.computePreclose(loan, lateFee);
 
             // Lender Yield Fee discount (Tokenomics §6 / §F2, #1354 / #1383):
@@ -451,7 +450,7 @@ contract PrecloseFacet is
             // to the loan's pre-funded `bufferAmount`), funded from the buffer
             // exactly like {RepayFacet.repayLoan}'s rental leg. Split base =
             // remaining rental + late fee, so the lender receives the penalty.
-            uint256 rentalLateFee = LibVaipakam.calculateRentalLateFee(loanId, endTime);
+            uint256 rentalLateFee = LibVaipakam.calculateRentalLateFee(loanId);
             uint256 totalDue = fullRental + rentalLateFee;
             (uint256 treasuryFee, uint256 lenderShare) = LibEntitlement.splitTreasury(
                 loan,
@@ -591,9 +590,7 @@ contract PrecloseFacet is
         // default) is a non-clean close and forfeits the borrower reward, per the
         // {RepayFacet.repayLoan} convention (Codex #1061 P2). Best-effort hook
         // (see {_rewardHook}).
-        uint256 graceEnd = loan.startTime
-            + loan.durationDays * LibVaipakam.ONE_DAY
-            + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = LibLoanClock.graceEnd(loan);
         _rewardHook(
             abi.encodeWithSelector(
                 InteractionRewardsFacet.precloseRewardClose.selector,
@@ -742,7 +739,7 @@ contract PrecloseFacet is
         // up to ~24h AFTER the original maturity, extending the lender's exposure.
         if (
             block.timestamp + offer.durationDays * LibVaipakam.ONE_DAY
-                > loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY
+                > LibLoanClock.maturity(loan)
         ) revert InvalidOfferTerms();
         if (offer.collateralAmount < loan.collateralAmount)
             revert InsufficientCollateral();
@@ -825,8 +822,8 @@ contract PrecloseFacet is
         // per-day rent for the same window.
         bool isErc20 = loan.assetType == LibVaipakam.AssetType.ERC20;
         uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
-        uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
-        uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
+        // #668 / #935 — the remaining term runs to the pause-moved end.
+        uint256 remainingSecs = LibLoanClock.remainingInterestSeconds(loan, block.timestamp);
         uint256 newSecs = offer.durationDays * 1 days;
         uint256 accruedInterest = isErc20
             ? LibEntitlement.proRataInterestSeconds(loan.principal, loan.interestRateBps, elapsed)
@@ -1365,7 +1362,7 @@ contract PrecloseFacet is
             loan.collateralAmount,
             loan.interestRateBps,
             loan.durationDays,
-            uint64(loan.startTime + loan.durationDays * 1 days),
+            uint64(LibLoanClock.maturity(loan)),
             newHf
         );
     }
@@ -1525,7 +1522,7 @@ contract PrecloseFacet is
         // whole acceptance atomically.
         if (
             block.timestamp + durationDays * LibVaipakam.ONE_DAY
-                > loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY
+                > LibLoanClock.maturity(loan)
         ) revert InvalidOfferTerms();
         // Lender-favorability: collateral from new borrower must not be less than original
         if (collateralAmount < loan.collateralAmount)
@@ -1613,8 +1610,8 @@ contract PrecloseFacet is
     {
         // #641 — read the interest clock, not the immutable term tuple.
         uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
-        uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
-        uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
+        // #668 / #935 — the remaining term runs to the pause-moved end.
+        uint256 remainingSecs = LibLoanClock.remainingInterestSeconds(loan, block.timestamp);
         uint256 accruedInterest = LibEntitlement.proRataInterestSeconds(
             loan.principal, loan.interestRateBps, elapsed
         );
@@ -1664,12 +1661,10 @@ contract PrecloseFacet is
         LibVaipakam.Offer storage offer
     ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // Pass-2 A1/D5 (#1189) — late fee off the original loan's fixed maturity
+        // Pass-2 A1/D5 (#1189) — late fee off the original loan's maturity
+        // (effective, with any pause credit — #668 / #935)
         // (0 within term). Defensive parity with the other early-close paths.
-        uint256 lateFee = LibVaipakam.calculateLateFee(
-            loanId,
-            uint256(loan.startTime) + uint256(loan.durationDays) * LibVaipakam.ONE_DAY
-        );
+        uint256 lateFee = LibVaipakam.calculateLateFee(loanId);
         (uint256 treasuryFee, uint256 lenderTotal, uint256 interestBase) =
             _computeOffsetSettlement(
                 loan, offer.interestRateBps, offer.durationDays, lateFee
@@ -1932,8 +1927,7 @@ contract PrecloseFacet is
         // the permissionless teardown earlier and never later — the safe
         // direction.
         {
-            uint256 lastAcceptable = uint256(loan.startTime) +
-                uint256(loan.durationDays) * LibVaipakam.ONE_DAY -
+            uint256 lastAcceptable = LibLoanClock.maturity(loan) -
                 durationDays * LibVaipakam.ONE_DAY;
             uint256 horizonCap = block.timestamp +
                 LibVaipakam.MAX_OFFER_EXPIRY_HORIZON;
@@ -2042,7 +2036,7 @@ contract PrecloseFacet is
         // silently extended. Equality (matures exactly at the original) is fine.
         if (
             block.timestamp + offer.durationDays * LibVaipakam.ONE_DAY
-                > loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY
+                > LibLoanClock.maturity(loan)
         ) revert InvalidOfferTerms();
 
         // Phase 6: borrower-entitled action. Authority resolves against
@@ -2139,9 +2133,7 @@ contract PrecloseFacet is
         // the old loan's grace window is a non-clean close and forfeits the old
         // borrower reward, matching the preclose/refinance grace checks (Codex
         // #1061 P2). Best-effort reward hook (see {_rewardHook}).
-        uint256 offsetGraceEnd = loan.startTime
-            + loan.durationDays * LibVaipakam.ONE_DAY
-            + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 offsetGraceEnd = LibLoanClock.graceEnd(loan);
         _rewardHook(
             abi.encodeWithSelector(
                 InteractionRewardsFacet.precloseRewardClose.selector,

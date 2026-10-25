@@ -28,6 +28,7 @@ import {
 } from "../mocks/MockVpfiTokenPool.sol";
 import {MockRewardMessenger} from "../mocks/MockRewardMessenger.sol";
 import {HelperTest} from "../HelperTest.sol";
+import {ArtifactDeploy} from "../../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title  MeshLedgerInvariant
@@ -133,21 +134,21 @@ contract MeshLedgerInvariant is Test {
         address owner = address(this);
         vm.chainId(CHAIN_BASE);
 
-        DiamondCutFacet cut = new DiamondCutFacet();
+        DiamondCutFacet cut = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cut));
         HelperTest helper = new HelperTest();
 
-        AccessControlFacet ac = new AccessControlFacet();
-        AdminFacet admin = new AdminFacet();
-        VPFITokenFacet vpfiFacet = new VPFITokenFacet();
-        InteractionRewardsFacet interaction = new InteractionRewardsFacet();
-        RewardReporterFacet reporter = new RewardReporterFacet();
-        RewardAggregatorFacet aggregator = new RewardAggregatorFacet();
+        AccessControlFacet ac = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
+        AdminFacet admin = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
+        VPFITokenFacet vpfiFacet = VPFITokenFacet(ArtifactDeploy.deploy(type(VPFITokenFacet).name));
+        InteractionRewardsFacet interaction = InteractionRewardsFacet(ArtifactDeploy.deploy(type(InteractionRewardsFacet).name));
+        RewardReporterFacet reporter = RewardReporterFacet(ArtifactDeploy.deploy(type(RewardReporterFacet).name));
+        RewardAggregatorFacet aggregator = RewardAggregatorFacet(ArtifactDeploy.deploy(type(RewardAggregatorFacet).name));
         TestMutatorFacet mutator = new TestMutatorFacet();
         // #1437 r1 P1 — §7 #2's FRESH half reads `getInteractionPoolPaidOut`,
         // which lives on the lens facet (#1306 follow-up split).
-        InteractionRewardsLensFacet lens = new InteractionRewardsLensFacet();
-        RepatriationFacet repatFacet = new RepatriationFacet();
+        InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(ArtifactDeploy.deploy(type(InteractionRewardsLensFacet).name));
+        RepatriationFacet repatFacet = RepatriationFacet(ArtifactDeploy.deploy(type(RepatriationFacet).name));
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
         cuts[0] = _cut(address(ac), helper.getAccessControlFacetSelectors());
@@ -164,7 +165,7 @@ contract MeshLedgerInvariant is Test {
         );
         // #1569 — broadcast split into its own facet.
         cuts[9] = _cut(
-            address(new RewardBroadcastFacet()),
+            ArtifactDeploy.deploy(type(RewardBroadcastFacet).name),
             helper.getRewardBroadcastFacetSelectors()
         );
         cuts[6] = _cut(address(mutator), helper.getTestMutatorFacetSelectors());

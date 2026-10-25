@@ -55,7 +55,11 @@ Implementation snapshot (branch `feat/market-rate-widget-and-tiered-ltv`):
   ③ CoinGecko 24h volume ≥ `LIQ_TIER3_MIN_VOL_USD` (default $50M).
   Operators can disable signal ① via `LIQ_TIER3_DISABLE_DEFI_LISTING`
   (the ensemble then collapses to 2-of-2 CoinGecko-only — stricter,
-  safe). Cron-wired (`runLiquidityConfidence` in `apps/keeper/src/index.ts`),
+  safe). **Superseded by #2746 (2026-10-25):** ① is now REQUIRED and must
+  show the asset enabled as collateral (DeFiLlama `/lendBorrow` LTV above
+  zero on an Aave v3 / Compound v3 pool; Morpho Blue no longer counts), and
+  ② or ③ must back it; with ① disabled nothing reaches Tier 3.
+  Cron-wired (`runLiquidityConfidence` in `apps/keeper/src/index.ts`),
   tsc clean; not deployed.
 - **Piece B follow-up (c) — `LibOfferMatch.previewMatch` AND
   `RefinanceFacet` tier-cap alignment — LANDED**: both sites now

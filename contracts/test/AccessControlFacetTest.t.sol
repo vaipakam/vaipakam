@@ -9,6 +9,7 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 contract AccessControlFacetTest is Test {
     VaipakamDiamond diamond;
@@ -25,9 +26,9 @@ contract AccessControlFacetTest is Test {
         user1 = makeAddr("user1");
         user2 = makeAddr("user2");
 
-        cutFacet = new DiamondCutFacet();
+        cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cutFacet));
-        accessControlFacet = new AccessControlFacet();
+        accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         helperTest = new HelperTest();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);

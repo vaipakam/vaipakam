@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
@@ -426,7 +427,7 @@ contract SwapToRepayIntentFacet is
         if (msg.sender == loan.lender) revert IVaipakamErrors.LenderCannotRepayOwnLoan();
         if (IERC721(address(this)).ownerOf(loan.lenderTokenId) == msg.sender)
             revert IVaipakamErrors.LenderCannotRepayOwnLoan();
-        uint256 endTime = uint256(loan.startTime) + uint256(loan.durationDays) * LibVaipakam.ONE_DAY;
+        uint256 endTime = LibLoanClock.maturity(loan);
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
@@ -850,8 +851,7 @@ contract SwapToRepayIntentFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.intentCommits[loanId].orderHash == bytes32(0)) return;
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        uint256 endTime = uint256(loan.startTime)
-            + uint256(loan.durationDays) * LibVaipakam.ONE_DAY;
+        uint256 endTime = LibLoanClock.maturity(loan);
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
         if (block.timestamp < graceEnd) {
             revert IVaipakamErrors.IntentPending(loanId);
@@ -1071,7 +1071,7 @@ contract SwapToRepayIntentFacet is
             loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
             loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid
         ) revert UnsupportedLoanShape();
-        uint256 endTime = uint256(loan.startTime) + uint256(loan.durationDays) * LibVaipakam.ONE_DAY;
+        uint256 endTime = LibLoanClock.maturity(loan);
         if (block.timestamp > endTime + LibVaipakam.gracePeriod(loan.durationDays))
             revert RepaymentPastGracePeriod();
         (lot, minTakerAmount) = _sizeCommitLot(loan, _commitMinOut(loanId, endTime));
@@ -1084,7 +1084,7 @@ contract SwapToRepayIntentFacet is
     function _commitMinOut(uint256 loanId, uint256 endTime) private view returns (uint256) {
         uint256 floor_ = LibCollateralSettlement.principalPlusAccruedInterest(loanId, block.timestamp)
             + LibCollateralSettlement.treasuryAndPrecloseFee(loanId, block.timestamp)
-            + LibVaipakam.calculateLateFee(loanId, endTime);
+            + LibVaipakam.calculateLateFee(loanId);
         return (floor_ * (
             LibVaipakam.BASIS_POINTS + LibVaipakam.cfgIntentMinOutputBufferBpsEffective()
         )) / LibVaipakam.BASIS_POINTS;

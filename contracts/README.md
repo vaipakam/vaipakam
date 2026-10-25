@@ -544,7 +544,7 @@ VPFI tokenomics constants (in `VPFIToken.sol`):
 | `AddKeeperSelectors.s.sol`         | Grant keeper selector access                                    |
 | `CheckSelectors.s.sol`             | Diff the diamond's live selector map vs. local facet bytecode   |
 | `SepoliaActiveLoan.s.sol`          | Testnet scenario: stand up an active loan                       |
-| `SepoliaPositiveFlows.s.sol`       | Testnet scenario: happy-path end-to-end flows                   |
+| `PositiveFlows.s.sol`              | Positive-flow smoke suite: runs every module in `positive-flows/` (local Anvil or a rehearsal Diamond only) |
 
 ---
 

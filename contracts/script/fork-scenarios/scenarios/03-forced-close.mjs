@@ -7,7 +7,7 @@
  * the liquidator's bonus, which comes off the top before the lender is paid.
  */
 import { DIAMOND, MOCKS, TREASURY, VENUE_ROUTE, WETH, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, claimAndExpect, delta, dynamicIncentiveBps, expectPosition, forcedCloseWaterfall, lateFee, mint, openLoan, perSecondInterest, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, claimAndExpect, delta, dynamicIncentiveBps, expectPosition, forcedCloseWaterfall, lateFee, mint, openLoan, perSecondInterest, positionOf, read, snapshot, vaultAddressFor, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { MOCK_ADAPTER_ABI, repriceFaucetAsset, sendAsOwner, setFeedUsd, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -131,8 +131,8 @@ export async function run() {
   // encumber and the lien reads released (amount 0). The recorded collateral
   // amount is the loan's original term and stays as it was on a terminal
   // close; the NFTs stay with their holders, who claim through them next.
-  await expectPosition('A3.6c', 'the time-based default changes the position exactly: status Defaulted, the lien released because the whole collateral was sold — NFTs and recorded terms unchanged',
-    loanId, preDefaultPos, { status: STATUS.Defaulted, lienReleased: true, lienAmount: 0n });
+  await expectPosition('A3.6c', 'the time-based default changes the position exactly: status Defaulted, both position NFTs "Loan Liquidated" because the collateral was sold, the lien released because all of it was — NFT holders and recorded terms unchanged',
+    loanId, preDefaultPos, { status: STATUS.Defaulted, ...bothNfts(NFT_STATUS.LoanLiquidated), lienReleased: true, lienAmount: 0n });
 
   // Each side's claim must move exactly the share the default credited to
   // that side's vault out to that side's wallet — both legs, and nothing else
@@ -242,8 +242,8 @@ export async function run() {
     `caller=outsider gas=${liqReceipt.gasUsed} status=${liquidated.status} proceeds=${f18(liqProceeds)}`);
   await expectForcedClose('A3.12b', 'the underwater HF liquidation settles exactly per the waterfall: keeper first, the lender takes the rest and the loss, no handling charge',
     preLiq, liqReceipt, beforeLiq, afterLiq, collateral, lending);
-  await expectPosition('A3.12c', 'the HF liquidation changes the position exactly: status Defaulted, the lien released because the whole collateral was sold — NFTs and recorded terms unchanged',
-    hfLoan, preLiqPos, { status: STATUS.Defaulted, lienReleased: true, lienAmount: 0n });
+  await expectPosition('A3.12c', 'the HF liquidation changes the position exactly: status Defaulted, both position NFTs "Loan Liquidated", the lien released because the whole collateral was sold — NFT holders and recorded terms unchanged',
+    hfLoan, preLiqPos, { status: STATUS.Defaulted, ...bothNfts(NFT_STATUS.LoanLiquidated), lienReleased: true, lienAmount: 0n });
 
   // The HF path writes its OWN claim records (RiskFacet, not DefaultedFacet),
   // so its claims are exercised in their own right. Underwater: the lender
@@ -308,8 +308,8 @@ export async function run() {
   // which, and the claim sequence below follows it.
   const crashW = await expectForcedClose('A3.13b', 'the collateral-drawdown liquidation settles exactly per the waterfall: keeper, lender net of the interest fee, the handling charge, and the borrower\'s residual when the specification leaves one',
     preCrash, crashReceipt, beforeCrash, afterCrash, collateral, lending);
-  await expectPosition('A3.13c', 'the drawdown liquidation changes the position exactly: status Defaulted, the lien released because the whole collateral was sold — NFTs and recorded terms unchanged',
-    crashLoan, preCrashPos, { status: STATUS.Defaulted, lienReleased: true, lienAmount: 0n });
+  await expectPosition('A3.13c', 'the drawdown liquidation changes the position exactly: status Defaulted, both position NFTs "Loan Liquidated", the lien released because the whole collateral was sold — NFT holders and recorded terms unchanged',
+    crashLoan, preCrashPos, { status: STATUS.Defaulted, ...bothNfts(NFT_STATUS.LoanLiquidated), lienReleased: true, lienAmount: 0n });
 
   // Claims follow the computed waterfall. With a borrower residual both sides
   // hold a claim and the second one settles the loan; with none the lender's

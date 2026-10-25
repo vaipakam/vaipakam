@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
@@ -240,9 +241,7 @@ contract OfferPreviewFacet {
                 return preview;
             }
             if (
-                block.timestamp >=
-                uint256(_saleLoanM.startTime) +
-                    uint256(_saleLoanM.durationDays) * 1 days
+                block.timestamp >= LibLoanClock.maturity(_saleLoanM)
             ) {
                 preview.errorCode =
                     OfferAcceptFacet.AcceptError.SaleLoanPastMaturity;

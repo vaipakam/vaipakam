@@ -95,7 +95,7 @@ RISK_PREVIEW_SELECTORS=(
 
 # KNOWN FAILURE — ReplaceStaleFacets still fails at step 6, and the failure is
 # REAL, not a flaw in this script. Do not "fix" it by pointing the rehearsal
-# back at N25 — that is precisely the blind spot that hid the defect
+# back at PF-230-floor — that is precisely the blind spot that hid the defect
 # (Codex #1635 r5).
 #
 # The DIAGNOSIS first recorded here was wrong on every substantive point, and
@@ -116,32 +116,43 @@ RISK_PREVIEW_SELECTORS=(
 #     the BUYER is the caller. It is masked whenever accrued interest is zero,
 #     which is every same-timestamp simulation and in-process test.
 #
-# So N25 surviving a refresh and N26 not is about WHO CALLS, not about which
-# facet was reinstalled. Tracked as #1659, retitled accordingly, with the
-# corrected trace.
+# So PF-230-floor surviving a refresh and PF-231 not is about WHO CALLS, not
+# about which facet was reinstalled. Tracked as #1659, retitled accordingly,
+# with the corrected trace.
 fail() { echo "REHEARSAL FAILED: $*" >&2; exit 1; }
 step() { echo; echo "--- $*"; }
 
-# The scenario-driver env. ONLY_SCENARIO skips the earlier scenarios, which
-# matters because the flow script cannot currently reach its broadcast pass from
-# the top (#1646, pre-existing).
+# The scenario-driver env. ONLY_SCENARIO runs the one sale scenario, on its
+# module's own fixture, so each step drives exactly the path under test. The ids
+# are the positive-flow ids of `script/positive-flows/` (#848); this script's
+# history and the issues it cites call PF-230-floor "N25" and PF-231 "N26".
 #
 # WHICH scenario is chosen per refresh script, and that is load-bearing (Codex
 # #1635 r5). Each script reinstalls a DIFFERENT guarded sale path, and a
 # scenario that does not traverse the path a given script refreshes would stay
 # green with that script's guard broken or dropped:
 #
-#   RedeployFacets     -> EarlyWithdrawalDirectFacet -> N25 (direct sellLoanViaBuyOffer)
-#   ReplaceStaleFacets -> OfferAcceptFacet           -> N26 (resting-listing accept)
+#   RedeployFacets     -> EarlyWithdrawalDirectFacet -> PF-230-floor
+#                         (direct sellLoanViaBuyOffer)
+#   ReplaceStaleFacets -> OfferAcceptFacet           -> PF-231
+#                         (resting-listing accept)
 #
-# Rehearsing ReplaceStaleFacets against N25 was exactly that mistake: N25's only
-# acceptOffer call originates an ordinary loan and never reaches the sale branch.
+# Rehearsing ReplaceStaleFacets against PF-230-floor was exactly that mistake:
+# PF-230-floor's only acceptOffer call originates an ordinary loan and never
+# reaches the sale branch.
 #
-# Since #1780 the direct sale N25 drives lives in `EarlyWithdrawalDirectFacet`,
-# not `EarlyWithdrawalFacet` — named precisely here because this mapping's whole
-# job is to say which scenario proves which script's guard, and looking for
-# `sellLoanViaBuyOffer` in the facet this line used to name would come back
-# empty. RedeployFacets reinstalls both halves, so the pairing still holds.
+# Since #1780 the direct sale PF-230-floor drives lives in
+# `EarlyWithdrawalDirectFacet`, not `EarlyWithdrawalFacet` — named precisely
+# here because this mapping's whole job is to say which scenario proves which
+# script's guard, and looking for `sellLoanViaBuyOffer` in the facet this line
+# used to name would come back empty. RedeployFacets reinstalls both halves,
+# so the pairing still holds.
+#
+# The module that carries both sale scenarios. `--disable-block-gas-limit`:
+# a forge script's whole run is one simulated frame, capped at the block gas
+# limit without it (see script/PositiveFlows.s.sol).
+FLOW_SCRIPT=script/positive-flows/PositiveFlowsAdvancedCredit.s.sol
+FLOW_SCRIPT_NAME=PositiveFlowsAdvancedCredit.s.sol
 export DEPLOYER_PRIVATE_KEY="$DEPLOYER_KEY"
 export ADMIN_PRIVATE_KEY="$ADMIN_KEY"
 export ADMIN_ADDRESS="$ADMIN_ADDR"
@@ -191,8 +202,8 @@ assert_risk_preview_routed() {
 # Which scenario exercises the sale path each script refreshes.
 scenario_for() {
   case "$1" in
-    RedeployFacets) echo N25 ;;
-    ReplaceStaleFacets) echo N26 ;;
+    RedeployFacets) echo PF-230-floor ;;
+    ReplaceStaleFacets) echo PF-231 ;;
     *) fail "no sale scenario mapped for $1 - add one rather than reusing another script's" ;;
   esac
 }
@@ -212,8 +223,8 @@ rehearse() {
   # nonces would be replayed against this brand-new chain.
   rm -rf "broadcast/$refresh_script.s.sol/31337" \
          "cache/$refresh_script.s.sol/31337" \
-         broadcast/AnvilNewPositiveFlows.s.sol/31337 \
-         cache/AnvilNewPositiveFlows.s.sol/31337
+         "broadcast/$FLOW_SCRIPT_NAME/31337" \
+         "cache/$FLOW_SCRIPT_NAME/31337"
   bash script/anvil-bootstrap.sh > "$WORKDIR/bootstrap.log" 2>&1 \
     || { tail -30 "$WORKDIR/bootstrap.log"; fail "anvil-bootstrap failed"; }
 
@@ -236,8 +247,8 @@ rehearse() {
   echo "    saleAdmission unrouted"
 
   step "3/6  assert the break: $scen's sale must fail for the ROUTING reason"
-  if ONLY_SCENARIO="$scen" forge script script/AnvilNewPositiveFlows.s.sol \
-       --rpc-url "$RPC" > "$WORKDIR/pre.log" 2>&1; then
+  if ONLY_SCENARIO="$scen" forge script "$FLOW_SCRIPT" \
+       --rpc-url "$RPC" --disable-block-gas-limit > "$WORKDIR/pre.log" 2>&1; then
     fail "$scen succeeded on the pre-#1503 fixture - the break was not reproduced"
   fi
   grep -q "FunctionDoesNotExist" "$WORKDIR/pre.log" \
@@ -257,10 +268,10 @@ rehearse() {
   assert_risk_preview_routed "$diamond"
 
   step "6/6  drive a real sale: $scen --broadcast"
-  ONLY_SCENARIO="$scen" forge script script/AnvilNewPositiveFlows.s.sol \
-    --rpc-url "$RPC" --broadcast > "$WORKDIR/post.log" 2>&1 \
+  ONLY_SCENARIO="$scen" forge script "$FLOW_SCRIPT" \
+    --rpc-url "$RPC" --broadcast --disable-block-gas-limit > "$WORKDIR/post.log" 2>&1 \
     || { tail -30 "$WORKDIR/post.log"; fail "$scen broadcast failed after refresh"; }
-  grep -q "$scen PASSED" "$WORKDIR/post.log" \
+  grep -qF "[$scen] PASS" "$WORKDIR/post.log" \
     || { tail -30 "$WORKDIR/post.log"; fail "$scen did not report PASSED"; }
   grep -q "ONCHAIN EXECUTION COMPLETE" "$WORKDIR/post.log" \
     || { tail -30 "$WORKDIR/post.log"; fail "$scen simulated but did not execute on chain"; }

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -218,7 +219,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (maxCollateralIn == 0 || maxCollateralIn > loan.collateralAmount)
             revert InvalidAmount();
 
-        uint256 endTime = loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY;
+        uint256 endTime = LibLoanClock.maturity(loan);
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
@@ -592,7 +593,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         ) revert UnsupportedLoanShape();
         if (maxCollateralIn == 0 || maxCollateralIn > loan.collateralAmount)
             revert InvalidAmount();
-        uint256 endTime = loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY;
+        uint256 endTime = LibLoanClock.maturity(loan);
         if (block.timestamp > endTime + LibVaipakam.gracePeriod(loan.durationDays))
             revert RepaymentPastGracePeriod();
         LibSettlement.ERC20Settlement memory plan = _fullSettlementPlan(loanId, loan, endTime);
@@ -615,7 +616,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ) private view returns (LibSettlement.ERC20Settlement memory) {
         return LibSettlement.computeRepayment(
             loan,
-            LibVaipakam.calculateLateFee(loanId, endTime),
+            LibVaipakam.calculateLateFee(loanId),
             block.timestamp
         );
     }

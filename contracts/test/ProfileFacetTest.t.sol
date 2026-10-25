@@ -13,6 +13,7 @@ import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
 
 /**
  * @title ProfileFacetTest
@@ -36,11 +37,11 @@ contract ProfileFacetTest is Test {
         user1 = makeAddr("user1");
         user2 = makeAddr("user2");
 
-        cutFacet = new DiamondCutFacet();
+        cutFacet = DiamondCutFacet(ArtifactDeploy.deploy(type(DiamondCutFacet).name));
         diamond = new VaipakamDiamond(owner, address(cutFacet));
-        profileFacet = new ProfileFacet();
-        adminFacet = new AdminFacet();
-        accessControlFacet = new AccessControlFacet();
+        profileFacet = ProfileFacet(ArtifactDeploy.deploy(type(ProfileFacet).name));
+        adminFacet = AdminFacet(ArtifactDeploy.deploy(type(AdminFacet).name));
+        accessControlFacet = AccessControlFacet(ArtifactDeploy.deploy(type(AccessControlFacet).name));
         helperTest = new HelperTest();
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);

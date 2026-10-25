@@ -38,11 +38,11 @@ import {
   DefaultedFacetABI,
   FlashLoanLiquidatorABI,
   LoanFacetABI,
-  OracleFacetABI,
   RiskFacetABI,
   RiskSplitLiquidationFacetABI,
 } from '@vaipakam/contracts/abis';
 import { attemptCloseOut } from './closeOut';
+import { parseLiquidationLoan, type LiquidationLoan } from './liquidationLoan';
 import { tryMatchLiquidation } from './matchLiquidation';
 import { orchestrateDexDirectQuotes } from './dexDirectQuotes';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
@@ -57,9 +57,8 @@ import { flashLoanRoute } from './flashLoanProviders';
 import { discountPathBlocker } from './discountPath';
 import {
   BPS,
-  MIN_PARTIAL_FRACTION_BPS,
-  reducePartialFractionBps,
-  clampPartialFractionBps,
+  MAX_PARTIAL_FRACTION_BPS,
+  runPartialAttempts,
   sellAmountForFractionBps,
   normalizeCloseFactorCapBps,
 } from './partialResize';
@@ -72,7 +71,8 @@ function parsePosIntEnv(v: string | undefined, dflt: number): number {
 
 /** Compute the smallest partial-liquidation fraction (in BPS) that
  *  brings a distressed loan's health factor back above `1.0 +
- *  targetBufferBps`, given the asset's `liqThresholdBps`.
+ *  targetBufferBps`, given the loan's stamped liquidation threshold
+ *  (`liquidationLtvBpsAtInit`, the T `calculateHealthFactor` uses).
  *
  *  Algebra (derived from the on-chain HF formula
  *  `HF = collateralValue × T / debt`):
@@ -233,7 +233,6 @@ function pickSplitLegs(
 // encode either call against the single Diamond address.
 const TRIGGER_ABI = [...RiskFacetABI, ...RiskSplitLiquidationFacetABI];
 const LOAN_DETAILS_ABI = LoanFacetABI;  // hosts getLoanDetails
-const ORACLE_ABI = OracleFacetABI;      // hosts getAssetRiskProfile
 
 export interface KeeperContext {
   /** Wallet client for the keeper EOA on this chain. */
@@ -358,25 +357,26 @@ export async function maybeAutonomousLiquidate(
   if (!ctx) return false;
 
   try {
-    // Read loan struct so we know the collateral asset (which we then
-    // use to fetch the asset risk profile for partial-fraction math).
-    // `startTime` + `durationDays` are picked up too so we can decide
-    // whether the partial-liquidation path is open — partial is in-term
-    // only by contract design.
-    const loan = (await publicClient.readContract({
-      address: ctx.diamond,
-      abi: LOAN_DETAILS_ABI,
-      functionName: 'getLoanDetails',
-      args: [loanIdBig],
-    })) as {
-      collateralAsset: Address;
-      collateralAmount: bigint;
-      principalAsset: Address;
-      status: number;
-      assetType: number;
-      startTime: bigint;
-      durationDays: bigint;
-    };
+    // Read the loan by field name (#2733). `startTime` + `durationDays`
+    // decide whether the partial path is open (partial is in-term only by
+    // contract design), and `liquidationLtvBpsAtInit` is the threshold the
+    // loan's health factor is computed against: the sizer below needs the
+    // SAME number the contract uses, and this is it. A struct this keeper
+    // does not recognise is not acted on at all.
+    const loan = parseLiquidationLoan(
+      await publicClient.readContract({
+        address: ctx.diamond,
+        abi: LOAN_DETAILS_ABI,
+        functionName: 'getLoanDetails',
+        args: [loanIdBig],
+      }),
+    );
+    if (!loan) {
+      console.log(
+        `[keeper] loan=${loanId} chain=${chain.name} skipped: getLoanDetails did not decode to the fields this keeper reads (ABI out of step with the Diamond)`,
+      );
+      return false;
+    }
 
     // assetType 0 = ERC20 — only liquidate ERC20 loans (NFT rentals
     // never hit the swap path; they default via the time-based route).
@@ -385,41 +385,21 @@ export async function maybeAutonomousLiquidate(
     // Defaulted, Settled) means the diamond would revert.
     if (loan.status !== 0) return false;
 
-    // Now read the collateral asset's risk profile so we can size the
-    // partial swap precisely. `getAssetRiskProfile.liqThresholdBps`
-    // feeds `computeOptimalPartialFractionBps` — the smallest f that
-    // restores HF >= 1.05 given the per-asset threshold. Replaces the
-    // hardcoded 50% from the prior commit: at HF=0.99 / T=0.85 the
-    // optimal is ~37% (smaller swap, more residual to the borrower);
-    // at HF=0.93 / T=0.85 it's ~78% (the legacy 50% would have reverted
-    // {PartialMustRestoreHF}). If the read fails (RPC blip, asset not
-    // yet onboarded), `liqThresholdBps = 0n` and the math returns 0n,
-    // making the partial path skip — we fall through to full liquidation
-    // so the keeper stays operational on the legacy path.
-    const riskProfile = (await publicClient
-      .readContract({
-        address: ctx.diamond,
-        abi: ORACLE_ABI,
-        functionName: 'getAssetRiskProfile',
-        args: [loan.collateralAsset],
-      })
-      .catch(() => null)) as
-      | readonly [boolean, number, bigint, bigint, bigint]
-      | null;
-    // getAssetRiskProfile returns (isSupported, status, maxLtvBps,
-    // liqThresholdBps, liqBonusBps). We only need liqThresholdBps for
-    // the partial-fraction math; if the read failed (RPC blip, asset
-    // not yet onboarded, etc.) we fall through to the legacy 5_000
-    // fraction so the path stays operational.
-    const liqThresholdBps = riskProfile ? riskProfile[3] : 0n;
+    // The partial-fraction math (`computeOptimalPartialFractionBps`) takes
+    // the loan's own stamped liquidation threshold: the smallest f that
+    // restores HF >= 1.05 at that threshold. At HF=0.99 / T=0.85 the optimal
+    // is ~37% (smaller swap, more residual to the borrower); at HF=0.93 /
+    // T=0.85 it's ~78%, past the partial band, so the loan goes to full. A
+    // zero stamp makes the math return 0n and the partial path is skipped.
+    const liqThresholdBps = BigInt(loan.liquidationLtvBpsAtInit);
 
     // Partial-liquidation decision: when the loan is only mildly-to-
     // moderately undercollateralized AND still in-term, a precisely-
     // sized partial sweep restores HF >= 1 without closing the
     // position. The on-chain `triggerPartialLiquidation` checks the
-    // post-mutation HF strictly improves AND lands >= 1.0; if our
-    // computed fraction is too small the tx reverts and we retry
-    // next tick (possibly as full liquidation).
+    // post-mutation HF strictly improves AND lands >= 1.0 (and no
+    // higher than the governance ceiling); a refused size is searched
+    // around in-tick, below, before any fall-back to full liquidation.
     //
     // Past maturity, partial is locked out by the on-chain
     // {PartialAfterMaturity} guard.
@@ -479,17 +459,16 @@ export async function maybeAutonomousLiquidate(
     // liquidation is cleaner because it refunds surplus collateral
     // to the borrower and emits the terminal event), and HF is at
     // least at the configured floor (default 0.95 — the floor is a
-    // coarse cutoff for chains where we don't yet have a tuned
-    // liqThresholdBps and don't want to attempt partial blindly).
+    // coarse cutoff below which a partial is not attempted at all).
     const partialEligible =
       inTerm &&
       hfRaw >= partialMinHfRaw &&
       hfRaw < 10n ** 18n &&
       optimalPartialFractionBps > 0n &&
-      optimalPartialFractionBps < 7_500n;
+      optimalPartialFractionBps < MAX_PARTIAL_FRACTION_BPS;
 
-    // Compute the partial-size for quote fetching. Falls back to half
-    // when we don't have liqThresholdBps (the legacy 50% path).
+    // Compute the partial-size for quote fetching. When no partial is
+    // eligible the value is unused (the half amount, for the split below).
     const partialAmount = partialEligible
       ? (loan.collateralAmount * optimalPartialFractionBps) / 10_000n
       : loan.collateralAmount / 2n;
@@ -604,36 +583,23 @@ export async function maybeAutonomousLiquidate(
     });
     if (flashLoanSubmitted) return true;
 
-    // Use the dedicated partial quote when we fetched one, else the
-    // half-quote (legacy 50% path when liqThresholdBps was missing).
+    // Use the dedicated partial quote when we fetched one. It is skipped
+    // only when the partial slice sells exactly the half amount, whose quote
+    // is then the partial's.
     const effectivePartialQuotes: ServerOrchestrationResult | null =
       partialQuotes ?? (partialEligible ? halfQuotes : null);
-    const effectivePartialFractionBps: bigint = partialQuotes
-      ? optimalPartialFractionBps
-      : 5_000n;
+    const effectivePartialFractionBps: bigint = optimalPartialFractionBps;
 
     if (
       partialEligible &&
       effectivePartialQuotes &&
       effectivePartialQuotes.calls.length > 0
     ) {
-      // #395 / #642 — the partial may revert under the on-chain sizing guards.
-      // `writeContract` estimates gas first, so a guard revert throws here
-      // BEFORE any tx is broadcast. Two new error classes are now resolved
-      // IN-TICK by re-sizing + re-quoting (#642) instead of skipping or
-      // escalating; the rest keep the #395 classify-and-fall-through behaviour.
-      //
-      // Bounded retry loop (≤ MAX_PARTIAL_RESIZE_ATTEMPTS total submits):
-      //   · PartialOverLiquidates  → slice too big: shrink 25%, re-quote, retry.
-      //   · InvalidPartialFraction → exceeds the governance close-factor cap:
-      //     read the live cap, CLAMP to it, re-quote, retry (escalate only if
-      //     the cap can't yield a usable slice).
-      //   · InternalMatchOnlyBand / PartialLeavesDust / PartialFullyClosedUseFull
-      //     / PartialAfterMaturity → a partial is the wrong tool: escalate (fall
-      //     through to split/full).
-      //   · PartialMustRestoreHF / PartialMustImproveHF / PartialSwapAllFailed /
-      //     unknown → skip this tick, recompute next tick (don't close the loan).
-      const MAX_PARTIAL_RESIZE_ATTEMPTS = 3;
+      // #395 / #642 / #2733 — the partial may revert under the on-chain
+      // sizing guards. `writeContract` estimates gas first, so a guard revert
+      // throws BEFORE any tx is broadcast, and `runPartialAttempts` re-sizes
+      // and re-quotes in-tick, searching the sizes between the refusals (see
+      // its doc). It escalates to split/full only when no partial size is left.
       // Re-quote the collateral→principal swap for a new slice fraction. Returns
       // null when the amount is zero or every route fails (treated as skip).
       const reQuotePartial = async (
@@ -661,136 +627,33 @@ export async function maybeAutonomousLiquidate(
         }
       };
 
-      let attemptFractionBps = effectivePartialFractionBps;
-      let attemptQuotes: ServerOrchestrationResult | null =
-        effectivePartialQuotes;
-      let escalateToFull = false;
-      // True once we've clamped the slice to the close-factor cap. If a
-      // cap-clamped retry then reverts "slice too small to restore HF", the cap
-      // itself prevents any viable partial → escalate to full rather than skip
-      // and recompute the identical too-large→clamp→too-small loop forever
-      // (Codex P1, restoring the pre-#642 InvalidPartialFraction→full path).
-      let clampedToCap = false;
-
-      for (
-        let attempt = 0;
-        attempt < MAX_PARTIAL_RESIZE_ATTEMPTS;
-        attempt++
-      ) {
-        if (!attemptQuotes || attemptQuotes.calls.length === 0) break;
-        try {
-          const hash = await ctx.wallet.writeContract({
+      const outcome = await runPartialAttempts(effectivePartialFractionBps, effectivePartialQuotes, {
+        submit: (fractionBps, q) =>
+          ctx.wallet.writeContract({
             address: ctx.diamond,
             abi: TRIGGER_ABI,
             functionName: 'triggerPartialLiquidation',
-            args: [loanIdBig, attemptFractionBps, attemptQuotes.calls],
+            args: [loanIdBig, fractionBps, q.calls],
             account,
             chain: ctx.wallet.chain,
-          });
-          console.log(
-            `[keeper] loan=${loanId} chain=${chain.name} submitted-partial tx=${hash} fraction=${attemptFractionBps}bps attempt=${attempt} liqThreshold=${liqThresholdBps}bps via=${attemptQuotes.ranked[0].kind} hfBefore=${hfRaw} expected=${attemptQuotes.ranked[0].expectedOutput}`,
-          );
-          return true;
-        } catch (partialErr) {
-          // #2572 — a deadline refusal ends the attempt: every later send this run
-          // would be refused too. Rethrown to the outer catch, which logs it
-          // as a deferral rather than as this route's failure.
-          if (isSendPastDeadline(partialErr)) throw partialErr;
-          const msg = String(partialErr);
-          const lastAttempt = attempt + 1 >= MAX_PARTIAL_RESIZE_ATTEMPTS;
-
-          // ESCALATE (wrong tool) → fall through to split/full.
-          if (
-            msg.includes('InternalMatchOnlyBand') ||
-            msg.includes('PartialLeavesDust') ||
-            msg.includes('PartialFullyClosedUseFull') ||
-            msg.includes('PartialAfterMaturity')
-          ) {
-            console.log(
-              `[keeper] loan=${loanId} chain=${chain.name} partial-reverted-escalation (${msg.slice(0, 140)}) — falling back to split/full liquidation`,
-            );
-            escalateToFull = true;
-            break;
-          }
-
-          // #642 RE-SIZE: over-ceiling slice → shrink + re-quote + retry.
-          if (msg.includes('PartialOverLiquidates')) {
-            const reduced = reducePartialFractionBps(attemptFractionBps);
-            if (lastAttempt || reduced < MIN_PARTIAL_FRACTION_BPS) {
-              // Bounded shrink budget exhausted without landing under the
-              // ceiling. Next tick would recompute the SAME initial fraction
-              // from the same loan state and abandon identically, so escalate to
-              // split/full (which has no over-liquidation ceiling) rather than
-              // skip forever (Codex P2).
-              console.log(
-                `[keeper] loan=${loanId} chain=${chain.name} partial-over-liquidates and shrink budget exhausted (fraction=${attemptFractionBps}bps) — escalating to split/full`,
-              );
-              escalateToFull = true;
-              break;
-            }
-            console.log(
-              `[keeper] loan=${loanId} chain=${chain.name} partial-over-liquidates (fraction=${attemptFractionBps}bps) — re-sizing to ${reduced}bps and retrying`,
-            );
-            attemptFractionBps = reduced;
-            attemptQuotes = await reQuotePartial(attemptFractionBps);
-            continue;
-          }
-
-          // #642 CAP-CLAMP: slice exceeds the close-factor cap → clamp + retry.
-          if (msg.includes('InvalidPartialFraction')) {
-            const capBps = await readCloseFactorCapBps();
-            const clamped = clampPartialFractionBps(attemptFractionBps, capBps);
-            // Clamp only helps if it actually lowers the fraction to a usable
-            // slice; otherwise the cap can't yield a partial → escalate to full.
-            if (
-              lastAttempt ||
-              clamped >= attemptFractionBps ||
-              clamped < MIN_PARTIAL_FRACTION_BPS
-            ) {
-              console.log(
-                `[keeper] loan=${loanId} chain=${chain.name} invalid-partial-fraction (fraction=${attemptFractionBps}bps cap=${capBps}bps) — cap yields no usable partial; escalating to split/full`,
-              );
-              escalateToFull = true;
-              break;
-            }
-            console.log(
-              `[keeper] loan=${loanId} chain=${chain.name} invalid-partial-fraction (fraction=${attemptFractionBps}bps) — clamping to cap ${clamped}bps and retrying`,
-            );
-            attemptFractionBps = clamped;
-            attemptQuotes = await reQuotePartial(attemptFractionBps);
-            clampedToCap = true;
-            continue;
-          }
-
-          // A cap-clamped slice that now reverts "too small to restore/improve
-          // HF" means the close-factor cap itself precludes a viable partial.
-          // Recomputing next tick yields the identical too-large→clamp→too-small
-          // loop, so escalate to split/full instead of skipping (Codex P1).
-          if (
-            clampedToCap &&
-            (msg.includes('PartialMustRestoreHF') ||
-              msg.includes('PartialMustImproveHF'))
-          ) {
-            console.log(
-              `[keeper] loan=${loanId} chain=${chain.name} capped partial too small to restore HF (fraction=${attemptFractionBps}bps) — escalating to split/full`,
-            );
-            escalateToFull = true;
-            break;
-          }
-
-          // Other re-size errors (a fresh too-small slice, route failure,
-          // unknown) → skip this tick; next tick recomputes from fresh HF/quotes
-          // (these can clear without escalating: a route may recover, and a
-          // non-capped too-small estimate is re-derived from updated state).
-          console.log(
-            `[keeper] loan=${loanId} chain=${chain.name} partial-reverted-resize (${msg.slice(0, 140)}) — skipping; recompute slice next tick`,
-          );
-          return false;
-        }
+          }),
+        reQuote: reQuotePartial,
+        readCloseFactorCapBps,
+        // #2572 — a deadline refusal ends the attempt: every later send this
+        // run would be refused too. Rethrown to the outer catch, which logs it
+        // as a deferral rather than as this route's failure.
+        isFatal: isSendPastDeadline,
+        log: (line) => console.log(`[keeper] loan=${loanId} chain=${chain.name} ${line}`),
+      });
+      if (outcome.kind === 'submitted') {
+        console.log(
+          `[keeper] loan=${loanId} chain=${chain.name} submitted-partial tx=${outcome.hash} fraction=${outcome.fractionBps}bps attempt=${outcome.attempt} liqThreshold=${liqThresholdBps}bps via=${outcome.quotes.ranked[0].kind} hfBefore=${hfRaw} expected=${outcome.quotes.ranked[0].expectedOutput}`,
+        );
+        return true;
       }
-      // Reached only via `break`: escalate → fall through to split/full below;
-      // a re-quote that came back empty (no route) is a skip, not an escalation.
-      if (!escalateToFull) return false;
+      // A re-quote that came back empty (no route) or an unclassified refusal
+      // is a skip, not an escalation.
+      if (outcome.kind === 'skip') return false;
     }
 
     // Split-route decision: when ≥2 distinct-adapter quotes succeeded at
@@ -1140,15 +1003,7 @@ interface FlashLoanBranchArgs {
   publicClient: PublicClient;
   loanId: number;
   loanIdBig: bigint;
-  loan: {
-    collateralAsset: Address;
-    collateralAmount: bigint;
-    principalAsset: Address;
-    status: number;
-    assetType: number;
-    startTime: bigint;
-    durationDays: bigint;
-  };
+  loan: LiquidationLoan;
   hfRaw: bigint;
   /** Quote bundle for the full-size collateral→principal swap.
    *  Reused from the main flow's earlier `orchestrateServerQuotes`
