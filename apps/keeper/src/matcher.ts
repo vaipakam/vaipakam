@@ -68,6 +68,7 @@ import {
   type KeeperContext,
 } from './keeper';
 import { reportSendError } from './submissionQueue';
+import { ROLL_MIN_VALUE_TO_GAS, judgeRollValue } from './rollGasFloor';
 
 // `getActiveOffersCount` / `getActiveOffersPaginated` live on
 // MetricsFacet; `getOffer` on OfferCancelFacet post the EIP-170 facet
@@ -1336,7 +1337,9 @@ async function submitRoll(
  * `rollIntentLoan`. Shares the per-tick submit budget (`submitsUsed`) + wall-time
  * budget with the match/fill passes, and self-gates on `keepersPaused` (re-read
  * before each submit). A loan whose owner the keeper isn't AUTO_ROLL-delegated
- * for reverts; every later loan with that owner is then skipped.
+ * for reverts; every later loan with that owner is then skipped. A loan worth
+ * less than {@link ROLL_MIN_VALUE_TO_GAS} times its gas is left for its owner
+ * (#2760 item 3, rollGasFloor.ts).
  */
 async function runIntentRollPass(
   ctx: KeeperContext,
@@ -1356,6 +1359,7 @@ async function runIntentRollPass(
 
   let submits = submitsUsed;
   let rolled = 0;
+  let declinedDust = 0;
   const unauthorizedOwners = new Set<string>();
   for (const loan of rollable) {
     if (submits >= MAX_SUBMITS_PER_TICK || overBudget()) break;
@@ -1367,6 +1371,54 @@ async function runIntentRollPass(
       logKeepersPausedOnce(ctx);
       return;
     }
+    // #2760 item 3 — the keeper pays this roll's gas and earns nothing back,
+    // so it rolls only when the amount is worth its gas (see rollGasFloor.ts).
+    // The estimate is also where an undelegated owner first shows: it reverts
+    // `KeeperAccessRequired` before anything is signed.
+    let gasUnits: bigint;
+    try {
+      gasUnits = await ctx.client.estimateContractGas({
+        address: ctx.diamond,
+        abi: MATCHER_ABI,
+        functionName: 'rollIntentLoan',
+        args: [loan.loanId],
+        account: ctx.wallet.account,
+      });
+    } catch (err) {
+      if (String(err).includes('KeeperAccessRequired')) {
+        unauthorizedOwners.add(loan.owner.toLowerCase());
+      } else {
+        console.log(
+          `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: gas estimate failed: ${String(err).slice(0, 200)}`,
+        );
+      }
+      continue;
+    }
+    const verdict = await judgeRollValue(
+      ctx.client,
+      ctx.diamond,
+      ctx.chainId,
+      loan.lendingAsset,
+      loan.amount,
+      gasUnits,
+    );
+    if (verdict.kind === 'gasUnpriced') {
+      // The same for every loan on this chain this run: say it once and stop.
+      console.log(
+        `[matcher] chain=${ctx.chainId} roll pass: not rolling, ${verdict.reason}; owners can roll or claim their loans themselves`,
+      );
+      break;
+    }
+    if (verdict.kind === 'assetUnpriced') {
+      console.log(
+        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loan.loanId)} not rolled: ${verdict.reason}`,
+      );
+      continue;
+    }
+    if (verdict.kind === 'dust') {
+      declinedDust += 1;
+      continue;
+    }
     submits += 1;
     const res = await submitRoll(ctx, loan.loanId);
     if (res.ok) {
@@ -1375,9 +1427,9 @@ async function runIntentRollPass(
       unauthorizedOwners.add(loan.owner.toLowerCase());
     }
   }
-  if (rolled > 0) {
+  if (rolled > 0 || declinedDust > 0) {
     console.log(
-      `[matcher] chain=${ctx.chainId} roll pass: ${rolled} loan(s) rolled (${rollable.length} repaid candidate(s))`,
+      `[matcher] chain=${ctx.chainId} roll pass: ${rolled} loan(s) rolled, ${declinedDust} worth less than ${ROLL_MIN_VALUE_TO_GAS}x their gas left for their owners (${rollable.length} repaid candidate(s))`,
     );
   }
 }
