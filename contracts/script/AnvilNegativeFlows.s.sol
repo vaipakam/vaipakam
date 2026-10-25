@@ -18,6 +18,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {RevertProbe} from "./lib/RevertProbe.sol";
 
 /**
  * @title AnvilNegativeFlows
@@ -25,15 +26,19 @@ import {Deployments} from "./lib/Deployments.sol";
  *         Anvil diamond. Each NEG-* assertion proves a specific gate
  *         reverts as expected.
  *
- *         Pattern: every negative case uses `vm.prank(<caller>)` +
- *         `address(diamond).call(badCalldata)` OUTSIDE any
- *         `vm.startBroadcast(...)` block. Without `startBroadcast`
- *         the call is simulation-only — forge does NOT add it to the
+ *         Pattern: every negative case calls
+ *         `RevertProbe.call(<caller>, diamond, badCalldata)` OUTSIDE any
+ *         `vm.startBroadcast(...)` block. Outside `startBroadcast` the
+ *         call is simulation-only — forge does NOT add it to the
  *         broadcast tx queue, so the broadcast pre-flight never
  *         re-attempts the failing call (the issue that bit us in
  *         positive-flow N11 / N18 / N19 when we tried to test reverts
- *         inside `vm.startBroadcast`). Each NEG case asserts
- *         `ok == false` via `require(!ok, ...)`.
+ *         inside `vm.startBroadcast`). The probe also restores the
+ *         simulation afterwards: a bare `vm.prank` call spends a nonce
+ *         of the pranked account that the chain never sees, so that
+ *         account's next broadcast is signed one nonce ahead and never
+ *         mines (#1646). Each NEG case asserts `ok == false` via
+ *         `require(!ok, ...)`.
  *
  *         Setup operations (mocks, KYC, oracle wiring, fresh loan
  *         creation when needed for terminal-path negatives) DO run
@@ -302,8 +307,9 @@ contract AnvilNegativeFlows is Script {
         vm.stopBroadcast();
 
         // Try claimAsLender on the still-Active loan.
-        vm.prank(lender);
-        (bool ok, ) = address(diamond).call(
+        (bool ok, ) = RevertProbe.call(
+            lender,
+            address(diamond),
             abi.encodeWithSelector(ClaimFacet.claimAsLender.selector, loanId)
         );
         require(!ok, "NEG-15: claim on Active loan should revert");
@@ -335,8 +341,9 @@ contract AnvilNegativeFlows is Script {
         vm.stopBroadcast();
 
         // Try a partial repay.
-        vm.prank(borrower);
-        (bool ok, ) = address(diamond).call(
+        (bool ok, ) = RevertProbe.call(
+            borrower,
+            address(diamond),
             abi.encodeWithSelector(
                 RepayFacet.repayPartial.selector,
                 loanId,
@@ -358,8 +365,9 @@ contract AnvilNegativeFlows is Script {
         address caller,
         LibVaipakam.CreateOfferParams memory p
     ) internal returns (bool ok) {
-        vm.prank(caller);
-        (ok, ) = address(diamond).call(
+        (ok, ) = RevertProbe.call(
+            caller,
+            address(diamond),
             abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, p)
         );
     }
