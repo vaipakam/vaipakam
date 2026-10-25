@@ -912,15 +912,16 @@ node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-end "$CON
 unset VAIPAKAM_LIVE_PUBLICATION_TOKEN
 
 # ── 5b. Master-flag flip (testnet ergonomics) ─────────────────────────
-# Range Orders Phase 1 governance-gated kill switches default `false` on
-# every fresh deploy (per docs/RangeOffersDesign.md §15 staged-enablement
-# rationale). On Anvil the bootstrap script flips them; on testnet
-# operators previously had to do this manually after every fresh deploy.
-# Flipping here removes the manual step — no functional change to
-# mainnet behaviour because deploy-mainnet.sh does NOT call this script
-# (and mainnet should keep the staged-rollout discipline).
+# The matching kill switch (`partialFillEnabled`) defaults `false` on
+# every fresh deploy. Ranged offers need no flag: they are always on (the
+# range master flags were retired in #2812). On Anvil the bootstrap
+# script flips the matcher; on testnet operators previously had to do
+# this manually after every fresh deploy. Flipping here removes the
+# manual step — no functional change to mainnet behaviour because
+# deploy-mainnet.sh does NOT call this script (and mainnet should keep
+# the staged-rollout discipline).
 #
-# Idempotent — `setRange*Enabled(true)` on an already-true flag is a
+# Idempotent — `setPartialFillEnabled(true)` on an already-true flag is a
 # successful no-op state write.
 
 echo
@@ -931,14 +932,15 @@ if [ -z "$DIAMOND_ADDR" ]; then
 elif [ -z "${ADMIN_PRIVATE_KEY:-}" ]; then
   echo "    (ADMIN_PRIVATE_KEY missing — skipping master-flag flip)"
 else
-  for fn in setRangeAmountEnabled setRangeRateEnabled setPartialFillEnabled; do
+  # Ranged offers need no flag (always on, #2812); the matcher is the one switch.
+  for fn in setPartialFillEnabled; do
     echo "  cast send $fn(true) on $DIAMOND_ADDR"
     cast send "$DIAMOND_ADDR" "$fn(bool)" true \
       --private-key "$ADMIN_PRIVATE_KEY" \
       --rpc-url "$RPC" \
       2>&1 | grep -E "^status" | head -1 || true
   done
-  echo "  Final master flags: $(cast call $DIAMOND_ADDR 'getMasterFlags()(bool,bool,bool)' --rpc-url $RPC | tr '\n' ' ')"
+  echo "  Final partial-fill flag: $(cast call $DIAMOND_ADDR 'getPartialFillEnabled()(bool)' --rpc-url $RPC | tr '\n' ' ')"
 fi
 
 # ── 5c. CCIP lane / channel wiring — NOT a single-chain step ──────────
@@ -1060,7 +1062,7 @@ else
     # turned into a failure after the log is written, below.
     sentinel_reads "$DIAMOND_FOR_HEALTH" "$RPC" || true
     echo "  facetCount       = $(diamond_facet_count "$DIAMOND_FOR_HEALTH" "$RPC" || echo UNREADABLE)"
-    echo "  getMasterFlags() = $(cast call "$DIAMOND_FOR_HEALTH" 'getMasterFlags()(bool,bool,bool)' --rpc-url "$RPC" 2>/dev/null | tr '\n' ' ' || echo '?')"
+    echo "  getPartialFillEnabled() = $(cast call "$DIAMOND_FOR_HEALTH" 'getPartialFillEnabled()(bool)' --rpc-url "$RPC" 2>/dev/null | tr '\n' ' ' || echo '?')"
     POOL_FOR_HEALTH=$(jq -r '.vpfiTokenPool // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
     if [ -n "$POOL_FOR_HEALTH" ]; then
       echo "  vpfiTokenPool    = $POOL_FOR_HEALTH"

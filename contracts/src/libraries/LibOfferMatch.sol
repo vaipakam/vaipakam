@@ -828,7 +828,7 @@ library LibOfferMatch {
         }
         // (c) Lender collateral floor (OfferCreateFacet lender branch). #998 S15
         //     (#900): keyed on the slice actually being liquid-both-legs (NOT
-        //     the now-dead `rangeAmountEnabled` flag — and NOT range-shape,
+        //     the retired `rangeAmountEnabled` flag (#2812) — and NOT range-shape,
         //     since intent slices materialize single-value `amount == amountMax
         //     == fillAmount`, so a range-shape key would skip them). `reqColl`
         //     (the intent-LTV-cap collateral) can sit below the HF floor when

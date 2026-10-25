@@ -346,6 +346,25 @@ library FacetSelectors {
         return bytes4(keccak256("setRecycleTariffKPer1e18EthDay(uint256)"));
     }
 
+    /// @notice #2812 — the range master flags' setters and getters, DELETED
+    ///         from `ConfigFacet` (owner decision 2026-10-25: ranged offers are
+    ///         always on; the storage slots are retained, dead). A `Replace` of
+    ///         the new surface leaves them routed to the OLD bytecode unless they
+    ///         are Removed — the split Diamond by the opposite door (CLAUDE.md
+    ///         "Deleting or renaming a function"). No contract calls any of them,
+    ///         so a curated refresh may retire them on its own.
+    ///         `RefreshAllFacetsInPlace` sweeps them from the loupe itself.
+    /// @dev    Computed from the signatures: none of them exists in source.
+    function retiredRangeFlagSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](6);
+        s[0] = bytes4(keccak256("setRangeAmountEnabled(bool)"));
+        s[1] = bytes4(keccak256("setRangeRateEnabled(bool)"));
+        s[2] = bytes4(keccak256("setRangeCollateralEnabled(bool)"));
+        s[3] = bytes4(keccak256("getRangeAmountEnabled()"));
+        s[4] = bytes4(keccak256("getRangeRateEnabled()"));
+        s[5] = bytes4(keccak256("getMasterFlags()"));
+    }
+
     /// @notice The pre-#1949 shapes of `OfferCreateFacet.createSignedOfferVault`
     ///         / `createSignedOfferWallet`, which gained a trailing `MakerFull`
     ///         in #2489. These are NOT retired by a curated refresh (Codex #2489

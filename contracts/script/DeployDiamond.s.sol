@@ -1017,26 +1017,21 @@ contract DeployDiamond is Script, ArtifactRootBase {
         //     decision 2026-10-23: the Timelock unpauses after handover).
         console.log("Protocol left PAUSED - run Launch.s.sol once the chain is configured.");
 
-        // 5f. Enable the canonical-limit-order (GTC) master flags
-        //     (Issue #102 / ADR-0010). Each is governance-tunable via
-        //     ConfigFacet.set*Enabled and defaults `false` at the
-        //     contract level — the kill-switch convention from ADR-0005.
-        //     Fresh Vaipakam deploys come up in GTC mode (lender ceiling
-        //     / borrower floor, partial-fill both sides, full range on
-        //     amount + rate + collateral) by FLIPPING THESE HERE rather
-        //     than changing the storage default. Operators that want a
-        //     conservative bake on a brand-new deployment can comment
-        //     these four lines out and call them manually after a
-        //     review window.
+        // 5f. Enable the matcher (Issue #102 / ADR-0010). Ranged offers
+        //     need no flag: they are always on (the range master flags
+        //     were retired in #2812). `partialFillEnabled` gates the order
+        //     matchers and multi-fill; it defaults `false` at the contract
+        //     level (the kill-switch convention from ADR-0005), so a fresh
+        //     deploy comes up in GTC mode by FLIPPING IT HERE rather than
+        //     changing the storage default. An operator who wants a
+        //     conservative bake can comment this line out and call it after
+        //     a review window.
         //
         //     The deployer holds ADMIN_ROLE (granted by
-        //     initializeAccessControl at Step 5a above), so these calls
-        //     succeed before the Step 6 handover.
-        ConfigFacet(diamond).setRangeAmountEnabled(true);
-        ConfigFacet(diamond).setRangeRateEnabled(true);
-        ConfigFacet(diamond).setRangeCollateralEnabled(true);
+        //     initializeAccessControl at Step 5a above), so this call
+        //     succeeds before the Step 6 handover.
         ConfigFacet(diamond).setPartialFillEnabled(true);
-        console.log("GTC master flags enabled (range amount/rate/collateral + partial-fill).");
+        console.log("Matcher enabled (partial-fill); ranged offers are always on.");
 
         // ── Step 6: Handover to admin (only when admin != deployer) ─────
         // Phase-1 testnet pattern: deployer EOA signs the deploy but the
@@ -2910,7 +2905,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](89);
+        s = new bytes4[](83);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -2936,15 +2931,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[13] = ConfigFacet.getVpfiTierDiscountBps.selector;
         s[14] = ConfigFacet.getProtocolConfigBundle.selector;
         s[15] = ConfigFacet.getProtocolConstants.selector;
-        // Range Orders Phase 1 master kill-switch flags. Default false
-        // on a fresh deploy; governance flips them via the setters
-        // below. See docs/RangeOffersDesign.md §15 for the staged-
-        // enablement rationale (each flag can be toggled
-        // independently to roll out range / partial-fill behavior).
-        s[16] = ConfigFacet.setRangeAmountEnabled.selector;
-        s[17] = ConfigFacet.setRangeRateEnabled.selector;
+        // #2812: the range master flags (setRangeAmountEnabled /
+        // setRangeRateEnabled / setRangeCollateralEnabled, their getters
+        // and getMasterFlags) were retired; their six slots are reused by
+        // the former tail entries (83..88) so the array stays hole-free.
+        // #1353 (M2 PR-5c) — loan-side reward-cap haircut knob.
+        s[16] = ConfigFacet.setUserSideShareCapBps.selector;
+        s[17] = ConfigFacet.setRewardHaircutBps.selector;
+        // The matching kill-switch (default false on a fresh deploy).
         s[18] = ConfigFacet.setPartialFillEnabled.selector;
-        s[19] = ConfigFacet.getMasterFlags.selector;
+        // #1347 (M2 PR-5a/5b) — Full VPFI tariff knobs.
+        s[19] = ConfigFacet.getFeeEntitlementConfig.selector;
         // Range Orders Phase 1 — governance-tunable matcher BPS.
         s[20] = ConfigFacet.setLifMatcherFeeBps.selector;
         // Auto-pause window duration setter (Phase 1 follow-up).
@@ -2965,9 +2962,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[25] = ConfigFacet.getTreasuryFeeBps.selector;
         s[26] = ConfigFacet.getLoanInitiationFeeBps.selector;
         s[27] = ConfigFacet.getLifMatcherFeeBps.selector;
-        // Single-field master-flag getters (companion of getMasterFlags).
-        s[28] = ConfigFacet.getRangeAmountEnabled.selector;
-        s[29] = ConfigFacet.getRangeRateEnabled.selector;
+        s[28] = ConfigFacet.setFeeEntitlementEnabled.selector;
+        s[29] = ConfigFacet.setTariffKPerLifYear.selector;
+        // Single-field getter for the matching kill-switch.
         s[30] = ConfigFacet.getPartialFillEnabled.selector;
         // T-044 admin-configurable loan-default grace schedule.
         s[31] = ConfigFacet.setGraceBuckets.selector;
@@ -3031,10 +3028,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[58] = ConfigFacet.setTreasuryConvertTargets.selector;
         s[59] = ConfigFacet.setTreasuryConvertThresholds.selector;
         s[60] = ConfigFacet.getTreasuryConvertConfig.selector;
-        // Issue #164 — borrower-side collateral range master flag.
-        // Defaults `false` on a fresh deploy; flipped on by governance
-        // via the setter below. See docs/RangeOffersDesign.md §3.
-        s[61] = ConfigFacet.setRangeCollateralEnabled.selector;
+        // RL-4 (#1306) — recycled-stream allocation register (read side).
+        s[61] = ConfigFacet.getRecycleRegisterState.selector;
         // T-086 step 6 — prepay-listing safety buffer setter. Read
         // by `NFTPrepayListingFacet.{postPrepayListing,
         // updatePrepayListing}` when validating askPrice against
@@ -3086,14 +3081,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[81] = ConfigFacet.getRewardClaimHorizonDays.selector;
         // RL-4 (#1306) — recycled-stream allocation register.
         s[82] = ConfigFacet.setRecycleRegisterKeeperBps.selector;
-        s[83] = ConfigFacet.getRecycleRegisterState.selector;
-        // #1347 (M2 PR-5a/5b) — Full VPFI tariff knobs.
-        s[84] = ConfigFacet.setTariffKPerLifYear.selector;
-        s[85] = ConfigFacet.setFeeEntitlementEnabled.selector;
-        s[86] = ConfigFacet.getFeeEntitlementConfig.selector;
-        // #1353 (M2 PR-5c) — loan-side reward-cap haircut knob.
-        s[87] = ConfigFacet.setRewardHaircutBps.selector;
-        s[88] = ConfigFacet.setUserSideShareCapBps.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet

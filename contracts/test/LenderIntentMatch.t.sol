@@ -87,9 +87,6 @@ contract LenderIntentMatchTest is SetupTest {
         solver = makeAddr("intentSolver");
 
         vm.startPrank(owner);
-        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
-        ConfigFacet(address(diamond)).setRangeRateEnabled(true);
-        ConfigFacet(address(diamond)).setRangeCollateralEnabled(true);
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         vm.stopPrank();
         // The #393 v1-b kill-switch — enabled here so matchIntent is reachable
@@ -1341,7 +1338,7 @@ contract LenderIntentMatchTest is SetupTest {
     // pinned by an agreement test here — this suite's $1 mock oracle does not
     // classify the pair as `Liquid`, so `minCollateralForLending` returns 0 and
     // both the slice's create-time floor check AND `previewIntent`'s mirror of
-    // it (which reuses the SAME helper + `rangeAmountEnabled` condition, so it
+    // it (which reuses the SAME helper, so it
     // cannot drift from `OfferCreateFacet`) skip. The agreement holds: with the
     // floor inactive, matchIntent succeeds and preview reports Ok.
 

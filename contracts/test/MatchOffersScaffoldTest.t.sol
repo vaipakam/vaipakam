@@ -33,21 +33,17 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
  *         + sanctions defaults from `setupHelper()`.
  */
 contract MatchOffersScaffoldTest is SetupTest {
-    // The Range Orders Phase 1 master flags default to `false` on a
-    // fresh deploy (`LibVaipakam.Storage.protocolCfg` zero-init). The
-    // smoke check below flips them to ON in `setUp` so any test that
-    // inherits this file lands on the partial-fill code paths #102
-    // introduced.
+    // The matching kill-switch (`partialFillEnabled`) defaults to
+    // `false` on a fresh deploy (`LibVaipakam.Storage.protocolCfg`
+    // zero-init). `setUp` flips it ON so any test that inherits this
+    // file lands on the partial-fill code paths #102 introduced.
     function setUp() public {
         setupHelper();
 
-        // Flip every Range Orders Phase 1 + #102 kill-switch on. Tests
-        // that need to exercise the OFF path can re-disable in their
-        // own scope.
+        // Flip the #102 matching kill-switch on (ranged offers need no
+        // flag, #2812). Tests that need to exercise the OFF path can
+        // re-disable it in their own scope.
         vm.startPrank(owner);
-        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
-        ConfigFacet(address(diamond)).setRangeRateEnabled(true);
-        ConfigFacet(address(diamond)).setRangeCollateralEnabled(true);
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         vm.stopPrank();
     }

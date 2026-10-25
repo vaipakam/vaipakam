@@ -2152,11 +2152,9 @@ contract EarlyWithdrawalFacetTest is Test {
     ///        (2) collateral=0 `MaxLendingAboveCeiling` — the vehicle posts a Borrower
     ///            offer with zero collateral (real collateral stays on the live loan);
     ///            fixed by the `saleVehicleCreate` ceiling exemption.
-    ///      Range-amount is enabled so the ceiling branch (Part B) actually runs,
-    ///      matching the deploy bootstrap (`rangeAmountEnabled=true`).
+    ///      The ceiling branch (Part B) runs whatever the config: ranged
+    ///      offers need no flag (the range master flags were retired, #2812).
     function testCreateLoanSaleOfferSuccessUnmocked() public {
-        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
-
         vm.recordLogs();
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
@@ -2186,7 +2184,6 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      createLoanSaleOffer for the same loan (while the first is live)
     ///      reverts instead of minting a duplicate that strands the link.
     function testCreateLoanSaleOfferRevertsOnDuplicate() public {
-        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
 

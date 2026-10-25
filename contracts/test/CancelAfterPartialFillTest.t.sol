@@ -62,9 +62,6 @@ contract CancelAfterPartialFillTest is SetupTest {
         // ONLY way to land a partial fill (direct-accept consumes the
         // whole offer / single-fill semantic).
         vm.startPrank(owner);
-        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
-        ConfigFacet(address(diamond)).setRangeRateEnabled(true);
-        ConfigFacet(address(diamond)).setRangeCollateralEnabled(true);
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         vm.stopPrank();
 

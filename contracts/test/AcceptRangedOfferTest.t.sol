@@ -87,13 +87,8 @@ contract AcceptRangedOfferTest is SetupTest {
 
         // Range / range-rate / range-collateral on; partial-fill OFF.
         // The direct-accept path doesn't consult the partial-fill flag
-        // (that gate is read by matchOffers), but enabling range fields
-        // is what unlocks `amountMax > amount` etc. in createOffer.
-        vm.startPrank(owner);
-        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
-        ConfigFacet(address(diamond)).setRangeRateEnabled(true);
-        ConfigFacet(address(diamond)).setRangeCollateralEnabled(true);
-        vm.stopPrank();
+        // (that gate is read by matchOffers), and ranged offers need no
+        // flag: they are always on (#2812).
     }
 
     // ─────────────────────────────────────────────────────────────────
