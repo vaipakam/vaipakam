@@ -140,6 +140,12 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   // exit that only half-completes is not an exit.
   'setVPFIDiscountConsent',
   'pokeMyTier',
+  // Withdrawing the consent to be charged for paid Push alerts (#2723).
+  // The same authority as the fee-deduction consent above — a standing
+  // permission for VPFI to leave the user's vault — so its withdrawal is an
+  // exit by the same test. Permitted only with a zero cap (see `ZERO_ONLY`):
+  // agreeing to pay, or raising a cap, stays gated.
+  'setNotificationFeeConsent',
 ]);
 
 /**
@@ -155,6 +161,15 @@ const DISABLE_ONLY: Readonly<Record<string, number>> = {
   setKeeperAccess: 0,
   setLoanKeeperEnabled: 2,
   setVPFIDiscountConsent: 0,
+};
+
+/**
+ * Writes permitted only when an amount argument is ZERO — the revoking value.
+ * Named per function for the same reason as `DISABLE_ONLY`; a missing or
+ * non-bigint argument is refused rather than read as zero.
+ */
+const ZERO_ONLY: Readonly<Record<string, number>> = {
+  setNotificationFeeConsent: 0,
 };
 
 /** Selectors of the exit writes, for inspecting batched calls. */
@@ -194,6 +209,8 @@ export function isExitWrite(functionName: string, args: readonly unknown[]): boo
   // than assumed to be the harmless direction.
   const flagAt = DISABLE_ONLY[functionName];
   if (flagAt !== undefined) return args[flagAt] === false;
+  const zeroAt = ZERO_ONLY[functionName];
+  if (zeroAt !== undefined) return args[zeroAt] === 0n;
 
   if (functionName !== 'multicall') return true;
 

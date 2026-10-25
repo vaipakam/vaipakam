@@ -128,6 +128,14 @@ contract RedeploySelectorParityTest is Test {
         _assertParity("NotificationFeeFacet", FacetSelectors.notificationFee());
     }
 
+    /// @dev #2795 - `RedeployFacets` cuts the forced-sale host with
+    ///      RepayPeriodicFacet, which self-calls it on every periodic
+    ///      settlement that sells. Pinned so the curated cut carries its whole
+    ///      surface.
+    function test_ForcedSaleSelectors_MatchCompiledAbi() public view {
+        _assertParity("ForcedSaleFacet", FacetSelectors.forcedSale());
+    }
+
     /// @dev #1503 item 28 — the RETIRED 3-argument resident-payout selector must
     ///      be GONE from the facet's compiled surface, so the curated refresh's
     ///      Remove leg targets a genuinely-retired entry point and no dual entry

@@ -471,6 +471,19 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
         );
     }
 
+    /// @notice #2795 — pay the borrower extra held on an OPEN loan to the
+    ///         exiting borrower-position holder on an obligation handover.
+    ///         Called by `PrecloseFacet.transferObligationViaOffer` before it
+    ///         re-anchors `loan.borrower`. See
+    ///         {LibCloseoutFreeze.payHeldBorrowerExtra}.
+    function payHeldBorrowerExtra(uint256 loanId, address to)
+        external
+        onlyDiamondInternal
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibCloseoutFreeze.payHeldBorrowerExtra(s, loanId, s.loans[loanId], to);
+    }
+
     // ─── Offer-principal lock (T-407-C, #566) — second lien category ────
     //
     // The per-offer principal lock for ERC20 Lender offers. The creator's

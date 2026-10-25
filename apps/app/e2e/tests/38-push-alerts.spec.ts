@@ -19,12 +19,24 @@
  *     the save again without the opt-in, Push stays off, the card says why,
  *     and it re-reads the status.
  *  4. UNKNOWN: the status could not be read — stated, and nothing offered.
+ *
+ *  #2723 — the paid-Push billing consent, against the REAL Diamond on anvil
+ *  (the fee and the consent are read from and written to the chain; only the
+ *  service's billing answer, `billedChainIds`, comes from the stub):
+ *  5. NOT BILLED: the fee is stated from the chain, the card says nothing
+ *     charges it on this network, and agreeing to pay is not offered.
+ *  6. BILLED HERE: agreeing signs the consent at the current fee — read back
+ *     from the chain — and the card says it covers the fee.
+ *  7. WITHDRAW: once billing is no longer stated (unknown answer), the stored
+ *     consent is still withdrawable, and withdrawing zeroes it on chain.
  */
 import http from 'node:http';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Page } from '@playwright/test';
 import { test, expect, connectWallet } from '../lib/wallet-fixture';
 import { ANVIL_URL } from '../lib/anvil';
+import { CHAIN_ID, DIAMOND, DIAMOND_ABI_VIEM, pub } from '../lib/chain';
+import { accountFor } from '../lib/wallets';
 
 const APP_PORT = 4177;
 const APP_BASE = `http://127.0.0.1:${APP_PORT}`;
@@ -41,6 +53,9 @@ let statusMode: 'available' | 'unavailable' | 'error' = 'available';
 /** What `PUT /thresholds` does with a NEW Push opt-in: store it, or refuse
  *  the whole save with the agent's 409. */
 let putPush: 'stored' | 'refuse' = 'stored';
+/** What `GET /push/status` says about billing (#2723): the chains it bills
+ *  paid Push on. The e2e chain is listed only in `here`. */
+let billedMode: 'nowhere' | 'here' = 'nowhere';
 const puts: Record<string, unknown>[] = [];
 
 test.beforeAll(async () => {
@@ -62,11 +77,12 @@ test.beforeAll(async () => {
     };
     if (req.url === '/push/status' && req.method === 'GET') {
       if (statusMode === 'error') return json(500, { error: 'boom' });
+      const billedChainIds = billedMode === 'here' ? [CHAIN_ID] : [];
       return json(
         200,
         statusMode === 'available'
-          ? { available: true, channel: AGENT_CHANNEL, scope: 'agent' }
-          : { available: false, reason: 'signer-unset', scope: 'agent' },
+          ? { available: true, channel: AGENT_CHANNEL, scope: 'agent', billedChainIds }
+          : { available: false, reason: 'signer-unset', scope: 'agent', billedChainIds },
       );
     }
     if (req.url === '/thresholds' && req.method === 'PUT') {
@@ -232,4 +248,78 @@ test('a status that cannot be read is stated as unknown, with nothing offered', 
     page.getByText(/couldn.t check whether push alerts can be sent/i),
   ).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('button', { name: /enable push delivery/i })).toHaveCount(0);
+});
+
+/** The wallet's stored paid-Push consent and the configured fee, from the
+ *  chain itself. */
+async function chainConsent(address: `0x${string}`) {
+  const [fee] = (await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getNotificationFeeConfig',
+  })) as readonly [bigint, bigint];
+  const [cap, covers] = (await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getNotificationFeeConsent',
+    args: [address],
+  })) as readonly [bigint, boolean];
+  return { fee, cap, covers };
+}
+
+test('paid Push: the fee is stated from the chain, and nothing is offered where Push is not billed', async ({
+  launchWallet,
+}) => {
+  statusMode = 'available';
+  billedMode = 'nowhere';
+  const { page } = await launchWallet('newBorrower');
+  await openAlerts(page);
+  const card = page.getByTestId('paid-push');
+  const { fee, cap } = await chainConsent(accountFor('newBorrower').address);
+  expect(cap).toBe(0n);
+  const feeText = (Number(fee) / 1e18).toString();
+  await expect(card.getByText(new RegExp(`cost ${feeText} VPFI per loan side`))).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(card.getByTestId('paid-push-billing')).toHaveText(/aren.t billed on/i);
+  await expect(card.getByTestId('paid-push-consent')).toHaveText(/haven.t agreed to pay/i);
+  await expect(card.getByRole('button', { name: /agree to pay/i })).toHaveCount(0);
+  await expect(card.getByRole('button', { name: /withdraw my agreement/i })).toHaveCount(0);
+});
+
+test('paid Push: agreeing where it is billed records the current fee on chain, and withdrawing always works', async ({
+  launchWallet,
+}) => {
+  statusMode = 'available';
+  billedMode = 'here';
+  const wallet = accountFor('newBorrower').address;
+  const { page } = await launchWallet('newBorrower');
+  await openAlerts(page);
+  const card = page.getByTestId('paid-push');
+  const { fee } = await chainConsent(wallet);
+  // Billing is stated outright, not left to the agree button's presence.
+  await expect(card.getByTestId('paid-push-billing')).toHaveText(/alert service charges this fee/i);
+
+  await card.getByRole('button', { name: /agree to pay up to/i }).click();
+  await expect(card.getByText(/saved: you.ve agreed to pay/i)).toBeVisible({ timeout: 30_000 });
+  await expect(card.getByTestId('paid-push-consent')).toHaveText(/that covers the current fee/i);
+  const agreed = await chainConsent(wallet);
+  expect(agreed.cap).toBe(fee);
+  expect(agreed.covers).toBe(true);
+  // Already covered: nothing more to agree to, and the withdrawal is offered.
+  await expect(card.getByRole('button', { name: /agree to pay/i })).toHaveCount(0);
+
+  // The service no longer answers about billing: agreeing is not offered,
+  // and the stored consent is still withdrawable.
+  statusMode = 'error';
+  await openAlerts(page);
+  await expect(card.getByTestId('paid-push-billing')).toHaveText(/couldn.t check whether paid push/i, {
+    timeout: 30_000,
+  });
+  await card.getByRole('button', { name: /withdraw my agreement/i }).click();
+  await expect(card.getByText(/withdrawn: paid push fees can.t be charged/i)).toBeVisible({
+    timeout: 30_000,
+  });
+  expect((await chainConsent(wallet)).cap).toBe(0n);
+  await expect(card.getByTestId('paid-push-consent')).toHaveText(/haven.t agreed to pay/i);
 });

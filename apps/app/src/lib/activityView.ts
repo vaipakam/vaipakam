@@ -127,9 +127,12 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   PeriodicInterestSettled: { label: 'Interest settled', category: 'loan-repay', priority: 50 },
   PeriodicInterestAutoLiquidated: { label: 'Auto-liquidated for interest', category: 'loan-default', priority: 85 },
   RepayPartialPeriodAdvanced: { label: 'Interest period advanced', category: 'loan-repay', priority: 45 },
-  // Informational: the periodic swap cleared the slippage gate but the
-  // lender still received less interest than owed.
-  PeriodicSlippageOverBuffer: { label: 'Interest settled with slippage', category: 'loan-repay', priority: 40 },
+  // #2795 — a forced sale sized to the debt: what was sold, what it raised
+  // and how it was split (lender first, then the fee, then the borrower).
+  ForcedSaleSettled: { label: 'Collateral sold for what was owed', category: 'loan-default', priority: 80 },
+  // #2795 — a borrower extra held on an open loan, paid out when the
+  // obligation was handed over to a replacement borrower.
+  BorrowerHeldExtraPaid: { label: 'Held sale extra paid out', category: 'collateral', priority: 50 },
   // Signed offers
   SignedOfferFilled: { label: 'Signed offer filled', category: 'loan-open', priority: 80 },
   SignedOfferMatched: { label: 'Signed offers matched', category: 'loan-open', priority: 80 },

@@ -2,27 +2,34 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibFallback} from "./LibFallback.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /**
- * @title  LibSwapToRepaySizing
- * @notice The ONE rule for how much collateral a full swap-to-repay close
- *         may sell (#2317, #2322): only what the debt needs.
- * @dev    Both full-close paths size through here — the borrower-driven
- *         {SwapToRepayFacet.swapToRepayFull} (sale sized to the payoff) and
- *         the resolver-filled {SwapToRepayIntentFacet.commitSwapToRepayIntent}
- *         (auction lot sized to the order's minimum taker amount) — so the two
- *         cannot drift into different answers to the same question. The
- *         caller's bound is an UPPER bound, never the sale size; collateral
- *         the sale does not need stays pledged in the borrower's vault.
+ * @title  LibSaleSizing
+ * @notice The ONE rule for how much collateral a sale may sell when it only
+ *         has to raise a known amount: the least collateral whose worst-case
+ *         proceeds cover it (#2317, #2322, #2795).
+ * @dev    Every sell-to-need path sizes through here, each with its own
+ *         slippage cap, so no two of them can answer the same question
+ *         differently:
+ *         - the voluntary full swap-to-repay ({SwapToRepayFacet.swapToRepayFull},
+ *           sized to the payoff) and the resolver-filled intent
+ *           ({SwapToRepayIntentFacet.commitSwapToRepayIntent}, the auction lot
+ *           sized to the order's minimum taker amount), at the borrower-facing
+ *           `cfgMaxSwapToRepaySlippageBps`;
+ *         - the forced sales ({ForcedSaleFacet}, sized to the debt plus the
+ *           largest charges), at `cfgMaxLiquidationSlippageBps`.
+ *         The caller's bound is an UPPER bound, never the sale size;
+ *         collateral the sale does not need stays pledged in the borrower's
+ *         vault.
  *
  *         "Worst-case proceeds" is the oracle value of the sale less the
- *         borrower-facing swap-to-repay slippage cap
- *         (`cfgMaxSwapToRepaySlippageBps`), the same cap both paths enforce.
+ *         caller's slippage cap.
  */
-library LibSwapToRepaySizing {
+library LibSaleSizing {
     /**
      * @notice The least collateral whose slippage-capped oracle floor covers
      *         `required`, bounded by `maxIn` — EXACTLY the least, whatever the
@@ -49,6 +56,7 @@ library LibSwapToRepaySizing {
      * @param principalAsset  The asset the sale must raise.
      * @param required        Principal the worst-case proceeds must cover.
      * @param maxIn           The caller's upper bound on collateral sold.
+     * @param capBps          The slippage cap the sale is held to (bps, `< BPS`).
      * @return covers False when even `maxIn` cannot cover `required` at the
      *                slippage floor (or an oracle price is zero); the caller
      *                refuses with its own error and `sell` / `floor` are then
@@ -60,11 +68,48 @@ library LibSwapToRepaySizing {
         address collateralAsset,
         address principalAsset,
         uint256 required,
-        uint256 maxIn
+        uint256 maxIn,
+        uint256 capBps
     ) internal view returns (bool covers, uint256 sell, uint256 floor) {
         (uint256 a, uint256 b) = _conversion(collateralAsset, principalAsset);
-        if (a == 0 || b == 0) return (false, 0, 0);
-        uint256 k = LibVaipakam.BASIS_POINTS - LibVaipakam.cfgMaxSwapToRepaySlippageBps();
+        return _size(a, b, required, maxIn, capBps);
+    }
+
+    /// @notice {sizeSale} at a rate the caller already read
+    ///         ({LibFallback.oracleRate}), so a caller that quotes its sale at
+    ///         that same rate sizes and quotes from ONE reading. The rate's
+    ///         `toPrincipal(x) = ⌊x·den / num⌋` is the `E(x)` above with
+    ///         `A = den`, `B = num`.
+    function sizeSaleAtRate(
+        LibFallback.Rate memory rate,
+        uint256 required,
+        uint256 maxIn,
+        uint256 capBps
+    ) internal pure returns (bool covers, uint256 sell, uint256 floor) {
+        return _size(rate.den, rate.num, required, maxIn, capBps);
+    }
+
+    /// @notice The slippage-capped floor of selling `amount` at `rate` —
+    ///         the same floor {sizeSaleAtRate} guarantees, for an amount the
+    ///         caller did not size (an uncovered sale of everything, or what
+    ///         actually arrived).
+    function floorAtRate(LibFallback.Rate memory rate, uint256 amount, uint256 capBps)
+        internal
+        pure
+        returns (uint256)
+    {
+        if (rate.num == 0) return 0;
+        return (LibFallback.toPrincipal(rate, amount) * (LibVaipakam.BASIS_POINTS - capBps))
+            / LibVaipakam.BASIS_POINTS;
+    }
+
+    function _size(uint256 a, uint256 b, uint256 required, uint256 maxIn, uint256 capBps)
+        private
+        pure
+        returns (bool covers, uint256 sell, uint256 floor)
+    {
+        if (a == 0 || b == 0 || capBps >= LibVaipakam.BASIS_POINTS) return (false, 0, 0);
+        uint256 k = LibVaipakam.BASIS_POINTS - capBps;
         uint256 eMin = Math.mulDiv(required, LibVaipakam.BASIS_POINTS, k, Math.Rounding.Ceil);
         sell = Math.mulDiv(eMin, b, a, Math.Rounding.Ceil);
         if (sell > maxIn) return (false, 0, 0);

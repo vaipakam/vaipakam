@@ -78,7 +78,7 @@ pnpm --filter @vaipakam/agent exec tsc -p . --noEmit
 Worker `wrangler.jsonc:vars`:
 
 - `FRONTEND_ORIGIN`, `TG_BOT_USERNAME`, `DIAG_*` knobs.
-- `PUSH_CHANNEL_ADDRESS` (optional, #1456) — the Push channel the signer posts for. Unset, the channel is the signer's own address; set, `PUSH_CHANNEL_PK` signs as that channel's delegate. `GET /push/status` reports the channel the rail will use, and the app's subscribe link reads it from there. Since #2667 it also covers the keeper's rail, as the keeper last published it to the shared `push_rail_status` row: `scope: 'service'` while that row is under 15 minutes old (both rails must be able to send, on the same channel), `scope: 'agent'` otherwise.
+- `PUSH_CHANNEL_ADDRESS` (optional, #1456) — the Push channel the signer posts for. Unset, the channel is the signer's own address; set, `PUSH_CHANNEL_PK` signs as that channel's delegate. `GET /push/status` reports the channel the rail will use, and the app's subscribe link reads it from there. Since #2667 it also covers the keeper's rail, as the keeper last published it to the shared `push_rail_status` row: `scope: 'service'` while that row is under 15 minutes old (both rails must be able to send, on the same channel), `scope: 'agent'` otherwise. Every answer also carries `billedChainIds` (#2723), the chains on which this service charges the paid-Push notification fee. It is a constant in code, not a setting, and it is empty because no sender here calls `markNotifBilled`. The app offers the on-chain agreement to pay only on a listed chain, and withdrawing that agreement everywhere.
 
 Worker secrets (via `wrangler secret put`):
 

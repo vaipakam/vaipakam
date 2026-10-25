@@ -67,6 +67,45 @@ describe('probeClaim — the borrower surplus lane', () => {
     expect(r.kind === 'claimable' && r.loan.claim.surplus).toEqual({ asset: USDC, amount: 5_000_000n });
   });
 
+  it('lists a held surplus behind a collateral row a close-out wrote claimed (#2795)', async () => {
+    // A periodic forced sale held an extra, then a default left the borrower
+    // nothing of the collateral and wrote that row claimed. The contract pays
+    // each lane on its own flag, so the surplus is still claimable, and the
+    // collateral lane carries nothing.
+    const r = await probeClaim(
+      client({
+        ownerOf: ME,
+        getClaimable: [WETH, 0n, true, 0n, 0n, 0n, 0n, false],
+        getBorrowerLifRebate: [0n, 0n],
+        getBorrowerSurplusClaim: [USDC, 5_000_000n, false],
+        getLoanCollateralLien: noLien,
+      }),
+      DIAMOND,
+      ME,
+      borrowerLoan,
+    );
+    expect(r.kind).toBe('claimable');
+    if (r.kind !== 'claimable') return;
+    expect(r.loan.claim.surplus).toEqual({ asset: USDC, amount: 5_000_000n });
+    expect(r.loan.claim.amount).toBe(0n);
+  });
+
+  it('is nothing to claim when the collateral row is claimed and no other lane is open', async () => {
+    const r = await probeClaim(
+      client({
+        ownerOf: ME,
+        getClaimable: [WETH, 3n, true, 0n, 0n, 0n, 0n, false],
+        getBorrowerLifRebate: [0n, 0n],
+        getBorrowerSurplusClaim: [USDC, 5_000_000n, true],
+        getLoanCollateralLien: noLien,
+      }),
+      DIAMOND,
+      ME,
+      borrowerLoan,
+    );
+    expect(r.kind).toBe('none');
+  });
+
   it('treats an already-claimed surplus as nothing to claim', async () => {
     const r = await probeClaim(
       client({

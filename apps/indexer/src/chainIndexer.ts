@@ -6569,7 +6569,7 @@ export async function processLoanLogs(
         .run();
     }
     // Notes on events deliberately not state-mutating here:
-    //  - LoanSettlementBreakdown / PeriodicSlippageOverBuffer /
+    //  - LoanSettlementBreakdown / ForcedSaleSettled / BorrowerHeldExtraPaid /
     //    SwapAdapter* — informational only; surfaced via activity_events
     //    for the LoanTimeline, no `loans` row change.
     //  - LoanFallbackPending / LoanCuredFromFallback — the FallbackPending

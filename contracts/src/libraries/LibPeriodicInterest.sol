@@ -104,6 +104,22 @@ library LibPeriodicInterest {
         return expected - paid;
     }
 
+    /// @dev The shortfall a periodic settlement would sell for if it ran
+    ///      now: {currentShortfall} when a settlement is allowed (periodic
+    ///      interest enabled, the loan Active on a cadence, the period's grace
+    ///      over), zero otherwise. The same preconditions
+    ///      `RepayPeriodicFacet.settlePeriodicInterest` refuses on, read as a
+    ///      zero rather than a revert so a preview can say "no sale is due".
+    function settleableShortfall(
+        LibVaipakam.Loan storage loan
+    ) internal view returns (uint256) {
+        if (!LibVaipakam.storageSlot().protocolCfg.periodicInterestEnabled) return 0;
+        if (loan.status != LibVaipakam.LoanStatus.Active) return 0;
+        if (loan.periodicInterestCadence == LibVaipakam.PeriodicInterestCadence.None) return 0;
+        if (block.timestamp < settleAllowedFromAt(loan)) return 0;
+        return currentShortfall(loan);
+    }
+
     /// @dev True when the current period's boundary has passed AND the
     ///      borrower has fully covered the period's expected interest.
     ///      Used by the inline `_maybeAdvancePeriodCheckpoint` in

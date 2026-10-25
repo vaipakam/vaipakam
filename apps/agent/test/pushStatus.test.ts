@@ -8,7 +8,13 @@
  */
 import { describe, it, expect } from 'vitest';
 import { generatePrivateKey, privateKeyToAddress } from 'viem/accounts';
-import { KEEPER_RAIL_FRESH_SEC, decidePushOptIn, handlePushStatus, servicePushStatus } from '../src/pushRail';
+import {
+  KEEPER_RAIL_FRESH_SEC,
+  PUSH_BILLED_CHAIN_IDS,
+  decidePushOptIn,
+  handlePushStatus,
+  servicePushStatus,
+} from '../src/pushRail';
 
 const ORIGIN = 'https://app.vaipakam.com';
 /** A throwaway key, generated per run so none is ever written down. */
@@ -42,7 +48,11 @@ async function statusFor(
   expect(res.status).toBe(200);
   expect(res.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN);
   expect(res.headers.get('Cache-Control')).toBe('no-store');
-  return (await res.json()) as Record<string, unknown>;
+  // #2723 — every answer says on which chains Push is billed (none today);
+  // the rail assertions below compare the rest of the body.
+  const { billedChainIds, ...rail } = (await res.json()) as Record<string, unknown>;
+  expect(billedChainIds).toEqual([]);
+  return rail;
 }
 
 describe('GET /push/status', () => {
@@ -75,6 +85,17 @@ describe('GET /push/status', () => {
     expect(
       await statusFor({ PUSH_CHANNEL_PK: key, PUSH_CHANNEL_ADDRESS: configured }),
     ).toEqual({ available: true, channel: configured, scope: 'agent' });
+  });
+
+  // #2723 — no sender here calls the billing entry point, so the answer names
+  // no billed chain, and says so whether or not the rail can send: the app
+  // reads it to decide whether to offer the on-chain consent to be charged.
+  it('says Push is billed on no chain, in every answer', async () => {
+    for (const env of [{}, { PUSH_CHANNEL_PK: key }]) {
+      const res = await handlePushStatus({ ...env, DB: sharedDb() }, ORIGIN, NOW);
+      expect(((await res.json()) as Record<string, unknown>).billedChainIds).toEqual([]);
+    }
+    expect(PUSH_BILLED_CHAIN_IDS).toEqual([]);
   });
 
   it('never carries any part of the key', async () => {

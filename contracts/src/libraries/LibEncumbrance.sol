@@ -456,6 +456,43 @@ library LibEncumbrance {
         notifyTierExclusion(loanId, false);
     }
 
+    /// @notice #2795 — move the borrower-surplus reservation `oldBorrower →
+    ///         newUser` when the borrower position moves on an OPEN loan and
+    ///         the held extra moves with it ({LibConsolidation}). Moves only the
+    ///         aggregate; the per-loan record is loan-keyed, so a later
+    ///         {releaseBorrowerProceeds}(loanId, loan.borrower) — now `newUser`
+    ///         — unwinds the right bucket. The borrower-side mirror of
+    ///         {migrateActiveHeld}. Reads `oldBorrower` from the live loan, so
+    ///         callers invoke it BEFORE re-anchoring `loan.borrower`. No-op
+    ///         when nothing is reserved or the holder is unchanged.
+    function migrateBorrowerHeld(uint256 loanId, address newUser) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 reserved = s.borrowerProceedsEncumbered[loanId];
+        if (reserved == 0) return;
+        address oldBorrower = s.loans[loanId].borrower;
+        if (newUser == oldBorrower) return;
+        address asset = s.borrowerProceedsEncumberedAsset[loanId];
+        _decrementAggregate(oldBorrower, asset, 0, reserved);
+        s.encumbered[newUser][asset][0] += reserved;
+        notifyTierExclusion(loanId, false);
+    }
+
+    /// @notice #2795 — keep the borrower-surplus reservation within what is
+    ///         now held, after a move of the held extra whose token delivered
+    ///         less than it sent. Releases the excess from `holder`'s aggregate
+    ///         (where {migrateBorrowerHeld} already put it). The borrower-side
+    ///         mirror of {capLenderHeldReservations}.
+    function capBorrowerHeldReservation(uint256 loanId, address holder, uint256 held) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 reserved = s.borrowerProceedsEncumbered[loanId];
+        if (reserved <= held) return;
+        address asset = s.borrowerProceedsEncumberedAsset[loanId];
+        _decrementAggregate(holder, asset, 0, reserved - held);
+        s.borrowerProceedsEncumbered[loanId] = held;
+        if (held == 0) s.borrowerProceedsEncumberedAsset[loanId] = address(0);
+        notifyTierExclusion(loanId, false);
+    }
+
     /// @notice #661 — release a loan's VPFI borrower-surplus reservation (see
     ///         {encumberBorrowerProceeds}). Called from `ClaimFacet.claimAsBorrower`
     ///         immediately BEFORE the surplus withdraw, so the withdraw guard
@@ -857,6 +894,11 @@ library LibEncumbrance {
             notifyTierExclusion(loanId, true);
             return;
         }
+        // #2795 — migrate the reservation on a borrower extra held on this OPEN
+        // loan (a periodic forced sale's extra), which follows the borrower
+        // position with the funds. Reads the old borrower from the live loan,
+        // so it runs here, before the caller re-anchors `loan.borrower`.
+        migrateBorrowerHeld(loanId, newUser);
         LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[loanId];
         if (lien.released || lien.user == address(0)) return; // nothing to move
         address from = lien.user;

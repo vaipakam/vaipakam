@@ -1,0 +1,22 @@
+{
+  "name": "@vaipakam/protocol-e2e",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "The protocol's own two-chain Anvil scenarios (#848): the positive flows a forge script cannot drive because they need two chains and moving time \u2014 the interaction-reward claim on the canonical chain and on a mirror, the day reports and broadcasts behind it, VPFI moving out and back over the real CCIP token pools, the tier push to a mirror and the guardian pause. Built on the shared two-chain mesh (@vaipakam/anvil-harness/mesh) under a state directory, artifact root and ports of its own. Node-only test tooling; nothing imports it.",
+  "scripts": {
+    "typecheck": "tsc -p . --noEmit",
+    "e2e:anvil": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@vaipakam/anvil-harness": "workspace:*",
+    "@vaipakam/contracts": "workspace:*",
+    "@vaipakam/lib": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "~6.0.2",
+    "viem": "^2.48.4",
+    "vitest": "^4.1.4"
+  }
+}

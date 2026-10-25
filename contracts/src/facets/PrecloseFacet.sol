@@ -1107,6 +1107,35 @@ contract PrecloseFacet is
             );
         }
 
+        // #2795 — a borrower extra held on this open loan (a periodic forced
+        // sale's extra that could not reach the holder's wallet) came from the
+        // exiting holder's collateral, so it leaves with them too. Paid from
+        // the STORED borrower's vault, before the rewrite below.
+        LibFacet.crossFacetCall(
+            abi.encodeCall(
+                EncumbranceMutateFacet.payHeldBorrowerExtra,
+                (loanId, exitingBorrowerHolder)
+            ),
+            bytes4(0)
+        );
+        // Both payouts above leave the STORED borrower's vault (the returned
+        // collateral and the held extra, in the principal asset). When either
+        // is VPFI, re-stamp that vault owner so no fee-tier or staking credit
+        // stays on VPFI that is no longer vaulted.
+        address vpfi = s.vpfiToken;
+        if (
+            vpfi != address(0) &&
+            (loan.collateralAsset == vpfi || loan.principalAsset == vpfi)
+        ) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.restampUserVpfiInternal.selector,
+                    loan.borrower
+                ),
+                bytes4(0)
+            );
+        }
+
         // ── 4. ben's collateral already locked in his vault at offer creation
 
         // ── 5. Update loan to reflect ben as borrower ───────────────────────

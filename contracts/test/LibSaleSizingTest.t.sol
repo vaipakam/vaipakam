@@ -2,10 +2,11 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
-import {LibSwapToRepaySizing} from "../src/libraries/LibSwapToRepaySizing.sol";
+import {LibSaleSizing} from "../src/libraries/LibSaleSizing.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
-/// @dev Stands in for the Diamond: {LibSwapToRepaySizing} reads prices through
+/// @dev Stands in for the Diamond: {LibSaleSizing} reads prices through
 ///      `OracleFacet(address(this)).getAssetPrice`, so the harness answers that
 ///      selector itself. The slippage cap is the library default (300 bps),
 ///      since the harness's protocol config is unset.
@@ -27,18 +28,18 @@ contract SizingHarness {
         view
         returns (bool covers, uint256 sell, uint256 floor)
     {
-        return LibSwapToRepaySizing.sizeSale(col, prin, required, maxIn);
+        return LibSaleSizing.sizeSale(col, prin, required, maxIn, LibVaipakam.cfgMaxSwapToRepaySlippageBps());
     }
 }
 
 /**
- * @title LibSwapToRepaySizingTest
+ * @title LibSaleSizingTest
  * @notice The shared full-close sizing rule (#2317, #2322) returns EXACTLY the
  *         least covering amount — including where both tokens are coarse, the
  *         case an approximate-then-step-up sizing got badly wrong (Codex #2341
  *         r5).
  */
-contract LibSwapToRepaySizingTest is Test {
+contract LibSaleSizingTest is Test {
     SizingHarness internal h;
 
     function setUp() public {

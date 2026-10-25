@@ -1,5 +1,5 @@
 /**
- * The keeper's mirror of the rooted (d6) wire commitment. The leaf and root
+ * The shared mirror of the rooted (d6) wire commitment. The leaf and root
  * encodings are pinned against vectors computed INDEPENDENTLY with `cast`
  * (abi-encode + keccak), never against this module's own output, so a drift
  * from `RemitWire.sol` fails here rather than as a refused proof on chain.
@@ -19,7 +19,8 @@ import {
   d6Proof,
   d6Root,
   d6VerifyProof,
-} from '../src/d6Wire';
+  fundedDaysFromBits,
+} from './d6Wire';
 
 const LEAF0 = '0x946623f0d05f16d845f2a9f23ebcb0ad35e18c9ba6b80bfd485189d67d73670b';
 const LEAF1 = '0xb90bcf7be13cb236a993d45fb386f2091b7dba515f41ddc212e549ed98592bf5';
@@ -58,5 +59,22 @@ describe('d6 wire — chunking', () => {
     const leaves = d6Leaves(days);
     expect(leaves).toHaveLength(3);
     expect(leaves[1]).toBe(d6Leaf(1, days.slice(16, 32)));
+  });
+});
+
+describe('fundedDaysFromBits — the rooted list from the reservation record itself (Codex #2489 r2)', () => {
+  it('takes exactly the days whose bit is set, in order, across word boundaries', () => {
+    const dayIds = Array.from({ length: 300 }, (_, i) => BigInt(1000 + i));
+    const bits = [(1n << 0n) | (1n << 255n), 1n << 43n]; // indexes 0, 255, 256 + 43
+    expect(fundedDaysFromBits(dayIds, bits)).toEqual([1000n, 1255n, 1299n]);
+  });
+
+  it('a closed day the reservation did not fund is left out', () => {
+    expect(fundedDaysFromBits([4n, 5n, 6n], [0b101n])).toEqual([4n, 6n]);
+  });
+
+  it('a reservation that predates the record reads as null (the caller falls back), never as "nothing funded"', () => {
+    expect(fundedDaysFromBits([4n, 5n], [])).toBeNull();
+    expect(fundedDaysFromBits([], []), 'no closed day: an empty list').toEqual([]);
   });
 });

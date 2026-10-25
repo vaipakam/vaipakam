@@ -137,6 +137,10 @@ export interface DeploymentFacets {
    *  has no such key (the charge was on LoanFacet, the consent on
    *  ProfileFacet). */
   notificationFeeFacet?: HexAddress;
+  /** #2795 - the forced-sale host: sizes a forced sale to the debt, sells
+   *  it and splits the proceeds lender first. Optional: a chain deployed
+   *  before it has no such key. */
+  forcedSaleFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

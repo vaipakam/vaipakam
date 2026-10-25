@@ -59,6 +59,8 @@ import TreasuryFeeFacetABI from './TreasuryFeeFacet.json';
 import NumeraireValueFacetABI from './NumeraireValueFacet.json';
 // #2769 — the paid-notification fee host (charge + consent).
 import NotificationFeeFacetABI from './NotificationFeeFacet.json';
+// #2795 — the forced-sale host (sized to the debt, lender first).
+import ForcedSaleFacetABI from './ForcedSaleFacet.json';
 import RiskSplitLiquidationFacetABI from './RiskSplitLiquidationFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
@@ -213,6 +215,7 @@ export {
   TreasuryFeeFacetABI,
   NumeraireValueFacetABI,
   NotificationFeeFacetABI,
+  ForcedSaleFacetABI,
   RiskSplitLiquidationFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
