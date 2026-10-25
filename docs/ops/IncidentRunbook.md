@@ -1708,6 +1708,123 @@ recovery waits on the flag clearing, **not** an operator lever. This is a
 **liveness** matter (funds parked, not lost/mis-routed); it does **not** warrant
 an emergency pause. Do **not** route around the screen.
 
+## 8. Cloned site or counterfeit position NFT (added 2026-10-25; #745)
+
+### Why this is an operations job
+
+A copied web page can show any verdict it likes. Anyone can copy the position
+NFT's name and picture onto a token of their own. Two losses follow, and nothing
+on-chain can reverse either one, because neither passes through the Diamond:
+
+- **A counterfeit token.** A copy of a position NFT is listed on a marketplace,
+  and its link leads to a cloned verifier that calls it genuine. The buyer pays
+  for a token with no claim on any Vaipakam loan. The loss is the price paid.
+- **A wallet drain.** A cloned verifier or app adds a "connect your wallet" or
+  "sign to confirm" step. What the visitor signs is an approval or a transfer.
+  The loss can be the whole wallet.
+
+The pages themselves already give readers what a page can give. The verifier
+says on every visit that checking a token never needs a wallet, signature or
+approval. It names the full contract address it checked, with an explorer link,
+and links each verdict to the same token on the block explorer. Help lists the
+contract address for every network and explains how to spot a fake (#2698). The
+script policy keeps an injected script from running on the real pages (#43).
+None of that reaches a visitor who is on a different site. That part is the
+response below.
+
+### What a notice may and may not promise
+
+Write every notice from these. Do not improvise around them.
+
+- **May say:** the verifier only reads the blockchain and never asks a visitor
+  to connect a wallet, sign a message or approve a transfer, so a page that does
+  is not Vaipakam's.
+- **May say:** a position is genuine only at the contract addresses listed in
+  the app's Help for that network. A name or a picture proves nothing.
+- **May say:** open Vaipakam by typing its address or from your own bookmark.
+  The addresses are `app.vaipakam.com` for the app (the verifier is at
+  `/nft`) and `vaipakam.com` for the site.
+- **Must NOT say "Vaipakam never sends links".** It does. The keeper's and the
+  agent's Telegram and Push alerts carry a link to the loan in the app. Tell
+  readers to check where a link points, not that no genuine link exists.
+
+### Detect
+
+None of this is automated today. A check that does not run catches nothing, so
+whoever runs operations owns each item explicitly.
+
+- **Certificate transparency.** Search crt.sh for certificates naming
+  `vaipakam`, and for lookalike spellings, at least weekly. A lookalike domain
+  usually gets a certificate before it serves a page.
+- **Lookalike domains.** Run a permutation scan such as `dnstwist --registered
+  vaipakam.com` and compare the result with the last run.
+- **Marketplaces.** Search for collections named like the position NFT whose
+  contract is not one of the addresses in Help.
+- **Reports.** Treat a user report of a strange verifier, an unexpected "connect
+  to verify" step or a cheap Vaipakam position as a lead, and log it as one.
+
+### Triage
+
+1. Open the page in an isolated browser profile with **no wallet installed**.
+   Never connect a wallet to a suspected clone, not even an empty one.
+2. Record the URL, the time first seen, a screenshot, and any contract address
+   the page or listing shows. Read the hosting provider and the registrar from
+   DNS and RDAP.
+3. Decide which case it is: a copied page, a counterfeit token, or both. Note
+   whether it asks for a wallet. If it does, it is a drain, and it is urgent.
+
+### Respond
+
+Report to each of these, and record what was filed and when:
+
+- **MetaMask's phishing list**, through the `MetaMask/eth-phishing-detect`
+  repository on GitHub. Every MetaMask user then gets a warning on the domain.
+- **Google Safe Browsing**, at
+  <https://safebrowsing.google.com/safebrowsing/report_phish/>. Chrome and other
+  browsers that use the list then warn as well.
+- **Chainabuse**, at <https://www.chainabuse.com/report>, with any wallet
+  address the drain sends to.
+- **The host and the registrar**, at the abuse contacts their RDAP record names.
+  For a site behind Cloudflare, use <https://abuse.cloudflare.com/>.
+- **The marketplace**, through its own report function, for a counterfeit
+  collection or listing.
+- **Wallet security vendors** (for example Blockaid and Wallet Guard), through
+  their published reporting channels, when the page asks for signatures.
+
+Then post a notice on the project's own channels. Name the clone's domain and
+use only the wording above.
+
+### Prevention still open
+
+These are deliberate decisions, not code changes in this repository. Each one
+is open until someone records it as done:
+
+- **Marketplace collection verification**, so a copied collection reads as
+  unverified next to the real one. This is an account action with each
+  marketplace.
+- **A content-addressed mirror of the verifier** (IPFS, named through ENS),
+  whose bytes a reader can check. This is not decided. If it is adopted, the
+  name's controller belongs under the same multisig as the Diamond's owner, so
+  one key cannot repoint it.
+- **Domain hygiene**: registrar lock, DNSSEC, CAA records and HSTS preload on
+  the two canonical domains. This runbook has not verified their state.
+- **The position NFT's `external_url`.** The metadata carries a link only when
+  an admin sets a base URL (`VaipakamNFTFacet.setExternalUrlBase`; the
+  configuration script reads `NFT_EXTERNAL_URL_BASE` and leaves it unset by
+  default). A link inside an NFT teaches buyers to follow links found in NFTs,
+  which is how a counterfeit sends them to a clone. Leave it unset, or point it
+  only at the canonical app host. Decide before mainnet. It is configuration,
+  not a contract change.
+
+### Decision recorded (#745)
+
+The verifier stays, and it is NOT replaced by a pointer to a block explorer. An
+explorer cannot say "this is the real Vaipakam contract": a counterfeit's own
+contract page shows a valid owner too. An explorer cannot decode a position
+into terms a buyer can read. And replacing the verifier would leave the drain
+case untouched. The verifier's explorer links are a cross-check beside it, not a
+replacement for it.
+
 ---
 
 ## Deployment log
