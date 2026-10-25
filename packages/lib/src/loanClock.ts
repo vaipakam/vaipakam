@@ -293,11 +293,16 @@ const PAGE = 64n;
  */
 export class PauseLogTooLongError extends Error {
   override name = 'PauseLogTooLongError';
-  constructor(
-    readonly total: bigint,
-    readonly limit: bigint,
-  ) {
+  /** How many entries the log has. */
+  readonly total: bigint;
+  /** How many the caller allowed. */
+  readonly limit: bigint;
+  // Plain fields, not parameter properties: the app compiles this source
+  // under `erasableSyntaxOnly`, which refuses them.
+  constructor(total: bigint, limit: bigint) {
     super(`the pause log has ${total} entries; this reader takes at most ${limit}`);
+    this.total = total;
+    this.limit = limit;
   }
 }
 
