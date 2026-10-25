@@ -1,4 +1,4 @@
-## Thread — Test suites create facets from their built artifacts (PR #<n>)
+## Thread — Test suites create facets from their built artifacts (PR #2798)
 
 The shared test setup, the invariant base and the individual test suites now
 create every Diamond facet from the creation code Foundry already wrote for
