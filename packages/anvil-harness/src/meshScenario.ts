@@ -35,9 +35,10 @@ export interface MeshScenario {
 export interface OpenMeshScenarioOptions {
   /** The suite's process clock, if its code under test reads one. */
   clock?: ClockPin;
-  /** Blocks to mine on each node before anything runs. A node started from a
-   *  dump serves state from the load point on, so a suite whose reader looks
-   *  a fixed depth behind the head starts that far clear of it. */
+  /** Blocks to mine on each node before anything runs (at least one, see the
+   *  opener). A node started from a dump serves state from the load point on,
+   *  so a suite whose reader looks a fixed depth behind the head starts that
+   *  far clear of it. */
   warmupBlocks?: number;
   /** A prefix for the chains' display names. */
   name?: string;
@@ -58,10 +59,13 @@ export async function openMeshScenario(store: MeshFixtureStore, opts: OpenMeshSc
     ],
     fixture.relayerKey as Hex,
   );
-  if (opts.warmupBlocks) {
-    await base.mineBlocks(opts.warmupBlocks);
-    await mirror.mineBlocks(opts.warmupBlocks);
-  }
+  // A node started from a dump reports the dumped head until it mines, while
+  // its own clock has kept running since the dump was taken: it then refuses a
+  // next-block timestamp the stale head says is ahead. One mined block makes
+  // the head read the node's own clock before anything reads `now()`.
+  const warmup = Math.max(1, opts.warmupBlocks ?? 0);
+  await base.mineBlocks(warmup);
+  await mirror.mineBlocks(warmup);
 
   const syncClock = async (): Promise<number> => {
     const ts = Math.max(await base.now(), await mirror.now());
