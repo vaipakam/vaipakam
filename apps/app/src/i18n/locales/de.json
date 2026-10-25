@@ -2872,6 +2872,8 @@
       "autoLendHint": "Ob Kreditgeber Auto-Lend neu aktivieren dürfen. Aus lehnt nur neue Aktivierungen ab: bestehende Zustimmungen bleiben, und bereits eingestellte stehende Angebote bleiben im Orderbuch, bis sie storniert oder gematcht werden.",
       "lenderIntentFills": "Ausführung stehender Intents",
       "lenderIntentFillsHint": "Ob registrierte Kredit-Intents ausgeführt werden können. Aus stoppt ihre Ausführung; Kreditgeber können weiterhin Intents registrieren.",
+      "minIntentFill": "Kleinste Intent-Ausführung",
+      "minIntentFillHint": "Der Mindestwert, den die kleinste Ausführung eines stehenden Intents bei seiner Registrierung haben muss. Beide Assets müssen außerdem bepreist sein. Ein vor einer Änderung registrierter Intent behält seine Bedingungen, bis er neu gesetzt wird.",
       "autoRefinanceHint": "Aus hindert Keeper und den Order-Matcher daran, Refinanzierungen abzuschließen. Ein Kreditnehmer, der seinen eigenen Kredit refinanziert, oder ein Kreditgeber, der eine Refinanzierungsanfrage direkt annimmt, kommt weiterhin durch.",
       "autoExtendHint": "Aus blockiert jede Verlängerung eines Kredits an Ort und Stelle, auch eine, die der Kreditnehmer direkt anfordert.",
       "numeraireFeed": "ETH-Preisfeed in der Referenzwährung",

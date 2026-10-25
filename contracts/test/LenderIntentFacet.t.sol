@@ -178,13 +178,14 @@ contract LenderIntentFacetTest is SetupTest {
         _set(mockERC20, mockCollateralERC20);
         vm.prank(user);
         LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, 50_000 ether, 500, 5000, 30, 1 ether, false, true
+            mockERC20, mockCollateralERC20, 50_000 ether, 500, 5000, 30, 250 ether, false, true
         );
         LibVaipakam.LenderIntent memory it = LenderIntentFacet(address(diamond))
             .getLenderIntent(user, mockERC20, mockCollateralERC20);
         assertEq(it.maxExposure, 50_000 ether, "overwritten exposure");
         assertEq(it.minRateBps, 500, "overwritten rate");
         assertEq(it.maxInitLtvBps, 5000, "overwritten ltv");
+        assertEq(it.minFillAmount, 250 ether, "overwritten min fill");
     }
 
     // ─── 3. Cancel ─────────────────────────────────────────────────────────

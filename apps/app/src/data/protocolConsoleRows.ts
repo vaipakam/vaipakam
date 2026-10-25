@@ -146,6 +146,7 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
       // them stops everything its name suggests.
       { key: 'autoLendEnabled', label: 'autoLend', hint: 'autoLendHint', format: 'flag' },
       { key: 'lenderIntentEnabled', label: 'lenderIntentFills', hint: 'lenderIntentFillsHint', format: 'flag' },
+      { key: 'minIntentFillNumeraire', label: 'minIntentFill', hint: 'minIntentFillHint', format: 'numeraireAmount' },
       { key: 'autoRefinanceEnabled', label: 'autoRefinance', hint: 'autoRefinanceHint', format: 'flag' },
       { key: 'autoExtendEnabled', label: 'autoExtend', hint: 'autoExtendHint', format: 'flag' },
       { key: 'keepersPaused', label: 'keepers', hint: 'keepersHint', format: 'pause' },
