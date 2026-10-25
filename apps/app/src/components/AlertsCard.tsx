@@ -20,6 +20,9 @@
  *    (#2251), and the subscribe link opens the channel the agent posts
  *    as. An unavailable rail, or one the card could not ask about, is
  *    stated instead of offering an opt-in that would do nothing.
+ *  - The on-chain consent to be charged for paid Push (#2723) sits below
+ *    the rail, in `PaidPushConsent`, read from the chain and offered only
+ *    where the agent says Push is billed; withdrawing it always works.
  */
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -30,6 +33,7 @@ import { chainDisplayName } from '../chain/chains';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
 import { useTermsBlockNonExitWrites } from '../contracts/diamond';
+import { PaidPushConsent } from './PaidPushConsent';
 import {
   addsAlertOptIn,
   alertsConfigured,
@@ -82,6 +86,7 @@ export function AlertsCard() {
     enabled: configured,
     staleTime: 60_000,
   });
+  const pushRail = pushStatus.data?.rail;
 
 
   /**
@@ -285,7 +290,13 @@ export function AlertsCard() {
       <p className="muted" style={{ marginTop: 0 }}>{copy.alerts.lede}</p>
 
       {!configured ? (
-        <p className="muted">{copy.alerts.notConfigured}</p>
+        <div className="stack" style={{ gap: 12 }}>
+          <p className="muted" style={{ margin: 0 }}>{copy.alerts.notConfigured}</p>
+          {/* #2723 — a consent stored on chain stays withdrawable even from a
+              deployment with no alert service; with no service to ask, the
+              billing posture is unknown and nothing is offered but that. */}
+          {address ? <PaidPushConsent billing={undefined} /> : null}
+        </div>
       ) : !address || !prefs ? (
         <p className="muted">{copy.alerts.connectFirst}</p>
       ) : (
@@ -440,7 +451,7 @@ export function AlertsCard() {
           <div>
             <h3 style={{ marginBottom: 4 }}>{copy.alerts.pushTitle}</h3>
             <p className="muted" style={{ marginTop: 0 }}>{copy.alerts.pushBody}</p>
-            {pushStatus.data?.kind === 'available' ? (
+            {pushRail?.kind === 'available' ? (
               <div className="cluster">
                 {/* Delivery needs BOTH halves: the service-side flag
                     (push_channel, written here) AND the wallet-side
@@ -459,7 +470,7 @@ export function AlertsCard() {
                 )}
                 <a
                   className="btn btn-secondary"
-                  href={pushStatus.data.channelUrl}
+                  href={pushRail.channelUrl}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -469,7 +480,7 @@ export function AlertsCard() {
                     (payment reminders); the risky-loan warnings come from
                     the keeper, which this check cannot see. Said, not
                     implied, until a combined answer exists. */}
-                {pushStatus.data.scope === 'agent' ? (
+                {pushRail.scope === 'agent' ? (
                   <p className="muted" style={{ margin: 0, flexBasis: '100%' }}>
                     {copy.alerts.pushScopeAgent}
                   </p>
@@ -480,17 +491,24 @@ export function AlertsCard() {
               // unavailable rail and one we could not ask about are both
               // stated, never shown as an option that would do nothing.
               <p className="muted" role="status" style={{ margin: 0 }}>
-                {pushStatus.data === undefined
+                {pushRail === undefined
                   ? copy.alerts.pushChecking
-                  : pushStatus.data.kind === 'unavailable'
+                  : pushRail.kind === 'unavailable'
                     ? copy.alerts.pushUnavailable
                     : copy.alerts.pushUnknown}
-                {pushStatus.data !== undefined && prefs.pushEnabled
+                {pushRail !== undefined && prefs.pushEnabled
                   ? ` ${copy.alerts.pushKeptNote}`
                   : ''}
               </p>
             )}
           </div>
+
+          {/* #2723 — the on-chain consent to be charged for paid Push. It is
+              read whenever the billing posture is known or not, because a
+              stored consent must always be withdrawable. */}
+          {pushStatus.data !== undefined ? (
+            <PaidPushConsent billing={pushStatus.data.billing} />
+          ) : null}
 
           {notice ? <p className="muted" style={{ margin: 0 }}>{notice}</p> : null}
           {error ? (
