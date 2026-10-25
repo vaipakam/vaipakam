@@ -18,7 +18,7 @@ export function alignOffsets(
   source: string,
   from: number,
   to: number,
-  options?: { decoded?: boolean; fold?: boolean },
+  options?: { references?: 'markdown' | 'html' | 'html-attribute' | 'none'; fold?: boolean },
 ): number[];
 export function readProse(
   source: string,

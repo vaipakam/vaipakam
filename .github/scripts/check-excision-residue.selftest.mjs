@@ -853,6 +853,20 @@ const FIXTURES = [
     body: '```buyOptions\nbuyOptions\n```\n',
   },
   {
+    name: 'html-semicolonless-reference.md',
+    caught: true,
+    mentions: 2,
+    why: 'a legacy HTML reference without its semicolon does not merge the two mentions after it',
+    body: '<div>&nbsp buyOptions buyOptions</div>\n',
+  },
+  {
+    name: 'html-attribute-reference.md',
+    caught: true,
+    mentions: 2,
+    why: 'an attribute value decodes as parse5 decodes it, so the mentions after its reference keep their own places',
+    body: '<span title="&notit; buyOptions buyOptions">x</span>\n',
+  },
+  {
     name: 'table-cells.md',
     caught: false,
     why: 'two table cells are two blocks',

@@ -41,7 +41,22 @@ describe('alignOffsets', () => {
 
   it('does not read references in an undecoded value', () => {
     const source = 'x &amp; y';
-    expect(alignOffsets('x &amp; y', source, 0, source.length, { decoded: false })).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(alignOffsets('x &amp; y', source, 0, source.length, { references: 'none' })).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it('reads references by the grammar of the parser that decoded them', () => {
+    // HTML decodes a legacy name without its semicolon, and a C1 code point
+    // through Windows-1252; CommonMark does neither.
+    const source = '&nbsp buy &#128;';
+    expect(alignOffsets('\u00a0 buy \u20ac', source, 0, source.length, { references: 'html' })).toEqual([0, 5, 6, 7, 8, 9, 10]);
+    expect(alignOffsets('&nbsp buy \ufffd', source, 0, source.length)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    // An attribute value keeps a legacy name followed by `=` as written.
+    expect(alignOffsets('&nbsp=x', '&nbsp=x', 0, 7, { references: 'html-attribute' })).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+
+  it('lets an unpaired character cost only its own offset', () => {
+    // `?` has no counterpart; the characters after it still find their own.
+    expect(alignOffsets('a?bc', 'abc', 0, 3)).toEqual([0, 1, 1, 2]);
   });
 
   it('keeps every offset inside the span when the value runs past it', () => {
@@ -99,6 +114,14 @@ describe('readProse — segments', () => {
     expect(texts('a<script>note</script>b\n', 'prose')).toEqual(['ab']);
     expect(texts('a<script>note</script>b\n', 'literal')).toEqual(['note']);
     expect(texts('<script>\nx<b>y\n</script>\n', 'literal')).toEqual(['\nx<b>y\n']);
+  });
+
+  it('keeps two mentions after a semicolonless HTML reference apart', () => {
+    const source = '<div>&nbsp buyOptions buyOptions</div>\n';
+    const segment = md(source).segments.find((s) => s.kind === 'prose')!;
+    const second = segment.text.lastIndexOf('buyOptions');
+    expect(segment.map[segment.text.indexOf('buyOptions')]).toBe(source.indexOf('buyOptions'));
+    expect(segment.map[second]).toBe(source.lastIndexOf('buyOptions'));
   });
 
   it('decodes references the way each parser does', () => {

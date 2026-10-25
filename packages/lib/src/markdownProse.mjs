@@ -70,9 +70,11 @@
  * Covered by `markdownProse.test.ts` beside this file.
  */
 import { decodeNamedCharacterReference } from 'decode-named-character-reference';
+import { DecodingMode, EntityDecoder, htmlDecodeTree } from 'entities/decode';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { gfmFromMarkdown } from 'mdast-util-gfm';
 import { gfm } from 'micromark-extension-gfm';
+import { decodeNumericCharacterReference } from 'micromark-util-decode-numeric-character-reference';
 import { Tokenizer, TokenizerMode } from 'parse5';
 
 /**
@@ -119,20 +121,53 @@ const RAW_TEXT_MODES = {
  *  `literal` segment: scanned, but never fused with rendered prose. */
 const HIDDEN_TEXT = new Set(['script', 'style', 'template', 'noscript', 'iframe', 'noembed', 'noframes']);
 
-/** A character reference as Markdown and HTML both spell it. */
-const CHARACTER_REFERENCE = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z][a-zA-Z0-9]{1,31}));/y;
+/**
+ * A character reference as CommonMark spells it: always closed by `;`, with a
+ * bounded number of digits or name characters.
+ */
+const MARKDOWN_REFERENCE = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z][a-zA-Z0-9]{1,31}));/y;
 
-/** The text a character reference stands for, or `null` if it is not one. */
-function decodeReference(dec, hex, name) {
+/**
+ * The reference starting at `source[i]` (an `&`) as the given grammar reads
+ * it — `{ text, length }`, or `null` if that grammar reads no reference there.
+ *
+ * Each grammar is decoded by the decoder its own parser uses, never by a
+ * restatement of it: micromark's for Markdown, and for HTML the `entities`
+ * decoder parse5 drives, in the mode parse5 drives it in (`html` for text,
+ * `html-attribute` for attribute values). The two grammars differ in ways a
+ * restatement had already got wrong: HTML decodes a legacy name without its
+ * semicolon (`&nbsp buy`, `&notit;` as `&not` + `it;`), a numeric reference
+ * without one, and C1 code points through the Windows-1252 table; Markdown
+ * does none of these.
+ */
+const htmlReference = (() => {
+  let text = '';
+  const decoder = new EntityDecoder(htmlDecodeTree, (cp) => {
+    text += String.fromCodePoint(cp);
+  });
+  return (source, i, to, mode) => {
+    text = '';
+    decoder.startEntity(mode);
+    const span = source.slice(i, to);
+    let length = decoder.write(span, 1);
+    if (length < 0) length = decoder.end();
+    return length > 0 ? { text, length } : null;
+  };
+})();
+
+function readReference(grammar, source, i, to) {
+  if (grammar === 'html') return htmlReference(source, i, to, DecodingMode.Legacy);
+  if (grammar === 'html-attribute') return htmlReference(source, i, to, DecodingMode.Attribute);
+  MARKDOWN_REFERENCE.lastIndex = i;
+  const m = MARKDOWN_REFERENCE.exec(source);
+  if (!m || i + m[0].length > to) return null;
+  const [, dec, hex, name] = m;
   if (name !== undefined) {
-    const out = decodeNamedCharacterReference(name);
-    return out === false ? null : out;
+    const text = decodeNamedCharacterReference(name);
+    return text === false ? null : { text, length: m[0].length };
   }
-  const code = dec !== undefined ? Number(dec) : parseInt(hex, 16);
-  if (!Number.isFinite(code) || code > 0x10ffff) return null;
-  // Both specifications replace NUL and surrogates with U+FFFD.
-  if (code === 0 || (code >= 0xd800 && code <= 0xdfff)) return '�';
-  return String.fromCodePoint(code);
+  const text = decodeNumericCharacterReference(dec ?? hex, dec !== undefined ? 10 : 16);
+  return { text, length: m[0].length };
 }
 
 /**
@@ -143,53 +178,58 @@ function decodeReference(dec, hex, name) {
  * value, and the value differs from its source: container prefixes (`> `,
  * list indentation) and delimiters are gone, backslash escapes and character
  * references are resolved. This walks both in step. Equal characters pair up;
- * a character reference pairs the text it decodes to with its own offset; an
- * escape pairs the escaped character with its own; any other source character
- * is something the parser dropped and is skipped.
+ * a character reference pairs the text it decodes to with its own offset; a
+ * Markdown escape pairs the escaped character with its own; any other source
+ * character is something the parser dropped and is skipped.
  *
- * `decoded` says whether the parser resolved references in this value. Code
- * and raw text are NOT decoded, so `&amp;` in a code block is five characters
- * of value, and reading it as one reference would push every later character
- * out of step.
+ * `references` names the grammar the parser resolved references by:
+ * `'markdown'` (the default; escapes too), `'html'` (text), `'html-attribute'`
+ * (attribute values), or `'none'` for code and raw text, which are NOT
+ * decoded — `&amp;` in a code block is five characters of value, and reading
+ * it as one reference would push every later character out of step.
  *
  * `fold` compares without case, for HTML tag and attribute names, which the
  * tokenizer lower-cases.
  *
  * The result is exact for everything the gate meets. Where it cannot be (a
- * value character with no source counterpart), the rest of the value is
- * assigned to the last source character, which keeps every offset inside the
- * node: a mention is still reported in the right block.
+ * value character with no source counterpart), that one character is
+ * assigned to where the walk last paired, and the walk resumes from there, so
+ * one unpaired character costs only its own offset: it cannot push the rest
+ * of the value to the end of the node and merge distinct mentions into one.
  */
-export function alignOffsets(value, source, from, to, { decoded = true, fold = false } = {}) {
+export function alignOffsets(value, source, from, to, { references = 'markdown', fold = false } = {}) {
   const out = new Array(value.length);
   let i = from;
   let j = 0;
+  // Where the walk resumes if value[j] has no counterpart: just past the last
+  // source character that paired.
+  let resume = from;
   const same = (a, b) => a === b || (fold && a.toLowerCase() === b.toLowerCase());
   while (j < value.length) {
     if (i >= to) {
-      out[j++] = Math.max(from, to - 1);
+      out[j++] = Math.max(from, Math.min(resume, to - 1));
+      i = resume;
       continue;
     }
     const s = source[i];
-    if (decoded && s === '&') {
-      CHARACTER_REFERENCE.lastIndex = i;
-      const m = CHARACTER_REFERENCE.exec(source);
-      if (m && i + m[0].length <= to) {
-        const text = decodeReference(m[1], m[2], m[3]);
-        if (text !== null && value.startsWith(text, j)) {
-          for (let k = 0; k < text.length; k++) out[j++] = i;
-          i += m[0].length;
-          continue;
-        }
+    if (references !== 'none' && s === '&') {
+      const ref = readReference(references, source, i, to);
+      if (ref && value.startsWith(ref.text, j)) {
+        for (let k = 0; k < ref.text.length; k++) out[j++] = i;
+        i += ref.length;
+        resume = i;
+        continue;
       }
     }
     if (same(value[j], s)) {
       out[j++] = i++;
+      resume = i;
       continue;
     }
-    if (decoded && s === '\\' && i + 1 < to && value[j] === source[i + 1]) {
+    if (references === 'markdown' && s === '\\' && i + 1 < to && value[j] === source[i + 1]) {
       out[j++] = i + 1;
       i += 2;
+      resume = i;
       continue;
     }
     i++;
@@ -278,7 +318,7 @@ function readHtml(html, toFile, sink) {
   let rawUndecoded = false;
   const flush = () => {
     if (!run) return;
-    const map = alignOffsets(run.chars, html, run.start, run.end, { decoded: !rawUndecoded }).map(toFile);
+    const map = alignOffsets(run.chars, html, run.start, run.end, { references: rawUndecoded ? 'none' : 'html' }).map(toFile);
     sink.prose(run.chars, map);
     run = null;
   };
@@ -292,14 +332,15 @@ function readHtml(html, toFile, sink) {
     }
   };
   /**
-   * One `interior` segment from [value, start, end, fold, decoded] pieces.
-   * Names fold case (the tokenizer lower-cases them); attribute values are
-   * decoded, comment and doctype text is not.
+   * One `interior` segment from [value, start, end, fold, references]
+   * pieces. Names fold case (the tokenizer lower-cases them) and hold no
+   * references; attribute values are decoded as attribute values; comment
+   * and doctype text is not decoded.
    */
   const interior = (pieces) => {
     let text = '';
     const map = [];
-    for (const [value, start, end, fold, decoded = true] of pieces) {
+    for (const [value, start, end, fold, references] of pieces) {
       if (!value) continue;
       if (text) {
         // A separator between pieces, mapped to the next piece's start, so
@@ -308,7 +349,7 @@ function readHtml(html, toFile, sink) {
         map.push(toFile(start));
       }
       text += value;
-      for (const o of alignOffsets(value, html, start, end, { fold, decoded })) map.push(toFile(o));
+      for (const o of alignOffsets(value, html, start, end, { fold, references })) map.push(toFile(o));
     }
     sink.emit('interior', text, map);
   };
@@ -321,13 +362,13 @@ function readHtml(html, toFile, sink) {
       onStartTag(t) {
         flush();
         const loc = t.location;
-        const pieces = [[t.tagName, loc.startOffset, loc.endOffset, true]];
+        const pieces = [[t.tagName, loc.startOffset, loc.endOffset, true, 'none']];
         for (const a of t.attrs) {
           const at = loc.attrs?.[a.name];
           const [s, e] = at ? [at.startOffset, at.endOffset] : [loc.startOffset, loc.endOffset];
-          pieces.push([a.name, s, e, true]);
+          pieces.push([a.name, s, e, true, 'none']);
           // The value is aligned against the same span, after the name.
-          pieces.push([a.value, s + a.name.length, e, false]);
+          pieces.push([a.value, s + a.name.length, e, false, 'html-attribute']);
         }
         interior(pieces);
         if (BLOCK_TAGS.has(t.tagName)) sink.breakProse();
@@ -341,7 +382,7 @@ function readHtml(html, toFile, sink) {
       onEndTag(t) {
         flush();
         rawUndecoded = false;
-        interior([[t.tagName, t.location.startOffset, t.location.endOffset, true]]);
+        interior([[t.tagName, t.location.startOffset, t.location.endOffset, true, 'none']]);
         if (BLOCK_TAGS.has(t.tagName)) sink.breakProse();
         const at = hidden.lastIndexOf(t.tagName);
         if (at !== -1) hidden.length = at;
@@ -351,7 +392,7 @@ function readHtml(html, toFile, sink) {
         // comment: processing instructions, CDATA outside foreign content,
         // `<!…>` declarations other than DOCTYPE.
         flush();
-        interior([[t.data, t.location.startOffset, t.location.endOffset, false, false]]);
+        interior([[t.data, t.location.startOffset, t.location.endOffset, false, 'none']]);
       },
       onDoctype(t) {
         flush();
@@ -359,7 +400,7 @@ function readHtml(html, toFile, sink) {
         interior(
           [t.name, t.publicId, t.systemId]
             .filter((v) => v)
-            .map((v) => [v, startOffset, endOffset, true, false]),
+            .map((v) => [v, startOffset, endOffset, true, 'none']),
         );
       },
       onEof() {
@@ -403,7 +444,7 @@ function readMarkdown(source) {
       }
       case 'inlineCode': {
         const [s, e] = span(node);
-        sink.prose(node.value, aligned(node.value, s, e, { decoded: false }));
+        sink.prose(node.value, aligned(node.value, s, e, { references: 'none' }));
         return;
       }
       case 'break':
@@ -411,7 +452,7 @@ function readMarkdown(source) {
         return;
       case 'html': {
         const [s, e] = span(node);
-        const local = aligned(node.value, s, e, { decoded: false });
+        const local = aligned(node.value, s, e, { references: 'none' });
         const open = sink.hidden.length;
         readHtml(node.value, (k) => local[Math.min(k, local.length - 1)] ?? s, sink);
         if (!open && sink.hidden.length) sink.rawFrom = e;
@@ -545,7 +586,7 @@ function readMarkdown(source) {
         const firstLineEnd = fenced ? source.slice(s, e).search(/\r\n|\r|\n|$/) + s : s;
         const bodyFrom = fenced ? Math.min(e, firstLineEnd + (source.startsWith('\r\n', firstLineEnd) ? 2 : 1)) : s;
         leaf(node, container, (sink) => {
-          sink.emit('literal', node.value, aligned(node.value, bodyFrom, e, { decoded: false }));
+          sink.emit('literal', node.value, aligned(node.value, bodyFrom, e, { references: 'none' }));
           const info = [node.lang, node.meta].filter((v) => v).join(' ');
           if (info) sink.emit('interior', info, aligned(info, s, firstLineEnd));
         });
@@ -553,7 +594,7 @@ function readMarkdown(source) {
       }
       case 'html': {
         const [s, e] = span(node);
-        const local = aligned(node.value, s, e, { decoded: false });
+        const local = aligned(node.value, s, e, { references: 'none' });
         leaf(node, container, (sink) =>
           readHtml(node.value, (k) => local[Math.min(k, local.length - 1)] ?? s, sink),
         );
