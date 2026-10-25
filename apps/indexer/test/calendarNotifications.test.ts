@@ -14,6 +14,8 @@ import {
   effectiveGraceSeconds,
   graceCaseSql,
   maxGraceSeconds,
+  pauseCreditSql,
+  pausedAtSql,
   planCalendarRows,
   sweepCalendarNotifications,
   _resetQuarantineTableProbe,
@@ -21,6 +23,7 @@ import {
   type GraceBucketJson,
 } from '../src/calendarNotifications';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
+import { pausedSecondsAt, pauseLogToJson, type PauseLog } from '@vaipakam/lib/loanClock';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
 const ALL_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
@@ -274,14 +277,15 @@ function seedLoan(
  *  '[]' = the definitive no-buckets state (default schedule); a JSON
  *  array = governance buckets; without a populated row the sweep
  *  defers rather than guess. */
-function seedGraceConfig(h: SqliteD1, bucketsJson = '[]') {
+function seedGraceConfig(h: SqliteD1, bucketsJson = '[]', pauseLogJson: string | null = '[]') {
   h.db
     .prepare(
       `INSERT INTO protocol_config
-         (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at)
-       VALUES (?, '[]', '[]', ?, 1, ?)`,
+         (chain_id, bundle_json, master_flags_json, grace_buckets_json, pause_intervals_json,
+          source_block, updated_at)
+       VALUES (?, '[]', '[]', ?, ?, 1, ?)`,
     )
-    .run(CHAIN, bucketsJson, NOW);
+    .run(CHAIN, bucketsJson, pauseLogJson, NOW);
 }
 
 describe('sweepCalendarNotifications (over the migrated schema)', () => {
@@ -552,8 +556,9 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     h.db
       .prepare(
         `INSERT INTO protocol_config
-           (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at)
-         VALUES (?, '[]', '[]', ?, 1, ?)`,
+           (chain_id, bundle_json, master_flags_json, grace_buckets_json, pause_intervals_json,
+            source_block, updated_at)
+         VALUES (?, '[]', '[]', ?, '[]', 1, ?)`,
       )
       .run(
         CHAIN,
@@ -593,7 +598,12 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
     expect(rowsInDb(h)).toHaveLength(0);
     // '[]' = the DEFINITIVE no-buckets state → default schedule applies.
-    h.db.prepare(`UPDATE protocol_config SET grace_buckets_json = '[]' WHERE chain_id = ?`).run(CHAIN);
+    // (#2808: the pause log must be known too — '[]' = never paused.)
+    h.db
+      .prepare(
+        `UPDATE protocol_config SET grace_buckets_json = '[]', pause_intervals_json = '[]' WHERE chain_id = ?`,
+      )
+      .run(CHAIN);
     await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
     expect(rowsInDb(h).map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']);
   });
@@ -773,7 +783,7 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     ]) {
       const plan = h.db
         .prepare(`EXPLAIN QUERY PLAN ${calendarWindowSql(graceCase)}`)
-        .all(CHAIN, NOW - 52 * DAY, NOW + 7 * DAY, ...Array<number>(8).fill(NOW))
+        .all(CHAIN, NOW - 52 * DAY, NOW + 7 * DAY, ...Array<number>(9).fill(NOW))
         .map((r) => String((r as { detail: string }).detail))
         .join(' | ');
       expect(plan).toContain('idx_loans_calendar_maturity');
@@ -781,5 +791,159 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
       expect(plan).toContain('idx_notifications_dedup');
       expect(plan).not.toMatch(/SCAN n2?(\s|$|\|)/);
     }
+  });
+});
+
+/**
+ * #2808 — the calendar runs on the D2 loan clock: every due date it keys on
+ * is the original one moved by the loan's pause credit (#668 / #935), in the
+ * SQL window and in the planner alike.
+ */
+describe('the loan clock (#2808)', () => {
+  const START = NOW - 31 * DAY; // 30-day loan, originally due a day ago
+  /** One 3-day pause during the loan, long over. */
+  const CLOSED: PauseLog = [
+    { start: BigInt(START + 5 * DAY), end: BigInt(START + 8 * DAY), pausedBefore: 0n },
+  ];
+  const json = (log: PauseLog) => JSON.stringify(pauseLogToJson(log));
+  const keys = (h: SqliteD1) =>
+    (h.db.prepare('SELECT kind, dedup_key FROM notifications ORDER BY id').all() as {
+      kind: string;
+      dedup_key: string;
+    }[]);
+
+  it('pausedAtSql is the contract walk, value for value', () => {
+    const log: PauseLog = [
+      { start: 100n, end: 200n, pausedBefore: 0n },
+      { start: 500n, end: 530n, pausedBefore: 100n },
+    ];
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    for (const x of [0, 99, 100, 150, 200, 300, 500, 515, 530, 10_000]) {
+      const got = (h.db.prepare(`SELECT ${pausedAtSql(log, 'x')} AS p FROM (SELECT ? AS x)`).get(x) as {
+        p: number;
+      }).p;
+      expect(got, String(x)).toBe(Number(pausedSecondsAt(log, BigInt(x))));
+    }
+    expect(pausedAtSql([], 'x')).toBe('0');
+    expect(pauseCreditSql([])).toBeNull();
+    expect(() => pausedAtSql([{ start: 1n, end: 2n ** 64n - 1n, pausedBefore: 0n }], 'x')).toThrow();
+  });
+
+  it('plans on the moved due date and keys the row on it', () => {
+    const loan: CalendarLoanRow = {
+      loan_id: 1,
+      lender: LENDER,
+      borrower: BORROWER,
+      lender_current_owner: null,
+      borrower_current_owner: null,
+      start_time: START,
+      duration_days: 30,
+    };
+    // Original clock: a day past due → grace_entered. Loan clock: due in two
+    // days → the T-7d reminder only.
+    const rows = planCalendarRows(CHAIN, [loan], NOW, 1, null, NOW, CLOSED);
+    const effective = START + 30 * DAY + 3 * DAY;
+    expect(rows.map((r) => r.kind)).toEqual(['maturity_7d']);
+    expect(rows[0].dedupKey).toBe(`${CHAIN}:${BORROWER}:maturity_7d:1:${effective}`);
+  });
+
+  it('credits only the pauses after the loan started', () => {
+    const before: PauseLog = [
+      { start: BigInt(START - 10 * DAY), end: BigInt(START - 7 * DAY), pausedBefore: 0n },
+    ];
+    const rows = planCalendarRows(
+      CHAIN,
+      [{ loan_id: 1, lender: LENDER, borrower: BORROWER, lender_current_owner: null, borrower_current_owner: null, start_time: START, duration_days: 30 }],
+      NOW,
+      1,
+      null,
+      NOW,
+      before,
+    );
+    expect(rows.map((r) => r.kind)).toEqual(['grace_entered', 'grace_entered']);
+  });
+
+  it('sweeps on the moved due date, end to end over the migrated schema', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h, '[]', json(CLOSED));
+    seedLoan(h, 1, START, 30);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set(), NOW);
+    const effective = START + 33 * DAY;
+    expect(keys(h)).toEqual([
+      { kind: 'maturity_7d', dedup_key: `${CHAIN}:${BORROWER}:maturity_7d:1:${effective}` },
+    ]);
+    // A second tick adds nothing: the suppression probe finds the key the
+    // planner wrote, because both use the moved date.
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW + 60, HEAD + 5, new Set(), NOW + 60);
+    expect(keys(h)).toHaveLength(1);
+  });
+
+  it('keeps a loan in its grace window that the original clock would call closed', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    // 30-day loan, originally due 5 days ago with 3 days' grace → grace has
+    // closed on the original clock; a 3-day credit puts it 2 days into grace.
+    const start = NOW - 35 * DAY;
+    seedGraceConfig(
+      h,
+      '[]',
+      json([{ start: BigInt(start + DAY), end: BigInt(start + 4 * DAY), pausedBefore: 0n }]),
+    );
+    seedLoan(h, 2, start, 30);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set(), NOW);
+    expect(keys(h).map((k) => k.kind)).toEqual(['grace_entered', 'grace_entered']);
+  });
+
+  it('leaves out a loan the credit pushes past the reminder window', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    // Originally due in 6 days (inside T-7d); a 3-day credit makes it 9.
+    const start = NOW - 24 * DAY;
+    seedGraceConfig(
+      h,
+      '[]',
+      json([{ start: BigInt(start + DAY), end: BigInt(start + 4 * DAY), pausedBefore: 0n }]),
+    );
+    seedLoan(h, 3, start, 30);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set(), NOW);
+    expect(keys(h)).toEqual([]);
+  });
+
+  it('defers while the pause log is unknown or unreadable', async () => {
+    for (const pl of [null, 'not json', '[{"start":"5"}]']) {
+      const h = createSqliteD1(ALL_MIGRATIONS);
+      seedGraceConfig(h, '[]', pl);
+      seedLoan(h, 9, NOW - 1 * DAY - 30 * DAY, 30); // would emit grace_entered
+      await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set(), NOW);
+      expect(keys(h), String(pl)).toEqual([]);
+    }
+  });
+
+  it('keys nothing while a pause is in force, and resumes once it has ended on both clocks', async () => {
+    const open: PauseLog = [{ start: BigInt(NOW - DAY), end: 2n ** 64n - 1n, pausedBefore: 0n }];
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedGraceConfig(h, '[]', json(open));
+    seedLoan(h, 9, NOW - 1 * DAY - 30 * DAY, 30);
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set(), NOW);
+    expect(keys(h)).toEqual([]);
+    // Closed on the wall clock but not yet on the chain's: still waits.
+    const justEnded: PauseLog = [{ start: BigInt(NOW - DAY), end: BigInt(NOW - 10), pausedBefore: 0n }];
+    h.db.prepare(`UPDATE protocol_config SET pause_intervals_json = ?`).run(json(justEnded));
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set(), NOW - 20);
+    expect(keys(h)).toEqual([]);
+    // Ended on both: the loan is credited the day and keyed once.
+    await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD, new Set(), NOW);
+    expect(keys(h).map((k) => k.kind)).toEqual(['grace_entered', 'grace_entered']);
+    expect(keys(h)[0].dedup_key.endsWith(`:9:${NOW - DAY + (DAY - 10)}`)).toBe(true);
+  });
+
+  it('still range-scans the maturity index with a pause credit in the query', () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const plan = h.db
+      .prepare(`EXPLAIN QUERY PLAN ${calendarWindowSql(graceCaseSql(null), true, pauseCreditSql(CLOSED))}`)
+      .all(CHAIN, NOW - 52 * DAY, NOW + 7 * DAY, ...Array<number>(9).fill(NOW))
+      .map((r) => String((r as { detail: string }).detail))
+      .join(' | ');
+    expect(plan).toContain('idx_loans_calendar_maturity');
+    expect(plan).not.toContain('TEMP B-TREE');
+    expect(plan).toContain('idx_notifications_dedup');
   });
 });

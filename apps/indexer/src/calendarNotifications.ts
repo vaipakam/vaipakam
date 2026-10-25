@@ -25,7 +25,7 @@
  * design calls out (HF alerts cover only liquid loans).
  *
  * Correctness notes:
- *   - Maturity is computed from the LIVE `start_time + duration_days`
+ *   - The ORIGINAL maturity is computed from the LIVE `start_time + duration_days`
  *     columns (never the immutable `init_*` history): the LoanExtended
  *     handler rewrites both, so the milestone windows re-derive
  *     correctly after an extension. Partial repays do NOT move the
@@ -43,6 +43,16 @@
  *     and a NULL block would sort a cron row to the bottom AND fall out
  *     of every keyset continuation (`block_number < ?` is NULL-false) —
  *     the 0038 migration's "stamp the head block" note.
+ *   - Maturity is the EFFECTIVE one (#2808): the original due date
+ *     moved by the protocol's paused time since the loan's start, the
+ *     D2 loan clock (#668 / #935, `LibLoanClock`), read from the pause
+ *     log the config refresh snapshots beside the grace schedule
+ *     (`pause_intervals_json`). The dedup key embeds it, so a pause that
+ *     moves a due date re-arms its milestones for the new date, as an
+ *     extension does. While a pause is in force every deadline moves
+ *     with the clock, so nothing approaches and nothing is keyed: the
+ *     sweep waits until the pause has ended on both clocks, and an
+ *     unknown log defers it like an unknown grace schedule.
  *   - Grace length mirrors `LibVaipakam.gracePeriod` EXACTLY (Codex
  *     #1298 r1): when governance has set custom `graceBuckets`, the
  *     sweep consults the snapshotted array (the `protocol_config`
@@ -52,6 +62,14 @@
  *     the retail deploy runs.
  */
 
+import {
+  defaultGraceSeconds as defaultGraceSecondsRule,
+  graceSecondsFromBuckets,
+  loanDeadlines,
+  pausedSecondsAt,
+  pauseLogFromJson,
+  type PauseLog,
+} from '@vaipakam/lib/loanClock';
 import {
   insertNotificationRows,
   recipientFor,
@@ -67,15 +85,10 @@ export interface GraceBucketJson {
   graceSeconds: string;
 }
 
-/** Mirrors LibVaipakam.gracePeriod's zero-bucket default schedule
- *  (same table as apps/app/src/lib/grace.ts). */
+/** LibVaipakam.gracePeriod's zero-bucket default schedule — the one copy
+ *  in `@vaipakam/lib/loanClock` (#2808), in this module's number units. */
 export function defaultGraceSeconds(durationDays: number): number {
-  if (durationDays < 7) return 3_600;
-  if (durationDays < 30) return 86_400;
-  if (durationDays < 90) return 3 * 86_400;
-  if (durationDays < 180) return 7 * 86_400;
-  if (durationDays < 365) return 14 * 86_400;
-  return 30 * 86_400;
+  return Number(defaultGraceSecondsRule(BigInt(durationDays)));
 }
 
 /**
@@ -89,13 +102,20 @@ export function effectiveGraceSeconds(
   durationDays: number,
   buckets: GraceBucketJson[] | null,
 ): number {
-  if (!buckets || buckets.length === 0) return defaultGraceSeconds(durationDays);
-  for (const b of buckets) {
+  // The walk itself is the shared rule (#2808); only the snapshot's
+  // decimal strings are converted here. A malformed bucket means the
+  // default schedule, exactly as `graceCaseSql` falls back, so the SQL
+  // filter and the planner can never disagree.
+  const parsed: { maxDurationDays: bigint; graceSeconds: bigint }[] = [];
+  for (const b of buckets ?? []) {
     const maxD = Number(b.maxDurationDays);
-    if (maxD === 0) return Number(b.graceSeconds);
-    if (durationDays < maxD) return Number(b.graceSeconds);
+    const g = Number(b.graceSeconds);
+    if (!Number.isFinite(maxD) || !Number.isFinite(g) || maxD < 0 || g < 0) {
+      return defaultGraceSeconds(durationDays);
+    }
+    parsed.push({ maxDurationDays: BigInt(Math.floor(maxD)), graceSeconds: BigInt(Math.floor(g)) });
   }
-  return Number(buckets[buckets.length - 1].graceSeconds);
+  return Number(graceSecondsFromBuckets(parsed, BigInt(durationDays)));
 }
 
 const DAY = 86_400;
@@ -252,11 +272,23 @@ export function planCalendarRows(
   /** The settled head's block timestamp, for `chain`-clock milestones.
    *  `null` withholds them: no lifecycle claim without the chain's time. */
   chainNowSec: number | null = null,
+  /** The snapshotted pause log (#2808). Every interval on it has ended by
+   *  both clocks — the sweep does not plan while one has not — so each
+   *  loan's credit is the same at either clock. Empty = never paused. */
+  pauseLog: PauseLog = [],
 ): NotifRow[] {
   const rows: NotifRow[] = [];
   for (const loan of loans) {
     if (loan.start_time <= 0) continue; // unhealed stub — no real clock yet
-    const maturity = loan.start_time + loan.duration_days * DAY;
+    // The EFFECTIVE due date — the loan clock's, never start + duration.
+    const maturity = Number(
+      loanDeadlines(
+        { startTime: BigInt(loan.start_time), durationDays: BigInt(loan.duration_days) },
+        0n,
+        pauseLog,
+        BigInt(nowSec),
+      ).maturity,
+    );
     const parties: LoanParties = {
       lender: loan.lender,
       borrower: loan.borrower,
@@ -277,9 +309,10 @@ export function planCalendarRows(
       for (const side of sides) {
         const recipient = recipientFor(parties, side);
         if (!recipient) continue;
-        // Maturity in the key → an extension re-arms; no block/log in the
-        // key → the milestone is one-shot per (loan, maturity) no matter
-        // how many cron ticks land inside its window.
+        // Maturity in the key → an extension, or a pause that moves the
+        // due date, re-arms; no block/log in the key → the milestone is
+        // one-shot per (loan, maturity) no matter how many cron ticks
+        // land inside its window.
         const dedupKey = `${chainId}:${recipient}:${m.kind}:${loan.loan_id}:${maturity}`;
         if (seen.has(dedupKey)) continue; // same wallet on both sides
         seen.add(dedupKey);
@@ -345,7 +378,41 @@ export function _resetQuarantineTableProbe(): void {
   _resetQuarantineAvailability();
 }
 
-export function calendarWindowSql(graceCase: string, withQuarantine = true): string {
+/**
+ * `pausedSecondsAt(column)` as SQL, over a log whose every interval has
+ * ENDED (#2808) — the sweep never builds it otherwise, because an open
+ * interval's credit grows with the clock. The same walk as the contract:
+ * the last interval starting at or before the value, plus the part of it
+ * before the value. Every number is a validated bigint, never caller text.
+ */
+export function pausedAtSql(log: PauseLog, column: string): string {
+  if (log.length === 0) return '0';
+  const whens: string[] = [];
+  for (let i = log.length - 1; i >= 0; i--) {
+    const iv = log[i];
+    if (iv.end > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error('pausedAtSql: the log has an interval that has not ended');
+    }
+    whens.push(`WHEN ${column} >= ${iv.end} THEN ${iv.pausedBefore + (iv.end - iv.start)}`);
+    whens.push(`WHEN ${column} >= ${iv.start} THEN ${iv.pausedBefore} + (${column} - ${iv.start})`);
+  }
+  return `(CASE ${whens.join(' ')} ELSE 0 END)`;
+}
+
+/** A loan's pause credit as SQL — the whole log's paused time less the part
+ *  before the loan's start — or null for a chain never paused, which keeps
+ *  the window query textually what it was before the loan clock. */
+export function pauseCreditSql(log: PauseLog): string | null {
+  if (log.length === 0) return null;
+  return `(${pausedSecondsAt(log, log[log.length - 1].end)} - ${pausedAtSql(log, 'loans.start_time')})`;
+}
+
+export function calendarWindowSql(
+  graceCase: string,
+  withQuarantine = true,
+  /** {@link pauseCreditSql}; null when the chain was never paused. */
+  creditSql: string | null = null,
+): string {
   // The already-notified suppression legs (Codex #1298 r5, reworked r6)
   // drop loans whose CURRENT-stage rows all exist, so a saturated window
   // can't spend the LIMIT on INSERT OR IGNORE no-ops tick after tick and
@@ -382,10 +449,22 @@ export function calendarWindowSql(graceCase: string, withQuarantine = true): str
   // stage by wall time while the planner emits by chain time would suppress
   // a lagging chain's loan as "already announced" on its grace_entered rows,
   // or select it for a stage the planner then refuses to emit.
+  //
+  // TWO MATURITIES (#2808). `maturity` is the ORIGINAL due date, the
+  // expression migration 0040 indexes: it carries the range prefilter and
+  // the ORDER BY, so the window stays an index range scan. `effective` is
+  // the loan clock's due date, the original moved by the loan's pause
+  // credit, and every test that decides what a loan is owed — its stage,
+  // its dedup key, its expiry — uses it. The credit is never negative, so
+  // the prefilter's lower bound is widened by the whole log's paused time
+  // and an exact upper bound on `effective` follows it. The order is by the
+  // original date; two loans' effective dates differ from it by at most the
+  // difference of their credits, which only reorders the LIMIT's tail.
   const maturity = `(loans.start_time + loans.duration_days * 86400)`;
-  const stageKind = `(CASE WHEN ${maturity} + ${graceCase} < ? THEN 'grace_ended'
-                      WHEN ${maturity} <= ? THEN 'grace_entered'
-                      WHEN ${maturity} - ? <= 86400 THEN 'maturity_1d'
+  const effective = creditSql === null ? maturity : `(${maturity} + ${creditSql})`;
+  const stageKind = `(CASE WHEN ${effective} + ${graceCase} < ? THEN 'grace_ended'
+                      WHEN ${effective} <= ? THEN 'grace_entered'
+                      WHEN ${effective} - ? <= 86400 THEN 'maturity_1d'
                       ELSE 'maturity_7d' END)`;
   const borrowerRcpt = `LOWER(COALESCE(loans.borrower_current_owner, loans.borrower))`;
   const lenderRcpt = `LOWER(COALESCE(loans.lender_current_owner, loans.lender))`;
@@ -411,20 +490,21 @@ export function calendarWindowSql(graceCase: string, withQuarantine = true): str
             ${withQuarantine ? `AND ${quarantineExclusionSql('loans')}` : ''}
             AND start_time > 0
             AND ${maturity} BETWEEN ? AND ?
-            AND (${maturity} + ${graceCase} + ${GRACE_ENDED_WINDOW_SECONDS}) > ?
+            AND ${effective} <= ?
+            AND (${effective} + ${graceCase} + ${GRACE_ENDED_WINDOW_SECONDS}) > ?
             AND (
               NOT EXISTS (
                 SELECT 1 FROM notifications n
                 WHERE n.dedup_key = loans.chain_id || ':' || ${borrowerRcpt} || ':' ||
-                  ${stageKind} || ':' || loans.loan_id || ':' || ${maturity}
+                  ${stageKind} || ':' || loans.loan_id || ':' || ${effective}
               )
               OR (
-                ${maturity} <= ?
+                ${effective} <= ?
                 AND ${lenderRcpt} <> '0x0000000000000000000000000000000000000000'
                 AND NOT EXISTS (
                   SELECT 1 FROM notifications n2
                   WHERE n2.dedup_key = loans.chain_id || ':' || ${lenderRcpt} || ':' ||
-                    ${stageKind} || ':' || loans.loan_id || ':' || ${maturity}
+                    ${stageKind} || ':' || loans.loan_id || ':' || ${effective}
                 )
               )
             )
@@ -470,9 +550,11 @@ export async function sweepCalendarNotifications(
     // backstop); null/absent column or empty array = the compile-time
     // default (Codex #1298 r1).
     const cfg = await db
-      .prepare(`SELECT grace_buckets_json FROM protocol_config WHERE chain_id = ?`)
+      .prepare(
+        `SELECT grace_buckets_json, pause_intervals_json FROM protocol_config WHERE chain_id = ?`,
+      )
       .bind(chainId)
-      .first<{ grace_buckets_json: string | null }>();
+      .first<{ grace_buckets_json: string | null; pause_intervals_json: string | null }>();
     // UNKNOWN vs DEFINITIVE (Codex #1298 r5): a missing row or a NULL
     // column means the schedule was never successfully read (pre-0039
     // row, or the isolated getGraceBuckets read is still failing) — on
@@ -488,6 +570,46 @@ export async function sweepCalendarNotifications(
       );
       return EMPTY_SWEEP;
     }
+    // THE PAUSE LOG, SAME DISCIPLINE (#2808). Every due date this sweep
+    // keys on is the loan clock's, and that needs the log: NULL (not read
+    // yet, or cleared after a pause event the refresh could not re-read)
+    // or a value that does not parse is unknown, and a reminder keyed on
+    // the original date would be early and is never retracted.
+    let pauseLog: PauseLog | null = null;
+    if (cfg.pause_intervals_json !== null) {
+      try {
+        pauseLog = pauseLogFromJson(JSON.parse(cfg.pause_intervals_json) as unknown);
+      } catch {
+        pauseLog = null;
+      }
+    }
+    if (pauseLog === null) {
+      console.warn(
+        `[calendarNotifications] pause log ${
+          cfg.pause_intervals_json === null ? 'not yet snapshotted' : 'unreadable'
+        } for chain ${chainId} — sweep deferred`,
+      );
+      return EMPTY_SWEEP;
+    }
+    // AND NOTHING WHILE A PAUSE RUNS. While one is in force every open
+    // loan's credit grows with the clock: no deadline approaches, and a
+    // key on a moving date would re-arm every tick. The sweep resumes once
+    // the last interval has ended by BOTH clocks — the planner's milestones
+    // run on either — and from then each loan's credit is fixed until the
+    // next pause.
+    const clockFloor = chainNowSec === null ? nowSec : Math.min(nowSec, chainNowSec);
+    const lastPause = pauseLog[pauseLog.length - 1];
+    if (lastPause && lastPause.end > BigInt(clockFloor)) {
+      console.warn(
+        `[calendarNotifications] chain ${chainId}: the protocol is paused (or the pause ` +
+          `ended after one of the sweep's clocks) — every due date is still moving, so ` +
+          `no reminder is keyed this tick`,
+      );
+      return EMPTY_SWEEP;
+    }
+    const totalPaused = lastPause
+      ? Number(lastPause.pausedBefore + (lastPause.end - lastPause.start))
+      : 0;
     let graceBuckets: GraceBucketJson[] | null = null;
     if (cfg.grace_buckets_json !== '[]') {
       try {
@@ -569,7 +691,9 @@ export async function sweepCalendarNotifications(
     }
     const windowClock = chainNowSec === null ? nowSec : Math.min(nowSec, chainNowSec);
     const res = await db
-      .prepare(calendarWindowSql(graceCaseSql(graceBuckets), withQuarantine))
+      .prepare(
+        calendarWindowSql(graceCaseSql(graceBuckets), withQuarantine, pauseCreditSql(pauseLog)),
+      )
       .bind(
         chainId,
         // The look-back floor and the expiry leg run on the EARLIER of the
@@ -577,7 +701,11 @@ export async function sweepCalendarNotifications(
         // chain time, so on a chain whose settled head lags wall time a
         // wall-clock expiry would age a loan out before its chain-clock
         // window opened — and no later tick would select it again.
-        windowClock - maxGraceSeconds(graceBuckets) - GRACE_ENDED_WINDOW_SECONDS,
+        // The floor is on the ORIGINAL due date, so it reaches back by the
+        // most any loan can have been credited (#2808).
+        windowClock - maxGraceSeconds(graceBuckets) - GRACE_ENDED_WINDOW_SECONDS - totalPaused,
+        nowSec + 7 * DAY,
+        // The exact upper bound, on the effective due date.
         nowSec + 7 * DAY,
         windowClock,
         // Suppression-probe binds (r5/r6), in SQL text order: the three
@@ -619,7 +747,15 @@ export async function sweepCalendarNotifications(
       );
     }
     if (eligible.length === 0) return EMPTY_SWEEP;
-    const rows = planCalendarRows(chainId, eligible, nowSec, headBlock, graceBuckets, chainNowSec);
+    const rows = planCalendarRows(
+      chainId,
+      eligible,
+      nowSec,
+      headBlock,
+      graceBuckets,
+      chainNowSec,
+      pauseLog,
+    );
     if (rows.length === 0) return EMPTY_SWEEP;
     const inserted = await insertNotificationRows(db, rows);
     if (inserted === 0) return EMPTY_SWEEP; // pure re-tick — nothing new
