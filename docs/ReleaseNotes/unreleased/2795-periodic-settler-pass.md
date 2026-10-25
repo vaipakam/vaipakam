@@ -1,4 +1,4 @@
-## Keeper — a periodic-interest settler pass (PR #TBD)
+## Keeper — a periodic-interest settler pass (PR #2833)
 
 Nothing settled an overdue periodic-interest period unless someone called the settlement by hand, so a lender on a cadence loan whose borrower missed a period was not paid until a person noticed. The keeper now has a pass that does it. Every 15 minutes, one chain at a time, it reads the contract's settlement preview for a window of the active loans and picks a loan whose period's grace is over. If the borrower already paid the period, it sends the settlement that only moves the checkpoint forward. If interest is short, it quotes the sale for exactly the collateral the contract sizes to the shortfall (the sell-to-need rule from #2795), never the whole collateral, since an aggregator quote encodes its sell amount and a quote for any other amount fails every route.
 
