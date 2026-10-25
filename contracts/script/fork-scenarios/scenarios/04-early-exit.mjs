@@ -8,7 +8,7 @@
  * has to say out loud.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, claimAndExpect, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, claimAndExpect, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor, bothNfts, NFT_STATUS } from '../lib/flow.mjs';
 import { parseEventLogs } from 'viem';
 import { f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
@@ -51,8 +51,8 @@ export async function run() {
         'lending.lenderVault': payoff - preCut,
         'lending.treasury': preCut,
       });
-    await expectPosition('A4.2c', 'the preclose changes ONLY the status to Repaid — both NFTs, terms and the whole lien as they were',
-      loanId, prePos, { status: STATUS.Repaid });
+    await expectPosition('A4.2c', 'the preclose changes ONLY the status to Repaid, on the loan and both position NFTs — their holders, terms and the whole lien as they were',
+      loanId, prePos, { status: STATUS.Repaid, ...bothNfts(NFT_STATUS.LoanRepaid) });
     // PrecloseFacet writes its own claim records, so both claims are
     // exercised here: the borrower's collateral, then the lender's payoff;
     // with both claimed the loan settles.
@@ -134,8 +134,8 @@ export async function run() {
         'lending.lenderVault': remaining - finalCut,
         'lending.treasury': finalCut,
       }, `gas=${finalReceipt.gasUsed} principal=${f18(mid.principal)} interest=${f18(finalInterest)}`);
-    await expectPosition('A4.7c', 'the final repayment changes ONLY the status to Repaid',
-      loanId, finalPos, { status: STATUS.Repaid });
+    await expectPosition('A4.7c', 'the final repayment changes ONLY the status to Repaid, on the loan and both position NFTs',
+      loanId, finalPos, { status: STATUS.Repaid, ...bothNfts(NFT_STATUS.LoanRepaid) });
   }
 
   // ---------------------------------------------------- lender loan sale

@@ -14,7 +14,7 @@
  *    exercising for that reason alone.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, ANY, acceptStoredOffer, approveDiamond, createOffer, delta, expectPosition, mint, openLoan, positionNftOwner, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, ANY, acceptStoredOffer, approveDiamond, createOffer, delta, expectPosition, mint, openLoan, positionNftOwner, positionOf, read, snapshot, vaultAddressFor, NFT_LOCK } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { parseEventLogs } from 'viem';
@@ -56,6 +56,7 @@ export async function run() {
   {
     const { loanId } = await openLoan({ lender, borrower });
     const before = await read(ABIS.loan, 'getLoanDetails', [loanId]);
+    const prePos = await positionOf(loanId);
 
     const listing = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'createLoanSaleOffer',
       [loanId, 500n, true, BigInt(3 * 86_400)], lender.address);
@@ -78,6 +79,17 @@ export async function run() {
         String(linked) === String(loanId) && unchanged.lender === before.lender && String(unchanged.status) === '0',
         `saleOfferId=${saleOfferId} linkedLoanId=${linked} offerType=${vehicle.offerType} ` +
         `creator=${vehicle.creator.slice(0, 10)} expiresAt=${vehicle.expiresAt}`);
+
+      // The live sale offer locks the lender position NFT (spec: a lender
+      // early-withdrawal sale offer locks the lender NFT until cancel or
+      // settlement); nothing else about the position changes at listing.
+      await expectPosition('A8.1c', 'listing changes the position only by locking the lender position NFT for the sale',
+        loanId, prePos, { lenderNftLock: NFT_LOCK.EarlyWithdrawalSale });
+      // A transfer lock: the seller sending their own token to a plain wallet
+      // is refused by nothing else.
+      const lockedMove = await simulate(DIAMOND, ABIS.nft, 'transferFrom',
+        [lender.address, outsider.address, before.lenderTokenId], lender.address);
+      expectRefusal('A8.1d', 'while the sale offer is live the lender position NFT cannot be transferred', lockedMove, 'ERC721Locked');
 
       const listedPos = await positionOf(loanId);
       const pre = await snapshot(tokens, holders);
@@ -107,8 +119,8 @@ export async function run() {
         check('A8.3c', 'the listed sale retires the seller\'s lender token and gives the buyer a distinct new one',
           after.lenderTokenId !== before.lenderTokenId && oldListed === null,
           `lenderTokenId ${before.lenderTokenId} -> ${after.lenderTokenId}; ownerOf(old)=${oldListed ?? 'does not resolve'}`);
-        await expectPosition('A8.3b', 'the listed sale changes the position exactly: the lender, the lender token and its holder become the buyer\'s; the borrower side, terms and lien unchanged',
-          loanId, listedPos, { lender: outsider.address, lenderTokenId: ANY, lenderNftOwner: outsider.address });
+        await expectPosition('A8.3b', 'the listed sale changes the position exactly: the lender, the lender token and its holder become the buyer\'s, and the buyer\'s token carries no sale lock; the borrower side, terms and lien unchanged',
+          loanId, listedPos, { lender: outsider.address, lenderTokenId: ANY, lenderNftOwner: outsider.address, lenderNftLock: NFT_LOCK.None });
         const late = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'completeLoanSale', [loanId], lender.address);
         expectRefusal('A8.4', 'completeLoanSale afterwards is refused — the fill already completed it', late, 'SaleNotLinked');
       }
