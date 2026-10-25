@@ -206,5 +206,5 @@ match cadence of P2P lending.
 - FOK / Iceberg — append the enum + add the match-time branch
   whenever the user signal warrants it; non-breaking additions.
 - Cross-chain fill-mode coordination — fill modes apply only to
-  single-chain lending offers; the `VpfiBuyAdapter` /
-  `VpfiBuyReceiver` flow is structurally best-effort.
+  single-chain lending offers. (This line once contrasted them with the
+  cross-chain fixed-rate VPFI buy flow, which #687-A removed.)

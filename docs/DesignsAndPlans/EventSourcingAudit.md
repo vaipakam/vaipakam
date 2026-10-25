@@ -1,5 +1,11 @@
 # Event Sourcing Audit — Vaipakam Solidity Events
 
+> **Removed surface (#687-A, noted in #1728).** This is a dated record. What it
+> says about the cross-chain fixed-rate VPFI buy flow (the buy adapter and
+> receiver, the direct ETH sale, and their events, errors and config) describes
+> code that #687-A deleted. There is no protocol VPFI purchase surface. Read
+> those parts as history, not as instructions; see [`VPFISecuritiesFeatureExcision.md`](VPFISecuritiesFeatureExcision.md).
+
 **Status:** Draft 2026-05-07. Sub-design under
 `DesignsAndPlans/DecentralizedPlatformArchitecture.md` Pillar 4.1
 ("Self-sufficient on-chain events"). Phase 1 of the platform-

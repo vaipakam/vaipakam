@@ -67,10 +67,10 @@ interest. See `LibVaipakam.sol`.
 DeFi-standard time-delayed-permissive license that converts to
 permissive (typically MIT) after a delay. See ADR-0009.
 
-**Buy adapter / receiver (VPFI)** — cross-chain VPFI purchase flow.
-`VpfiBuyAdapter` (on mirror chains) pulls user funds, sends a
-BUY_REQUEST via CCIP to `VpfiBuyReceiver` (on Base), which mints +
-ships VPFI back. Two-step release with refund on failure.
+**Buy adapter / receiver (VPFI)** — REMOVED. The cross-chain fixed-rate
+VPFI purchase flow (`VpfiBuyAdapter` / `VpfiBuyReceiver`) was deleted in
+#687-A; there is no protocol VPFI purchase surface. See
+[`VPFISecuritiesFeatureExcision.md`](DesignsAndPlans/VPFISecuritiesFeatureExcision.md).
 
 ## C
 
@@ -241,7 +241,8 @@ transport. T-068 (PR #46, merged 2026-05-18) migrated every
 cross-chain code path off LayerZero to Chainlink CCIP. The five
 LayerZero-era contracts (`VPFIOFTAdapter`, `VPFIMirror`,
 `VPFIBuyAdapter`, `VPFIBuyReceiver`, `VaipakamRewardOApp`) were
-replaced by their CCIP equivalents under
+replaced by their CCIP equivalents (the two buy contracts' successors
+were themselves later removed in #687-A, with nothing in their place) under
 [`contracts/src/crosschain/`](../contracts/src/crosschain/). The
 April 2026 ~$292M Kelp bridge exploit on LayerZero's
 1-required / 0-optional DVN configuration drove the migration —

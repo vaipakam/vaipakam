@@ -21,8 +21,8 @@ upgrade" guarantee is a real, honest user value-add — but only once the core i
 - **Governance** = OZ `VaipakamTimelock` (single min-delay, **no on-chain quorum**); a
   timelocked owner role can ultimately cut anything.
 - **Guardian-pause exists — but only cross-chain.** `GuardianPausable` (guardian pause / owner
-  unpause) wraps the CCIP messenger, VPFI mirror, pool governor, buy adapter/receiver, reward
-  messenger. **The Diamond itself has only a simple on/off `LibPausable` pause** (no guardian
+  unpause) wraps the CCIP messenger, VPFI mirror, pool governor and reward
+  messenger (it also wrapped the fixed-rate buy contracts, removed since in #687-A). **The Diamond itself has only a simple on/off `LibPausable` pause** (no guardian
   fast-path) + a per-asset `AdminFacet.pauseAsset`. So the *cross-chain* surface has a guardian
   fast-pause the *core lending* surface lacks.
 - **Ossification today: none.** No freeze, no layout lock, no quorum, no staged renounce.

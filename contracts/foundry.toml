@@ -276,7 +276,6 @@ skip = [
   "test/VaultFactoryFacetTest.t.sol",
   "test/VaultRecoveryTest.t.sol",
   "test/VolatilityLTVTest.t.sol",
-  "test/VpfiBuyFlowTest.t.sol",
   "test/VPFIDiscountBoundariesTest.t.sol",
   "test/VPFIDiscountFacetTest.t.sol",
   "test/VPFIMirrorTokenTest.t.sol",

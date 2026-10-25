@@ -17,6 +17,8 @@ Card [#687](https://github.com/vaipakam/vaipakam/issues/687) — the **prerequis
 2. the **5% APR passive staking yield** paid on vault-held VPFI.
 
 > ⚠️ **These surfaces still exist in the tree** until #687 lands — and across the **whole CCIP mesh**, not just the Diamond: the sale is `VPFIDiscountFacet` buy config **plus the mirror-chain path** (`VpfiBuyAdapter` / `VpfiBuyReceiver` / `ConfigureVPFIBuy.s.sol`); the yield is `StakingRewardsFacet`; plus "5% APR" copy. #687 must remove the issuer sale **everywhere**, or a mirror-chain buy path survives. Phase 1 is **blocked on the actual removal work** — do not treat the high-risk paths as already gone.
+>
+> **Update (#1728):** #687-A has since removed the sale: the `VPFIDiscountFacet` buy config and the mirror-chain `VpfiBuyAdapter` / `VpfiBuyReceiver` path are gone. `ConfigureVPFIBuy.s.sol` survives under its old name and only sets the fee-discount price anchor. See [`VPFISecuritiesFeatureExcision.md`](VPFISecuritiesFeatureExcision.md).
 
 This document answers the follow-on question: **how do mature DeFi lending protocols, DEXs, and NFT-finance platforms give a token genuine value and distribute it WITHOUT recreating those two fact patterns?** Each concept below carries an explicit **ADOPT / ADAPT / AVOID** recommendation for Vaipakam.
 

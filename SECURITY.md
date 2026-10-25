@@ -31,7 +31,7 @@ We aim to acknowledge within 24h and provide a remediation ETA within 72h. In-sc
 - any facet under [`contracts/src/facets/`](contracts/src/facets/)
 - the vault implementation and Diamond proxy under [`contracts/src/`](contracts/src/)
 - the swap adapters under [`contracts/src/adapters/`](contracts/src/adapters/) (Phase 7a `LibSwap` failover)
-- the **Chainlink CCIP** cross-chain surface under [`contracts/src/crosschain/`](contracts/src/crosschain/) (`CcipMessenger`, `VPFIMirrorToken`, `VpfiBuyAdapter`, `VpfiBuyReceiver`, `VaipakamRewardMessenger`, `VpfiPoolRateGovernor`, the stock CCIP `LockReleaseTokenPool` / `BurnMintTokenPool` instances)
+- the **Chainlink CCIP** cross-chain surface under [`contracts/src/crosschain/`](contracts/src/crosschain/) (`CcipMessenger`, `VPFIMirrorToken`, `VaipakamRewardMessenger`, `RewardRemittanceReceiver`, `BuybackRemittanceReceiver`, `VpfiReturnSender` / `VpfiReturnReceiver`, `VpfiPoolRateGovernor`, the stock CCIP `LockReleaseTokenPool` / `BurnMintTokenPool` instances)
 - the cross-chain reward mesh (`RewardReporterFacet`, `RewardAggregatorFacet`, `VaipakamRewardMessenger`)
 - the subgraph state-machine guard under [`ops/subgraph/`](ops/subgraph/)
 - the Permit2 integration path (`LibPermit2`)
@@ -237,8 +237,10 @@ Vaipakam's cross-chain layer runs on **Chainlink CCIP** post-T-068 (LayerZero �
 - `ICrossChainMessenger` — provider-agnostic port; the domain contracts depend only on this, never on a CCIP-specific library.
 - `CcipMessenger` — the single CCIP-aware adapter that implements `ICrossChainMessenger`.
 - `VPFIMirrorToken` + the stock CCIP `LockReleaseTokenPool` (canonical chain) / `BurnMintTokenPool` (mirror chains) — VPFI deployed as a Cross-Chain Token (CCT).
-- `VpfiBuyAdapter` / `VpfiBuyReceiver` — the cross-chain fixed-rate VPFI buy flow (two-step release, refund on receiver failure).
+- `RewardRemittanceReceiver` / `BuybackRemittanceReceiver` — the reward-budget and buyback remittance receive paths.
 - `VaipakamRewardMessenger` — cross-chain reward accounting (REPORT / BROADCAST round-trip).
+
+There is no protocol VPFI purchase surface. The cross-chain fixed-rate buy contracts (`VpfiBuyAdapter` / `VpfiBuyReceiver`) were removed in #687-A and are not in scope; a report about them concerns code that no longer exists.
 
 ### Why CCIP
 
@@ -313,7 +315,7 @@ This repository has been reviewed internally. External audit status is tracked i
 - Phase 7a `LibSwap` swap-failover, including caller insulation on `minOutputAmount` and adapter approval scoping
 - Per-user vault proxy deployment, mandatory upgrade gating, and the storage append-only invariant
 - CCIP surface: `CcipMessenger` peer / channel / chainSelector registry authentication, message replay protection, and the cross-chain reward mesh REPORT / BROADCAST finalisation
-- `VpfiBuyAdapter` / `VpfiBuyReceiver` rate limits and the `VpfiPoolRateGovernor` bounds-checked per-lane CCIP rate limits on the canonical-chain `LockReleaseTokenPool` and the mirror-chain `BurnMintTokenPool`s
+- The `VpfiPoolRateGovernor` bounds-checked per-lane CCIP rate limits on the canonical-chain `LockReleaseTokenPool` and the mirror-chain `BurnMintTokenPool`s
 - Phase 5 borrower LIF custody (`LibVPFIDiscount.settleBorrowerLifProper` / `forfeitBorrowerLif`) — the held VPFI must never leak through any terminal path
 - Phase 6 keeper per-action authorization (lender-side vs borrower-side scoping)
 - Permit2 integration (signature replay protection, deadline enforcement, exact scope)
