@@ -1,4 +1,4 @@
-## Keeper — reward remittances fund one day per send (PR #TBD)
+## Keeper — reward remittances fund one day per send (PR #2823)
 
 After any delay the keeper's reward-remittance pass used to fund every owed day for a mirror in a single send. A multi-day send lands on the mirror as one delivery listing all of those days, and the mirror holds that delivery back while more than one of its days is still open. A day closes only once every reward entry covering it has claimed past it. So an entry covering two of the delivery's days needs the delivery to claim the first day, and needs that claim to free the delivery. It can never be paid on the mirror, and any loan open across the batch has such an entry. The backlog cases (a late commitment report, a paused keeper, the delivery gate opening) are exactly the ones that built such batches.
 
