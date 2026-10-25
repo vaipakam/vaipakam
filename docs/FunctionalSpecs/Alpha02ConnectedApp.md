@@ -749,50 +749,59 @@ The app uses chain reads and indexed reads for different jobs.
   chain and the messages it sends: those leave the run just as the others do,
   and a bound that ignored them would let a run that believed it was rationing
   its messages exceed the real limit while sending almost none.
-- The run holds back the request it needs to SAVE ITS PLACE, and refuses to
-  begin a record it could only finish by spending it. A run that used its
-  last request on a reminder and then could not record where it got to would
-  stay inside its allowance and re-read the same prefix on every later run,
-  which is the starvation the remembered position exists to prevent — so the
-  two requirements are held together rather than traded off.
-- **The place it saves is a DEADLINE, not a position in a list.** The run
-  resumes at the first record whose deadline is at or after the one it
-  recorded. This is what stops the saved place drifting: the list of records
-  awaiting a reminder is rebuilt each run, and the ones reminded last time are
-  no longer in it, so a remembered *position* points further along than it did
-  — past exactly as many of the nearest remaining deadlines as were handled.
-  A deadline does not move when other records are handled or leave. Where the
-  recorded place cannot be read at all, the run begins at the nearest
-  deadline.
+- The run holds back the request it needs to RECORD WHAT IT EXAMINED, and
+  refuses to begin a record it could only finish by spending it. A run that
+  used its last request on a reminder and then could not record what it had
+  looked at would stay inside its allowance and examine the same records
+  again on every later run, which is the starvation that record exists to
+  prevent — so the two requirements are held together rather than traded
+  off.
+- **What a pass has examined is remembered RECORD BY RECORD, not as a place
+  in the list (#2230).** A pass is one trip through every record awaiting a
+  reminder. Each record the run examines, whatever came of it, is recorded as
+  examined in the current pass, for the payment period it was examined for. A
+  run takes the records the current pass has not yet examined, nearest
+  deadline first; when none are left, the pass is complete and the next one
+  begins with every record awaiting a reminder. A record examined for an
+  earlier payment period counts as not examined, because its reminder now is
+  a different one. Remembering a *place* instead (first a position in the
+  list, then a deadline) could not take a record that appears in front of
+  that place, and re-reading the front on every run would let records that
+  are examined but never reminded hold the allowance on every run. Where a
+  record's examination cannot be read, the record counts as not examined.
 - **THE RESTART PROPERTY, stated once and not restated elsewhere.** Every
-  surface that describes a run beginning at the nearest deadline — because the
-  place was missing, unreadable, malformed, or deliberately cleared during a
-  restore — means exactly this and nothing more: *for that run*, beginning at
-  the front repeats work already done rather than stepping over anything,
-  which is the direction the failure must take. It is **not** a guarantee that
-  no reminder is missed. A run that always restarts at the same place makes no
-  progress through the list, so records further down are not reached and can
-  pass their deadlines; and a single restarted run whose front fills the whole
-  allowance leaves the tail for a later one that may arrive too late. The run
-  therefore announces each time that the place could not be read, rather than
-  falling back quietly on the strength of one run being safe.
+  surface that describes records being examined again because what a pass
+  examined was lost — missing, unreadable, malformed, or deliberately cleared
+  during a restore — means exactly this and nothing more: *for that run*,
+  examining a record again repeats work already done rather than stepping
+  over anything, which is the direction the failure must take. It is **not**
+  a guarantee that no reminder is missed. A run whose record of what it
+  examined is never kept makes no progress through the list, so records
+  further down are not reached and can pass their deadlines; and a single run
+  whose re-examined front fills the whole allowance leaves the rest for a
+  later run that may arrive too late. The run therefore announces each time
+  that what it examined could not be recorded or read, rather than falling
+  back quietly on the strength of one run being safe.
 
   This is written here once because it was written in five places and was
   wrong in all of them, in four consecutive reviews: the per-run property was
   stated as an absolute, corrected where it was flagged, and re-derived in the
   next surface. Anything needing it points here instead of restating it.
 - **What "nearest first" does and does not promise, stated exactly.** Within
-  one pass through the list, records are taken nearest deadline first. Across
-  passes, the saved place means the run continues rather than restarting, so
-  every record gets its turn within one pass of the list rather than
-  competing forever with the nearest ones. It does NOT promise preemption: a
-  record that becomes known *after* the run has already passed its deadline in
-  the order waits for the next pass rather than jumping the queue. That
-  matters only where a pass takes longer than the notice period itself — a
-  backlog deep enough that the list cannot be worked through in the days the
-  reminder window covers — and in that state the service is under-provisioned
-  in a way no ordering can conceal. The honest statement is that this is
-  bounded by how long a pass takes, not that it cannot happen.
+  one pass, the records not yet examined are taken nearest deadline first,
+  and that includes a record that becomes known part-way through the pass: it
+  is taken ahead of every unexamined record due after it, not left for the
+  next pass. Across passes, every record gets its turn within each pass rather
+  than competing forever with the nearest ones. What it does NOT promise is a
+  second look within a pass: a record the pass examined without reminding
+  anybody (nobody could be reached, a delivery was deferred, the network could
+  not be read for it, the index was behind) is looked at again only in the
+  next pass. That matters only where a pass takes longer than the notice
+  period itself, and in that state the service is under-provisioned in a way
+  no ordering can conceal. So the service says, each run, when the current
+  pass has run longer than the reminder window, rather than leaving the
+  condition to be inferred. The honest statement is that this is bounded by
+  how long a pass takes, not that it cannot happen.
 - **The same allowance governs the runs that keep the records current, and
   those runs COUNT what they spend rather than estimating it.** The service
   that follows each network and writes down what happened draws on the same
@@ -944,10 +953,10 @@ The app uses chain reads and indexed reads for different jobs.
   who is owed — there is no way to reach one without the other. The cost is a
   futile attempt each time that record comes round, which on a deployment
   whose credential has been rotated is every record with a party who has
-  switched reminders off. What bounds it is the remembered scan position,
-  which advances past an unmarked record exactly as it does past a marked
-  one: the futile attempt costs once per trip round the window, not once per
-  run.
+  switched reminders off. What bounds it is the record of what each pass
+  examined, which counts an unmarked record as examined exactly as it does a
+  marked one: the futile attempt costs once per pass round the window, not
+  once per run.
 - **Being owed another attempt is not cancelled by the other party having
   nothing to offer.** A borrower whose reminder the service deferred stays
   owed one even when their lender turns out to have no usable channel at all;

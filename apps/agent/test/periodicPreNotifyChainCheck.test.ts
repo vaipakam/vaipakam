@@ -26,7 +26,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import {
   CHAIN_OPENING_REQUESTS_AFTER_IDENTITY,
-  CURSOR_WRITE_RESERVE,
+  EXAMINED_MARK_RESERVE,
   MAX_SUBREQUESTS_PER_INVOCATION,
   MAX_SENDS_PER_LOAN,
   MAX_SUBREQUESTS_PER_LOAN,
@@ -105,8 +105,7 @@ const PRE_MESSAGE_SUBREQUESTS =
   1 + // the pause
   1 + // the pause log (#2808)
   1 + // the config
-  1 + // the candidate query (D1)
-  1 + // this lane's stored scan position (D1)
+  1 + // the candidate query (D1) — the examination marks ride on it (#2230)
   1; //  the first batched status read
 
 /**
@@ -129,11 +128,12 @@ const TYPICAL_SUBREQUESTS_PER_LOAN = 2 + MAX_SENDS_PER_LOAN + 1;
 function loansThatFit(costPerLoan: number, available = MAX_SUBREQUESTS_PER_INVOCATION): number {
   let remaining = available - PRE_MESSAGE_SUBREQUESTS;
   let n = 0;
-  // The gate holds the scan-position write back as well as a loan's worth
-  // (#2213 r32 `4017648029`) — a pass that spends its last request on a loan
-  // and then cannot record where it got to is the failure the budget exists
-  // to prevent, so the loop refuses to begin one that would.
-  while (remaining >= MAX_SUBREQUESTS_PER_LOAN + CURSOR_WRITE_RESERVE) {
+  // The gate holds the batch's examination-mark write back as well as a
+  // loan's worth (#2213 r32 `4017648029`, #2230) — a batch that spends its
+  // last request on a loan and then cannot record what it examined is the
+  // failure the budget exists to prevent, so the loop refuses to begin one
+  // that would.
+  while (remaining >= MAX_SUBREQUESTS_PER_LOAN + EXAMINED_MARK_RESERVE) {
     remaining -= costPerLoan;
     n += 1;
   }
@@ -163,7 +163,7 @@ function loansReached(costs: number[]): number {
   let remaining = MAX_SUBREQUESTS_PER_INVOCATION - PRE_MESSAGE_SUBREQUESTS;
   let n = 0;
   for (const c of costs) {
-    if (remaining < MAX_SUBREQUESTS_PER_LOAN + CURSOR_WRITE_RESERVE) break;
+    if (remaining < MAX_SUBREQUESTS_PER_LOAN + EXAMINED_MARK_RESERVE) break;
     remaining -= c;
     n += 1;
   }
@@ -176,11 +176,10 @@ const TG_ONLY_SUBREQUESTS_PER_LOAN = ONE_RAIL_SUBREQUESTS_PER_LOAN;
 /** An opted-out loan still costs its two lookups — asking IS a subrequest. */
 const OPTED_OUT_SUBREQUESTS_PER_LOAN = 2;
 /**
- * Saving the scan position back — paid on EVERY pass, not only an interrupted
- * one: a pass that reached the end of the window writes the wrapped position
- * so the next tick starts at the front rather than where this one stopped.
+ * Marking what a batch examined — one write per batch that examined anything
+ * (#2230). Every window in this suite that the tick reaches fits one batch.
  */
-const CURSOR_PERSIST_SUBREQUESTS = 1;
+const MARK_SUBREQUESTS = 1;
 /**
  * Reading which chain led last time and writing which one led this time — two
  * D1 calls, paid once per invocation rather than once per chain. A tick with
@@ -193,7 +192,7 @@ const LEFTOVER_AFTER_TICK =
   MAX_SUBREQUESTS_PER_INVOCATION -
   PRE_MESSAGE_SUBREQUESTS -
   LOANS_PER_TICK * TYPICAL_SUBREQUESTS_PER_LOAN -
-  CURSOR_PERSIST_SUBREQUESTS;
+  MARK_SUBREQUESTS;
 
 /** Who is subscribed, and how. `null` = no subscription row at all. */
 let subscriberFor: (wallet: string) => Record<string, unknown> | null;
@@ -274,12 +273,24 @@ let indexedBlock: number | null;
 let cursorReadFails: boolean;
 /** Which of the lane's OWN cursor kinds fails to WRITE, if any. */
 let cursorWriteFails: string | null;
-/** The lane's own persisted scan position, surviving across ticks like D1 does. */
+/** The rotation position, surviving across ticks like D1 does. */
 const scanOffsets = new Map<string, number>();
-/** #2219 — the pre-notify scan cursor: a deadline, not a position. */
-const scanKeys = new Map<number, { checkpoint: number; loanId: number }>();
-/** Deploy landed ahead of migration 0050 — the table is not there yet. */
-let scanKeyTableMissing = false;
+/**
+ * #2230 — the examination marks on each loan row, keyed `chain:loan`, and
+ * surviving across ticks the way the columns do. The fixtures' rows carry
+ * none, so the candidate query merges these in as the database would.
+ */
+const marks = new Map<string, { lap: number; checkpoint: number; at: number }>();
+/** When set, the mark write fails — the examinations are not recorded. */
+let markThrows = false;
+/** Mark loans examined in a pass, as a pass the lane ran earlier would have. */
+function markAs(lap: number, ids: number[], at = NOW - 3600) {
+  for (const id of ids) {
+    const settledAt = settledAtOf.get(id);
+    if (settledAt === undefined) throw new Error(`no fixture loan ${id}`);
+    marks.set(`84532:${id}`, { lap, checkpoint: settledAt + 30 * DAY, at });
+  }
+}
 /** Blocks the batched read was pinned to, so the pin can be asserted. */
 const pinnedAt: (bigint | undefined)[] = [];
 /** The rows D1 hands back for the loan scan, in the order it hands them back. */
@@ -434,19 +445,6 @@ function tenLoans() {
   return loans.reverse();
 }
 
-/**
- * The stored resume key that makes the next tick start at the nth candidate of
- * `tenLoans()` — #2219's cursor is a DEADLINE, so a test says which deadline
- * rather than which slot.
- *
- * Derived from the same arithmetic the lane uses (settled-at plus the cadence
- * interval) rather than from a copied constant, so a change to either moves
- * the fixture and the expectation together.
- */
-function resumeKeyForNth(n: number): { checkpoint: number; loanId: number } {
-  const settledAt = NOW - 29 * DAY + n * 3600;
-  return { checkpoint: settledAt + 30 * DAY, loanId: 100 - n };
-}
 
 /** Run with the clock pinned to a minute of the given parity. */
 async function atMinute(minute: number, extra: Record<string, unknown> = {}) {
@@ -470,7 +468,16 @@ function env(extra: Record<string, unknown> = {}) {
       const rowsFor = (params: unknown[]) => {
         if (!isLoanScan || warmupOnly) return [];
         const chainId = Number(params[0]);
-        return loanRowsByChain?.[chainId] ?? (loanRowsByChain ? [] : loanRows);
+        const rows = loanRowsByChain?.[chainId] ?? (loanRowsByChain ? [] : loanRows);
+        return rows.map((r) => {
+          const m = marks.get(`${chainId}:${Number(r.loan_id)}`);
+          return {
+            prenotify_examined_lap: m?.lap ?? 0,
+            prenotify_examined_checkpoint: m?.checkpoint ?? 0,
+            prenotify_examined_at: m?.at ?? 0,
+            ...r,
+          };
+        });
       };
       const record = (params: unknown[]) => {
         if (!sql.trim().startsWith('SELECT')) writes.push({ sql, params });
@@ -479,23 +486,14 @@ function env(extra: Record<string, unknown> = {}) {
       const isIndexerCursor =
         sql.includes('FROM indexer_cursor') && sql.includes('kind = ?');
       const isCursorWrite = sql.includes('INSERT INTO indexer_cursor');
-      // #2219 — the scan position moved to its own table, as a DEADLINE
-      // rather than a list index. Modelled here the way D1 holds it: one row
-      // per chain, both halves of the key written together.
-      const isScanKeyRead = sql.includes('FROM prenotify_scan_cursor');
-      const isScanKeyWrite = sql.includes('INSERT INTO prenotify_scan_cursor');
+      // #2230 — the mark write, modelled the way SQLite applies it: every loan
+      // in the JSON array gets this pass, this time and its own period. The
+      // statement itself is run against real SQLite in
+      // periodicPreNotifyMarks.test.ts; this fake only has to keep the state.
+      const isMarkWrite = sql.includes('prenotify_examined_lap = ?1');
       const leaf = (params: unknown[]) => ({
         all: async () => ({ results: rowsFor(params) }),
         first: async () => {
-          if (isScanKeyRead) {
-            if (scanKeyTableMissing) {
-              throw new Error('D1_ERROR: no such table: prenotify_scan_cursor');
-            }
-            const key = scanKeys.get(Number(params[0]));
-            return key
-              ? { next_checkpoint: key.checkpoint, loan_id: key.loanId }
-              : null;
-          }
           if (isIndexerCursor) {
             const kind = String(params[1] ?? '');
             if (kind.startsWith('prenotify_')) {
@@ -513,14 +511,12 @@ function env(extra: Record<string, unknown> = {}) {
           if (stampThrows && sql.includes('period_pre_notified_at')) {
             throw new Error('D1_ERROR: write failed');
           }
-          if (isScanKeyWrite) {
-            if (cursorWriteFails === 'prenotify_scan') {
-              throw new Error('D1_ERROR: cursor write failed');
+          if (isMarkWrite) {
+            if (markThrows) throw new Error('D1_ERROR: mark write failed');
+            const [lap, at, chainId, json] = params as [number, number, number, string];
+            for (const [loanId, checkpoint] of JSON.parse(json) as [number, number][]) {
+              marks.set(`${chainId}:${loanId}`, { lap, checkpoint, at });
             }
-            scanKeys.set(Number(params[0]), {
-              checkpoint: Number(params[1]),
-              loanId: Number(params[2]),
-            });
             record(params);
             return { meta: { changes: 0 } };
           }
@@ -664,8 +660,8 @@ beforeEach(() => {
   cursorReadFails = false;
   cursorWriteFails = null;
   scanOffsets.clear();
-  scanKeys.clear();
-  scanKeyTableMissing = false;
+  marks.clear();
+  markThrows = false;
   sends.length = 0;
   pushAttemptFor = () => 'accepted';
   tgAccepts = 'accepted';
@@ -1406,10 +1402,10 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     //
     // What survives, and is what the fairness argument actually needs: they
     // cost only their LOOKUPS, never the four sends; a subscribed loan behind
-    // them is still reached in the same tick; and the scan position advances
-    // past them, so the next tick resumes beyond rather than re-paying for
-    // them forever. That last part is r12's cursor doing the work r7 thought
-    // the counting unit was doing.
+    // them is still reached in the same tick; and they are marked as examined
+    // in this pass, so the next tick goes on to the loans behind them rather
+    // than re-paying for them forever. That last part is the examination
+    // marks (#2230) doing the work r7 thought the counting unit was doing.
     const costs = [
       ...Array(8).fill(2), // two subscriber lookups each, no sends, no stamp
       ...Array(2).fill(TYPICAL_SUBREQUESTS_PER_LOAN),
@@ -1466,32 +1462,28 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(stamped.length).toBe(reached);
     expect(sends.length).toBe(2 + (reached - 1) * MAX_SENDS_PER_LOAN);
     // THE CEILING ITSELF, stated separately from the count: everything this
-    // tick spent — its opening reads, the loans it began, the saved position —
+    // tick spent — its opening reads, the loans it began, the marks it wrote —
     // is inside the allowance. A gate that merely asked "is there anything
     // left" would begin one more loan and pass every assertion above.
     const spent =
       PRE_MESSAGE_SUBREQUESTS +
       costs.slice(0, reached).reduce((a, b) => a + b, 0) +
-      CURSOR_PERSIST_SUBREQUESTS;
+      MARK_SUBREQUESTS;
     expect(spent).toBeLessThanOrEqual(MAX_SUBREQUESTS_PER_INVOCATION);
   });
 
-  it('RESUMES where it stopped, so a wide window cannot hide its tail', async () => {
+  it('goes on past what this pass examined, so a wide window cannot hide its tail', async () => {
     // #2213 r8 `4012464544` found the starvation; r12 `4013387382` found that
     // the clock-derived rotation which fixed it aliased with the chain
-    // rotation — a chain scanned every third tick sees the minute advance in
-    // threes, so `minute % spans` can be constant on every opportunity it
-    // gets. The position is stored now and advances on its own progress, so
-    // this test manipulates no clock at all: that is the property being
+    // rotation. What a pass has examined is remembered per loan now (#2230),
+    // so this test manipulates no clock at all: that is the property being
     // bought.
     //
     // THE PREFIX IS DERIVED, not 300 as it was before r27 (`4016129218`).
     // Establishing that someone opted out costs a subscriber lookup, and a
-    // binding call is a subrequest, so one tick now covers about a dozen
+    // binding call is a subrequest, so one tick covers about a dozen
     // opted-out rows rather than hundreds. The property is the same either
-    // way — a prefix that fills a whole tick does not block the tail forever —
-    // and stating the prefix as "exactly one tick's worth" is what keeps the
-    // second invocation landing on the subscribed loans behind it.
+    // way — a prefix that fills a whole tick does not block the tail forever.
     const prefix = loansThatFit(OPTED_OUT_SUBREQUESTS_PER_LOAN);
     const N = prefix + 5;
     const ids = Array.from({ length: N }, (_, k) => 1000 - k); // nearest first
@@ -1518,70 +1510,111 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     };
 
     const first = await run();
-    expect(first.stamped).toEqual([]); // the whole first pass is opted-out
+    expect(first.stamped).toEqual([]); // the whole first tick is opted-out
     expect(first.said).toContain(`${prefix} examined`);
+    // Each of them is marked as examined in the pass this tick began.
+    expect(ids.slice(0, prefix).every((id) => marks.get(`84532:${id}`)?.lap === 1)).toBe(true);
     const second = await run();
     // The tail is reached on the very next tick, with no clock involved.
     expect(second.stamped.length).toBeGreaterThan(0);
     expect(second.stamped.every((id) => !optedOut.has(id))).toBe(true);
-    expect(second.said).toContain(`resumed at ${prefix}`);
+    expect(second.said).toContain(`pass 1: ${prefix} of ${N} in the window already examined`);
   });
 
-  it('does not claim a remainder when a RESUMED pass finishes the window', async () => {
-    // #2213 r13 `4013571024`. A pass that resumes at 7 in a 10-row window
-    // examines 3 and reaches the end — `examined` is 3, which is less than
-    // the window, but there is nothing left. Testing the count rather than the
-    // cursor announced a remainder the tick had just consumed, telling an
-    // operator the run was partial when it had completed.
+  it('takes a loan that turns up mid-pass in deadline order, not after the pass (#2230)', async () => {
+    // THE DEFECT THIS CHANGE FIXES. A stored place in the order could not take
+    // a loan that arrived IN FRONT of it — newly indexed, or a period that
+    // just entered the window — so the nearest deadline of all waited for the
+    // whole pass to wrap. Re-checking the front every tick would have brought
+    // back the starvation the stored place ended. Per-loan marks give both.
+    loanRows = tenLoans(); // ids 100…91, nearest first
+    // An earlier tick of this pass examined the nearest six. They are still in
+    // the window (nobody was reached for them, say), so a lane that re-read the
+    // front would spend its allowance on them again.
+    markAs(1, [100, 99, 98, 97, 96, 95]);
+    // And a loan the indexer has only just found, due before all of them.
+    loanRows = [...loanRows, periodicLoan(500, NOW - 29 * DAY - 3600)];
+    const { stamped, said } = await run();
+    // The newcomer goes first, then the nearest the pass has not examined.
+    expect(stamped).toEqual([500, 94, 93, 92, 91].slice(0, LOANS_PER_TICK));
+    // Nothing this pass already examined is looked at again.
+    expect(stamped.some((id) => id >= 95 && id <= 100)).toBe(false);
+    expect(said).not.toContain('pass 2');
+  });
+
+  it('does not claim a remainder when the pass finishes the window', async () => {
+    // #2213 r13 `4013571024`. A tick that takes up a pass with 3 loans left
+    // in a 10-row window examines 3 and reaches the end — `examined` is 3,
+    // which is less than the window, but there is nothing left. Testing the
+    // count rather than what is left announced a remainder the tick had just
+    // consumed, telling an operator the run was partial when it had completed.
     loanRows = tenLoans();
-    scanKeys.set(84532, resumeKeyForNth(7));
+    markAs(1, [100, 99, 98, 97, 96, 95, 94]);
     const { stamped, said } = await run();
     expect(stamped.length).toBe(3);
     expect(said).toBe('');
   });
 
-  it('starts over once every remaining deadline is nearer than the stored one', async () => {
-    // The cursor wraps rather than running off the end. With a deadline as
-    // the key this is the honest statement of the case: the window has moved
-    // past where this chain stopped, so there is no candidate at or after the
-    // stored key and the scan goes back to the nearest.
-    scanKeys.set(84532, { checkpoint: NOW + 500 * DAY, loanId: 1 });
+  it('starts the next pass once every loan has been examined in this one', async () => {
+    // A finished pass wraps: every candidate carries the pass number, so none
+    // is pending, and the next pass begins under the next number with all of
+    // them pending again, nearest first.
     loanRows = tenLoans();
+    markAs(2, [100, 99, 98, 97, 96, 95, 94, 93, 92, 91]);
     const { stamped } = await run();
-    expect(stamped.length).toBe(LOANS_PER_TICK);
+    expect(stamped).toEqual(Array.from({ length: LOANS_PER_TICK }, (_, k) => 100 - k));
+    expect(marks.get('84532:100')?.lap).toBe(3);
   });
 
-  it('refuses a cursor that is not a pair of whole numbers, and says so', async () => {
-    // #2229 r2 `4034537653`. A non-STRICT SQLite column accepts a REAL, and
-    // `(deadline, 7.5)` is finite: it sorts between loan 7 and loan 8, so the
-    // scan would resume just past loan 7 and step over it — the exact defect
-    // the cursor exists to remove, arriving through the type system. The
-    // migration makes the table STRICT; this is the reader's half, for a
-    // table a restore or a hand-run statement produced instead.
+  it('counts a mark for an earlier period as no mark', async () => {
+    // A mark names the period it was examined for. A loan whose next period
+    // has come into the window is a different reminder, so the mark left by
+    // the previous period's examination must not hide it.
     loanRows = tenLoans();
-    scanKeys.set(84532, { ...resumeKeyForNth(7), loanId: 93.5 });
+    markAs(1, [100, 99, 98, 97, 96, 95, 94, 93, 92]);
+    // Loan 100's mark is for the period before.
+    marks.set('84532:100', { ...marks.get('84532:100')!, checkpoint: NOW - 60 * DAY });
+    const { stamped } = await run();
+    expect(stamped).toEqual([100, 91].slice(0, LOANS_PER_TICK));
+  });
+
+  it('treats an examination mark that is not a whole number as no mark, and says so', async () => {
+    // #2229 r2 `4034537653`, carried over to the marks. The columns are not
+    // STRICT, so a restore or a hand-run statement could leave a REAL or a
+    // string in one. Reading it as no mark fails toward examining the loan
+    // again rather than skipping it, and the summary counts it.
+    loanRows = tenLoans();
+    markAs(1, [100, 99, 98, 97, 96, 95, 94]);
+    marks.set('84532:100', { ...marks.get('84532:100')!, lap: 1.5 });
     const { stamped, said } = await run();
-    // Fell back to the nearest deadline rather than resuming past loan 93.
     expect(stamped[0]).toBe(100);
-    expect(said).toContain('not a pair of whole numbers');
+    expect(said).toContain('1 with an unreadable examination mark');
   });
 
-  it('says so when there is no stored cursor at all', async () => {
-    // #2229 r1 `4034434474`. Falling back silently contradicted this lane's
-    // own promise that an unavailable position is announced — and a row being
-    // deleted repeatedly is precisely what an operator would never otherwise
-    // hear about.
+  it('says when a pass has run longer than the window itself', async () => {
+    // #2230's provisioning half. A loan a pass examined without stamping is
+    // looked at again only in the next pass, so a pass longer than the window
+    // can let it reach its deadline first. That is a fact about this lane's
+    // allowance and cadence, stated rather than absorbed.
     loanRows = tenLoans();
+    markAs(4, [100, 99], NOW - 4 * DAY);
     const { said } = await run();
-    expect(said).toContain('no stored scan position');
+    expect(said).toContain('pass 4 over the notification window began at least');
+    expect(said).toContain('longer than the 3-day window itself');
   });
 
-  it('resumes at the nearest REMAINING deadline after a stamped prefix (#2219)', async () => {
-    // THE DEFECT THIS REPLACED. The lane stamped the nearest few and stored
-    // its POSITION; next tick those loans were gone from the list, so the same
-    // position pointed that many loans further along and the nearest remaining
-    // deadlines were stepped over — farther-out reminders going while nearer
-    // ones waited, which inverts the guarantee this lane states.
+  it('says nothing about pass length while a pass fits inside the window', async () => {
+    loanRows = tenLoans();
+    markAs(4, [100, 99], NOW - 3600);
+    const { said } = await run();
+    expect(said).not.toContain('longer than the');
+  });
+
+  it('takes the nearest REMAINING deadline after a stamped prefix (#2219)', async () => {
+    // THE DEFECT #2219 REPLACED, kept as a regression case. The lane stamped
+    // the nearest few and stored its POSITION; next tick those loans were gone
+    // from the list, so the same position pointed that many loans further
+    // along and the nearest remaining deadlines were stepped over.
     //
     // Two ticks, with the first tick's loans removed from the second's list
     // exactly as being stamped removes them.
@@ -1598,22 +1631,16 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     const second = await run();
 
     // The nearest remaining deadlines, not the ones a shifted index points at.
-    const expected = Array.from({ length: LOANS_PER_TICK }, (_, i) =>
-      resumeKeyForNth(LOANS_PER_TICK + i).loanId,
-    );
+    const expected = Array.from({ length: LOANS_PER_TICK }, (_, i) => 100 - (LOANS_PER_TICK + i));
     expect(second.stamped).toEqual(expected);
-    // GUARDS THE GUARD: this case only distinguishes the two cursors while a
-    // stamped prefix still leaves more loans behind it than the prefix was
-    // long — otherwise the old position-based resume would have fallen off the
-    // end, wrapped to the front, and passed for the wrong reason.
     expect(loanRows.length).toBeGreaterThan(LOANS_PER_TICK * 2);
   });
 
   it('keeps the tick\u2019s outcomes when a checkpoint stamp fails', async () => {
     // #2213 r17 `4014237577`. The messages have already gone out when the
     // stamp is attempted, so letting the failure escape discarded the
-    // delivery counters, skipped the summary, and left the scan position
-    // unsaved — an operator would see a generic chain error and no sign that
+    // delivery counters, skipped the summary, and left what it examined
+    // unrecorded — an operator would see a generic chain error and no sign that
     // anyone had been messaged.
     stampThrows = true;
     const ids = Array.from({ length: 12 }, (_, k) => 500 - k);
@@ -1625,9 +1652,11 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // ...the stamp failure is named per loan, with its consequence...
     expect(said).toContain('could not be stamped');
     expect(said).toContain('will send it again');
-    // ...and the scan position was still saved, so the next tick moves on.
-    // A DEADLINE now: the next unexamined loan's, not a count of examined rows.
-    expect(scanKeys.get(84532)?.loanId).toBe(500 - LOANS_PER_TICK);
+    // ...and what the tick examined is still marked, so the next tick moves
+    // on: the loans it reached carry this pass, the first it did not reach
+    // carries none.
+    expect(marks.get(`84532:${500 - LOANS_PER_TICK + 1}`)?.lap).toBe(1);
+    expect(marks.has(`84532:${500 - LOANS_PER_TICK}`)).toBe(false);
   });
 
   it('admits a chain on what identity ACTUALLY costs when the cache is warm', async () => {
@@ -1764,8 +1793,8 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
       return bothRails(w);
     };
     const { said } = await run();
-    // The position WAS written — the tick kept enough to record itself.
-    expect(scanKeys.has(84532)).toBe(true);
+    // The marks WERE written — the tick kept enough to record itself.
+    expect(marks.size).toBeGreaterThan(0);
     // And it stopped for the allowance rather than running out inside a loan:
     // whatever it reports as left is non-negative, which is the observable
     // form of "it never overshot".
@@ -1810,11 +1839,11 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     const { said } = await run();
     // The tick spends every whole loan it can afford and stops with a
     // remainder BELOW the threshold the lane itself tests (a batch read, a
-    // loan's worth and the scan-position write), so the stop reason must name
+    // loan's worth and the examination-mark write), so the stop reason must name
     // the allowance rather than say "stopping".
     expect(LOANS_PER_TICK).toBeLessThan(8);
     expect(sends.length).toBe(SENDS_PER_TICK);
-    expect(LEFTOVER_AFTER_TICK).toBeLessThan(1 + MAX_SUBREQUESTS_PER_LOAN + CURSOR_WRITE_RESERVE);
+    expect(LEFTOVER_AFTER_TICK).toBeLessThan(1 + MAX_SUBREQUESTS_PER_LOAN + EXAMINED_MARK_RESERVE);
     expect(said).toContain(
       `outbound-request allowance is down to ${LEFTOVER_AFTER_TICK}`,
     );
@@ -2030,7 +2059,7 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     const { said, stamped } = await run();
     expect(sends.length).toBe(0);
     expect(stamped.length).toBe(4); // handled, so the scan does move on
-    expect(said).toContain('scan complete');
+    expect(said).toContain('pass complete');
     expect(said).toContain('4 with nobody to tell');
   });
 
@@ -2279,26 +2308,22 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     expect(said).toContain(`below the ${coldNeed} needed`);
   });
 
-  it('does not promise a resume the database refused', async () => {
-    // #2213 r25 `4015755019`. `persistCursor` catches its own failure and
-    // returned void, so the summary went on promising that the next tick
-    // resumes from the new position — while the warning printed one line
-    // above said the position could not be written. Two lines of the same
-    // report contradicting each other, and the reassuring one is the one an
-    // operator would act on.
-    //
-    // In reality `scanOffset` reads the OLD position: the prefix is re-read
-    // and the tail stays unreached, which is the opposite of what the summary
-    // claimed.
-    cursorWriteFails = 'prenotify_scan';
+  it('does not claim progress the database refused to record', async () => {
+    // #2213 r25 `4015755019`, carried over to the marks. A summary promising
+    // that the next tick moves on, beside a warning that the record of what it
+    // examined could not be written, is two lines of one report contradicting
+    // each other — and the reassuring one is the one an operator acts on.
+    markThrows = true;
     loanRows = tenLoans();
     const { said } = await run();
     // It still reports the tick honestly...
     expect(said).toContain('loan(s) in the notification window');
-    // ...and says the resume did NOT happen, naming the consequence.
-    expect(said).toContain('starts from where THIS one did');
-    expect(said).toContain('the tail stays unreached');
-    expect(said).not.toContain('RESUMES from');
+    // ...names the failed write and its consequence...
+    expect(said).toContain('could not mark the');
+    expect(said).toContain('the rest of the window is not reached');
+    // ...and the summary says the next tick examines them again.
+    expect(said).toContain('could not be marked');
+    expect(marks.size).toBe(0);
   });
 
   it('counts a DEFERRED rail apart from a refused one', async () => {
@@ -2393,9 +2418,9 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // So the price of that person's reminder is a futile send each time this
     // loan comes round, and on a deployment with a rotated token that is
     // every loan with an opted-out counterparty. What keeps it bounded is the
-    // stored scan position: it advances past an unstamped loan exactly as it
-    // does past a stamped one, so the futile send costs once per trip round
-    // the window rather than once per tick. Before r28 this case stamped and
+    // examination mark: an unstamped loan is marked exactly as a stamped one
+    // would be, so the futile send costs once per pass round the window
+    // rather than once per tick. Before r28 this case stamped and
     // cost nothing — that is the trade, stated rather than discovered later.
     const lender = `0x${'7'.repeat(40)}`;
     const borrower = `0x${'8'.repeat(40)}`;
@@ -2408,10 +2433,8 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     const { stamped } = await run();
     expect(sends.length).toBe(1); // the refused rail was tried, and refused
     expect(stamped).toEqual([]); // and the opted-out party keeps their tick
-    // The cursor moved anyway, which is what bounds the cost above. A single
-    // examined loan finishes the window, so what is stored is the bottom of
-    // the deadline order — the wrap.
-    expect(scanKeys.get(84532)).toEqual({ checkpoint: 0, loanId: 0 });
+    // The loan is marked anyway, which is what bounds the cost above.
+    expect(marks.get('84532:7')?.lap).toBe(1);
   });
 
   it('DOES stamp a loan the service refused — there is nothing to retry there', async () => {
