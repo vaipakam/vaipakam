@@ -29,6 +29,7 @@ import {
   type ProtocolKnobRead,
 } from '@vaipakam/lib/protocolKnobs';
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { pauseLogToJson, readPauseLog } from '@vaipakam/lib/loanClock';
 import type { Env } from './env';
 import { jsonResponse } from './offerRoutes';
@@ -502,9 +503,10 @@ export async function maybeRefreshProtocolConfig(opts: {
         .then((log) => JSON.stringify(pauseLogToJson(log)))
         .catch((err: unknown) => {
           // eslint-disable-next-line no-console
+          // A bounded description, not the error: a transport failure
+          // carries the RPC URL and any key in it (Codex #2822 r2).
           console.error(
-            `[configSnapshot] getPauseIntervals read failed for chain ${opts.chainId} (keeping previous value)`,
-            err,
+            `[configSnapshot] getPauseIntervals read failed for chain ${opts.chainId} (keeping previous value): ${describeFailure(err)}`,
           );
           return null;
         }),

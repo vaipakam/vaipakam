@@ -38,7 +38,7 @@ describe('inTermOnLoanClock (#2808)', () => {
   it('says the answer is unknown, never the original date, when the log does not read', async () => {
     const r = await inTermOnLoanClock(
       client(() => {
-        throw new Error('HTTP request failed: 503');
+        throw new Error('HTTP request failed. URL: https://rpc.example/v2/SECRETKEY123 Status: 503');
       }),
       DIAMOND,
       loan,
@@ -46,5 +46,7 @@ describe('inTermOnLoanClock (#2808)', () => {
     );
     expect(r.known).toBe(false);
     expect(r.known === false && r.reason).toMatch(/pause log unread/);
+    // Never the raw message: it carries the RPC URL and its key.
+    expect(r.known === false && r.reason).not.toMatch(/SECRETKEY123/);
   });
 });

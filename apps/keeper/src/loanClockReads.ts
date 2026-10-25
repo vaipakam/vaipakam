@@ -9,6 +9,7 @@
  * "unknown" when the record does not read.
  */
 import type { Address, PublicClient } from 'viem';
+import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { loanMaturity, readPauseLog } from '@vaipakam/lib/loanClock';
 
 /** Whether a loan is before its effective due date, or why that is unknown. */
@@ -33,6 +34,8 @@ export async function inTermOnLoanClock(
     const log = await readPauseLog({ client, diamond });
     return { known: true, inTerm: now < loanMaturity(loan, log, now) };
   } catch (err) {
-    return { known: false, reason: `pause log unread: ${String(err).slice(0, 200)}` };
+    // A bounded description, never the message: a transport error carries
+    // the RPC URL, and with it any key in that URL (Codex #2822 r2).
+    return { known: false, reason: `pause log unread: ${describeFailure(err)}` };
   }
 }

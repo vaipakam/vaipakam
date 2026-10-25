@@ -76,6 +76,7 @@ import {
 } from './db';
 import { batchedRead } from './batchRead';
 import { AlertDelivery } from './alertDelivery';
+import { describeFailure } from '@vaipakam/lib/errorDescription';
 import { loanMaturity, pauseInForceAt, readPauseLog, type PauseLog } from '@vaipakam/lib/loanClock';
 
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
@@ -261,7 +262,7 @@ async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): 
     pauseLog = await readPauseLog({ client: publicClient, diamond });
   } catch (err) {
     console.warn(
-      `[keeper] preGraceWatcher skipped chain=${chain.id}: pause log unread, so no due date is known: ${String(err).slice(0, 200)}`,
+      `[keeper] preGraceWatcher skipped chain=${chain.id}: pause log unread, so no due date is known: ${describeFailure(err)}`,
     );
     return;
   }
