@@ -29,8 +29,10 @@
 // measurement, never on what a send is assumed to have done: a delivery still
 // not whole one full scan after the first scan that could have reached it (its
 // days fund nothing a claim can find, and an armed day-delivery gate holds
-// them) — a delivery this run worked on is READ AGAIN after its sends before it
-// counts as whole — and a proof or index call that reverts for any reason other
+// them). That first scan is the one that QUEUED it, so the allowance starts
+// when this pass could first see the delivery, not when it arrived (#2775). A
+// delivery this run worked on is READ AGAIN after its sends before it counts as
+// whole. The other alert is a proof or index call that reverts for any reason other
 // than the work already being done (named, with the contract's reason, a mined
 // revert included). A revert alert stands only while its delivery is still open
 // work on this Diamond.
@@ -81,12 +83,28 @@ const READ_CHUNK = 100;
 const WORK_KIND = 'delivery_proof' as const;
 /** Open deliveries one tick works on (the rest wait their turn in rotation). */
 const OPEN_SLICE = 200;
-/** This pass's cadence in seconds (passSchedule). */
+/** This pass's cadence in seconds. `passSchedule` schedules the pass from it,
+ *  so the alert below, aged in scans, always counts real scans (#2775). */
 export const PASS_CADENCE_SEC = 5 * 60;
-/** A delivery not whole this long after its packet arrived is reported: the
- *  first scan reaches it within one cadence, and a whole further cadence is
- *  the "one scan interval" the issue allows it (#2516). */
-export const AWAITING_ALERT_SEC = 2 * PASS_CADENCE_SEC;
+/** A delivery not whole this long after this pass first QUEUED it is reported
+ *  (#2516): the scan that found it and one whole further scan have both left
+ *  it not whole.
+ *
+ *  The clock starts at the queueing, never at the packet's arrival (#2775).
+ *  The pass finds a delivery only once the indexer's settled ledger holds it,
+ *  and how long that takes is the CHAIN's: the indexer reads up to the `safe`
+ *  head, which trails by minutes on Arbitrum (its L1 batch posting) and barely
+ *  on BNB. Aged from arrival, a normal index on Arbitrum landed 8.8 and 9.4
+ *  min in against a 10-min bound, one slow tick from a false alert, because
+ *  the chain's settlement lag was spent out of the keeper's allowance. Aged
+ *  from the queueing, both readings are the keeper's own clock, too.
+ *
+ *  One and a half cadences puts the bound midway between the scan after the
+ *  finding (about one cadence in, still allowed) and the one after that
+ *  (about two in, reported), so a late or early tick moves neither across it.
+ *  How late the indexer records a delivery is not this alert's to judge: an
+ *  undiscovered delivery is in no queue and raises nothing here. */
+export const AWAITING_ALERT_SEC = PASS_CADENCE_SEC + PASS_CADENCE_SEC / 2;
 /** What a run keeps for its alerts after its last send. */
 export const PASS_ALERT_WINDOW_MS = 15_000;
 /** Repeat an open alert at most this often. */
@@ -250,6 +268,9 @@ async function proveOnMirror(
     return;
   }
   const rows = open.map((o) => o.payload);
+  // When this pass first queued each delivery: the clock its "not whole"
+  // alert runs on (#2775).
+  const queuedAt = new Map(open.map((o) => [o.item, o.addedAt] as const));
 
   const { packets, unread: unreadPackets } = await readPackets(client, diamond, rows.map((r) => r.packetHash as Hex), deadline);
   // Packets read as finished are retired however the tick ends (a failed
@@ -356,12 +377,12 @@ async function proveOnMirror(
   }
 
   // A delivery this run READ as not whole — and, if its sends may have moved
-  // it, read again as still not whole — by its own packet's arrival time (a
-  // packet not yet arrived awaits nothing on this mirror). A run that could not
+  // it, read again as still not whole — aged from when this pass first queued
+  // it (a packet not yet arrived awaits nothing on this mirror). A run that could not
   // settle every open delivery — a packet or plan unread, a row the run's
   // budget never reached, a re-read that did not land, a slice that is not the
   // whole queue — can raise the alert but never clear it.
-  const { awaiting, undetermined } = awaitingDeliveries({ rows, packets, finished, notWhole, moved, remeasured, nowSec });
+  const { awaiting, undetermined } = awaitingDeliveries({ rows, packets, queuedAt, finished, notWhole, moved, remeasured, nowSec });
   // A run whose work ended early has not measured everything awaiting: what it
   // did read is still reported, as a lower bound, and it clears nothing
   // (Codex #2599 r6).
@@ -411,18 +432,22 @@ export function actionScope(a: ProofAction): string {
  * only on a read: its first read built a plan, and — when any of its calls
  * landed or was already done — a fresh read after the sends still found it
  * not whole. One whose re-read did not land is undetermined, as is one never
- * read; an unread packet is the caller's to count. Pure; pinned by the tests.
+ * read; an unread packet is the caller's to count. It is overdue once
+ * {@link AWAITING_ALERT_SEC} has passed since this pass first QUEUED it
+ * (`queuedAt`, by lowercase packet hash), whenever the packet arrived (#2775).
+ * Pure; pinned by the tests.
  */
 export function awaitingDeliveries(m: {
   rows: readonly { packetHash: string }[];
   packets: ReadonlyMap<string, { arrivedAt: number }>;
+  queuedAt: ReadonlyMap<string, number>;
   finished: ReadonlySet<string>;
   notWhole: ReadonlySet<string>;
   moved: ReadonlySet<string>;
   remeasured: ReadonlySet<string>;
   nowSec: number;
-}): { awaiting: { packetHash: string; arrivedAt: number }[]; undetermined: number } {
-  const awaiting: { packetHash: string; arrivedAt: number }[] = [];
+}): { awaiting: AwaitingDelivery[]; undetermined: number } {
+  const awaiting: AwaitingDelivery[] = [];
   let undetermined = 0;
   for (const row of m.rows) {
     const key = row.packetHash.toLowerCase();
@@ -433,9 +458,25 @@ export function awaitingDeliveries(m: {
       undetermined += 1;
       continue;
     }
-    if (m.nowSec - p.arrivedAt > AWAITING_ALERT_SEC) awaiting.push({ packetHash: key, arrivedAt: p.arrivedAt });
+    const queued = m.queuedAt.get(key);
+    // Every row comes from the queue, so this is never missing; if it were, the
+    // run could not age the delivery, and says so as undetermined.
+    if (queued === undefined || !Number.isSafeInteger(queued)) {
+      undetermined += 1;
+      continue;
+    }
+    if (m.nowSec - queued > AWAITING_ALERT_SEC) awaiting.push({ packetHash: key, arrivedAt: p.arrivedAt, queuedAt: queued });
   }
   return { awaiting, undetermined };
+}
+
+/** An open delivery a run measured as not whole past its allowance. */
+export interface AwaitingDelivery {
+  packetHash: string;
+  /** When its packet reached this mirror (block time). */
+  arrivedAt: number;
+  /** When this pass first queued it (keeper clock) — what the alert ages. */
+  queuedAt: number;
 }
 
 /** What a run measured, for its alerts. */
@@ -448,9 +489,9 @@ export interface DeliveryAlertInput {
    *  alert whose delivery is not — retired by a run whose clear did not land,
    *  or a Diamond since replaced — has nothing left to stand on. */
   openWork: (packets: readonly string[]) => Promise<ReadonlySet<string>>;
-  /** Open deliveries older than {@link AWAITING_ALERT_SEC} — all of them when
-   *  `awaitingMeasured`, otherwise only those this run could read. */
-  awaiting: readonly { packetHash: string; arrivedAt: number }[];
+  /** Open deliveries queued more than {@link AWAITING_ALERT_SEC} ago — all of
+   *  them when `awaitingMeasured`, otherwise only those this run could read. */
+  awaiting: readonly AwaitingDelivery[];
   /** False when the run could not look at every open delivery. */
   awaitingMeasured: boolean;
   nowSec: number;
@@ -514,18 +555,19 @@ export async function raiseDeliveryAlerts(env: Env, chainId: number, m: Delivery
   }
   if (m.awaiting.length > 0 || m.awaitingMeasured) {
     const sorted = [...m.awaiting].sort((a, b) => a.arrivedAt - b.arrivedAt);
-    const lines = sorted.map((a) => `${a.packetHash} arrived ${new Date(a.arrivedAt * 1000).toISOString()}`);
+    const iso = (sec: number) => new Date(sec * 1000).toISOString();
+    const lines = sorted.map((a) => `${a.packetHash} arrived ${iso(a.arrivedAt)}, found ${iso(a.queuedAt)}`);
     const n = m.awaiting.length;
     // Every one is named in the journal on every run that finds it; the alert
     // names as many as one message holds and counts the rest (Codex #2599 r5).
-    if (n > 0) console.warn(`[keeper] deliveryProof chain=${chainId} not whole past ${AWAITING_ALERT_SEC / 60} min: ${lines.join('; ')}`);
+    if (n > 0) console.warn(`[keeper] deliveryProof chain=${chainId} not whole ${AWAITING_ALERT_SEC / 60} min after found: ${lines.join('; ')}`);
     // A run that could not read every open delivery knows only a lower bound,
     // and only the order of the ones it read: say so.
     const count = m.awaitingMeasured ? `${n}` : `at least ${n}`;
     const order = m.awaitingMeasured ? 'oldest first' : 'oldest of those this run could read first; it could not look at every open delivery';
     await toggle(`delivery-awaiting:${chainId}:all`, n > 0, () =>
       digestText(
-        `${tag}: ${count} deliver${n === 1 && m.awaitingMeasured ? 'y is' : 'ies are'} not yet whole more than ${AWAITING_ALERT_SEC / 60} min after arriving (${order}):`,
+        `${tag}: ${count} deliver${n === 1 && m.awaitingMeasured ? 'y is' : 'ies are'} not yet whole two scans after this keeper found ${n === 1 && m.awaitingMeasured ? 'it' : 'them'} (more than ${AWAITING_ALERT_SEC / 60} min; ${order}):`,
         lines,
         'Their days not yet indexed or proven fund nothing a claim can find, and an armed day-delivery gate holds them.',
       ),

@@ -2122,11 +2122,17 @@ that day, an armed side whose reported liability is zero, a recycled-only side.
   from the indexer's event ledger, takes the three routes, and applies the
   bitmap reconstruction rule below. It ships with #2497's re-cut and runs only
   with `REWARD_DELIVERY_PROOF_ENABLED` set. Its operator alerts (#2516) go to
-  the ops chat per mirror: a delivery still not whole ten minutes after it
-  arrived, and a proof or index call refused for anything but "already done".
+  the ops chat per mirror: a delivery still not whole two scans after the pass
+  found it (more than 7.5 minutes after it was queued), and a proof or index
+  call refused for anything but "already done". The allowance starts when the
+  pass finds the delivery, not when it arrives (#2775): the pass finds a
+  delivery only once the indexer's settled ledger holds it, and that lag is the
+  chain's own (Arbitrum's `safe` head trails by minutes, BNB's barely). A
+  delivery the indexer has not yet recorded raises nothing here.
   "Verified" on a mirror means: deliveries that arrived there were indexed or
-  proven within those ten minutes (the journal's `deliveryProof` lines, and the
-  delivery's chunks reading as landed on chain), and neither alert is open.
+  proven by the scan after the one that found them (the journal's
+  `deliveryProof` lines, and the delivery's chunks reading as landed on chain),
+  and neither alert is open.
   Until it is deployed AND verified on that mirror, leave the gate dark — the arm is irreversible and its
   precondition is that pass running there (Codex #2489 r13). A mirror past custody era 0 may arm:
   Base stamps every remittance with the destination's own reported era and a

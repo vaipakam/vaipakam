@@ -38,13 +38,13 @@ import { runLiquidator } from './liquidator';
 import { runAutoLifecycle } from './autoLifecycle';
 import { runPreGraceWatcher } from './preGraceWatcher';
 import { runRewardBudgetRemit } from './rewardBudgetRemit';
-import { runRewardSanctionsHold } from './rewardSanctionsHold';
-import { runDeliveryProof } from './deliveryProof';
-import { runRewardHorizonHeartbeat } from './rewardHorizonHeartbeat';
+import { PASS_CADENCE_SEC as SANCTIONS_HOLD_CADENCE_SEC, runRewardSanctionsHold } from './rewardSanctionsHold';
+import { PASS_CADENCE_SEC as DELIVERY_PROOF_CADENCE_SEC, runDeliveryProof } from './deliveryProof';
+import { PASS_CADENCE_SEC as HORIZON_HEARTBEAT_CADENCE_SEC, runRewardHorizonHeartbeat } from './rewardHorizonHeartbeat';
 import { runCommitmentReport } from './commitmentReport';
 import { runRemitAck } from './remitAck';
 import { runGraceDefault } from './graceDefault';
-import { runRewardDayClose } from './rewardDayClose';
+import { PASS_CADENCE_SEC as DAY_CLOSE_CADENCE_SEC, runRewardDayClose } from './rewardDayClose';
 
 /** The UTC hour `dailyOracleSnapshot` acts in, and how long it stays
  *  open — mirroring the window that pass already self-checks against.
@@ -57,7 +57,9 @@ export interface KeeperPass {
   /** Matches the name the pass passes to `passIsArmed`, so a cadence
    *  skip and an arming skip read as lines about the same thing. */
   readonly name: string;
-  /** Act when the scheduled UTC minute divides by this. */
+  /** Act when the scheduled UTC minute divides by this. A pass whose own
+   *  bounds are derived from its cadence (an alert aged in scans, say) exports
+   *  that cadence and is scheduled FROM it, so the two cannot drift (#2775). */
   readonly cadenceMinutes: number;
   /** Which minute inside each cadence window to act on. Distinct
    *  offsets are what keep the staggered passes off each other's ticks
@@ -217,7 +219,7 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
   },
   {
     name: 'rewardSanctionsHold',
-    cadenceMinutes: 60,
+    cadenceMinutes: SANCTIONS_HOLD_CADENCE_SEC / 60,
     // :14, not :13 — graceDefault (#2483, 5-minute cadence from :03) took
     // :13 when the two branches met; the stagger test pins one pass a minute.
     offsetMinutes: 14,
@@ -226,14 +228,14 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
   },
   {
     name: 'deliveryProof',
-    cadenceMinutes: 5,
+    cadenceMinutes: DELIVERY_PROOF_CADENCE_SEC / 60,
     offsetMinutes: 1,
     why: 'a delivered day waits on its proof before a gated mirror may price it — minutes, not hours; the scan is bounded and idempotent (#1944)',
     run: runDeliveryProof,
   },
   {
     name: 'rewardHorizonHeartbeat',
-    cadenceMinutes: 60,
+    cadenceMinutes: HORIZON_HEARTBEAT_CADENCE_SEC / 60,
     // :44 — clear of every staggered pass (the 5-minute ones sit on :01–:03
     // modulo 5, preGraceWatcher on :04/:19/:34/:49, rewardSanctionsHold on :14).
     offsetMinutes: 44,
@@ -242,7 +244,7 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
   },
   {
     name: 'rewardDayClose',
-    cadenceMinutes: 15,
+    cadenceMinutes: DAY_CLOSE_CADENCE_SEC / 60,
     // :10/:25/:40/:55 — clear of every staggered pass (the 5-minute ones sit on
     // :01–:03 modulo 5, preGraceWatcher on :04/:19/:34/:49, the hourly ones on
     // :14 and :44).

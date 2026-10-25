@@ -13,6 +13,7 @@ import { RewardEpochFacetABI } from '@vaipakam/contracts/abis';
 import {
   ALREADY_DONE,
   AWAITING_ALERT_SEC,
+  PASS_CADENCE_SEC,
   awaitingDeliveries,
   classifyRevert,
   actionScope,
@@ -129,23 +130,23 @@ describe('raiseDeliveryAlerts', () => {
   });
 
   it('states a lower bound, not a count, when the run could not read every open delivery', async () => {
-    await raiseDeliveryAlerts(env, CHAIN, input({ awaiting: [{ packetHash: P1, arrivedAt: NOW - 3600 }], awaitingMeasured: false }));
+    await raiseDeliveryAlerts(env, CHAIN, input({ awaiting: [{ packetHash: P1, arrivedAt: NOW - 3600, queuedAt: NOW - 3500 }], awaitingMeasured: false }));
     const [line] = warned.filter((w) => w.includes('reward delivery proofs'));
     expect(line).toContain('at least 1 deliveries are not yet whole');
     expect(line).toContain('it could not look at every open delivery');
     expect(line).not.toContain('oldest first');
   });
 
-  it('says how many deliveries are not whole, oldest first, with when each arrived', async () => {
+  it('says how many deliveries are not whole, oldest first, with when each arrived and was found', async () => {
     const awaiting = [
-      { packetHash: P2, arrivedAt: NOW - 3600 },
-      { packetHash: P1, arrivedAt: NOW - 7200 },
+      { packetHash: P2, arrivedAt: NOW - 3600, queuedAt: NOW - 3000 },
+      { packetHash: P1, arrivedAt: NOW - 7200, queuedAt: NOW - 6900 },
     ];
     await raiseDeliveryAlerts(env, CHAIN, input({ awaiting }));
     const [line] = warned.filter((w) => w.includes('reward delivery proofs'));
-    expect(line).toContain(`2 deliveries are not yet whole more than ${AWAITING_ALERT_SEC / 60} min after arriving`);
+    expect(line).toContain(`2 deliveries are not yet whole two scans after this keeper found them (more than ${AWAITING_ALERT_SEC / 60} min; oldest first)`);
     expect(line.indexOf(P1), 'oldest first').toBeLessThan(line.indexOf(P2));
-    expect(line).toContain(new Date((NOW - 7200) * 1000).toISOString());
+    expect(line).toContain(`arrived ${new Date((NOW - 7200) * 1000).toISOString()}, found ${new Date((NOW - 6900) * 1000).toISOString()}`);
   });
 
   it('clears the "not whole" alert only on a run that measured every open delivery', async () => {
@@ -169,7 +170,7 @@ describe('raiseDeliveryAlerts', () => {
     await raiseDeliveryAlerts(
       env,
       CHAIN,
-      input({ failures: new Map([[P1, 'x']]), cleared: new Set([P2]), awaiting: [{ packetHash: P1, arrivedAt: 0 }], deadline: 0 }),
+      input({ failures: new Map([[P1, 'x']]), cleared: new Set([P2]), awaiting: [{ packetHash: P1, arrivedAt: 0, queuedAt: 0 }], deadline: 0 }),
     );
     expect(warned.filter((w) => w.includes('refused by the contract') && w.includes(`${P1} — x`)), 'a refusal is never dropped').toHaveLength(1);
     expect(warned.filter((w) => w.includes('not yet whole')), 'the "not whole" alert waits').toEqual([]);
@@ -197,6 +198,7 @@ describe('awaitingDeliveries', () => {
   const base = {
     rows: [{ packetHash: P1 }],
     packets: new Map([[P1, { arrivedAt: old }]]),
+    queuedAt: new Map([[P1, old]]),
     finished: new Set<string>(),
     notWhole: new Set([P1]),
     moved: new Set<string>(),
@@ -208,7 +210,7 @@ describe('awaitingDeliveries', () => {
     // e.g. a rollout admission: the call went through, but it only OPENS the
     // epoch its days are indexed into on a later run.
     expect(awaitingDeliveries({ ...base, moved: new Set([P1]), remeasured: new Set([P1]) })).toEqual({
-      awaiting: [{ packetHash: P1, arrivedAt: old }],
+      awaiting: [{ packetHash: P1, arrivedAt: old, queuedAt: old }],
       undetermined: 0,
     });
   });
@@ -223,7 +225,35 @@ describe('awaitingDeliveries', () => {
   });
 
   it('does not report a delivery inside its first scan interval', () => {
-    expect(awaitingDeliveries({ ...base, packets: new Map([[P1, { arrivedAt: NOW - 60 }]]) })).toEqual({ awaiting: [], undetermined: 0 });
+    const fresh = NOW - 60;
+    expect(awaitingDeliveries({ ...base, packets: new Map([[P1, { arrivedAt: fresh }]]), queuedAt: new Map([[P1, fresh]]) })).toEqual({
+      awaiting: [],
+      undetermined: 0,
+    });
+  });
+
+  // #2775: on Arbitrum Sepolia two batches arrived and were indexed 8.8 and
+  // 9.4 min later, because the indexer's settled (`safe`) ledger reached them
+  // one scan later than BNB's did. The keeper had them for one scan only.
+  it('ages a delivery from when this pass found it, not from when it arrived', () => {
+    const arrived = NOW - 11 * 60; // past the old 10-minute arrival bound
+    const at = (queued: number) =>
+      awaitingDeliveries({ ...base, packets: new Map([[P1, { arrivedAt: arrived }]]), queuedAt: new Map([[P1, queued]]) });
+    expect(at(NOW - 60).awaiting, 'found by the previous scan only').toEqual([]);
+    expect(at(NOW - 5 * 60).awaiting, 'one full scan after the scan that found it').toEqual([]);
+    expect(at(NOW - 10 * 60).awaiting, 'two scans after it was found').toEqual([{ packetHash: P1, arrivedAt: arrived, queuedAt: NOW - 600 }]);
+  });
+
+  it('keeps the bound clear of the scans on both sides', () => {
+    // One scan after the finding is about one cadence in, the next about two;
+    // the bound sits midway, so a tick up to half a cadence late or early
+    // moves neither across it.
+    expect(AWAITING_ALERT_SEC - PASS_CADENCE_SEC).toBe(PASS_CADENCE_SEC / 2);
+    expect(2 * PASS_CADENCE_SEC - AWAITING_ALERT_SEC).toBe(PASS_CADENCE_SEC / 2);
+  });
+
+  it('leaves a delivery it cannot age undetermined, never overdue', () => {
+    expect(awaitingDeliveries({ ...base, queuedAt: new Map() })).toEqual({ awaiting: [], undetermined: 1 });
   });
 });
 
@@ -275,12 +305,13 @@ describe('listOpenWorkPage', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const k = createKeeperD1();
     const ins = k.db.prepare(
-      'INSERT INTO keeper_work_open (chain_id, diamond, kind, item, block, payload, checked_at, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0)',
+      'INSERT INTO keeper_work_open (chain_id, diamond, kind, item, block, payload, checked_at, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     );
-    ins.run(CHAIN, '0xab', 'delivery_proof', 'a', 1, JSON.stringify({ packetHash: P1 }), 0);
-    ins.run(CHAIN, '0xab', 'delivery_proof', 'b', 2, '{not json', 0);
+    ins.run(CHAIN, '0xab', 'delivery_proof', 'a', 1, JSON.stringify({ packetHash: P1 }), 0, NOW - 42);
+    ins.run(CHAIN, '0xab', 'delivery_proof', 'b', 2, '{not json', 0, NOW);
     const page = await listOpenWorkPage(k.d1 as unknown as KeeperD1, CHAIN, '0xab', 'delivery_proof', 10);
     expect(page.items.map((i) => i.item)).toEqual(['a']);
+    expect(page.items[0].addedAt, 'when the item was first queued travels with it (#2775)').toBe(NOW - 42);
     expect(page.rows, 'an unreadable row is counted, so the run knows it did not see it').toBe(2);
     vi.restoreAllMocks();
   });
@@ -382,7 +413,7 @@ describe('refusal digest (Codex #2599 r4)', () => {
     const k = createKeeperD1();
     const warned: string[] = [];
     vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void warned.push(a.map(String).join(' ')));
-    const awaiting = Array.from({ length: 8 }, (_, i) => ({ packetHash: `0x${i.toString(16).padStart(64, '0')}`, arrivedAt: NOW - 3600 - i }));
+    const awaiting = Array.from({ length: 8 }, (_, i) => ({ packetHash: `0x${i.toString(16).padStart(64, '0')}`, arrivedAt: NOW - 3600 - i, queuedAt: NOW - 3000 - i }));
     await raiseDeliveryAlerts({ DB: createSharedD1().d1, KEEPER_DB: k.d1 } as unknown as Env, CHAIN, {
       failures: new Map(),
       cleared: new Set(),
@@ -393,7 +424,7 @@ describe('refusal digest (Codex #2599 r4)', () => {
       deadline: Number.POSITIVE_INFINITY,
     });
     const alert = warned.find((w) => w.includes('reward delivery proofs'))!;
-    const journal = warned.find((w) => w.includes('not whole past'))!;
+    const journal = warned.find((w) => w.includes('min after found:'))!;
     for (const a of awaiting) {
       expect(alert).toContain(a.packetHash);
       expect(journal).toContain(a.packetHash);
