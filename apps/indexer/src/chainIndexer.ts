@@ -5642,26 +5642,16 @@ export async function processLoanLogs(
         .first<{ '1': number } | null>();
       if (hasListing2) {
         // Codex round-4 P2 — anchor the grace refresh to the SAME event
-        // block as the loan read above. `_resolveGraceEnd` calls
-        // `getLoanDetails` at the node's `latest` head; if there's a
-        // later partial repay or governance grace change past `scanTo`,
-        // we'd write a grace_period_end that contradicts the principal
-        // / collateral_amount we just wrote at log.blockNumber. Read
-        // `getEffectiveGraceSeconds` at the event block too and
-        // compute grace_period_end inline from the loan fields we
-        // already have — also saves one RPC call.
-        const graceSeconds = Number(
-          (await client.readContract({
-            address: diamond,
-            abi: GRACE_SECONDS_ABI,
-            functionName: 'getEffectiveGraceSeconds',
-            args: [detail.durationDays],
-            blockNumber: log.blockNumber,
-          })) as bigint,
+        // block as the loan read above, so it never contradicts the
+        // principal / collateral_amount just written at log.blockNumber.
+        // #2808 — read from the contract's own listing context rather than
+        // recomputed from the loan fields: the D2 loan clock moves it.
+        const refreshedGraceEnd = await _resolveGraceEnd(
+          client,
+          diamond,
+          loanId,
+          log.blockNumber,
         );
-        const endTime =
-          Number(detail.startTime) + Number(detail.durationDays) * 86400;
-        const refreshedGraceEnd = endTime + graceSeconds;
         await env.DB.prepare(
           `UPDATE prepay_listings
              SET grace_period_end = ?, updated_at = ?
@@ -5696,9 +5686,38 @@ export async function processLoanLogs(
       // current-owner together so the read routes attribute the loan to the new
       // borrower (and not the exited one). The mint Transfer for the new id is a
       // no-op until this write lands; this write is the authoritative one.
+      //
+      // #2808 (Codex #2822 r3 P1) — the handover also RE-ORIGINATES the
+      // term: `PrecloseFacet` sets the incoming borrower's collateral amount
+      // and token id, rate, duration and `startTime = block.timestamp`. The
+      // row's term is what the loan routes date the loan by (start + duration
+      // + pause credit since start), so leaving the exiting borrower's term
+      // here served a wrong due date as `available` and credited pauses from
+      // before the new term began. The event carries no start time and a
+      // block timestamp here may be the wall-clock sentinel, so the term is
+      // read from the chain, pinned to the event's block — the same
+      // absolute-value read `SwapToRepayPartialExecuted` makes, so a re-scan
+      // writes the same values. Any RPC error passes through and the pass
+      // retries: nothing else repairs an Active row's term.
+      const transferredLoanId = Number(a.loanId as bigint);
+      const term = (await client.readContract({
+        address: diamond,
+        abi: DIAMOND_LOAN_DETAILS_ABI,
+        functionName: 'getLoanDetails',
+        args: [BigInt(transferredLoanId)],
+        blockNumber: log.blockNumber,
+      })) as {
+        collateralAmount: bigint;
+        collateralTokenId: bigint;
+        interestRateBps: bigint;
+        durationDays: bigint;
+        startTime: bigint;
+      };
       const obligationMoved = await env.DB.prepare(
         `UPDATE loans
             SET borrower = ?, borrower_token_id = ?, borrower_current_owner = ?,
+                collateral_amount = ?, collateral_token_id = ?,
+                interest_rate_bps = ?, duration_days = ?, start_time = ?,
                 updated_at = ?
           WHERE chain_id = ? AND loan_id = ?`,
       )
@@ -5706,9 +5725,14 @@ export async function processLoanLogs(
           String(a.newBorrower as string).toLowerCase(),
           String(a.newBorrowerTokenId as bigint),
           String(a.newBorrower as string).toLowerCase(),
+          term.collateralAmount.toString(),
+          term.collateralTokenId.toString(),
+          Number(term.interestRateBps),
+          Number(term.durationDays),
+          Number(term.startTime),
           Math.floor(Date.now() / 1000),
           chainId,
-          Number(a.loanId as bigint),
+          transferredLoanId,
         )
         .run();
       // RPC read-diet PR 0 — the borrower side changed hands (burn +
@@ -5722,7 +5746,7 @@ export async function processLoanLogs(
       await recordLoanParticipant(
         env,
         chainId,
-        Number(a.loanId as bigint),
+        transferredLoanId,
         String(a.newBorrower as string),
         'borrower',
         blockTimestamps.get(log.blockNumber) ?? now,
@@ -6946,69 +6970,40 @@ async function loadActivityValueContext(
 /** Map a decoded event to the cross-domain reference columns the
  *  activity_events ledger denormalizes for fast filtering. The full
  *  args bag is preserved separately in `args_json`. */
-/// @dev Minimal ABI for the on-chain
-///      `ConfigFacet.getEffectiveGraceSeconds(durationDays)` view.
-///      Inlined here (not pulled in via the full ConfigFacet ABI)
-///      because the indexer only needs this one function. Honors
-///      the governance-tunable grace schedule
-///      (`ConfigFacet.setGraceBuckets`) — fixes the "default-only"
-///      drift Codex round-3 P2 flagged.
-const GRACE_SECONDS_ABI = [
-  {
-    type: 'function',
-    name: 'getEffectiveGraceSeconds',
-    stateMutability: 'view',
-    // On-chain signature is `uint256 durationDays` (per
-    // ConfigFacet.sol:1969). A mismatch here would compile a
-    // different 4-byte selector and the RPC would 404 silently,
-    // falling back to the `graceEnd = 0` sentinel. Codex P2
-    // round-4 on PR #304.
-    inputs: [{ name: 'durationDays', type: 'uint256' }],
-    outputs: [{ name: '', type: 'uint256' }],
-  },
-] as const;
-
-/// @dev RPC-read the loan's CURRENT `startTime + durationDays`
-///      AND the on-chain effective grace-seconds for that
-///      durationDays. Reading from RPC (not the indexer's cached
-///      `loans` row) is the correct source — `RepayFacet.repayPartial`
-///      resets `startTime` for ERC20 loans and reduces
-///      `durationDays` for NFT rentals; governance can also flip
-///      the grace schedule via `ConfigFacet.setGraceBuckets`.
-///      Falls back to `0` (sentinel) on RPC failure, with a
-///      console.error.
+/// @dev The grace end the CONTRACT holds the loan's listing to, read from
+///      `getPrepayContext(loanId, asOf).graceEnd` — the value the Diamond's
+///      own listing builder uses for the order. Read from the contract rather
+///      than recomputed as `startTime + durationDays + grace` (#2808): since
+///      the D2 loan clock (#668 / #935) the grace end is the original one
+///      moved by the protocol's paused time since the loan's start, and a
+///      second copy of that rule here would drift from the one the order was
+///      built with. On a Diamond that predates the loan clock the same read
+///      returns that Diamond's own unmoved value, so no branch is needed.
+///      `asOf` only prices the context's settlement legs, which this caller
+///      does not use.
+///      Falls back to `0` (sentinel) on RPC failure, with a console.error.
 async function _resolveGraceEnd(
   client: PublicClient,
   diamond: Address,
   loanId: number,
-  /** #763 — pin BOTH reads to the triggering event's block so a
+  /** #763 — pin the read to the triggering event's block so a
    *  partial-failure re-scan (or a cron catch-up that runs an old block range
-   *  after later blocks were seen) computes the grace boundary from the loan's
-   *  state AT that event, not a post-`scanTo` `latest` that a subsequent partial
-   *  repay / governance `setGraceBuckets` could have moved. Omit (undefined) to
-   *  read `latest` — viem treats an absent `blockNumber` as the latest head. */
+   *  after later blocks were seen) reads the grace boundary as it stood AT
+   *  that event, not a post-`scanTo` `latest` that a later partial repay,
+   *  governance `setGraceBuckets` or pause could have moved. Omit
+   *  (undefined) to read `latest` — viem treats an absent `blockNumber` as
+   *  the latest head. */
   blockNumber?: bigint,
 ): Promise<number> {
   try {
-    const detail = (await client.readContract({
+    const ctx = (await client.readContract({
       address: diamond,
-      abi: DIAMOND_LOAN_DETAILS_ABI,
-      functionName: 'getLoanDetails',
-      args: [BigInt(loanId)],
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getPrepayContext',
+      args: [BigInt(loanId), BigInt(Math.floor(Date.now() / 1000))],
       blockNumber,
-    })) as { startTime: bigint; durationDays: number | bigint };
-    const startTime = Number(detail.startTime);
-    const durationDays = Number(detail.durationDays);
-    const graceSeconds = Number(
-      (await client.readContract({
-        address: diamond,
-        abi: GRACE_SECONDS_ABI,
-        functionName: 'getEffectiveGraceSeconds',
-        args: [BigInt(durationDays)],
-        blockNumber,
-      })) as bigint,
-    );
-    return startTime + durationDays * 86_400 + graceSeconds;
+    })) as { graceEnd: bigint };
+    return Number(ctx.graceEnd);
   } catch (err) {
     // #763 (Codex #767 P2) — a block-pinned read can fail when the RPC can't
     // serve HISTORICAL state for `blockNumber` on a catch-up (non-archive /

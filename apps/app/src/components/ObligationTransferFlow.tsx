@@ -86,7 +86,7 @@ function offerEligible(
     return false;
   }
   if (BigInt(o.collateralAmount) < live.collateralAmount) return false;
-  if (chainNow + BigInt(o.durationDays) * 86_400n > loanEndTimeOf(live))
+  if (chainNow + BigInt(o.durationDays) * 86_400n > loanEndTimeOf(live, chainNow))
     return false;
   if (o.creator.toLowerCase() === myAddress.toLowerCase()) return false;
   if (o.expiresAt && BigInt(o.expiresAt) !== 0n && BigInt(o.expiresAt) <= chainNow)
@@ -389,7 +389,7 @@ export function ObligationTransferFlow({
         (liveOffer.expiresAt !== 0n &&
           liveOffer.expiresAt <= latestBlock.timestamp) ||
         latestBlock.timestamp + liveOffer.durationDays * 86_400n >
-          loanEndTimeOf(liveLoan);
+          loanEndTimeOf(liveLoan, latestBlock.timestamp);
       if (gone) {
         setError(copy.transferOb.offerGone);
         void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });

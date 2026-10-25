@@ -41,6 +41,8 @@ import {
  * stubbed and counted here so the cap tests below cost what a real tick costs.
  */
 const sends: string[] = [];
+/** Every Push message body the lane sent this run — what the reader is told. */
+const pushBodies: string[] = [];
 /**
  * What the stubbed `sendPush` reports back.
  *
@@ -62,9 +64,12 @@ let tgAccepts: 'accepted' | 'refused' | 'unknown';
 // The shared rail (#2248): the lane passes its whole rail configuration, not
 // a bare key, and reads the rail's status once per chain for its disclosure.
 vi.mock('@vaipakam/push', () => ({
-  sendPush: vi.fn(async (_rail: unknown, m: { subscriber: string }) => {
+  sendPush: vi.fn(async (_rail: unknown, m: { subscriber: string; body: string }) => {
     const attempt = pushAttemptFor(m.subscriber);
-    if (attempt !== 'not-requested') sends.push(`push:${m.subscriber}`);
+    if (attempt !== 'not-requested') {
+      sends.push(`push:${m.subscriber}`);
+      pushBodies.push(m.body);
+    }
     return attempt;
   }),
   pushRailStatus: vi.fn(() => ({ usable: false, reason: 'signer-malformed' })),
@@ -98,6 +103,7 @@ const PRE_MESSAGE_SUBREQUESTS =
   1 + // the head
   1 + // the indexer cursor (D1)
   1 + // the pause
+  1 + // the pause log (#2808)
   1 + // the config
   1 + // the candidate query (D1)
   1 + // this lane's stored scan position (D1)
@@ -220,6 +226,7 @@ let answer: (
       status: number;
       periodicInterestCadence?: number;
       lastPeriodicInterestSettledAt?: number;
+      startTime?: bigint;
     }
   | null;
 /** When set, the whole batched call throws — the RPC being unreachable. */
@@ -254,6 +261,13 @@ let diamondPaused: boolean;
 let pauseThrows: boolean;
 /** The block each pause read was pinned to. */
 const pauseReads: (bigint | undefined)[] = [];
+/** The protocol's pause-interval log, as `getPauseIntervals` returns it (#2808). */
+let pauseLog: { start: bigint; end: bigint; pausedBefore: bigint }[];
+/** What the pause-log read does instead of answering: throw, or revert as a
+ *  Diamond without the loan clock does (`FunctionDoesNotExist`). */
+let pauseLogFails: 'throws' | 'unrouted' | null;
+/** The block each pause-log read was pinned to, and the page it asked for. */
+const pauseLogReads: { blockNumber?: bigint; count: bigint }[] = [];
 /** What the shared database says the indexer has scanned this chain through. */
 let indexedBlock: number | null;
 /** Whether reading the indexer cursor FAILS (a different thing from absent). */
@@ -331,6 +345,24 @@ vi.mock('viem', async (importOriginal) => {
           if (pauseThrows) throw new Error('pause read failed');
           return diamondPaused;
         }
+        if (functionName === 'getPauseIntervals') {
+          const [from, count] = args as readonly [bigint, bigint];
+          pauseLogReads.push({ blockNumber, count });
+          if (pauseLogFails === 'throws') throw new Error('pause log read failed');
+          if (pauseLogFails === 'unrouted') {
+            // The structural shape `isFunctionDoesNotExistRevert` reads.
+            const err = new Error('reverted') as Error & {
+              walk: (fn: (x: unknown) => boolean) => unknown;
+            };
+            const node = { name: 'ContractFunctionRevertedError', raw: '0xa9ad62f8' };
+            err.walk = (fn) => (fn(node) ? node : null);
+            throw err;
+          }
+          return [
+            pauseLog.slice(Number(from), Number(from + count)),
+            BigInt(pauseLog.length),
+          ];
+        }
         if (functionName === 'getPeriodicInterestConfig') {
           configReads += 1;
           configPinnedAt.push(blockNumber);
@@ -382,6 +414,8 @@ function periodicLoan(loanId: number, settledAt: number) {
     chain_id: 84532,
     lender: '0x1111111111111111111111111111111111111111',
     borrower: '0x2222222222222222222222222222222222222222',
+    // The chain's zero struct starts at 0 too, so stored and chain agree.
+    start_time: 0,
     periodic_interest_cadence: 1,
     last_period_settled_at: settledAt,
     period_pre_notified_at: null,
@@ -622,6 +656,10 @@ beforeEach(() => {
   diamondPaused = false;
   pauseThrows = false;
   pauseReads.length = 0;
+  pauseLog = [];
+  pauseLogFails = null;
+  pauseLogReads.length = 0;
+  pushBodies.length = 0;
   indexedBlock = 900;
   cursorReadFails = false;
   cursorWriteFails = null;
@@ -1224,7 +1262,12 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // between. Here exactly one loan in the middle has ended, so a lane that
     // read the wrong slot would withhold the wrong borrower's reminder —
     // and, worse, send the one it was supposed to withhold.
-    loanRows = tenLoans().slice(-5); // ids 96…100 — the five nearest deadlines
+    // ids 97…100 — the four nearest deadlines. Four, so that with the ended
+    // one costing nothing the other three are one whole tick's worth
+    // (`LOANS_PER_TICK`) and every one of them is reached: a lane reading the
+    // wrong slot then shows up as a wrong id, never as a loan the budget left.
+    expect(LOANS_PER_TICK).toBeGreaterThanOrEqual(3);
+    loanRows = tenLoans().slice(-4);
     answer = (id) => ({
       id: BigInt(id),
       status: id === 98 ? 1 : 0,
@@ -1232,7 +1275,7 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
       lastPeriodicInterestSettledAt: settledAtOf.get(id) ?? 0,
     });
     const { stamped, said } = await run();
-    expect([...stamped].sort((a, b) => b - a)).toEqual([100, 99, 97, 96]);
+    expect([...stamped].sort((a, b) => b - a)).toEqual([100, 99, 97]);
     expect(said).toContain('loan=98');
     expect(said).toContain('reports status 1');
   });
@@ -1250,14 +1293,16 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // budget actually promises is observable without knowing any of the
     // numbers — both chains draw from one pool, so giving each of them a
     // window it could finish ALONE leaves the second one short.
-    const WINDOW = 2;
+    const WINDOW = 3;
     const windowFor = (base: number) =>
       Array.from({ length: WINDOW }, (_, k) => periodicLoan(base - k, NOW - 29 * DAY + k * 60));
     loanRowsByChain = { 84532: windowFor(600), 421614: windowFor(700) };
-    // Telegram only, so a loan costs two sends rather than four and the second
-    // chain is squeezed rather than shut out entirely — which is the state
-    // this test needs to observe.
-    subscriberFor = (w) => ({ ...bothRails(w), push_channel: null });
+    // Nobody subscribed, so a loan costs its two lookups and its stamp and
+    // nothing more, and the second chain is squeezed rather than shut out
+    // entirely — which is the state this test needs to observe. (It was
+    // Telegram-only until #2808 added the pause-log read to every chain's
+    // opening; at two sends a loan the second chain no longer fit at all.)
+    subscriberFor = () => null;
     const { stamps } = await run({ RPC_ARB_SEPOLIA: 'https://stub-421614.invalid' });
     // Both chains were reached: the second got the REMAINDER rather than
     // nothing, which is what distinguishes a shared pool from a pool the first
@@ -1606,15 +1651,25 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
       ROTATION_SUBREQUESTS -
       CHAIN_OPENING_REQUESTS_AFTER_IDENTITY -
       warmNeed;
-    // Composed from two loan SHAPES rather than one, because the target need
-    // not be a multiple of any single loan's cost — it was not, once D1 came
-    // into the model in r27. One routed loan plus however many no-route ones
-    // land on it exactly.
-    const fillers = (target - TYPICAL_SUBREQUESTS_PER_LOAN) / NO_ROUTE_SUBREQUESTS_PER_LOAN;
+    // Composed from several loan SHAPES rather than one, because the target
+    // need not be a multiple of any single loan's cost — it was not, once D1
+    // came into the model in r27, and again once #2808 added the pause-log
+    // read. One routed loan, then no-route and opted-out ones, land on it
+    // exactly: any remainder of two or more is a sum of threes and twos.
+    const rest = target - TYPICAL_SUBREQUESTS_PER_LOAN;
+    let fillers = -1;
+    let optedOutFillers = 0;
+    for (let b = 0; b * OPTED_OUT_SUBREQUESTS_PER_LOAN <= rest; b++) {
+      const left = rest - b * OPTED_OUT_SUBREQUESTS_PER_LOAN;
+      if (left % NO_ROUTE_SUBREQUESTS_PER_LOAN === 0) {
+        fillers = left / NO_ROUTE_SUBREQUESTS_PER_LOAN;
+        optedOutFillers = b;
+        break;
+      }
+    }
     // THE TUNING IS THE TEST, so a composition that no longer lands exactly
     // must fail loudly rather than leave the trailing chain with a request to
     // spare — which would pass whether the warm probe is charged for or not.
-    expect(Number.isInteger(fillers)).toBe(true);
     expect(fillers).toBeGreaterThanOrEqual(0);
     const known = new Map<string, number>();
     const withWallets = (rows: Record<string, unknown>[]) =>
@@ -1628,14 +1683,19 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
       });
     const lead = withWallets([
       periodicLoan(600, NOW - 29 * DAY),
-      ...Array.from({ length: fillers }, (_, k) =>
+      ...Array.from({ length: fillers + optedOutFillers }, (_, k) =>
         periodicLoan(599 - k, NOW - 29 * DAY + (k + 1) * 60),
       ),
     ]);
     const trail = withWallets([periodicLoan(700, NOW - 29 * DAY)]);
     // Every loan on the lead chain BEHIND its first has a subscriber row with
-    // no rail on it — two lookups and a stamp, no sends.
+    // no rail on it — two lookups and a stamp, no sends — and the last
+    // `optedOutFillers` of them have opted out — two lookups, nothing else.
     const noRoute = new Set(lead.slice(1).map((r) => r.loan_id as number));
+    const optedOut = new Set(
+      lead.slice(lead.length - optedOutFillers).map((r) => r.loan_id as number),
+    );
+    if (optedOutFillers === 0) optedOut.clear();
     subscriberFor = (w) => {
       const id = known.get(w.toLowerCase());
       if (id === undefined) return null;
@@ -1645,7 +1705,7 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
         push_channel: null,
         tg_chat_id: null,
         locale: 'en',
-        notify_maturity_approaching: 1,
+        notify_maturity_approaching: optedOut.has(id) ? 0 : 1,
       };
     };
     // The SECOND invocation leads with Arb (the rotation advanced), so Arb is
@@ -1731,9 +1791,9 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
         known.set(borrower.toLowerCase(), id);
         return { ...r, lender, borrower };
       });
-    // The nearest eight cost four requests each (32); the other ninety-two in
-    // the batch cost nothing. Four opening reads plus 32 leaves exactly four —
-    // one short of the five the next batch needs.
+    // The nearest eight are routed and the other ninety-two in the batch have
+    // nobody to tell; the tick reaches only the first few routed ones before
+    // its allowance falls below what another loan needs.
     const routed = new Set(ids.slice(0, 8));
     subscriberFor = (w) => {
       const id = known.get(w.toLowerCase());
@@ -1749,10 +1809,12 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     };
     const { said } = await run();
     // The tick spends every whole loan it can afford and stops with a
-    // remainder BELOW the batch-read threshold (`1 + MAX_SENDS_PER_LOAN`), so
-    // the stop reason must name the allowance rather than say "stopping".
+    // remainder BELOW the threshold the lane itself tests (a batch read, a
+    // loan's worth and the scan-position write), so the stop reason must name
+    // the allowance rather than say "stopping".
+    expect(LOANS_PER_TICK).toBeLessThan(8);
     expect(sends.length).toBe(SENDS_PER_TICK);
-    expect(LEFTOVER_AFTER_TICK).toBeLessThan(1 + MAX_SENDS_PER_LOAN);
+    expect(LEFTOVER_AFTER_TICK).toBeLessThan(1 + MAX_SUBREQUESTS_PER_LOAN + CURSOR_WRITE_RESERVE);
     expect(said).toContain(
       `outbound-request allowance is down to ${LEFTOVER_AFTER_TICK}`,
     );
@@ -1785,11 +1847,12 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // subrequests and the tick would never see a second batch. Rows the CHAIN
     // rejects cost nothing — no lookup is worth making about a loan that does
     // not exist — so they are what a batch can be full of while the allowance
-    // survives it. Two loans are messaged and two more have nobody to tell, so
+    // survives it. Two loans are messaged and one more has nobody to tell, so
     // the completed batch still does every kind of work whose survival this
-    // test is about.
+    // test is about. (One, not two, since #2808's pause-log read: a second
+    // would leave the allowance below a second batch read.)
     const reachable = new Set([2000, 1999]);
-    const noRoute = new Set([1998, 1997]);
+    const noRoute = new Set([1998]);
     const orphan = (id: number) => !reachable.has(id) && !noRoute.has(id);
     answer = (id) => ({
       id: orphan(id) ? 0n : BigInt(id),
@@ -1811,10 +1874,10 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     };
     const { stamped, said } = await run();
     // The completed batch's work survives: a hundred loans examined, two of
-    // them messaged and two more stamped with nobody to tell.
+    // them messaged and one more stamped with nobody to tell.
     expect(stamped.length).toBe(reachable.size + noRoute.size);
     expect(said).toContain('100 examined, 2 reminded');
-    expect(said).toContain('2 with nobody to tell');
+    expect(said).toContain('1 with nobody to tell');
     // The failure is still stated, and described as THIS batch's.
     expect(said).toContain('status read failed');
     // #2213 r15 `4013952981`: and the SUMMARY names it as the reason the tick
@@ -2013,9 +2076,9 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     // the pause is checked before `periodicInterestEnabled` is even read. The
     // r18 fix asked the switch and stopped there.
     //
-    // It is also the worse case: a global pause closes ORDINARY REPAYMENT too,
-    // so the borrower told to pay before their collateral is sold has no route
-    // at all, not even the fallback they would reach for.
+    // It is also the worse case: while a pause lasts, the loan clock (#668 /
+    // #935) moves every deadline later, so no date the lane could name is
+    // final (#2808).
     diamondPaused = true;
     loanRows = tenLoans().slice(-3);
     const { stamped, said } = await run();
@@ -2037,6 +2100,7 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     loanRows = tenLoans().slice(-3);
     await run();
     expect(pauseReads).toEqual([1_000n]);
+    expect(pauseLogReads.map((r) => r.blockNumber)).toEqual([1_000n]);
     expect(configPinnedAt).toEqual([1_000n]);
     expect(pinnedAt).toEqual([1_000n]);
   });
@@ -2383,5 +2447,100 @@ describe('the invocation spends a bounded allowance, nearest deadline first', ()
     const { stamped, said } = await run();
     expect(stamped.length).toBe(3);
     expect(said).not.toContain('in the notification window');
+  });
+});
+
+describe('the payment deadline is the loan clock’s (#2808)', () => {
+  // These cases use loan 70, never the shared `dueLoan` (7): `periodicLoan`
+  // records the settlement the stub answers with per id, so re-using 7 with a
+  // different settlement would leave later cases' chain disagreeing with it.
+
+  /** A closed pause of `days`, long before now, after the loans' start at 0. */
+  const closedPause = (days: number) => [
+    { start: BigInt(NOW - 200 * DAY), end: BigInt(NOW - (200 - days) * DAY), pausedBefore: 0n },
+  ];
+
+  it('reminds about a period whose unmoved end has passed but whose deadline has not', async () => {
+    // Monthly, settled 31 days ago: the unmoved end was yesterday. A 3-day
+    // pause while the loan was open moves the deadline to two days from now,
+    // which is inside the 3-day window — the chain still accepts payment.
+    pauseLog = closedPause(3);
+    loanRows = [periodicLoan(70, NOW - 31 * DAY)];
+    const { stamps, writes } = await run();
+    expect(stamps.map((s) => s.loanId)).toEqual([70]);
+    // The stamp is the period's identity — the UNMOVED end — so the de-dup and
+    // the chain's eligibility rule keep speaking about the same period.
+    const stamp = writes.find((w) => w.sql.includes('period_pre_notified_at'))!;
+    expect(Number(stamp.params[0])).toBe(NOW - 31 * DAY + 30 * DAY);
+    // And the reader is told the deadline moved, by exactly how much.
+    expect(pushBodies.length).toBeGreaterThan(0);
+    expect(pushBodies[0]).toContain('3 days later than the loan');
+    expect(pushBodies[0]).toContain('paused');
+  });
+
+  it('does not remind early when the credit puts the deadline past the window', async () => {
+    // Unmoved end tomorrow; a 5-day pause moves the deadline to six days out,
+    // past the 3-day lead time. A reminder now would be days early.
+    pauseLog = closedPause(5);
+    loanRows = [periodicLoan(70, NOW - 29 * DAY)];
+    const { stamped } = await run();
+    expect(stamped).toEqual([]);
+    expect(sends).toEqual([]);
+  });
+
+  it('says nothing about a moved deadline when the protocol was never paused', async () => {
+    const { stamped } = await run();
+    expect(stamped).toEqual([7]);
+    expect(pushBodies.every((b) => !b.includes('paused'))).toBe(true);
+  });
+
+  it('names the deadline the chain’s own start gives, and holds when it disagrees', async () => {
+    // The stored start (0) predates the pause, so the stored row looks due in
+    // two days. The chain re-originated the term after the pause — its start
+    // credits nothing, and the deadline it gives was yesterday.
+    pauseLog = closedPause(3);
+    loanRows = [periodicLoan(70, NOW - 31 * DAY)];
+    answer = (id) => ({
+      id: BigInt(id),
+      status: 0,
+      periodicInterestCadence: 1,
+      lastPeriodicInterestSettledAt: settledAtOf.get(id) ?? 0,
+      startTime: BigInt(NOW - 100 * DAY),
+    });
+    const { stamped, said } = await run();
+    expect(stamped).toEqual([]);
+    expect(sends).toEqual([]);
+    expect(said).toContain('is not the stored one');
+  });
+
+  it('reads a Diamond without the loan clock as never moving a deadline', async () => {
+    pauseLogFails = 'unrouted';
+    const { stamped } = await run();
+    expect(stamped).toEqual([7]);
+  });
+
+  it('sends nothing when the pause log cannot be read', async () => {
+    pauseLogFails = 'throws';
+    const { stamped, said } = await run();
+    expect(stamped).toEqual([]);
+    expect(sends).toEqual([]);
+    expect(said).toContain('could not read the pause log');
+  });
+
+  it('reads the log in one request and refuses one longer than that', async () => {
+    await run();
+    expect(pauseLogReads).toHaveLength(1);
+    const page = pauseLogReads[0]!.count;
+    // One entry past the single read: refused, never truncated.
+    pauseLog = Array.from({ length: Number(page) + 1 }, (_, i) => ({
+      start: BigInt(10 * i),
+      end: BigInt(10 * i + 1),
+      pausedBefore: BigInt(i),
+    }));
+    pauseLogReads.length = 0;
+    const { stamped, said } = await run();
+    expect(pauseLogReads).toHaveLength(1);
+    expect(stamped).toEqual([]);
+    expect(said).toContain('the pause log has');
   });
 });

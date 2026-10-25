@@ -71,6 +71,7 @@ import {
 } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
 import {
+  loanEndTimeOf,
   readLoanLive,
   saleBuyerRemainingInterest,
   type LoanLive,
@@ -3291,7 +3292,8 @@ async function readSaleReviewLive(
     return { kind: 'other' };
   }
   const saleRateBps = BigInt(offerRateBps(offer));
-  const dueAtSec = Number(live.startTime + live.durationDays * 86_400n);
+  // The EFFECTIVE due date (#668 / #935): the sale refuses at it.
+  const dueAtSec = Number(loanEndTimeOf(live, block.timestamp));
   const matured = block.timestamp >= BigInt(dueAtSec);
   // The same figure the seller's listing review shows
   // (`saleSettlementNow`): the larger of the interest the seller gives up

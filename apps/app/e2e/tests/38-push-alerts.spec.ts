@@ -281,7 +281,7 @@ test('paid Push: the fee is stated from the chain, and nothing is offered where 
   await expect(card.getByText(new RegExp(`cost ${feeText} VPFI per loan side`))).toBeVisible({
     timeout: 30_000,
   });
-  await expect(card.getByTestId('paid-push-billing')).toHaveText(/aren.t billed on/i);
+  await expect(card.getByTestId('paid-push-billing')).toHaveText(/alert service doesn.t charge this fee/i);
   await expect(card.getByTestId('paid-push-consent')).toHaveText(/haven.t agreed to pay/i);
   await expect(card.getByRole('button', { name: /agree to pay/i })).toHaveCount(0);
   await expect(card.getByRole('button', { name: /withdraw my agreement/i })).toHaveCount(0);
@@ -297,6 +297,8 @@ test('paid Push: agreeing where it is billed records the current fee on chain, a
   await openAlerts(page);
   const card = page.getByTestId('paid-push');
   const { fee } = await chainConsent(wallet);
+  // Billing is stated outright, not left to the agree button's presence.
+  await expect(card.getByTestId('paid-push-billing')).toHaveText(/alert service charges this fee/i);
 
   await card.getByRole('button', { name: /agree to pay up to/i }).click();
   await expect(card.getByText(/saved: you.ve agreed to pay/i)).toBeVisible({ timeout: 30_000 });

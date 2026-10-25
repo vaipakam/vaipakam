@@ -230,6 +230,35 @@ async function mapLoan(id) {
     terminalBlock: null,
     terminalAt: n(l.status) === 0 ? null : nowSec,
     updatedAt: nowSec,
+    ...(n(l.status) === 0 ? { deadlines: await loanDeadlines(id) } : {}),
+  };
+}
+
+/**
+ * `IndexedLoan.deadlines` for an ACTIVE loan, as the worker's loan routes
+ * serve it since #2808. The worker computes them from its loan-clock
+ * snapshot; the stub reads the chain's own `getLoanDeadlines` instead, so
+ * the fork tier tests the app against the dates the contracts enforce. The
+ * getter, the pause flag and the timestamp are read at ONE block, so the
+ * credit and "paused now" describe the same moment. No catch, as in
+ * mapLoan: a failed read is a 500, never a row without its dates.
+ */
+async function loanDeadlines(id) {
+  const block = await pub.getBlock();
+  const at = { address: DIAMOND, abi: DIAMOND_ABI_VIEM, blockNumber: block.number };
+  const [[originalMaturity, pauseCredit, maturity, graceEnd], pauseInForce] =
+    await Promise.all([
+      pub.readContract({ ...at, functionName: 'getLoanDeadlines', args: [BigInt(id)] }),
+      pub.readContract({ ...at, functionName: 'paused' }),
+    ]);
+  return {
+    available: true,
+    originalMaturity: Number(originalMaturity),
+    pauseCredit: Number(pauseCredit),
+    maturity: Number(maturity),
+    graceEnd: Number(graceEnd),
+    pauseInForce: Boolean(pauseInForce),
+    asOf: Number(block.timestamp),
   };
 }
 

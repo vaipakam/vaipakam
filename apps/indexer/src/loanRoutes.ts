@@ -14,6 +14,12 @@
  */
 
 import { type Env } from './env';
+import {
+  graceSecondsFromBuckets,
+  loanDeadlines,
+  pauseInForceAt,
+} from '@vaipakam/lib/loanClock';
+import { readLoanClockSnapshot, type LoanClockSnapshotRead } from '@vaipakam/lib/loanClockSnapshot';
 import { chainDeployed, chainNotServed, parseChainId, requestedChainId } from './servedChain';
 import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
 import {
@@ -117,7 +123,64 @@ interface LoanRow {
   updated_at: number;
 }
 
-function loanToJson(row: LoanRow): Record<string, unknown> {
+/**
+ * The loan clock a response's loans are dated by (#2808): the chain's
+ * snapshotted grace schedule and pause log, and the moment the deadlines are
+ * computed at. One per response, so every loan in it is dated at the same
+ * instant from the same snapshot.
+ */
+interface LoanClockView {
+  read: LoanClockSnapshotRead;
+  nowSec: bigint;
+}
+
+async function loanClockView(env: Env, chainId: number): Promise<LoanClockView> {
+  return {
+    read: await readLoanClockSnapshot(env.DB, chainId),
+    nowSec: BigInt(Math.floor(Date.now() / 1000)),
+  };
+}
+
+/**
+ * An ACTIVE loan's deadlines, on the D2 loan clock (#668 / #935): the due
+ * date and grace end moved by the protocol's paused time since the loan's
+ * start — the figures `LoanFacet.getLoanDeadlines` returns, never
+ * `startTime + durationDays` (that is `originalMaturity`, the due date the
+ * loan was announced with, and after a pause it is early).
+ *
+ * Served as `{ available: false, reason }` when the chain's grace schedule or
+ * pause log is not known to this indexer: a date that might be early is not
+ * served as current. `pauseInForce` says the protocol is paused at `asOf`;
+ * while it is, the credit grows with the clock, so the dates keep moving and
+ * the time LEFT to them is what stays fixed. Omitted for a loan that is not
+ * Active: its deadlines no longer govern anything.
+ */
+function deadlinesJson(row: LoanRow, clock: LoanClockView): Record<string, unknown> | undefined {
+  if (row.status !== 'active') return undefined;
+  if (!clock.read.known) return { available: false, reason: clock.read.reason };
+  // An unhealed stub has no real clock yet (start_time 0).
+  if (row.start_time <= 0) return { available: false, reason: 'loan-not-indexed' };
+  const { graceBuckets, pauseLog } = clock.read.snapshot;
+  const durationDays = BigInt(row.duration_days);
+  const d = loanDeadlines(
+    { startTime: BigInt(row.start_time), durationDays },
+    graceSecondsFromBuckets(graceBuckets, durationDays),
+    pauseLog,
+    clock.nowSec,
+  );
+  return {
+    available: true,
+    originalMaturity: Number(d.originalMaturity),
+    pauseCredit: Number(d.pauseCredit),
+    maturity: Number(d.maturity),
+    graceEnd: Number(d.graceEnd),
+    pauseInForce: pauseInForceAt(pauseLog, clock.nowSec),
+    asOf: Number(clock.nowSec),
+  };
+}
+
+function loanToJson(row: LoanRow, clock: LoanClockView): Record<string, unknown> {
+  const deadlines = deadlinesJson(row, clock);
   return {
     chainId: row.chain_id,
     loanId: row.loan_id,
@@ -174,6 +237,7 @@ function loanToJson(row: LoanRow): Record<string, unknown> {
     // this withholds. Other terminal statuses are served as stored.
     terminalAt: row.status === 'settled' && row.terminal_at_verified !== 1 ? null : row.terminal_at,
     updatedAt: row.updated_at,
+    ...(deadlines ? { deadlines } : {}),
   };
 }
 
@@ -253,7 +317,8 @@ export async function handleLoansActive(req: Request, env: Env): Promise<Respons
            ORDER BY loan_id DESC LIMIT ?`,
         ).bind(chainId, limit);
     const rows = await stmt.all<LoanRow>();
-    const loans = (rows.results ?? []).map(loanToJson);
+    const clock = await loanClockView(env, chainId);
+    const loans = (rows.results ?? []).map((r) => loanToJson(r, clock));
     const next =
       loans.length === limit && loans.length > 0
         ? (loans[loans.length - 1] as { loanId: number }).loanId
@@ -314,7 +379,7 @@ export async function handleLoanById(
         auction_end_time: number | null;
         auction_mode: number | null;
       }>();
-    const payload: Record<string, unknown> = loanToJson(row);
+    const payload: Record<string, unknown> = loanToJson(row, await loanClockView(env, chainId));
     if (listing) {
       // T-086 Round-5 Block C (#309 Mode B) — surface conduit_key /
       // salt / executor / auction_mode / end_ask_price /
@@ -446,7 +511,8 @@ export async function handleLoansByParticipant(
            LIMIT ?`,
         ).bind(chainId, addr, limit);
     const rows = (await stmt.all<LoanRow>()).results ?? [];
-    const loans = rows.map(loanToJson);
+    const clock = await loanClockView(env, chainId);
+    const loans = rows.map((r) => loanToJson(r, clock));
     const next =
       rows.length === limit && rows.length > 0
         ? (loans[loans.length - 1] as { loanId: number }).loanId
@@ -508,7 +574,8 @@ export async function handleLoansByCurrentHolder(
            LIMIT ?`,
         ).bind(chainId, addr, addr, limit);
     const rows = (await stmt.all<LoanRow>()).results ?? [];
-    const loans = rows.map(loanToJson);
+    const clock = await loanClockView(env, chainId);
+    const loans = rows.map((r) => loanToJson(r, clock));
     const next =
       rows.length === limit && rows.length > 0
         ? (loans[loans.length - 1] as { loanId: number }).loanId
@@ -828,11 +895,12 @@ export async function handleClaimables(
         asBorrower.push(row);
       }
     }
+    const clock = await loanClockView(env, chainId);
     return jsonResponse({
       chainId,
       address: addr,
-      asLender: asLender.map(loanToJson),
-      asBorrower: asBorrower.map(loanToJson),
+      asLender: asLender.map((r) => loanToJson(r, clock)),
+      asBorrower: asBorrower.map((r) => loanToJson(r, clock)),
       truncated,
     });
   } catch (err) {
@@ -1316,7 +1384,8 @@ export async function handleLoansRecent(req: Request, env: Env): Promise<Respons
     } else {
       rows = await stmt.all<LoanRow>();
     }
-    const loans = (rows.results ?? []).map(loanToJson);
+    const clock = await loanClockView(env, chainId);
+    const loans = (rows.results ?? []).map((r) => loanToJson(r, clock));
     const next =
       loans.length === limit && loans.length > 0
         ? (loans[loans.length - 1] as { loanId: number }).loanId
@@ -1833,8 +1902,9 @@ export async function handleLoansByHistoricalParticipant(
       .bind(...binds, limit)
       .all<LoanRow & { participant_roles: string; participated_at: number }>();
     const results = rows.results ?? [];
+    const clock = await loanClockView(env, chainId);
     const loans = results.map((row) => ({
-      ...loanToJson(row),
+      ...loanToJson(row, clock),
       // When the wallet's newest participation on the loan was observed
       // (unix seconds) — the value the ordering + cursor run on.
       participatedAt: row.participated_at,

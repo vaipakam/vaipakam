@@ -320,7 +320,8 @@
       "unlinkedChainOnly": "Für {{network}} getrennt. Eine Smart-Account-Wallet wird pro Netzwerk getrennt — ist diese Wallet auf anderen Netzwerken verknüpft, trennen Sie jede dort mit ihrer eigenen Signatur.",
       "paidTitle": "Kostenpflichtige Push-Benachrichtigungen",
       "paidFee": "Auf {{chain}} kosten kostenpflichtige Push-Benachrichtigungen {{fee}} VPFI pro Kreditseite. Die Gebühr wird aus dem freien VPFI in deinem Vault an das Protokoll gezahlt, höchstens einmal für jeden Kredit, an dem du beteiligt bist, bei der ersten kostenpflichtigen Push-Benachrichtigung dazu. Telegram-Benachrichtigungen sind immer kostenlos.",
-      "paidNotBilled": "Kostenpflichtige Push-Benachrichtigungen werden auf {{chain}} derzeit nicht abgerechnet: Hier erhebt noch nichts diese Gebühr, also gibt es nichts zuzustimmen.",
+      "paidBilled": "Der Benachrichtigungsdienst erhebt diese Gebühr für kostenpflichtige Push-Benachrichtigungen auf {{chain}}.",
+      "paidNotBilled": "Der Benachrichtigungsdienst erhebt diese Gebühr auf {{chain}} derzeit nicht, also gibt es nichts zuzustimmen.",
       "paidBilledUnknown": "Wir konnten nicht prüfen, ob kostenpflichtige Push-Benachrichtigungen auf {{chain}} abgerechnet werden, daher wird die Zustimmung zur Zahlung gerade nicht angeboten.",
       "paidConsentNone": "Du hast der Zahlung dieser Gebühr auf {{chain}} nicht zugestimmt, daher kann sie dir nicht berechnet werden.",
       "paidConsentCovers": "Du hast zugestimmt, bis zu {{cap}} VPFI pro Kreditseite auf {{chain}} zu zahlen. Das deckt die aktuelle Gebühr.",
@@ -332,6 +333,11 @@
       "paidLowVault": "Dein Vault enthält {{free}} freie VPFI, weniger als die Gebühr von {{fee}} VPFI. Eine kostenpflichtige Push-Benachrichtigung kann daher erst berechnet werden, wenn du VPFI in deinen Vault einzahlst.",
       "paidReadFailed": "Wir konnten deine Zustimmung zu kostenpflichtigen Push-Benachrichtigungen nicht von der Chain lesen. Bitte versuche es später erneut.",
       "paidStale": "Wir konnten dies nicht von {{chain}} aktualisieren. Die Gebühr und deine Zustimmung unten stammen aus dem letzten erfolgreichen Lesevorgang und können veraltet sein. Zustimmen ist daher pausiert, bis ein Lesevorgang gelingt. Du kannst deine Zustimmung weiterhin zurückziehen.",
+      "paidStaleLegacy": "Wir konnten dies nicht von {{chain}} aktualisieren. Was unten angezeigt wird, stammt aus dem letzten erfolgreichen Lesevorgang und kann veraltet sein.",
+      "paidPredatesConsent": "Die Verträge auf {{chain}} sind eine ältere Version ohne die Zustimmung zu kostenpflichtigen Push-Benachrichtigungen. Du kannst hier daher weder einer Zahlung zustimmen noch eine Zustimmung zurückziehen.",
+      "paidPredatesBillable": "Unabhängig vom Benachrichtigungsdienst erlaubt diese Vertragsversion der Abrechnungsrolle des Protokolls, die Gebühr direkt zu erheben, und prüft dabei möglicherweise nicht, ob eine Zustimmung vorliegt.",
+      "paidPredatesNotBillable": "Diese Version hat auch keinen Abrechnungsaufruf, daher kann die Gebühr auf {{chain}} nicht erhoben werden.",
+      "paidPredatesBillingUnknown": "Wir konnten nicht prüfen, ob diese Version die Gebühr erheben kann.",
       "paidAgreed": "Gespeichert: Du hast zugestimmt, bis zu {{fee}} VPFI pro Kreditseite auf {{chain}} zu zahlen.",
       "paidWithdrawn": "Zurückgezogen: Gebühren für kostenpflichtige Push-Benachrichtigungen können dir auf {{chain}} nicht berechnet werden."
     },
@@ -1342,7 +1348,8 @@
           "terms": "Bedingungen",
           "health": "Gesundheit",
           "whatNext": "Was als Nächstes passiert",
-          "ifNothing": "Wenn nichts passiert"
+          "ifNothing": "Wenn nichts passiert",
+          "dueMoved": "Fälligkeit verschoben"
         },
         "done": {
           "rentalClosed": "Vermietung geschlossen. Jeder erstattbare Puffer ist bereit — beanspruchen Sie ihn im Anspruchszentrum.",
@@ -1461,7 +1468,10 @@
         "positionBorrowedAmountUnknown": "Ihre Kreditnehmerposition · der beim Start dieses Kredits geliehene Betrag ist gerade nicht verfügbar",
         "positionLentAmountUnknown": "Ihre Kreditgeberposition · der beim Start dieses Kredits verliehene Betrag ist gerade nicht verfügbar",
         "collateralSettledClosed": "Dieser Kredit ist abgeschlossen — seine Sicherheit wird über die Claims abgewickelt und ist nicht mehr für den Kredit gesperrt.",
-        "collateralSettledInternalMatch": "Das interne Matching hat die Sicherheit des Kreditnehmers an den Kreditgeber des Kredits ausgezahlt, mit dem dieser Kredit gematcht wurde. Ein etwaiger Überschuss geht über seinen Claim an den Kreditnehmer zurück."
+        "collateralSettledInternalMatch": "Das interne Matching hat die Sicherheit des Kreditnehmers an den Kreditgeber des Kredits ausgezahlt, mit dem dieser Kredit gematcht wurde. Ein etwaiger Überschuss geht über seinen Claim an den Kreditnehmer zurück.",
+        "dueDatePaused": "später als geplant (das Protokoll ist pausiert, daher verschiebt sich das Datum weiter)",
+        "dueDateUnknown": "Datum derzeit unbekannt",
+        "dueMovedByPause": "Ursprünglich fällig am {{date}}. Um {{credit}} verschoben, weil das Protokoll so lange pausiert war, während dieses Darlehen offen war."
       },
       "loading": "Ihre Positionen werden geladen…",
       "openOffers": "Offene Angebote",
@@ -2271,7 +2281,20 @@
       "timeJustNow": "gerade eben",
       "timeMinutesAgo": "vor {{count}} Min.",
       "timeHoursAgo": "vor {{count}} Std.",
-      "timeDaysAgo": "vor {{count}} T."
+      "timeDaysAgo": "vor {{count}} T.",
+      "durationHour_zero": "{{count, number}} Stunden",
+      "durationHour_one": "1 Stunde",
+      "durationHour_two": "{{count, number}} Stunden",
+      "durationHour_few": "{{count, number}} Stunden",
+      "durationHour_many": "{{count, number}} Stunden",
+      "durationHour_other": "{{count, number}} Stunden",
+      "durationMinute_zero": "{{count, number}} Minuten",
+      "durationMinute_one": "1 Minute",
+      "durationMinute_two": "{{count, number}} Minuten",
+      "durationMinute_few": "{{count, number}} Minuten",
+      "durationMinute_many": "{{count, number}} Minuten",
+      "durationMinute_other": "{{count, number}} Minuten",
+      "durationUnderMinute": "weniger als eine Minute"
     },
     "vault": {
       "unreadableCount_zero": "{{count}} Assets",
@@ -2327,7 +2350,9 @@
       "dueInDays_few": "Fällig in {{count}} Tagen",
       "dueInDays_many": "Fällig in {{count}} Tagen",
       "dueInDays_other": "Fällig in {{count}} Tagen",
-      "pastGrace": "Nachfrist abgelaufen"
+      "pastGrace": "Nachfrist abgelaufen",
+      "duePaused": "Pausiert — Fälligkeit verschiebt sich",
+      "dueUnknown": "Fälligkeit unbekannt"
     },
     "activity": {
       "loading": "Ihre Aktivität wird geladen…",

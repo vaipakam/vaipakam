@@ -1,0 +1,7 @@
+## Paid Push alerts — honest on networks whose contracts predate the consent
+
+The paid Push section of the alerts card used to show only "We couldn't read your paid Push agreement" on a network whose contracts are older than the consent record, and suggested trying again later. Base Sepolia and Arbitrum Sepolia are in that state today, so retrying would never help. On such a network the card now says the contracts are an older version without the agreement, so agreeing and withdrawing aren't available there. It still shows the fee and whether the alert service bills on that network.
+
+It also states whether that older version can still charge the fee, read from the contract's own routing. On both testnets the billing call is still routed and predates the consent check, so the card says the fee may be charged without an agreement, and no longer suggests the wallet can't be charged. Nothing calls that billing route today. The card names an older version only when the contract itself answers that the consent function doesn't exist. Any other failure is still a failed read.
+
+The two lines are worded so they can't be read as contradicting each other. The billing line attributes its answer to the alert service ("The alert service doesn't charge this fee on …"). The older-contract line says the contract version would let the billing role charge the fee directly, separately from the alert service.

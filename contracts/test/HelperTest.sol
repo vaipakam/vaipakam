@@ -2424,7 +2424,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](12);
         selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -2437,6 +2437,7 @@ contract HelperTest {
         // #1944 consequence 1 — the mirror's one-shot day-delivery gate.
         selectors[10] = RewardRemittanceFacet.setDayDeliveryGateFromDay.selector;
         selectors[9] = RewardRemittanceFacet.backfillRemitHistory.selector; // #2489 r7: the history walk
+        selectors[11] = RewardRemittanceFacet.quoteRemitDayStatuses.selector; // #2760: why a day closes or not
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair (mirrors DeployDiamond).

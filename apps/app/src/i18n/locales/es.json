@@ -320,7 +320,8 @@
       "unlinkedChainOnly": "Desvinculado para {{network}}. Un monedero de cuenta inteligente se desconecta por red — si este monedero está vinculado en otras redes, desvincule cada una desde allí con su propia firma.",
       "paidTitle": "Alertas Push de pago",
       "paidFee": "En {{chain}}, las alertas Push de pago cuestan {{fee}} VPFI por lado del préstamo. La tarifa se paga al protocolo con el VPFI libre de tu Vault, como máximo una vez por cada préstamo en el que participas, con la primera alerta Push de pago sobre él. Las alertas de Telegram son siempre gratuitas.",
-      "paidNotBilled": "Las alertas Push de pago no se cobran en {{chain}} por ahora: aquí todavía nada cobra esta tarifa, así que no hay nada que aceptar.",
+      "paidBilled": "El servicio de alertas cobra esta tarifa por las alertas Push de pago en {{chain}}.",
+      "paidNotBilled": "El servicio de alertas no cobra esta tarifa en {{chain}} por ahora, así que no hay nada que aceptar.",
       "paidBilledUnknown": "No pudimos comprobar si las alertas Push de pago se cobran en {{chain}}, así que ahora no se ofrece aceptar el pago.",
       "paidConsentNone": "No has aceptado pagar esta tarifa en {{chain}}, así que no se te puede cobrar.",
       "paidConsentCovers": "Has aceptado pagar hasta {{cap}} VPFI por lado del préstamo en {{chain}}. Eso cubre la tarifa actual.",
@@ -332,6 +333,11 @@
       "paidLowVault": "Tu Vault tiene {{free}} VPFI libres, menos que la tarifa de {{fee}} VPFI, así que no se puede cobrar una alerta Push de pago hasta que añadas VPFI a tu Vault.",
       "paidReadFailed": "No pudimos leer en la cadena tu aceptación de las alertas Push de pago. Inténtalo de nuevo más tarde.",
       "paidStale": "No pudimos actualizar esto desde {{chain}}. La tarifa y tu aceptación que ves abajo son de la última lectura correcta y pueden estar desactualizadas, así que aceptar queda en pausa hasta que una lectura funcione. Aún puedes retirarla.",
+      "paidStaleLegacy": "No pudimos actualizar esto desde {{chain}}. Lo que ves abajo es de la última lectura correcta y puede estar desactualizado.",
+      "paidPredatesConsent": "Los contratos de {{chain}} son una versión anterior sin la aceptación de Push de pago, así que aquí no puedes aceptar pagar ni retirar una aceptación.",
+      "paidPredatesBillable": "Aparte del servicio de alertas, esta versión del contrato permite que el rol de facturación del protocolo cobre la tarifa directamente, y es posible que no compruebe una aceptación antes de hacerlo.",
+      "paidPredatesNotBillable": "Esta versión tampoco tiene una llamada de facturación, así que la tarifa no se puede cobrar en {{chain}}.",
+      "paidPredatesBillingUnknown": "No pudimos comprobar si esta versión puede cobrar la tarifa.",
       "paidAgreed": "Guardado: has aceptado pagar hasta {{fee}} VPFI por lado del préstamo en {{chain}}.",
       "paidWithdrawn": "Retirada: ya no se te pueden cobrar tarifas de alertas Push de pago en {{chain}}."
     },
@@ -1342,7 +1348,8 @@
           "terms": "Términos",
           "health": "Salud",
           "whatNext": "Qué pasa después",
-          "ifNothing": "Si no pasa nada"
+          "ifNothing": "Si no pasa nada",
+          "dueMoved": "Vencimiento aplazado"
         },
         "done": {
           "rentalClosed": "Alquiler cerrado. Cualquier colchón reembolsable está listo — reclámalo desde el centro de reclamos.",
@@ -1461,7 +1468,10 @@
         "positionBorrowedAmountUnknown": "Tu posición prestataria · el importe tomado cuando empezó este préstamo no está disponible ahora mismo",
         "positionLentAmountUnknown": "Tu posición prestamista · el importe prestado cuando empezó este préstamo no está disponible ahora mismo",
         "collateralSettledClosed": "Este préstamo se ha cerrado — su colateral se liquida mediante las reclamaciones, no queda bloqueado para el préstamo.",
-        "collateralSettledInternalMatch": "El emparejamiento interno pagó el colateral del prestatario al prestamista del préstamo con el que se emparejó. Cualquier excedente vuelve al prestatario mediante su reclamación."
+        "collateralSettledInternalMatch": "El emparejamiento interno pagó el colateral del prestatario al prestamista del préstamo con el que se emparejó. Cualquier excedente vuelve al prestatario mediante su reclamación.",
+        "dueDatePaused": "más tarde de lo previsto (el protocolo está en pausa, así que la fecha sigue moviéndose)",
+        "dueDateUnknown": "fecha desconocida en este momento",
+        "dueMovedByPause": "Vencía originalmente el {{date}}. Se aplazó {{credit}} porque el protocolo estuvo en pausa ese tiempo mientras este préstamo estaba abierto."
       },
       "loading": "Cargando tus posiciones…",
       "openOffers": "Ofertas abiertas",
@@ -2271,7 +2281,20 @@
       "timeJustNow": "ahora mismo",
       "timeMinutesAgo": "hace {{count}} min",
       "timeHoursAgo": "hace {{count}} h",
-      "timeDaysAgo": "hace {{count}} d"
+      "timeDaysAgo": "hace {{count}} d",
+      "durationHour_zero": "{{count, number}} horas",
+      "durationHour_one": "1 hora",
+      "durationHour_two": "{{count, number}} horas",
+      "durationHour_few": "{{count, number}} horas",
+      "durationHour_many": "{{count, number}} horas",
+      "durationHour_other": "{{count, number}} horas",
+      "durationMinute_zero": "{{count, number}} minutos",
+      "durationMinute_one": "1 minuto",
+      "durationMinute_two": "{{count, number}} minutos",
+      "durationMinute_few": "{{count, number}} minutos",
+      "durationMinute_many": "{{count, number}} minutos",
+      "durationMinute_other": "{{count, number}} minutos",
+      "durationUnderMinute": "menos de un minuto"
     },
     "vault": {
       "unreadableCount_zero": "{{count}} activos",
@@ -2327,7 +2350,9 @@
       "dueInDays_few": "Vence en {{count}} días",
       "dueInDays_many": "Vence en {{count}} días",
       "dueInDays_other": "Vence en {{count}} días",
-      "pastGrace": "Gracia vencida"
+      "pastGrace": "Gracia vencida",
+      "duePaused": "Pausado — la fecha de vencimiento se aplaza",
+      "dueUnknown": "Fecha de vencimiento desconocida"
     },
     "activity": {
       "loading": "Cargando tu actividad…",

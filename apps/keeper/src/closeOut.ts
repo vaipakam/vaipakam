@@ -243,7 +243,7 @@ function previewVerdict(
   return null;
 }
 
-async function readLoan(
+export async function readLoan(
   client: PublicClient,
   diamond: Address,
   loanId: bigint,
@@ -297,9 +297,9 @@ async function saleVerdict(
  *  collateral has no health factor — the read reverts, and the liquidator
  *  skips such loans too, so a revert reads as above the line. A read that
  *  got no answer is said as such and never guessed. */
-type HfStanding = 'above' | 'under-water' | { unread: string };
+export type HfStanding = 'above' | 'under-water' | { unread: string };
 
-async function hfStanding(
+export async function hfStanding(
   client: PublicClient,
   diamond: Address,
   loanId: bigint,

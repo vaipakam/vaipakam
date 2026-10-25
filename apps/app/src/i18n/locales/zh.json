@@ -320,7 +320,8 @@
       "unlinkedChainOnly": "已为 {{network}} 解除关联。智能账户钱包按网络断开连接——如果此钱包在其他网络上也已关联，请分别在相应网络上用其各自的签名解除关联。",
       "paidTitle": "付费 Push 提醒",
       "paidFee": "在 {{chain}} 上，付费 Push 提醒按每个贷款方收取 {{fee}} VPFI。该费用从你 Vault 中的可用 VPFI 支付给协议，你参与的每笔贷款最多收取一次，在关于该贷款的第一条付费 Push 提醒时收取。Telegram 提醒始终免费。",
-      "paidNotBilled": "目前 {{chain}} 上不对付费 Push 提醒计费：这里还没有任何服务收取这笔费用，因此无需同意。",
+      "paidBilled": "提醒服务会在 {{chain}} 上为付费 Push 提醒收取这项费用。",
+      "paidNotBilled": "提醒服务目前不在 {{chain}} 上收取这项费用，因此无需同意。",
       "paidBilledUnknown": "我们无法确认 {{chain}} 上是否对付费 Push 提醒计费，因此目前不提供同意付费的选项。",
       "paidConsentNone": "你尚未同意在 {{chain}} 上支付这笔费用，因此不会向你收取。",
       "paidConsentCovers": "你已同意在 {{chain}} 上每个贷款方最多支付 {{cap}} VPFI。这足以覆盖当前费用。",
@@ -332,6 +333,11 @@
       "paidLowVault": "你的 Vault 中有 {{free}} 可用 VPFI，少于 {{fee}} VPFI 的费用，因此在你向 Vault 添加 VPFI 之前，无法收取付费 Push 提醒的费用。",
       "paidReadFailed": "我们无法从链上读取你对付费 Push 提醒的同意。请稍后再试。",
       "paidStale": "我们无法从 {{chain}} 刷新这些信息。下方的费用和你的同意来自上一次成功读取，可能已过时，因此在读取成功之前暂停同意。你仍然可以撤回同意。",
+      "paidStaleLegacy": "我们无法从 {{chain}} 刷新这些信息。下方显示的内容来自上一次成功读取，可能已过时。",
+      "paidPredatesConsent": "{{chain}} 上的合约是没有付费 Push 同意功能的旧版本，因此你无法在这里同意付费或撤回同意。",
+      "paidPredatesBillable": "与提醒服务无关，这个合约版本允许协议的计费角色直接收取该费用，而且收费前可能不会检查是否有你的同意。",
+      "paidPredatesNotBillable": "这个版本也没有计费调用，因此在 {{chain}} 上无法收取该费用。",
+      "paidPredatesBillingUnknown": "我们无法确认这个版本能否收取该费用。",
       "paidAgreed": "已保存：你已同意在 {{chain}} 上每个贷款方最多支付 {{fee}} VPFI。",
       "paidWithdrawn": "已撤回：在 {{chain}} 上不会再向你收取付费 Push 提醒费用。"
     },
@@ -1342,7 +1348,8 @@
           "terms": "条款",
           "health": "健康度",
           "whatNext": "接下来会发生什么",
-          "ifNothing": "如果什么都不做"
+          "ifNothing": "如果什么都不做",
+          "dueMoved": "到期日已顺延"
         },
         "done": {
           "rentalClosed": "租赁已关闭。任何可退缓冲金已就绪 — 请从领取中心领取。",
@@ -1461,7 +1468,10 @@
         "positionBorrowedAmountUnknown": "你的借款头寸 · 这笔贷款开始时的借入金额目前无法显示",
         "positionLentAmountUnknown": "你的出借头寸 · 这笔贷款开始时的借出金额目前无法显示",
         "collateralSettledClosed": "这笔贷款已结束 — 其抵押品通过领取结算，不再为这笔贷款锁定。",
-        "collateralSettledInternalMatch": "内部撮合已将借款人的抵押品支付给与之撮合的那笔贷款的出借人。任何剩余部分会通过借款人的领取退还给借款人。"
+        "collateralSettledInternalMatch": "内部撮合已将借款人的抵押品支付给与之撮合的那笔贷款的出借人。任何剩余部分会通过借款人的领取退还给借款人。",
+        "dueDatePaused": "晚于原定日期（协议处于暂停状态，日期仍在顺延）",
+        "dueDateUnknown": "目前日期未知",
+        "dueMovedByPause": "原定到期日为 {{date}}。由于本贷款存续期间协议暂停了这么久，到期日顺延了 {{credit}}。"
       },
       "loading": "正在加载您的持仓…",
       "openOffers": "开放 offers",
@@ -2271,7 +2281,20 @@
       "timeJustNow": "刚刚",
       "timeMinutesAgo": "{{count}} 分钟前",
       "timeHoursAgo": "{{count}} 小时前",
-      "timeDaysAgo": "{{count}} 天前"
+      "timeDaysAgo": "{{count}} 天前",
+      "durationHour_zero": "{{count, number}} 小时",
+      "durationHour_one": "1 小时",
+      "durationHour_two": "{{count, number}} 小时",
+      "durationHour_few": "{{count, number}} 小时",
+      "durationHour_many": "{{count, number}} 小时",
+      "durationHour_other": "{{count, number}} 小时",
+      "durationMinute_zero": "{{count, number}} 分钟",
+      "durationMinute_one": "1 分钟",
+      "durationMinute_two": "{{count, number}} 分钟",
+      "durationMinute_few": "{{count, number}} 分钟",
+      "durationMinute_many": "{{count, number}} 分钟",
+      "durationMinute_other": "{{count, number}} 分钟",
+      "durationUnderMinute": "不到一分钟"
     },
     "vault": {
       "unreadableCount_zero": "{{count}} 个资产",
@@ -2327,7 +2350,9 @@
       "dueInDays_few": "{{count}} 天后到期",
       "dueInDays_many": "{{count}} 天后到期",
       "dueInDays_other": "{{count}} 天后到期",
-      "pastGrace": "宽限期已过"
+      "pastGrace": "宽限期已过",
+      "duePaused": "已暂停 — 到期日正在顺延",
+      "dueUnknown": "到期日未知"
     },
     "activity": {
       "loading": "正在加载您的活动…",

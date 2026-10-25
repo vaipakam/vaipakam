@@ -30,6 +30,8 @@ import {
   type ProtocolKnobRead,
 } from '@vaipakam/lib/protocolKnobs';
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { pauseLogToJson, readPauseLog } from '@vaipakam/lib/loanClock';
 import type { Env } from './env';
 import { jsonResponse } from './offerRoutes';
 import { chainNotServed } from './servedChain';
@@ -127,6 +129,23 @@ const CONFIG_EVENT_NAMES: ReadonlySet<string> = new Set([
   ...PROTOCOL_KNOB_SETTER_EVENTS,
 ]);
 
+/** #2808 — the events that change the pause-interval log the loan clock
+ *  reads (`LibPausable`). Not governance config, but they refresh the same
+ *  row: the log is snapshotted beside the grace schedule, at the same block,
+ *  because a loan's effective deadline needs both. An auto-pause that lapses
+ *  by itself emits nothing, and needs nothing: its `AutoPaused` already put
+ *  the window's end on the log. */
+const PAUSE_EVENT_NAMES: ReadonlySet<string> = new Set([
+  'Paused',
+  'Unpaused',
+  'AutoPaused',
+  'PauseIntervalClosed',
+]);
+
+export function isPauseEventName(name: string): boolean {
+  return PAUSE_EVENT_NAMES.has(name);
+}
+
 /** Backstop refresh age: config flips are event-driven within one scan
  *  (~60s); the backstop covers bootstrap + any setter missing from the
  *  allowlist. */
@@ -173,6 +192,10 @@ async function markStaleBelow(
      *  pre-change schedule as current — while NULL keeps the sweep
      *  deferred and the unpopulated-column force retrying. */
     clearGrace?: boolean;
+    /** #2808 — the same, for a scan that saw a pause event: the stored
+     *  pause log is known to be missing an interval, and a deadline computed
+     *  from it would be early. */
+    clearPauseLog?: boolean;
   },
 ): Promise<void> {
   // Codex #2683 r7 — also record the block of the scan that saw the event
@@ -182,7 +205,7 @@ async function markStaleBelow(
     `UPDATE protocol_config SET updated_at = 0,
        stale_at_block = MAX(COALESCE(stale_at_block, 0), ?2)${
          opts?.clearGrace ? ', grace_buckets_json = NULL' : ''
-       }
+       }${opts?.clearPauseLog ? ', pause_intervals_json = NULL' : ''}
      WHERE chain_id = ?1 AND source_block < ?2`,
   )
     .bind(chainId, Number(belowBlock))
@@ -329,9 +352,12 @@ export async function maybeRefreshProtocolConfig(opts: {
   // `GraceBucketsUpdated`, any previously-snapshotted bucket set is
   // known-obsolete — a failed grace read must not preserve it.
   let sawGraceEvent = false;
+  // #2808 — and when it carries a pause event, the stored pause log is.
+  let sawPauseEvent = false;
   for (const n of opts.scannedEventNames) {
     if (n === 'GraceBucketsUpdated') sawGraceEvent = true;
-    if (isConfigEventName(n)) saw = true;
+    if (isPauseEventName(n)) sawPauseEvent = true;
+    if (isConfigEventName(n) || isPauseEventName(n)) saw = true;
   }
   try {
     // Catch-up scans read historic state — never stamp those fresh.
@@ -344,15 +370,21 @@ export async function maybeRefreshProtocolConfig(opts: {
       if (saw) {
         await markStaleBelow(opts.env, opts.chainId, opts.blockNumber, {
           clearGrace: sawGraceEvent,
+          clearPauseLog: sawPauseEvent,
         });
       }
       return;
     }
     const row = await opts.env.DB.prepare(
-      `SELECT updated_at, grace_buckets_json FROM protocol_config WHERE chain_id = ?`,
+      `SELECT updated_at, grace_buckets_json, pause_intervals_json
+       FROM protocol_config WHERE chain_id = ?`,
     )
       .bind(opts.chainId)
-      .first<{ updated_at: number; grace_buckets_json: string | null }>();
+      .first<{
+        updated_at: number;
+        grace_buckets_json: string | null;
+        pause_intervals_json: string | null;
+      }>();
     const now = Math.floor(Date.now() / 1000);
     // #1213 PR 2 (Codex #1298 r3) — a fresh pre-0039 row has
     // `grace_buckets_json IS NULL`, and the calendar sweep would fall
@@ -362,8 +394,12 @@ export async function maybeRefreshProtocolConfig(opts: {
     // migration lands (after which it is always non-null: the read
     // stores '[]' for the no-buckets state).
     const graceColumnUnpopulated = row !== null && row.grace_buckets_json === null;
+    // #2808 — the same for the pause log, which the sweep likewise refuses
+    // to run without (0072 lands with the column NULL on every row).
+    const pauseColumnUnpopulated = row !== null && row.pause_intervals_json === null;
     if (
       !graceColumnUnpopulated &&
+      !pauseColumnUnpopulated &&
       !shouldRefreshConfig({
         sawConfigEvent: saw,
         rowUpdatedAt: row?.updated_at ?? null,
@@ -379,7 +415,7 @@ export async function maybeRefreshProtocolConfig(opts: {
       chainId: opts.chainId,
       blockNumber: opts.blockNumber,
     };
-    const [bundle, flags, graceBuckets, bundleAbiBound, flagsAbiBound, knobs] = await Promise.all([
+    const [bundle, flags, graceBuckets, pauseLog, bundleAbiBound, flagsAbiBound, knobs] = await Promise.all([
       opts.client.readContract({
         address: opts.diamond,
         abi: DIAMOND_ABI_VIEM,
@@ -441,6 +477,28 @@ export async function maybeRefreshProtocolConfig(opts: {
         );
         return null;
       }),
+      // #2808 — the pause-interval log, at the same block as the grace
+      // schedule: a loan's effective deadline is its due date moved by the
+      // paused time since its start, plus that grace. Isolated like the
+      // grace read. A Diamond that predates the loan clock never moves a
+      // deadline, and `readPauseLog` says so with a definitive `[]`; any
+      // other failure is `null`, which keeps the stored log (or, after a
+      // pause event, clears it below) rather than storing "never paused".
+      readPauseLog({
+        client: opts.client,
+        diamond: opts.diamond,
+        blockNumber: opts.blockNumber,
+      })
+        .then((log) => JSON.stringify(pauseLogToJson(log)))
+        .catch((err: unknown) => {
+          // eslint-disable-next-line no-console
+          // A bounded description, not the error: a transport failure
+          // carries the RPC URL and any key in it (Codex #2822 r2).
+          console.error(
+            `[configSnapshot] getPauseIntervals read failed for chain ${opts.chainId} (keeping previous value): ${describeFailure(err)}`,
+          );
+          return null;
+        }),
       // #2073 (Codex #2653 r1) — is this build's ABI the one the chain ran
       // at this block? Never throws; false withholds the names below.
       abiDescribesChainGetter({ ...readAt, functionName: 'getProtocolConfigBundle' }),
@@ -473,6 +531,8 @@ export async function maybeRefreshProtocolConfig(opts: {
     // unpopulated-column force-refresh retries next tick, so one RPC
     // hiccup can never let reminders mint off the pre-change buckets.
     const invalidateGrace = graceBuckets === null && sawGraceEvent;
+    // #2808 — the same rule for the pause log.
+    const invalidatePauseLog = pauseLog === null && sawPauseEvent;
     // #2073 — the output names THIS build decoded the tuples with, written
     // in the same statement as the tuples, so the route labels each value
     // with the name it was decoded under rather than with whatever the
@@ -484,16 +544,28 @@ export async function maybeRefreshProtocolConfig(opts: {
     await opts.env.DB.prepare(
       `INSERT INTO protocol_config
          (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at,
-          bundle_names_json, master_flags_names_json, knob_values_json)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8, ?9, ?10)
+          bundle_names_json, master_flags_names_json, knob_values_json, pause_intervals_json)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8, ?9, ?10, ?11)
        ON CONFLICT (chain_id) DO UPDATE SET
          bundle_json = excluded.bundle_json,
          master_flags_json = excluded.master_flags_json,
          bundle_names_json = excluded.bundle_names_json,
          master_flags_names_json = excluded.master_flags_names_json,
          knob_values_json = excluded.knob_values_json,
+         -- Codex #2822 r1 — a column a stale mark CLEARED (the scan that
+         -- set the mark saw that column's own event) stays NULL until a
+         -- refresh reaches the mark: a read below it predates the event, so
+         -- writing it would restore the known-obsolete value as current. A
+         -- column the mark left populated is not about that event, and a
+         -- newer read of it is written as usual.
          grace_buckets_json = CASE WHEN ?7 = 1 THEN NULL
+           WHEN protocol_config.stale_at_block > excluded.source_block
+             AND protocol_config.grace_buckets_json IS NULL THEN NULL
            ELSE COALESCE(excluded.grace_buckets_json, protocol_config.grace_buckets_json) END,
+         pause_intervals_json = CASE WHEN ?12 = 1 THEN NULL
+           WHEN protocol_config.stale_at_block > excluded.source_block
+             AND protocol_config.pause_intervals_json IS NULL THEN NULL
+           ELSE COALESCE(excluded.pause_intervals_json, protocol_config.pause_intervals_json) END,
          source_block = excluded.source_block,
          -- Codex #2683 r7 — a refresh read below the block of a governance
          -- event the row was marked stale for does not include that event:
@@ -515,6 +587,8 @@ export async function maybeRefreshProtocolConfig(opts: {
         bundleNames === null ? null : JSON.stringify(bundleNames),
         flagNames === null ? null : JSON.stringify(flagNames),
         knobs === null ? null : JSON.stringify(knobs),
+        pauseLog,
+        invalidatePauseLog ? 1 : 0,
       )
       .run();
   } catch (err) {
@@ -533,6 +607,7 @@ export async function maybeRefreshProtocolConfig(opts: {
         // ON a grace-change scan leaves known-obsolete buckets behind.
         await markStaleBelow(opts.env, opts.chainId, opts.blockNumber, {
           clearGrace: sawGraceEvent,
+          clearPauseLog: sawPauseEvent,
         });
       } catch {
         /* stale-marking is best-effort */

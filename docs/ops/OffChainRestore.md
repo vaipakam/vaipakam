@@ -542,6 +542,7 @@ then deploy.
       | `REWARD_REMIT_ENABLED` | remit + remit-ACK passes skip | reward-budget remittance and delivered-backing acknowledgement |
       | `REWARD_COMMIT_ENABLED` | commitment-report pass skips | mirror→canonical commitment reporting |
       | `GRACE_DEFAULT_ENABLED` | grace-default pass skips — past-grace loans stay Active until someone else closes them | autonomous `triggerDefault` on past-grace loans (#2483) |
+      | `PERIODIC_SETTLE_ENABLED` | periodic settler skips — an overdue periodic-interest period stays open until someone else settles it, so its lender is not paid the period's interest | autonomous `settlePeriodicInterest` on periods past grace, selling only the collateral the contract sizes to the shortfall (#2795) |
       | `REWARD_DELIVERY_PROOF_ENABLED` | delivery pass skips — epoch days stay unindexed (their value funds nothing a claim can find) and an armed delivery gate holds every funded day | indexing every mirror delivery's epoch days and proving no-epoch day lists (#1944) |
       | `REWARD_SANCTIONS_KEEPER_ENABLED` | sanctions-hold observer skips — a held reward claimant goes unobserved, so its hold (and the custody-activation block it carries) can run past its window | observing held claimants, the owner settlement and resolving their held staging records (#2450) |
       | `REWARD_DAY_CLOSE_ENABLED` | day-close pass skips — no reward day is reported, finalized or broadcast unless someone makes those calls by hand, so the remit pass has no finalized day to fund and mirror users cannot claim | closing each elapsed reward day on every chain, finalizing it on Base and broadcasting it to the mirrors (#2612) |
@@ -1844,7 +1845,8 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    from the offline record. Either way, BEFORE starting, set
    `KEEPER_ENABLED=false` and every per-pass flag (`REWARD_REMIT_ENABLED`,
    `REWARD_COMMIT_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED`,
-   `GRACE_DEFAULT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`,
+   `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED`,
+   `REWARD_SANCTIONS_KEEPER_ENABLED`,
    `REWARD_HORIZON_HEARTBEAT_ENABLED`, `REWARD_DAY_CLOSE_ENABLED`,
    `DISCOUNT_PATH_CHAIN_IDS`) empty — by editing the
    file (`sudo -e /etc/vaipakam/keeper.env`), never by assuming what it held.
@@ -1999,7 +2001,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    The gated passes are every pass in `KEEPER_PASSES`
    (`apps/keeper/src/passSchedule.ts`) whose run calls `passIsArmed`. Today
    that is `matcher`, `liquidator`, `autoLifecycle`, `graceDefault`,
-   `rewardBudgetRemit`, `remitAck`, `commitmentReport`, `deliveryProof` and
+   `periodicSettle`, `rewardBudgetRemit`, `remitAck`, `commitmentReport`, `deliveryProof` and
    `rewardSanctionsHold`.
    This list is the one place the set is written down; every other step here says "every
    gated pass" rather than counting them, because a count goes stale the day
@@ -2034,7 +2036,7 @@ restored on its machine in step 3; its Worker keeps `"crons": []` for good
    | | accepts | rejects |
    |---|---|---|
    | `KEEPER_ENABLED` (`isKeeperEnabled`) | `true` / `1`, **case-insensitive** — `True` and `TRUE` are on | anything else, **and** it returns false whenever `KEEPER_PRIVATE_KEY` is unset, regardless of the flag |
-   | `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`, `GRACE_DEFAULT_ENABLED` (`passIsArmed`) | exactly `true` or `1`, **case-SENSITIVE** | `True`, `TRUE`, and anything with surrounding whitespace |
+   | `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`, `GRACE_DEFAULT_ENABLED`, `PERIODIC_SETTLE_ENABLED` (`passIsArmed`) | exactly `true` or `1`, **case-SENSITIVE** | `True`, `TRUE`, and anything with surrounding whitespace |
 
    So `KEEPER_ENABLED=True` works while `REWARD_REMIT_ENABLED=True` is off —
    **off but reported**, not silently so. That is the whole point of the

@@ -101,3 +101,33 @@ export function revertErrorName(e: unknown): string | null {
   const name = revert?.data?.errorName;
   return typeof name === 'string' ? name : null;
 }
+
+/** `VaipakamDiamond.FunctionDoesNotExist()` — the Diamond fallback's revert
+ *  for a selector no facet hosts. No arguments, so the revert data is exactly
+ *  these four bytes. */
+const FUNCTION_DOES_NOT_EXIST_SELECTOR = '0xa9ad62f8';
+
+/**
+ * True when a read reverted with the Diamond's own `FunctionDoesNotExist()`:
+ * the Diamond does not route the selector, as opposed to a revert from the
+ * code behind it or a transport failure. Structural for the same reason as
+ * {@link isRevert}: the decoded name when the caller's ABI declares the
+ * proxy's error (#2399), else the raw revert data viem keeps on the error.
+ */
+export function isFunctionDoesNotExistRevert(e: unknown): boolean {
+  if (!isWalkable(e)) return false;
+  const revert = e.walk(
+    (x) =>
+      typeof x === 'object' &&
+      x !== null &&
+      (x as { name?: unknown }).name === 'ContractFunctionRevertedError',
+  ) as { data?: { errorName?: unknown }; raw?: unknown; signature?: unknown } | null;
+  if (!revert) return false;
+  if (revert.data?.errorName === 'FunctionDoesNotExist') return true;
+  const raw = typeof revert.signature === 'string'
+    ? revert.signature
+    : typeof revert.raw === 'string'
+      ? revert.raw
+      : '';
+  return raw.toLowerCase().startsWith(FUNCTION_DOES_NOT_EXIST_SELECTOR);
+}

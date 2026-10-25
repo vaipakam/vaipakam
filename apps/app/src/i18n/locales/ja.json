@@ -320,7 +320,8 @@
       "unlinkedChainOnly": "{{network}} のリンクを解除しました。スマートアカウントウォレットはネットワークごとに切断されます。このウォレットが他のネットワークでもリンクされている場合は、それぞれのネットワークで各自の署名によりリンクを解除してください。",
       "paidTitle": "有料の Push 通知",
       "paidFee": "{{chain}} では、有料の Push 通知の料金はローンの片側ごとに {{fee}} VPFI です。料金はあなたのVault にある自由な VPFI からプロトコルに支払われ、参加している各ローンにつき最大 1 回、そのローンに関する最初の有料 Push 通知の時点で請求されます。Telegram の通知は常に無料です。",
-      "paidNotBilled": "現在、{{chain}} では有料の Push 通知は請求されていません。ここではまだこの料金を請求するものがないため、同意するものはありません。",
+      "paidBilled": "通知サービスは {{chain}} で有料 Push 通知にこの手数料を請求しています。",
+      "paidNotBilled": "現在、通知サービスは {{chain}} でこの手数料を請求していないため、同意するものはありません。",
       "paidBilledUnknown": "{{chain}} で有料の Push 通知が請求されているか確認できなかったため、現在は支払いへの同意を提供していません。",
       "paidConsentNone": "{{chain}} でこの料金の支払いに同意していないため、あなたに請求されることはありません。",
       "paidConsentCovers": "{{chain}} でローンの片側ごとに最大 {{cap}} VPFI の支払いに同意しています。これで現在の料金をまかなえます。",
@@ -332,6 +333,11 @@
       "paidLowVault": "Vault の自由な VPFI は {{free}} で、{{fee}} VPFI の料金より少ないため、Vault に VPFI を追加するまで有料の Push 通知は請求できません。",
       "paidReadFailed": "チェーンから有料の Push 通知への同意を読み取れませんでした。後でもう一度お試しください。",
       "paidStale": "{{chain}} からこの情報を更新できませんでした。下の手数料とあなたの同意は最後に成功した読み取りのもので、古い可能性があります。そのため、読み取りが成功するまで同意は一時停止しています。同意の取り消しは引き続き可能です。",
+      "paidStaleLegacy": "{{chain}} からこの情報を更新できませんでした。下の内容は最後に成功した読み取りのもので、古い可能性があります。",
+      "paidPredatesConsent": "{{chain}} のコントラクトは有料 Push 通知への同意の仕組みがない旧バージョンのため、ここでは支払いへの同意も同意の取り消しもできません。",
+      "paidPredatesBillable": "通知サービスとは別に、このバージョンのコントラクトではプロトコルの課金ロールが手数料を直接請求でき、その際に同意の有無を確認しない可能性があります。",
+      "paidPredatesNotBillable": "このバージョンには課金の呼び出しもないため、{{chain}} では手数料を請求できません。",
+      "paidPredatesBillingUnknown": "このバージョンが手数料を請求できるかどうかを確認できませんでした。",
       "paidAgreed": "保存しました：{{chain}} でローンの片側ごとに最大 {{fee}} VPFI の支払いに同意しました。",
       "paidWithdrawn": "取り消しました：{{chain}} で有料の Push 通知の料金が請求されることはありません。"
     },
@@ -1342,7 +1348,8 @@
           "terms": "条件",
           "health": "健全性",
           "whatNext": "次に起きること",
-          "ifNothing": "何もしない場合"
+          "ifNothing": "何もしない場合",
+          "dueMoved": "期日の変更"
         },
         "done": {
           "rentalClosed": "レンタルが終了しました。返金可能なバッファがあれば準備できています — 請求センターから請求してください。",
@@ -1461,7 +1468,10 @@
         "positionBorrowedAmountUnknown": "あなたの借り手ポジション · このローン開始時の借入額は現在表示できません",
         "positionLentAmountUnknown": "あなたの貸し手ポジション · このローン開始時の貸出額は現在表示できません",
         "collateralSettledClosed": "このローンは終了しています — 担保は請求を通じて精算され、ローンのためにロックされてはいません。",
-        "collateralSettledInternalMatch": "内部マッチングにより、借り手の担保はマッチ相手のローンの貸し手に支払われました。余剰分があれば、借り手の請求を通じて借り手に返還されます。"
+        "collateralSettledInternalMatch": "内部マッチングにより、借り手の担保はマッチ相手のローンの貸し手に支払われました。余剰分があれば、借り手の請求を通じて借り手に返還されます。",
+        "dueDatePaused": "予定より後（プロトコルが一時停止中のため、期日はまだ動いています）",
+        "dueDateUnknown": "現在、日付は不明です",
+        "dueMovedByPause": "当初の期日は {{date}} でした。このローンの期間中にプロトコルがその時間だけ一時停止していたため、{{credit}} 後ろにずれました。"
       },
       "loading": "ポジションを読み込み中…",
       "openOffers": "未決済オファー",
@@ -2271,7 +2281,20 @@
       "timeJustNow": "たった今",
       "timeMinutesAgo": "{{count}} 分前",
       "timeHoursAgo": "{{count}} 時間前",
-      "timeDaysAgo": "{{count}} 日前"
+      "timeDaysAgo": "{{count}} 日前",
+      "durationHour_zero": "{{count, number}} 時間",
+      "durationHour_one": "1 時間",
+      "durationHour_two": "{{count, number}} 時間",
+      "durationHour_few": "{{count, number}} 時間",
+      "durationHour_many": "{{count, number}} 時間",
+      "durationHour_other": "{{count, number}} 時間",
+      "durationMinute_zero": "{{count, number}} 分",
+      "durationMinute_one": "1 分",
+      "durationMinute_two": "{{count, number}} 分",
+      "durationMinute_few": "{{count, number}} 分",
+      "durationMinute_many": "{{count, number}} 分",
+      "durationMinute_other": "{{count, number}} 分",
+      "durationUnderMinute": "1 分未満"
     },
     "vault": {
       "unreadableCount_zero": "{{count}} 資産",
@@ -2327,7 +2350,9 @@
       "dueInDays_few": "{{count}} 日後に期限",
       "dueInDays_many": "{{count}} 日後に期限",
       "dueInDays_other": "{{count}} 日後に期限",
-      "pastGrace": "猶予期間終了"
+      "pastGrace": "猶予期間終了",
+      "duePaused": "一時停止中 — 期日が後ろにずれています",
+      "dueUnknown": "期日不明"
     },
     "activity": {
       "loading": "アクティビティを読み込み中…",

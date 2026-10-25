@@ -27,7 +27,7 @@ import {
   type IndexedOffer,
   type IndexerFreshness,
 } from './indexer';
-import { readLoanRowLive } from './liveLoanRow';
+import { readLoanRowLive, withChainDeadlines } from './liveLoanRow';
 import { withIndexedInitPrincipal } from '../lib/positionAmounts';
 import { scanTerminalOfferIds } from './bookCatchUp';
 import {
@@ -437,12 +437,23 @@ export function useLoan(loanId: number | undefined) {
       // the indexer verdict: null = unavailable/not found.
       if (!publicClient) return null;
       try {
-        return await readLoanRowLive(
+        const live = await readLoanRowLive(
           publicClient,
           readChain.diamondAddress,
           readChain.chainId,
           loanId!,
         );
+        if (!live) return null;
+        // A chain row carries no deadlines of its own (#2808): date it on
+        // the loan clock the same way the positions list dates its chain
+        // rows, or this page would call the due date unknown whenever the
+        // indexer has not caught up.
+        const [dated] = await withChainDeadlines(
+          publicClient,
+          readChain.diamondAddress,
+          [live],
+        );
+        return dated;
       } catch {
         return null;
       }

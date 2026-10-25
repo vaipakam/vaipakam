@@ -320,7 +320,8 @@
       "unlinkedChainOnly": "Dissocié pour {{network}}. Un portefeuille à compte intelligent se déconnecte réseau par réseau — si ce portefeuille est lié sur d’autres réseaux, dissociez chacun depuis ce réseau avec sa propre signature.",
       "paidTitle": "Alertes Push payantes",
       "paidFee": "Sur {{chain}}, les alertes Push payantes coûtent {{fee}} VPFI par côté de prêt. Les frais sont payés au protocole à partir du VPFI libre de votre Vault, au plus une fois pour chaque prêt auquel vous participez, lors de la première alerte Push payante le concernant. Les alertes Telegram sont toujours gratuites.",
-      "paidNotBilled": "Les alertes Push payantes ne sont pas facturées sur {{chain}} pour le moment : rien ne prélève encore ces frais ici, il n’y a donc rien à accepter.",
+      "paidBilled": "Le service d’alertes prélève ces frais pour les alertes Push payantes sur {{chain}}.",
+      "paidNotBilled": "Le service d’alertes ne prélève pas ces frais sur {{chain}} pour le moment : il n’y a donc rien à accepter.",
       "paidBilledUnknown": "Nous n’avons pas pu vérifier si les alertes Push payantes sont facturées sur {{chain}}, l’acceptation du paiement n’est donc pas proposée pour le moment.",
       "paidConsentNone": "Vous n’avez pas accepté de payer ces frais sur {{chain}}, ils ne peuvent donc pas vous être facturés.",
       "paidConsentCovers": "Vous avez accepté de payer jusqu’à {{cap}} VPFI par côté de prêt sur {{chain}}. Cela couvre les frais actuels.",
@@ -332,6 +333,11 @@
       "paidLowVault": "Votre Vault contient {{free}} VPFI libres, moins que les frais de {{fee}} VPFI : une alerte Push payante ne peut donc pas être facturée tant que vous n’ajoutez pas de VPFI à votre Vault.",
       "paidReadFailed": "Nous n’avons pas pu lire votre accord pour les alertes Push payantes sur la chaîne. Veuillez réessayer plus tard.",
       "paidStale": "Nous n’avons pas pu actualiser ces informations depuis {{chain}}. Les frais et votre accord ci-dessous proviennent de la dernière lecture réussie et peuvent être dépassés : l’acceptation est donc suspendue jusqu’à ce qu’une lecture réussisse. Vous pouvez toujours retirer votre accord.",
+      "paidStaleLegacy": "Nous n’avons pas pu actualiser ces informations depuis {{chain}}. Ce qui est affiché ci-dessous provient de la dernière lecture réussie et peut être dépassé.",
+      "paidPredatesConsent": "Les contrats de {{chain}} sont une ancienne version sans l’accord pour les alertes Push payantes : vous ne pouvez donc ni accepter de payer ni retirer un accord ici.",
+      "paidPredatesBillable": "Indépendamment du service d’alertes, cette version du contrat permet au rôle de facturation du protocole de prélever les frais directement, et elle peut ne pas vérifier l’existence d’un accord avant de le faire.",
+      "paidPredatesNotBillable": "Cette version n’a pas non plus d’appel de facturation : les frais ne peuvent donc pas être prélevés sur {{chain}}.",
+      "paidPredatesBillingUnknown": "Nous n’avons pas pu vérifier si cette version peut prélever les frais.",
       "paidAgreed": "Enregistré : vous avez accepté de payer jusqu’à {{fee}} VPFI par côté de prêt sur {{chain}}.",
       "paidWithdrawn": "Retiré : les frais d’alertes Push payantes ne peuvent plus vous être facturés sur {{chain}}."
     },
@@ -1342,7 +1348,8 @@
           "terms": "Conditions",
           "health": "Santé",
           "whatNext": "Ce qui se passe ensuite",
-          "ifNothing": "Si rien ne se passe"
+          "ifNothing": "Si rien ne se passe",
+          "dueMoved": "Échéance reportée"
         },
         "done": {
           "rentalClosed": "Location clôturée. Tout buffer remboursable est prêt — réclamez-le depuis le centre de retraits.",
@@ -1461,7 +1468,10 @@
         "positionBorrowedAmountUnknown": "Votre position d’emprunteur · le montant emprunté au démarrage de ce prêt est indisponible pour le moment",
         "positionLentAmountUnknown": "Votre position de prêteur · le montant prêté au démarrage de ce prêt est indisponible pour le moment",
         "collateralSettledClosed": "Ce prêt est clôturé — son collatéral est réglé via les réclamations, il n’est plus bloqué pour le prêt.",
-        "collateralSettledInternalMatch": "L’appariement interne a versé le collatéral de l’emprunteur au prêteur du prêt avec lequel il a été apparié. Tout excédent revient à l’emprunteur via sa réclamation."
+        "collateralSettledInternalMatch": "L’appariement interne a versé le collatéral de l’emprunteur au prêteur du prêt avec lequel il a été apparié. Tout excédent revient à l’emprunteur via sa réclamation.",
+        "dueDatePaused": "plus tard que prévu (le protocole est en pause, la date continue donc de reculer)",
+        "dueDateUnknown": "date inconnue pour le moment",
+        "dueMovedByPause": "Échéance initiale : {{date}}. Reportée de {{credit}}, car le protocole a été en pause pendant cette durée alors que ce prêt était ouvert."
       },
       "loading": "Chargement de vos positions…",
       "openOffers": "Offres ouvertes",
@@ -2271,7 +2281,20 @@
       "timeJustNow": "à l’instant",
       "timeMinutesAgo": "il y a {{count}} min",
       "timeHoursAgo": "il y a {{count}} h",
-      "timeDaysAgo": "il y a {{count}} j"
+      "timeDaysAgo": "il y a {{count}} j",
+      "durationHour_zero": "{{count, number}} heures",
+      "durationHour_one": "1 heure",
+      "durationHour_two": "{{count, number}} heures",
+      "durationHour_few": "{{count, number}} heures",
+      "durationHour_many": "{{count, number}} heures",
+      "durationHour_other": "{{count, number}} heures",
+      "durationMinute_zero": "{{count, number}} minutes",
+      "durationMinute_one": "1 minute",
+      "durationMinute_two": "{{count, number}} minutes",
+      "durationMinute_few": "{{count, number}} minutes",
+      "durationMinute_many": "{{count, number}} minutes",
+      "durationMinute_other": "{{count, number}} minutes",
+      "durationUnderMinute": "moins d’une minute"
     },
     "vault": {
       "unreadableCount_zero": "{{count}} actifs",
@@ -2327,7 +2350,9 @@
       "dueInDays_few": "Échéance dans {{count}} jours",
       "dueInDays_many": "Échéance dans {{count}} jours",
       "dueInDays_other": "Échéance dans {{count}} jours",
-      "pastGrace": "Délai de grâce écoulé"
+      "pastGrace": "Délai de grâce écoulé",
+      "duePaused": "En pause — l’échéance recule",
+      "dueUnknown": "Échéance inconnue"
     },
     "activity": {
       "loading": "Chargement de votre activité…",

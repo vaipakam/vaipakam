@@ -13,6 +13,7 @@ import {
   abiOutputNames,
   handleConfigSnapshot,
   isConfigEventName,
+  isPauseEventName,
   maybeRefreshProtocolConfig,
   serializeTuple,
   shouldRefreshConfig,
@@ -37,6 +38,10 @@ const MIGRATION_0070 = readFileSync(
   new URL('../migrations/0070_protocol_config_knobs.sql', import.meta.url),
   'utf8',
 );
+const MIGRATION_0072 = readFileSync(
+  new URL('../migrations/0072_protocol_config_pause_log.sql', import.meta.url),
+  'utf8',
+);
 
 /** Env + client stubs for the refresh path: real SQLite behind the D1
  *  shape (the upsert/stale-mark guards ARE SQL), canned reads. */
@@ -47,13 +52,21 @@ const BUILD_CONFIG_FACET = getDeployment(84532)!.facets.configFacet!;
 
 function refreshHarness(opts?: {
   graceRead?: () => Promise<unknown>;
+  /** #2808 — the pause-log read; defaults to a never-paused chain. */
+  pauseRead?: () => Promise<unknown>;
   /** What the loupe reports as the getters' host; defaults to this build's. */
   loupeHost?: () => Promise<string>;
   /** #2071 — the batched settings read; absent = the client has none, so
    *  that read fails and the row stores no settings. */
   multicall?: (args: { contracts: readonly { functionName: string }[]; blockNumber?: bigint }) => Promise<unknown>;
 }) {
-  const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067, MIGRATION_0070]);
+  const { db, d1 } = createSqliteD1([
+    MIGRATION_0035,
+    MIGRATION_0039,
+    MIGRATION_0067,
+    MIGRATION_0070,
+    MIGRATION_0072,
+  ]);
   const reads: string[] = [];
   const client = {
     readContract: async (args: { functionName: string }) => {
@@ -67,6 +80,9 @@ function refreshHarness(opts?: {
       if (args.functionName === 'getGraceBuckets') {
         return opts?.graceRead ? opts.graceRead() : ([] as const);
       }
+      if (args.functionName === 'getPauseIntervals') {
+        return opts?.pauseRead ? opts.pauseRead() : ([[], 0n] as const);
+      }
       return [100n, [1n, 2n, 3n, 4n]] as const;
     },
     ...(opts?.multicall ? { multicall: opts.multicall } : {}),
@@ -76,10 +92,12 @@ function refreshHarness(opts?: {
     db
       .prepare(
         `SELECT source_block AS sb, updated_at AS ua, bundle_json AS bj,
-                grace_buckets_json AS gb
+                grace_buckets_json AS gb, pause_intervals_json AS pl
          FROM protocol_config WHERE chain_id = 84532`,
       )
-      .get() as { sb: number; ua: number; bj: string; gb: string | null } | undefined;
+      .get() as
+      | { sb: number; ua: number; bj: string; gb: string | null; pl: string | null }
+      | undefined;
   return { db, env, client, reads, row };
 }
 
@@ -309,9 +327,10 @@ describe('configSnapshot', () => {
     expect(h.reads.sort()).toEqual([
       'getGraceBuckets',
       'getMasterFlags',
+      'getPauseIntervals',
       'getProtocolConfigBundle',
     ]);
-    expect(h.row()).toMatchObject({ sb: 100 });
+    expect(h.row()).toMatchObject({ sb: 100, pl: '[]' });
     expect(JSON.parse(h.row()!.bj)).toEqual(['100', ['1', '2', '3', '4']]);
     // #2073 — the names this build decoded with are written beside the tuples.
     const names = h.db
@@ -456,6 +475,19 @@ describe('configSnapshot', () => {
     });
     expect(h.reads).toEqual([]);
     expect(h.row()).toMatchObject({ ua: 0, gb: null });
+    // Codex #2822 r1 — an overlapping scan below the mark reads the schedule
+    // as it stood before the change; it must not restore it as current.
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: [],
+      blockNumber: 90n,
+      headBlock: 95n,
+    });
+    expect(h.reads).toContain('getGraceBuckets');
+    expect(h.row()).toMatchObject({ sb: 90, ua: 0, gb: null });
   });
 
   it('force-refreshes a populated row whose grace column is still NULL (Codex #1298 r3)', async () => {
@@ -479,6 +511,164 @@ describe('configSnapshot', () => {
     });
     expect(h.reads).toContain('getGraceBuckets');
     expect(h.row()?.gb).toBe('[]'); // populated — the force stops firing
+  });
+
+  /**
+   * #2808 — the pause-interval log the loan clock reads, snapshotted beside
+   * the grace schedule under the same discipline: refreshed on the pause
+   * events, definitive '[]' from a Diamond without the loan clock, kept
+   * through a transient failure, cleared when the failure is on a scan that
+   * proves the log changed.
+   */
+  describe('pause log (#2808)', () => {
+    const fresh = () => Math.floor(Date.now() / 1000);
+    const seed = (h: ReturnType<typeof refreshHarness>, pl: string | null, ua: number) =>
+      h.db
+        .prepare(
+          `INSERT INTO protocol_config
+             (chain_id, bundle_json, master_flags_json, grace_buckets_json, pause_intervals_json,
+              source_block, updated_at)
+           VALUES (84532, '[]', '[]', '[]', ?, 50, ?)`,
+        )
+        .run(pl, ua);
+    const refresh = (h: ReturnType<typeof refreshHarness>, events: string[], head = 110n) =>
+      maybeRefreshProtocolConfig({
+        env: h.env,
+        chainId: 84532,
+        client: h.client,
+        diamond: DIAMOND,
+        scannedEventNames: events,
+        blockNumber: 100n,
+        headBlock: head,
+      });
+    const STORED = '[{"start":"10","end":"20","pausedBefore":"0"}]';
+
+    it('names exactly the four events that change the log', () => {
+      for (const n of ['Paused', 'Unpaused', 'AutoPaused', 'PauseIntervalClosed']) {
+        expect(isPauseEventName(n), n).toBe(true);
+      }
+      for (const n of ['FeesConfigSet', 'LoanRepaid', 'AssetPauseEnabled']) {
+        expect(isPauseEventName(n), n).toBe(false);
+      }
+    });
+
+    it('re-reads a fresh row when the scan carries a pause event, at the scan block', async () => {
+      const h = refreshHarness({
+        pauseRead: async () => [[{ start: 10n, end: 2n ** 64n - 1n, pausedBefore: 0n }], 1n],
+      });
+      seed(h, '[]', fresh());
+      await refresh(h, ['Paused']);
+      expect(h.reads).toContain('getPauseIntervals');
+      expect(JSON.parse(h.row()!.pl!)).toEqual([
+        { start: '10', end: '18446744073709551615', pausedBefore: '0' },
+      ]);
+    });
+
+    it('stores a Diamond without the loan clock as a definitive never-paused log', async () => {
+      const h = refreshHarness({
+        pauseRead: async () => {
+          const err = new Error('reverted') as Error & { walk: (f: (x: unknown) => boolean) => unknown };
+          const node = { name: 'ContractFunctionRevertedError', data: { errorName: 'FunctionDoesNotExist' } };
+          err.walk = (f) => (f(node) ? node : null);
+          throw err;
+        },
+      });
+      seed(h, null, fresh());
+      await refresh(h, []);
+      expect(h.row()?.pl).toBe('[]');
+    });
+
+    it('keeps the stored log through a transient failure on a quiet scan', async () => {
+      const h = refreshHarness({
+        pauseRead: async () => {
+          throw new Error('HTTP request failed: 503');
+        },
+      });
+      seed(h, STORED, 0);
+      await refresh(h, []);
+      expect(h.row()).toMatchObject({ sb: 100, pl: STORED });
+    });
+
+    it('clears the stored log when the read fails ON a pause-event scan', async () => {
+      const h = refreshHarness({
+        pauseRead: async () => {
+          throw new Error('HTTP request failed: 503');
+        },
+      });
+      seed(h, STORED, 0);
+      await refresh(h, ['Unpaused']);
+      expect(h.row()).toMatchObject({ sb: 100, pl: null });
+    });
+
+    it('clears the stored log when a CATCH-UP scan carries a pause event', async () => {
+      const h = refreshHarness();
+      seed(h, STORED, fresh());
+      await refresh(h, ['AutoPaused'], 1_000n);
+      expect(h.reads).toEqual([]);
+      expect(h.row()).toMatchObject({ ua: 0, pl: null });
+    });
+
+    it('keeps a log a stale mark cleared unknown until a refresh reaches the mark (Codex #2822 r1)', async () => {
+      // A catch-up scan to block 100 saw a pause: the log is cleared and the
+      // row marked stale at 100.
+      const h = refreshHarness();
+      seed(h, '[]', fresh());
+      await refresh(h, ['Paused'], 1_000n);
+      expect(h.row()).toMatchObject({ ua: 0, pl: null });
+      // An overlapping scan that only reached block 90 reads the log as it
+      // stood BEFORE that pause. It must not restore it.
+      await maybeRefreshProtocolConfig({
+        env: h.env,
+        chainId: 84532,
+        client: h.client,
+        diamond: DIAMOND,
+        scannedEventNames: [],
+        blockNumber: 90n,
+        headBlock: 95n,
+      });
+      expect(h.reads).toContain('getPauseIntervals');
+      expect(h.row()).toMatchObject({ sb: 90, ua: 0, pl: null });
+      // A refresh at the mark fills it and clears the mark.
+      await maybeRefreshProtocolConfig({
+        env: h.env,
+        chainId: 84532,
+        client: h.client,
+        diamond: DIAMOND,
+        scannedEventNames: [],
+        blockNumber: 100n,
+        headBlock: 105n,
+      });
+      expect(h.row()?.pl).toBe('[]');
+      expect(h.row()?.ua).not.toBe(0);
+    });
+
+    it('still writes a newer log below a mark set for another setting', async () => {
+      const h = refreshHarness({
+        pauseRead: async () => [[{ start: 10n, end: 20n, pausedBefore: 0n }], 1n],
+      });
+      seed(h, '[]', fresh());
+      // The mark is for a fee change; the log stays populated.
+      await refresh(h, ['FeesConfigSet'], 1_000n);
+      expect(h.row()).toMatchObject({ ua: 0, pl: '[]' });
+      await maybeRefreshProtocolConfig({
+        env: h.env,
+        chainId: 84532,
+        client: h.client,
+        diamond: DIAMOND,
+        scannedEventNames: [],
+        blockNumber: 90n,
+        headBlock: 95n,
+      });
+      expect(JSON.parse(h.row()!.pl!)).toEqual([{ start: '10', end: '20', pausedBefore: '0' }]);
+    });
+
+    it('force-refreshes a fresh row whose pause column is still NULL', async () => {
+      const h = refreshHarness();
+      seed(h, null, fresh());
+      await refresh(h, []);
+      expect(h.reads).toContain('getPauseIntervals');
+      expect(h.row()?.pl).toBe('[]');
+    });
   });
 
   it('serializes nested bigint arrays (the uint256[4] tier slots)', () => {

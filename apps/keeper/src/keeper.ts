@@ -46,6 +46,7 @@ import { parseLiquidationLoan, type LiquidationLoan } from './liquidationLoan';
 import { tryMatchLiquidation } from './matchLiquidation';
 import { orchestrateDexDirectQuotes } from './dexDirectQuotes';
 import { describeFailure } from '@vaipakam/lib/errorDescription';
+import { inTermOnLoanClock } from './loanClockReads';
 import type { ChainConfig, Env } from './env';
 import {
   orchestrateServerQuotes,
@@ -416,9 +417,22 @@ export async function maybeAutonomousLiquidate(
     // fraction works.
     const partialMinHfBps = parsePosIntEnv(env.PARTIAL_LIQ_MIN_HF_BPS, 9500);
     const partialMinHfRaw = (10n ** 18n * BigInt(partialMinHfBps)) / 10_000n;
-    const endTime = loan.startTime + loan.durationDays * 86_400n;
+    // #2808 — "in term" is measured against the EFFECTIVE due date on the
+    // loan clock (#668 / #935): the contract's `PartialAfterMaturity` guard
+    // reads `LibLoanClock.maturity`, which a pause moved later. The original
+    // `startTime + durationDays` would send a loan a pause kept in term
+    // straight to full liquidation. When that date is unknown the loan is
+    // skipped this tick (and retried next tick) rather than sized against a
+    // date the chain may not hold it to.
     const nowTs = BigInt(Math.floor(Date.now() / 1000));
-    const inTerm = nowTs < endTime;
+    const term = await inTermOnLoanClock(publicClient, ctx.diamond, loan, nowTs);
+    if (!term.known) {
+      console.log(
+        `[keeper] loan=${loanId} chain=${chain.name} skipped: its due date (and whether a partial is allowed) is unknown — ${term.reason}`,
+      );
+      return false;
+    }
+    const inTerm = term.inTerm;
 
     // #395 (Codex r5 P2) — read the LIVE on-chain over-liquidation ceiling so
     // the keeper tracks a governance change. If governance lowers
@@ -746,7 +760,8 @@ export type PassArmingFlag =
   | 'REWARD_SANCTIONS_KEEPER_ENABLED'
   | 'REWARD_HORIZON_HEARTBEAT_ENABLED'
   | 'REWARD_DAY_CLOSE_ENABLED'
-  | 'GRACE_DEFAULT_ENABLED';
+  | 'GRACE_DEFAULT_ENABLED'
+  | 'PERIODIC_SETTLE_ENABLED';
 
 /**
  * Describe a rejected flag value WITHOUT echoing it.

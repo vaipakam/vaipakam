@@ -138,9 +138,74 @@ prove the path end to end.
   announced by the existing `AutoPaused` event, which carries its end.
 - The `LoanInitiatedDetails.dueTimestamp` an indexer stored at
   origination is the ORIGINAL due date. After a pause it is stale, and the
-  view above is the source of truth. The indexer, keeper and app changes
-  that consume it are tracked as a follow-up issue, since they are
-  off-chain.
+  view above is the source of truth. The off-chain consumers follow in
+  #2808, described below.
+
+#### Off-chain consumers (#2808)
+
+The off-chain side computes deadlines by ONE rule, `@vaipakam/lib/loanClock`,
+which mirrors `LibLoanClock` over a copy of the pause log: the paused time
+before a moment, the credit between two moments, a loan's original and
+effective maturity and grace end, a periodic period's unmoved end and its
+deadline, and the credit stated in words. No Worker or app computes
+`startTime + durationDays * 1 days` as a current deadline.
+
+- **The log is read once and shared.** The indexer's config refresh reads
+  the whole log (`getPauseIntervals`, paged at one block) beside the grace
+  schedule and stores both in `protocol_config` (migration 0072,
+  `pause_intervals_json`). It refreshes on every pause event, and a refresh
+  that cannot read the log clears the column rather than keep a log the
+  event has made stale. `@vaipakam/lib/loanClockSnapshot` is the one reader
+  of that row. It answers either both inputs or an unknown with its reason:
+  no row, a column unread, a value that does not parse, or a database
+  ahead of the migration.
+- **A Diamond without the loan clock** does not route `getPauseIntervals`.
+  Its `FunctionDoesNotExist` is read as an empty log, definitively, because
+  such a Diamond never moves a deadline. Every other failure is an unknown.
+  Nothing falls back to the original dates on a failed read.
+- **The indexer's loan routes** add `deadlines` to every Active loan: the
+  original maturity, the credit, the effective maturity and grace end,
+  whether a pause is in force, and the instant they were computed for. When
+  the inputs are unknown the routes serve `available: false` with the
+  reason, never the original dates.
+- **The calendar reminders** window on the effective maturity, and their
+  dedup key embeds it, so a pause that moves a loan's maturity re-arms its
+  milestones for the new date. The window query still filters on the
+  original maturity's expression index first, widened by the largest credit
+  any loan could have. The sweep holds while a pause is in force, or while
+  the log is unknown or damaged, because the maturity is still moving.
+- **The swap-to-repay grace end** the indexer stores is read from the
+  contract (`getPrepayContext`), which already includes the credit.
+- **The agent's periodic-interest reminders** read the log at the same
+  head as their other reads, in one request, and refuse a log longer than
+  that request returns instead of truncating it. Their window and the date
+  they name are the period's deadline. The dedup stamp, the eligibility
+  check and the resume key stay on the period's unmoved end, which is the
+  period's identity and does not move under a pause between ticks. A
+  reminder whose deadline a pause moved says by how much and why. The
+  extra read costs every chain one more request per tick, so a tick reaches
+  one loan fewer before its allowance runs out; the reminder window is days
+  wide, so a deferred loan is reached on a later tick.
+- **The keeper** reads the log through one helper. Its liquidation pass
+  decides whether a partial is still allowed against the effective
+  maturity, which is what the contract's `PartialAfterMaturity` guard reads;
+  a log that does not read skips the loan for the tick, with the reason
+  logged. Its auto-refinance pre-grace warning reads the log once per chain
+  and measures its window to the effective maturity; it skips the chain when
+  the log does not read and holds every warning while a pause is in force.
+  Its grace-default pass already asks the contract (`isLoanDefaultable`),
+  which applies the credit itself.
+- **The app** reads the pause log with every live loan read and works from
+  the effective deadlines wherever one matters: the loan page and the
+  positions list, the late-fee and grace checks before a repayment, cure,
+  preclose or refinance, the term a sale, offset or obligation handover must
+  fit inside, and the remaining interest such a move is priced over. A moved
+  due date gets its own row on the loan page with the original date, the
+  credit and the reason. While a pause is in force the page and the list say
+  the date is still moving. A loan the app cannot date reads "due date
+  unknown". Rows the app reads from the chain itself (when the indexer is
+  behind) are dated from one read of the pause log and the grace schedule at
+  a single block. A rental's paid-use end is not moved (§5).
 
 ### 5. What the credit does not cover
 

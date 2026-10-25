@@ -38,6 +38,7 @@ import {
   type AbiParameter,
 } from 'viem';
 import {
+  AdminFacetABI,
   AutoLifecycleFacetABI,
   LoanFacetABI,
   MetricsFacetABI,
@@ -590,6 +591,8 @@ const PG_FNS = {
   caps: fn(AutoLifecycleFacetABI, 'getAutoRefinanceCaps'),
   details: fn(LoanFacetABI, 'getLoanDetails'),
   ownerOf: fn(erc721Abi, 'ownerOf'),
+  // #2808 — the one pause-log read per chain that dates every loan.
+  pauseLog: fn(AdminFacetABI, 'getPauseIntervals'),
 } as const;
 
 const PG_SEL = Object.fromEntries(
@@ -606,6 +609,13 @@ const PG_SEL = Object.fromEntries(
  * and does not skip). A fixture that stops the pass early would let a
  * completely unbatched version pass this test.
  */
+/** The chain's pause record and the loans' schedule for the loan-clock
+ *  cases (#2808); the batching test runs on the defaults. */
+type PgPause = { start: bigint; end: bigint; pausedBefore: bigint }[] | 'unreadable';
+let pgPause: PgPause = [];
+let pgLoanStartAgo = 12n * 60n * 60n;
+let pgLoanDays = 1n;
+
 function pgAnswer(data: string): string {
   const sel = data.slice(0, 10).toLowerCase();
   const now = BigInt(Math.floor(Date.now() / 1000));
@@ -635,14 +645,23 @@ function pgAnswer(data: string): string {
     case PG_SEL.details:
       return answerFor(PG_FNS.details, {
         status: 0,
-        startTime: now - 12n * 60n * 60n,
-        durationDays: 1n,
+        startTime: now - pgLoanStartAgo,
+        durationDays: pgLoanDays,
       });
     case PG_SEL.ownerOf:
       // Deliberately NOT a subscribed wallet: the dispatch tail then returns at
       // its subscription lookup, so this test covers the read path only and
       // needs no Telegram / Push / D1 write fixture.
       return answerFor(PG_FNS.ownerOf, { _: '0x00000000000000000000000000000000000000ff' });
+    // Never paused by default: every due date is the original one. An
+    // unreadable log answers with no data, which no decoder accepts.
+    case PG_SEL.pauseLog:
+      if (pgPause === 'unreadable') return '0x';
+      return encodeFunctionResult({
+        abi: [PG_FNS.pauseLog] as Abi,
+        functionName: PG_FNS.pauseLog.name,
+        result: [pgPause, BigInt(pgPause.length)] as never,
+      });
     default:
       return '0x';
   }
@@ -753,8 +772,71 @@ describe('preGraceWatcher batching (#1896)', () => {
 
     // 4. The whole chain costs a handful of requests. The subrequest ceiling is
     //    the point of the change, so bound it: one batch per stage plus the four
-    //    count/page scan reads, against 5 loans + 3 offers = 8 per-item reads
-    //    before.
+    //    count/page scan reads and the one pause-log read (#2808), against
+    //    5 loans + 3 offers = 8 per-item reads before.
     expect(seen.length).toBeLessThanOrEqual(10);
+  });
+});
+
+describe('preGraceWatcher on the loan clock (#2808)', () => {
+  const HOUR = 3_600n;
+  const DAY = 24n * HOUR;
+  const run = async () => {
+    const { seen, restore } = recordPreGraceCalls();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { runPreGraceWatcher } = await import('../src/preGraceWatcher');
+      await runPreGraceWatcher({
+        DB: emptyDb(),
+        RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
+        TG_BOT_TOKEN: 'test:token',
+      } as never);
+      const said = [...warn.mock.calls, ...log.mock.calls].map((c) => String(c[0]));
+      const inner = seen.flatMap((s) => s.innerSelectors);
+      return { inner, said };
+    } finally {
+      restore();
+      warn.mockRestore();
+      log.mockRestore();
+      err.mockRestore();
+    }
+  };
+  afterEach(() => {
+    pgPause = [];
+    pgLoanStartAgo = 12n * HOUR;
+    pgLoanDays = 1n;
+  });
+
+  it('measures the warning window to the moved due date, not the original one', async () => {
+    // Originally due 12 h from now — inside the 24 h window — but a two-day
+    // pause while the loan was open moved it 2 days 12 h out.
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    pgLoanDays = 3n;
+    pgLoanStartAgo = 3n * DAY - 12n * HOUR;
+    const start = now - pgLoanStartAgo;
+    pgPause = [{ start: start + HOUR, end: start + HOUR + 2n * DAY, pausedBefore: 0n }];
+    const { inner } = await run();
+    expect(inner).toContain(PG_SEL.details);
+    // Nothing is inside the window, so no owner is looked up to warn.
+    expect(inner.filter((s) => s === PG_SEL.ownerOf)).toHaveLength(0);
+  });
+
+  it('skips the chain and says why when the pause log does not read', async () => {
+    pgPause = 'unreadable';
+    const { inner, said } = await run();
+    expect(inner).not.toContain(PG_SEL.caps);
+    expect(said.some((l) => /pause log unread, so no due date is known/.test(l))).toBe(true);
+  });
+
+  it('holds every warning while a pause is in force', async () => {
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    pgPause = [{ start: now - HOUR, end: 2n ** 64n - 1n, pausedBefore: 0n }];
+    const { inner, said } = await run();
+    expect(inner).not.toContain(PG_SEL.caps);
+    expect(said.some((l) => /the protocol is paused, so every due date is still moving/.test(l))).toBe(
+      true,
+    );
   });
 });

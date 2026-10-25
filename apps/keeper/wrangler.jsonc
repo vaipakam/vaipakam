@@ -345,6 +345,11 @@
   //     pass, which submits the permissionless `triggerDefault` for
   //     past-grace loans and so sells or transfers the borrower's
   //     collateral. Needs no on-chain role. Arming it is an owner decision.
+  //   - PERIODIC_SETTLE_ENABLED — 'true' arms the periodic-interest settler,
+  //     which submits the permissionless `settlePeriodicInterest` once a
+  //     period's grace is over and so sells part of the borrower's
+  //     collateral when the period's interest is unpaid. Ships unset. Needs
+  //     no on-chain role. Arming it is an owner decision.
   //
   // (b) GENUINE PLAIN VARS. `keep_vars: true` preserves the ones this config
   //     does NOT declare — it suppresses the delete of bindings absent from

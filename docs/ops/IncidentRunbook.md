@@ -233,21 +233,22 @@ recoverable back-pressure — not a fund-loss event.
 > an opened claim gate with no funding behind it is exactly the user-visible
 > revert this section exists to prevent.
 >
-> **Then resolve any `finalized day(s) neither remitted nor closed` warning —
-> the warning itself is not a blocker; an unresolved ID is.** That line lists
-> days the pass cannot classify: each is either an obligation still gated —
-> awaiting its commitment report, or unbacked — or a day that gave that mirror
-> no slice at all. The pass deliberately does NOT guess between them: guessing
-> "owed" would hold coverage below `A/A` on every tick for a zero-budget day
-> and put the stand-down permanently out of reach, and guessing "settled"
-> would hide a real obligation.
+> **Then resolve any `finalized day(s) still owed and not closeable` warning
+> (#2760).** Base reports the send's own verdict for each day
+> (`quoteRemitDayStatuses`), so this line lists only days that are still owed,
+> each with its reason: awaiting its commitment report, recycled backing short,
+> or remit-ineligible (funded by the manual-budget path). A day that gave the
+> mirror no slice is not listed. Any listed day keeps that mirror out of the
+> `C` count until it closes, so `C = A` now also means no gated obligation is
+> left at the source.
 >
-> A zero-budget day is **never closed by anything**, so its ID keeps appearing
-> for as long as it stays in the scan window. Requiring the warning to vanish
-> would therefore recreate exactly the permanent false-red the reporting
-> exists to avoid. The rule is per ID, not per line: **stand down once every
-> warned ID has been checked and found to carry no obligation; any ID that is
-> a gated obligation keeps coverage manual until it clears.**
+> On a Diamond deployed before #2760 the pass keeps its earlier line,
+> `finalized day(s) neither remitted nor closed`, which cannot tell a gated
+> obligation from a zero-budget day. There the rule is per ID: **stand down
+> once every warned ID has been checked and found to carry no obligation; any
+> ID that is a gated obligation keeps coverage manual until it clears.** A
+> zero-budget day is never closed by anything, so on that build its ID keeps
+> appearing for as long as it stays in the scan window.
 > This matters most in exactly the incident this section is written for:
 > if a finalized day is broadcast and you leave a mirror's claim gate open
 > expecting the keeper to fund it, nothing will, and users hit the claim
@@ -304,7 +305,7 @@ Derive it from source rather than from any prose list, this one included — but
 derive it from the **right** entry point, because there are two and the obvious
 one is the minority case. `keeperBlockers` (`keeper.ts:891`) is the shared
 gate: `isKeeperEnabled` wraps it, and `passIsArmed` calls it directly, which is
-how `matcher`, `liquidator`, `autoLifecycle`, `graceDefault`,
+how `matcher`, `liquidator`, `autoLifecycle`, `graceDefault`, `periodicSettle`,
 `rewardBudgetRemit`, `remitAck` and `commitmentReport` are gated. Only two call
 sites reach `isKeeperEnabled` by name (`keeper.ts:268`,
 `liquidityConfidence.ts:807`), so grepping for that alone finds two of nine and
@@ -367,6 +368,21 @@ sudo systemctl try-restart vaipakam-keeper
 `triggerDefault` is permissionless, so stopping the pass stops only this
 keeper's submissions; the lender's own close-out button and any third party
 can still default a past-grace loan.
+
+**`periodicSettle` has its own switch too, and it also sells collateral.**
+The pass submits `settlePeriodicInterest` for periodic-interest loans whose
+period's grace is over. When the period's interest is short, that sells the
+part of the borrower's collateral the contract sizes to the shortfall. It runs
+whenever both `KEEPER_ENABLED` and `PERIODIC_SETTLE_ENABLED` are `true`, so
+check it before re-arming the master switch too. To stop only this pass:
+
+```bash
+# In /etc/vaipakam/keeper.env:  PERIODIC_SETTLE_ENABLED=false
+sudo systemctl try-restart vaipakam-keeper
+```
+
+`settlePeriodicInterest` is permissionless, so stopping the pass stops only
+this keeper's submissions; anyone can still settle an overdue period.
 
 A deploy afterwards does apply the committed `"TG_BOT_USERNAME": ""` over
 whatever is live, with or without `--keep-vars` — but that is harmless here

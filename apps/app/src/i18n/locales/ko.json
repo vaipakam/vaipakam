@@ -320,7 +320,8 @@
       "unlinkedChainOnly": "{{network}} 연결이 해제되었습니다. 스마트 계정 지갑은 네트워크별로 연결이 해제됩니다. 이 지갑이 다른 네트워크에도 연결되어 있다면 각 네트워크에서 해당 서명으로 개별적으로 해제하세요.",
       "paidTitle": "유료 Push 알림",
       "paidFee": "{{chain}}에서 유료 Push 알림은 대출 한쪽당 {{fee}} VPFI입니다. 수수료는 Vault의 사용 가능한 VPFI에서 프로토콜로 지불되며, 참여한 대출마다 최대 한 번, 해당 대출에 대한 첫 유료 Push 알림 시 청구됩니다. Telegram 알림은 항상 무료입니다.",
-      "paidNotBilled": "현재 {{chain}}에서는 유료 Push 알림이 청구되지 않습니다. 아직 이곳에서 이 수수료를 청구하는 것이 없으므로 동의할 것이 없습니다.",
+      "paidBilled": "알림 서비스는 {{chain}}에서 유료 Push 알림에 이 수수료를 청구합니다.",
+      "paidNotBilled": "현재 알림 서비스는 {{chain}}에서 이 수수료를 청구하지 않으므로 동의할 것이 없습니다.",
       "paidBilledUnknown": "{{chain}}에서 유료 Push 알림이 청구되는지 확인하지 못해 지금은 지불 동의를 제공하지 않습니다.",
       "paidConsentNone": "{{chain}}에서 이 수수료 지불에 동의하지 않았으므로 청구되지 않습니다.",
       "paidConsentCovers": "{{chain}}에서 대출 한쪽당 최대 {{cap}} VPFI 지불에 동의했습니다. 현재 수수료를 충당합니다.",
@@ -332,6 +333,11 @@
       "paidLowVault": "Vault에 사용 가능한 VPFI가 {{free}}로 {{fee}} VPFI 수수료보다 적으므로, Vault에 VPFI를 추가할 때까지 유료 Push 알림을 청구할 수 없습니다.",
       "paidReadFailed": "체인에서 유료 Push 알림 동의를 읽지 못했습니다. 나중에 다시 시도해 주세요.",
       "paidStale": "{{chain}}에서 이 정보를 새로 고치지 못했습니다. 아래 수수료와 동의 내용은 마지막으로 성공한 읽기 기준이며 오래되었을 수 있으므로, 읽기가 성공할 때까지 동의는 일시 중지됩니다. 동의 철회는 계속 할 수 있습니다.",
+      "paidStaleLegacy": "{{chain}}에서 이 정보를 새로 고치지 못했습니다. 아래 내용은 마지막으로 성공한 읽기 기준이며 오래되었을 수 있습니다.",
+      "paidPredatesConsent": "{{chain}}의 컨트랙트는 유료 Push 알림 동의 기능이 없는 이전 버전이므로, 여기서는 결제에 동의하거나 동의를 철회할 수 없습니다.",
+      "paidPredatesBillable": "알림 서비스와 별개로, 이 버전의 컨트랙트는 프로토콜의 청구 역할이 수수료를 직접 청구할 수 있게 하며, 청구 전에 동의 여부를 확인하지 않을 수 있습니다.",
+      "paidPredatesNotBillable": "이 버전에는 청구 호출도 없으므로 {{chain}}에서는 수수료를 청구할 수 없습니다.",
+      "paidPredatesBillingUnknown": "이 버전이 수수료를 청구할 수 있는지 확인하지 못했습니다.",
       "paidAgreed": "저장됨: {{chain}}에서 대출 한쪽당 최대 {{fee}} VPFI 지불에 동의했습니다.",
       "paidWithdrawn": "철회됨: {{chain}}에서 유료 Push 알림 수수료가 청구되지 않습니다."
     },
@@ -1342,7 +1348,8 @@
           "terms": "조건",
           "health": "건강도",
           "whatNext": "다음에 일어나는 일",
-          "ifNothing": "아무 일도 하지 않으면"
+          "ifNothing": "아무 일도 하지 않으면",
+          "dueMoved": "만기일 변경"
         },
         "done": {
           "rentalClosed": "대여가 종료되었습니다. 환불 가능한 버퍼가 있으면 준비되었습니다 — 청구 센터에서 청구하세요.",
@@ -1461,7 +1468,10 @@
         "positionBorrowedAmountUnknown": "내 차입 포지션 · 이 대출 시작 시 차입한 금액은 지금 표시할 수 없습니다",
         "positionLentAmountUnknown": "내 대여 포지션 · 이 대출 시작 시 대여한 금액은 지금 표시할 수 없습니다",
         "collateralSettledClosed": "이 대출은 종료되었습니다 — 담보는 청구를 통해 정산되며 대출을 위해 잠겨 있지 않습니다.",
-        "collateralSettledInternalMatch": "내부 매칭이 차입자의 담보를 매칭된 상대 대출의 대여자에게 지급했습니다. 남는 금액이 있으면 차입자의 청구를 통해 차입자에게 돌아갑니다."
+        "collateralSettledInternalMatch": "내부 매칭이 차입자의 담보를 매칭된 상대 대출의 대여자에게 지급했습니다. 남는 금액이 있으면 차입자의 청구를 통해 차입자에게 돌아갑니다.",
+        "dueDatePaused": "예정보다 늦음 (프로토콜이 일시 중지되어 날짜가 계속 늦춰지고 있음)",
+        "dueDateUnknown": "현재 날짜를 알 수 없음",
+        "dueMovedByPause": "원래 만기일은 {{date}}였습니다. 이 대출이 열려 있는 동안 프로토콜이 그만큼 일시 중지되어 {{credit}} 늦춰졌습니다."
       },
       "loading": "포지션 불러오는 중…",
       "openOffers": "열린 제안",
@@ -2271,7 +2281,20 @@
       "timeJustNow": "방금 전",
       "timeMinutesAgo": "{{count}}분 전",
       "timeHoursAgo": "{{count}}시간 전",
-      "timeDaysAgo": "{{count}}일 전"
+      "timeDaysAgo": "{{count}}일 전",
+      "durationHour_zero": "{{count, number}}시간",
+      "durationHour_one": "1시간",
+      "durationHour_two": "{{count, number}}시간",
+      "durationHour_few": "{{count, number}}시간",
+      "durationHour_many": "{{count, number}}시간",
+      "durationHour_other": "{{count, number}}시간",
+      "durationMinute_zero": "{{count, number}}분",
+      "durationMinute_one": "1분",
+      "durationMinute_two": "{{count, number}}분",
+      "durationMinute_few": "{{count, number}}분",
+      "durationMinute_many": "{{count, number}}분",
+      "durationMinute_other": "{{count, number}}분",
+      "durationUnderMinute": "1분 미만"
     },
     "vault": {
       "unreadableCount_zero": "{{count}} assets",
@@ -2327,7 +2350,9 @@
       "dueInDays_few": "{{count}}일 후 due",
       "dueInDays_many": "{{count}}일 후 due",
       "dueInDays_other": "{{count}}일 후 due",
-      "pastGrace": "유예 기간 종료"
+      "pastGrace": "유예 기간 종료",
+      "duePaused": "일시 중지됨 — 만기일이 늦춰지는 중",
+      "dueUnknown": "만기일 알 수 없음"
     },
     "activity": {
       "loading": "활동을 불러오는 중…",

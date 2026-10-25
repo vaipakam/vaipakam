@@ -22,7 +22,7 @@ import { BaseError, ContractFunctionRevertedError, type PublicClient } from 'vie
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import type { IndexedOffer } from './indexer';
 import type { PositionLoan } from './hooks';
-import { readLoanRowLive, mapLoanStructToRow, isRevert } from './liveLoanRow';
+import { readLoanRowLive, mapLoanStructToRow, isRevert, withChainDeadlines } from './liveLoanRow';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 const PAGE = 200n;
@@ -285,7 +285,8 @@ export async function readOwnLoanRowsLive(
         if (row) rows.push(row);
       }
     }
-    return rows;
+    // A chain row carries no deadlines of its own (#2808).
+    return withChainDeadlines(publicClient, diamond, rows);
   } catch (e) {
     if (isBatchTooLarge(e)) {
       // Chunking makes this unreachable unless the deployed cap
@@ -304,7 +305,11 @@ export async function readOwnLoanRowsLive(
         return withRole(row, heldTokenId);
       }),
     );
-    return rows.filter((r): r is PositionLoan => r !== null);
+    return withChainDeadlines(
+      publicClient,
+      diamond,
+      rows.filter((r): r is PositionLoan => r !== null),
+    );
   } catch {
     return null; // a row read failed — never a confident partial list
   }

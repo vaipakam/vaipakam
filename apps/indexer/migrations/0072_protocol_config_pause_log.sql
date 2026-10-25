@@ -1,0 +1,23 @@
+-- #2808 — snapshot the protocol's pause-interval log beside the grace
+-- schedule.
+--
+-- Since #668 / #935 (owner decision D2) the time the protocol spends paused
+-- is added to every open loan's due date and grace end, counted from the
+-- loan's start. The contract reads it from the pause-interval log
+-- (`AdminFacet.getPauseIntervals`). The calendar sweep and the loan routes
+-- are pure D1, so the log rides the same `protocol_config` row as the grace
+-- buckets, read at the same block, and refreshes on the pause events
+-- (`Paused`, `Unpaused`, `AutoPaused`, `PauseIntervalClosed`) and the 6h
+-- backstop (configSnapshot.ts).
+--
+--   pause_intervals_json — JSON array of
+--     {"start":"…","end":"…","pausedBefore":"…"}, decimal strings, oldest
+--     first, exactly as the chain pages it (an open manual pause carries
+--     end = 2^64 - 1). '[]' = the chain has never been paused, or its
+--     Diamond predates the loan clock and so never moves a deadline.
+--     NULL = not read yet, or a read failed after a pause event: unknown,
+--     and every consumer withholds what it would compute from it.
+--
+-- Additive: one NULLable column; the deployed code neither reads nor writes
+-- it. The next near-head refresh populates it.
+ALTER TABLE protocol_config ADD COLUMN pause_intervals_json TEXT;
