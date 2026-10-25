@@ -53,9 +53,9 @@ function harness(files = FILES) {
     h.db
       .prepare(
         `INSERT INTO protocol_config
-           (chain_id, bundle_json, master_flags_json, grace_buckets_json, pause_intervals_json,
+           (chain_id, bundle_json, grace_buckets_json, pause_intervals_json,
             source_block, updated_at)
-         VALUES (?, '[]', '[]', ?, ?, 1, ?)`,
+         VALUES (?, '[]', ?, ?, 1, ?)`,
       )
       .run(CHAIN, grace, pauseLog, NOW);
   const byId = async (loanId: number) =>
@@ -144,8 +144,8 @@ describe('loan routes on the loan clock (#2808)', () => {
     h.seedLoan(1);
     h.db
       .prepare(
-        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, grace_buckets_json,
-           source_block, updated_at) VALUES (?, '[]', '[]', '[]', 1, ?)`,
+        `INSERT INTO protocol_config (chain_id, bundle_json, grace_buckets_json,
+           source_block, updated_at) VALUES (?, '[]', '[]', 1, ?)`,
       )
       .run(CHAIN, NOW);
     expect((await h.byId(1)).deadlines).toEqual({ available: false, reason: 'pre-migration' });

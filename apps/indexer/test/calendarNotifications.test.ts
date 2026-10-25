@@ -281,9 +281,9 @@ function seedGraceConfig(h: SqliteD1, bucketsJson = '[]', pauseLogJson: string |
   h.db
     .prepare(
       `INSERT INTO protocol_config
-         (chain_id, bundle_json, master_flags_json, grace_buckets_json, pause_intervals_json,
+         (chain_id, bundle_json, grace_buckets_json, pause_intervals_json,
           source_block, updated_at)
-       VALUES (?, '[]', '[]', ?, ?, 1, ?)`,
+       VALUES (?, '[]', ?, ?, 1, ?)`,
     )
     .run(CHAIN, bucketsJson, pauseLogJson, NOW);
 }
@@ -556,9 +556,9 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     h.db
       .prepare(
         `INSERT INTO protocol_config
-           (chain_id, bundle_json, master_flags_json, grace_buckets_json, pause_intervals_json,
+           (chain_id, bundle_json, grace_buckets_json, pause_intervals_json,
             source_block, updated_at)
-         VALUES (?, '[]', '[]', ?, '[]', 1, ?)`,
+         VALUES (?, '[]', ?, '[]', 1, ?)`,
       )
       .run(
         CHAIN,
@@ -591,8 +591,8 @@ describe('sweepCalendarNotifications (over the migrated schema)', () => {
     // Pre-0039 row (NULL column) → still unknown → defer.
     h.db
       .prepare(
-        `INSERT INTO protocol_config (chain_id, bundle_json, master_flags_json, source_block, updated_at)
-         VALUES (?, '[]', '[]', 1, ?)`,
+        `INSERT INTO protocol_config (chain_id, bundle_json, source_block, updated_at)
+         VALUES (?, '[]', 1, ?)`,
       )
       .run(CHAIN, NOW);
     await sweepCalendarNotifications(h.d1 as never, CHAIN, NOW, HEAD);
