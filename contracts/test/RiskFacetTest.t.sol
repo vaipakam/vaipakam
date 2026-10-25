@@ -89,6 +89,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
 import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
+import {LibDiscountedLiquidation} from "../src/libraries/LibDiscountedLiquidation.sol";
 import {LibNumeraireValue} from "../src/libraries/LibNumeraireValue.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
@@ -5113,6 +5114,112 @@ contract RiskFacetTest is Test {
             "loan should be Defaulted"
         );
 
+        vm.clearMockedCalls();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // #2697 — the discounted liquidation's preview names its figures
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// @notice Read in the same block, the preview is exactly what the
+    ///         liquidation pulls, seizes and leaves for the borrower — after
+    ///         interest has accrued, so the debt is not just the principal.
+    function test_2697_previewIsWhatTheLiquidationDoes() public {
+        uint256 loanId = createAndAcceptOffer();
+        vm.warp(block.timestamp + 15 days);
+        _mockDiscountPathHappy(loanId);
+        deal(mockERC20, address(this), 4000 ether);
+        IERC20(mockERC20).approve(address(diamond), 4000 ether);
+
+        LibDiscountedLiquidation.Preview memory p =
+            ForcedSaleFacet(address(diamond)).previewDiscountedLiquidation(loanId);
+        assertEq(uint8(p.status), uint8(LibDiscountedLiquidation.Status.Ready), "ready");
+        assertEq(p.principalAsset, mockERC20, "principal asset");
+        assertEq(p.collateralAsset, mockCollateralERC20, "collateral asset");
+        assertEq(p.tier, 3, "tier");
+        LibVaipakam.Loan memory ln = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertGt(p.debt, ln.principal, "interest accrued into the debt");
+        assertEq(p.seized + p.surplus, ln.collateralAmount, "seized + surplus = pledged");
+
+        uint256 before = IERC20(mockERC20).balanceOf(address(this));
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit RiskFacet.LiquidationDiscounted(
+            loanId, address(this), address(this), p.tier, p.discountBps, p.debt, p.seized, p.surplus
+        );
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(loanId, address(this), "");
+        assertEq(before - IERC20(mockERC20).balanceOf(address(this)), p.debt, "pulled exactly the previewed debt");
+        // The vault withdraw is mocked in this fixture, so the seizure and
+        // surplus are read from the liquidation's own event above.
+        vm.clearMockedCalls();
+    }
+
+    /// @notice Each gate is named, in the liquidation's own order, and a
+    ///         loan that cannot be liquidated carries no figures.
+    function test_2697_previewNamesWhyNot() public {
+        uint256 loanId = createAndAcceptOffer();
+        ForcedSaleFacet f = ForcedSaleFacet(address(diamond));
+
+        LibDiscountedLiquidation.Preview memory p = f.previewDiscountedLiquidation(loanId);
+        assertEq(uint8(p.status), uint8(LibDiscountedLiquidation.Status.Disabled), "switch off");
+        assertEq(p.principalAsset, mockERC20, "assets named even when not ready");
+        assertEq(p.debt, 0, "no figures");
+
+        _mockDiscountPathHappy(loanId);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE)
+        );
+        assertEq(
+            uint8(f.previewDiscountedLiquidation(loanId).status),
+            uint8(LibDiscountedLiquidation.Status.Healthy),
+            "HF at 1 is healthy"
+        );
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.sequencerHealthy.selector),
+            abi.encode(false)
+        );
+        assertEq(
+            uint8(f.previewDiscountedLiquidation(loanId).status),
+            uint8(LibDiscountedLiquidation.Status.SequencerUnhealthy),
+            "sequencer checked before HF"
+        );
+        vm.clearMockedCalls();
+
+        _mockDiscountPathHappy(loanId);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getEffectiveLiquidityTier.selector, mockCollateralERC20),
+            abi.encode(uint8(0))
+        );
+        p = f.previewDiscountedLiquidation(loanId);
+        assertEq(uint8(p.status), uint8(LibDiscountedLiquidation.Status.Untiered), "untiered");
+        assertEq(p.seized, 0, "no figures");
+        vm.clearMockedCalls();
+
+        _mockDiscountPathHappy(loanId);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPriceStatus.selector, mockCollateralERC20),
+            abi.encode(OracleFacet.PriceStatus.Unavailable, uint256(0), uint8(0))
+        );
+        assertEq(
+            uint8(f.previewDiscountedLiquidation(loanId).status),
+            uint8(LibDiscountedLiquidation.Status.Unpriced),
+            "unpriced"
+        );
+        vm.clearMockedCalls();
+
+        // A pause is checked first, as the liquidation's own modifier does.
+        _mockDiscountPathHappy(loanId);
+        AdminFacet(address(diamond)).pause();
+        assertEq(
+            uint8(f.previewDiscountedLiquidation(loanId).status),
+            uint8(LibDiscountedLiquidation.Status.Paused),
+            "paused"
+        );
         vm.clearMockedCalls();
     }
 

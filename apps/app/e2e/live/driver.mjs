@@ -48,6 +48,7 @@ import {
 import { privateKeyToAccount } from 'viem/accounts';
 import { baseSepolia, arbitrumSepolia, bscTestnet } from 'viem/chains';
 import { walletGateDecision } from './walletGate.mjs';
+import { LiveShapeMismatchError, shapeBlock, shapeChecked } from './shapeCheckedClient.mjs';
 import { classifyRpcResponse, createSocketCalls, isChainRpcMethod } from './rpc-verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -89,6 +90,49 @@ export function trackBrowser(browser) {
  * BLOCKED exits below can honour evidence precedence by themselves.
  */
 const OBSERVED_RPC_FAULTS = [];
+/**
+ * #2841 — a PASS reached after a chain answer of the wrong shape is
+ * withdrawn.
+ *
+ * Every drive reads the chain through `livePublicClient`, which refuses to
+ * decode a static-output answer whose length is not the one this build's
+ * ABI describes and records why (`shapeChecked`). The record is applied
+ * HERE, at process exit, rather than at each drive's catch: a drive's own
+ * catch may read any failed read as "still pending" or carry on, and the
+ * drives have dozens of exits between them.
+ *
+ * - A PASS (0) is BLOCKED with the reason: it was reached on a chain that
+ *   is not this build, so it verified nothing about this build.
+ * - An uncaught mismatch is BLOCKED with the reason, not the 1 Node exits
+ *   with: nothing but the mismatch ended the run.
+ * - Every other code stands, with the reason added. A FAIL can rest on
+ *   evidence the mismatch does not touch (a malformed or write request
+ *   from the page, which several drives collect themselves), and turning
+ *   it into BLOCKED would hide a defect, the misclassification this
+ *   contract ranks worst; the printed reason says the chain was not this
+ *   build. BLOCKED (2) and UNDETERMINED (3, the drive wrote and could not
+ *   settle its claims) already say what a BLOCKED would.
+ *
+ * Node takes `process.exitCode` set in an `exit` listener as the final
+ * code; `uncaughtExceptionMonitor` only observes and leaves Node's own
+ * handling of the throw as it is.
+ */
+let UNCAUGHT;
+process.on('uncaughtExceptionMonitor', (err) => {
+  UNCAUGHT = err;
+});
+process.on('exit', (code) => {
+  const why = shapeBlock();
+  if (!why) return;
+  const uncaughtMismatch = code === 1 && UNCAUGHT instanceof LiveShapeMismatchError;
+  if ((code === 0 || uncaughtMismatch) && OBSERVED_RPC_FAULTS.length === 0) {
+    console.error(`\nBLOCKED: ${why}\n  (${code === 0 ? 'the PASS this drive reached' : 'the run'} rested on that answer and is withdrawn)`);
+    process.exitCode = 2;
+    return;
+  }
+  console.error(`\n(the chain also answered in a shape this build does not describe: ${why})`);
+});
+
 /** Each attached watcher's session drain, awaited by `blocked()` and by
  *  `done()` before the browser closes (which would cut the reads off). A
  *  watcher leaves the set when its page closes. */
@@ -242,27 +286,11 @@ export class LiveSetupError extends Error {
   }
 }
 
-/**
- * A PRECONDITION failure raised where exiting immediately would be
- * unsafe (Codex #1621 r4).
- *
- * `blockedSync` is right before a drive can mutate anything. After that
- * point `process.exit` skips the drive's `finally`, which is what cancels
- * a posted offer or a resting signed order — so a stale ABI bundle could
- * cost real testnet funds. Throwing instead lets the cleanup run, and the
- * drive classifies this type as BLOCKED at its final exit.
- *
- * Preferred over an up-front list of everything used after the mutation
- * boundary: such a list drifted within one review round (it omitted
- * `getOffer` and `previewMatch`), and a list that must stay exhaustive to
- * be safe is the wrong shape for a safety property.
- */
-export class LivePreconditionError extends Error {
-  constructor(why) {
-    super(why);
-    this.name = 'LivePreconditionError';
-  }
-}
+// `LivePreconditionError` lives in `liveErrors.mjs` so the modules this
+// driver imports can extend it without a cycle (#2841); drives keep
+// importing it from here.
+export { LivePreconditionError } from './liveErrors.mjs';
+export { LiveShapeMismatchError } from './shapeCheckedClient.mjs';
 
 /**
  * Run a setup/precondition step; any throw is BLOCKED, not FAIL.
@@ -970,10 +998,35 @@ export async function ensureConnected(page) {
   throw new Error('wallet connect did not complete within 30s');
 }
 
+/**
+ * The answer-shape rule (`@vaipakam/lib/staticReturn`), loaded through tsx
+ * the way `live-activity-participants.mjs` loads its rule, on the first
+ * chain read only.
+ */
+let SHAPE_RULE;
+function loadShapeRule() {
+  SHAPE_RULE ??= (async () => {
+    const { register } = await import('tsx/esm/api');
+    register();
+    return import('@vaipakam/lib/staticReturn');
+  })();
+  return SHAPE_RULE;
+}
+
+/**
+ * The ONE way a drive makes a public client (#2841): viem's, with
+ * `readContract` and `multicall` checked against the answer-shape rule
+ * (`shapeCheckedClient.mjs`). `liveClients.test.mjs` holds every drive to
+ * it.
+ */
+export function livePublicClient(options) {
+  return shapeChecked(createPublicClient(options), loadShapeRule);
+}
+
 export function clientsFor(chainId) {
   const { chain, rpc } = CHAINS[chainId];
   return {
-    pub: createPublicClient({ chain, transport: http(rpc) }),
+    pub: livePublicClient({ chain, transport: http(rpc) }),
     wallet: (role) =>
       createWalletClient({
         chain,
@@ -1620,6 +1673,10 @@ export async function launch({
 
   async function dispatch({ method, params }) {
     const { chain, rpc } = CHAINS[chainId];
+    // The PAGE's transport, not a drive's read: it forwards the page's own
+    // requests verbatim (`pub.request`) and decodes nothing, so the answer-
+    // shape rule has nothing to check here (#2841). Checking the page's
+    // decoding is the page's job, which is what the drives observe.
     const pub = createPublicClient({ chain, transport: http(rpc) });
     // A watch-only session has an address and no key; `readOnly` refuses
     // every write before this client could be asked to sign.

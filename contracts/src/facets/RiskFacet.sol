@@ -18,6 +18,7 @@ import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
+import {LibDiscountedLiquidation} from "../libraries/LibDiscountedLiquidation.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {NumeraireValueFacet} from "./NumeraireValueFacet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -1403,11 +1404,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // requires a classified tier so we reject up-front. The
         // atomic-path is the alternative for Liquid-but-unclassified
         // assets; time-based default for Illiquid.
-        uint8 tier = OracleFacet(address(this)).getEffectiveLiquidityTier(
-            loan.collateralAsset
-        );
+        // #2697 — one rule with the preview ({LibDiscountedLiquidation}).
+        (uint8 tier, uint16 discountBps) =
+            LibDiscountedLiquidation.discountFor(loan.collateralAsset);
         if (tier == 0) revert UntierableCollateral(loan.collateralAsset);
-        uint16 discountBps = LibVaipakam.effectiveTierLiqDiscountBps(tier);
 
         _settleDiscountedLiquidation(loanId, loan, recipient, tier, discountBps);
     }
@@ -1431,13 +1431,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
-        // Debt — same shape as atomic path. Scoped so the intermediates leave
-        // the stack frame before the settlement below (viaIR budget).
-        uint256 totalDebt;
-        {
-            uint256 lateFee = LibVaipakam.calculateLateFee(loanId);
-            totalDebt = LibEntitlement.currentBorrowBalance(loan) + lateFee;
-        }
+        // Debt — same shape as atomic path, by the rule the preview reads
+        // ({LibDiscountedLiquidation.debt}, #2697).
+        uint256 totalDebt = LibDiscountedLiquidation.debt(loan);
         uint256 interestPortion = totalDebt - loan.principal;
 
         // Pull `totalDebt` of principal-asset from msg.sender. The
@@ -1452,33 +1448,17 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // made up from tokens the Diamond holds for others.
         LibDelivery.pullExact(loan.principalAsset, msg.sender, address(this), totalDebt);
 
-        // Compute seizure size at oracle-priced debt-plus-discount-
-        // value. `collateralEquivalent` reports a missing price as
-        // unpriced (no revert on stale) so we can fail-soft here with a
-        // precise `OracleStaleForDiscount` revert rather than bubbling a
-        // generic oracle-feed error; a distrusted price reverts with its
-        // read's own divergence error inside it (#666). Availability is its `priced` flag,
-        // never a zero result (#1281 item 027). Rounded down: the
-        // liquidator has paid the lender `totalDebt` in full, so the
-        // rounding unit stays with the borrower's surplus.
-        (bool priced, uint256 collForDebt) = LibFallback.collateralEquivalent(
-            address(this),
-            totalDebt,
-            loan.collateralAsset,
-            loan.principalAsset,
-            Math.Rounding.Floor
-        );
+        // Seizure at oracle-priced debt-plus-discount value, by the rule the
+        // preview reads ({LibDiscountedLiquidation.seizure}, #2697). A missing
+        // price is reported as unpriced (no revert on stale) so this fails
+        // with a precise `OracleStaleForDiscount` rather than a generic
+        // oracle-feed error; a distrusted price reverts with its read's own
+        // divergence error inside it (#666). Availability is its `priced`
+        // flag, never a zero result (#1281 item 027).
+        (bool priced, uint256 collateralSeized) =
+            LibDiscountedLiquidation.seizure(loan, totalDebt, discountBps);
         if (!priced) {
             revert OracleStaleForDiscount(loan.principalAsset, loan.collateralAsset);
-        }
-        uint256 collateralSeized = (collForDebt *
-            (LibVaipakam.BASIS_POINTS + discountBps)) / LibVaipakam.BASIS_POINTS;
-        // Cap at available collateral — underwater loans seize all
-        // collateral. The liquidator's profit (or loss) is settled
-        // off-chain at their own sale price; the protocol's books
-        // are clean once `totalDebt` lands at the lender + treasury.
-        if (collateralSeized > loan.collateralAmount) {
-            collateralSeized = loan.collateralAmount;
         }
         uint256 borrowerSurplus = loan.collateralAmount - collateralSeized;
 

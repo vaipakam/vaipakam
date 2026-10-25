@@ -1,0 +1,21 @@
+-- #2840 — drop the two columns that held the retired `getMasterFlags` tuple.
+--
+-- #2812 retired the getter together with the range master flags, and its
+-- off-chain half (#2839, deployed to the indexer on 2026-10-25) stopped
+-- reading both columns. That build still NAMES them in its snapshot upsert,
+-- writing an empty list and NULL, because `master_flags_json` was declared
+-- NOT NULL (0035) and SQLite cannot relax that in place. So no build can stop
+-- writing the column before it is gone, and this is the contract step of the
+-- expand/contract pair, with one stated window:
+--
+--   Between this migration applying and the new indexer publishing, the
+--   still-serving build's snapshot refresh fails on the missing column.
+--   That refresh is fail-open by design: the failure is logged, the stored
+--   row keeps its previous values, and a refresh that failed on a governance
+--   or pause event marks the row stale, so the connected app reads the chain
+--   instead and the next scan refreshes it. Nothing else touches the columns:
+--   no route, reader or other Worker selects them.
+--
+-- A fresh environment replays 0035 (creates them) and then this file.
+ALTER TABLE protocol_config DROP COLUMN master_flags_json;
+ALTER TABLE protocol_config DROP COLUMN master_flags_names_json;

@@ -1048,6 +1048,11 @@ export interface ProtocolKnobValues {
   autoRefinanceEnabled?: boolean;
   autoExtendEnabled?: boolean;
   keepersPaused?: boolean;
+  /** #2843 — seconds, the effective value. */
+  autoPauseCooldownSeconds?: string;
+  /** #2843 — unix seconds; `'0'` while no auto-pause window has ever frozen
+   *  the protocol. A recorded time, not a reading of the clock. */
+  autoPauseAvailableAt?: string;
   lenderIntentEnabled?: boolean;
   minIntentFillNumeraire?: string;
   treasury?: string;

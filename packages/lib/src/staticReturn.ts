@@ -59,9 +59,12 @@ function staticParameterBytes(p: AbiParameter): number | null {
 /** The exact length, in bytes, of the answer the ABI describes for
  *  `functionName`; null when the getter is absent, has no outputs, or any
  *  output is dynamic (its length is then not fixed and this rule does not
- *  apply). */
-export function staticReturnBytes(abi: Abi, functionName: string): number | null {
-  const item = getAbiItem({ abi, name: functionName });
+ *  apply). `args` picks the overload, as it does for the call itself
+ *  (#2841); without it the first overload the ABI lists is described. */
+export function staticReturnBytes(abi: Abi, functionName: string, args?: readonly unknown[]): number | null {
+  const item = getAbiItem({ abi, name: functionName, ...(args === undefined ? {} : { args }) } as Parameters<
+    typeof getAbiItem
+  >[0]);
   if (!item || item.type !== 'function' || item.outputs.length === 0) return null;
   let total = 0;
   for (const o of item.outputs) {
@@ -96,7 +99,7 @@ export async function readStaticReturn(opts: {
   args?: readonly unknown[];
   blockNumber?: bigint;
 }): Promise<StaticReturnRead> {
-  const expectedBytes = staticReturnBytes(opts.abi, opts.functionName);
+  const expectedBytes = staticReturnBytes(opts.abi, opts.functionName, opts.args);
   if (expectedBytes === null) {
     throw new Error(`readStaticReturn: ${opts.functionName} has no static outputs in this ABI`);
   }
@@ -114,9 +117,14 @@ export async function readStaticReturn(opts: {
   const decoded = decodeFunctionResult({
     abi: opts.abi,
     functionName: opts.functionName,
+    args: opts.args,
     data,
   } as Parameters<typeof decodeFunctionResult>[0]) as unknown;
-  const item = getAbiItem({ abi: opts.abi, name: opts.functionName }) as { outputs: readonly unknown[] };
+  const item = getAbiItem({
+    abi: opts.abi,
+    name: opts.functionName,
+    ...(opts.args === undefined ? {} : { args: opts.args }),
+  } as Parameters<typeof getAbiItem>[0]) as { outputs: readonly unknown[] };
   return { kind: 'decoded', outputs: item.outputs.length === 1 ? [decoded] : (decoded as readonly unknown[]) };
 }
 

@@ -546,21 +546,14 @@ export async function maybeRefreshProtocolConfig(opts: {
       // eslint-disable-next-line no-console
       console.warn(`[configSnapshot] chain ${opts.chainId}: the config bundle is stored as unknown: ${bundle.reason}`);
     }
-    // `master_flags_json` / `master_flags_names_json` held the retired
-    // `getMasterFlags` tuple (#2812). Nothing reads them any more; the
-    // first column is NOT NULL, so it is written as an empty list until the
-    // follow-up migration drops both (#2840).
     await opts.env.DB.prepare(
       `INSERT INTO protocol_config
-         (chain_id, bundle_json, master_flags_json, grace_buckets_json, source_block, updated_at,
-          bundle_names_json, master_flags_names_json, knob_values_json, pause_intervals_json,
-          bundle_unread_reason)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8, ?9, ?10, ?11, ?13)
+         (chain_id, bundle_json, grace_buckets_json, source_block, updated_at,
+          bundle_names_json, knob_values_json, pause_intervals_json, bundle_unread_reason)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?7, ?8, ?9, ?11)
        ON CONFLICT (chain_id) DO UPDATE SET
          bundle_json = excluded.bundle_json,
-         master_flags_json = excluded.master_flags_json,
          bundle_names_json = excluded.bundle_names_json,
-         master_flags_names_json = excluded.master_flags_names_json,
          bundle_unread_reason = excluded.bundle_unread_reason,
          knob_values_json = excluded.knob_values_json,
          -- Codex #2822 r1 — a column a stale mark CLEARED (the scan that
@@ -569,11 +562,11 @@ export async function maybeRefreshProtocolConfig(opts: {
          -- writing it would restore the known-obsolete value as current. A
          -- column the mark left populated is not about that event, and a
          -- newer read of it is written as usual.
-         grace_buckets_json = CASE WHEN ?7 = 1 THEN NULL
+         grace_buckets_json = CASE WHEN ?6 = 1 THEN NULL
            WHEN protocol_config.stale_at_block > excluded.source_block
              AND protocol_config.grace_buckets_json IS NULL THEN NULL
            ELSE COALESCE(excluded.grace_buckets_json, protocol_config.grace_buckets_json) END,
-         pause_intervals_json = CASE WHEN ?12 = 1 THEN NULL
+         pause_intervals_json = CASE WHEN ?10 = 1 THEN NULL
            WHEN protocol_config.stale_at_block > excluded.source_block
              AND protocol_config.pause_intervals_json IS NULL THEN NULL
            ELSE COALESCE(excluded.pause_intervals_json, protocol_config.pause_intervals_json) END,
@@ -590,15 +583,13 @@ export async function maybeRefreshProtocolConfig(opts: {
       .bind(
         opts.chainId,
         // An unreadable bundle is stored as an empty list beside the reason
-        // (?13); the route serves the reason, never the list.
+        // (?11); the route serves the reason, never the list.
         bundle.kind === 'read' ? serializeTuple(bundle.positional) : '[]',
-        '[]', // master_flags_json, retired (#2812)
         graceBuckets === null ? null : serializeTuple(graceBuckets),
         Number(opts.blockNumber),
         now,
         invalidateGrace ? 1 : 0,
         bundleNames === null ? null : JSON.stringify(bundleNames),
-        null, // master_flags_names_json, retired (#2812)
         knobs === null ? null : JSON.stringify(knobs),
         pauseLog,
         invalidatePauseLog ? 1 : 0,

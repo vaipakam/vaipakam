@@ -12,13 +12,20 @@ import {
     IBalancerV2Vault,
     IFlashLoanRecipient
 } from "../interfaces/IBalancerV2Vault.sol";
+import {LibDiscountedLiquidation} from "../libraries/LibDiscountedLiquidation.sol";
 
-/// @title IRiskFacetDiscount
-/// @dev   Local alias for the `RiskFacet.triggerLiquidationDiscounted`
-///        selector. Lives here rather than as a full RiskFacet import
-///        to keep this contract independently deployable (no Diamond
-///        dependency at compile time beyond the function selector).
-interface IRiskFacetDiscount {
+/// @title IDiscountedLiquidationDiamond
+/// @dev   The two Diamond selectors this receiver calls. The preview's return
+///        type is the Diamond's own ({LibDiscountedLiquidation.Preview}), so
+///        the two can never decode differently; importing the library adds no
+///        bytecode here, and this contract stays deployable without the
+///        Diamond's code.
+interface IDiscountedLiquidationDiamond {
+    function previewDiscountedLiquidation(uint256 loanId)
+        external
+        view
+        returns (LibDiscountedLiquidation.Preview memory);
+
     function triggerLiquidationDiscounted(
         uint256 loanId,
         address recipient,
@@ -36,9 +43,10 @@ interface IRiskFacetDiscount {
  *         pays it to the Vaipakam DIAMOND at oracle-priced
  *         debt-plus-discount value, receives the borrower's
  *         collateral at the per-tier discount, swaps the collateral
- *         back to principal on an off-chain-ranked DEX, repays the
- *         flash-loan + fee, and forwards the net profit to the
- *         keeper-bot EOA.
+ *         back to principal on an off-chain-ranked DEX and repays the
+ *         flash-loan + fee. The net profit, and any seized collateral
+ *         beyond what the swap sold, stay in this contract as standing
+ *         balance until the OWNER withdraws them.
  *
  * @dev    Phase 3 of `docs/DesignsAndPlans/FlashLoanLiquidationPath.md`.
  *         Deployed per chain (one address per chain) alongside the
@@ -67,18 +75,20 @@ interface IRiskFacetDiscount {
  *         Reentrancy: each flash-loan provider's callback runs
  *         INSIDE that provider's flash-loan code path, so re-entry
  *         from outside is naturally blocked while the loan is open.
- *         The `_inFlight` flag also blocks a malicious nested
- *         `triggerLiquidationDiscounted` from re-entering one of
- *         our entry points (defence-in-depth — the DIAMOND's
- *         `ReentrancyGuard` already covers this).
+ *         Each entry point commits to ONE callback (the provider plus
+ *         the exact packed parameters) and the first matching callback
+ *         spends it, so a nested flash loan opened mid-run (Balancer V2
+ *         accepts any recipient) cannot run a second liquidation with
+ *         its own swap calldata (#2697). The DIAMOND's
+ *         `ReentrancyGuard` separately blocks a nested trigger.
  *
  *         Security notes:
  *           - Aave V3 + Balancer V2 callbacks validate
  *             `msg.sender` against the configured provider, AND
- *             validate the in-flight flag — both have to align
- *             for the callback to execute. An attacker calling
- *             our `executeOperation` directly will hit the
- *             `_inFlight` guard.
+ *             spend the run commitment — both have to align for
+ *             the callback to execute. A callback with no matching
+ *             commitment (a direct call, a nested or repeated
+ *             loan) reverts `NotInFlight`.
  *           - Swap calldata is provided OFF-CHAIN by the keeper
  *             bot (e.g. 0x v2 / 1inch v6 quote). The contract
  *             validates the post-swap balance covers the
@@ -118,30 +128,58 @@ contract FlashLoanLiquidator is
 
     // ─── Transient state ─────────────────────────────────────────────
 
-    /// @dev In-flight flag — set by the entry-point BEFORE calling
-    ///      the flash-loan provider, validated by the callback,
-    ///      cleared after. Prevents an attacker from invoking
-    ///      `executeOperation` / `receiveFlashLoan` directly with a
-    ///      forged `msg.sender` (the `msg.sender == provider` check
-    ///      already blocks that, but defence-in-depth).
-    bool private _inFlight;
+    /// @dev The ONE callback this contract will run next: the hash of the
+    ///      provider it borrowed from and the exact parameters it packed.
+    ///      Set by the entry point before calling the provider and CONSUMED
+    ///      (zeroed) by the first callback that matches it, so each owner
+    ///      call runs at most one liquidation (#2697). A bare in-flight flag
+    ///      was not enough: Balancer V2 lets anyone name this contract as a
+    ///      flash-loan recipient, so code running mid-run (an aggregator
+    ///      route, a token hook) could open a nested Balancer loan and have
+    ///      the callback run its own swap target and calldata while the flag
+    ///      was still up. A callback with no matching commitment reverts
+    ///      `NotInFlight`.
+    bytes32 private _expectedRun;
+
+    /// @dev One run's parameters, packed by {_prepare} and carried through
+    ///      the flash-loan provider to {_runLiquidation}.
+    struct Run {
+        uint256 loanId;
+        address collateralAsset;
+        uint256 sellAmount;
+        uint256 minProfit;
+        address swapTarget;
+        address swapAllowanceTarget;
+        bytes swapCalldata;
+    }
 
     // ─── Errors ──────────────────────────────────────────────────────
 
     error NotOwner();
     error NotFlashLoanProvider(address expected, address got);
     error WrongInitiator(address expected, address got);
+    /// @dev A provider callback that is not the run the entry point
+    ///      committed to, or a provider that returned without calling back.
     error NotInFlight();
     error ProviderNotConfigured();
     error SwapFailed();
     error InsufficientPostSwapBalance(uint256 needed, uint256 got);
     error InvalidTokenArrayLength(uint256 length);
+    /// @notice The Diamond's preview says the loan cannot be liquidated on
+    ///         the discount path now; `status` is its
+    ///         {LibDiscountedLiquidation.Status} reason.
+    error NotLiquidatable(uint256 loanId, uint8 status);
+    /// @notice The liquidation delivers less collateral than the swap
+    ///         calldata was quoted to sell.
+    error SeizureBelowQuote(uint256 seized, uint256 sellAmount);
 
     // ─── Events ──────────────────────────────────────────────────────
 
     /// @notice Emitted at the end of every successful
     ///         flash-loan-funded liquidation. Includes the gross +
-    ///         net profit for off-chain accounting.
+    ///         net profit for off-chain accounting. `collateralSold` is what
+    ///         the swap was quoted for; any seized collateral above it stays
+    ///         here as standing balance until the owner withdraws it.
     event FlashLoanLiquidationCompleted(
         uint256 indexed loanId,
         address indexed principalAsset,
@@ -149,6 +187,7 @@ contract FlashLoanLiquidator is
         uint256 totalDebt,
         uint256 flashLoanFee,
         uint256 collateralSeized,
+        uint256 collateralSold,
         uint256 swapProceeds,
         uint256 netProfit
     );
@@ -207,28 +246,30 @@ contract FlashLoanLiquidator is
     ///         liquidation via Aave V3.
     ///
     /// @dev    Workflow:
-    ///         1. Set in-flight flag.
-    ///         2. Call `flashLoanSimple` — Aave sends `totalDebt`
-    ///            of `principalAsset` to this contract.
-    ///         3. Aave invokes `executeOperation` synchronously.
-    ///         4. Inside the callback: approve DIAMOND, trigger
-    ///            discounted liquidation, swap seized collateral
-    ///            for more principal-asset via OWNER-supplied
-    ///            calldata.
-    ///         5. Approve Aave to sweep `totalDebt + premium`.
-    ///         6. Return true — Aave reclaims funds.
-    ///         7. Clear in-flight flag, emit event.
+    ///         1. Read the Diamond's preview of this liquidation
+    ///            ({_prepare}). It runs in this transaction, so its debt is
+    ///            exactly what the liquidation pulls and its seizure exactly
+    ///            what it delivers (#2697); the loan's assets come from it
+    ///            too, never from the caller.
+    ///         2. Set in-flight flag and call `flashLoanSimple` for exactly
+    ///            that debt.
+    ///         3. Aave invokes `executeOperation` synchronously; inside it,
+    ///            {_runLiquidation} pays the debt, receives the collateral,
+    ///            sells `sellAmount` of it and checks the run netted at least
+    ///            `minProfit` above its flash-loan fee.
+    ///         4. Approve Aave to sweep `debt + premium`; Aave reclaims.
+    ///         5. Clear in-flight flag.
     ///
     /// @param loanId               Loan to liquidate.
-    /// @param principalAsset       Loan's principal asset — what
-    ///                             we flash-loan.
-    /// @param collateralAsset      Loan's collateral asset — what
-    ///                             the DIAMOND will hand us, then
-    ///                             we swap back to principal.
-    /// @param totalDebt            Exact debt to pay the DIAMOND.
-    ///                             Caller computes off-chain from
-    ///                             `LoanFacet.getLoanDetails` +
-    ///                             current borrow-balance interest.
+    /// @param sellAmount           Collateral the swap calldata was quoted
+    ///                             to sell. The liquidation must deliver at
+    ///                             least this much; exactly this much is
+    ///                             offered to the swap.
+    /// @param minProfit            Least net profit, in principal-asset
+    ///                             base units, the run must leave after
+    ///                             repaying the flash loan and its fee. The
+    ///                             keeper sets it to the transaction's fee,
+    ///                             so a run never nets less than its gas.
     /// @param swapTarget           DEX / aggregator contract our
     ///                             swap calldata will target
     ///                             (e.g. 0x Settler, 1inch router).
@@ -236,74 +277,99 @@ contract FlashLoanLiquidator is
     ///                             the swap — sometimes ≠
     ///                             `swapTarget` (0x v2 / Permit2
     ///                             pattern).
-    /// @param swapCalldata         Pre-computed swap calldata.
+    /// @param swapCalldata         Pre-computed swap calldata selling
+    ///                             `sellAmount` of collateral for principal.
     function liquidateViaAaveV3(
         uint256 loanId,
-        address principalAsset,
-        address collateralAsset,
-        uint256 totalDebt,
+        uint256 sellAmount,
+        uint256 minProfit,
         address swapTarget,
         address swapAllowanceTarget,
         bytes calldata swapCalldata
     ) external onlyOwner {
         if (AAVE_V3_POOL == address(0)) revert ProviderNotConfigured();
-
-        bytes memory params = abi.encode(
-            loanId,
-            collateralAsset,
-            swapTarget,
-            swapAllowanceTarget,
-            swapCalldata
+        (address principalAsset, uint256 debt, bytes memory params) = _prepare(
+            loanId, sellAmount, minProfit, swapTarget, swapAllowanceTarget, swapCalldata
         );
-        _inFlight = true;
+        _expectedRun = _runHash(AAVE_V3_POOL, params);
         IAaveV3Pool(AAVE_V3_POOL).flashLoanSimple(
             address(this),
             principalAsset,
-            totalDebt,
+            debt,
             params,
             0 /* referralCode */
         );
-        _inFlight = false;
+        // The callback consumed the commitment; a provider that returned
+        // without calling back would leave it set, so the run reverts.
+        if (_expectedRun != bytes32(0)) revert NotInFlight();
     }
 
     /// @notice Initiate a flash-loan-funded discount-path
     ///         liquidation via Balancer V2 — fallback when Aave V3
-    ///         doesn't list `principalAsset` on this chain OR
+    ///         doesn't list the principal asset on this chain OR
     ///         when its premium would push the trade unprofitable.
-    /// @dev    Balancer V2's flash-loan is fee-less on assets the
-    ///         Vault already holds (typical for major assets).
-    ///         Multi-asset array shape with a single entry.
+    ///         Same parameters and checks as {liquidateViaAaveV3}.
+    /// @dev    Balancer V2 charges its protocol flash-loan fee percentage,
+    ///         which the Vault passes to the callback; the run must cover
+    ///         whatever it is. Multi-asset array shape with a single entry.
     function liquidateViaBalancerV2(
         uint256 loanId,
-        address principalAsset,
-        address collateralAsset,
-        uint256 totalDebt,
+        uint256 sellAmount,
+        uint256 minProfit,
         address swapTarget,
         address swapAllowanceTarget,
         bytes calldata swapCalldata
     ) external onlyOwner {
         if (BALANCER_V2_VAULT == address(0)) revert ProviderNotConfigured();
-
-        bytes memory params = abi.encode(
-            loanId,
-            collateralAsset,
-            swapTarget,
-            swapAllowanceTarget,
-            swapCalldata
+        (address principalAsset, uint256 debt, bytes memory params) = _prepare(
+            loanId, sellAmount, minProfit, swapTarget, swapAllowanceTarget, swapCalldata
         );
         address[] memory tokens = new address[](1);
         tokens[0] = principalAsset;
         uint256[] memory amounts = new uint256[](1);
-        amounts[0] = totalDebt;
+        amounts[0] = debt;
 
-        _inFlight = true;
+        _expectedRun = _runHash(BALANCER_V2_VAULT, params);
         IBalancerV2Vault(BALANCER_V2_VAULT).flashLoan(
             IFlashLoanRecipient(address(this)),
             tokens,
             amounts,
             params
         );
-        _inFlight = false;
+        if (_expectedRun != bytes32(0)) revert NotInFlight();
+    }
+
+    /// @dev Read the Diamond's preview, refuse a run the preview already
+    ///      rules out, and pack the callback's parameters. Refusing here,
+    ///      before any flash loan, means a keeper's gas estimate names the
+    ///      reason instead of a provider's revert.
+    function _prepare(
+        uint256 loanId,
+        uint256 sellAmount,
+        uint256 minProfit,
+        address swapTarget,
+        address swapAllowanceTarget,
+        bytes calldata swapCalldata
+    ) private view returns (address principalAsset, uint256 debt, bytes memory params) {
+        LibDiscountedLiquidation.Preview memory p =
+            IDiscountedLiquidationDiamond(DIAMOND).previewDiscountedLiquidation(loanId);
+        if (p.status != LibDiscountedLiquidation.Status.Ready) {
+            revert NotLiquidatable(loanId, uint8(p.status));
+        }
+        if (p.seized < sellAmount) revert SeizureBelowQuote(p.seized, sellAmount);
+        principalAsset = p.principalAsset;
+        debt = p.debt;
+        params = abi.encode(
+            Run({
+                loanId: loanId,
+                collateralAsset: p.collateralAsset,
+                sellAmount: sellAmount,
+                minProfit: minProfit,
+                swapTarget: swapTarget,
+                swapAllowanceTarget: swapAllowanceTarget,
+                swapCalldata: swapCalldata
+            })
+        );
     }
 
     // ─── Provider callbacks ──────────────────────────────────────────
@@ -318,10 +384,10 @@ contract FlashLoanLiquidator is
         address initiator,
         bytes calldata params
     ) external returns (bool) {
-        if (!_inFlight) revert NotInFlight();
         if (msg.sender != AAVE_V3_POOL) {
             revert NotFlashLoanProvider(AAVE_V3_POOL, msg.sender);
         }
+        _consumeRun(AAVE_V3_POOL, params);
         if (initiator != address(this)) {
             revert WrongInitiator(address(this), initiator);
         }
@@ -344,10 +410,10 @@ contract FlashLoanLiquidator is
         uint256[] memory feeAmounts,
         bytes memory userData
     ) external {
-        if (!_inFlight) revert NotInFlight();
         if (msg.sender != BALANCER_V2_VAULT) {
             revert NotFlashLoanProvider(BALANCER_V2_VAULT, msg.sender);
         }
+        _consumeRun(BALANCER_V2_VAULT, userData);
         // We always flash-loan a single asset — defensive against
         // a Vault that erroneously hands us a different shape.
         if (tokens.length != 1 || amounts.length != 1 || feeAmounts.length != 1) {
@@ -365,6 +431,20 @@ contract FlashLoanLiquidator is
         tokens[0].safeTransfer(BALANCER_V2_VAULT, amounts[0] + feeAmounts[0]);
     }
 
+    /// @dev The commitment for one run: the provider and the exact params.
+    function _runHash(address provider, bytes memory params) private pure returns (bytes32) {
+        return keccak256(abi.encode(provider, params));
+    }
+
+    /// @dev Accept the callback only if it is the run the entry point
+    ///      committed to, and spend the commitment so no second callback
+    ///      (nested or repeated) can run inside the same owner call.
+    function _consumeRun(address provider, bytes memory params) private {
+        bytes32 expected = _expectedRun;
+        if (expected == bytes32(0) || expected != _runHash(provider, params)) revert NotInFlight();
+        _expectedRun = bytes32(0);
+    }
+
     // ─── Shared post-flash-loan logic ────────────────────────────────
 
     /// @dev Decode `params`, approve the DIAMOND, trigger the
@@ -378,85 +458,92 @@ contract FlashLoanLiquidator is
     ///      owner sweeps it, so an absolute check would let a
     ///      loss-making swap pass by spending that standing balance and
     ///      still report a positive `netProfit`. The run must return at
-    ///      least its own flash-loan fee on top of what it started with,
-    ///      or it reverts. Likewise only collateral that arrived from
-    ///      the Diamond in this run is offered to the swap.
+    ///      least its own flash-loan fee plus `minProfit` on top of what it
+    ///      started with, or it reverts. Likewise only collateral that
+    ///      arrived from the Diamond in this run is offered to the swap,
+    ///      and only the `sellAmount` the swap was quoted for.
     function _runLiquidation(
         address principalAsset,
         uint256 totalDebt,
         uint256 fee,
         bytes memory params
     ) internal {
-        (
-            uint256 loanId,
-            address collateralAsset,
-            address swapTarget,
-            address swapAllowanceTarget,
-            bytes memory swapCalldata
-        ) = abi.decode(params, (uint256, address, address, address, bytes));
+        Run memory r = abi.decode(params, (Run));
 
-        // 0. Entry snapshots. `principalAtEntry` already includes the
-        // flash-loaned `totalDebt`; repaying `totalDebt + fee` leaves
-        // the standing balance intact only if the run ends at or above
+        // 0. Entry snapshot. It already includes the flash-loaned
+        // `totalDebt`; repaying `totalDebt + fee` leaves the standing
+        // balance intact only if the run ends at or above
         // `principalAtEntry + fee`.
         uint256 principalAtEntry = IERC20(principalAsset).balanceOf(address(this));
-        uint256 collateralAtEntry = IERC20(collateralAsset).balanceOf(address(this));
 
-        // 1. Approve DIAMOND for the exact debt amount. The
-        // DIAMOND's `safeTransferFrom` consumes the entire
-        // allowance — no leftover risk.
-        IERC20(principalAsset).forceApprove(DIAMOND, totalDebt);
+        // 1–3. Pay the debt and measure the seizure.
+        uint256 collateralSeized = _seize(r, principalAsset, totalDebt);
 
-        // 2. Trigger discounted liquidation. Collateral lands on
-        // this contract (we passed `address(this)` as recipient).
-        IRiskFacetDiscount(DIAMOND).triggerLiquidationDiscounted(
-            loanId,
-            address(this),
-            "" /* extraData reserved for v2 */
-        );
+        // 4. Swap `sellAmount` of collateral → principal using off-chain
+        // calldata quoted for exactly that amount.
+        uint256 swapProceeds = _swap(r, principalAsset);
 
-        // 3. Measure the seized collateral: what arrived in this run.
-        // The exact size depends on the DIAMOND's per-tier discount
-        // math applied to the loan's oracle-priced collateral value;
-        // we don't try to second-guess it on-chain.
-        uint256 collateralNow = IERC20(collateralAsset).balanceOf(address(this));
-        uint256 collateralSeized = collateralNow > collateralAtEntry ? collateralNow - collateralAtEntry : 0;
-
-        // 4. Swap collateral → principal using off-chain calldata.
-        // The keeper bot computed the route + min-output; if the
-        // realised proceeds are insufficient to repay the loan +
-        // fee, the balance check below reverts the whole tx.
-        uint256 swapProceeds = 0;
-        if (collateralSeized > 0) {
-            IERC20(collateralAsset).forceApprove(swapAllowanceTarget, collateralSeized);
-            uint256 principalBefore = IERC20(principalAsset).balanceOf(address(this));
-            (bool ok, ) = swapTarget.call(swapCalldata);
-            if (!ok) revert SwapFailed();
-            uint256 principalAfter = IERC20(principalAsset).balanceOf(address(this));
-            swapProceeds = principalAfter > principalBefore ? principalAfter - principalBefore : 0;
-            // Clean up the allowance — defence-in-depth against an
-            // aggregator that pulled less than approved.
-            IERC20(collateralAsset).forceApprove(swapAllowanceTarget, 0);
-        }
-
-        // 5. This run must cover its own flash-loan fee without
-        // touching the standing balance it started with.
+        // 5. This run must cover its own flash-loan fee and `minProfit`
+        // without touching the standing balance it started with.
         uint256 needed = principalAtEntry + fee;
         uint256 finalBalance = IERC20(principalAsset).balanceOf(address(this));
-        if (finalBalance < needed) {
-            revert InsufficientPostSwapBalance(needed, finalBalance);
+        if (finalBalance < needed + r.minProfit) {
+            revert InsufficientPostSwapBalance(needed + r.minProfit, finalBalance);
         }
 
         emit FlashLoanLiquidationCompleted(
-            loanId,
+            r.loanId,
             principalAsset,
-            collateralAsset,
+            r.collateralAsset,
             totalDebt,
             fee,
             collateralSeized,
+            r.sellAmount,
             swapProceeds,
             finalBalance - needed /* this run's net profit */
         );
+    }
+
+    /// @dev Approve the DIAMOND for the debt it previewed in this
+    ///      transaction (#2697), which is what it pulls; trigger the
+    ///      liquidation with this contract as recipient; clear the
+    ///      allowance whatever it consumed; and return the collateral that
+    ///      arrived in this run. The preview already promised at least
+    ///      `sellAmount`; measured again because a balance is the only
+    ///      figure this contract trusts.
+    function _seize(Run memory r, address principalAsset, uint256 totalDebt)
+        private
+        returns (uint256 collateralSeized)
+    {
+        uint256 collateralAtEntry = IERC20(r.collateralAsset).balanceOf(address(this));
+        IERC20(principalAsset).forceApprove(DIAMOND, totalDebt);
+        IDiscountedLiquidationDiamond(DIAMOND).triggerLiquidationDiscounted(
+            r.loanId,
+            address(this),
+            "" /* extraData reserved for v2 */
+        );
+        IERC20(principalAsset).forceApprove(DIAMOND, 0);
+        uint256 collateralNow = IERC20(r.collateralAsset).balanceOf(address(this));
+        collateralSeized = collateralNow > collateralAtEntry ? collateralNow - collateralAtEntry : 0;
+        if (collateralSeized < r.sellAmount) revert SeizureBelowQuote(collateralSeized, r.sellAmount);
+    }
+
+    /// @dev Offer exactly `sellAmount` of collateral to the swap and return
+    ///      the principal it delivered. The keeper bot computed the route +
+    ///      min-output; if the realised proceeds do not cover the flash loan,
+    ///      its fee and `minProfit`, the caller's balance check reverts the
+    ///      whole tx.
+    function _swap(Run memory r, address principalAsset) private returns (uint256 swapProceeds) {
+        if (r.sellAmount == 0) return 0;
+        IERC20(r.collateralAsset).forceApprove(r.swapAllowanceTarget, r.sellAmount);
+        uint256 principalBefore = IERC20(principalAsset).balanceOf(address(this));
+        (bool ok, ) = r.swapTarget.call(r.swapCalldata);
+        if (!ok) revert SwapFailed();
+        uint256 principalAfter = IERC20(principalAsset).balanceOf(address(this));
+        swapProceeds = principalAfter > principalBefore ? principalAfter - principalBefore : 0;
+        // Clean up the allowance — defence-in-depth against an
+        // aggregator that pulled less than approved.
+        IERC20(r.collateralAsset).forceApprove(r.swapAllowanceTarget, 0);
     }
 
     // ─── Owner withdraw / rescue ─────────────────────────────────────

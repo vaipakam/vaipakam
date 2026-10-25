@@ -37,6 +37,7 @@ import { substituteLiveValuesInMarkdown } from './liveValueMarkdown.ts';
 // The SAME decode + freshness rule the rendered pages apply, not a
 // second opinion about the same rail (#1664 item 3).
 import { fetchProtocolConfigSnapshot } from '../src/lib/protocolConfigSnapshot.ts';
+import { indexerOrigin } from '../src/lib/indexerOrigin.ts';
 // Read the same `.env*` files Vite gives the bundle (Codex #1895 r1).
 // A process.env-only read here published one deployment's figures while
 // the rendered pages consulted another, with nothing saying so.
@@ -62,16 +63,14 @@ const ORIGIN = (
 const DOCS_CONFIG_CHAIN_ID = readViteEnv('VITE_DOCS_CONFIG_CHAIN_ID') ?? '84532';
 
 /**
- * The indexer this build's pages actually read — same env var, default
- * and trailing-slash normalisation as `useProtocolConfig` (Codex #1821
- * r1 P2). Hard-coding production here made a preview or self-hosted
+ * The indexer this build's pages actually read — the same env var, through
+ * the same rule (`src/lib/indexerOrigin.ts`) as `useProtocolConfig` (Codex
+ * #1821 r1 P2; one rule since #43). Hard-coding production here made a preview or self-hosted
  * build advertise an indexer its own pages never consult: the chain id
  * would agree while the SERVICE did not, which is the same "figures for
  * someone else's deployment" failure the chain pin exists to prevent.
  */
-const INDEXER_ORIGIN = (
-  readViteEnv('VITE_INDEXER_ORIGIN') ?? 'https://indexer.vaipakam.com'
-).replace(/\/+$/, '');
+const INDEXER_ORIGIN = indexerOrigin(readViteEnv('VITE_INDEXER_ORIGIN'));
 
 /**
  * Longer than the browser's 4 s. A reader waiting on a page is the
