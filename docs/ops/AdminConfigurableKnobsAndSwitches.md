@@ -1037,10 +1037,20 @@ setters and getters are gone. Their storage slots are kept, unused.
 The governance lever over matching. Defaults `false` post-deploy; the
 deploy scripts turn it on.
 
-- **While off:** `matchOffers` and `matchIntent` (and the match
-  preview) refuse with `FunctionDisabled(3)`, and an accepted offer is
-  single-fill.
-- **While on:** a ranged offer can be filled across several matches.
+- **While off:** the three matchers, `matchOffers`, `matchSignedOffer`
+  and `matchIntent`, revert `FunctionDisabled(3)`, and an accepted offer
+  is single-fill. The previews say so without reverting:
+  `OfferMatchFacet.previewMatch` returns `MatchError.MatcherDisabled`,
+  and `RiskPreviewFacet.previewIntent` returns
+  `IntentError.MatcherDisabled`. Before #2812, `previewMatch` did not
+  check the switch and could return `Ok` for a match that would revert.
+  An integration should read `getPartialFillEnabled` (or the preview's
+  code) before it submits a match.
+- **While on:** a ranged offer can be filled across several matches,
+  and an offer nobody has filled yet cannot be cancelled in the first
+  5 minutes after it is created (unless it has expired). The cooldown
+  stops a cancel being slipped in ahead of a match that is already
+  pending.
 - **Getter:** `ConfigFacet.getPartialFillEnabled() -> bool`
   (also a field of `getProtocolConfigBundle`).
 - **Setter:** `ConfigFacet.setPartialFillEnabled(bool)` (`ADMIN_ROLE`;

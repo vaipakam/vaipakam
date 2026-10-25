@@ -2123,6 +2123,7 @@
       "noGasDiscount": "VPFI 割引はネットワーク gas を減らしません。",
       "withdrawWarning": "VPFI を引き出すと、今後の手数料割引が下がる可能性があります。",
       "belowMinNote": "{{floor}} VPFI 未満の保有では手数料割引はありません。",
+      "tierTableUnknown": "現在このネットワークから割引ティアを読み取れないため、ここには表示していません。",
       "notOnThisChain": "{{chain}} では VPFI 入金はまだ利用できません。Vaipakam の他の機能は VPFI なしで動作します。",
       "tokenChanged": "レビュー後に VPFI トークン設定が変わりました。何も承認されていません — 更新後の数値を確認して再試行してください。",
       "tokenCheckRetry": "現在 VPFI トークンを確認できませんでした — 何も承認されていません。少し待って再試行してください。",

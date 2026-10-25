@@ -2123,6 +2123,7 @@
       "noGasDiscount": "您的 VPFI 折扣不会降低网络 gas。",
       "withdrawWarning": "提取 VPFI 可能降低未来手续费折扣。",
       "belowMinNote": "持有少于 {{floor}} VPFI 不会获得费用折扣。",
+      "tierTableUnknown": "目前无法从此网络读取折扣等级，因此这里不显示任何等级。",
       "notOnThisChain": "{{chain}} 上尚不能存入 VPFI。Vaipakam 的其他功能无需 VPFI 也可使用。",
       "tokenChanged": "VPFI token 配置在您审核后发生变化。没有批准任何内容 — 请检查更新后的数字并重试。",
       "tokenCheckRetry": "刚才无法确认 VPFI token — 没有批准任何内容。请稍后重试。",

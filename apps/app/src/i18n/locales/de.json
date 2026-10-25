@@ -2123,6 +2123,7 @@
       "noGasDiscount": "Ihr VPFI-Rabatt reduziert kein Netzwerk-Gas.",
       "withdrawWarning": "Das Abheben von VPFI kann künftige Gebührenrabatte senken.",
       "belowMinNote": "Das Halten von weniger als {{floor}} VPFI bringt keinen Gebührenrabatt.",
+      "tierTableUnknown": "Die Rabattstufen können von diesem Netzwerk gerade nicht gelesen werden, daher wird hier keine angezeigt.",
       "notOnThisChain": "VPFI-Einzahlungen sind auf {{chain}} noch nicht verfügbar. Alles andere auf Vaipakam funktioniert ohne VPFI.",
       "tokenChanged": "Die VPFI-Token-Konfiguration hat sich seit Ihrer Prüfung geändert. Es wurde nichts freigegeben — bitte prüfen Sie die aktualisierten Zahlen und versuchen Sie es erneut.",
       "tokenCheckRetry": "Wir konnten den VPFI-Token gerade nicht bestätigen — es wurde nichts freigegeben. Bitte versuchen Sie es gleich noch einmal.",

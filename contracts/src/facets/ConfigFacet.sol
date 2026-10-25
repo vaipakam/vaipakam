@@ -1411,8 +1411,9 @@ contract ConfigFacet is DiamondAccessControl {
     /// Matching is the gated operation, and this flag is its lever.
 
     /// @notice Toggle the order matcher and multi-fill. While false (the
-    ///         fresh-deploy default), `matchOffers` / `matchIntent` refuse
-    ///         with `FunctionDisabled(3)` and an accepted offer is
+    ///         fresh-deploy default), `matchOffers` / `matchSignedOffer` /
+    ///         `matchIntent` refuse with `FunctionDisabled(3)` (`previewMatch` /
+    ///         `previewIntent` report `MatcherDisabled`) and an accepted offer is
     ///         single-fill, whatever range capacity it has left. While true,
     ///         a ranged offer can be filled across several matches.
     function setPartialFillEnabled(bool enabled)

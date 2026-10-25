@@ -15,7 +15,12 @@ carries the two range fields. The storage slots stay where they are, marked
 retired, so the layout is unchanged. The matching kill-switch (partial fill)
 stays: while it is off the order matchers refuse and an accepted offer fills
 once, and while it is on a ranged offer can be filled across several matches.
-The deploy scripts now turn on only that switch. A curated in-place refresh
+The match preview now reports
+that switch too: before this change it did not check it, so with matching off
+it could say a match would succeed when the match itself would be refused. It
+now reports the matcher as disabled, and a paused protocol or a sanctioned
+matcher, the other two checks the match makes first, are reported the same
+way. The deploy scripts now turn on only that switch. A curated in-place refresh
 removes the six retired entry points from a Diamond that still routes them, so
 the old build cannot keep answering for them.
 

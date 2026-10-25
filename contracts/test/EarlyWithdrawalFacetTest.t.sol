@@ -3295,6 +3295,9 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      on-chain `SaleVehicleNotMatchable` revert so a matching bot never sees
     ///      an `Ok` verdict for a sale vehicle that always reverts on submit.
     function testPreviewMatchFlagsSaleVehicle() public {
+        // Matching on: with it off, previewMatch reports the switch
+        // before any offer-level verdict (#2812).
+        ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         uint256 saleOfferId = _listSaleOffer();
         LibOfferMatch.MatchResult memory r =
             OfferMatchFacet(address(diamond)).previewMatch(buyOfferId, saleOfferId, address(this), address(this));

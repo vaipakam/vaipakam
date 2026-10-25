@@ -4909,6 +4909,12 @@ const copySource = {
       `Holding under {{floor}} VPFI earns no fee discount.`,
       ['floor'],
     ),
+    // #2812 r3 — the tier table could not be read on this network (no
+    // indexer snapshot, and the configuration read failed or answered in
+    // another shape). No figures are shown in its place: a default set
+    // would read as this network's live tiers.
+    tierTableUnknown:
+      'The discount tiers can’t be read from this network right now, so none are shown here.',
     notOnThisChain: tmpl(
       `VPFI deposits aren’t available on {{chain}} yet. Everything else on Vaipakam works without VPFI.`,
       ['chain'],

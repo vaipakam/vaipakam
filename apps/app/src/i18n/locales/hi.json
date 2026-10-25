@@ -2123,6 +2123,7 @@
       "noGasDiscount": "आपका VPFI discount network gas reduce नहीं करता।",
       "withdrawWarning": "VPFI withdraw करने से future fee discounts घट सकते हैं।",
       "belowMinNote": "{{floor}} VPFI से कम hold करने पर fee discount नहीं मिलता।",
+      "tierTableUnknown": "इस समय इस नेटवर्क से छूट के स्तर पढ़े नहीं जा सकते, इसलिए यहाँ कोई नहीं दिखाया गया है।",
       "notOnThisChain": "VPFI deposits अभी {{chain}} पर available नहीं हैं। Vaipakam पर बाकी सब VPFI के बिना चलता है।",
       "tokenChanged": "Review के बाद VPFI token configuration बदल गया। कुछ approve नहीं हुआ — updated numbers check करके फिर try करें।",
       "tokenCheckRetry": "अभी VPFI token confirm नहीं कर सके — कुछ approve नहीं हुआ। थोड़ी देर में try करें।",

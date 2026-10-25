@@ -8,6 +8,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -194,6 +195,9 @@ contract OfferFillModeTest is SetupTest {
     // ─── AON match-time enforcement (via previewMatch) ──────────────
 
     function testPreviewMatchAonRequiresFullFillRevertsOnPartial() public {
+        // Matching on: with it off, previewMatch reports the switch
+        // before any offer-level verdict (#2812).
+        ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         // Lender AON at amount=1000 against borrower partial range
         // [500, 2000]. The match-amount midpoint would be 1000 (the
         // overlap), so this case naturally satisfies AON. To force a
@@ -228,6 +232,9 @@ contract OfferFillModeTest is SetupTest {
     }
 
     function testPreviewMatchBothSidesAonMatchedExact() public {
+        // Matching on: with it off, previewMatch reports the switch
+        // before any offer-level verdict (#2812).
+        ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         // Symmetric AON: both lender and borrower carry AON at the
         // same amount. previewMatch's overlap math + the AON gate
         // converge cleanly.
@@ -240,6 +247,9 @@ contract OfferFillModeTest is SetupTest {
     }
 
     function testPreviewMatchAonRevertsOnSizeMismatch() public {
+        // Matching on: with it off, previewMatch reports the switch
+        // before any offer-level verdict (#2812).
+        ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         // Lender AON at 1000 + borrower partial floor 2000 (above AON
         // size). lenderRemaining = 1000 → hi = 1000; lo = max(1000,
         // 2000) = 2000 → lo > hi → AmountNoOverlap fires BEFORE the

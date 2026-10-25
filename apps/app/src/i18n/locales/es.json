@@ -2123,6 +2123,7 @@
       "noGasDiscount": "Tu descuento VPFI no reduce el gas de red.",
       "withdrawWarning": "Retirar VPFI puede reducir descuentos de comisiones futuros.",
       "belowMinNote": "Mantener menos de {{floor}} VPFI no otorga descuento de comisiones.",
+      "tierTableUnknown": "Los niveles de descuento no se pueden leer desde esta red en este momento, así que aquí no se muestra ninguno.",
       "notOnThisChain": "Los depósitos VPFI aún no están disponibles en {{chain}}. Todo lo demás en Vaipakam funciona sin VPFI.",
       "tokenChanged": "La configuración del token VPFI cambió desde que revisaste. No se aprobó nada — revisa los números actualizados e inténtalo de nuevo.",
       "tokenCheckRetry": "No pudimos confirmar el token VPFI ahora mismo — no se aprobó nada. Inténtalo de nuevo en un momento.",
