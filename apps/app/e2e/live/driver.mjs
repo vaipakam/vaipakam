@@ -40,7 +40,9 @@ import { chromium } from '@playwright/test';
 import {
   createPublicClient,
   createWalletClient,
+  getAddress,
   http,
+  isAddress,
   numberToHex,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -1122,6 +1124,15 @@ export async function launch({
   // visitor journey counts connection modals for exactly this reason
   // (#2069 r15).
   keyless = false,
+  // watchAddress: inject the wallet over an address this process does NOT
+  // hold — no key is read, and the session is read-only (every signing or
+  // sending request is refused and recorded, like `readOnly`). For a drive
+  // that observes a page as some wallet on the live chain, a wallet it has
+  // found in public data rather than one of ours: the page sees that wallet
+  // connected, and nothing can move its funds because no key exists here.
+  // `live-position-observe.mjs` carries its own provider of the same shape
+  // from before this option; this is the shared one.
+  watchAddress = null,
   // onSetupFailure: what a browser/context SETUP failure does.
   //
   //   'blocked' (default) — exit 2 immediately. Right for a drive that
@@ -1166,6 +1177,18 @@ export async function launch({
   pinnedChainId = null,
 } = {}) {
   requireSiteUrl();
+  const watching = watchAddress !== null;
+  if (watching) {
+    if (typeof watchAddress !== 'string' || !isAddress(watchAddress, { strict: false })) {
+      blockedSync(`launch({ watchAddress }) needs an address (got ${JSON.stringify(watchAddress)})`);
+    }
+    if (keyless || signingGate) {
+      blockedSync('launch({ watchAddress }) injects a watch-only wallet — it cannot be combined with keyless or signingGate');
+    }
+    // Watch-only IS read-only: there is no key to sign with, and a page that
+    // asks to sign or send must be recorded, not answered with a bare error.
+    readOnly = true;
+  }
   if (signingGate) {
     if (typeof signingGate !== 'function' || !CHAINS[pinnedChainId]) {
       blockedSync(
@@ -1194,7 +1217,9 @@ export async function launch({
   // `blockedSync` is still the right default — a driver that never asked
   // to accumulate should stop at a bad credential.
   let account = null;
-  if (!keyless) {
+  if (watching) {
+    account = { address: getAddress(watchAddress) };
+  } else if (!keyless) {
     if (onSetupFailure === 'throw') {
       // Same validator as `walletFor`, different transport (round 52 P2).
       // This branch used to reimplement all four checks so it could raise
@@ -1596,7 +1621,13 @@ export async function launch({
   async function dispatch({ method, params }) {
     const { chain, rpc } = CHAINS[chainId];
     const pub = createPublicClient({ chain, transport: http(rpc) });
-    const wallet = createWalletClient({ chain, transport: http(rpc), account });
+    // A watch-only session has an address and no key; `readOnly` refuses
+    // every write before this client could be asked to sign.
+    const wallet = createWalletClient({
+      chain,
+      transport: http(rpc),
+      account: watching ? account.address : account,
+    });
     rpcLog.push(method);
     if (readOnly && WRITE_METHODS.has(method)) {
       // Land wallet-level refusals in the SAME violations list as the
