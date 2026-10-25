@@ -240,8 +240,7 @@ contract RiskSplitLiquidationFacet is
 
         // Calculate debt — identical to {RiskFacet.triggerLiquidation}. #915 —
         // `currentBorrowBalance` nets `interestSettled` (periodic-settled interest).
-        uint256 endTime = loan.startTime + loan.durationDays * 1 days;
-        uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
+        uint256 lateFee = LibVaipakam.calculateLateFee(loanId);
         uint256 totalDebt = LibEntitlement.currentBorrowBalance(loan) + lateFee;
         uint256 interestPortion = totalDebt - loan.principal;
 

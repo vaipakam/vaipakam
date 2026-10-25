@@ -19,6 +19,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
+import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -72,6 +73,9 @@ contract ReplaceStaleFacets is DeployDiamond {
     /// @notice #2419 - the target Diamond predates the 1e18 numeraire value
     ///         rule; see {_requireNumeraireValueRule}.
     error PredatesNumeraireValueRule(address diamond);
+    /// @notice #668 / #935 - the target Diamond predates the loan clock (the
+    ///         global pause credit); see {_requireLoanClock}.
+    error PredatesLoanClock(address diamond);
 
     function run() external override {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -106,6 +110,9 @@ contract ReplaceStaleFacets is DeployDiamond {
         // #2419 - and one from before the 1e18 numeraire value rule; see
         // {_requireNumeraireValueRule}.
         _requireNumeraireValueRule(diamond);
+        // #668 / #935 - and one from before the loan clock; see
+        // {_requireLoanClock}.
+        _requireLoanClock(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -426,6 +433,22 @@ contract ReplaceStaleFacets is DeployDiamond {
             IDiamondLoupe(diamond).facetAddress(NumeraireValueFacet.getLiquidNumeraireValue.selector)
                 == address(0)
         ) revert PredatesNumeraireValueRule(diamond);
+    }
+
+    /// @dev #668 / #935 (owner decision D2) - refuse a Diamond from before
+    ///      the loan clock. Every facet that reads a loan deadline moved onto
+    ///      {LibLoanClock} in one change, and this curated set carries only
+    ///      some of them: run across the boundary it would leave the default,
+    ///      repay and late-fee paths reading different due dates, so a loan
+    ///      could be defaultable on one facet while still repayable without a
+    ///      late fee on another. Crossing the boundary is a fresh deploy or
+    ///      `RefreshAllFacetsInPlace`, never this refresh. The marker is the
+    ///      routing of `LoanFacet.getLoanDeadlines`, which D2 introduced.
+    ///      Called before the broadcast starts, so a refused run sends nothing.
+    function _requireLoanClock(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(LoanFacet.getLoanDeadlines.selector) == address(0)) {
+            revert PredatesLoanClock(diamond);
+        }
     }
 
     /// @dev RL-1 (Codex #1302 P2) — split `selectors` into the subset the

@@ -1564,11 +1564,6 @@
   },
   {
     "type": "error",
-    "name": "EnforcedPause",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "ExpectedSourceListUnusable",
     "inputs": []
   },

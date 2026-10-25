@@ -17,12 +17,14 @@ import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {TreasuryFacet} from "../../src/facets/TreasuryFacet.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 import {RevertProbe} from "../lib/RevertProbe.sol";
+import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
+import {LibPausable} from "../../src/libraries/LibPausable.sol";
 
 /**
  * @title PositiveFlowsOperatorAdmin
  * @notice Operator and compliance surfaces (#848 Phase 1): a flagged wallet's
  *         Tier-1 refusal with its Tier-2 close-out left open, per-asset pause,
- *         global pause, the treasury accrual surface, and master-flag dormancy.
+ *         global pause, treasury accrual and withdrawal, and an admin fee knob inside its bounds.
  *
  *         Moved from the retired `AnvilNewPositiveFlows` suite, whose `N`
  *         labels the comments below still use in places; {PositiveFlowsBase}
@@ -41,9 +43,9 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
             "PF-323");
         list[2] = Scenario("PF-322", "Global pause and unpause",
             "PF-322");
-        list[3] = Scenario("PF-329", "Treasury accrual surface across a repaid loan",
+        list[3] = Scenario("PF-329", "Treasury receives the initiation fee; a Diamond-held balance is withdrawn",
             "PF-329");
-        list[4] = Scenario("PF-324", "Master-flag dormancy: range amounts off, then on",
+        list[4] = Scenario("PF-324", "Admin fee knob: above the cap refused; inside it, the getter and the next loan follow",
             "PF-324");
     }
 
@@ -52,7 +54,7 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
         else if (index == 1) _pauseAsset();
         else if (index == 2) _globalPause();
         else if (index == 3) _treasuryAccrual();
-        else if (index == 4) _masterFlagDormancy();
+        else if (index == 4) _feeKnobInsideBounds();
         else revert("PositiveFlowsOperatorAdmin: no scenario at index");
     }
 
@@ -96,16 +98,19 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
         vm.stopBroadcast();
         console.log("Flagged borrower:", borrower);
 
-        // Step 3: verify the borrower is now flagged (Tier-1 deny is
-        // exercised end-to-end by NEG-S1 in AnvilNegativeFlows; here we
-        // just assert the sanctions state via a view call). Wrapping
-        // the try-revert in `vm.startBroadcast` would fail in
-        // `--broadcast` mode because forge re-attempts every tx the
-        // simulation issued — even ones inside try/catch — and reports
-        // them as broadcast failures.
+        // Step 3: the Diamond reads the flag, and a Tier-1 entry point
+        // refuses the flagged wallet by name. The refusal is probed in the
+        // simulation only (`RevertProbe`): a reverting call under
+        // `vm.startBroadcast` would be replayed on chain and abort the run.
         bool isFlagged = ProfileFacet(diamond).isSanctionedAddress(borrower);
         require(isFlagged, "PF-008: borrower should be flagged on the oracle");
-        console.log("Tier-1 deny gate is armed (oracle flag verified via view-call)");
+        _requireRefused(
+            borrower,
+            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, _borrowerOfferStandard()),
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, borrower),
+            "PF-008: createOffer by a flagged wallet should revert SanctionedAddress(borrower)"
+        );
+        console.log("Tier-1 createOffer refused the flagged borrower with SanctionedAddress");
 
         // Step 4: borrower repays the EXISTING loan — should succeed
         // (Tier-2 close-out stays open).
@@ -153,19 +158,15 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
         );
         console.log("USDC paused; isAssetPaused == true");
 
-        // Step 2: assertion of the gate state. We deliberately do NOT
-        // attempt a `address(diamond).call(...)` to a paused-asset
-        // createOffer here — forge `--broadcast` re-simulates every
-        // tx the script issued during the broadcast pre-flight, and
-        // a low-level call wrapped in `vm.startBroadcast` IS recorded
-        // as a broadcast tx that will revert (causing
-        // "Simulated execution failed"). The actual revert path is
-        // exercised end-to-end by AdminFacetTest.t.sol's pause tests.
-        require(
-            AdminFacet(diamond).isAssetPaused(address(usdc)) == true,
-            "PF-323: USDC must report paused via view"
+        // Step 2: an offer on the paused asset is refused, naming it.
+        // Probed in the simulation only (`RevertProbe`, see PF-008).
+        _requireRefused(
+            newLender,
+            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, _lenderOfferStandard()),
+            abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, address(usdc)),
+            "PF-323: createOffer on a paused asset should revert AssetPaused(usdc)"
         );
-        console.log("Pause-gate state verified via isAssetPaused() == true");
+        console.log("createOffer on paused USDC refused with AssetPaused");
 
         // Step 3: admin unpauses; create succeeds.
         vm.startBroadcast(adminKey);
@@ -198,10 +199,15 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
         vm.stopBroadcast();
         require(AdminFacet(diamond).paused(), "PF-322: paused() should be true");
         console.log("Diamond globally paused; paused() == true");
-        // We don't probe the revert via address(diamond).call here —
-        // see PF-323's comment: forge --broadcast re-attempts low-level
-        // call txs in the pre-flight and the revert kills the script.
-        // AdminFacetTest.t.sol exercises the actual revert path.
+        // A whenNotPaused entry point is refused while paused. Probed in
+        // the simulation only (`RevertProbe`, see PF-008).
+        _requireRefused(
+            lender,
+            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, _lenderOfferStandard()),
+            abi.encodeWithSelector(LibPausable.EnforcedPause.selector),
+            "PF-322: createOffer while the Diamond is paused should revert EnforcedPause"
+        );
+        console.log("createOffer refused with EnforcedPause while paused");
 
         vm.startBroadcast(adminKey);
         AdminFacet(diamond).unpause();
@@ -220,53 +226,80 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
 
     }
 
-    // ─── PF-329: Treasury accrual ──────────────────────────────────────────
+    // ─── PF-329: Treasury accrual and withdrawal ───────────────────────────
 
-    /// @dev Verifies the treasury accrual surface is wired end-to-end.
-    ///      In broadcast mode against Anvil the actual interest delta
-    ///      rounds to 0 because each tx is ~1 second apart and 5% APR
-    ///      on 1,000 USDC for 1 second is well below 1 wei (USDC has
-    ///      6 decimals). The test therefore (a) reads USDC treasury
-    ///      balance pre and post a fresh loan-and-repay and asserts
-    ///      it's non-decreasing (the counter is monotonic on positive
-    ///      paths), and (b) reads VPFI treasury balance as a CALL-SURFACE
-    ///      check only. #1555 r3 — this used to claim the VPFI counter
-    ///      "DOES grow when PF-250's settleBorrowerLifProper runs"; that has
-    ///      been false since #1352 retired the peg-custody path, so PF-250
-    ///      holds nothing to forward and no current positive flow in this
-    ///      drive accrues VPFI treasury revenue. Real treasury
-    ///      growth on duration-bearing fees is exercised by
-    ///      TreasuryFacetTest.t.sol unit tests where vm.warp can move
-    ///      simulation time.
+    /// @dev Where a fee goes depends on the deployment's treasury topology,
+    ///      and the scenario states which one it found rather than assuming:
+    ///
+    ///        - External treasury (the documented mainnet shape, and what
+    ///          `anvil-bootstrap.sh` sets): a fee leaves the Diamond as it is
+    ///          collected. The treasury wallet must receive at least the loan
+    ///          initiation fee, and nothing is held at the Diamond, so there
+    ///          is nothing there to withdraw.
+    ///        - Diamond as treasury: the fee is held at the Diamond and
+    ///          recorded in `getTreasuryBalance`, and the admin withdraws it
+    ///          with `claimTreasuryFees`.
+    ///
+    ///      On an external-treasury deployment the scenario walks the first
+    ///      shape, then points the treasury at the Diamond for one more loan
+    ///      so the withdrawal half of the row runs too, and restores the
+    ///      original treasury in the same broadcast as the withdrawal.
+    ///
+    ///      The fee checked is the initiation fee, read from what the
+    ///      borrower received (principal less the fee). Interest-side fees
+    ///      round to zero here: the loan lives a few seconds, and 5% APR on
+    ///      1,000 USDC for that long is below one USDC unit. So the checks
+    ///      are "at least the fee", never an exact interest share;
+    ///      TreasuryFacetTest covers duration-bearing fees with warped time.
     function _treasuryAccrual() internal {
-        uint256 usdcTreasuryBefore = TreasuryFacet(diamond).getTreasuryBalance(address(usdc));
-        console.log("USDC treasury pre:", usdcTreasuryBefore);
+        address treasury = AdminFacet(diamond).getTreasury();
+        bool diamondIsTreasury = treasury == diamond;
+        console.log("Treasury:", treasury);
+        console.log(diamondIsTreasury
+            ? "Topology: the Diamond is the treasury (fees held, then withdrawn)"
+            : "Topology: external treasury (fees leave the Diamond as collected)");
 
-        vm.startBroadcast(newLenderKey);
-        usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        if (!diamondIsTreasury) {
+            uint256 walletBefore = usdc.balanceOf(treasury);
+            uint256 heldBefore = TreasuryFacet(diamond).getTreasuryBalance(address(usdc));
+            uint256 fee = _loanRoundTrip();
+            require(
+                usdc.balanceOf(treasury) - walletBefore >= fee,
+                "PF-329: the external treasury should receive at least the initiation fee"
+            );
+            require(
+                TreasuryFacet(diamond).getTreasuryBalance(address(usdc)) == heldBefore,
+                "PF-329: an external treasury leaves nothing held at the Diamond"
+            );
+            console.log("External treasury received the initiation fee; nothing held at the Diamond");
+
+            vm.startBroadcast(adminKey);
+            AdminFacet(diamond).setTreasury(diamond);
+            vm.stopBroadcast();
+            console.log("Treasury pointed at the Diamond for the withdrawal half");
+        }
+
+        uint256 heldStart = TreasuryFacet(diamond).getTreasuryBalance(address(usdc));
+        uint256 heldFee = _loanRoundTrip();
+        uint256 held = TreasuryFacet(diamond).getTreasuryBalance(address(usdc));
+        require(held - heldStart >= heldFee, "PF-329: a Diamond treasury should hold at least the initiation fee");
+        console.log("USDC held at the Diamond for the treasury:", held);
+
+        uint256 adminBefore = usdc.balanceOf(admin);
+        vm.startBroadcast(adminKey);
+        TreasuryFacet(diamond).claimTreasuryFees(address(usdc), admin);
+        if (!diamondIsTreasury) AdminFacet(diamond).setTreasury(treasury);
         vm.stopBroadcast();
-
-        LibAcceptTerms.AcceptTerms memory _t10 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(newBorrowerKey), offerId, true, 0);
-        bytes memory _sig10 = LibAcceptTestSigner.sign(diamond, _t10, newBorrowerKey);
-        vm.startBroadcast(newBorrowerKey);
-        weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t10, _sig10);
-        vm.stopBroadcast();
-
-        vm.startBroadcast(newBorrowerKey);
-        uint256 repayAmt = RepayFacet(diamond).calculateRepaymentAmount(loanId);
-        usdc.approve(diamond, repayAmt + 100e6);
-        RepayFacet(diamond).repayLoan(loanId);
-        vm.stopBroadcast();
-        _claimBoth(newLenderKey, newBorrowerKey, loanId);
-
-        uint256 usdcTreasuryAfter = TreasuryFacet(diamond).getTreasuryBalance(address(usdc));
-        console.log("USDC treasury post:", usdcTreasuryAfter);
         require(
-            usdcTreasuryAfter >= usdcTreasuryBefore,
-            "PF-329: USDC treasury must be non-decreasing"
+            TreasuryFacet(diamond).getTreasuryBalance(address(usdc)) == 0,
+            "PF-329: the withdrawal should clear the held USDC balance"
         );
+        require(
+            usdc.balanceOf(admin) - adminBefore == held,
+            "PF-329: the admin should receive exactly the held balance"
+        );
+        require(AdminFacet(diamond).getTreasury() == treasury, "PF-329: the original treasury should be restored");
+        console.log("Admin withdrew the held treasury USDC:", held);
 
         // VPFI treasury surface: CALL-SURFACE ONLY, and labelled as such
         // (#1555 r3). No current positive flow in this drive produces VPFI
@@ -290,55 +323,113 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
         }
     }
 
-    // ─── PF-324: Master-flag dormancy ──────────────────────────────────────
+    /// @dev One standard loan, opened by `newBorrower` against `newLender`'s
+    ///      offer, repaid in full and claimed by both. Returns the loan
+    ///      initiation fee, read from what the borrower received.
+    function _loanRoundTrip() internal returns (uint256 initiationFee) {
+        vm.startBroadcast(newLenderKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        vm.stopBroadcast();
 
-    /// @dev Range Orders Phase 1 is governance-gated: every range
-    ///      offer is rejected unless the corresponding master flag is
-    ///      ON. This scenario verifies the dormancy gate by:
-    ///        1. Snapshot the current flags (bootstrap-flipped to ON).
-    ///        2. Admin flips `setRangeAmountEnabled(false)`.
-    ///        3. Lender attempts to create an `amountMax > amount`
-    ///           range offer → must revert.
-    ///        4. Admin re-enables → action succeeds.
-    function _masterFlagDormancy() internal {
-        (bool rangeAmount, , ) = ConfigFacet(diamond).getMasterFlags();
-        console.log("rangeAmountEnabled pre:", rangeAmount);
-        require(rangeAmount, "PF-324: precondition - bootstrap should leave rangeAmountEnabled=true");
+        uint256 borrowerBefore = usdc.balanceOf(newBorrower);
+        uint256 loanId = _acceptAs(newBorrowerKey, offerId, address(weth), COLLATERAL_AMOUNT);
+        uint256 received = usdc.balanceOf(newBorrower) - borrowerBefore;
+        require(received < LOAN_AMOUNT, "the borrower paid no initiation fee");
+        initiationFee = LOAN_AMOUNT - received;
+        console.log("Loan / initiation fee:", loanId, initiationFee);
 
-        // Step 1: turn the flag off; verify gate via view call. We
-        // intentionally do NOT attempt a range-offer creation while
-        // the flag is off — forge --broadcast would re-simulate the
-        // failing low-level call in its pre-flight and abort the
-        // script. The actual gate revert (FunctionDisabled) is
-        // exercised by ConfigFacetTest.t.sol unit tests.
+        vm.startBroadcast(newBorrowerKey);
+        uint256 repayAmt = RepayFacet(diamond).calculateRepaymentAmount(loanId);
+        usdc.approve(diamond, repayAmt);
+        RepayFacet(diamond).repayLoan(loanId);
+        vm.stopBroadcast();
+        _claimBoth(newLenderKey, newBorrowerKey, loanId);
+    }
+
+    // ─── PF-324: Admin config knob inside its bounds ───────────────────────
+
+    /// @dev The knob is the loan initiation fee (`setFeesConfig`), chosen
+    ///      because its effect on the next loan can be measured exactly.
+    ///      The scenario shows the three things PF-324 asks of a knob:
+    ///        1. A value above the cap is refused (`InvalidFeeBps`).
+    ///        2. A value inside the cap lands and the getter reports it.
+    ///        3. The next loan pays the new fee, and the old value comes
+    ///           back the same way.
+    ///      The range master flags are not used here: `rangeAmountEnabled`
+    ///      no longer gates offer creation (OfferCreateFacet calls it
+    ///      "now-dead"), so it cannot show a knob affecting a flow (#2812).
+    /// @dev `ConfigFacet`'s fee ceiling (its private `MAX_FEE_BPS`, 50%),
+    ///      which the setter names in `InvalidFeeBps`.
+    uint256 private constant FEE_CAP_BPS = 5_000;
+
+    function _feeKnobInsideBounds() internal {
+        (uint256 treasuryBps, uint256 originalLifBps) = ConfigFacet(diamond).getFeesConfig();
+        console.log("Loan initiation fee bps pre:", originalLifBps);
+        require(
+            _loanRoundTrip() == _netInitiationFee(originalLifBps),
+            "PF-324: the first loan should pay the configured initiation fee"
+        );
+
+        // Step 1: above the cap is refused, with the cap named.
+        _requireRefused(
+            admin,
+            abi.encodeWithSelector(ConfigFacet.setFeesConfig.selector, uint16(treasuryBps), uint16(FEE_CAP_BPS + 1)),
+            abi.encodeWithSelector(ConfigFacet.InvalidFeeBps.selector, FEE_CAP_BPS + 1, FEE_CAP_BPS),
+            "PF-324: an initiation fee above the 50% cap should be refused with InvalidFeeBps"
+        );
+        console.log("Initiation fee above the cap refused with InvalidFeeBps");
+
+        // Step 2: a different value inside the cap lands and is visible.
+        // Step down instead of up when the current fee is near the cap.
+        uint256 newLifBps = originalLifBps + 10 <= FEE_CAP_BPS ? originalLifBps + 10 : originalLifBps - 10;
         vm.startBroadcast(adminKey);
-        ConfigFacet(diamond).setRangeAmountEnabled(false);
+        ConfigFacet(diamond).setFeesConfig(uint16(treasuryBps), uint16(newLifBps));
         vm.stopBroadcast();
-        (bool rangeAmountOff, , ) = ConfigFacet(diamond).getMasterFlags();
-        require(!rangeAmountOff, "PF-324: setRangeAmountEnabled(false) should land");
-        console.log("Dormancy gate state verified: rangeAmountEnabled flipped to false");
+        (, uint256 lifBps) = ConfigFacet(diamond).getFeesConfig();
+        require(lifBps == newLifBps, "PF-324: the getter should report the new initiation fee");
+        require(
+            ConfigFacet(diamond).getLoanInitiationFeeBps() == newLifBps,
+            "PF-324: the single-field getter should agree"
+        );
 
-        // Step 2: re-enable; range offer now succeeds. The collateral
-        // floor scales with `amountMax`, so we bump collateralAmount
-        // to 2 WETH (above the ~1.764 WETH floor for amountMax =
-        // 2,000 USDC at WETH @ $2000 with 8500 bps liqThreshold).
+        // Step 3: the next loan pays it.
+        require(
+            _loanRoundTrip() == _netInitiationFee(newLifBps),
+            "PF-324: the next loan should pay the new initiation fee"
+        );
+        console.log("The next loan paid the new initiation fee at bps:", newLifBps);
+
+        // Restores the effective values read at the start. Where either fee
+        // was on its library default, it is now stored as an explicit value
+        // equal to that default (`setFeesConfig` has no "keep the default"
+        // input other than 0, and the getter does not say which was set).
         vm.startBroadcast(adminKey);
-        ConfigFacet(diamond).setRangeAmountEnabled(true);
+        ConfigFacet(diamond).setFeesConfig(uint16(treasuryBps), uint16(originalLifBps));
         vm.stopBroadcast();
-        (bool rangeAmountOn, , ) = ConfigFacet(diamond).getMasterFlags();
-        require(rangeAmountOn, "PF-324: setRangeAmountEnabled(true) should land");
+        (, lifBps) = ConfigFacet(diamond).getFeesConfig();
+        require(lifBps == originalLifBps, "PF-324: the original initiation fee should be restored");
+    }
 
-        LibVaipakam.CreateOfferParams memory params = _lenderOfferStandard();
-        params.amountMax = LOAN_AMOUNT * 2;
-        params.collateralAmount = 2 * COLLATERAL_AMOUNT;
-        // Lender offers require collateralAmountMax == collateralAmount
-        // (LenderCollateralRangeNotAllowed) — keep it in lock-step.
-        params.collateralAmountMax = 2 * COLLATERAL_AMOUNT;
-        vm.startBroadcast(lenderKey);
-        usdc.approve(diamond, LOAN_AMOUNT * 2);
-        uint256 offerId = OfferCreateFacet(diamond).createOffer(params);
-        vm.stopBroadcast();
-        console.log("Post-re-enable range offer accepted; offerId:", offerId);
+    /// @dev What `_loanRoundTrip` measures as the fee: the initiation fee on
+    ///      LOAN_AMOUNT at `lifBps`, less the matcher's share, which goes
+    ///      back to the accepting borrower (the matcher on a direct accept).
+    ///      The round-trip borrower holds no VPFI, so no discount applies.
+    function _netInitiationFee(uint256 lifBps) internal view returns (uint256) {
+        uint256 gross = (LOAN_AMOUNT * lifBps) / 10_000;
+        return gross - (gross * ConfigFacet(diamond).getLifMatcherFeeBps()) / 10_000;
+    }
 
+    /// @dev Requires `data`, sent to the Diamond as `caller`, to revert with
+    ///      exactly `expectedRevert` (selector and arguments). Runs in the
+    ///      simulation only, through `RevertProbe`.
+    function _requireRefused(
+        address caller,
+        bytes memory data,
+        bytes memory expectedRevert,
+        string memory failure
+    ) internal {
+        (bool ok, bytes memory ret) = RevertProbe.call(caller, diamond, data);
+        require(!ok && keccak256(ret) == keccak256(expectedRevert), failure);
     }
 }

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
 import {LibPrepayListingWiring} from "../libraries/LibPrepayListingWiring.sol";
@@ -157,8 +158,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         // Split into the two precondition reverts the design enumerates
         // so the dapp / keeper UX can distinguish "too early" from
         // "too late" without reading the helper's combined bool.
-        uint256 loanEnd =
-            uint256(loan.startTime) + (uint256(loan.durationDays) * 1 days);
+        uint256 loanEnd = LibLoanClock.maturity(loan);
         if (block.timestamp < loanEnd) {
             revert GraceNotStarted(loanId, block.timestamp, loanEnd);
         }

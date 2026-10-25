@@ -247,9 +247,7 @@ library LibSwapToRepayIntentSettlement {
 
         // ── Step 4: live floor re-check (Codex round-2 P1 #8 +
         //    round-10 P1 #5 + round-11 P1 #3 — add `lateFee`) ───────
-        uint256 endTime = uint256(loan.startTime)
-            + uint256(loan.durationDays) * LibVaipakam.ONE_DAY;
-        uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
+        uint256 lateFee = LibVaipakam.calculateLateFee(loanId);
         uint256 liveLenderLeg = LibCollateralSettlement.principalPlusAccruedInterest(
             loanId, block.timestamp
         );

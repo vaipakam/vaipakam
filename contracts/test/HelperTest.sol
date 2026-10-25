@@ -754,7 +754,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](50);
+        selectors = new bytes4[](52);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -812,6 +812,8 @@ contract HelperTest {
         selectors[47] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
         selectors[48] = AdminFacet.unpauseIfPauseEpoch.selector;
         selectors[49] = AdminFacet.launch.selector;
+        selectors[50] = AdminFacet.pausedSecondsAt.selector;
+        selectors[51] = AdminFacet.getPauseIntervals.selector;
         return selectors;
     }
 
@@ -1002,11 +1004,12 @@ contract HelperTest {
     }
 
     function getLoanFacetSelectors() public pure returns (bytes4[] memory) {
-        bytes4[] memory selectors = new bytes4[](3);
+        bytes4[] memory selectors = new bytes4[](4);
         selectors[0] = LoanFacet.initiateLoan.selector;
         selectors[1] = LoanFacet.getLoanDetails.selector;
         selectors[2] = LoanFacet.getLoanConsents.selector;
         // `markNotifBilled` moved to NotificationFeeFacet in #2769.
+        selectors[3] = LoanFacet.getLoanDeadlines.selector;
         return selectors;
     }
 

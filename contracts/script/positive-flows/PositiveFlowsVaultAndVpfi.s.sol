@@ -187,7 +187,13 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsBase {
     function _recoverySanctionedBan() internal {
         address user = newLender;
         uint256 userKey = newLenderKey;
-        address strayer = address(0xBADC0DE);  // dedicated dummy stray sender we flag
+        // A dummy stray sender we flag, fresh on every run. The ban this
+        // scenario records stays on `user`'s vault, so a fixed address would
+        // make a second run on the same Diamond flag the source of the FIRST
+        // run's ban, which sanctions `user` before it can sign the recovery.
+        address strayer = address(uint160(uint256(keccak256(
+            abi.encode("PF-281 stray source", block.chainid, block.number, block.timestamp)
+        ))));
 
         // Provision user's vault.
         vm.startBroadcast(userKey);
@@ -195,7 +201,7 @@ contract PositiveFlowsVaultAndVpfi is PositiveFlowsBase {
         vm.stopBroadcast();
 
         // Stray transfer from `strayer`. We don't have a key for the
-        // dummy 0xBADC0DE address. Mint mock USDC directly into the
+        // dummy strayer address. Mint mock USDC directly into the
         // user's vault via the deployer (ERC20Mock allows public
         // mint). The source-of-funds is what gets attested to in the
         // EIP-712 sig, not the actual transfer path — what matters for

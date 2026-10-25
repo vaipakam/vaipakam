@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
 import {LibPrepayListingWiring} from "../libraries/LibPrepayListingWiring.sol";
@@ -997,7 +998,7 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         view
         returns (uint256)
     {
-        uint256 endTime = uint256(loan.startTime) + (uint256(loan.durationDays) * 1 days);
+        uint256 endTime = LibLoanClock.maturity(loan);
         return endTime + LibVaipakam.gracePeriod(loan.durationDays);
     }
 

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
@@ -1201,7 +1202,7 @@ contract NFTPrepayListingFacet is
     ///      into a `LibLoanTime.gracePeriodEnd(loan)` helper,
     ///      every facet should switch in lockstep.
     function _gracePeriodEnd(LibVaipakam.Loan storage loan) private view returns (uint256) {
-        uint256 endTime = uint256(loan.startTime) + (uint256(loan.durationDays) * 1 days);
+        uint256 endTime = LibLoanClock.maturity(loan);
         return endTime + LibVaipakam.gracePeriod(loan.durationDays);
     }
 
