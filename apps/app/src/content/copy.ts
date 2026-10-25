@@ -3500,6 +3500,18 @@ const copySource = {
         'duration',
         'date',
       ]),
+      // #2808 — the {{date}} of `termsLoan` when it cannot be stated: a
+      // pause in force is still moving it, or the page has no source that
+      // establishes it. The original date is never shown in its place.
+      dueDatePaused: 'later than planned (the protocol is paused, so the date is still moving)',
+      dueDateUnknown: 'date unknown right now',
+      // #2808 — shown when a pause moved this loan's due date (owner
+      // decision D2): the protocol's paused time since the loan started is
+      // added to its due date and grace period.
+      dueMovedByPause: tmpl(
+        'Originally due {{date}}. Moved {{credit}} later because the protocol was paused for that long while this loan was open.',
+        ['date', 'credit'],
+      ),
       confirmAction: tmpl('Confirm — {{action}}', ['action']),
       addCollateralReceipt: tmpl(
         '{{amount}} {{symbol}} more collateral, returned with the rest when the loan closes properly.',
@@ -3534,6 +3546,8 @@ const copySource = {
         locked: 'Locked',
         owed: 'Owed',
         terms: 'Terms',
+        // #2808 — the row that says a pause moved the due date.
+        dueMoved: 'Due date moved',
         health: 'Health',
         whatNext: 'What happens next',
         ifNothing: 'If nothing happens',
@@ -5251,6 +5265,11 @@ const copySource = {
     durationDay: tmpl('{{count, number}} days', ['count'], { one: '1 day' }),
     durationMonth: tmpl('{{count, number}} months', ['count'], { one: '1 month' }),
     durationYear: tmpl('{{count, number}} years', ['count'], { one: '1 year' }),
+    // #2808 — the parts of an exact span (how far a pause moved a date),
+    // largest first: "2 days 3 hours".
+    durationHour: tmpl('{{count, number}} hours', ['count'], { one: '1 hour' }),
+    durationMinute: tmpl('{{count, number}} minutes', ['count'], { one: '1 minute' }),
+    durationUnderMinute: 'under a minute',
     timeJustNow: 'just now',
     timeMinutesAgo: tmpl('{{count}}m ago', ['count']),
     timeHoursAgo: tmpl('{{count}}h ago', ['count']),
@@ -5327,6 +5346,12 @@ const copySource = {
     pastGrace: 'Past grace',
     dueToday: 'Due today',
     dueInDays: tmpl('Due in {{count}} days', ['count'], { one: 'Due in {{count}} day' }),
+    // #2808 — the protocol is paused, and a pause moves every open loan's
+    // due date later for as long as it lasts, so no date is final yet.
+    duePaused: 'Paused — due date moving later',
+    // #2808 — the loan-clock dates could not be established for this row;
+    // the original date is not shown in their place.
+    dueUnknown: 'Due date unknown',
   },
 
   activity: {

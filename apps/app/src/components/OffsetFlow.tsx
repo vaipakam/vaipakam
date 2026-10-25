@@ -378,7 +378,7 @@ export function OffsetFlow({
         latestBlock.timestamp +
           BigInt(durationDays) * 86_400n +
           OFFSET_SUBMIT_BUFFER_SECONDS >
-        loanEndTimeOf(liveLoan)
+        loanEndTimeOf(liveLoan, latestBlock.timestamp)
       ) {
         setError(copy.offset.onlyBeforeDue);
         return;
@@ -457,7 +457,7 @@ export function OffsetFlow({
         blockAtWrite.timestamp +
           BigInt(durationDays) * 86_400n +
           OFFSET_SUBMIT_BUFFER_SECONDS >
-        loanEndTimeOf(liveLoan)
+        loanEndTimeOf(liveLoan, blockAtWrite.timestamp)
       ) {
         setError(copy.offset.onlyBeforeDue);
         await unwindApproval();

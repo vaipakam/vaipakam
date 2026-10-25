@@ -195,8 +195,17 @@ deadline, and the credit stated in words. No Worker or app computes
   the log does not read and holds every warning while a pause is in force.
   Its grace-default pass already asks the contract (`isLoanDefaultable`),
   which applies the credit itself.
-- **The app** follows in its own change: its loan pages state the original
-  date, the credit and the reason.
+- **The app** reads the pause log with every live loan read and works from
+  the effective deadlines wherever one matters: the loan page and the
+  positions list, the late-fee and grace checks before a repayment, cure,
+  preclose or refinance, the term a sale, offset or obligation handover must
+  fit inside, and the remaining interest such a move is priced over. A moved
+  due date gets its own row on the loan page with the original date, the
+  credit and the reason. While a pause is in force the page and the list say
+  the date is still moving. A loan the app cannot date reads "due date
+  unknown". Rows the app reads from the chain itself (when the indexer is
+  behind) are dated from one read of the pause log and the grace schedule at
+  a single block. A rental's paid-use end is not moved (§5).
 
 ### 5. What the credit does not cover
 

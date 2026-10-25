@@ -6,6 +6,12 @@
  */
 import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import {
+  interestTermEnd,
+  pausedSecondsBetween,
+  readPauseLog,
+  type PauseLog,
+} from '@vaipakam/lib/loanClock';
 
 /** LibVaipakam.LoanStatus.Active — first enum member. */
 export const LOAN_STATUS_ACTIVE = 0;
@@ -69,6 +75,11 @@ export interface LoanLive {
    *  the timestamp was not, which left the same torn-pair hazard one field
    *  further out — and `sellerEconomics` combines exactly those. */
   readAtTimestamp: bigint;
+  /** The protocol's pause-interval log, read at the same block (#2808). Every
+   *  deadline below is the D2 loan clock's (#668 / #935): the original one
+   *  moved by the paused time since the loan's start. Empty on a Diamond
+   *  without the loan clock, which never moves a deadline. */
+  pauseLog: PauseLog;
   // Collateral identity — a refinance-tagged offer must repeat these
   // EXACTLY for the collateral to carry over instead of re-pledging.
   collateralAsset: `0x${string}`;
@@ -98,18 +109,51 @@ export function interestAccrualStartOf(live: LoanLive): bigint {
     : live.startTime;
 }
 
-/** The loan's fixed origination maturity — the reference every
- *  late-fee and grace computation keys on (LibVaipakam.ONE_DAY days). */
-export function loanEndTimeOf(live: LoanLive): bigint {
+/** The loan's ORIGINAL maturity, `startTime + durationDays` — what the loan
+ *  was opened with and what its originally announced due date says. Never a
+ *  deadline the chain enforces once the protocol has been paused; read
+ *  {@link loanEndTimeOf} for that. Shown beside it when a pause moved it. */
+export function originalLoanEndTimeOf(live: LoanLive): bigint {
   return live.startTime + live.durationDays * 86_400n;
 }
 
+/** Paused time since the loan's start, as of `at` (default: the snapshot's
+ *  block) — `LibLoanClock.pauseCredit`. */
+export function pauseCreditOf(live: LoanLive, at: bigint = live.readAtTimestamp): bigint {
+  return pausedSecondsBetween(live.pauseLog, live.startTime, at);
+}
+
+/** The loan's EFFECTIVE maturity as of `at` — `LibLoanClock.maturity`: the
+ *  original one moved by the paused time since the start. The reference every
+ *  late-fee, grace and listing computation keys on (#668 / #935, #2808).
+ *  `at` defaults to the snapshot's block; a later moment counts a pause still
+ *  in force up to it, and cannot know about a pause that has not begun. */
+export function loanEndTimeOf(live: LoanLive, at: bigint = live.readAtTimestamp): bigint {
+  return originalLoanEndTimeOf(live) + pauseCreditOf(live, at);
+}
+
+/** Seconds of the interest term left at `at` — `LibLoanClock
+ *  .remainingInterestSeconds`: the interest clock's end, moved by the paused
+ *  time since THAT clock started, minus `at`. What a sale, a transfer and an
+ *  offset price their rate difference over. */
+export function remainingInterestSecondsOf(live: LoanLive, at: bigint): bigint {
+  const end = interestTermEnd(
+    {
+      interestAccrualStart: interestAccrualStartOf(live),
+      interestRemainingDays: interestRemainingDaysOf(live),
+    },
+    live.pauseLog,
+    at,
+  );
+  return end > at ? end - at : 0n;
+}
+
 /** Mirrors LibVaipakam.calculateLateFee for ERC-20 loans: 0 at or
- *  before maturity, then 1% of principal + 0.5% per WHOLE day late,
- *  capped at 5%. Both the repay and the #1189 preclose/refinance
+ *  before the EFFECTIVE maturity, then 1% of principal + 0.5% per WHOLE
+ *  day late, capped at 5%. Both the repay and the #1189 preclose/refinance
  *  grace-window paths charge exactly this. */
 export function lateFeeAt(live: LoanLive, ts: bigint): bigint {
-  const endTime = loanEndTimeOf(live);
+  const endTime = loanEndTimeOf(live, ts);
   if (ts <= endTime) return 0n;
   const daysLate = (ts - endTime) / 86_400n;
   let feeBps = 100n + daysLate * 50n;
@@ -155,6 +199,9 @@ export function refinanceApprovalOf(
   live: LoanLive,
   opts: { expiresAt: bigint; graceSeconds: bigint },
 ): bigint {
+  // The effective grace end at the snapshot. A pause that begins later moves
+  // it, and the contract's pull with it — an intrinsic race this bound cannot
+  // see; the request then needs a fresh approval, never a short-paid lender.
   const graceEnd = loanEndTimeOf(live) + opts.graceSeconds;
   // acceptOffer rejects at ts >= expiresAt, so the last fillable
   // moment under the offer's own clock is expiresAt - 1.
@@ -221,14 +268,11 @@ export function sellerEconomics(
   // exists to prevent survived in exactly the callers I did not happen to grep.
   // A parameter that must always be one value should not be a parameter.
   const chainNow = live.readAtTimestamp;
-  const start = interestAccrualStartOf(live);
-  const elapsed = chainNow > start ? chainNow - start : 0n;
-  const totalSecs = interestRemainingDaysOf(live) * 86_400n;
-  const remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0n;
+  // The remaining term runs to the pause-moved end (#668 / #935).
+  const remainingSecs = remainingInterestSecondsOf(live, chainNow);
   const denom = SECONDS_PER_YEAR * BASIS_POINTS;
-  // #1503 item 28 — the FORFEITURE clock is not the accrual clock. `elapsed`
-  // above still measures the loan's own progress, which `remainingSecs` needs;
-  // the forfeiture measures only the stretch the lender has NOT been paid for.
+  // #1503 item 28 — the FORFEITURE clock is not the accrual clock. The
+  // remaining term above measures the loan's own progress; the forfeiture measures only the stretch the lender has NOT been paid for.
   //
   // This value is RESOLVED ON CHAIN, not re-derived here: `readLoanLive` reads
   // `RiskPreviewFacet.sellerForfeitureWindow`, which returns what
@@ -280,10 +324,8 @@ export function saleBuyerRemainingInterest(
   saleRateBps: bigint,
   chainNow: bigint,
 ): bigint {
-  const start = interestAccrualStartOf(live);
-  const elapsed = chainNow > start ? chainNow - start : 0n;
-  const totalSecs = interestRemainingDaysOf(live) * 86_400n;
-  const remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0n;
+  // The remaining term runs to the pause-moved end (#668 / #935).
+  const remainingSecs = remainingInterestSecondsOf(live, chainNow);
   return (
     (live.principal * saleRateBps * remainingSecs) /
     (SECONDS_PER_YEAR * BASIS_POINTS)
@@ -310,8 +352,9 @@ export function transferEconomicsOf(
 ): { accrued: bigint; shortfall: bigint; total: bigint } {
   const start = interestAccrualStartOf(live);
   const elapsed = chainNow > start ? chainNow - start : 0n;
-  const totalSecs = interestRemainingDaysOf(live) * 86_400n;
-  const remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0n;
+  // The remaining term runs to the pause-moved end (#668 / #935); accrual
+  // above is plain elapsed time, pause included, as the facet charges it.
+  const remainingSecs = remainingInterestSecondsOf(live, chainNow);
   const denom = SECONDS_PER_YEAR * BASIS_POINTS;
   const grossAccrued = (live.principal * live.interestRateBps * elapsed) / denom;
   // Mirror LibEntitlement.creditSettledInterest: the facet subtracts
@@ -338,23 +381,23 @@ export function transferEconomicsOf(
  *  at the loan's own rate (they cover complementary slices of that
  *  window), `principal + remaining-term interest` bounds the pull
  *  exactly. Completion is contract-blocked at/after maturity (the
- *  anti-drift guard), so no late-fee headroom is needed. */
+ *  anti-drift guard), so no late-fee headroom is needed.
+ *
+ *  The window is the committed term PLUS the paused time since the interest
+ *  clock started (#668 / #935): accrual counts paused seconds, and the
+ *  remaining term runs to the pause-moved end, so together they cover both.
+ *  A pause that begins after this snapshot widens the window again — an
+ *  intrinsic race the bound cannot see; completion then needs a fresh
+ *  approval, never a short-paid lender. */
 export function offsetCompletionBoundOf(live: LoanLive): bigint {
+  const start = interestAccrualStartOf(live);
+  const windowSecs =
+    interestRemainingDaysOf(live) * 86_400n +
+    pausedSecondsBetween(live.pauseLog, start, live.readAtTimestamp);
   return (
     live.principal +
-    (live.principal * live.interestRateBps * interestRemainingDaysOf(live)) /
-      (365n * 10_000n)
+    (live.principal * live.interestRateBps * windowSecs) / (SECONDS_PER_YEAR * BASIS_POINTS)
   );
-}
-
-/** The sale path's duration-fit bound: the IMMUTABLE term minus
- *  whole days elapsed since the immutable start — NOT the interest
- *  clock (a partial re-stamps that; the borrower-favourability check
- *  does not care). */
-export function durationFitDays(live: LoanLive, chainNow: bigint): bigint {
-  const elapsedDays =
-    chainNow > live.startTime ? (chainNow - live.startTime) / 86_400n : 0n;
-  return live.durationDays > elapsedDays ? live.durationDays - elapsedDays : 0n;
 }
 
 export async function readLoanLive(
@@ -403,7 +446,7 @@ export async function readLoanLive(
     blockNumber !== undefined ? { blockNumber } : { blockTag: 'latest' },
   );
   const at = atBlock.number;
-  const [rawResult, windowResult] = await Promise.allSettled([
+  const [rawResult, windowResult, pauseLogResult] = await Promise.allSettled([
     publicClient.readContract({
       address: diamondAddress,
       abi: DIAMOND_ABI_VIEM,
@@ -418,11 +461,18 @@ export async function readLoanLive(
       args: [BigInt(loanId)],
       blockNumber: at,
     }) as Promise<readonly [bigint, bigint]>,
+    // MANDATORY, like the loan itself (#2808): every deadline on this record
+    // is the loan clock's, and a log that could not be read is not "never
+    // paused" — treating it so would show an early deadline as current. A
+    // Diamond without the loan clock answers an empty log, definitively.
+    readPauseLog({ client: publicClient, diamond: diamondAddress, blockNumber: at }),
   ]);
   if (rawResult.status === 'rejected') throw rawResult.reason;
+  if (pauseLogResult.status === 'rejected') throw pauseLogResult.reason;
   const raw = rawResult.value;
   return {
     readAtTimestamp: atBlock.timestamp,
+    pauseLog: pauseLogResult.value,
     // A FAILED read is not the same as an absent selector (Codex #1801 r8 P2).
     // Falling back to the accrual origin assumed that is always the
     // conservative answer, and it is not: a valid mark can PRECEDE the origin,

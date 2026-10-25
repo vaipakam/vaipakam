@@ -42,6 +42,18 @@
       ],
       "reason": "Arabic dual encodes the count in the noun (يومان = 'two days'); restating {{count}} renders '2 يومان'"
     },
+    "ar:copy.units.durationHour_two": {
+      "tokens": [
+        "count, number"
+      ],
+      "reason": "Arabic dual encodes the count in the noun (ساعتان = 'two hours')"
+    },
+    "ar:copy.units.durationMinute_two": {
+      "tokens": [
+        "count, number"
+      ],
+      "reason": "Arabic dual encodes the count in the noun (دقيقتان = 'two minutes')"
+    },
     "ar:copy.units.durationMonth_two": {
       "tokens": [
         "count, number"
@@ -342,6 +354,52 @@
       "source": "Treasury",
       "locales": [
         "de"
+      ]
+    },
+    "copy.units.durationMinute_few": {
+      "reason": "\"minute\"/\"minutes\" is the ordinary French noun, spelled as the English one; the sibling hour forms read \"heure\"/\"heures\", so the bundle was localized and this leaf is settled vocabulary. A shrink-only baseline could only lose it to a worse synonym (#2808).",
+      "source": "{{count, number}} minutes",
+      "locales": [
+        "fr"
+      ]
+    },
+    "copy.units.durationMinute_many": {
+      "reason": "\"minute\"/\"minutes\" is the ordinary French noun, spelled as the English one; the sibling hour forms read \"heure\"/\"heures\", so the bundle was localized and this leaf is settled vocabulary. A shrink-only baseline could only lose it to a worse synonym (#2808).",
+      "source": "{{count, number}} minutes",
+      "locales": [
+        "fr"
+      ]
+    },
+    "copy.units.durationMinute_one": {
+      "reason": "\"minute\"/\"minutes\" is the ordinary French noun, spelled as the English one; the sibling hour forms read \"heure\"/\"heures\", so the bundle was localized and this leaf is settled vocabulary. A shrink-only baseline could only lose it to a worse synonym (#2808). German writes the singular \"1 Minute\", also spelled as the English; its plural reads \"Minuten\".",
+      "source": "1 minute",
+      "locales": [
+        "de",
+        "fr"
+      ],
+      "values": {
+        "de": "1 Minute"
+      }
+    },
+    "copy.units.durationMinute_other": {
+      "reason": "\"minute\"/\"minutes\" is the ordinary French noun, spelled as the English one; the sibling hour forms read \"heure\"/\"heures\", so the bundle was localized and this leaf is settled vocabulary. A shrink-only baseline could only lose it to a worse synonym (#2808).",
+      "source": "{{count, number}} minutes",
+      "locales": [
+        "fr"
+      ]
+    },
+    "copy.units.durationMinute_two": {
+      "reason": "\"minute\"/\"minutes\" is the ordinary French noun, spelled as the English one; the sibling hour forms read \"heure\"/\"heures\", so the bundle was localized and this leaf is settled vocabulary. A shrink-only baseline could only lose it to a worse synonym (#2808).",
+      "source": "{{count, number}} minutes",
+      "locales": [
+        "fr"
+      ]
+    },
+    "copy.units.durationMinute_zero": {
+      "reason": "\"minute\"/\"minutes\" is the ordinary French noun, spelled as the English one; the sibling hour forms read \"heure\"/\"heures\", so the bundle was localized and this leaf is settled vocabulary. A shrink-only baseline could only lose it to a worse synonym (#2808).",
+      "source": "{{count, number}} minutes",
+      "locales": [
+        "fr"
       ]
     }
   }

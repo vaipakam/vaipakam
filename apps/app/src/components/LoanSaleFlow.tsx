@@ -311,8 +311,9 @@ export function LoanSaleFlow({
       // `_boundListingExpiry` clamps every window at maturity and refuses a
       // clamped window below the minimum. Fail plainly here rather than
       // send a listing that is certain to be refused (Codex #1505 r2).
-      const maturityTs =
-        liveLoan.startTime + liveLoan.durationDays * 86_400n;
+      // The EFFECTIVE maturity (#668 / #935): what `_boundListingExpiry`
+      // clamps at, moved by the paused time since the loan's start.
+      const maturityTs = loanEndTimeOf(liveLoan, latestBlock.timestamp);
       if (latestBlock.timestamp >= maturityTs) {
         setError(copy.errors.saleListingMatured);
         return;

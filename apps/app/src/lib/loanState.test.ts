@@ -6,7 +6,12 @@ import type { IndexedLoan } from '../data/indexer';
 const DAY = 86_400;
 const now = () => Math.floor(Date.now() / 1000);
 
-function loan(p: Partial<IndexedLoan>): IndexedLoan {
+/** An indexed row, dated by the indexer's loan clock (#2808) as a loan the
+ *  protocol never paused — unless the case supplies its own `deadlines`. */
+function loan(p: Partial<IndexedLoan>, credit = 0): IndexedLoan {
+  const startTime = p.startTime ?? now();
+  const durationDays = p.durationDays ?? 30;
+  const originalMaturity = startTime + durationDays * DAY;
   return {
     loanId: 1,
     role: 'borrower',
@@ -17,8 +22,17 @@ function loan(p: Partial<IndexedLoan>): IndexedLoan {
     principal: '0',
     collateralAmount: '0',
     interestRateBps: 0,
-    durationDays: 30,
-    startTime: now(),
+    durationDays,
+    startTime,
+    deadlines: {
+      available: true,
+      originalMaturity,
+      pauseCredit: credit,
+      maturity: originalMaturity + credit,
+      graceEnd: originalMaturity + credit + 3 * DAY,
+      pauseInForce: false,
+      asOf: now(),
+    },
     ...p,
   } as IndexedLoan;
 }
@@ -46,6 +60,48 @@ describe('loanStateView labelKey', () => {
     );
     expect(dueLater.labelKey).toBe('dueInDays');
     expect(dueLater.daysRemaining).toBeGreaterThan(0);
+  });
+});
+
+describe('loanStateView on the loan clock (#2808)', () => {
+  it('dates an active loan by its MOVED due date, not start + duration', () => {
+    // Originally due five days ago; a ten-day pause moved it five days out.
+    const moved = loanStateView(
+      loan({ status: 'active', startTime: now() - 35 * DAY, durationDays: 30 }, 10 * DAY),
+    );
+    expect(moved.labelKey).not.toBe('pastDue');
+    expect(moved.daysRemaining).toBeGreaterThan(0);
+  });
+
+  it('says a pause in force is moving the date, and names no day count', () => {
+    const view = loanStateView(
+      loan({
+        status: 'active',
+        deadlines: {
+          available: true,
+          originalMaturity: now(),
+          pauseCredit: DAY,
+          maturity: now() + DAY,
+          graceEnd: now() + 2 * DAY,
+          pauseInForce: true,
+          asOf: now(),
+        },
+      }),
+    );
+    expect(view.labelKey).toBe('duePaused');
+    expect(view.daysRemaining).toBeNull();
+  });
+
+  it('says the date is unknown rather than show the original one', () => {
+    const unread = loanStateView(
+      loan({ status: 'active', deadlines: { available: false, reason: 'pause-log-unread' } }),
+    );
+    expect(unread.labelKey).toBe('dueUnknown');
+    // A row with no loan-clock dates at all (a live-chain fallback row).
+    const bare = loan({ status: 'active' });
+    delete bare.deadlines;
+    expect(loanStateView(bare).labelKey).toBe('dueUnknown');
+    expect(loanStateLabel(loanStateView(bare), copySource.loanState)).toBe('Due date unknown');
   });
 });
 

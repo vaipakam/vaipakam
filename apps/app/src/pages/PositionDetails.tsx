@@ -44,10 +44,13 @@ import {
 import {
   LOAN_STATUS_ACTIVE,
   loanEndTimeOf,
+  originalLoanEndTimeOf,
+  pauseCreditOf,
   readLoanLive,
   readRepaymentDueLive,
   MIN_SALE_LISTING_SECONDS,
 } from '../contracts/loanLive';
+import { pauseInForceAt } from '@vaipakam/lib/loanClock';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
@@ -56,6 +59,7 @@ import {
   formatBpsAsPercent,
   formatDate,
   formatDurationDays,
+  formatExactSpan,
   formatTokenAmountExact,
   exactUnitsOrNull,
   formatTokenAmountDown,
@@ -65,6 +69,7 @@ import {
 } from '../lib/format';
 import { flowDisabled } from '../lib/killSwitch';
 import { loanStateView, loanStateLabel } from '../lib/loanState';
+import { rowDeadline } from '../lib/loanDeadline';
 import { AmountPrecisionHint } from '../components/AmountPrecisionHint';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { type ReceiptData } from '../components/ReviewReceipt';
@@ -1103,6 +1108,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     loan.data &&
       (loan.data.status === 'active' || loan.data.status === 'fallback_pending') &&
       loan.data.assetType === AssetType.ERC20 &&
+      // The ORIGINAL due date, deliberately: a pause only ever moves the
+      // deadline LATER (#668 / #935), so this can start the chain read
+      // early but never late, and the chain decides what shows.
       loan.data.startTime + loan.data.durationDays * 86400 < nowSec + 3600,
   );
   // #1503 PR-H (Codex r2 P2) — a LENDER viewing an active position needs
@@ -1124,8 +1132,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // KNOWN SIDE EFFECT, stated rather than left to be discovered: every
   // other consumer of `bannerTerms` now has data for these viewers
   // where it previously had none, so for a LENDER (only — borrowers are
-  // excluded by the role clause) `termsStartSec` / `termsDurationDays`
-  // switch from the indexer row to LIVE terms, `bannerNowSec` switches
+  // excluded by the role clause) `termsEndSec`
+  // switches from the indexer row to LIVE terms, `bannerNowSec` switches
   // from the raw device clock to the chain-anchored one, and
   // `liveSaysFallbackPending` / `showGraceBanner` become computable
   // instead of constant. Each of those moves in the same direction as
@@ -1166,6 +1174,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       };
     },
   });
+  /** `bannerTerms`' snapshot, and only while the query is ENABLED (#2808,
+   *  Codex #2830 r1). TanStack keeps a disabled query's data, and this one
+   *  is disabled exactly when the terms move out from under it: a keeper
+   *  extension makes the indexed row no longer past due, which turns
+   *  `rowPastDueCandidate` off. Reading that cache would keep the page on
+   *  the old term (its due date, grace countdown and sale cutoff) while
+   *  the indexer already serves the new one. Same rule as the
+   *  disabled-cache note on `loanLive` (Codex #1858 r5), held here once so
+   *  no reader of these terms can skip it; each reader keeps its own
+   *  `isError` handling. */
+  const bannerTermsData = bannerTermsEnabled ? bannerTerms.data : undefined;
   // UX-004 — the grace window, read for DISPLAY (previously read only
   // inside submit handlers, so a past-due borrower could never see how
   // long they had). Static protocol config per (chain, duration) —
@@ -1180,8 +1199,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     loan.data && loan.data.assetType === AssetType.ERC20
       ? loanLive.data
         ? Number(loanLive.data.live.durationDays)
-        : bannerTerms.data
-          ? Number(bannerTerms.data.live.durationDays)
+        : bannerTermsData
+          ? Number(bannerTermsData.live.durationDays)
           : loan.data.durationDays
       : undefined,
   );
@@ -1387,23 +1406,29 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // LIVE read (a keeper extend re-stamps them while the row lags); on
   // read failure we fall back to the row rather than hide a warning —
   // the repay submit path re-checks live and is authoritative.
-  const termsStartSec = bannerTerms.data
-    ? Number(bannerTerms.data.live.startTime)
-    : row.startTime;
-  const termsDurationDays = bannerTerms.data
-    ? Number(bannerTerms.data.live.durationDays)
-    : row.durationDays;
-  const termsEndSec = termsStartSec + termsDurationDays * 86400;
   // Anchor "now" to CHAIN time when the live read has it (Codex #1166
   // r2): the repay/default gates run on block.timestamp, so a skewed
   // device clock must not flip the banner to "no longer accepts
   // repayment" early — or keep a countdown alive late. The local tick
   // only advances the anchor between refetches.
-  const bannerNowSec = bannerTerms.data
-    ? bannerTerms.data.chainNow + (nowSec - bannerTerms.data.fetchedAtLocal)
+  const bannerNowSec = bannerTermsData
+    ? bannerTermsData.chainNow + (nowSec - bannerTermsData.fetchedAtLocal)
     : nowSec;
+  // The EFFECTIVE due date on the loan clock (#668 / #935, #2808): the live
+  // terms moved by the paused time since the start, as of the anchored
+  // clock. The row's fallback is the indexer's loan-clock date; a row that
+  // cannot date the loan (a pause in force, or dates it did not send) gives
+  // `null` — no due date — rather than the original one standing in.
+  const rowDue = rowDeadline(row);
+  const termsEndSec: number | null = bannerTermsData
+    ? Number(loanEndTimeOf(bannerTermsData.live, BigInt(bannerNowSec)))
+    : rowDue.kind === 'known'
+      ? rowDue.maturity
+      : null;
   const graceDeadline =
-    grace.data !== undefined ? termsEndSec + Number(grace.data) : null;
+    grace.data !== undefined && termsEndSec !== null
+      ? termsEndSec + Number(grace.data)
+      : null;
   const graceRemaining = graceDeadline !== null ? graceDeadline - bannerNowSec : null;
   // Codex #1166 r4 — the LIVE status can be ahead of both the row and
   // the separate liveStatus query: a loan that already entered
@@ -1574,8 +1599,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     },
     {
       status:
-        bannerTerms.data && !bannerTerms.isError
-          ? (bannerTerms.data.live.status as LoanStatus)
+        bannerTermsData && !bannerTerms.isError
+          ? (bannerTermsData.live.status as LoanStatus)
           : undefined,
       fresh: bannerTermsEnabled,
       settled: sourceSettled(bannerTerms),
@@ -1646,8 +1671,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       liveStatus.data && !liveStatus.isError
         ? liveStatus.data.sellerWindowReadable
         : undefined,
-      bannerTerms.data && !bannerTerms.isError
-        ? bannerTerms.data.live.lenderForfeitFrom !== undefined
+      bannerTermsData && !bannerTerms.isError
+        ? bannerTermsData.live.lenderForfeitFrom !== undefined
         : undefined,
     ].filter((a): a is boolean => a !== undefined);
     if (answers.length === 0) return undefined;
@@ -1927,7 +1952,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // stale one is the worst place for the exception.
   const liveSaysFallbackPending =
     !bannerTerms.isError &&
-    bannerTerms.data?.live.status === LoanStatus.FallbackPending;
+    bannerTermsData?.live.status === LoanStatus.FallbackPending;
   // Past-due is decided by CHAIN-anchored time against (preferably
   // live) terms — not by view.state, whose daysRemaining derives from
   // the device clock (Codex #1166 r3). A failed grace read keeps a
@@ -1941,6 +1966,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     (graceRemaining !== null || grace.isError) &&
     // Live terms say the loan is genuinely past due (a keeper extend
     // makes this false and the banner honestly disappears)…
+    termsEndSec !== null &&
     termsEndSec < bannerNowSec &&
     // …and never render from row terms while the live read is still
     // in flight for a past-due candidate.
@@ -1953,7 +1979,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // graceEnd). fallback_pending cures stay exempt — including when
   // only the LIVE read knows the loan is FallbackPending (r4).
   const graceVerifiablyOver =
-    bannerTerms.data !== undefined &&
+    bannerTermsData !== undefined &&
     !liveSaysFallbackPending &&
     graceRemaining !== null &&
     graceRemaining < 0;
@@ -1966,7 +1992,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       ? 'unknown'
       : graceRemaining >= 0
         ? 'countdown'
-        : bannerTerms.data
+        : bannerTermsData
           ? 'over'
           : 'unknown';
   // Codex #1166 r2 — fallback_pending is the OTHER post-grace danger
@@ -2152,7 +2178,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // grace window — fail BEFORE the approval, judged on the LIVE
         // term fields (see the liveGate read above).
         if (row.assetType === AssetType.ERC20) {
-          const endTime = liveGate.startTime + liveGate.durationDays * 86_400n;
+          const endTime = loanEndTimeOf(liveGate, chainNow);
           if (chainNow > endTime + graceSec) {
             setError(copy.errors.pastGrace);
             return;
@@ -2180,7 +2206,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // LIVE term (a keeper extend moves it), pad one day-step, and
           // clamp — an uncapped estimate blocks a borrower who holds
           // enough for the real capped pull once ~8 days late.
-          const endTimeLive = live.startTime + live.durationDays * 86_400n;
+          const endTimeLive = loanEndTimeOf(live, chainNow);
           const daysPastEnd =
             chainNow > endTimeLive ? (chainNow - endTimeLive) / 86_400n : 0n;
           let lateFeeBps = 100n + (daysPastEnd + 2n) * 50n;
@@ -2635,7 +2661,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       });
       if (
         latestBlock.timestamp >
-        live.startTime + live.durationDays * 86_400n + graceSec
+        loanEndTimeOf(live, latestBlock.timestamp) + graceSec
       ) {
         setError(copy.errors.pastGrace);
         return;
@@ -2820,7 +2846,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       });
       if (
         latestBlock.timestamp >
-        live.startTime + live.durationDays * 86_400n + graceSec
+        loanEndTimeOf(live, latestBlock.timestamp) + graceSec
       ) {
         setError(copy.errors.preclosePastGrace);
         return;
@@ -2914,7 +2940,50 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         ? `${formatTokenAmountExact(row.collateralAmount, collateral.decimals)} ${collateral.symbol}`
         : '…';
   const nftStr = `NFT ${shortAddress(row.lendingAsset)} #${row.tokenId}`;
-  const dueDate = formatDate(row.startTime + row.durationDays * 86_400);
+  // THE DUE DATE THIS PAGE STATES (#2808) — the loan clock's (#668 /
+  // #935): the original one moved by the protocol's paused time since the
+  // loan started. A live read is preferred (only a healthy, enabled one, for
+  // the reasons the maturity gate below spells out), then the indexer's
+  // loan-clock dates. A pause in force is still moving the date, and a page
+  // with no source that dates the loan says so; neither shows the original
+  // date as if it were current.
+  const dueFacts = ((): ReturnType<typeof rowDeadline> => {
+    const src =
+      loanLiveEnabled && loanLive.data && !loanLive.isError
+        ? { live: loanLive.data.live, now: loanLiveNowSec ?? loanLive.data.chainNow }
+        : bannerTermsData && !bannerTerms.isError
+          ? { live: bannerTermsData.live, now: BigInt(bannerNowSec) }
+          : null;
+    if (!src) return rowDeadline(row);
+    const originalMaturity = Number(originalLoanEndTimeOf(src.live));
+    const pauseCredit = Number(pauseCreditOf(src.live, src.now));
+    if (pauseInForceAt(src.live.pauseLog, src.now)) {
+      return { kind: 'paused', originalMaturity, pauseCredit };
+    }
+    return {
+      kind: 'known',
+      maturity: originalMaturity + pauseCredit,
+      originalMaturity,
+      pauseCredit,
+    };
+  })();
+  // A rental's paid use is NOT extended by a pause (rent is charged per
+  // elapsed day), so its "ends" date stays the original one; only its
+  // late-fee and default deadlines move, which the repay gates read live.
+  const dueDate = isRental
+    ? formatDate(row.startTime + row.durationDays * 86_400)
+    : dueFacts.kind === 'known'
+      ? formatDate(dueFacts.maturity)
+      : dueFacts.kind === 'paused'
+        ? copy.positions.details.dueDatePaused
+        : copy.positions.details.dueDateUnknown;
+  const dueMovedBy =
+    !isRental && dueFacts.kind !== 'unknown' && dueFacts.pauseCredit > 0
+      ? copy.positions.details.dueMovedByPause(
+          formatDate(dueFacts.originalMaturity),
+          formatExactSpan(dueFacts.pauseCredit),
+        )
+      : null;
   // #1235/#1236 — the borrower's early-close and refinance windows
   // extend THROUGH the grace period since contract #1189 (both charge
   // the repay-parity late fee there; strictly past grace they revert).
@@ -2923,7 +2992,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // (conservative: the surface appears once the bucket lands — it
   // never lingers past the real window).
   const liveEndTime = loanLive.data
-    ? loanLive.data.live.startTime + loanLive.data.live.durationDays * 86_400n
+    ? loanEndTimeOf(loanLive.data.live, loanLive.data.chainNow)
     : null;
   const livePastDue =
     liveEndTime !== null && loanLive.data!.chainNow > liveEndTime;
@@ -3201,7 +3270,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </div>
           <div className="receipt-row">
             <dt>{copy.positions.details.labels.terms}</dt>
-            <dd>
+            <dd data-testid="position-terms">
               {isRental
                 ? copy.positions.details.termsRental(
                     formatDurationDays(row.durationDays),
@@ -3214,6 +3283,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   )}
             </dd>
           </div>
+          {dueMovedBy !== null ? (
+            <div className="receipt-row" data-testid="position-due-moved">
+              <dt>{copy.positions.details.labels.dueMoved}</dt>
+              <dd>{dueMovedBy}</dd>
+            </div>
+          ) : null}
           {!isRental &&
           feeEnt.data?.stamped &&
           (feeEnt.data.borrowerMode === FEE_MODE_FULL ||
@@ -3482,10 +3557,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // cards enforce the real gates.
           pastDueHint={
             loanLive.data
-              ? loanLive.data.chainNow > loanEndTimeOf(loanLive.data.live)
-              : bannerTerms.data
-                ? BigInt(bannerTerms.data.chainNow) >
-                  loanEndTimeOf(bannerTerms.data.live)
+              ? loanLive.data.chainNow >
+                loanEndTimeOf(loanLive.data.live, loanLive.data.chainNow)
+              : bannerTermsData
+                ? BigInt(bannerTermsData.chainNow) >
+                  loanEndTimeOf(
+                    bannerTermsData.live,
+                    BigInt(bannerTermsData.chainNow),
+                  )
                 : false
           }
           refinancePending={refinanceBlocking}
@@ -4362,7 +4441,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // reject the terminal loan with `LoanNotActive`.
       //
       // Blocks only on an AFFIRMATIVE terminal answer, never on a
-      // missing one: `bannerTerms.data === undefined` leaves the card
+      // missing one: `bannerTermsData === undefined` leaves the card
       // mounted. Failing closed on an unanswered read is the
       // permanent-dead-end trap this card has already met twice.
       !(
@@ -4400,7 +4479,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             liveStatus.data?.periodicInterestCadence ??
             (bannerTerms.isError
               ? undefined
-              : bannerTerms.data?.live.periodicInterestCadence)
+              : bannerTermsData?.live.periodicInterestCadence)
           }
           // A FAILED read arrives as the same `undefined` a loading one
           // does (Codex r7 P2), and the checking line then promises an
@@ -4426,8 +4505,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             loanLive.data?.live.periodicInterestCadence === undefined &&
             liveStatus.data?.periodicInterestCadence === undefined &&
             (bannerTerms.isError ||
-              (bannerTerms.data !== undefined &&
-                bannerTerms.data.live.periodicInterestCadence === undefined) ||
+              (bannerTermsData !== undefined &&
+                bannerTermsData.live.periodicInterestCadence === undefined) ||
               bannerTerms.fetchStatus === 'idle') &&
             (liveStatus.isError || (isAdvanced && loanLive.isError))
           }
@@ -4512,8 +4591,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // that closes both exits.
           maturity={(() => {
             const banner =
-              bannerTerms.data && !bannerTerms.isError
-                ? bannerNowSec >= termsEndSec
+              bannerTermsData && !bannerTerms.isError
+                ? termsEndSec !== null && bannerNowSec >= termsEndSec
                   ? 'past'
                   : 'current'
                 : undefined;
@@ -4555,7 +4634,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   // device clock shifts the boundary by its drift
                   // rather than by its absolute error.
                   (loanLiveNowSec ?? loanLive.data.chainNow) >=
-                  loanEndTimeOf(loanLive.data.live)
+                  loanEndTimeOf(
+                    loanLive.data.live,
+                    loanLiveNowSec ?? loanLive.data.chainNow,
+                  )
                   ? 'past'
                   : 'current'
                 : undefined;
@@ -4588,18 +4670,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             // false offer that is a form filled in for a transaction
             // the tool's live preflight then rejects.
             const verdicts: boolean[] = [];
-            if (bannerTerms.data && !bannerTerms.isError) {
+            if (bannerTermsData && !bannerTerms.isError) {
               verdicts.push(
-                termsEndSec > bannerNowSec &&
+                termsEndSec !== null &&
+                  termsEndSec > bannerNowSec &&
                   BigInt(termsEndSec - bannerNowSec) < MIN_SALE_LISTING_SECONDS,
               );
             }
             // Same disabled-cache rule as the maturity branch above.
             if (loanLiveEnabled && loanLive.data && !loanLive.isError) {
-              const end = loanEndTimeOf(loanLive.data.live);
               // Advanced, not frozen — same clock as the maturity
               // branch above (Codex r22 P2).
               const now = loanLiveNowSec ?? loanLive.data.chainNow;
+              const end = loanEndTimeOf(loanLive.data.live, now);
               verdicts.push(
                 end > now && BigInt(end - now) < MIN_SALE_LISTING_SECONDS,
               );
@@ -4984,8 +5067,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // pending card below explains and offers cancel/restore.
           null
         ) : (loanLiveNowSec ?? loanLive.data.chainNow) <
-          loanLive.data.live.startTime +
-            loanLive.data.live.durationDays * 86_400n ? (
+          loanEndTimeOf(
+            loanLive.data.live,
+            loanLiveNowSec ?? loanLive.data.chainNow,
+          ) ? (
           // `isError` too, not just absence (Codex r19 P2). TanStack
           // retains the last success through a failed refetch, so this
           // branch let both FORMS mount on a cached entitlement the

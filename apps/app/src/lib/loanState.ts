@@ -6,6 +6,7 @@
  */
 import type { IndexedLoan } from '../data/indexer';
 import { daysRemaining } from './format';
+import { rowDeadline } from './loanDeadline';
 
 export type LoanUiState =
   | 'on-track'
@@ -29,7 +30,12 @@ export type LoanStateLabelKey =
   | 'pastDue'
   | 'pastGrace'
   | 'dueToday'
-  | 'dueInDays';
+  | 'dueInDays'
+  // #2808 — what an Active row cannot date: a pause in force is still
+  // moving its due date, and a row without the indexer's loan-clock dates
+  // has none it can stand behind.
+  | 'duePaused'
+  | 'dueUnknown';
 
 export interface LoanStateView {
   state: LoanUiState;
@@ -54,6 +60,8 @@ export interface LoanStateLabels {
   pastGrace: string;
   dueToday: string;
   dueInDays: (n: number) => string;
+  duePaused: string;
+  dueUnknown: string;
 }
 
 const DUE_SOON_DAYS = 3;
@@ -71,7 +79,16 @@ export function loanStateView(loan: IndexedLoan): LoanStateView {
     case 'fallback_pending':
       return { state: 'closed', labelKey: 'beingSettled', daysRemaining: null, label: 'Being settled', badge: 'warn' };
     case 'active': {
-      const remaining = daysRemaining(loan.startTime, loan.durationDays);
+      // The EFFECTIVE due date, on the loan clock (#2808) — never
+      // `startTime + durationDays`, which a pause has moved.
+      const deadline = rowDeadline(loan);
+      if (deadline.kind === 'paused') {
+        return { state: 'on-track', labelKey: 'duePaused', daysRemaining: null, label: 'Paused — due date moving later', badge: 'warn' };
+      }
+      if (deadline.kind === 'unknown') {
+        return { state: 'on-track', labelKey: 'dueUnknown', daysRemaining: null, label: 'Due date unknown', badge: 'neutral' };
+      }
+      const remaining = daysRemaining(deadline.maturity);
       if (remaining < 0) {
         return { state: 'overdue', labelKey: 'pastDue', daysRemaining: null, label: 'Past due', badge: 'danger' };
       }

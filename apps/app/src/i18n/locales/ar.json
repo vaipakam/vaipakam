@@ -1348,7 +1348,8 @@
           "terms": "الشروط",
           "health": "الصحة",
           "whatNext": "ما الذي يحدث بعد ذلك",
-          "ifNothing": "إذا لم يحدث شيء"
+          "ifNothing": "إذا لم يحدث شيء",
+          "dueMoved": "تأخر موعد الاستحقاق"
         },
         "done": {
           "rentalClosed": "أُغلق التأجير. أي هامش قابل للاسترداد جاهز — طالِب به من مركز المطالبات.",
@@ -1467,7 +1468,10 @@
         "positionBorrowedAmountUnknown": "مركز الاقتراض الخاص بك · المبلغ المقترَض عند بدء هذا القرض غير متاح حاليًا",
         "positionLentAmountUnknown": "مركز الإقراض الخاص بك · المبلغ المُقرَض عند بدء هذا القرض غير متاح حاليًا",
         "collateralSettledClosed": "تم إغلاق هذا القرض — تتم تسوية ضمانه عبر المطالبات، ولم يعد مقفلًا للقرض.",
-        "collateralSettledInternalMatch": "دفعت المطابقة الداخلية ضمان المقترض إلى مُقرض القرض الذي طوبق معه. ويعود أي فائض إلى المقترض عبر مطالبته."
+        "collateralSettledInternalMatch": "دفعت المطابقة الداخلية ضمان المقترض إلى مُقرض القرض الذي طوبق معه. ويعود أي فائض إلى المقترض عبر مطالبته.",
+        "dueDatePaused": "أبعد مما كان مخططًا (البروتوكول متوقف مؤقتًا، لذا ما زال الموعد يتأخر)",
+        "dueDateUnknown": "التاريخ غير معروف حاليًا",
+        "dueMovedByPause": "كان موعد الاستحقاق الأصلي {{date}}. تأخر {{credit}} لأن البروتوكول توقف مؤقتًا طوال هذه المدة بينما كان هذا القرض مفتوحًا."
       },
       "loading": "جارٍ تحميل مراكزك…",
       "openOffers": "العروض المفتوحة",
@@ -2277,7 +2281,20 @@
       "timeJustNow": "الآن",
       "timeMinutesAgo": "منذ {{count}} د",
       "timeHoursAgo": "منذ {{count}} س",
-      "timeDaysAgo": "منذ {{count}} ي"
+      "timeDaysAgo": "منذ {{count}} ي",
+      "durationHour_zero": "{{count, number}} ساعة",
+      "durationHour_one": "ساعة واحدة",
+      "durationHour_two": "ساعتان",
+      "durationHour_few": "{{count, number}} ساعات",
+      "durationHour_many": "{{count, number}} ساعة",
+      "durationHour_other": "{{count, number}} ساعة",
+      "durationMinute_zero": "{{count, number}} دقيقة",
+      "durationMinute_one": "دقيقة واحدة",
+      "durationMinute_two": "دقيقتان",
+      "durationMinute_few": "{{count, number}} دقائق",
+      "durationMinute_many": "{{count, number}} دقيقة",
+      "durationMinute_other": "{{count, number}} دقيقة",
+      "durationUnderMinute": "أقل من دقيقة"
     },
     "vault": {
       "unreadableCount_zero": "{{count}} أصول",
@@ -2333,7 +2350,9 @@
       "dueInDays_few": "مستحق خلال {{count}} أيام",
       "dueInDays_many": "مستحق خلال {{count}} أيام",
       "dueInDays_other": "مستحق خلال {{count}} أيام",
-      "pastGrace": "انتهت فترة السماح"
+      "pastGrace": "انتهت فترة السماح",
+      "duePaused": "متوقف مؤقتًا — موعد الاستحقاق يتأخر",
+      "dueUnknown": "موعد الاستحقاق غير معروف"
     },
     "activity": {
       "loading": "جارٍ تحميل نشاطك…",

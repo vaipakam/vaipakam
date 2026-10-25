@@ -190,7 +190,7 @@ export function RefinancePendingCard({
         // An expired request is unacceptable on-chain — re-granting a
         // payoff-sized approval for it is a pure dangling authorization.
         (offer.expiresAt !== 0n && latestBlock.timestamp >= offer.expiresAt) ||
-        latestBlock.timestamp > loanEndTimeOf(liveLoan) + graceSec ||
+        latestBlock.timestamp > loanEndTimeOf(liveLoan, latestBlock.timestamp) + graceSec ||
         liveLoan.status !== LOAN_STATUS_ACTIVE
       ) {
         setError(copy.refinance.reapproveAborted);

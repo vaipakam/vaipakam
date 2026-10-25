@@ -331,7 +331,8 @@ export function useRefinancePending(
         (live.principal * BigInt(fees.loanInitiationFeeBps)) / 10_000n;
       // Strictly past grace the contract's admission gate rejects any
       // accept — the request behaves like an expired one from here.
-      const pastGrace = latestBlock.timestamp > loanEndTimeOf(live) + graceSec;
+      const pastGrace =
+        latestBlock.timestamp > loanEndTimeOf(live, latestBlock.timestamp) + graceSec;
       // What the contract could pull at the request's LAST fillable
       // moment — the allowance threshold (Codex #1256 r1): an
       // allowance covering only today's payoff still strands a

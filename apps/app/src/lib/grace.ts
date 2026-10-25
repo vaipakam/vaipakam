@@ -7,20 +7,19 @@
  * and the enforced grace from drifting apart.
  */
 
-/** Mirrors LibVaipakam.gracePeriod's zero-bucket default schedule. */
-export function defaultGraceSeconds(durationDays: number): bigint {
-  if (durationDays < 7) return 3_600n;
-  if (durationDays < 30) return 86_400n;
-  if (durationDays < 90) return 3n * 86_400n;
-  if (durationDays < 180) return 7n * 86_400n;
-  if (durationDays < 365) return 14n * 86_400n;
-  return 30n * 86_400n;
-}
+import {
+  defaultGraceSeconds as defaultGraceSecondsShared,
+  graceSecondsFromBuckets as graceSecondsFromBucketsShared,
+  type GraceBucket,
+} from '@vaipakam/lib/loanClock';
 
-/** One governance grace bucket, as `ConfigFacet.getGraceBuckets` returns it. */
-export interface GraceBucket {
-  maxDurationDays: bigint;
-  graceSeconds: bigint;
+export type { GraceBucket };
+
+/** Mirrors LibVaipakam.gracePeriod's zero-bucket default schedule. The
+ *  table lives once, in `@vaipakam/lib/loanClock`, beside the deadlines
+ *  it feeds (#2808); this keeps the app's number-typed call sites. */
+export function defaultGraceSeconds(durationDays: number): bigint {
+  return defaultGraceSecondsShared(BigInt(durationDays));
 }
 
 /**
@@ -34,21 +33,14 @@ export interface GraceBucket {
  *
  * Pure, so the live review drive can be checked against it (#1557): its
  * first draft treated an empty set as zero grace and skipped every loan
- * on a chain that publishes none.
+ * on a chain that publishes none. The walk itself is the shared one in
+ * `@vaipakam/lib/loanClock` (#2808).
  */
 export function graceSecondsFromBuckets(
   buckets: readonly GraceBucket[],
   durationDays: number | bigint,
 ): bigint {
-  const days = BigInt(durationDays);
-  if (buckets.length > 0) {
-    for (const b of buckets) {
-      if (b.maxDurationDays === 0n) return b.graceSeconds; // catch-all
-      if (days < b.maxDurationDays) return b.graceSeconds;
-    }
-    return buckets[buckets.length - 1].graceSeconds;
-  }
-  return defaultGraceSeconds(Number(days));
+  return graceSecondsFromBucketsShared(buckets, BigInt(durationDays));
 }
 
 /** Human label for a grace window in seconds ("1 hour", "3 days",

@@ -130,6 +130,22 @@ export function formatDurationDays(days: number): string {
   return copy.units.durationDay(days);
 }
 
+/** An exact span in seconds as days, hours and minutes, largest first,
+ *  zero parts left out ("2 days 3 hours"), in the active locale — how far
+ *  a pause moved a date (#2808). Never rounded UP: a two-hour pause reads
+ *  "2 hours", not "1 day". */
+export function formatExactSpan(seconds: number): string {
+  if (seconds < 60) return copy.units.durationUnderMinute;
+  const d = Math.floor(seconds / 86_400);
+  const h = Math.floor((seconds % 86_400) / 3_600);
+  const m = Math.floor((seconds % 3_600) / 60);
+  const parts: string[] = [];
+  if (d > 0) parts.push(copy.units.durationDay(d));
+  if (h > 0) parts.push(copy.units.durationHour(h));
+  if (m > 0) parts.push(copy.units.durationMinute(m));
+  return parts.join(' ');
+}
+
 /** Unix-seconds → localized date + time ("12 Jun 2026, 14:05" / …).
  *  For moments where the hour matters (e.g. the one-day relist
  *  cooldown) — `formatDate` alone would render "today" and "tomorrow
@@ -169,12 +185,13 @@ export function formatTimeAgo(unixSeconds: number): string {
   return formatDate(unixSeconds);
 }
 
-/** Days remaining until (startTime + durationDays). Negative the
- *  moment the due time passes — Math.floor, NOT ceil: ceil returns -0
- *  for the first 24h past due (and -0 < 0 is false), which showed
- *  overdue — even already-defaultable — loans as "Due today". */
-export function daysRemaining(startTime: number, durationDays: number): number {
-  const dueAt = startTime + durationDays * 86_400;
+/** Days remaining until `dueAt` (seconds) — pass the EFFECTIVE due date
+ *  (`rowDeadline` / `loanEndTimeOf`), never `startTime + durationDays`,
+ *  which a pause has moved (#2808). Negative the moment the due time
+ *  passes — Math.floor, NOT ceil: ceil returns -0 for the first 24h past
+ *  due (and -0 < 0 is false), which showed overdue — even
+ *  already-defaultable — loans as "Due today". */
+export function daysRemaining(dueAt: number): number {
   const diff = dueAt - Date.now() / 1000;
   if (diff < 0) return Math.min(-1, Math.ceil(diff / 86_400));
   return Math.floor(diff / 86_400);

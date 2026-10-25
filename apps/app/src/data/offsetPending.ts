@@ -170,13 +170,14 @@ export function useOffsetPending(
         offer !== null && offer.creator !== ZERO_ADDRESS && !offer.accepted;
       const loanActive = live.status === LOAN_STATUS_ACTIVE;
       // The completion anti-drift bound: acceptance re-checks that the
-      // replacement term still ends by the ORIGINAL maturity, so once
-      // chain time passes (end − duration) the offer is permanently
-      // unfillable and only cancel remains.
+      // replacement term still ends by the loan's EFFECTIVE maturity
+      // (#668 / #935), so once chain time passes (end − duration) the
+      // offer is unfillable and only cancel remains — unless a later
+      // pause moves the maturity out again.
       const termUnfillable =
         offerExists &&
         latestBlock.timestamp + offer!.durationDays * 86_400n >
-          loanEndTimeOf(live);
+          loanEndTimeOf(live, latestBlock.timestamp);
       const completionBound = offsetCompletionBoundOf(live);
       // Disconnected wallet must not paint the funding warnings red
       // off zero placeholders; a dead offset (loan settled another
