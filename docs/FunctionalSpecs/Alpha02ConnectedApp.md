@@ -161,9 +161,12 @@ including people who never will.
   in-place extension. The layer-2 sequencer guard is described as holding
   prices both while the sequencer is down and for the hour after it
   returns.
-- A setting whose change announces nothing on chain (today the layer-2
-  sequencer uptime feed) can lag in the indexer's snapshot until its next
-  scheduled refresh. While the console shows the snapshot, that row says so.
+- A setting that can change without announcing it on chain (today the
+  layer-2 sequencer uptime feed, and the ETH reference feed, which one of
+  its two setters changes silently) can lag in the indexer's snapshot until
+  its next scheduled refresh. While the console shows the snapshot, that
+  row says so. Every other published setting names the events that announce
+  its change, and the snapshot refreshes on each of them.
 - The console shows the public indexer's snapshot only while that snapshot
   can stand in for the chain: it is dated, recent enough that the indexer's
   regular refresh is still running, not known to be behind a governance

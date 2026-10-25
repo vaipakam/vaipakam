@@ -31,18 +31,33 @@
 import { getAbiItem, toFunctionSelector, type Abi, type Address, type PublicClient } from 'viem';
 import { MULTICALL3_ADDRESS } from './multicall.js';
 
-export interface ProtocolKnobGetter {
+interface ProtocolKnobGetterBase {
   /** The name the value is published and displayed under. */
   readonly key: string;
   /** The Diamond view that answers it: no arguments, one output. */
   readonly getter: string;
-  /** Codex #2683 r3 — its setter emits no event, so nothing on chain says
-   *  when it changed. A snapshot of it is refreshed only on the indexer's
-   *  schedule and can show the previous value until then; every surface
-   *  that shows a snapshot of it says so. The contract-side fix (an event)
-   *  is #2685. */
-  readonly eventless?: true;
+  /** Codex #2815 r1 — every event a setter of this value emits. The
+   *  indexer refreshes its snapshot on exactly these (plus its own list of
+   *  bundle setters), so a setting added here cannot be published without
+   *  naming what announces its change. The package test pins each name to
+   *  an event the Diamond ABI declares. */
+  readonly setterEvents: readonly string[];
 }
+
+/**
+ * One published setting. Either every setter announces its change
+ * (`setterEvents` names them), or at least one does not, and the entry says
+ * so with `eventless`.
+ *
+ * `eventless` (Codex #2683 r3): some way of changing the value emits no
+ * event, so nothing on chain says when it changed. A snapshot of it is
+ * refreshed on the indexer's schedule as well as on any listed event, and
+ * can show the previous value until then; every surface that shows a
+ * snapshot of it says so. The contract-side fix (an event) is #2685.
+ */
+export type ProtocolKnobGetter =
+  | (ProtocolKnobGetterBase & { readonly eventless?: undefined; readonly setterEvents: readonly [string, ...string[]] })
+  | (ProtocolKnobGetterBase & { readonly eventless: true });
 
 /**
  * The settings, by the name the console and `/config` use. Where the
@@ -52,44 +67,52 @@ export interface ProtocolKnobGetter {
  */
 export const PROTOCOL_KNOB_GETTERS = [
   // Risk
-  { key: 'minHealthFactor', getter: 'getMinHealthFactor' },
-  { key: 'maxSwapToRepaySlippageBps', getter: 'getMaxSwapToRepaySlippageBps' },
-  { key: 'rateModel', getter: 'getRateModel' },
-  { key: 'rateModelMaxDeviationBps', getter: 'getRateModelMaxDeviationBps' },
+  { key: 'minHealthFactor', getter: 'getMinHealthFactor', setterEvents: ['MinHealthFactorSet'] },
+  { key: 'maxSwapToRepaySlippageBps', getter: 'getMaxSwapToRepaySlippageBps', setterEvents: ['MaxSwapToRepaySlippageBpsSet'] },
+  { key: 'rateModel', getter: 'getRateModel', setterEvents: ['RateModelSet'] },
+  { key: 'rateModelMaxDeviationBps', getter: 'getRateModelMaxDeviationBps', setterEvents: ['RateModelMaxDeviationBpsSet'] },
   // Oracle stack
-  { key: 'secondaryOracleMaxDeviationBps', getter: 'getSecondaryOracleMaxDeviationBps' },
-  { key: 'secondaryOracleMaxStalenessSeconds', getter: 'getSecondaryOracleMaxStaleness' },
-  { key: 'pythOracle', getter: 'getPythOracle' },
-  { key: 'pythCrossCheckFeedId', getter: 'getPythNumeraireFeedId' },
-  { key: 'pythMaxStalenessSeconds', getter: 'getPythMaxStalenessSeconds' },
-  { key: 'pythCrossCheckMaxDeviationBps', getter: 'getPythNumeraireMaxDeviationBps' },
-  { key: 'pythConfidenceMaxBps', getter: 'getPythConfidenceMaxBps' },
-  { key: 'sequencerUptimeFeed', getter: 'getSequencerUptimeFeed', eventless: true },
+  { key: 'secondaryOracleMaxDeviationBps', getter: 'getSecondaryOracleMaxDeviationBps', setterEvents: ['SecondaryOracleMaxDeviationBpsSet'] },
+  { key: 'secondaryOracleMaxStalenessSeconds', getter: 'getSecondaryOracleMaxStaleness', setterEvents: ['SecondaryOracleMaxStalenessSet'] },
+  { key: 'pythOracle', getter: 'getPythOracle', setterEvents: ['PythOracleSet'] },
+  { key: 'pythCrossCheckFeedId', getter: 'getPythNumeraireFeedId', setterEvents: ['PythNumeraireFeedIdSet', 'NumeraireUpdated'] },
+  { key: 'pythMaxStalenessSeconds', getter: 'getPythMaxStalenessSeconds', setterEvents: ['PythMaxStalenessSecondsSet'] },
+  { key: 'pythCrossCheckMaxDeviationBps', getter: 'getPythNumeraireMaxDeviationBps', setterEvents: ['PythNumeraireMaxDeviationBpsSet'] },
+  { key: 'pythConfidenceMaxBps', getter: 'getPythConfidenceMaxBps', setterEvents: ['PythConfidenceMaxBpsSet'] },
+  { key: 'sequencerUptimeFeed', getter: 'getSequencerUptimeFeed', setterEvents: [], eventless: true },
   // Cross-chain reward reporting
-  { key: 'rewardGraceSeconds', getter: 'getRewardGraceSeconds' },
+  { key: 'rewardGraceSeconds', getter: 'getRewardGraceSeconds', setterEvents: ['RewardReporterConfigUpdated'] },
   // Periodic interest and the numeraire
-  { key: 'periodicInterestEnabled', getter: 'getPeriodicInterestEnabled' },
-  { key: 'numeraireSwapEnabled', getter: 'getNumeraireSwapEnabled' },
-  { key: 'numeraireSymbol', getter: 'getNumeraireSymbol' },
-  { key: 'ethNumeraireFeed', getter: 'getEthNumeraireFeed' },
-  { key: 'minPrincipalForFinerCadence', getter: 'getMinPrincipalForFinerCadence' },
-  { key: 'preNotifyDays', getter: 'getPreNotifyDays' },
+  { key: 'periodicInterestEnabled', getter: 'getPeriodicInterestEnabled', setterEvents: ['PeriodicInterestEnabledSet'] },
+  { key: 'numeraireSwapEnabled', getter: 'getNumeraireSwapEnabled', setterEvents: ['NumeraireSwapEnabledSet'] },
+  { key: 'numeraireSymbol', getter: 'getNumeraireSymbol', setterEvents: ['NumeraireUpdated'] },
+  // Codex #2815 r1 — `setNumeraire` announces it (NumeraireUpdated), but
+  // `OracleAdminFacet.setEthUsdFeed` writes the same slot and emits nothing.
+  { key: 'ethNumeraireFeed', getter: 'getEthNumeraireFeed', setterEvents: ['NumeraireUpdated'], eventless: true },
+  { key: 'minPrincipalForFinerCadence', getter: 'getMinPrincipalForFinerCadence', setterEvents: ['MinPrincipalForFinerCadenceSet', 'NumeraireUpdated'] },
+  { key: 'preNotifyDays', getter: 'getPreNotifyDays', setterEvents: ['PreNotifyDaysSet'] },
   // Automation and pauses
-  { key: 'autoLendEnabled', getter: 'getAutoLendEnabled' },
-  { key: 'autoRefinanceEnabled', getter: 'getAutoRefinanceEnabled' },
-  { key: 'autoExtendEnabled', getter: 'getAutoExtendEnabled' },
-  { key: 'keepersPaused', getter: 'keepersPaused' },
-  { key: 'lenderIntentEnabled', getter: 'isLenderIntentEnabled' },
+  { key: 'autoLendEnabled', getter: 'getAutoLendEnabled', setterEvents: ['AutoLendEnabledSet'] },
+  { key: 'autoRefinanceEnabled', getter: 'getAutoRefinanceEnabled', setterEvents: ['AutoRefinanceEnabledSet'] },
+  { key: 'autoExtendEnabled', getter: 'getAutoExtendEnabled', setterEvents: ['AutoExtendEnabledSet'] },
+  { key: 'keepersPaused', getter: 'keepersPaused', setterEvents: ['KeepersPausedSet'] },
+  { key: 'lenderIntentEnabled', getter: 'isLenderIntentEnabled', setterEvents: ['LenderIntentEnabledSet'] },
   // #2760 — the effective value: the default when governance has set none.
-  { key: 'minIntentFillNumeraire', getter: 'getMinIntentFillNumeraire' },
+  { key: 'minIntentFillNumeraire', getter: 'getMinIntentFillNumeraire', setterEvents: ['MinIntentFillNumeraireSet'] },
   // Treasury
-  { key: 'treasury', getter: 'getTreasury' },
+  { key: 'treasury', getter: 'getTreasury', setterEvents: ['TreasurySet'] },
 ] as const satisfies readonly ProtocolKnobGetter[];
 
-/** The settings whose change announces nothing on chain (see
- *  {@link ProtocolKnobGetter.eventless}). */
+/** The settings that can change without announcing it on chain (see
+ *  {@link ProtocolKnobGetter}). */
 export const EVENTLESS_PROTOCOL_KNOBS: ReadonlySet<string> = new Set(
   PROTOCOL_KNOB_GETTERS.filter((k): boolean => 'eventless' in k && k.eventless === true).map((k) => k.key),
+);
+
+/** Codex #2815 r1 — every event that announces a change to a published
+ *  setting. The indexer's snapshot refreshes on each of these. */
+export const PROTOCOL_KNOB_SETTER_EVENTS: ReadonlySet<string> = new Set(
+  PROTOCOL_KNOB_GETTERS.flatMap((k): readonly string[] => k.setterEvents),
 );
 
 /** Every published setting's name, as a type, so a consumer can prove at
