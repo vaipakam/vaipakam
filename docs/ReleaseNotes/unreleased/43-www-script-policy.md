@@ -1,4 +1,4 @@
-## Thread — the marketing site refuses inline and evaluated script (PR #TBD)
+## Thread — the marketing site refuses inline and evaluated script (PR #2846)
 
 The marketing site's content policy allowed any inline script and any text evaluated as code, and it named an analytics loader, a web-font host and a wallet-verification frame. It had been copied from the retired connected app. This site uses none of those, and the two script keywords would let an injected script run with the page's full authority (#43).
 
