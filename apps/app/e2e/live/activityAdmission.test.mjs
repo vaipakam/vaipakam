@@ -4,6 +4,7 @@ import {
   admits,
   compareRendered,
   expectedRows,
+  lastChain,
   lastScan,
   namesAsText,
   pickCandidates,
@@ -137,6 +138,55 @@ describe('renderedRows + compareRendered', () => {
       ]),
     );
     expect(cmp.ok).toBe(true);
+  });
+});
+
+describe('loans the oracle cannot see', () => {
+  const explorer = 'https://sepolia.basescan.org';
+  // The page also admits loans the wallet holds on chain (an RPC read this
+  // oracle does not make), so a row tied only to a loan outside the indexer
+  // legs is neither a pass nor a defect.
+  it('reports a rendered row tied to an unseen loan as undetermined, not unexpected', () => {
+    const r = expectedRows({ events: [settled], me: BORROWER, loanIds: new Set(), participants });
+    expect([...r.outsideLoans.keys()]).toEqual([TX(3)]);
+    const cmp = compareRendered(r, renderedRows([{ observation: false, href: `${explorer}/tx/${TX(3)}` }]));
+    expect(cmp.undetermined).toEqual([TX(3)]);
+    expect(cmp.unexpected).toEqual([]);
+    expect(cmp.ok).toBe(true);
+  });
+  it('keeps a missing admitted row a finding: the unseen loans only ever add rows', () => {
+    const r = expectedRows({ events: [settled], me: BORROWER, loanIds: new Set([7]), participants });
+    expect(r.outsideLoans.size).toBe(0);
+    expect(compareRendered(r, renderedRows([])).missing).toEqual([TX(3)]);
+  });
+  it('a rendered named-only row with no loan is still the #2703 regression', () => {
+    const r = expectedRows({ events: [roleGranted], me: KEEPER, loanIds: new Set(), participants });
+    const cmp = compareRendered(r, renderedRows([{ observation: false, href: `${explorer}/tx/${TX(4)}` }]));
+    expect(cmp.undetermined).toEqual([]);
+    expect(cmp.namedShown).toEqual([TX(4)]);
+  });
+});
+
+describe('lastChain', () => {
+  it('returns the last cursor walk in one series', () => {
+    const walk = lastChain([
+      { before: null, nextBefore: 'x' },
+      { before: null, nextBefore: 'y' },
+      { before: 'y', nextBefore: null },
+    ]);
+    expect(walk).toEqual([
+      { before: null, nextBefore: 'y' },
+      { before: 'y', nextBefore: null },
+    ]);
+  });
+  it('is null when the walk breaks or never started', () => {
+    expect(
+      lastChain([
+        { before: null, nextBefore: 'a' },
+        { before: 'b', nextBefore: null },
+      ]),
+    ).toBeNull();
+    expect(lastChain([])).toBeNull();
   });
 });
 

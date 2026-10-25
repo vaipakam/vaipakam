@@ -62,6 +62,7 @@ import {
 import {
   compareRendered,
   expectedRows,
+  lastChain,
   lastScan,
   namedAddresses,
   pickCandidates,
@@ -156,10 +157,15 @@ function finding(chainId, address, what, detail) {
   console.log(`FAIL [${chainId} ${address}] ${what}${detail ? ' — ' + detail : ''}`);
 }
 
-/** The page's own indexer traffic, by kind, in arrival order. */
+/** The page's own indexer traffic, by kind, in arrival order: the feed
+ *  scan, and the three loan legs its participation filter is built from
+ *  (`Activity.tsx`: the historical participation ids, and `useMyLoansFull`'s
+ *  lender and borrower lists; its fourth leg, the chain's own enumeration, is
+ *  an RPC read, see `expectedRows`). */
 function watchIndexer(page) {
   const activity = [];
   const participation = [];
+  const indexedLoans = { lender: [], borrower: [] };
   const reads = new Set();
   const failures = [];
   let lastStart = Date.now();
@@ -173,6 +179,8 @@ function watchIndexer(page) {
     }
     if (u.pathname === '/activity') return { kind: 'activity', u };
     if (u.pathname === '/loans/by-participant') return { kind: 'participation', u };
+    const side = /^\/loans\/by-(lender|borrower)\/(0x[0-9a-fA-F]{40})$/.exec(u.pathname);
+    if (side) return { kind: 'indexedLoans', side: side[1], wallet: side[2].toLowerCase(), u };
     return null;
   };
   page.on('request', (req) => {
@@ -207,6 +215,15 @@ function watchIndexer(page) {
           events: Array.isArray(json?.events) ? json.events : [],
           nextBefore: json?.nextBefore ?? null,
         });
+      } else if (k.kind === 'indexedLoans') {
+        indexedLoans[k.side].push({
+          ...entry,
+          wallet: k.wallet,
+          before: k.u.searchParams.get('before'),
+          chainId: Number(k.u.searchParams.get('chainId')),
+          loanIds: Array.isArray(json?.loans) ? json.loans.map((l) => Number(l?.loanId)) : [],
+          nextBefore: json?.nextBefore ?? null,
+        });
       } else {
         participation.push({ ...entry, wallet: k.u.searchParams.get('wallet') });
       }
@@ -216,6 +233,7 @@ function watchIndexer(page) {
   return {
     activity,
     participation,
+    indexedLoans,
     failures,
     async quiet(budgetMs) {
       const until = Date.now() + budgetMs;
@@ -331,20 +349,21 @@ async function observe(chainId, address, picked) {
 
     const scan = lastScan(traffic.activity);
     const participation = traffic.participation.at(-1) ?? null;
-    if (blockedRequests.length > 0) {
-      finding(
-        chainId,
-        me,
-        'the page attempted a write in a watch-only session',
-        blockedRequests.map((b) => b.reason).join('; '),
-      );
-    }
+    const legs = { lender: lastChain(traffic.indexedLoans.lender), borrower: lastChain(traffic.indexedLoans.borrower) };
+    const answeredOk = (r) => r.status === 200 && r.json !== null;
     if (state === 'unavailable') {
+      // Every indexer read the page made answered, so the page had what it
+      // needed. Conservative: one failed read anywhere in the visit and the
+      // unavailable state is not judged (the chain leg alone cannot make the
+      // page unavailable while the indexer legs answer — useMyLoansFull).
       const answered =
         scan !== null &&
-        traffic.activity.every((p) => p.status === 200 && p.json) &&
-        participation?.status === 200 &&
-        Array.isArray(participation?.json?.loanIds);
+        legs.lender !== null &&
+        legs.borrower !== null &&
+        traffic.activity.every(answeredOk) &&
+        traffic.participation.length > 0 &&
+        traffic.participation.every((r) => answeredOk(r) && Array.isArray(r.json.loanIds)) &&
+        [...traffic.indexedLoans.lender, ...traffic.indexedLoans.borrower].every(answeredOk);
       if (answered) finding(chainId, me, 'the page showed its unavailable state over answers that arrived');
       else {
         record.blocked = `the indexer did not answer the page${traffic.failures.length ? ': ' + traffic.failures.join('; ') : ''}`;
@@ -352,8 +371,15 @@ async function observe(chainId, address, picked) {
       }
       return;
     }
-    if (scan === null || participation === null || !Array.isArray(participation.json?.loanIds)) {
-      record.blocked = 'the page rendered without a readable scan or participation read to judge it by';
+    if (
+      scan === null ||
+      participation === null ||
+      !Array.isArray(participation.json?.loanIds) ||
+      legs.lender === null ||
+      legs.borrower === null ||
+      ![...legs.lender, ...legs.borrower].every(answeredOk)
+    ) {
+      record.blocked = 'the page rendered without a readable scan and loan legs to judge it by';
       console.log(`BLOCKED [${tag}] ${record.blocked}`);
       return;
     }
@@ -366,12 +392,25 @@ async function observe(chainId, address, picked) {
       );
       return;
     }
-    if (participation.wallet !== me) {
-      finding(chainId, me, 'the page read another wallet’s participation', String(participation.wallet));
+    const legPages = [...legs.lender, ...legs.borrower];
+    if (participation.wallet !== me || legPages.some((r) => r.wallet !== me)) {
+      finding(
+        chainId,
+        me,
+        'the page read another wallet’s loans',
+        [participation.wallet, ...legPages.map((r) => r.wallet)].join(', '),
+      );
+      return;
+    }
+    if (legPages.some((r) => r.chainId !== chainId)) {
+      finding(chainId, me, 'the page read another chain’s loans', legPages.map((r) => r.chainId).join(', '));
       return;
     }
 
-    const loanIds = new Set(participation.json.loanIds.filter((v) => typeof v === 'number'));
+    // The loan set the oracle can see: every indexer leg the page read.
+    const loanIds = new Set(
+      [...participation.json.loanIds, ...legPages.flatMap((r) => r.loanIds)].filter((v) => Number.isInteger(v)),
+    );
     const expected = expectedRows({ events: scan.events, me, loanIds, participants });
     const rendered = renderedRows(rows);
     const cmp = compareRendered(expected, rendered);
@@ -384,6 +423,7 @@ async function observe(chainId, address, picked) {
       namedOnly: expected.namedOnly.size,
       namedOnlyKinds: [...new Set([...expected.namedOnly.values()].flatMap((r) => r.kinds))],
       renderedTx: rendered.tx.size,
+      undetermined: cmp.undetermined,
       renderedWithoutTx: rendered.withoutTx,
       repairObservations: rendered.observations,
       compare: cmp,
@@ -407,8 +447,25 @@ async function observe(chainId, address, picked) {
       );
     }
     for (const href of cmp.unreadable) finding(chainId, me, 'a transaction link this review could not read', href);
+    if (cmp.undetermined.length > 0) {
+      console.log(
+        `UNDETERMINED [${tag}] ${cmp.undetermined.length} rendered row(s) only a loan outside the indexer legs could admit` +
+          ' (the page also adds the loans the wallet holds on chain, which this review does not read)',
+      );
+    }
   } finally {
+    // On EVERY exit, the early ones included: a write the page attempted is
+    // a finding whatever else stopped the observation. After `done()`, which
+    // lets in-flight requests land first.
     await done().catch(() => {});
+    if (blockedRequests.length > 0) {
+      finding(
+        chainId,
+        me,
+        'the page attempted a write in a watch-only session',
+        blockedRequests.map((b) => b.reason).join('; '),
+      );
+    }
   }
 }
 
@@ -459,7 +516,15 @@ if (findings.length > 0) {
   console.log(`${findings.length} finding(s)`);
   await exitWithVerdict(1);
 }
-const notJudged = observations.filter((o) => o.blocked);
+const notJudged = [
+  ...observations.filter((o) => o.blocked),
+  ...judged
+    .filter((o) => o.undetermined.length > 0)
+    .map((o) => ({
+      ...o,
+      blocked: `${o.undetermined.length} rendered row(s) could not be judged: only a loan outside the indexer legs could admit them`,
+    })),
+];
 if (notJudged.length > 0) {
   await blocked(
     `${notJudged.length} wallet page(s) could not be judged: ` +

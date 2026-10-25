@@ -66,12 +66,23 @@ export function txKeyOf(ev) {
  *   - `admittedWithoutTx`: admitted events carrying no transaction hash (each
  *     renders as its own row with no link);
  *   - `namedOnly`: transactions whose events name `me` as text while none of
- *     them admits it — the rows the retired rule showed.
+ *     them admits it — the rows the retired rule showed;
+ *   - `outsideLoans`: transactions none of whose events is admitted, but one
+ *     of which belongs to a loan outside `loanIds`.
+ *
+ * `loanIds` is the part of the page's loan set this oracle can SEE: the
+ * indexer legs the page read. The page also adds the loans the wallet holds
+ * on chain, read over RPC, which the drive does not reconstruct. That set
+ * only ever ADDS loans, so a transaction admitted here must be on the page,
+ * while a rendered transaction in `outsideLoans` may be there because of a
+ * loan only the chain read knew: it cannot be judged either way, and is
+ * reported as such rather than as a defect.
  * Each map value is `{ block, kinds }`, for the report.
  */
 export function expectedRows({ events, me, loanIds, participants }) {
   const admitted = new Map();
   const named = new Map();
+  const loanTied = new Map();
   let admittedWithoutTx = 0;
   for (const ev of events) {
     const tx = txKeyOf(ev);
@@ -86,10 +97,13 @@ export function expectedRows({ events, me, loanIds, participants }) {
       map.set(tx, row);
     };
     if (isAdmitted) into(admitted);
-    else if (namesAsText(ev, me)) into(named);
+    else {
+      if (namesAsText(ev, me)) into(named);
+      if (ev.loanId !== null && ev.loanId !== undefined) into(loanTied);
+    }
   }
-  const namedOnly = new Map([...named].filter(([tx]) => !admitted.has(tx)));
-  return { admitted, admittedWithoutTx, namedOnly };
+  const notAdmitted = (map) => new Map([...map].filter(([tx]) => !admitted.has(tx)));
+  return { admitted, admittedWithoutTx, namedOnly: notAdmitted(named), outsideLoans: notAdmitted(loanTied) };
 }
 
 /**
@@ -119,8 +133,12 @@ export function renderedRows(rows) {
 }
 
 /**
- * Compare the rendered rows with the expected ones. Every list is a finding:
- *   - `unexpected`: rendered transactions no event admits;
+ * Compare the rendered rows with the expected ones. Every list but
+ * `undetermined` is a finding:
+ *   - `undetermined`: rendered transactions only a loan outside the visible
+ *     loan set could admit (see `expectedRows`) — not judged either way;
+ *   - `unexpected`: rendered transactions no event admits, and no loan
+ *     outside the visible set could;
  *   - `namedShown`: the subset of those the retired rule would have shown —
  *     the #2703 regression itself, reported by name;
  *   - `missing`: admitted transactions the page did not render;
@@ -129,7 +147,9 @@ export function renderedRows(rows) {
  *   - `unreadable`: a transaction link this oracle could not read.
  */
 export function compareRendered(expected, rendered) {
-  const unexpected = [...rendered.tx].filter((tx) => !expected.admitted.has(tx));
+  const notAdmitted = [...rendered.tx].filter((tx) => !expected.admitted.has(tx));
+  const undetermined = notAdmitted.filter((tx) => expected.outsideLoans.has(tx));
+  const unexpected = notAdmitted.filter((tx) => !expected.outsideLoans.has(tx));
   const namedShown = unexpected.filter((tx) => expected.namedOnly.has(tx));
   const missing = [...expected.admitted.keys()].filter((tx) => !rendered.tx.has(tx));
   const withoutTxMismatch =
@@ -137,6 +157,7 @@ export function compareRendered(expected, rendered) {
       ? null
       : { rendered: rendered.withoutTx, expected: expected.admittedWithoutTx };
   return {
+    undetermined,
     unexpected,
     namedShown,
     missing,
@@ -145,6 +166,25 @@ export function compareRendered(expected, rendered) {
     ok:
       unexpected.length === 0 && missing.length === 0 && withoutTxMismatch === null && rendered.unreadable.length === 0,
   };
+}
+
+/**
+ * The pages of the LAST cursor walk in one series of responses, in arrival
+ * order (`{ before, nextBefore }` each): from the last request carrying no
+ * `before` to the end, provided each later page asked for the cursor the
+ * page before it returned. `null` when there is no walk or it does not chain.
+ * One series at a time: walks the page runs side by side (a lender and a
+ * borrower list) interleave, so the caller separates them first.
+ */
+export function lastChain(responses) {
+  let start = -1;
+  for (let i = 0; i < responses.length; i++) if (responses[i].before === null) start = i;
+  if (start === -1) return null;
+  const walk = responses.slice(start);
+  for (let i = 1; i < walk.length; i++) {
+    if (walk[i].before !== walk[i - 1].nextBefore) return null;
+  }
+  return walk;
 }
 
 /**
@@ -162,13 +202,8 @@ export function compareRendered(expected, rendered) {
  * be read as the page's input, and the drive must not judge the page by them.
  */
 export function lastScan(responses) {
-  let start = -1;
-  for (let i = 0; i < responses.length; i++) if (responses[i].before === null) start = i;
-  if (start === -1) return null;
-  const scan = responses.slice(start);
-  for (let i = 1; i < scan.length; i++) {
-    if (scan[i].before !== scan[i - 1].nextBefore) return null;
-  }
+  const scan = lastChain(responses);
+  if (scan === null) return null;
   return {
     chainIds: [...new Set(scan.map((p) => p.chainId))],
     events: scan.flatMap((p) => p.events),
