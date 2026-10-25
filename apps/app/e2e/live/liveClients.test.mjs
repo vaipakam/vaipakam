@@ -1,8 +1,8 @@
 // #2841 — every drive reads the chain through the driver's shape-checked
-// client, and a shape mismatch ends the run BLOCKED whatever exit the drive
-// then takes. The exit rule is a process `exit` listener, so it is driven
-// in a child process: a drive's catch that swallows the error, an exit
-// code the drive chose, and an uncaught throw must all end at 2.
+// client, and a PASS reached after a shape mismatch ends BLOCKED. The exit
+// rule is a process `exit` listener, so it is driven in a child process:
+// a PASS after a swallowed mismatch and an uncaught mismatch end at 2,
+// while a FAIL or UNDETERMINED the drive chose stands with the reason.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,7 +38,7 @@ function child(answer, then) {
 const RIGHT = `0x${word(7n)}${word(9n)}${word(1n)}`;
 const WRONG = `0x${word(7n)}${word(1n)}${word(0n)}${word(1n)}`;
 
-describe('a shape mismatch withdraws the drive\'s verdict', () => {
+describe('a shape mismatch withdraws a PASS', () => {
   it('leaves the drive\'s own code alone when every answer had its shape', () => {
     const r = child(RIGHT, 'console.log(String(read)); process.exit(0);');
     expect(r.stdout).toContain('7,9,true');
@@ -50,12 +50,18 @@ describe('a shape mismatch withdraws the drive\'s verdict', () => {
     expect(r.stdout).toContain('swallowed LiveShapeMismatchError');
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/BLOCKED: bundle answered 4 words, and this build's ABI describes 3 words/);
-    expect(r.stderr).toMatch(/drive's own exit code, 0, was reached against that answer and is withdrawn/);
+    expect(r.stderr).toMatch(/the PASS this drive reached rested on that answer and is withdrawn/);
   });
 
-  it('turns a FAIL reached against that answer into BLOCKED', () => {
-    const r = child(WRONG, 'process.exit(1);');
+  it('turns a PASS at the natural end of the script into BLOCKED too', () => {
+    const r = child(WRONG, '');
     expect(r.status).toBe(2);
+  });
+
+  it('keeps a FAIL, which can rest on evidence the mismatch does not touch, and adds the reason', () => {
+    const r = child(WRONG, 'process.exit(1);');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/shape this build does not describe: bundle answered 4 words/);
   });
 
   it('keeps UNDETERMINED, which also says the drive wrote, and adds the reason', () => {
@@ -64,10 +70,16 @@ describe('a shape mismatch withdraws the drive\'s verdict', () => {
     expect(r.stderr).toMatch(/shape this build does not describe: bundle answered 4 words/);
   });
 
-  it('turns an uncaught throw after the mismatch into BLOCKED', () => {
-    const r = child(WRONG, "throw new Error('drive gave up');");
+  it('turns an uncaught mismatch into BLOCKED, not the 1 Node exits with', () => {
+    const r = child(WRONG, 'throw new (await import(' + JSON.stringify(DRIVER) + ")).LiveShapeMismatchError('again');");
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/BLOCKED: bundle answered 4 words/);
+  });
+
+  it('keeps an uncaught throw of anything else as Node\'s FAIL, with the reason', () => {
+    const r = child(WRONG, "throw new Error('drive gave up');");
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/shape this build does not describe: bundle answered 4 words/);
   });
 });
 
@@ -87,6 +99,12 @@ describe('every drive reads the chain through livePublicClient', () => {
     const driver = sources.find(([f]) => f === 'driver.mjs')[1];
     expect(driver).toContain('return shapeChecked(createPublicClient(options), loadShapeRule);');
     expect(driver).toMatch(/The PAGE's transport, not a drive's read[\s\S]{0,400}const pub = createPublicClient\(/);
+  });
+
+  it('makes no raw eth_call around the checked reads', () => {
+    // A drive that wants the bytes uses `readRaw`, which checks them.
+    const raw = sources.filter(([, src]) => /\bpub\.call\(/.test(src)).map(([f]) => f);
+    expect(raw).toEqual([]);
   });
 
   it('calls no viem read action around the client', () => {

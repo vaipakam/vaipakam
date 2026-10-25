@@ -139,6 +139,22 @@ describe('readContract through the answer-shape rule', () => {
   });
 });
 
+describe('readRaw through the answer-shape rule', () => {
+  it('returns the bytes of an answer that has its shape, and 0x for an empty one', async () => {
+    const { checked } = clients({ [sel('bundle()')]: BUNDLE_3, [sel('boom()')]: '0x' });
+    expect(await checked.readRaw({ address: DIAMOND, abi: ABI, functionName: 'bundle', blockNumber: 2n })).toBe(BUNDLE_3);
+    expect(await checked.readRaw({ address: DIAMOND, abi: ABI, functionName: 'boom' })).toBe('0x');
+    expect(mod.shapeBlock()).toBeNull();
+  });
+
+  it('refuses the bytes of an answer of another shape, and records why', async () => {
+    const { checked } = clients({ [sel('bundle()')]: BUNDLE_4 });
+    const { error } = await settle(checked.readRaw({ address: DIAMOND, abi: ABI, functionName: 'bundle', blockNumber: 2n }));
+    expect(error).toBeInstanceOf(mod.LiveShapeMismatchError);
+    expect(mod.shapeBlock()).toMatch(/^bundle answered 4 words, .* at block 2\)$/);
+  });
+});
+
 describe('multicall through the answer-shape rule', () => {
   const aggregate = (entries) =>
     encodeFunctionResult({ abi: multicall3Abi, functionName: 'aggregate3', result: entries });

@@ -95,7 +95,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { decodeFunctionResult, encodeFunctionData, parseUnits } from 'viem';
+import { decodeFunctionResult, parseUnits } from 'viem';
 import {
   addressOf,
   blocked,
@@ -347,14 +347,10 @@ const diamondRead = (functionName, args) => {
  */
 const rawDiamondCall = async (functionName, args, blockNumber) => {
   requireAbiMember(functionName, 'function');
-  const { data } = await pub.call({
-    to: DIAMOND,
-    data: encodeFunctionData({ abi: ABI, functionName, args }),
-    blockNumber,
-  });
-  // `0x` for an empty reply, so the decode below raises viem's own
-  // zero-data error rather than a TypeError about `undefined`.
-  return data ?? '0x';
+  // `readRaw` applies the answer-shape rule to the bytes (#2841) and
+  // returns `0x` for an empty reply, so the decode below raises viem's
+  // own zero-data error rather than a TypeError about `undefined`.
+  return pub.readRaw({ address: DIAMOND, abi: ABI, functionName, args, blockNumber });
 };
 
 const confirmLedgerAtCeiling = (orderHash, ceiling, minBlock) =>

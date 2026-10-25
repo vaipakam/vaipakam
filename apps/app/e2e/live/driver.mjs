@@ -48,7 +48,7 @@ import {
 import { privateKeyToAccount } from 'viem/accounts';
 import { baseSepolia, arbitrumSepolia, bscTestnet } from 'viem/chains';
 import { walletGateDecision } from './walletGate.mjs';
-import { shapeBlock, shapeChecked } from './shapeCheckedClient.mjs';
+import { LiveShapeMismatchError, shapeBlock, shapeChecked } from './shapeCheckedClient.mjs';
 import { classifyRpcResponse, createSocketCalls, isChainRpcMethod } from './rpc-verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -91,39 +91,46 @@ export function trackBrowser(browser) {
  */
 const OBSERVED_RPC_FAULTS = [];
 /**
- * #2841 — a chain answer of the wrong shape withdraws the drive's verdict.
+ * #2841 — a PASS reached after a chain answer of the wrong shape is
+ * withdrawn.
  *
  * Every drive reads the chain through `livePublicClient`, which refuses to
  * decode a static-output answer whose length is not the one this build's
  * ABI describes and records why (`shapeChecked`). The record is applied
  * HERE, at process exit, rather than at each drive's catch: a drive's own
- * catch may read any failed read as FAIL, as "still pending", or carry on,
- * and the drives have dozens of exits between them. Whatever code the
- * drive exits with was reached against a chain that is not this build, so
- * the run is BLOCKED with the reason, unless a malformed page request was
- * recorded (a finding about the page: FAIL outranks BLOCKED as it does in
- * `exitBlockedOrFail`) or the drive already exits UNDETERMINED, which
- * also says that it wrote to the chain. Node takes `process.exitCode` set in
- * an `exit` listener as the final code (an uncaught throw included).
+ * catch may read any failed read as "still pending" or carry on, and the
+ * drives have dozens of exits between them.
+ *
+ * - A PASS (0) is BLOCKED with the reason: it was reached on a chain that
+ *   is not this build, so it verified nothing about this build.
+ * - An uncaught mismatch is BLOCKED with the reason, not the 1 Node exits
+ *   with: nothing but the mismatch ended the run.
+ * - Every other code stands, with the reason added. A FAIL can rest on
+ *   evidence the mismatch does not touch (a malformed or write request
+ *   from the page, which several drives collect themselves), and turning
+ *   it into BLOCKED would hide a defect, the misclassification this
+ *   contract ranks worst; the printed reason says the chain was not this
+ *   build. BLOCKED (2) and UNDETERMINED (3, the drive wrote and could not
+ *   settle its claims) already say what a BLOCKED would.
+ *
+ * Node takes `process.exitCode` set in an `exit` listener as the final
+ * code; `uncaughtExceptionMonitor` only observes and leaves Node's own
+ * handling of the throw as it is.
  */
+let UNCAUGHT;
+process.on('uncaughtExceptionMonitor', (err) => {
+  UNCAUGHT = err;
+});
 process.on('exit', (code) => {
   const why = shapeBlock();
   if (!why) return;
-  if (OBSERVED_RPC_FAULTS.length > 0) {
-    console.error(`\n(the chain also answered in a shape this build does not describe: ${why})`);
-    process.exitCode = 1;
+  const uncaughtMismatch = code === 1 && UNCAUGHT instanceof LiveShapeMismatchError;
+  if ((code === 0 || uncaughtMismatch) && OBSERVED_RPC_FAULTS.length === 0) {
+    console.error(`\nBLOCKED: ${why}\n  (${code === 0 ? 'the PASS this drive reached' : 'the run'} rested on that answer and is withdrawn)`);
+    process.exitCode = 2;
     return;
   }
-  // UNDETERMINED (3) already says the drive wrote and could not establish
-  // its claims, which a BLOCKED would hide; it stands, with the reason.
-  if (code === 2 || code === 3) {
-    console.error(`\n(the chain answered in a shape this build does not describe: ${why})`);
-    return;
-  }
-  console.error(
-    `\nBLOCKED: ${why}\n  (the drive's own exit code, ${code}, was reached against that answer and is withdrawn)`,
-  );
-  process.exitCode = 2;
+  console.error(`\n(the chain also answered in a shape this build does not describe: ${why})`);
 });
 
 /** Each attached watcher's session drain, awaited by `blocked()` and by

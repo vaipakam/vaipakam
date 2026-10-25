@@ -11,7 +11,10 @@
  * neighbour in a PASS/FAIL check.
  *
  * `shapeChecked(pub, loadRule)` returns the same client with those two
- * reads replaced by versions that make the rule's one comparison first:
+ * reads replaced, plus `readRaw` for a drive that decodes the answer itself
+ * (a write confirmation keeps a malformed reply apart from a failure to
+ * reach anything, so it takes the bytes, #2107). All three make the rule's
+ * one comparison first:
  * an answer to a getter whose outputs are all static must be exactly as
  * long as this build's ABI describes. An answer of another length is not
  * decoded. The read throws `LiveShapeMismatchError`, and the mismatch is
@@ -128,6 +131,23 @@ export function shapeChecked(pub, loadRule) {
       }
     }
 
+    // The undecoded answer, checked: the same request `readContract`
+    // makes, its bytes returned as they came (`0x` for an empty one, so a
+    // decoder raises viem's own zero-data error), and errors left as the
+    // raw `call` raises them, as the drives' own `pub.call` did.
+    async function readRaw(params) {
+      refuseUnsupported('readRaw', params, READ_PARAMS);
+      const r = await theRule();
+      const { abi, address, args, functionName, blockNumber } = params;
+      const { data } = await getAction(client, call, 'call')({
+        to: address,
+        data: encodeFunctionData({ abi, args, functionName }),
+        blockNumber,
+      });
+      checkShape(r, params, data);
+      return data ?? '0x';
+    }
+
     // viem's multicall, minus what no drive uses: one aggregate3 call (no
     // chunking) to an address the drive names. Each entry is checked
     // before it is decoded; a mismatch throws for the whole call rather
@@ -184,6 +204,6 @@ export function shapeChecked(pub, loadRule) {
       });
     }
 
-    return { readContract, multicall };
+    return { readContract, readRaw, multicall };
   });
 }
