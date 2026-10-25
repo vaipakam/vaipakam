@@ -1,4 +1,4 @@
-## Keeper — Tier 3 needs evidence the asset is used as collateral elsewhere (PR #TBD)
+## Keeper — Tier 3 needs evidence the asset is used as collateral elsewhere (PR #2806)
 
 Before the keeper's liquidity relay promotes an asset to the deepest tier, an
 off-chain advisory checks that the asset is "battle-tested elsewhere". It used
