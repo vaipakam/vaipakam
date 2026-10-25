@@ -142,6 +142,22 @@ describe('#642 partial-liquidation re-size helpers', () => {
       expect(out).toMatchObject({ kind: 'submitted', fractionBps: 5_334n });
     });
 
+    it('a growth step past the band is clamped to the band end, not taken as exhaustion', async () => {
+      // #2800 r1: 6,000 grows to 8,000, past the 7,500 end; 7,499 is tried
+      // instead, and the bracket then narrows into the 7,000-7,200 band.
+      const { d, sent } = deps({ restoreBps: 7_000n, ceilingBps: 7_200n });
+      const out = await runPartialAttempts(6_000n, route, d);
+      expect(sent).toEqual([6_000n, 7_499n, 6_749n, 7_124n]);
+      expect(out).toMatchObject({ kind: 'submitted', fractionBps: 7_124n });
+    });
+
+    it('a shrink below the floor tries the floor itself before escalating', async () => {
+      const { d, sent } = deps({ ceilingBps: MIN_PARTIAL_FRACTION_BPS });
+      const out = await runPartialAttempts(600n, route, d);
+      expect(sent).toEqual([600n, MIN_PARTIAL_FRACTION_BPS]);
+      expect(out).toMatchObject({ kind: 'submitted', fractionBps: MIN_PARTIAL_FRACTION_BPS });
+    });
+
     it('escalates when no whole bps size passes, after narrowing the bracket to nothing', async () => {
       // Too small below 4,001, over-liquidating above 4,000: an empty band.
       const { d, sent } = deps({ restoreBps: 4_001n, ceilingBps: 4_000n });

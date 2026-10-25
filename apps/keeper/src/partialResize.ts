@@ -108,12 +108,13 @@ export interface PartialAttemptDeps<Q> {
  *   · too big, nothing known too small → shrink 25%;
  *   · too small, nothing known too big → grow by a third;
  *   · both sides known                 → the midpoint;
- *   · over the cap                     → clamp to the cap, which also becomes
- *     the upper limit for any growth.
+ *   · over the cap                     → the cap itself, which also becomes
+ *     the upper limit for every later size.
  *
- * It escalates to split/full only when the bracket closes with no whole bps
- * size left in it, or the next size would leave `[MIN_PARTIAL_FRACTION_BPS,
- * MAX_PARTIAL_FRACTION_BPS)` (or pass the cap): then no partial can pass and a
+ * A step is clamped to the interval still open — never past the floor
+ * `MIN_PARTIAL_FRACTION_BPS`, the end of the partial band
+ * `MAX_PARTIAL_FRACTION_BPS` or the cap — so it escalates to split/full only
+ * when that interval holds no whole bps size: then no partial can pass and a
  * full liquidation is the lender's way out. A refusal that says a partial is
  * the wrong tool (`InternalMatchOnlyBand`, `PartialLeavesDust`,
  * `PartialFullyClosedUseFull`, `PartialAfterMaturity`) escalates at once. Any
@@ -138,21 +139,32 @@ export async function runPartialAttempts<Q extends { calls: readonly unknown[] }
   let quotes = initialQuotes;
   /** Largest size refused as too small to restore HF. */
   let tooSmall: bigint | null = null;
-  /** Smallest size refused as too big (over the ceiling or the cap). */
+  /** Smallest size refused as over the health-factor ceiling. */
   let tooBig: bigint | null = null;
   /** Sizes must stay below this: the partial band's end, or the live cap + 1. */
   let limit = MAX_PARTIAL_FRACTION_BPS;
 
-  /** The next size strictly inside the bracket, or null when none is left. */
-  const nextSize = (): bigint | null => {
-    let next: bigint;
-    if (tooSmall !== null && tooBig !== null) next = (tooSmall + tooBig) / 2n;
-    else if (tooBig !== null) next = reducePartialFractionBps(tooBig);
-    else next = tooSmall! + (tooSmall! + 2n) / 3n; // grow by a third, at least 1 bps
-    if (next < MIN_PARTIAL_FRACTION_BPS || next >= limit) return null;
-    if (tooSmall !== null && next <= tooSmall) return null;
-    if (tooBig !== null && next >= tooBig) return null;
-    return next;
+  /**
+   * The next size to send, strictly inside the open interval the refusals
+   * leave, or null when that interval holds no whole bps size. The interval
+   * runs from the largest size known too small (or just under the floor) to
+   * the smallest known too big (or the limit), so a step that would leave it
+   * is CLAMPED to its edge rather than ending the search (#2800 r1): a growth
+   * step from 6,000 past a 7,000-7,200 band still tries 7,499, and a shrink
+   * below the floor still tries the floor.
+   */
+  const nextSize = (step: 'down' | 'up' | 'cap'): bigint | null => {
+    const lower = tooSmall ?? MIN_PARTIAL_FRACTION_BPS - 1n;
+    const upper = tooBig !== null && tooBig < limit ? tooBig : limit;
+    if (upper - lower <= 1n) return null;
+    if (tooSmall !== null && tooBig !== null) return (lower + upper) / 2n;
+    if (step === 'cap') return upper - 1n;
+    if (step === 'down') {
+      const shrunk = reducePartialFractionBps(fractionBps);
+      return shrunk > lower ? (shrunk < upper ? shrunk : upper - 1n) : lower + 1n;
+    }
+    const grown = fractionBps + (fractionBps + 2n) / 3n; // a third, at least 1 bps
+    return grown < upper ? (grown > lower ? grown : lower + 1n) : upper - 1n;
   };
   const bracket = () => `too small ${tooSmall ?? '-'}bps, too big ${tooBig ?? '-'}bps, limit ${limit}bps`;
 
@@ -180,22 +192,24 @@ export async function runPartialAttempts<Q extends { calls: readonly unknown[] }
       if (msg.includes('InvalidPartialFraction')) {
         const capBps = await deps.readCloseFactorCapBps();
         refusal = `over the close-factor cap ${capBps}bps`;
-        // The cap bounds every later size. A clamp that does not lower this
-        // one means the cap is not what refused it: nothing to clamp to.
-        if (capBps + 1n < limit) limit = capBps + 1n;
-        tooBig = tooBig === null || fractionBps < tooBig ? fractionBps : tooBig;
-        const clamped = clampPartialFractionBps(fractionBps, capBps);
-        next = clamped < fractionBps && (tooSmall === null || clamped > tooSmall) && clamped >= MIN_PARTIAL_FRACTION_BPS
-          ? clamped
-          : null;
+        // A cap at or above this size is not what refused it: there is no
+        // smaller cap-legal size to move to, so a partial cannot help.
+        if (capBps >= fractionBps) {
+          next = null;
+        } else {
+          // The cap bounds every later size; the first one tried under it is
+          // the cap itself, the largest size it allows.
+          if (capBps + 1n < limit) limit = capBps + 1n;
+          next = nextSize('cap');
+        }
       } else if (msg.includes('PartialOverLiquidates')) {
         refusal = 'over the health-factor ceiling';
-        tooBig = tooBig === null || fractionBps < tooBig ? fractionBps : tooBig;
-        next = nextSize();
+        if (tooBig === null || fractionBps < tooBig) tooBig = fractionBps;
+        next = nextSize('down');
       } else if (msg.includes('PartialMustRestoreHF') || msg.includes('PartialMustImproveHF')) {
         refusal = 'too small to restore HF';
-        tooSmall = tooSmall === null || fractionBps > tooSmall ? fractionBps : tooSmall;
-        next = nextSize();
+        if (tooSmall === null || fractionBps > tooSmall) tooSmall = fractionBps;
+        next = nextSize('up');
       } else {
         deps.log(`partial-reverted-resize (${msg.slice(0, 140)}) — skipping; recompute slice next tick`);
         return { kind: 'skip' };
