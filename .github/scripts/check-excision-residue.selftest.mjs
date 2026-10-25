@@ -14,6 +14,13 @@
  * some point and the direction it must fall. A change that re-breaks one is a
  * failing command rather than a finding in the next review.
  *
+ * SCOPE. The gate reads prose files only (owner decision 2026-10-16, #1734),
+ * so the fixtures for PDF, Office, JSON and standalone HTML went with the
+ * readers they tested. The raw-HTML cases that also apply inside Markdown
+ * were kept as `.md` fixtures, and the "OUT OF SCOPE BY CONSTRUCTION" group
+ * pins the boundary itself: non-prose files that name the retired surface and
+ * must stay silent.
+ *
  * HOW IT WORKS. The checker reads `git ls-files`, so fixtures are staged in a
  * scratch directory inside the repo, the checker is run, and the staging is
  * undone. Nothing is committed and the index is restored even on failure.
@@ -24,7 +31,6 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { deflateRawSync, deflateSync } from 'node:zlib';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
@@ -100,75 +106,10 @@ const FIXTURES = [
     body: 'Docs ' + ']('.repeat(2000) + ' notes.\n',
   },
   {
-    // Round 8 P1. A real DOCX: ZIP of deflated XML. The sentence exists only
-    // inside the compressed part, so reading the container's bytes saw nothing
-    // and the file passed a gate claiming whole-tree coverage. Built here with
-    // `deflateRawSync` rather than committed as a binary blob, so the fixture
-    // is reviewable as source.
-    name: 'guidance.docx',
-    caught: true,
-    why: 'a DOCX paragraph naming the retired surface must be read, not skipped',
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        'word/document.xml',
-        '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:t>' +
-          'Operators must deploy the VPFI buy adapter before launch.' +
-          '</w:t></w:r></w:p></w:body></w:document>',
-      ],
-    ],
-  },
-  {
-    // The other half, inline direction. Word segments a single WORD across runs
-    // at arbitrary points — a spell-check marker here — so a run boundary is
-    // nothing on the page and must delete to nothing. `buyRequest` is one of
-    // the two `identifierOnly` tokens, so it is caught only if the source span
-    // behind it is one word: replacing run tags with a space would break the
-    // span and let a dead identifier escape by however Word happened to split
-    // it. (My first version of this fixture asserted the opposite — that tags
-    // become a space — and failed, correctly: `buy adapter` with only a space
-    // between IS a mention under the gate's own rules, in a `.docx` exactly as
-    // in a `.md`. Nothing about the space was doing the work.)
-    name: 'run-split.docx',
-    caught: true,
-    why: 'a run boundary inside a word is nothing on the page',
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        'word/document.xml',
-        '<?xml version="1.0"?><w:document><w:body><w:p>' +
-          '<w:r><w:t>buy</w:t></w:r>' +
-          '<w:proofErr w:type="spellStart"/>' +
-          '<w:r><w:t>Request</w:t></w:r>' +
-          '</w:p></w:body></w:document>',
-      ],
-    ],
-  },
-  {
-    // …and the block direction, which is what stops that deletion from fusing
-    // the document. A paragraph boundary IS something on the page, so it
-    // becomes a blank line and the two sentences either side of it stay two
-    // sentences. Same inline-vs-block split the HTML path already draws.
-    name: 'paragraph-split.docx',
-    caught: false,
-    why: 'a paragraph boundary separates what the reader sees',
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        'word/document.xml',
-        '<?xml version="1.0"?><w:document><w:body>' +
-          '<w:p><w:r><w:t>Decide what to buy</w:t></w:r></w:p>' +
-          '<w:p><w:r><w:t>Request a quote from the desk</w:t></w:r></w:p>' +
-          '</w:body></w:document>',
-      ],
-    ],
-  },
-  {
-    // Round 10 P1. Signature alone is claimable by ANY file, and the Office
-    // decoder's output REPLACES the source text — so a `.md` opening with the
-    // four ZIP bytes had its whole body swapped for the empty string and the
-    // gate scanned nothing. Same bypass shape as the `GIF8`-prefixed markdown
-    // the binary-signature rule already had to close, arriving one format over.
+    // Round 10 P1. A container decoder once REPLACED the source text by
+    // signature, so a `.md` opening with the four ZIP bytes was scanned as the
+    // empty string. The decoders are gone with the prose scope (#1734); this
+    // stays to pin that a prose file is always read as itself.
     name: 'pk-prefixed.md',
     caught: true,
     why: 'a text file cannot buy an exemption by opening with a ZIP signature',
@@ -176,268 +117,6 @@ const FIXTURES = [
       Buffer.from([0x50, 0x4b, 0x03, 0x04]),
       Buffer.from('\nOperators must deploy the VPFI buy adapter before launch.\n'),
     ]),
-  },
-  {
-    // Round 10 P1. The archive comment is arbitrary bytes; a decoy `PK\x05\x06`
-    // planted there is found FIRST by a backward scan. The decoy declares zero
-    // entries, so a real document read as zero parts and passed clean. A real
-    // EOCD's comment ends exactly at EOF and its central directory starts on a
-    // central-directory signature — this fixture's decoy satisfies neither.
-    name: 'eocd-in-comment.docx',
-    caught: true,
-    why: 'a decoy EOCD in the archive comment must not displace the real record',
-    zipComment: Buffer.concat([
-      Buffer.from([0x50, 0x4b, 0x05, 0x06]),
-      Buffer.alloc(18),
-    ]),
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        'word/document.xml',
-        '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:t>' +
-          'Operators must deploy the VPFI buy adapter before launch.' +
-          '</w:t></w:r></w:p></w:body></w:document>',
-      ],
-    ],
-  },
-  {
-    // Round 10 P1. A tab inside a paragraph is inline whitespace — the reader
-    // sees two words on one line, exactly as with a space — and treating it as
-    // a block break discarded a visible mention. The space already gets this
-    // call; the tab is the same call one character over.
-    name: 'tab-inline.docx',
-    caught: true,
-    why: 'a tab within a paragraph is whitespace, not a block boundary',
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        'word/document.xml',
-        '<?xml version="1.0"?><w:document><w:body><w:p><w:r>' +
-          '<w:t>Deploy the VPFI buy</w:t><w:tab/><w:t>adapter before launch</w:t>' +
-          '</w:r></w:p></w:body></w:document>',
-      ],
-    ],
-  },
-  {
-    // A `>` inside a quoted attribute value ends the tag early for a
-    // `<[^>]*>` strip, spilling the rest of the attribute into the text — and
-    // the spilled `B` sat between `buy` and `adapter`, so the phrase normalized
-    // to `buybadapter` and the mention was MISSED. The quote-aware walk ends
-    // the tag where the tag ends. (This is also what CodeQL reports as an
-    // incomplete one-pass strip; nothing here reaches an HTML sink, but the
-    // observation behind the query is correct and this is the fix for it.)
-    name: 'attr-gt.docx',
-    caught: true,
-    why: 'a quoted `>` does not end a tag',
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        'word/document.xml',
-        '<?xml version="1.0"?><w:document><w:body><w:p><w:r>' +
-          '<w:t>Deploy the VPFI buy</w:t>' +
-          '<w:ins w:author="A > B"/>' +
-          '<w:t>adapter before launch</w:t>' +
-          '</w:r></w:p></w:body></w:document>',
-      ],
-    ],
-  },
-  {
-    // Round 10 P1, the other direction. A worksheet using inline strings gives
-    // each cell its own element; with no boundary between them two unrelated
-    // cells fused into a mention that no cell contains.
-    name: 'cells.xlsx',
-    caught: false,
-    why: 'separate spreadsheet cells are separate text',
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        'xl/worksheets/sheet1.xml',
-        '<?xml version="1.0"?><worksheet><sheetData><row>' +
-          '<c t="inlineStr"><is><t>Decide what to buy</t></is></c>' +
-          '<c t="inlineStr"><is><t>Adapter selection follows</t></is></c>' +
-          '</row></sheetData></worksheet>',
-      ],
-    ],
-  },
-  {
-    // Round 10 P1. CDATA is reader-visible text wearing markup's brackets, so
-    // the blanket tag strip deleted a whole paragraph written that way.
-    name: 'cdata.docx',
-    caught: true,
-    why: 'a paragraph written as CDATA is still on the page',
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        'word/document.xml',
-        '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:t>' +
-          '<![CDATA[Operators must deploy the VPFI buy adapter before launch.]]>' +
-          '</w:t></w:r></w:p></w:body></w:document>',
-      ],
-    ],
-  },
-  {
-    // Round 10 P1. A UTF-16 part decoded as UTF-8 keeps a NUL between every
-    // markup character, so `</w:p>` stopped matching the boundary regex and two
-    // paragraphs fused into a mention no reader sees.
-    name: 'utf16.docx',
-    caught: false,
-    why: 'a UTF-16 part still has paragraph boundaries',
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        'word/document.xml',
-        Buffer.concat([
-          Buffer.from([0xff, 0xfe]),
-          Buffer.from(
-            '<w:document><w:body>' +
-              '<w:p><w:r><w:t>Decide what to buy</w:t></w:r></w:p>' +
-              '<w:p><w:r><w:t>Adapter selection follows</w:t></w:r></w:p>' +
-              '</w:body></w:document>',
-            'utf16le',
-          ),
-        ]),
-      ],
-    ],
-  },
-  {
-    // Round 10 P1. OOXML names its main part through the package relationships,
-    // so a conforming document body need not be called `word/document.xml`. The
-    // fixed filename whitelist walked straight past this one.
-    name: 'nonstandard-part.docx',
-    caught: true,
-    why: 'the main part is named by relationship, not by convention',
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        '_rels/.rels',
-        '<?xml version="1.0"?><Relationships><Relationship Id="rId1" ' +
-          'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" ' +
-          'Target="word/guidance.xml"/></Relationships>',
-      ],
-      [
-        'word/guidance.xml',
-        '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:t>' +
-          'Operators must deploy the VPFI buy adapter before launch.' +
-          '</w:t></w:r></w:p></w:body></w:document>',
-      ],
-    ],
-  },
-  {
-    // Round 10 P1. A drawing's accessibility description IS reader-visible —
-    // assistive technology reads it aloud — but it lives in an attribute, so
-    // the blanket tag removal deleted it along with the markup.
-    name: 'alt-text.docx',
-    caught: true,
-    why: 'alt text is read aloud, so it is text',
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        'word/document.xml',
-        '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:drawing>' +
-          '<wp:docPr id="1" name="Picture 1" ' +
-          'descr="Operators must deploy the VPFI buy adapter before launch."/>' +
-          '</w:drawing></w:r></w:p></w:body></w:document>',
-      ],
-    ],
-  },
-  {
-    // Round 11 P1. A comment is not a tag and does not end at its first `>`.
-    // The quoted-tag walk read `<!-- A > B -->` as ending after `A >` and
-    // emitted ` B -->` as text; the `B` landed between the two words and the
-    // phrase normalized to `buybadapter`. Same shape as the quoted-`>` bug the
-    // walk was written to fix, one construct over.
-    name: 'xml-comment.docx',
-    caught: true,
-    why: 'an XML comment ends at `-->`, not at its first `>`',
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        'word/document.xml',
-        '<?xml version="1.0"?><w:document><w:body><w:p><w:r>' +
-          '<w:t>Deploy the VPFI buy</w:t><!-- A > B --><w:t>adapter before launch</w:t>' +
-          '</w:r></w:p></w:body></w:document>',
-      ],
-    ],
-  },
-  {
-    // Round 11 P1. XML permits either quote character; matching only `"`
-    // exempted the single-quoted spelling of the very accessibility text the
-    // double-quoted fixture covers.
-    name: 'alt-text-single-quote.docx',
-    caught: true,
-    why: "alt text is alt text in single quotes too",
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        'word/document.xml',
-        '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:drawing>' +
-          "<wp:docPr id='1' descr='Operators must deploy the VPFI buy adapter before launch.'/>" +
-          '</w:drawing></w:r></w:p></w:body></w:document>',
-      ],
-    ],
-  },
-  {
-    // Round 13 P1. XML does not expand character references inside CDATA, so
-    // `&#32;` there is four visible characters, not a space. Decoding it after
-    // unwrapping fused two words the reader sees held apart and BLOCKED a clean
-    // document — the unwrapping has to carry the "this was literal" fact.
-    name: 'cdata-entity.docx',
-    caught: false,
-    why: 'a character reference inside CDATA is literal text',
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        'word/document.xml',
-        '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:t>' +
-          '<![CDATA[Decide what to buy&#32;adapter selection follows.]]>' +
-          '</w:t></w:r></w:p></w:body></w:document>',
-      ],
-    ],
-  },
-  {
-    // Round 12 P1. An xmlns binding is SCOPED to the element that declares it.
-    // Flattening every declaration in the part let `e:` keep a
-    // WordprocessingML meaning after the element that bound it had closed, so
-    // a later `<e:p/>` from an ignorable-extension namespace inserted a
-    // boundary no reader sees and split a real mention in two.
-    name: 'ns-scoped.docx',
-    caught: true,
-    why: 'a prefix binding does not outlive the element that declares it',
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        'word/document.xml',
-        '<?xml version="1.0"?><w:document ' +
-          'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
-          '<w:body><w:p><w:r>' +
-          '<w:t xmlns:e="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
-          'Deploy the VPFI buy</w:t>' +
-          '<e:p xmlns:e="http://schemas.openxmlformats.org/markup-compatibility/2006"/>' +
-          '<w:t>adapter before launch</w:t>' +
-          '</w:r></w:p></w:body></w:document>',
-      ],
-    ],
-  },
-  {
-    // Round 11 P1, the false-BLOCK direction. An XML prefix is an alias a
-    // document declares for itself: `w:` is conventional, not required. A
-    // literal QName list stopped seeing paragraphs in a part that binds
-    // WordprocessingML to `x:`, fused two of them, and blocked a clean file.
-    name: 'ns-prefix.docx',
-    caught: false,
-    why: 'a paragraph is a paragraph under any prefix bound to its namespace',
-    zip: [
-      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
-      [
-        'word/document.xml',
-        '<?xml version="1.0"?><x:document ' +
-          'xmlns:x="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
-          '<x:body>' +
-          '<x:p><x:r><x:t>Decide what to buy</x:t></x:r></x:p>' +
-          '<x:p><x:r><x:t>Adapter selection follows</x:t></x:r></x:p>' +
-          '</x:body></x:document>',
-      ],
-    ],
   },
   {
     // Round 11 P1. A bare `](` in running prose is literal visible text under
@@ -459,10 +138,9 @@ const FIXTURES = [
     body: 'Operators must deploy the VPFI buy<?target data?>adapter before launch.\n',
   },
   {
-    // Round 11 P1, and the same bypass as `pk-prefixed.md` one format over —
-    // the Office signature fix earlier this round was not applied to the path
-    // it was copied from. `extractPdfText` returns '' for a file with no
-    // streams, and that empty string REPLACED the visible Markdown.
+    // Round 11 P1, the same bypass as `pk-prefixed.md` one format over: a
+    // `.md` opening with `%PDF` had its visible text replaced by a PDF
+    // decoder's empty output. Kept for the same reason as that fixture.
     name: 'pdf-prefixed.md',
     caught: true,
     why: 'a text file cannot buy an exemption by opening with %PDF',
@@ -472,7 +150,7 @@ const FIXTURES = [
     // Round 12 P1. A `\` before a delimiter makes it data, not structure:
     // `(https://example/a\)b)` is ONE destination containing a literal `)`.
     // Ending there left `b)` in the stream, wedging the label apart from the
-    // word after it. Same shape as the quoted-`>` case on the Office side.
+    // word after it.
     name: 'escaped-paren.md',
     caught: true,
     why: 'an escaped `)` does not close a destination',
@@ -597,17 +275,6 @@ const FIXTURES = [
     body: 'The treasury uses a fixed-rate buy<strong>back</strong> auction.\n',
   },
   {
-    // Round 16 P1, a regression from round 15's suffix fix. Stripping EVERY tag
-    // in the gap removed block boundaries too, so `<p>…fixed-rate buy</p>` and
-    // `<p>Back up config…</p>` read as the surviving `buyback` feature and a
-    // real hit was suppressed before crossesBlockBoundary ever saw it.
-    name: 'buyback-block.html',
-    caught: true,
-    why: 'a paragraph break is not intra-word, whatever the suffix says',
-    body:
-      '<p>Operators must use the fixed-rate buy</p><p>Back up config before launch.</p>\n',
-  },
-  {
     // Round 16 P2. `\!` is an escaped exclamation mark, so the bracket after it
     // opens a LINK, not an image — and since images survive an inner link while
     // links do not, getting it backwards preserved an opener CommonMark had
@@ -624,16 +291,6 @@ const FIXTURES = [
     caught: false,
     why: 'a bracket in a code span opens nothing',
     body: 'Decide what to buy `[` ](/middle) Adapter selection follows.\n',
-  },
-  {
-    // Round 16 P1. The normalizer decodes `s` to `s` — that is how the
-    // candidate is found — but the identifier validation re-sliced the
-    // UNDECODED source and rejected the backslash. Every JSON consumer reads
-    // this as the exact retired getter.
-    name: 'json-escape-identifier.json',
-    caught: true,
-    why: 'a JSON unicode escape does not buy an exemption',
-    body: '{"operation":"buyOption\\u0073"}\n',
   },
   {
     // Round 16 P2. `.markdown` is the standard long spelling; omitting it let a
@@ -703,17 +360,6 @@ const FIXTURES = [
     body: 'Decide what to buy\n===\nAdapter selection follows.\n',
   },
   {
-    // Round 19 P1. A JSON string VALUE is not a sentence. `buy:adapter` names
-    // the dead identifier exactly as `buy-adapter` does, but the `:` read as a
-    // sentence ender discarded it — while the identical
-    // `data-operation="buy:adapter"` was caught by the tag-interior path. The
-    // two paths disagreed about the same string.
-    name: 'json-colon.json',
-    caught: true,
-    why: 'a colon inside one JSON value is a separator, not a sentence end',
-    body: '{"operation":"buy:adapter"}\n',
-  },
-  {
     // Round 20 P1. A phrase wrapping across consecutive QUOTED lines is one
     // rendered paragraph — every continuation begins with `>` and none starts a
     // new block — so treating each marker as a boundary let a live mention hide
@@ -722,15 +368,6 @@ const FIXTURES = [
     caught: true,
     why: 'a quoted continuation line does not start a new block',
     body: '> Operators must deploy the VPFI buy\n> adapter before launch.\n',
-  },
-  {
-    // Round 20 P2, a REGRESSION from round 19. The absence of a quote does not
-    // prove the span sits inside one: in `.jsonc` it can be comment prose, and
-    // the unconditional exemption skipped the sentence rules there.
-    name: 'jsonc-comment.jsonc',
-    caught: false,
-    why: 'a colon in comment prose is still a sentence boundary',
-    body: '{\n  // Decide what to buy: Adapter selection follows.\n  "a": 1\n}\n',
   },
   {
     // Round 20 P2. A fence opened inside a LIST ITEM starts after the marker,
@@ -967,16 +604,6 @@ const FIXTURES = [
     body: 'Decide what to buy\n=\nAdapter selection follows.\n',
   },
   {
-    // Round 22 P1. The comment stripper ended a `//` comment at LF only, so a
-    // CR-only file's first comment swallowed the rest of the prefix and every
-    // structural quote after it went uncounted. The parity then failed toward
-    // GREEN, which is the one direction a gate must never fail in.
-    name: 'jsonc-cr-comment.jsonc',
-    caught: true,
-    why: 'a `//` comment ends at CR as well as LF',
-    body: '{\r  // A 6" clearance is required.\r  "operation":"buy:adapter"\r}\r',
-  },
-  {
     // Round 22 P1. CommonMark forbids a backtick in a BACKTICK fence's info
     // string. Accepting one opened a fence that never existed, and every line
     // to the end of the file was then classified as code — live prose below it
@@ -1005,26 +632,6 @@ const FIXTURES = [
     caught: false,
     why: 'entering a nested quote starts a new block',
     body: '> Decide what to buy\n>> Adapter selection follows.\n',
-  },
-  {
-    // Round 22 P2. Deleting every unrecognized named reference assumed they
-    // all render as ignorable punctuation. A browser renders an unknown
-    // reference as its own source text, so deleting it manufactured a dead
-    // name out of clean prose.
-    name: 'unknown-entity.html',
-    caught: false,
-    why: 'an unrecognized character reference stays visible and separates words',
-    body: '<p>Decide what to buy&bogus;adapter selection follows.</p>\n',
-  },
-  {
-    // Round 21 P1. A `"` inside a `.jsonc` COMMENT cannot open a JSON string,
-    // but the structural-quote parity counted it — so a single quote in a
-    // comment above flipped the span out of the string-value branch, the `:`
-    // read as a sentence end, and a real configuration spelling went silent.
-    name: 'jsonc-comment-quote.jsonc',
-    caught: true,
-    why: 'a quote inside a comment does not open a JSON string',
-    body: '{\n  // A 6" clearance is required.\n  "operation":"buy:adapter"\n}\n',
   },
   {
     // Round 21 P1, the mirror of round 20's quote-wrap fix. CommonMark allows
@@ -1063,12 +670,6 @@ const FIXTURES = [
     body: 'Configure buyOpti&#111;ns before deployment.\n',
   },
   {
-    name: 'attr-colon.html',
-    caught: true,
-    why: 'attribute values are configuration, not sentences — `:` is not a prose boundary there',
-    body: '<div data-operation="buy:adapter"></div>\n',
-  },
-  {
     name: 'tag-interior.md',
     caught: true,
     why: 'attributes and component names are scanned as their own stream',
@@ -1095,12 +696,6 @@ const FIXTURES = [
     body: 'Decide what to buy<hr>Adapter selection follows.\n',
   },
   {
-    name: 'two-json-strings.json',
-    caught: false,
-    why: 'separate JSON string values never render as one phrase',
-    body: '["Decide what to buy", "Adapter selection follows"]\n',
-  },
-  {
     name: 'synthesized-tag.md',
     caught: false,
     why: 'malformed markup must not be re-parsed into a tag that was never there',
@@ -1108,261 +703,105 @@ const FIXTURES = [
   },
 
   // --- encodings that hide a phrase from a naive read ---
+
+  // --- raw HTML inside Markdown: these were .html fixtures before the prose
+  // scope (#1734). Markdown renders inline HTML, so each case still applies,
+  // now in the one place the gate reads it. ---
   {
-    name: 'json-unicode-escape.json',
+    // Round 16 P1, a regression from round 15's suffix fix. Stripping EVERY tag
+    // in the gap removed block boundaries too, so `<p>…fixed-rate buy</p>` and
+    // `<p>Back up config…</p>` read as the surviving `buyback` feature and a
+    // real hit was suppressed before crossesBlockBoundary ever saw it.
+    name: 'buyback-block-html.md',
     caught: true,
-    why: 'a \\u escape renders as the character, not as its spelling',
-    body: '{"operatorMessage":"Deploy the buy\\u0020adapter before launch"}\n',
+    why: 'a paragraph break is not intra-word, whatever the suffix says',
+    body:
+      '<p>Operators must use the fixed-rate buy</p><p>Back up config before launch.</p>\n',
   },
   {
-    name: 'json-escaped-quote.json',
+    // Round 22 P2. Deleting every unrecognized named reference assumed they
+    // all render as ignorable punctuation. A browser renders an unknown
+    // reference as its own source text, so deleting it manufactured a dead
+    // name out of clean prose.
+    name: 'unknown-entity-html.md',
+    caught: false,
+    why: 'an unrecognized character reference stays visible and separates words',
+    body: '<p>Decide what to buy&bogus;adapter selection follows.</p>\n',
+  },
+  {
+    name: 'attr-colon-html.md',
     caught: true,
-    why: 'an escaped quote stays inside ONE string value',
-    body: '{"note": "Operators must deploy the VPFI buy \\"adapter\\" before cutover."}\n',
+    why: 'attribute values are configuration, not sentences — `:` is not a prose boundary there',
+    body: '<div data-operation="buy:adapter"></div>\n',
+  },
+
+  // --- plain text is prose and in scope ---
+  {
+    name: 'operator-notes.txt',
+    caught: true,
+    why: 'a plain-text document is prose, so a live instruction in one is caught',
+    body: 'Operators must deploy the VPFI buy adapter before cutover.\n',
+  },
+  {
+    // `#` and `*` mean nothing in plain text, so the Markdown structure rules
+    // must not run there: this wrapped sentence is one phrase.
+    name: 'wrapped-plain.txt',
+    caught: true,
+    why: 'a line starting with # is not a heading in plain text',
+    body: 'Operators must deploy the VPFI buy\n# adapter before cutover.\n',
+  },
+
+  // --- OUT OF SCOPE BY CONSTRUCTION (owner decision 2026-10-16, #1734) ---
+  // The gate reads prose files only. Each of these names the retired surface
+  // in a file that is not prose, and each must stay SILENT: the scope is a
+  // test on the file type, so no rule about the content can bring one back.
+  // A failure here means the scope widened, which is a design change and
+  // wants an owner decision, not a fixture update.
+  {
+    // The #1727 round-24 operator case that started #1734: valid JavaScript
+    // naming neither surface, fused by prose normalization into `buyadapter`.
+    name: 'operands.js',
+    caught: false,
+    why: 'source code is not prose; `buy + adapter` is two operands',
+    body: 'export const total = buy + adapter;\n',
+  },
+  {
+    name: 'copy.ts',
+    caught: false,
+    why: 'app copy in a source file is outside the prose scope (review catches it, not this gate)',
+    body: 'export const msg = "Operators must deploy the VPFI buy adapter before cutover.";\n',
+  },
+  {
+    name: 'help.sh',
+    caught: false,
+    why: 'shell help text is outside the prose scope',
+    body: 'echo "Deploy the VPFI buy adapter before cutover."\n',
+  },
+  {
+    name: 'values.json',
+    caught: false,
+    why: 'JSON is data, not prose',
+    body: '["Decide what to buy", "Adapter selection follows"]\n',
+  },
+  {
+    name: 'page.html',
+    caught: false,
+    why: 'a standalone HTML file is app source here, outside the prose scope',
+    body: '<p>Operators must deploy the VPFI buy adapter before cutover.</p>\n',
+  },
+  {
+    name: 'runbook.pdf',
+    caught: false,
+    why: 'a container-format document is outside the prose scope',
+    body: '%PDF-1.4\nBT (Operators must deploy the VPFI buy adapter) Tj ET\n',
   },
 ];
-
-/** PDFs are built rather than written literally, so the compression is real. */
-function pdfFixtures() {
-  const stream = (text) => {
-    const raw = Buffer.from(`BT (${text}) Tj ET`);
-    const comp = deflateSync(raw);
-    return Buffer.concat([
-      Buffer.from('%PDF-1.4\n2 0 obj\n<< /Filter /FlateDecode >>\nstream\n'),
-      comp,
-      Buffer.from('\nendstream\nendobj\n'),
-    ]);
-  };
-  return [
-    {
-      name: 'compressed.pdf',
-      caught: true,
-      why: 'real PDFs Flate-compress their content streams; the phrase is absent from the raw bytes',
-      buf: stream('Operators must deploy the VPFI buy adapter'),
-    },
-    {
-      name: 'compressed-clean.pdf',
-      caught: false,
-      why: 'an ordinary document must not be failed by its drawing operators',
-      buf: stream('Quarterly audit summary, nothing removed here'),
-    },
-    {
-      // Round 11 P1. Stream data is arbitrary bytes and may spell `endstream`
-      // itself — here inside a valid PDF comment. Truncating the body at the
-      // first occurrence meant everything the page actually drew went unread.
-      // The declared `/Length` is the real boundary.
-      name: 'endstream-in-body.pdf',
-      caught: true,
-      why: 'a stream ends at its declared length, not at the first `endstream` in its data',
-      buf: (() => {
-        const body = '% endstream\nBT (Operators must deploy the VPFI buy adapter) Tj ET';
-        return Buffer.from(
-          `%PDF-1.4\n1 0 obj\n<< /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj\n`,
-        );
-      })(),
-    },
-    {
-      // Round 12 P1. Only ONE EOL sequence follows the `stream` keyword; eating
-      // a RUN of them consumed the stream's own first byte when the data began
-      // with a newline, shifting the declared endpoint off the terminator and
-      // dropping back to the `endstream` scan the /Length fix exists to
-      // replace.
-      name: 'leading-newline.pdf',
-      caught: true,
-      why: 'the stream data may begin with a newline of its own',
-      buf: (() => {
-        // TWO leading newlines. With one, the off-by-one endpoint happens to
-        // land on the newline before the terminator and the validation still
-        // passes — the fixture would pin nothing.
-        //
-        // The drawn string is HEX-ENCODED, and that is load-bearing. Written as
-        // a literal, the phrase sits in the container's own bytes, so the
-        // read-as-text fallback recovers it and the fixture passes whether or
-        // not the bug is fixed. Compressing instead does not work either: a
-        // deflate stream begins with its own header, never a newline, so the
-        // off-by-one cannot arise. Both of my earlier attempts at this fixture
-        // asserted a catch that proved nothing.
-        const hex = Buffer.from('Operators must deploy the VPFI buy adapter')
-          .toString('hex')
-          .toUpperCase();
-        const body = `\n\n% endstream\nBT <${hex}> Tj ET`;
-        return Buffer.from(
-          `%PDF-1.4\n1 0 obj\n<< /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj\n`,
-        );
-      })(),
-    },
-    {
-      // Round 15 P1. PDF end-of-line is CR, LF or CRLF; looking only for LF let
-      // a CR-terminated comment swallow the rest of the stream — the same
-      // failure the comment skip was added to prevent, one line ending over.
-      name: 'comment-cr.pdf',
-      caught: true,
-      why: 'a PDF comment ends at CR as well as LF',
-      buf: (() => {
-        const raw = deflateSync(
-          Buffer.from(
-            '% unmatched ( in comment\rBT (Operators must deploy the VPFI buy adapter) Tj ET',
-          ),
-        );
-        return Buffer.concat([
-          Buffer.from(
-            `%PDF-1.4\n1 0 obj\n<< /Length ${raw.length} /Filter /FlateDecode >>\nstream\n`,
-          ),
-          raw,
-          Buffer.from('\nendstream\nendobj\n'),
-        ]);
-      })(),
-    },
-    {
-      // Round 14 P1, a regression from round 13's balanced walk. `%` starts a
-      // comment running to end of line; an unmatched `(` inside one was read as
-      // opening a literal string, the walk ran to EOF, and every real string
-      // after it was abandoned. Compressed, so the read-as-text fallback cannot
-      // paper over it.
-      name: 'comment-paren.pdf',
-      caught: true,
-      why: 'a `(` inside a content-stream comment opens nothing',
-      buf: (() => {
-        const raw = deflateSync(
-          Buffer.from(
-            '% unmatched ( in comment\nBT (Operators must deploy the VPFI buy adapter) Tj ET',
-          ),
-        );
-        return Buffer.concat([
-          Buffer.from(
-            `%PDF-1.4\n1 0 obj\n<< /Length ${raw.length} /Filter /FlateDecode >>\nstream\n`,
-          ),
-          raw,
-          Buffer.from('\nendstream\nendobj\n'),
-        ]);
-      })(),
-    },
-    {
-      // Round 13 P1. A PDF literal string may contain unescaped parentheses so
-      // long as they balance. Stopping at the inner `)` extracted
-      // `Operators (must` — NON-EMPTY, so the read-as-text fallback never
-      // fired and the drawn phrase went unread. A partial decode is worse than
-      // none: it looks like success.
-      name: 'nested-parens.pdf',
-      caught: true,
-      why: 'a literal string ends at its BALANCED closing paren',
-      buf: (() => {
-        const body =
-          'BT (Operators (must) deploy the VPFI buy adapter before launch.) Tj ET';
-        return Buffer.from(
-          `%PDF-1.4\n1 0 obj\n<< /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj\n`,
-        );
-      })(),
-    },
-    {
-      // Round 12 P1. The SOURCE spelling is not what the page draws: `\040`
-      // renders as a space, but the raw slice normalized to `buy040adapter` —
-      // the octal digits are alphanumeric, so the normalizer kept them and they
-      // wedged the phrase apart.
-      name: 'octal-escape.pdf',
-      caught: true,
-      why: 'a PDF octal escape renders as the character, not as its digits',
-      buf: Buffer.from(
-        '%PDF-1.4\n1 0 obj\n<< /Length 64 >>\nstream\nBT (Operators must deploy the VPFI buy\\040adapter) Tj ET\nendstream\nendobj\n',
-      ),
-    },
-    {
-      name: 'uncompressed.pdf',
-      caught: true,
-      why: 'the uncompressed path must keep working',
-      buf: Buffer.from(
-        '%PDF-1.4\n1 0 obj\n<< /Length 60 >>\nstream\nBT (Operators must deploy the VPFI buy adapter) Tj ET\nendstream\nendobj\n',
-      ),
-    },
-  ];
-}
-
-/**
- * Office fixtures are built as REAL ZIP archives — local headers, central
- * directory, EOCD — with raw-deflated parts, so the extractor is exercised
- * against the container format rather than a mock of it. Written as source
- * (part name + XML) rather than committed as binary, so a reviewer can read
- * what the document says.
- */
-/**
- * CRC-32 for the ZIP headers.
- *
- * NOT `node:zlib`'s `crc32`, which landed in Node 22.2. This repository's
- * engine floor is `>=22.0.0`, and a STATIC import of a missing export fails
- * before any fixture runs — so on a supported 22.0/22.1 the newly mandatory
- * selftest did not merely fail, it could not start. A gate whose own test
- * suite depends on a newer runtime than the project declares is not a gate
- * everyone can run.
- */
-function crc32(buf) {
-  let c = ~0;
-  for (let i = 0; i < buf.length; i++) {
-    c ^= buf[i];
-    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
-  }
-  return (~c) >>> 0;
-}
-
-function zipFixtures() {
-  return FIXTURES.filter((f) => f.zip).map((f) => {
-    const locals = [];
-    const central = [];
-    let offset = 0;
-    for (const [name, xml] of f.zip) {
-      const nameBuf = Buffer.from(name, 'utf8');
-      // A part may be given as a Buffer rather than a string, so a fixture can
-      // pin the encoding handling with real UTF-16 bytes.
-      const raw = Buffer.isBuffer(xml) ? xml : Buffer.from(xml, 'utf8');
-      const comp = deflateRawSync(raw);
-      const sum = crc32(raw);
-      const lh = Buffer.alloc(30);
-      lh.writeUInt32LE(0x04034b50, 0);
-      lh.writeUInt16LE(20, 4);
-      lh.writeUInt16LE(8, 8); // deflate
-      lh.writeUInt32LE(sum, 14);
-      lh.writeUInt32LE(comp.length, 18);
-      lh.writeUInt32LE(raw.length, 22);
-      lh.writeUInt16LE(nameBuf.length, 26);
-      locals.push(lh, nameBuf, comp);
-
-      const ch = Buffer.alloc(46);
-      ch.writeUInt32LE(0x02014b50, 0);
-      ch.writeUInt16LE(20, 4);
-      ch.writeUInt16LE(20, 6);
-      ch.writeUInt16LE(8, 10);
-      ch.writeUInt32LE(sum, 16);
-      ch.writeUInt32LE(comp.length, 20);
-      ch.writeUInt32LE(raw.length, 24);
-      ch.writeUInt16LE(nameBuf.length, 28);
-      ch.writeUInt32LE(offset, 42);
-      central.push(ch, nameBuf);
-      offset += lh.length + nameBuf.length + comp.length;
-    }
-    const localPart = Buffer.concat(locals);
-    const centralPart = Buffer.concat(central);
-    // The archive COMMENT is arbitrary bytes and a fixture may plant a decoy
-    // EOCD signature in it — that is the whole point of `eocd-in-comment.docx`.
-    const comment = f.zipComment ?? Buffer.alloc(0);
-    const eocd = Buffer.alloc(22);
-    eocd.writeUInt32LE(0x06054b50, 0);
-    eocd.writeUInt16LE(f.zip.length, 8);
-    eocd.writeUInt16LE(f.zip.length, 10);
-    eocd.writeUInt32LE(centralPart.length, 12);
-    eocd.writeUInt32LE(localPart.length, 16);
-    eocd.writeUInt16LE(comment.length, 20);
-    return { ...f, buf: Buffer.concat([localPart, centralPart, eocd, comment]) };
-  });
-}
 
 const git = (...args) =>
   execFileSync('git', args, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
 function run() {
-  const all = [
-    ...FIXTURES.filter((f) => !f.zip).map((f) => ({ ...f, buf: Buffer.from(f.body) })),
-    ...zipFixtures(),
-    ...pdfFixtures(),
-  ];
+  const all = FIXTURES.map((f) => ({ ...f, buf: Buffer.from(f.body) }));
   // `recursive: false` — refuse to adopt an existing directory rather than
   // writing into, and later deleting, something this run did not create.
   mkdirSync(join(REPO, DIR));

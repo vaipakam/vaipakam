@@ -16,9 +16,13 @@ or a copied number leaves behind text that nothing checks.
    `docs-citations.mjs` + `check-docs-paths.mjs` (below).
 2. **The #687-A VPFI buy surface must not be described as live again** —
    `check-excision-residue.mjs`, a count-and-digest RATCHET rather than a ban.
-   Scope is the whole tracked tree minus the historical-narrative directories;
-   matching is on normalized text, so the prose spelling "VPFI buy adapter" is
-   caught alongside the identifier `VpfiBuyAdapter`. Each file's mention count
+   Scope is PROSE FILES ONLY — the Markdown family and plain text — minus the
+   historical-narrative directories (owner decision 2026-10-16, #1734): prose
+   normalization means nothing in code, data or container formats, and applying
+   it there produced false positives on a blocking check. Code, app copy in
+   source files, shell help text, config and PDFs are therefore NOT checked by
+   it. Matching is on normalized text, so the prose spelling "VPFI buy adapter"
+   is caught alongside the identifier `VpfiBuyAdapter`. Each file's mention count
    AND a digest of the mentions are pinned in the script, so growth, cleanup,
    and equal-count substitutions all fail — each with its own message telling
    you which. Exclusions are directory-level only for genuinely archival trees;
