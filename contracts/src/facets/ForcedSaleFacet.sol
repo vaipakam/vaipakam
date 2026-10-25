@@ -18,9 +18,12 @@ import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
 import {LibLoanClock} from "../libraries/LibLoanClock.sol";
 import {LibDefaultRoute} from "../libraries/LibDefaultRoute.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibPausable} from "../libraries/LibPausable.sol";
+import {LibDiscountedLiquidation} from "../libraries/LibDiscountedLiquidation.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
+import {OracleFacet} from "./OracleFacet.sol";
 
 /**
  * @title ForcedSaleFacet
@@ -266,6 +269,73 @@ contract ForcedSaleFacet is IVaipakamErrors {
         uint256 debt = _debt(loan, kind);
         if (debt == 0) return plan;
         (plan, ) = _plan(loan, debt);
+    }
+
+    /**
+     * @notice The discounted liquidation of `loanId` as it would run now
+     *         ({RiskFacet.triggerLiquidationDiscounted}): whether it can, and
+     *         if so the debt the liquidator pays and the collateral it
+     *         receives (#2697).
+     * @dev    Not a sale through this host: on the discount path the
+     *         liquidator buys the collateral with its own funds. It is
+     *         previewed here, beside {previewForcedSale}, so a keeper reads
+     *         the size of every forced close-out it can send from one facet.
+     *         The figures come from {LibDiscountedLiquidation}, the rule the
+     *         liquidation itself charges and seizes by, so a reader in the
+     *         same transaction (a flash-loan receiver) gets exactly the
+     *         liquidation's figures; read earlier, the debt can only have
+     *         grown by the block that settles.
+     *
+     *         `status` is the first check that fails, in the liquidation's
+     *         own order; the figures are filled only when it is `Ready`,
+     *         except the assets, which are always the loan's. Not checked
+     *         here because they depend on who calls: the caller's and
+     *         recipient's sanctions screens, and the liquidator's funds and
+     *         approval. A distrusted price reverts, as the liquidation
+     *         itself would (#666), and so does a Health Factor read that
+     *         cannot price the loan: `Unpriced` is the case where the Health
+     *         Factor was read but the seizure's own rate is unavailable.
+     */
+    function previewDiscountedLiquidation(uint256 loanId)
+        external
+        view
+        returns (LibDiscountedLiquidation.Preview memory p)
+    {
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        p.principalAsset = loan.principalAsset;
+        p.collateralAsset = loan.collateralAsset;
+        if (LibPausable.paused()) return p; // Status.Paused
+        if (!LibVaipakam.cfgDiscountPathEnabled()) {
+            p.status = LibDiscountedLiquidation.Status.Disabled;
+            return p;
+        }
+        if (loan.status != LibVaipakam.LoanStatus.Active) {
+            p.status = LibDiscountedLiquidation.Status.NotActive;
+            return p;
+        }
+        if (!OracleFacet(address(this)).sequencerHealthy()) {
+            p.status = LibDiscountedLiquidation.Status.SequencerUnhealthy;
+            return p;
+        }
+        if (RiskFacet(address(this)).calculateHealthFactor(loanId) >= LibVaipakam.HF_SCALE) {
+            p.status = LibDiscountedLiquidation.Status.Healthy;
+            return p;
+        }
+        (p.tier, p.discountBps) = LibDiscountedLiquidation.discountFor(loan.collateralAsset);
+        if (p.tier == 0) {
+            p.status = LibDiscountedLiquidation.Status.Untiered;
+            return p;
+        }
+        uint256 debt = LibDiscountedLiquidation.debt(loan);
+        (bool priced, uint256 seized) = LibDiscountedLiquidation.seizure(loan, debt, p.discountBps);
+        if (!priced) {
+            p.status = LibDiscountedLiquidation.Status.Unpriced;
+            return p;
+        }
+        p.status = LibDiscountedLiquidation.Status.Ready;
+        p.debt = debt;
+        p.seized = seized;
+        p.surplus = loan.collateralAmount - seized;
     }
 
     // ─── Mutators (Diamond-internal) ────────────────────────────────────

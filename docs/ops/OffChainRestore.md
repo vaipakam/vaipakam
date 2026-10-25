@@ -566,7 +566,7 @@ then deploy.
       runs (#2633). Unset, that branch skips on every chain and the partial
       / split / atomic branches still run. It is a chain list, not `true`,
       ships empty, and does anything only on a chain that also has a
-      FlashLoanLiquidator (none today; sizing #2697). It is cleared with the
+      FlashLoanLiquidator (none today). It is cleared with the
       flags in §7a step 3B and re-armed only by the owner's decision.
 
       **Do NOT set them here.** They arm signing against a database §§4–6

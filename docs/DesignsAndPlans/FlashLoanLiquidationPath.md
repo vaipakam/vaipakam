@@ -218,11 +218,15 @@ on HF < liquidation_threshold detected:
         if flashLoanProvider != none:
             simulate(triggerLiquidationDiscounted via flashLoan):
                 a. Aave/Balancer flashLoan principalAsset = totalDebt
-                b. approve diamond for totalDebt
+                   (read from previewDiscountedLiquidation inside the
+                   same transaction, #2697 — never estimated off-chain)
+                b. approve diamond for totalDebt, cleared after the call
                 c. diamond.triggerLiquidationDiscounted(loanId, bot, "")
-                d. swap seized collateral → principal on best DEX
+                d. swap the previewed seizure → principal on best DEX
+                   (the quote is built for exactly that amount)
                 e. repay flash-loan + fee from swap proceeds
-                f. keep net profit
+                f. keep net profit, at least the tx's own fee in
+                   principal units (minProfit), or revert
             if simulation profitable:
                 submit
             else:

@@ -523,7 +523,7 @@ library FacetSelectors {
         s[2] = NumeraireValueFacet.getLiquidNumeraireValue.selector;
     }
 
-    /// @notice Full external selector surface of {ForcedSaleFacet} (4).
+    /// @notice Full external selector surface of {ForcedSaleFacet} (5).
     ///
     /// @dev    #2795 / #2796. The one forced-sale rule: size the sale to the
     ///         debt, sell it, and split the proceeds lender first.
@@ -540,10 +540,13 @@ library FacetSelectors {
     ///         (`getForcedSaleFacetSelectors`) return it, and
     ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
     function forcedSale() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = ForcedSaleFacet.previewForcedSale.selector;
         s[1] = ForcedSaleFacet.sellToNeed.selector;
         s[2] = ForcedSaleFacet.payBorrowerWallet.selector;
         s[3] = bytes4(keccak256("QUOTE_MARGIN_BPS()"));
+        // #2697 — the discounted liquidation's figures, read by its
+        // flash-loan receiver inside the liquidating transaction.
+        s[4] = ForcedSaleFacet.previewDiscountedLiquidation.selector;
     }
 }

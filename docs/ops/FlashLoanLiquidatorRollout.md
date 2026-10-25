@@ -287,13 +287,22 @@ The second is the bot's belt-and-suspenders: even if governance
 flipped the on-chain flag prematurely, the bot still won't try
 the discount path until you tell it to.
 
-> **⚠ Before arming: the path's debt and gas figures are
-> placeholders (#2697).** The keeper sizes the loan's debt from its
-> collateral amount and the gas headroom as a fixed `1e18` units of
-> the principal token. The liquidator reverts any run that does not
-> cover its own flash-loan fee, so funds are safe, but trades will be
-> misjudged and reverted runs cost gas. Arm the path only once #2697
-> is fixed.
+> **How the keeper sizes a run (#2697).** Every figure is measured.
+> The Diamond's preview (`ForcedSaleFacet.previewDiscountedLiquidation`)
+> gives the debt and the collateral the liquidation delivers, by the
+> rule the liquidation itself uses. The keeper quotes the swap for
+> exactly that seizure, and the FlashLoanLiquidator reads the preview
+> again inside the liquidating transaction and flash-borrows exactly its
+> debt. The run's least profit (`minProfit`) is the transaction's whole
+> fee, converted by the Diamond into the principal token's own units, so
+> a 6-decimal and an 18-decimal principal are each priced correctly. The
+> liquidator reverts a run that would keep less, and the keeper's gas
+> estimate simulates that, so an unprofitable run is never sent. Before
+> #2697 the debt was the collateral amount and the gas a fixed `1e18`
+> units of the principal; a keeper build older than #2697 must not be
+> armed. On a chain whose gas the keeper cannot value (its wrapped native
+> token or fee model is unknown, as on BNB Testnet), the path skips every
+> loan and says so.
 
 The setting replaced a per-chain `DISCOUNT_PATH_ENABLED_<chainId>`
 flag that the keeper never read (#2633). A leftover line of that
@@ -331,12 +340,12 @@ armed also logs `flash-loan-skip not-armed:` with the reason. A chain
 with no route logs nothing per loan; the start-up line is where that
 shows. No line echoes the setting's value.
 
-**Why a separate keeper-side flag rather than reading the
-on-chain flag every tick**: cost. An on-chain read every tick ×
-every chain × every loan would burn thousands of RPC calls per
-day. Turning the keeper-side flag off is a local edit: remove the
-line (or leave it empty) and restart the keeper, and the discount
-branch skips from the first tick after the restart.
+**Why a separate keeper-side flag as well as the on-chain one**: the
+on-chain switch is read per loan, as the preview's first check, and only
+for loans that reach the branch; the keeper-side flag is the operator's
+own affirmative step on top of it, and turning it off is a local edit:
+remove the line (or leave it empty) and restart the keeper, and the
+discount branch skips from the first tick after the restart.
 
 ---
 
@@ -351,10 +360,12 @@ each common skip path):
 
 | Log line | Meaning | Action |
 |---|---|---|
-| `submitted-flashloan tx=0x… via=aave-v3 swap=zeroex expected=…` | Happy path. Tx submitted. | Follow the hash on Basescan; confirm `FlashLoanLiquidationCompleted` event fired with non-zero `netProfit`. |
-| `flash-loan-skip no-dex-direct-quotes (failed: zeroex,oneinch)` | Both aggregators failed to quote. | Asset isn't well-supported on this chain. Legacy partial/split/atomic falls through automatically. Nothing to do. |
-| `flash-loan-skip unprofitable: proceeds=X < needed=Y …` | Simulation said trade wouldn't clear. | Healthy — bot correctly skipped a loss-making submission. |
-| `flash-loan-skip direct-quote-unprofitable: …` | Re-fetched DEX-direct quote (with receiver as taker) came in lower than the initial sim. | Same as above — healthy skip. |
+| `submitted-flashloan tx=0x… via=aave-v3 swap=zeroex debt=… sell=… expected=… minProfit=…` | Happy path. Tx submitted: the previewed debt, the collateral the swap sells, the quoted proceeds and the least profit the run must keep. | Follow the hash on Basescan; confirm `FlashLoanLiquidationCompleted` fired with `netProfit` at least `minProfit`. |
+| `flash-loan-skip not liquidatable: …` | The Diamond's preview rules the loan out, and names why: the protocol is paused, its discount-path switch is off, the loan is healthy or not Active, the sequencer breaker is tripped, the collateral has no liquidity tier, or a price is unavailable. | Healthy skip. The switch-off reason on an armed chain means governance has not flipped it (precondition #2). |
+| `flash-loan-skip gas cannot be valued: …` | The keeper cannot price this chain's gas, or the Diamond cannot express it in the principal token. | The path cannot run on this chain; legacy branches handle the loan. |
+| `flash-loan dex-direct quotes failed: zeroex,oneinch` then `flash-loan-skip no DEX-direct quote for the seizure` | Both aggregators failed to quote. | Asset isn't well-supported on this chain. Legacy partial/split/atomic falls through automatically. Nothing to do. |
+| `flash-loan-skip unprofitable: quoted proceeds … do not exceed the debt …` | The quote does not even repay the debt. | Healthy skip. |
+| `flash-loan-skip simulation reverted: …` | The exact call's gas estimate reverted, usually `InsufficientPostSwapBalance` (the run would not keep its fees) or `SeizureBelowQuote`. | Healthy skip — nothing was sent. |
 | `flash-loan-submit-failed err=…` | Submission reverted on-chain. | Read the revert reason carefully (see [troubleshooting](#troubleshooting)). |
 
 After 1–2 weeks of healthy `submitted-flashloan` entries on the
@@ -433,28 +444,16 @@ The old contract becomes orphaned on-chain (no longer
 referenced). Etherscan-tag it as "deprecated" if you want; no
 on-chain cleanup is needed.
 
-### Every tx reverts with `DiscountPathDisabled`
+### Every loan skips with "the Diamond's discount-path switch is off"
 
 You flipped the keeper-side flag (Step 5) before governance
-flipped the on-chain flag (precondition #2). The keeper happily
-submits txs that the diamond rejects.
+flipped the on-chain flag (precondition #2). Since #2697 the keeper
+reads the switch per loan, through the preview, and sends nothing
+while it is off, so this costs no gas.
 
-Snap it off on the machine: remove `8453` from the
-`DISCOUNT_PATH_CHAIN_IDS` line in `/etc/vaipakam/keeper.env` (or
-leave the line empty) and run
-`sudo systemctl try-restart vaipakam-keeper`. The restart waits for the
-tick in flight, so it takes as long as that tick does, not a fixed
-30 seconds.
-
-Wait for governance to land `setDiscountPathEnabled(true)`,
-verify with:
-
-```bash
-cast call $DIAMOND_BASE "getProtocolConfigBundle()" \
-  --rpc-url $VITE_BASE_RPC_URL | grep -i discount
-```
-
-…then re-flip the keeper-side flag.
+Wait for governance to land `setDiscountPathEnabled(true)`; the next
+tick after it lands takes the path. There is no need to change the
+keeper-side flag.
 
 ### Aggregator quote OK but tx reverts on-chain (price moved)
 
@@ -462,8 +461,15 @@ Symptom: `flash-loan-submit-failed err=execution reverted`. Log
 will show one of:
 
 - `InsufficientPostSwapBalance(needed, got)` — the swap didn't
-  return enough principal to repay flash-loan + fee. Healthy
-  revert — borrower state preserved, no damage.
+  return enough principal to repay flash-loan + fee + the run's
+  `minProfit`. Healthy revert — borrower state preserved, no damage.
+- `SeizureBelowQuote(seized, sellAmount)` — the liquidation would
+  deliver less collateral than the swap was quoted for (the
+  collateral's price rose between the quote and the block). Healthy;
+  the next tick re-quotes.
+- `NotLiquidatable(loanId, status)` — the preview ruled the loan out
+  by the time the transaction ran (another liquidator closed it, or
+  the price recovered).
 - `SwapFailed` — the aggregator's swap call itself reverted
   (price moved past slippage tolerance between quote and
   submit). Also healthy.
