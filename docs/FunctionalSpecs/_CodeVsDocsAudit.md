@@ -1348,6 +1348,4 @@ accepts it only inside the published range (the spec's quote line), a detail
 the code needed because every sale is an exact-input swap.
 
 **Status:** resolved — the code follows the stated intent on every forced-sale
-path. The 2% quote margin is the recommended answer to an owner question
-still open on 2026-10-25; if the owner picks another answer, the spec line
-and the constant change together.
+path. The 2% quote margin is the owner's decision of 2026-10-25.

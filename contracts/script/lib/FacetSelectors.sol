@@ -335,6 +335,24 @@ library FacetSelectors {
         return bytes4(keccak256("updateRiskParams(address,uint256,uint256,uint256)"));
     }
 
+    /// @notice The forced-sale entry points whose signatures #2796 changed.
+    ///         The three forced-sale entries gained the caller's quoted sell
+    ///         amount, and the host's periodic-only settlement entry gave way
+    ///         to the one sale entry every forced sale uses. A `Replace` of
+    ///         the new surfaces leaves each old selector routed to the OLD
+    ///         build, which would sell the whole collateral on the old
+    ///         waterfall; a curated refresh Removes whichever are routed.
+    /// @dev    Computed from the signatures: none exists in source any more.
+    function retiredForcedSaleSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = bytes4(keccak256("triggerLiquidation(uint256,(uint256,bytes)[])"));
+        s[1] = bytes4(keccak256("triggerDefault(uint256,(uint256,bytes)[])"));
+        s[2] = bytes4(keccak256("settlePeriodicInterest(uint256,(uint256,bytes)[])"));
+        s[3] = bytes4(keccak256(
+            "settlePeriodicSale(uint256,(uint256,uint256,uint256,uint256,bool),uint256,(uint256,bytes)[],address)"
+        ));
+    }
+
     /// @notice The ETH·day recycle-tariff setter #2489 DELETED from `ConfigFacet`
     ///         (its slot is retained, dead; security review of #2489). A
     ///         `Replace` of the new surface leaves it routed to the OLD

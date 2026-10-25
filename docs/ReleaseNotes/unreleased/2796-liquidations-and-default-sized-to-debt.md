@@ -30,6 +30,5 @@ of the proceeds taken alongside it, so the lender receives every unit the
 charges do not. A sanctioned caller of a time-based default still triggers it
 but earns no incentive. All forced sales now publish the same settlement event
 with every figure. Fresh deploys only; nothing reaches a testnet until the
-remaining work waves are done. The 2% quote margin is the recommended answer
-to an owner question still open; if another answer is chosen, the margin
-changes with it. Closes #2796.
+remaining work waves are done. The 2% quote margin is the owner's decision.
+Closes #2796.

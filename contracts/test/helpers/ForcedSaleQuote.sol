@@ -45,3 +45,14 @@ function liquidationQuote(address diamond, uint256 loanId) view returns (uint256
 function periodicQuote(address diamond, uint256 loanId) view returns (uint256) {
     return forcedSaleQuote(diamond, loanId, ForcedSaleFacet.ForcedSaleKind.PeriodicSettlement);
 }
+
+/// @notice The whole plan `ForcedSaleFacet.previewForcedSale` publishes now,
+///         for a test that derives expected figures from the debt the sale
+///         settles (`plan.debt`) or the amount it sells (`plan.sell`). Same
+///         read-before-cheatcode caution as {forcedSaleQuote}.
+function forcedSalePlan(address diamond, uint256 loanId, ForcedSaleFacet.ForcedSaleKind kind)
+    view
+    returns (ForcedSaleFacet.ForcedSalePlan memory)
+{
+    return ForcedSaleFacet(diamond).previewForcedSale(loanId, kind);
+}

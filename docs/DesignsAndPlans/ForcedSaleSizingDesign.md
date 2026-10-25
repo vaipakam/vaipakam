@@ -15,7 +15,7 @@ on 2026-10-25. The rule below is the one the owner chose from it.
 | --- | --- | --- |
 | 2026-10-25 01:14 | Where should the extra from a periodic settlement sale go? | **Pay it back to the borrower.** An unflagged current borrower is paid to their wallet; a flagged borrower's extra is held for them in their vault and paid with their claim at loan end. |
 | 2026-10-25 01:26 | Adopt one sell-to-need rule for every forced sale? | **Yes, charges on the debt.** One shared host. The handling fee is 2% of what is owed and the keeper bonus up to 3% of what is owed. Spec lines on the charge base move to the debt. #2795 is the host's first user. |
-| 2026-10-25 (#2796, pending) | How far above the least covering amount may a keeper's quote be? | Asked on a card; the work proceeds on the recommended answer, **up to 2% above** (§3.1a). The other options were an exact quote only and any amount up to all the collateral. |
+| 2026-10-25 10:13 (#2796) | How far above the least covering amount may a keeper's quote be? | **Up to 2% above** (§3.1a). The other options were an exact quote only and any amount up to all the collateral. |
 | 2026-10-20 (standing) | Liquidation priority | The lender is made whole as far as the position allows; the borrower's share comes second. |
 
 Prelive rule (standing): fresh deploys only, no legacy shims.

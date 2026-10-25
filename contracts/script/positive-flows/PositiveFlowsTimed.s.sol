@@ -447,7 +447,8 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
         _requireRefused(
             newLender,
             abi.encodeWithSelector(
-                RepayPeriodicFacet.settlePeriodicInterest.selector, periodicLoanId, new LibSwap.AdapterCall[](0)
+                RepayPeriodicFacet.settlePeriodicInterest.selector, periodicLoanId, uint256(0),
+                new LibSwap.AdapterCall[](0)
             ),
             abi.encodeWithSelector(IVaipakamErrors.PeriodicSettleNotDue.selector, periodicLoanId, periodEndAt, graceEndsAt),
             "PF-116: a settle before the checkpoint and its grace should be refused (PeriodicSettleNotDue)"

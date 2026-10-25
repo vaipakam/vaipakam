@@ -101,14 +101,18 @@ contract ForcedSaleTerminalTest is SetupTest {
     }
 
     /// @dev Price the collateral so 5,000 units are worth `k` (in 1e4) times
-    ///      the 1,000-unit principal, and require the loan to be liquidatable.
+    ///      the 1,000-unit principal, and make the loan liquidatable.
+    ///      `SetupTest` mocks every health-factor read to 2.0, so the
+    ///      liquidation gate's read of THIS loan is mocked below 1; the sale
+    ///      itself is sized from the oracle prices set here, which no mock
+    ///      touches.
     function _collateralWorth(uint256 kBps) internal {
         // 5,000 × p = k × 1,000 × $1,000  →  p = k × $200.
         _price((kBps * 200 * 1e8) / 10_000);
-        assertLt(
-            RiskFacet(address(diamond)).calculateHealthFactor(LOAN),
-            1e18,
-            "fixture: the loan must be liquidatable at this price"
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, LOAN),
+            abi.encode(uint256(0.9e18))
         );
     }
 

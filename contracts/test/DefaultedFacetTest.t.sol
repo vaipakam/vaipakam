@@ -56,6 +56,7 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {SwapAttemptFacet} from "../src/facets/SwapAttemptFacet.sol";
+import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 import {TreasuryFeeFacet} from "../src/facets/TreasuryFeeFacet.sol";
 import {NumeraireValueFacet} from "../src/facets/NumeraireValueFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
@@ -93,7 +94,7 @@ import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {MockVaultWithdraw} from "./helpers/MockVaultWithdraw.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
-import {defaultQuote, liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
+import {defaultQuote, liquidationQuote, forcedSalePlan} from "./helpers/ForcedSaleQuote.sol";
 
 contract DefaultedFacetTest is Test {
     VaipakamDiamond diamond;
@@ -225,7 +226,7 @@ contract DefaultedFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -386,6 +387,15 @@ contract DefaultedFacetTest is Test {
             facetAddress: ArtifactDeploy.deploy(type(NumeraireValueFacet).name),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getNumeraireValueFacetSelectors()
+        });
+        // #2795 / #2796 - every forced sale (the periodic settlement, the HF
+        // liquidation and the time-based default) runs through a self-call
+        // into ForcedSaleFacet, so a hand-built Diamond that cuts any seller
+        // must cut this host too.
+        cuts[25] = IDiamondCut.FacetCut({
+            facetAddress: ArtifactDeploy.deploy(type(ForcedSaleFacet).name),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getForcedSaleFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -736,12 +746,16 @@ contract DefaultedFacetTest is Test {
             loanId
         );
 
-        // ZeroExProxyMock rate is 11/10 → proceeds = collateralAmount * 11 / 10
-        uint256 expectedProceeds = ((loan.collateralAmount * 11) / 10);
+        // #2796 — the sale offers the plan's amount. At $0.5 the whole
+        // collateral cannot cover the debt plus charges, so the plan sells all
+        // of it. ZeroExProxyMock rate is 11/10 → proceeds = sold * 11 / 10.
+        ForcedSaleFacet.ForcedSalePlan memory plan = forcedSalePlan(
+            address(diamond), loanId, ForcedSaleFacet.ForcedSaleKind.HealthFactorLiquidation
+        );
+        uint256 sellQuote = plan.sell;
+        uint256 expectedProceeds = (sellQuote * 11) / 10;
+        assertGe(expectedProceeds, plan.debt, "fixture: proceeds still cover the debt");
 
-        // Call triggerLiquidation (contract constructs swap calldata internally
-        // with the oracle-derived minOutputAmount = expected * 94%).
-        uint256 sellQuote = liquidationQuote(address(diamond), loanId);
         vm.expectEmit(true, true, false, true);
         emit RiskFacet.HFLiquidationTriggered(
             loanId,
@@ -755,10 +769,11 @@ contract DefaultedFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
 
         // Assert proceeds distributed: liqBonus to liquidator, debt to lender, surplus to borrower.
-        // The mock swap delivers exactly expectedProceeds (zero realized
-        // slippage), so the dynamic incentive clamps to the 3% README cap.
+        // The mock swap delivers above the oracle value (zero realized
+        // slippage), so the dynamic incentive clamps to the 3% README cap,
+        // taken on the debt since #2796 (the proceeds cover it here).
         uint256 incentiveBps = LibVaipakam.MAX_LIQUIDATOR_INCENTIVE_BPS;
-        uint256 bonus = (expectedProceeds * incentiveBps) / BASIS_POINTS;
+        uint256 bonus = (plan.debt * incentiveBps) / BASIS_POINTS;
         // Bonus sent directly to liquidator (msg.sender = address(this))
         assertEq(IERC20(loan.principalAsset).balanceOf(address(this)), bonus);
         // Verify lender claim recorded correctly (includes treasury fee deduction)
@@ -1390,10 +1405,9 @@ contract DefaultedFacetTest is Test {
 
     //     vm.prank(borrower); // Not lender
     //     vm.expectRevert(IVaipakamErrors.NotLender.selector);
-    //     DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote2, defaultAdapterCalls());
+    //     DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
     // }
 
-    uint256 sellQuote2 = defaultQuote(address(diamond), loanId);
     function testTriggerDefaultRevertsIfNotDefaultedYet() public {
         uint256 loanId = createAndAcceptOffer(
             mockERC20,
@@ -2222,11 +2236,19 @@ contract DefaultedFacetTest is Test {
         assertGt(lenderAmt, 0, "lender recovers from swap proceeds");
 
         // Borrower keeps the recoverable surplus — the §790/§774 entitlement the
-        // old whole-collateral-in-kind branch destroyed.
+        // old whole-collateral-in-kind branch destroyed. Since #2796 that is
+        // two rows: the collateral the sale did not take (the borrower claim,
+        // in the collateral asset) and the proceeds beyond the debt and the
+        // charges (the surplus row, in the principal asset).
         (address borrowerAsset, uint256 borrowerAmt,) =
             ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
-        assertEq(borrowerAsset, mockERC20, "borrower surplus in principal asset");
+        assertEq(borrowerAsset, mockCollateralERC20, "borrower keeps the unsold collateral");
+        assertEq(borrowerAmt, 2000 ether - sellQuote, "unsold collateral = pledged - sold");
         assertGt(borrowerAmt, 0, "borrower must retain recoverable surplus (C1 fix)");
+        (address surplusAsset, uint256 surplusAmt,) =
+            ClaimFacet(address(diamond)).getBorrowerSurplusClaim(loanId);
+        assertEq(surplusAsset, mockERC20, "proceeds extra held in the principal asset");
+        assertGt(surplusAmt, 0, "proceeds beyond the debt and charges are the borrower's");
         vm.clearMockedCalls();
     }
 
@@ -2931,29 +2953,36 @@ contract DefaultedFacetTest is Test {
         uint256 grace = LibVaipakam.gracePeriod(30);
         vm.warp(endTime + grace + 1);
 
-        // Mock swap to return low proceeds directly (below principal)
-        uint256 lowProceeds = 500 ether;
-        // #2472 — the proxy mock DELIVERS the stated proceeds: a mocked
-        // `swap` return books proceeds that never arrive, which the
-        // Diamond's delivery check refuses.
-        ZeroExProxyMock(address(mockZeroExProxy)).setFixedOutput(lowProceeds);
-        deal(
-            mockERC20,
-            address(mockZeroExProxy),
-            IERC20(mockERC20).balanceOf(address(mockZeroExProxy)) + lowProceeds
+        // #2796 — the collateral is worth too little to cover the debt: at
+        // $0.5 the 2000 pledged is worth 1000, below principal plus interest
+        // and charges, so the plan sells ALL of it. The swap delivers at the
+        // oracle rate (1/2), which clears the worst-case floor; a route
+        // delivering below the floor would be refused and the loan would go
+        // to the in-kind fallback instead.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encode(5e7, 8)
         );
-        deal(mockERC20, address(diamond), 2000 ether + lowProceeds);
-        deal(mockCollateralERC20, address(diamond), 2000 ether + lowProceeds);
+        ZeroExProxyMock(address(mockZeroExProxy)).setRate(1, 2);
+        deal(mockERC20, address(diamond), 2000 ether);
+        deal(mockCollateralERC20, address(diamond), 2000 ether);
 
         MockVaultWithdraw.deliversAll(address(diamond));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
 
-        uint256 sellQuote = defaultQuote(address(diamond), loanId);
-        DefaultedFacet(address(diamond)).triggerDefault(loanId, sellQuote, defaultAdapterCalls());
+        ForcedSaleFacet.ForcedSalePlan memory plan = forcedSalePlan(
+            address(diamond), loanId, ForcedSaleFacet.ForcedSaleKind.TimeBasedDefault
+        );
+        assertFalse(plan.covered, "fixture: the whole collateral cannot cover the debt");
+        assertEq(plan.sell, 2000 ether, "an uncovered sale sells all the collateral");
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, plan.sell, defaultAdapterCalls());
 
-        // Verify: no borrower surplus (proceeds < principal)
+        // Verify: nothing left for the borrower (all collateral sold, proceeds < debt)
         (, uint256 borrowerAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
-        assertEq(borrowerAmt, 0, "No surplus when proceeds < principal");
+        assertEq(borrowerAmt, 0, "No collateral left when every unit was sold");
+        (, uint256 surplusAmt,) = ClaimFacet(address(diamond)).getBorrowerSurplusClaim(loanId);
+        assertEq(surplusAmt, 0, "No surplus when proceeds < principal");
 
         // Verify lender got less than principal (loss)
         (, uint256 lenderAmt,) = ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);

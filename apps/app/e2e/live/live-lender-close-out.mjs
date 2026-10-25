@@ -74,6 +74,7 @@ import { readPinned } from './pinnedRead.mjs';
 import { splitBlocked } from './readOnlyFindings.mjs';
 import { decodeTxForComparison, expectedTx } from './refinanceExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
+import { readDefaultQuote } from './forcedSaleQuote.mjs';
 
 const SITE_URL = requireSiteUrl();
 const REFERENCE_SITE_URL = process.env.REFERENCE_SITE_URL ?? '';
@@ -339,7 +340,11 @@ if (enabledAdapters.size === 0) await blocked('the Diamond lists no enabled swap
 {
   let answer;
   try {
-    await pub.simulateContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'triggerDefault', args: [LOAN_ID, []], account: WALLET });
+    // #2796 — the close-out names the amount it sells, inside the range the
+    // Diamond publishes; quoted inside it, an empty try-list still reaches
+    // `NoEnabledSwapRoute` rather than stopping at the quote check.
+    const quote = await readDefaultQuote(pub, DIAMOND, DIAMOND_ABI, LOAN_ID);
+    await pub.simulateContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'triggerDefault', args: [LOAN_ID, quote, []], account: WALLET });
     answer = 'success';
   } catch (err) {
     if (!isRevert(err)) await blocked('the direct RPC could not simulate the close-out at startup', err);
@@ -429,7 +434,10 @@ async function eligibleAt(blockNumber) {
     // loan that closes without a sale: either way the card is right to
     // withhold the sale, and this drive does not have to list the gates.
     settle(
-      pub.simulateContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'triggerDefault', args: [LOAN_ID, []], account: WALLET, blockNumber: pinned }),
+      // #2796 — quoted from the plan at the same pinned block (see startup).
+      readDefaultQuote(pub, DIAMOND, DIAMOND_ABI, LOAN_ID, pinned).then((quote) =>
+        pub.simulateContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'triggerDefault', args: [LOAN_ID, quote, []], account: WALLET, blockNumber: pinned }),
+      ),
     ),
     // The ROUTE POSTURE at this block too (#2505): the card caches what its
     // roster could route, so a roster that changed since — the last adapter
@@ -538,12 +546,22 @@ const PLAN = SUBMIT
         id: 'closeOut',
         role: ROLE,
         kind: 'tx',
-        purpose: `triggerDefault(${LOAN_ID}, routes)`,
+        purpose: `triggerDefault(${LOAN_ID}, sellAmount, routes)`,
         expected: {
           ...expectedTx({
             from: WALLET,
             to: DIAMOND,
-            call: { functionName: 'triggerDefault', args: { loanId: LOAN_ID, adapterCalls: is(ROUTES_RULE, routesOk) } },
+            call: {
+              functionName: 'triggerDefault',
+              args: {
+                loanId: LOAN_ID,
+                // #2796 — whether it lies in the Diamond's range is the
+                // independent preview's question: an amount outside it
+                // reverts there, and a preview that does not sell fails.
+                sellAmount: is('a positive collateral amount (its range is proven by the preview)', (v) => asBig(v) > 0n),
+                adapterCalls: is(ROUTES_RULE, routesOk),
+              },
+            },
             chainId: CHAIN_ID,
           }),
           // Bounded below by a fresh estimate of the EXACT call the page asks

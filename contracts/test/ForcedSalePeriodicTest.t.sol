@@ -236,8 +236,12 @@ contract ForcedSalePeriodicTest is SetupTest {
         _toPeriodEnd(1);
         uint256 collateral0 = LoanFacet(address(diamond)).getLoanDetails(LOAN).collateralAmount;
         uint256 lender0 = _bal(lender);
+        // Quoted before the revert expectation: the quote is a nested call,
+        // and the expectation would otherwise bind to it.
+        uint256 sellQuote = periodicQuote(address(diamond), LOAN);
         vm.expectPartialRevert(IVaipakamErrors.PeriodicSettleSwapFailed.selector);
-        _settle();
+        vm.prank(settler);
+        RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(LOAN, sellQuote, _calls());
         assertEq(LoanFacet(address(diamond)).getLoanDetails(LOAN).collateralAmount, collateral0);
         assertEq(_bal(lender), lender0);
     }

@@ -417,7 +417,9 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         _setRisk(other, 0.9e18, 9_600);
         uint256 loanId = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
-        bytes memory liquidate = abi.encodeCall(RiskFacet.triggerLiquidation, (other, _workingRoute()));
+        bytes memory liquidate = abi.encodeCall(
+            RiskFacet.triggerLiquidation, (other, liquidationQuote(address(diamond), other), _workingRoute())
+        );
         CallbackERC20(weth).arm(_vaultOf(loanId), taker, address(diamond), makeAddr("liquidator"), liquidate);
 
         _fill(r, "");
