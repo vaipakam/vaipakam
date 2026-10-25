@@ -1,4 +1,4 @@
-## Thread — The app states loan due dates on the loan clock
+## Thread — The app states loan due dates on the loan clock (PR #2830)
 
 Since the D2 pause change (#668 / #935), a pause moves every open loan's due
 date and grace end later by the time the protocol spent paused since the loan
