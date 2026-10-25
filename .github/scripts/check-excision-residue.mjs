@@ -605,9 +605,12 @@ function lineOf(starts, offset) {
  * UNIT to a digest: the raw source lines of the block that holds it — the
  * list item's own blocks (task box included, nested-list lines left out),
  * the table row or footnote, or else the paragraph, heading, cell or code
- * block itself — preceded by the headings that govern it (`headingChain`). Units are sorted
- * and hashed, so moving a mention without rewording it is invisible, while
- * rewording its block or retitling a governing heading moves the digest.
+ * block itself — preceded by what governs it: the headings over it
+ * (`headingChain`), its table's header row, and the own blocks of every list
+ * item its list is nested in. Units are sorted and hashed, so moving a
+ * mention without rewording it is invisible, while rewording its block,
+ * retitling a governing heading, relabelling its column or rewording its
+ * parent item's lead-in moves the digest.
  *
  * Why the block and not a window of lines around the mention, which is what
  * the digest hashed until #1732: a fixed window both over- and under-reached.
@@ -681,15 +684,17 @@ function scanFile(path) {
   const lines = text.split(/\r\n|\r|\n/);
   const units = kept
     .map(({ unit }) => {
-      // Every line any of the unit's ranges touches, once each and in order.
-      // A list item's ranges skip its nested lists, so their lines are not
-      // part of the parent's fingerprint.
-      const at = new Set();
-      for (const [from, to] of unit.ranges) {
-        for (let l = lineOf(starts, from); l <= lineOf(starts, Math.max(from, to - 1)); l++) at.add(l);
-      }
-      const block = [...at].sort((a, b) => a - b).map((l) => lines[l]);
-      return [...headingChain(unit.start), ...block]
+      // Every line a set of ranges touches, once each and in order. A list
+      // item's ranges skip its nested lists, so their lines are not part of
+      // the parent's fingerprint.
+      const linesOf = (ranges) => {
+        const at = new Set();
+        for (const [from, to] of ranges) {
+          for (let l = lineOf(starts, from); l <= lineOf(starts, Math.max(from, to - 1)); l++) at.add(l);
+        }
+        return [...at].sort((a, b) => a - b).map((l) => lines[l]);
+      };
+      return [...headingChain(unit.start), ...linesOf(unit.context), ...linesOf(unit.ranges)]
         .map((l) => l.replace(/\r/g, '').replace(/[ \t]+$/gm, ''))
         .join('\n');
     })

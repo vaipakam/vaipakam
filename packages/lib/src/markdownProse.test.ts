@@ -54,6 +54,14 @@ describe('alignOffsets', () => {
     expect(alignOffsets('&nbsp=x', '&nbsp=x', 0, 7, { references: 'html-attribute' })).toEqual([0, 1, 2, 3, 4, 5, 6]);
   });
 
+  it('pairs characters the parser rewrote with what they came from', () => {
+    // micromark expands a tab to spaces; parse5 turns CR into LF and NUL
+    // into U+FFFD. The letters after each keep their own offsets.
+    expect(alignOffsets('   ab', '\tab', 0, 3)).toEqual([0, 0, 0, 1, 2]);
+    expect(alignOffsets('a\nb\nc', 'a\rb\r\nc', 0, 6, { references: 'html' })).toEqual([0, 1, 2, 4, 5]);
+    expect(alignOffsets('a\ufffdb', 'a\0b', 0, 3)).toEqual([0, 1, 2]);
+  });
+
   it('lets an unpaired character cost only its own offset', () => {
     // `?` has no counterpart; the characters after it still find their own.
     expect(alignOffsets('a?bc', 'abc', 0, 3)).toEqual([0, 1, 1, 2]);
@@ -124,6 +132,17 @@ describe('readProse — segments', () => {
     expect(segment.map[second]).toBe(source.lastIndexOf('buyOptions'));
   });
 
+  it('reads a tag named after an Object property as an ordinary tag', () => {
+    expect(texts('<constructor>Ordinary documentation.</constructor>\n', 'prose')).toEqual(['Ordinary documentation.']);
+  });
+
+  it('keeps the mentions of a tab-indented fenced body apart', () => {
+    const source = ' ~~~\n\tbuyOptions buyOptions\n ~~~\n';
+    const segment = md(source).segments.find((s) => s.kind === 'literal')!;
+    expect(segment.map[segment.text.indexOf('buyOptions')]).toBe(source.indexOf('buyOptions'));
+    expect(segment.map[segment.text.lastIndexOf('buyOptions')]).toBe(source.lastIndexOf('buyOptions'));
+  });
+
   it('decodes references the way each parser does', () => {
     expect(texts('a&ThickSpace;b &fjlig; &bogus;\n', 'prose')).toEqual(['a  b fj &bogus;']);
     expect(texts('<p>a&nbspb</p>\n', 'prose')).toEqual(['a b']);
@@ -174,6 +193,24 @@ describe('readProse — units', () => {
   it('fingerprints a table row, not just its cell', () => {
     const source = '| a | b |\n|---|---|\n| name | Removed |\n';
     expect(unitText(source, 'name')).toBe('| name | Removed |');
+  });
+
+  const contextText = (source: string, needle: string) => {
+    const segment = md(source).segments.find((s) => s.text.includes(needle))!;
+    return segment.unit.context.map(([from, to]) => source.slice(from, to)).join('|');
+  };
+
+  it("gives a data row its table's header row as context", () => {
+    const source = '| a | b |\n|---|---|\n| name | Removed |\n| other | x |\n';
+    expect(contextText(source, 'name')).toBe('| a | b |');
+    expect(contextText(source, 'a')).toBe('');
+  });
+
+  it("gives a nested item its parents' own blocks as context", () => {
+    const source = '- Removed contracts:\n  - Group A\n    - VpfiBuyAdapter\n- Next\n';
+    expect(contextText(source, 'VpfiBuyAdapter')).toBe('- Removed contracts:|- Group A');
+    expect(contextText(source, 'Removed')).toBe('');
+    expect(contextText(source, 'Next')).toBe('');
   });
 
   it('fingerprints each paragraph of a quote on its own', () => {

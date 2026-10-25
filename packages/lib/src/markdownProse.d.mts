@@ -8,8 +8,10 @@ export interface ProseSegment {
   /** Source offset of every UTF-16 unit of `text`. */
   map: number[];
   /** What the gate fingerprints for a mention found here: the source
-   *  `ranges` it hashes, and the `start` its governing headings precede. */
-  unit: { start: number; ranges: Array<[number, number]> };
+   *  `ranges` of the block itself, the `context` ranges that govern it (a
+   *  table's header row, enclosing list items' own blocks), and the `start`
+   *  its governing headings precede. */
+  unit: { start: number; ranges: Array<[number, number]>; context: Array<[number, number]> };
 }
 
 export const BLOCK_TAGS: Set<string>;

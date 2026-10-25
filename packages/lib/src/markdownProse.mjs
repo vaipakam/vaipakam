@@ -49,9 +49,12 @@
  * Each segment also carries its UNIT, the source ranges the gate fingerprints
  * when a mention is found in it: the nearest enclosing list item (its own
  * blocks, one range each, so a nested list between two of them is left out),
- * table row or footnote definition, or else the leaf block itself. A list item and not its paragraph, because the item
- * carries status the paragraph does not (a task box `[x]`), and a table row
- * and not its cell, because the row's other cells say what the cell means.
+ * table row or footnote definition, or else the leaf block itself. A list
+ * item and not its paragraph, because the item carries status the paragraph
+ * does not (a task box `[x]`), and a table row and not its cell, because the
+ * row's other cells say what the cell means. The unit's CONTEXT is what
+ * governs it without being part of it: the header row of its table, and the
+ * own blocks of every list item or footnote its list is nested in.
  * `headingChain(offset)` gives the headings that govern a position: the
  * nearest heading before it, then each strictly shallower one before that,
  * up to the first level-one heading. A paragraph that OPENS with bold text
@@ -103,19 +106,22 @@ export const BLOCK_TAGS = new Set([
  * reads it in. The HTML tree builder switches the tokenizer into these modes
  * when it sees the start tag; a bare tokenizer has to be told, or the `<b>` in
  * `<script>a<b>c</script>` would be read as a tag.
+ *
+ * A `Map`, as every table keyed by a name from the document is: an object
+ * literal would answer `<constructor>` with `Object`'s constructor.
  */
-const RAW_TEXT_MODES = {
-  script: TokenizerMode.SCRIPT_DATA,
-  style: TokenizerMode.RAWTEXT,
-  xmp: TokenizerMode.RAWTEXT,
-  iframe: TokenizerMode.RAWTEXT,
-  noembed: TokenizerMode.RAWTEXT,
-  noframes: TokenizerMode.RAWTEXT,
-  noscript: TokenizerMode.RAWTEXT,
-  textarea: TokenizerMode.RCDATA,
-  title: TokenizerMode.RCDATA,
-  plaintext: TokenizerMode.PLAINTEXT,
-};
+const RAW_TEXT_MODES = new Map([
+  ['script', TokenizerMode.SCRIPT_DATA],
+  ['style', TokenizerMode.RAWTEXT],
+  ['xmp', TokenizerMode.RAWTEXT],
+  ['iframe', TokenizerMode.RAWTEXT],
+  ['noembed', TokenizerMode.RAWTEXT],
+  ['noframes', TokenizerMode.RAWTEXT],
+  ['noscript', TokenizerMode.RAWTEXT],
+  ['textarea', TokenizerMode.RCDATA],
+  ['title', TokenizerMode.RCDATA],
+  ['plaintext', TokenizerMode.PLAINTEXT],
+]);
 
 /** Elements whose text is never shown as part of the page. Their text is a
  *  `literal` segment: scanned, but never fused with rendered prose. */
@@ -177,10 +183,12 @@ function readReference(grammar, source, i, to) {
  * Parsers report a position for a whole node, not for each character of its
  * value, and the value differs from its source: container prefixes (`> `,
  * list indentation) and delimiters are gone, backslash escapes and character
- * references are resolved. This walks both in step. Equal characters pair up;
- * a character reference pairs the text it decodes to with its own offset; a
- * Markdown escape pairs the escaped character with its own; any other source
- * character is something the parser dropped and is skipped.
+ * references are resolved, tabs are expanded and line endings normalized.
+ * This walks both in step. Equal characters pair up; a character reference
+ * pairs the text it decodes to with its own offset; a Markdown escape pairs
+ * the escaped character with its own; a character the parser rewrote (a tab
+ * as spaces, CR as LF, NUL as U+FFFD) pairs with the one it replaced; any
+ * other source character is something the parser dropped and is skipped.
  *
  * `references` names the grammar the parser resolved references by:
  * `'markdown'` (the default; escapes too), `'html'` (text), `'html-attribute'`
@@ -222,6 +230,30 @@ export function alignOffsets(value, source, from, to, { references = 'markdown',
       }
     }
     if (same(value[j], s)) {
+      out[j++] = i++;
+      resume = i;
+      continue;
+    }
+    // Characters the parser itself rewrote, paired with what they came from.
+    // A tab it expanded to spaces (micromark, to the next tab stop of 4, less
+    // any indentation it removed): each of up to four spaces pairs with the
+    // tab. A line ending it normalized to LF (parse5's preprocessor turns CR
+    // and CR LF into LF). A NUL it replaced with U+FFFD (both parsers).
+    // Without these, the walk searched ahead for the rewritten character and
+    // paired the text after it with a later, unrelated stretch of the node.
+    if (s === '\t' && value[j] === ' ') {
+      for (let n = 0; n < 4 && value[j] === ' '; n++) out[j++] = i;
+      resume = ++i;
+      continue;
+    }
+    if (s === '\r' && value[j] === '\n') {
+      const crlf = i + 1 < to && source[i + 1] === '\n';
+      out[j++] = crlf ? i + 1 : i;
+      i += crlf ? 2 : 1;
+      resume = i;
+      continue;
+    }
+    if (s === '\0' && value[j] === '\uFFFD') {
       out[j++] = i++;
       resume = i;
       continue;
@@ -373,7 +405,7 @@ function readHtml(html, toFile, sink) {
         interior(pieces);
         if (BLOCK_TAGS.has(t.tagName)) sink.breakProse();
         if (!t.selfClosing && HIDDEN_TEXT.has(t.tagName)) hidden.push(t.tagName);
-        const mode = RAW_TEXT_MODES[t.tagName];
+        const mode = RAW_TEXT_MODES.get(t.tagName);
         if (mode !== undefined && !t.selfClosing) {
           tokenizer.state = mode;
           rawUndecoded = mode === TokenizerMode.SCRIPT_DATA || mode === TokenizerMode.RAWTEXT || mode === TokenizerMode.PLAINTEXT;
@@ -517,33 +549,38 @@ function readMarkdown(source) {
   };
 
   /**
-   * The unit for a leaf block, given the nearest enclosing container: a
-   * `start` (where governing headings are looked up from) and the source
-   * `ranges` the fingerprint covers.
+   * A list item's or footnote definition's OWN blocks, NOT its nested lists.
+   * A nested list is its own items' unit, and folding fifty sub-items into
+   * one parent's fingerprint would move it on every edit to any of them. So
+   * these are the item's own blocks, one range each, with any nested list
+   * between two of them left out; the first starts at the item itself, so its
+   * marker and task box are in it.
    */
-  const unitFor = (leaf, container) => {
-    const [s, e] = span(leaf);
-    if (!container) return { start: s, ranges: [[s, e]] };
-    if (container.type === 'tableRow') {
-      const row = span(container);
-      return { start: row[0], ranges: [row] };
-    }
-    // A list item or footnote definition: its own blocks, NOT its nested
-    // lists. A nested list is its own items' context, and folding fifty
-    // sub-items into one parent's fingerprint would move it on every edit
-    // to any of them. So the ranges are the item's own blocks, one each,
-    // with any nested list between two of them left out; the item's marker
-    // and task box sit on its first block's first line.
-    const start = container.position.start.offset;
+  const ownRanges = (container) => {
     const ranges = container.children.filter((c) => c.type !== 'list').map(span);
-    if (!ranges.length) ranges.push([s, e]);
-    // From the item's own start, so its marker and task box are in it.
-    ranges[0] = [start, ranges[0][1]];
-    return { start, ranges };
+    if (ranges.length) ranges[0] = [container.position.start.offset, ranges[0][1]];
+    return ranges;
   };
 
-  const leaf = (node, container, read) => {
-    const sink = new BlockSink(unitFor(node, container), segments, source, node.position.end.offset);
+  /**
+   * The unit for a leaf block, given the nearest enclosing container and the
+   * `context` that governs it: a `start` (where governing headings are looked
+   * up from), the source `ranges` the block itself covers, and the `context`
+   * ranges, passed through.
+   */
+  const unitFor = (leaf, container, context) => {
+    const [s, e] = span(leaf);
+    if (!container) return { start: s, ranges: [[s, e]], context };
+    if (container.type === 'tableRow') {
+      const row = span(container);
+      return { start: row[0], ranges: [row], context };
+    }
+    const ranges = ownRanges(container);
+    return { start: container.position.start.offset, ranges: ranges.length ? ranges : [[s, e]], context };
+  };
+
+  const leaf = (node, container, context, read) => {
+    const sink = new BlockSink(unitFor(node, container, context), segments, source, node.position.end.offset);
     read(sink);
     sink.close();
   };
@@ -554,13 +591,22 @@ function readMarkdown(source) {
    * quote titles the quote, not the prose after it (#1758), so retitling
    * `> ## Historical note` must not move the fingerprint of a paragraph
    * below the quote.
+   *
+   * `context` is what governs the block without being part of it, other than
+   * headings: the header row of the table a row is in, and the own blocks of
+   * every list item or footnote a nested list is in. A data row reads under
+   * its column headers, and a nested item under its parent's lead-in, so
+   * turning `| Contract | Removed |` into `| Contract | Currently deployed |`,
+   * or `- Removed contracts:` into `- Live contracts:`, rewords every mention
+   * beneath it as surely as retitling a heading does, and moves the digest
+   * the same way.
    */
-  const block = (node, container, scopeEnd) => {
+  const block = (node, container, scopeEnd, context) => {
     switch (node.type) {
       case 'heading': {
         const [s, e] = span(node);
         headings.push({ offset: s, scopeEnd, level: node.depth, raw: source.slice(s, e) });
-        leaf(node, container, (sink) => node.children.forEach((c) => phrasing(c, sink)));
+        leaf(node, container, context, (sink) => node.children.forEach((c) => phrasing(c, sink)));
         return;
       }
       case 'paragraph': {
@@ -569,11 +615,11 @@ function readMarkdown(source) {
           const [s, e] = span(first);
           headings.push({ offset: s, scopeEnd, level: 7, raw: source.slice(s, e) });
         }
-        leaf(node, container, (sink) => node.children.forEach((c) => phrasing(c, sink)));
+        leaf(node, container, context, (sink) => node.children.forEach((c) => phrasing(c, sink)));
         return;
       }
       case 'tableCell':
-        leaf(node, container, (sink) => node.children.forEach((c) => phrasing(c, sink)));
+        leaf(node, container, context, (sink) => node.children.forEach((c) => phrasing(c, sink)));
         return;
       case 'code': {
         const [s, e] = span(node);
@@ -585,7 +631,7 @@ function readMarkdown(source) {
         const fenced = /^ {0,3}(?:`{3,}|~{3,})/.test(source.slice(s, e));
         const firstLineEnd = fenced ? source.slice(s, e).search(/\r\n|\r|\n|$/) + s : s;
         const bodyFrom = fenced ? Math.min(e, firstLineEnd + (source.startsWith('\r\n', firstLineEnd) ? 2 : 1)) : s;
-        leaf(node, container, (sink) => {
+        leaf(node, container, context, (sink) => {
           sink.emit('literal', node.value, aligned(node.value, bodyFrom, e, { references: 'none' }));
           const info = [node.lang, node.meta].filter((v) => v).join(' ');
           if (info) sink.emit('interior', info, aligned(info, s, firstLineEnd));
@@ -595,14 +641,14 @@ function readMarkdown(source) {
       case 'html': {
         const [s, e] = span(node);
         const local = aligned(node.value, s, e, { references: 'none' });
-        leaf(node, container, (sink) =>
+        leaf(node, container, context, (sink) =>
           readHtml(node.value, (k) => local[Math.min(k, local.length - 1)] ?? s, sink),
         );
         return;
       }
       case 'definition': {
         const [s, e] = span(node);
-        leaf(node, container, (sink) => {
+        leaf(node, container, context, (sink) => {
           let at = s;
           for (const value of [node.label, node.url, node.title]) {
             if (!value) continue;
@@ -615,29 +661,40 @@ function readMarkdown(source) {
       }
       case 'footnoteDefinition': {
         const [s, e] = span(node);
-        leaf(node, node, (sink) => sink.emit('interior', node.label ?? '', aligned(node.label ?? '', s, e)));
-        for (const child of node.children) block(child, node, e);
+        leaf(node, node, context, (sink) => sink.emit('interior', node.label ?? '', aligned(node.label ?? '', s, e)));
+        const nested = [...context, ...ownRanges(node)];
+        for (const child of node.children) block(child, node, e, child.type === 'list' ? nested : context);
         return;
       }
-      case 'listItem':
-        for (const child of node.children) block(child, node, node.position.end.offset);
+      case 'listItem': {
+        const nested = [...context, ...ownRanges(node)];
+        for (const child of node.children) block(child, node, node.position.end.offset, child.type === 'list' ? nested : context);
         return;
+      }
+      case 'table': {
+        // The first row is the header; it governs every row after it.
+        const [header, ...rows] = node.children;
+        if (header) block(header, container, scopeEnd, context);
+        const governed = header ? [...context, span(header)] : context;
+        for (const row of rows) block(row, container, scopeEnd, governed);
+        return;
+      }
       case 'tableRow':
-        for (const child of node.children) block(child, node, scopeEnd);
+        for (const child of node.children) block(child, node, scopeEnd, context);
         return;
       case 'blockquote':
         // A scope for headings, NOT a unit: a quoted banner can run to many
         // paragraphs, and each is its own.
-        for (const child of node.children) block(child, container, node.position.end.offset);
+        for (const child of node.children) block(child, container, node.position.end.offset, context);
         return;
       default:
-        // root, list, table, and anything a later extension adds: structure
-        // only, read through.
-        if (node.children) for (const child of node.children) block(child, container, scopeEnd);
+        // root, list, and anything a later extension adds: structure only,
+        // read through.
+        if (node.children) for (const child of node.children) block(child, container, scopeEnd, context);
     }
   };
 
-  block(tree, null, Infinity);
+  block(tree, null, Infinity, []);
   return { segments, headings };
 }
 
@@ -651,7 +708,7 @@ function readText(source) {
     if (start === -1) return;
     const text = source.slice(start, end);
     const map = Array.from({ length: text.length }, (_, k) => start + k);
-    const unit = { start, ranges: [[start, end]] };
+    const unit = { start, ranges: [[start, end]], context: [] };
     segments.push({ kind: 'prose', text, map, unit });
     start = -1;
   };
