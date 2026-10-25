@@ -201,13 +201,14 @@ contract ReplaceStaleFacets is DeployDiamond {
         // the inherited `DeployDiamond` getter that defines what the Diamond
         // routes, so the surface cannot be partial (#778/#779).
         //
-        // Twelve facets, so at most two cuts each, plus TWO retired-selector
-        // Removes (#2459 r4's previewIntent; #2489's tariff setter) — 26 at most
+        // Twelve facets, so at most two cuts each, plus THREE retired-selector
+        // Removes (#2459 r4's previewIntent; #2489's tariff setter; #2812's
+        // range flags) — 27 at most
         // (Codex #2489 r12: a short array would panic on a fully mixed stale
         // Diamond before diamondCut ran); empty partitions are skipped and the
         // staging array is trimmed to what was actually used (a zero-selector
         // cut reverts).
-        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](26);
+        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](27);
         uint256 n;
         n = _appendPartitioned(
             staging, n, diamond, address(offerCreateFacet), _getOfferCreateSelectors()
@@ -301,6 +302,27 @@ contract ReplaceStaleFacets is DeployDiamond {
                 action: IDiamondCut.FacetCutAction.Remove,
                 functionSelectors: gone
             });
+        }
+        // #2812 — the range master flags' setters and getters, deleted from
+        // ConfigFacet; whichever are still routed are Removed in one cut, for
+        // the same reason as the tariff setter above (no caller exists).
+        {
+            bytes4[] memory retiredRange = FacetSelectors.retiredRangeFlagSelectors();
+            uint256 routed;
+            for (uint256 i; i < retiredRange.length; ++i) {
+                if (IDiamondLoupe(diamond).facetAddress(retiredRange[i]) != address(0)) {
+                    retiredRange[routed++] = retiredRange[i];
+                }
+            }
+            if (routed != 0) {
+                bytes4[] memory gone = new bytes4[](routed);
+                for (uint256 i; i < routed; ++i) gone[i] = retiredRange[i];
+                staging[n++] = IDiamondCut.FacetCut({
+                    facetAddress: address(0),
+                    action: IDiamondCut.FacetCutAction.Remove,
+                    functionSelectors: gone
+                });
+            }
         }
         // Codex #2489 r12 — a Diamond still routing the pre-#1949 signed-offer
         // entry shapes is one this PARTIAL refresh cannot carry: the new

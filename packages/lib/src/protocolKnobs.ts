@@ -30,6 +30,7 @@
  */
 import { getAbiItem, toFunctionSelector, type Abi, type Address, type PublicClient } from 'viem';
 import { MULTICALL3_ADDRESS } from './multicall.js';
+import { describeShapeMismatch, readStaticReturn } from './staticReturn.js';
 
 interface ProtocolKnobGetterBase {
   /** The name the value is published and displayed under. */
@@ -195,13 +196,77 @@ export function abiOutputNames(abi: Abi, functionName: string): readonly string[
   return names.every((n) => n.length > 0) ? names : null;
 }
 
-/** The deployment-artifact facet key that hosts each labelled getter. Both
- *  live on ConfigFacet; read by every caller of {@link abiDescribesGetterAt}
- *  so the indexer and the app look the host up under the same key. */
+/** The deployment-artifact facet key that hosts each labelled getter; read
+ *  by every caller of {@link abiDescribesGetterAt} so the indexer and the
+ *  app look the host up under the same key. (`getMasterFlags` was the
+ *  second entry until #2812 retired it with the range flags.) */
 export const LABELLED_GETTER_HOST = {
   getProtocolConfigBundle: 'configFacet',
-  getMasterFlags: 'configFacet',
 } as const;
+
+/** A value of the config bundle as it is published: integers as decimal
+ *  strings, flags as booleans, the fixed tier arrays as lists of those. */
+export type ProtocolBundleValue = ProtocolKnobValue | ProtocolKnobValue[];
+
+export type ProtocolBundleRead =
+  | {
+      kind: 'read';
+      /** The bundle in output order, as published in `/config` `bundle`. */
+      positional: ProtocolBundleValue[];
+      /** The same values under this build's output names. Whether those
+       *  names may be PUBLISHED is the separate host binding
+       *  ({@link abiDescribesGetterAt}); a caller that cannot establish it
+       *  withholds them. */
+      values: Record<string, ProtocolBundleValue>;
+    }
+  /** Nothing was decoded, and why, in words. */
+  | { kind: 'unreadable'; reason: string };
+
+function toBundleValue(v: unknown): ProtocolBundleValue | null {
+  if (Array.isArray(v)) {
+    const items = v.map(toKnobValue);
+    return items.every((x): x is ProtocolKnobValue => x !== null) ? items : null;
+  }
+  return toKnobValue(v);
+}
+
+/**
+ * #2812 — THE read of `getProtocolConfigBundle`, for the indexer's snapshot
+ * and for every chain read in the connected app.
+ *
+ * The answer is decoded only when its length is the one this build's ABI
+ * describes ({@link readStaticReturn}). An answer of another length comes
+ * from other code (a Diamond whose ConfigFacet predates or postdates this
+ * build), and decoding it by position would put real numbers under the
+ * wrong names, so it is reported as `unreadable` and its fields are unknown.
+ * A revert or a transport failure throws.
+ */
+export async function readProtocolConfigBundle(opts: {
+  client: PublicClient;
+  diamond: Address;
+  abi: Abi;
+  blockNumber?: bigint;
+}): Promise<ProtocolBundleRead> {
+  const names = abiOutputNames(opts.abi, 'getProtocolConfigBundle');
+  if (names === null) {
+    return { kind: 'unreadable', reason: "this build's ABI names no output of getProtocolConfigBundle" };
+  }
+  const r = await readStaticReturn({
+    client: opts.client,
+    address: opts.diamond,
+    abi: opts.abi,
+    functionName: 'getProtocolConfigBundle',
+    blockNumber: opts.blockNumber,
+  });
+  if (r.kind === 'shape-mismatch') {
+    return { kind: 'unreadable', reason: describeShapeMismatch('getProtocolConfigBundle', r) };
+  }
+  const positional = r.outputs.map(toBundleValue);
+  if (!positional.every((v): v is ProtocolBundleValue => v !== null)) {
+    return { kind: 'unreadable', reason: 'getProtocolConfigBundle answered a value of a kind this reader does not publish' };
+  }
+  return { kind: 'read', positional, values: Object.fromEntries(names.map((n, i) => [n, positional[i]])) };
+}
 
 /**
  * #2073 / #2074 — whether `abi` describes the code that answered

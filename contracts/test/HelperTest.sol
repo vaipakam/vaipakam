@@ -1940,7 +1940,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](89);
+        selectors = new bytes4[](83);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1988,14 +1988,19 @@ contract HelperTest {
         selectors[26] = ConfigFacet.getTreasuryFeeBps.selector;
         selectors[27] = ConfigFacet.getLoanInitiationFeeBps.selector;
         selectors[28] = ConfigFacet.getLifMatcherFeeBps.selector;
-        // Range Orders Phase 1 master kill-switch flags + companion
-        // single-field getters (matches DeployDiamond's full surface).
-        selectors[29] = ConfigFacet.setRangeAmountEnabled.selector;
-        selectors[30] = ConfigFacet.setRangeRateEnabled.selector;
+        // #2812: the range master flags (their setters, getters and
+        // getMasterFlags) were retired; their six slots are reused by the
+        // former tail entries (83..88) so the array stays hole-free.
+        // #1353 (M2 PR-5c) — loan-side reward-cap haircut knob.
+        selectors[29] = ConfigFacet.setUserSideShareCapBps.selector;
+        selectors[30] = ConfigFacet.setRewardHaircutBps.selector;
+        // The matching kill-switch.
         selectors[31] = ConfigFacet.setPartialFillEnabled.selector;
-        selectors[32] = ConfigFacet.getMasterFlags.selector;
-        selectors[33] = ConfigFacet.getRangeAmountEnabled.selector;
-        selectors[34] = ConfigFacet.getRangeRateEnabled.selector;
+        // #1347 (M2 PR-5a/5b) — Full VPFI tariff knobs.
+        selectors[32] = ConfigFacet.getFeeEntitlementConfig.selector;
+        selectors[33] = ConfigFacet.setFeeEntitlementEnabled.selector;
+        selectors[34] = ConfigFacet.setTariffKPerLifYear.selector;
+        // The matching kill-switch's single-field getter.
         selectors[35] = ConfigFacet.getPartialFillEnabled.selector;
         // Depth-tiered LTV (Piece B) — governance setters + the
         // liquidity-confidence relay write + getters / bundle.
@@ -2042,8 +2047,8 @@ contract HelperTest {
         selectors[58] = ConfigFacet.setTreasuryConvertTargets.selector;
         selectors[59] = ConfigFacet.setTreasuryConvertThresholds.selector;
         selectors[60] = ConfigFacet.getTreasuryConvertConfig.selector;
-        // Issue #164 — borrower-side collateral range master flag.
-        selectors[61] = ConfigFacet.setRangeCollateralEnabled.selector;
+        // RL-4 (#1306) — recycled-stream allocation register (read side).
+        selectors[61] = ConfigFacet.getRecycleRegisterState.selector;
         // T-086 step 6 — prepay-listing safety buffer setter.
         selectors[62] = ConfigFacet.setPrepayListingBufferBps.selector;
         // T-086 step 6 — prepay-listing master kill-switch setter.
@@ -2082,14 +2087,6 @@ contract HelperTest {
         selectors[81] = ConfigFacet.getRewardClaimHorizonDays.selector;
         // RL-4 (#1306) — recycled-stream allocation register.
         selectors[82] = ConfigFacet.setRecycleRegisterKeeperBps.selector;
-        selectors[83] = ConfigFacet.getRecycleRegisterState.selector;
-        // #1347 (M2 PR-5a/5b) — Full VPFI tariff knobs.
-        selectors[84] = ConfigFacet.setTariffKPerLifYear.selector;
-        selectors[85] = ConfigFacet.setFeeEntitlementEnabled.selector;
-        selectors[86] = ConfigFacet.getFeeEntitlementConfig.selector;
-        // #1353 (M2 PR-5c) — loan-side reward-cap haircut knob.
-        selectors[87] = ConfigFacet.setRewardHaircutBps.selector;
-        selectors[88] = ConfigFacet.setUserSideShareCapBps.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet

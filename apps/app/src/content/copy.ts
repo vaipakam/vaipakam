@@ -4910,6 +4910,12 @@ const copySource = {
       `Holding under {{floor}} VPFI earns no fee discount.`,
       ['floor'],
     ),
+    // #2812 r3 — the tier table could not be read on this network (no
+    // indexer snapshot, and the configuration read failed or answered in
+    // another shape). No figures are shown in its place: a default set
+    // would read as this network's live tiers.
+    tierTableUnknown:
+      'The discount tiers can’t be read from this network right now, so none are shown here.',
     notOnThisChain: tmpl(
       `VPFI deposits aren’t available on {{chain}} yet. Everything else on Vaipakam works without VPFI.`,
       ['chain'],
@@ -6438,9 +6444,9 @@ const copySource = {
     autoPause: 'Auto-pause duration',
     maxOfferDuration: 'Max offer duration',
     flagsHeading: 'Feature flags',
-    rangeAmount: 'Range amount offers',
-    rangeRate: 'Range rate offers',
-    partialFill: 'Partial fill',
+    partialFill: 'Order matching (partial fill)',
+    partialFillHint:
+      'While off, the order matchers refuse and an accepted offer fills once. While on, a ranged offer can be filled across several matches. Ranged offers themselves are always on.',
     periodicHeading: 'Periodic interest',
     periodicInterest: 'Periodic interest payments',
     finerCadenceMinPrincipal: 'Minimum principal for shorter payment periods',

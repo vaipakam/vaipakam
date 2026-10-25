@@ -1109,14 +1109,14 @@ EOF
   forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --ffi --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
 
   # ── Master-flag flip (testnet ergonomics) ───────────────────────
-  # Range Orders Phase 1 governance-gated kill switches default
-  # `false` on every fresh deploy (per docs/RangeOffersDesign.md §15
-  # staged-enablement rationale). Mainnet keeps them dormant —
-  # deploy-mainnet.sh does NOT call this block. On testnet, the
-  # PositiveFlows / PartialFlows scenarios assume the flags are ON
-  # (Anvil's BootstrapAnvil flips them; testnet deploy-chain.sh
-  # flips them at step [5b]). Flipping here mirrors that ergonomic.
-  # Idempotent: setRangeXxxEnabled(true) on an already-true flag is
+  # The matching kill switch (`partialFillEnabled`) defaults `false`
+  # on every fresh deploy; ranged offers need no flag (always on, the
+  # range master flags were retired in #2812). Mainnet keeps the
+  # matcher dormant — deploy-mainnet.sh does NOT call this block. On
+  # testnet, the PositiveFlows / PartialFlows scenarios assume it is ON
+  # (Anvil's BootstrapAnvil flips it; testnet deploy-chain.sh flips it
+  # at step [5b]). Flipping here mirrors that ergonomic.
+  # Idempotent: setPartialFillEnabled(true) on an already-true flag is
   # a successful no-op state write.
   echo
   echo "[5b] Master-flag flip (testnet ergonomics)"
@@ -1126,14 +1126,15 @@ EOF
   elif [ -z "${ADMIN_PRIVATE_KEY:-}" ]; then
     echo "    (ADMIN_PRIVATE_KEY missing — skipping master-flag flip)"
   else
-    for fn in setRangeAmountEnabled setRangeRateEnabled setPartialFillEnabled; do
+    # Ranged offers need no flag (always on, #2812); the matcher is the one switch.
+    for fn in setPartialFillEnabled; do
       echo "  cast send $fn(true) on $DIAMOND_FOR_FLAGS"
       cast send "$DIAMOND_FOR_FLAGS" "$fn(bool)" true \
         --private-key "$ADMIN_PRIVATE_KEY" \
         --rpc-url "$RPC" \
         2>&1 | grep -E "^status" | head -1 || true
     done
-    echo "  Final master flags: $(cast call $DIAMOND_FOR_FLAGS 'getMasterFlags()(bool,bool,bool)' --rpc-url $RPC | tr '\n' ' ')"
+    echo "  Final partial-fill flag: $(cast call $DIAMOND_FOR_FLAGS 'getPartialFillEnabled()(bool)' --rpc-url $RPC | tr '\n' ' ')"
   fi
 
   # ── Indexer-cursor: trust the natural fallback ──────────────────
@@ -2219,7 +2220,7 @@ phase_verify() {
 
   echo
   echo "[3] Master flag state"
-  echo "  getMasterFlags() = $(cast call "$DIAMOND" 'getMasterFlags()(bool,bool,bool)' --rpc-url "$RPC" 2>/dev/null | tr '\n' ' ' || echo '?')"
+  echo "  getPartialFillEnabled() = $(cast call "$DIAMOND" 'getPartialFillEnabled()(bool)' --rpc-url "$RPC" 2>/dev/null | tr '\n' ' ' || echo '?')"
 
   # CCIP per-lane rate limits live on the VPFI TokenPool and are set
   # through the bounds-checked VpfiPoolRateGovernor — the CLAUDE.md

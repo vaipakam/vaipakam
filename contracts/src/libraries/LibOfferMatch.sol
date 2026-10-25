@@ -62,7 +62,16 @@ library LibOfferMatch {
         OffsetVehicleTagged, // #1001 (S3, Codex #1070 r4) — the LENDER offer is a linked Preclose Option-3 offset vehicle (`offsetOfferToLoanId`). It settles ONLY through `acceptOffer` → `completeOffsetInternal`; `matchOffers` reverts `OffsetVehicleNotMatchable`. Appended LAST to keep every prior ordinal ABI-stable. Lets bots skip the pair at preview time.
         // #1219 review — the filler's capacity cannot cover this fill. Checked LAST,
         // exactly where `matchOffers` / `matchSignedOffer` now take the charge.
-        CapacityExhausted
+        CapacityExhausted,
+        // #2812 — `matchOffers`'s own entry guards, which run BEFORE the match
+        // core. Reported only by `OfferMatchFacet.previewMatch` (the guards are
+        // the facet's, so this library's `previewMatch` never returns them), in
+        // the order `matchOffers` checks them, so `Ok` keeps meaning the match
+        // would succeed at this block. Appended last to keep every prior
+        // ordinal ABI-stable.
+        Paused,                   // diamond globally paused (whenNotPaused)
+        Sanctioned,               // `matcher` flagged by the sanctions oracle → SanctionedAddress(matcher)
+        MatcherDisabled           // partialFillEnabled OFF → FunctionDisabled(3)
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -828,7 +837,7 @@ library LibOfferMatch {
         }
         // (c) Lender collateral floor (OfferCreateFacet lender branch). #998 S15
         //     (#900): keyed on the slice actually being liquid-both-legs (NOT
-        //     the now-dead `rangeAmountEnabled` flag — and NOT range-shape,
+        //     the retired `rangeAmountEnabled` flag (#2812) — and NOT range-shape,
         //     since intent slices materialize single-value `amount == amountMax
         //     == fillAmount`, so a range-shape key would skip them). `reqColl`
         //     (the intent-LTV-cap collateral) can sit below the HF floor when

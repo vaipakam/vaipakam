@@ -54,9 +54,6 @@ contract RiskAccessMatchGateTest is SetupTest {
         // Range Orders / partial-fill master switches ON so `matchOffers`
         // reaches `executeMatch` (otherwise it reverts on the kill-switch).
         vm.startPrank(owner);
-        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
-        ConfigFacet(address(diamond)).setRangeRateEnabled(true);
-        ConfigFacet(address(diamond)).setRangeCollateralEnabled(true);
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         vm.stopPrank();
     }

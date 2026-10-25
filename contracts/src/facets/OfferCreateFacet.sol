@@ -973,7 +973,7 @@ contract OfferCreateFacet is
         }
 
         // ── System-derived floor/ceiling admission bound (#998 S15 / #900) ──
-        // Formerly gated behind the now-dead `rangeAmountEnabled` flag; the
+        // Formerly gated behind the `rangeAmountEnabled` flag (retired, #2812); the
         // bound is now enforced whenever the offer is actually liquid-both-legs
         // ERC-20 (matching the runtime HF gate's scope), via the shared
         // {LibOfferBounds} so create / mutate / internal-match slice cannot
@@ -1628,9 +1628,9 @@ contract OfferCreateFacet is
         //    `rangeCollateralEnabled`) are removed — every Phase 2
         //    offer is canonically a range (lender amount differs from
         //    amountMax via the minPartialFill rule), so the OFF state
-        //    would block every legitimate offer. The flags remain in
-        //    `ProtocolConfig` as dead-config until a follow-up card
-        //    sweeps them. `partialFillEnabled` keeps its runtime role
+        //    would block every legitimate offer. #2812 retired the flags
+        //    themselves: no setter or getter remains, and their storage
+        //    slots are marked retired. `partialFillEnabled` keeps its runtime role
         //    in `OfferMatchFacet.matchOffers` (matching is the gated
         //    operation, not create).
         if (params.amount == 0) revert AmountMustBePositive();

@@ -50,9 +50,6 @@ contract LenderIntentCapitalTest is SetupTest {
         solver = makeAddr("intentSolver");
 
         vm.startPrank(owner);
-        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
-        ConfigFacet(address(diamond)).setRangeRateEnabled(true);
-        ConfigFacet(address(diamond)).setRangeCollateralEnabled(true);
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         vm.stopPrank();
         vm.prank(owner);

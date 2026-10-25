@@ -185,6 +185,21 @@ contract RedeploySelectorParityTest is Test {
         );
     }
 
+    /// @dev #2812 — the range master flags were retired, so every selector
+    ///      `ReplaceStaleFacets` Removes for them must be GONE from ConfigFacet's
+    ///      compiled surface, while the matching kill-switch stays.
+    function test_RetiredRangeFlagSelectors_AreGone() public view {
+        bytes4[] memory abiSels = _abiSelectorsExcept("ConfigFacet", bytes4(0));
+        bytes4[] memory retired = FacetSelectors.retiredRangeFlagSelectors();
+        for (uint256 i; i < retired.length; ++i) {
+            assertFalse(_contains(abiSels, retired[i]), "a retired range-flag selector is still compiled");
+        }
+        assertTrue(
+            _contains(abiSels, bytes4(keccak256("setPartialFillEnabled(bool)"))),
+            "setPartialFillEnabled is the live matching kill-switch"
+        );
+    }
+
     /// @dev #1221 — the keeper action bitmask widened uint8→uint16, changing the
     ///      selectors of `approveKeeper`/`setKeeperActions`. `RedeployFacets`
     ///      Removes the OLD uint8 selectors from a pre-widen diamond. Pin the

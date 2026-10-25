@@ -2123,6 +2123,7 @@
       "noGasDiscount": "आपका VPFI discount network gas reduce नहीं करता।",
       "withdrawWarning": "VPFI withdraw करने से future fee discounts घट सकते हैं।",
       "belowMinNote": "{{floor}} VPFI से कम hold करने पर fee discount नहीं मिलता।",
+      "tierTableUnknown": "इस समय इस नेटवर्क से छूट के स्तर पढ़े नहीं जा सकते, इसलिए यहाँ कोई नहीं दिखाया गया है।",
       "notOnThisChain": "VPFI deposits अभी {{chain}} पर available नहीं हैं। Vaipakam पर बाकी सब VPFI के बिना चलता है।",
       "tokenChanged": "Review के बाद VPFI token configuration बदल गया। कुछ approve नहीं हुआ — updated numbers check करके फिर try करें।",
       "tokenCheckRetry": "अभी VPFI token confirm नहीं कर सके — कुछ approve नहीं हुआ। थोड़ी देर में try करें।",
@@ -2836,9 +2837,7 @@
       "autoPause": "स्वतः-विराम अवधि",
       "maxOfferDuration": "प्रस्ताव की अधिकतम अवधि",
       "flagsHeading": "फ़ीचर फ़्लैग",
-      "rangeAmount": "रेंज-राशि प्रस्ताव",
-      "rangeRate": "रेंज-दर प्रस्ताव",
-      "partialFill": "आंशिक पूर्ति",
+      "partialFill": "ऑर्डर मिलान (आंशिक पूर्ति)",
       "tiersHeading": "VPFI छूट स्तर",
       "tiers": "स्तर",
       "tierThreshold": "स्तर {{n}} की सीमा",
@@ -2919,7 +2918,8 @@
       "autoRefinanceHint": "बंद होने पर कीपर और ऑर्डर मैचर रीफ़ाइनेंस पूरे नहीं कर सकते। अपने ही ऋण को रीफ़ाइनेंस करने वाला उधारकर्ता, या रीफ़ाइनेंस अनुरोध को सीधे स्वीकार करने वाला ऋणदाता, अब भी आगे बढ़ सकता है।",
       "autoExtendHint": "बंद होने पर हर इन-प्लेस ऋण विस्तार रुक जाता है, उधारकर्ता द्वारा सीधे माँगा गया विस्तार भी।",
       "numeraireFeed": "संदर्भ मुद्रा में ETH मूल्य फ़ीड",
-      "numeraireFeedHint": "वह Chainlink फ़ीड जो संदर्भ मुद्रा में ETH का मूल्य बताती है। यह संदर्भ मुद्रा के साथ ही बदलती है।"
+      "numeraireFeedHint": "वह Chainlink फ़ीड जो संदर्भ मुद्रा में ETH का मूल्य बताती है। यह संदर्भ मुद्रा के साथ ही बदलती है।",
+      "partialFillHint": "बंद होने पर ऑर्डर मिलान करने वाले मना कर देते हैं और स्वीकार किया गया ऑफ़र एक ही बार पूरा होता है। चालू होने पर, सीमा वाला ऑफ़र कई मिलानों में पूरा हो सकता है। सीमा वाले ऑफ़र अपने आप में हमेशा उपलब्ध हैं।"
     },
     "forcedClose": {
       "title": "यह ऋण अतिदेय है",

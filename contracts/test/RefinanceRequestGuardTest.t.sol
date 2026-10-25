@@ -21,6 +21,7 @@ import {LibAutoRefinanceCheck} from "../src/libraries/LibAutoRefinanceCheck.sol"
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -399,6 +400,9 @@ contract RefinanceRequestGuardTest is SetupTest {
     /// The match preview (the bots' and the matcher's admission check) refuses
     /// an unrecorded carry-over request too.
     function test_theMatchPreviewRefusesAnUnrecordedRequest() public {
+        // Matching on: with it off, previewMatch reports the switch
+        // before any offer-level verdict (#2812).
+        ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         uint256 loanId = _activeLoan();
         uint256 r1 = _request(loanId, 0);
         vm.prank(lender);

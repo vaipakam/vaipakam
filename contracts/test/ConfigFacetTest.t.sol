@@ -342,10 +342,8 @@ contract ConfigFacetTest is Test {
             uint256 rb,
             uint256[4] memory tiers,
             uint256[4] memory disc,
-            // Range Orders Phase 1 master kill-switch flags. All 3
-            // default `false` on a fresh deploy.
-            bool rangeAmount,
-            bool rangeRate,
+            // The matching kill-switch, `false` on a fresh deploy. The
+            // range master flags that sat beside it were retired (#2812).
             bool partialFill,
             // Matcher kickback BPS — defaults to LIF_MATCHER_FEE_BPS
             // (100 = 1%) when unset; governance-tunable via
@@ -374,9 +372,7 @@ contract ConfigFacetTest is Test {
         assertEq(tiers[3], LibVaipakam.VPFI_TIER4_THRESHOLD);
         assertEq(disc[0], LibVaipakam.VPFI_TIER1_DISCOUNT_BPS);
         assertEq(disc[3], LibVaipakam.VPFI_TIER4_DISCOUNT_BPS);
-        // Master flags: default off on a fresh deploy.
-        assertFalse(rangeAmount);
-        assertFalse(rangeRate);
+        // The matching kill-switch: default off on a fresh deploy.
         assertFalse(partialFill);
         // Max offer duration default — 365 days unless governance has tuned.
         assertEq(maxDur, LibVaipakam.MAX_OFFER_DURATION_DAYS_DEFAULT);

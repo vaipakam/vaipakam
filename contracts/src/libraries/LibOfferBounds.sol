@@ -13,7 +13,7 @@ import {OracleFacet} from "../facets/OracleFacet.sol";
  *         internal-match slice materialization (#998 S15 / #900).
  *
  *         Before this, the create-time floor/ceiling check was gated behind the
- *         now-dead `rangeAmountEnabled` flag and had NO mutate/slice
+ *         since-retired `rangeAmountEnabled` flag (#2812) and had NO mutate/slice
  *         counterpart, so (a) a mutate could move an offer into a shape
  *         `createOffer` would reject, and (b) in the live (flag-off) config the
  *         bound was enforced nowhere — admission was left entirely to the

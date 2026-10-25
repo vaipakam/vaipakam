@@ -121,9 +121,9 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
     id: 'pc-flags',
     heading: 'flagsHeading',
     rows: [
-      { key: 'rangeAmountEnabled', label: 'rangeAmount', format: 'flag' },
-      { key: 'rangeRateEnabled', label: 'rangeRate', format: 'flag' },
-      { key: 'partialFillEnabled', label: 'partialFill', format: 'flag' },
+      // The matching kill-switch. The two range flags that sat beside it
+      // were retired in #2812: ranged offers are always on.
+      { key: 'partialFillEnabled', label: 'partialFill', hint: 'partialFillHint', format: 'flag' },
     ],
   },
   {
