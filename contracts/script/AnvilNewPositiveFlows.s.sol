@@ -36,6 +36,7 @@ import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkReg
 import {MockUniswapV3Factory, MockUniswapV3Pool} from "./mocks/MockUniswapV3.sol";
 import {MockSanctionsList} from "../test/mocks/MockSanctionsList.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {RevertProbe} from "./lib/RevertProbe.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
@@ -70,6 +71,17 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
  *         testnet liquidity mocks + flips Range Orders flags), then
  *         this script. Each scenario deploys its own fresh mock USDC /
  *         WETH so it is independent of the bootstrap's mock set.
+ *
+ *         Broadcast rule (#1646): never wrap a call made under
+ *         `vm.startBroadcast` in try/catch. Forge records every call
+ *         the simulation issues, a swallowed revert included, and
+ *         replays it on the broadcast pass, where the same revert
+ *         aborts the whole run before anything is mined. Decide from a
+ *         view read instead, or let the call revert the scenario. To
+ *         prove a call REVERTS, probe it with `RevertProbe.call`, never
+ *         with a bare `vm.prank`: a pranked call spends a nonce of that
+ *         account the chain never sees, so its next broadcast is signed
+ *         one nonce ahead and never mines.
  *
  *         Env vars (same shape as SepoliaPositiveFlows):
  *           DEPLOYER_PRIVATE_KEY, ADMIN_PRIVATE_KEY, ADMIN_ADDRESS,
@@ -110,6 +122,15 @@ contract AnvilNewPositiveFlows is Script {
     uint256 constant COLLATERAL_AMOUNT = 1e18;   // 1 WETH (18 dec)
     uint256 constant INTEREST_BPS = 500;         // 5% APR
     uint256 constant DURATION_DAYS = 30;
+    /// @dev Duration of a replacement position that must END by the running
+    ///      loan's maturity: the obligation handover's incoming borrower offer
+    ///      (N5) and the offset vehicle (N6). Both are refused once
+    ///      `now + duration` passes the loan's maturity, so a full-term
+    ///      duration is acceptable only in the loan's first second. That
+    ///      holds in simulation, where every call shares one timestamp, and
+    ///      fails on a real broadcast, where each transaction is its own block
+    ///      (#1646). One day shorter gives each a one-day window.
+    uint256 constant HANDOVER_DURATION_DAYS = DURATION_DAYS - 1;
 
     function run() external {
         _loadEnv();
@@ -125,13 +146,9 @@ contract AnvilNewPositiveFlows is Script {
 
         _deployMocksAndConfigure();
 
-        // Run ONE scenario and stop. The full wave cannot currently reach its
-        // broadcast pass: N12's `revokeKeeper` re-simulates as
-        // `KeeperNotApproved()` there (reproduces on a pristine chain with
-        // every later scenario disabled, so it predates them), and that aborts
-        // the whole script before any transaction is mined. This switch lets a
-        // single scenario be broadcast for real while that is outstanding —
-        // `ONLY_SCENARIO=N25 forge script ... --broadcast`.
+        // Run ONE scenario and stop — `ONLY_SCENARIO=N25 forge script ...
+        // --broadcast`. A convenience for iterating on one scenario; the full
+        // wave broadcasts too (#1646).
         string memory only = vm.envOr("ONLY_SCENARIO", string(""));
         if (bytes(only).length != 0) {
             if (keccak256(bytes(only)) == keccak256("N25")) {
@@ -901,15 +918,19 @@ contract AnvilNewPositiveFlows is Script {
         //   (c) `approveKeeper(keeper, actionBits)` — per-action bitmask
         // Missing any of the three → KeeperAccessRequired revert.
         uint8 initPreclose = 1 << 3;
-        vm.startBroadcast(aliceKey);
-        ProfileFacet(diamond).setKeeperAccess(true);
         // approveKeeper reverts KeeperAlreadyApproved if a prior scenario
         // on the same chain (e.g. PartialFlows Phase B P-P) granted bot
-        // an authorization that's still live. Revoke first so the
-        // scenario stays idempotent across multi-suite runs on persistent
-        // testnet state — try-style swallow keeps the first-run case
-        // (no prior auth) free of a useless revert.
-        try ProfileFacet(diamond).revokeKeeper(bot) {} catch {}
+        // an authorization that's still live, so revoke it first — but only
+        // when there is one, read from the chain. This used to be a
+        // try/catch around the revoke, and forge broadcasts every call the
+        // simulation issued, swallowed reverts included: on a chain with no
+        // prior approval the revoke re-simulated as `KeeperNotApproved()`
+        // on the broadcast pass and aborted the whole script before anything
+        // was mined (#1646). See the "Broadcast rule" in the contract header.
+        bool botAlreadyApproved = ProfileFacet(diamond).isApprovedKeeper(alice, bot);
+        vm.startBroadcast(aliceKey);
+        ProfileFacet(diamond).setKeeperAccess(true);
+        if (botAlreadyApproved) ProfileFacet(diamond).revokeKeeper(bot);
         ProfileFacet(diamond).approveKeeper(bot, initPreclose);
         ProfileFacet(diamond).setLoanKeeperEnabled(loanId, bot, true);
         vm.stopBroadcast();
@@ -1220,8 +1241,8 @@ contract AnvilNewPositiveFlows is Script {
 
         // ben creates a Borrower offer with terms favoring liam:
         // same lending asset, same collateral asset, principal == l1
-        // principal, durationDays <= remaining, collateralAmount >=
-        // l1.collateralAmount. We use exact-match terms for simplicity.
+        // principal, a replacement that ends by l1's maturity
+        // (HANDOVER_DURATION_DAYS), collateralAmount >= l1.collateralAmount.
         vm.startBroadcast(benKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
         uint256 benOfferId = OfferCreateFacet(diamond).createOffer(_borrowerOfferTakeoverFor(ben));
@@ -1260,7 +1281,7 @@ contract AnvilNewPositiveFlows is Script {
             interestRateBps: INTEREST_BPS,
             collateralAsset: address(weth),
             collateralAmount: COLLATERAL_AMOUNT,
-            durationDays: DURATION_DAYS,
+            durationDays: HANDOVER_DURATION_DAYS,
             assetType: LibVaipakam.AssetType.ERC20,
             tokenId: 0,
             quantity: 0,
@@ -1342,7 +1363,7 @@ contract AnvilNewPositiveFlows is Script {
         uint256 offsetOfferId = PrecloseFacet(diamond).offsetWithNewOffer(
             loanL1,
             INTEREST_BPS,           // same rate as l1 — minimal shortfall
-            DURATION_DAYS,          // same duration — within remaining
+            HANDOVER_DURATION_DAYS, // fits inside l1's remaining term
             address(weth),
             COLLATERAL_AMOUNT,
             true,                   // creatorRiskAndTermsConsent
@@ -2043,11 +2064,13 @@ contract AnvilNewPositiveFlows is Script {
             "N25: and above the liquidation trigger"
         );
 
-        // Simulated (not broadcast) so a deliberate revert does not abort the
-        // run — it still executes the real deployed bytecode against real
-        // chain state, which is the thing being verified.
-        vm.prank(newLender);
-        (bool ok, bytes memory ret) = diamond.call(
+        // Probed in the simulation only (`RevertProbe`), so a deliberate
+        // revert neither aborts the broadcast nor spends a nonce the chain
+        // never sees — it still executes the real deployed bytecode against
+        // real chain state, which is the thing being verified.
+        (bool ok, bytes memory ret) = RevertProbe.call(
+            newLender,
+            diamond,
             abi.encodeWithSelector(
                 EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector, loanId, buyOfferId
             )
@@ -2173,10 +2196,11 @@ contract AnvilNewPositiveFlows is Script {
         usdc.approve(diamond, LOAN_AMOUNT * 2);
         vm.stopBroadcast();
 
-        // Simulated so a deliberate revert does not abort the run; still the
+        // Probed in the simulation only (`RevertProbe`), as in N25; still the
         // real deployed bytecode against real chain state.
-        vm.prank(vm.addr(lenderKey));
-        (bool ok, bytes memory ret) = diamond.call(
+        (bool ok, bytes memory ret) = RevertProbe.call(
+            vm.addr(lenderKey),
+            diamond,
             abi.encodeWithSelector(
                 OfferAcceptFacet.acceptOffer.selector, saleOfferId, _ts26, _ssig26
             )
@@ -2276,12 +2300,17 @@ contract AnvilNewPositiveFlows is Script {
         });
     }
 
+    /// @dev Both sides claim a settled loan. Every caller reaches this right
+    ///      after a full repayment, where each side has a claim, so a claim
+    ///      that reverts is a failed scenario and must stop the run. These
+    ///      were try/catch-swallowed, which hid such a failure in simulation
+    ///      and then aborted the broadcast pass on it (#1646).
     function _claimBoth(uint256 lKey, uint256 bKey, uint256 loanId) internal {
         vm.startBroadcast(lKey);
-        try ClaimFacet(diamond).claimAsLender(loanId) {} catch {}
+        ClaimFacet(diamond).claimAsLender(loanId);
         vm.stopBroadcast();
         vm.startBroadcast(bKey);
-        try ClaimFacet(diamond).claimAsBorrower(loanId) {} catch {}
+        ClaimFacet(diamond).claimAsBorrower(loanId);
         vm.stopBroadcast();
     }
 }
