@@ -48,18 +48,19 @@
  *
  * Each segment also carries its UNIT, the source ranges the gate fingerprints
  * when a mention is found in it: the nearest enclosing list item (its own
- * blocks, one range each, so a nested list between two of them is left out),
- * table row or footnote definition, or else the leaf block itself. A list
- * item and not its paragraph, because the item carries status the paragraph
- * does not (a task box `[x]`), and a table row and not its cell, because the
- * row's other cells say what the cell means. The unit's CONTEXT is what
- * governs it without being part of it: the header row of its table, and the
- * own blocks of every list item or footnote its list is nested in.
- * `headingChain(offset)` gives the headings that govern a position: the
- * nearest heading before it, then each strictly shallower one before that,
- * up to the first level-one heading. A paragraph that OPENS with bold text
- * (`**Planned:** …`) counts as a heading below level six, because this
- * repository writes sub-sections that way.
+ * blocks, one range each, so a nested list or table between two of them is
+ * left out), table row or footnote definition, or else the leaf block itself.
+ * A list item and not its paragraph, because the item carries status the
+ * paragraph does not (a task box `[x]`), and a table row and not its cell,
+ * because the row's other cells say what the cell means. The unit's CONTEXT
+ * is what governs it without being part of it: the header row of its table,
+ * and the own blocks of every list item or footnote its item or table is
+ * nested in. `headingChain(offset)` gives the headings that govern a
+ * position: the nearest heading before it, then each strictly shallower one
+ * before that, up to the first level-one heading. A paragraph that OPENS with
+ * bold text (`**Planned:** …`) counts as a heading below level six, because
+ * this repository writes sub-sections that way, and the whole paragraph is
+ * that heading: the status after the label is what it says.
  *
  * Plain text (`format: 'text'`) has no markup: each run of non-blank lines is
  * one `prose` segment and its own unit, and nothing is a heading.
@@ -126,6 +127,14 @@ const RAW_TEXT_MODES = new Map([
 /** Elements whose text is never shown as part of the page. Their text is a
  *  `literal` segment: scanned, but never fused with rendered prose. */
 const HIDDEN_TEXT = new Set(['script', 'style', 'template', 'noscript', 'iframe', 'noembed', 'noframes']);
+
+/** Containers whose own blocks are one unit, and what governs the units
+ *  nested in them (see `ownRanges` and `governing`). */
+const ITEMS = new Set(['listItem', 'footnoteDefinition']);
+
+/** Blocks that carry their own units, so are not part of an enclosing
+ *  item's: each list item, and each table row. */
+const CARRIES_UNITS = new Set(['list', 'table']);
 
 /**
  * A character reference as CommonMark spells it: always closed by `;`, with a
@@ -290,17 +299,14 @@ class BlockSink {
     // text `note` arrives BETWEEN two fragments, and is still inside the
     // script for a browser.
     this.hidden = [];
-    // Inside a paragraph, where an unrendered element's raw text began (the
-    // end of its opening tag), or null. Its contents are read as that raw
-    // source, not as the Markdown nodes micromark made of it: a script's
-    // text is not emphasis, and `&ThickSpace;` in it is not a space.
-    this.rawFrom = null;
-  }
-
-  /** Raw source [from, to) as one literal segment. */
-  raw(from, to) {
-    const text = this.source.slice(from, to);
-    this.emit('literal', text, Array.from({ length: text.length }, (_, k) => from + k));
+    // Inside a paragraph, a raw-text element (see RAW_TEXT_MODES) that an
+    // inline tag opened and has not closed: its name, where its content
+    // began (the end of the opening tag) and where it ends (the start of its
+    // closing tag, or the end of the paragraph). Its content is read by the
+    // HTML tokenizer in that element's mode, not as the Markdown nodes
+    // micromark made of it: a script's or a textarea's text is not emphasis,
+    // and `&ThickSpace;` in a script is not a space.
+    this.raw = null;
   }
 
   /** Text a reader would see unless an open hidden element holds it. */
@@ -324,10 +330,6 @@ class BlockSink {
   }
 
   close() {
-    // An unrendered element left open at the end of a paragraph holds the
-    // rest of it.
-    if (this.rawFrom !== null) this.raw(this.rawFrom, this.leafEnd);
-    this.rawFrom = null;
     this.breakProse();
   }
 }
@@ -335,9 +337,13 @@ class BlockSink {
 /**
  * Tokenize an HTML fragment and route what it contains into `sink`.
  *
- * `toFile(k)` turns an offset into `html` into a file offset.
+ * `toFile(k)` turns an offset into `html` into a file offset. `startIn`, if
+ * given, is a raw-text element `html` starts inside of (its opening tag was
+ * an earlier fragment): the tokenizer starts in that element's mode.
+ *
+ * Returns the raw-text element still open at the end of `html`, or null.
  */
-function readHtml(html, toFile, sink) {
+function readHtml(html, toFile, sink, startIn = null) {
   // Character tokens arrive in small pieces (the tokenizer splits on
   // whitespace and references), and the location it reports for a piece next
   // to a reference can be off by the reference's length. Pieces are therefore
@@ -348,6 +354,15 @@ function readHtml(html, toFile, sink) {
   // style: yes; textarea, title: no, those are RCDATA and decode references).
   const { hidden } = sink;
   let rawUndecoded = false;
+  // The raw-text element the tokenizer is inside of, or null.
+  let rawTag = null;
+  const enterRaw = (tag, tokenizer) => {
+    const mode = RAW_TEXT_MODES.get(tag);
+    tokenizer.state = mode;
+    tokenizer.lastStartTagName = tag;
+    rawTag = tag;
+    rawUndecoded = mode === TokenizerMode.SCRIPT_DATA || mode === TokenizerMode.RAWTEXT || mode === TokenizerMode.PLAINTEXT;
+  };
   const flush = () => {
     if (!run) return;
     const map = alignOffsets(run.chars, html, run.start, run.end, { references: rawUndecoded ? 'none' : 'html' }).map(toFile);
@@ -405,15 +420,12 @@ function readHtml(html, toFile, sink) {
         interior(pieces);
         if (BLOCK_TAGS.has(t.tagName)) sink.breakProse();
         if (!t.selfClosing && HIDDEN_TEXT.has(t.tagName)) hidden.push(t.tagName);
-        const mode = RAW_TEXT_MODES.get(t.tagName);
-        if (mode !== undefined && !t.selfClosing) {
-          tokenizer.state = mode;
-          rawUndecoded = mode === TokenizerMode.SCRIPT_DATA || mode === TokenizerMode.RAWTEXT || mode === TokenizerMode.PLAINTEXT;
-        }
+        if (RAW_TEXT_MODES.has(t.tagName) && !t.selfClosing) enterRaw(t.tagName, tokenizer);
       },
       onEndTag(t) {
         flush();
         rawUndecoded = false;
+        rawTag = null;
         interior([[t.tagName, t.location.startOffset, t.location.endOffset, true, 'none']]);
         if (BLOCK_TAGS.has(t.tagName)) sink.breakProse();
         const at = hidden.lastIndexOf(t.tagName);
@@ -440,7 +452,9 @@ function readHtml(html, toFile, sink) {
       },
     },
   );
+  if (startIn) enterRaw(startIn, tokenizer);
   tokenizer.write(html, true);
+  return rawTag;
 }
 
 /** The source span of an mdast node. */
@@ -460,13 +474,31 @@ function readMarkdown(source) {
   /** A value read from `node`'s source span, as file offsets. */
   const aligned = (value, from, to, opts) => alignOffsets(value, source, from, to, opts);
 
+  /**
+   * Read the content of the raw-text element an inline tag left open, once
+   * the walk has passed it: the source from the end of the opening tag to
+   * the start of the closing one, through the HTML tokenizer started in that
+   * element's mode. The closing tag is its own html node, read as usual.
+   */
+  const flushRaw = (sink) => {
+    const { raw } = sink;
+    if (!raw) return;
+    sink.raw = null;
+    readHtml(source.slice(raw.from, raw.to), (k) => raw.from + k, sink, raw.tag);
+  };
+
   const phrasing = (node, sink) => {
-    // Inside an unrendered element (`<script>…</script>` in a paragraph) only
-    // HTML matters, to find where the element closes; the text is read raw
-    // when it does.
-    if (sink.rawFrom !== null && node.type !== 'html') {
-      if (node.children) for (const child of node.children) phrasing(child, sink);
-      return;
+    // Inside a raw-text element an inline tag opened, every node micromark
+    // made of its content is skipped; the content is read as HTML when the
+    // walk reaches the closing tag. A node that runs past where the element
+    // closes (the closing tag inside a code span) takes the raw read with it.
+    if (sink.raw) {
+      const [s, e] = span(node);
+      if (s < sink.raw.to) {
+        sink.raw.to = Math.max(sink.raw.to, e);
+        return;
+      }
+      flushRaw(sink);
     }
     switch (node.type) {
       case 'text': {
@@ -485,12 +517,14 @@ function readMarkdown(source) {
       case 'html': {
         const [s, e] = span(node);
         const local = aligned(node.value, s, e, { references: 'none' });
-        const open = sink.hidden.length;
-        readHtml(node.value, (k) => local[Math.min(k, local.length - 1)] ?? s, sink);
-        if (!open && sink.hidden.length) sink.rawFrom = e;
-        else if (open && !sink.hidden.length && sink.rawFrom !== null) {
-          sink.raw(sink.rawFrom, s);
-          sink.rawFrom = null;
+        const tag = readHtml(node.value, (k) => local[Math.min(k, local.length - 1)] ?? s, sink);
+        if (tag) {
+          // Where the HTML tokenizer would end the element: `</tag` followed
+          // by whitespace, `/` or `>`, without regard to case.
+          const close = new RegExp(`</${tag}(?=[\\t\\n\\f\\r />])`, 'i');
+          const rest = source.slice(e, sink.leafEnd);
+          const at = rest.search(close);
+          sink.raw = { tag, from: e, to: at === -1 ? sink.leafEnd : e + at };
         }
         return;
       }
@@ -549,18 +583,27 @@ function readMarkdown(source) {
   };
 
   /**
-   * A list item's or footnote definition's OWN blocks, NOT its nested lists.
-   * A nested list is its own items' unit, and folding fifty sub-items into
-   * one parent's fingerprint would move it on every edit to any of them. So
-   * these are the item's own blocks, one range each, with any nested list
-   * between two of them left out; the first starts at the item itself, so its
-   * marker and task box are in it.
+   * A list item's or footnote definition's OWN blocks, NOT the lists and
+   * tables in it. Those carry their own units (each item, each row), and
+   * folding fifty sub-items or rows into one parent's fingerprint would move
+   * it on every edit to any of them. So these are the item's own blocks, one
+   * range each, with any list or table between two of them left out; the
+   * first starts at the item itself, so its marker and task box are in it.
    */
   const ownRanges = (container) => {
-    const ranges = container.children.filter((c) => c.type !== 'list').map(span);
+    const ranges = container.children.filter((c) => !CARRIES_UNITS.has(c.type)).map(span);
     if (ranges.length) ranges[0] = [container.position.start.offset, ranges[0][1]];
     return ranges;
   };
+
+  /**
+   * The context a block that carries its own units (a list item, a
+   * footnote, a table) takes from where it sits: inside a list item or
+   * footnote, that item's own blocks govern it, as a lead-in governs what
+   * follows it, whatever is between (a blank line, a quote).
+   */
+  const governing = (container, context) =>
+    container && ITEMS.has(container.type) ? [...context, ...ownRanges(container)] : context;
 
   /**
    * The unit for a leaf block, given the nearest enclosing container and the
@@ -582,6 +625,7 @@ function readMarkdown(source) {
   const leaf = (node, container, context, read) => {
     const sink = new BlockSink(unitFor(node, container, context), segments, source, node.position.end.offset);
     read(sink);
+    flushRaw(sink);
     sink.close();
   };
 
@@ -612,7 +656,11 @@ function readMarkdown(source) {
       case 'paragraph': {
         const first = node.children[0];
         if (first && first.type === 'strong' && first.position.start.offset === node.position.start.offset) {
-          const [s, e] = span(first);
+          // The whole paragraph, not just its bold label: in
+          // `**Status:** These contracts were removed.` the status is the
+          // sentence after the label, and it governs what follows as much
+          // as the label does.
+          const [s, e] = span(node);
           headings.push({ offset: s, scopeEnd, level: 7, raw: source.slice(s, e) });
         }
         leaf(node, container, context, (sink) => node.children.forEach((c) => phrasing(c, sink)));
@@ -661,21 +709,22 @@ function readMarkdown(source) {
       }
       case 'footnoteDefinition': {
         const [s, e] = span(node);
-        leaf(node, node, context, (sink) => sink.emit('interior', node.label ?? '', aligned(node.label ?? '', s, e)));
-        const nested = [...context, ...ownRanges(node)];
-        for (const child of node.children) block(child, node, e, child.type === 'list' ? nested : context);
+        const own = governing(container, context);
+        leaf(node, node, own, (sink) => sink.emit('interior', node.label ?? '', aligned(node.label ?? '', s, e)));
+        for (const child of node.children) block(child, node, e, own);
         return;
       }
       case 'listItem': {
-        const nested = [...context, ...ownRanges(node)];
-        for (const child of node.children) block(child, node, node.position.end.offset, child.type === 'list' ? nested : context);
+        const own = governing(container, context);
+        for (const child of node.children) block(child, node, node.position.end.offset, own);
         return;
       }
       case 'table': {
         // The first row is the header; it governs every row after it.
+        const own = governing(container, context);
         const [header, ...rows] = node.children;
-        if (header) block(header, container, scopeEnd, context);
-        const governed = header ? [...context, span(header)] : context;
+        if (header) block(header, container, scopeEnd, own);
+        const governed = header ? [...own, span(header)] : own;
         for (const row of rows) block(row, container, scopeEnd, governed);
         return;
       }

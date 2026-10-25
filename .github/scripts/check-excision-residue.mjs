@@ -606,8 +606,9 @@ function lineOf(starts, offset) {
  * list item's own blocks (task box included, nested-list lines left out),
  * the table row or footnote, or else the paragraph, heading, cell or code
  * block itself — preceded by what governs it: the headings over it
- * (`headingChain`), its table's header row, and the own blocks of every list
- * item its list is nested in. Units are sorted and hashed, so moving a
+ * (`headingChain`, where a bold lead-in paragraph counts whole), its table's
+ * header row, and the own blocks of every list item its item or table is
+ * nested in. Units are sorted and hashed, so moving a
  * mention without rewording it is invisible, while rewording its block,
  * retitling a governing heading, relabelling its column or rewording its
  * parent item's lead-in moves the digest.

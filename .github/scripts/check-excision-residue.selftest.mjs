@@ -963,6 +963,38 @@ const FIXTURES = [
     body: '| Contract | Removed |\n|---|---|\n| VpfiBuyAdapter | Yes |\n| Other | No |\n',
   },
   {
+    name: 'digest-item-table.md',
+    caught: true,
+    why: 'base for the table-in-item pair',
+    body: '- These contracts were removed:\n\n  | VpfiBuyAdapter | x |\n  |---|---|\n  | a | b |\n',
+  },
+  {
+    name: 'digest-item-table-reworded.md',
+    caught: true,
+    digestDiffersFrom: 'digest-item-table.md',
+    why: "a table inside a list item reads under the item's lead-in, so rewording it moves the table's fingerprint",
+    body: '- These contracts are currently deployed:\n\n  | VpfiBuyAdapter | x |\n  |---|---|\n  | a | b |\n',
+  },
+  {
+    name: 'digest-bold-lead-in.md',
+    caught: true,
+    why: 'base for the bold lead-in pair',
+    body: '**Status:** These contracts were removed.\n\nAn unrelated paragraph.\n\nVpfiBuyAdapter\n',
+  },
+  {
+    name: 'digest-bold-lead-in-reworded.md',
+    caught: true,
+    digestDiffersFrom: 'digest-bold-lead-in.md',
+    why: 'a bold lead-in governs with its whole paragraph, so rewording the status after its label moves the fingerprint',
+    body: '**Status:** These contracts are currently deployed.\n\nAn unrelated paragraph.\n\nVpfiBuyAdapter\n',
+  },
+  {
+    name: 'inline-textarea-emphasis.md',
+    caught: false,
+    why: 'a textarea inside a paragraph is RCDATA, so its asterisks are text and do not join a name',
+    body: 'prefix<textarea>buy*Options*</textarea>suffix\n',
+  },
+  {
     name: 'html-prototype-tag.md',
     caught: false,
     why: 'a tag named after an Object property is an ordinary tag, not a tokenizer mode',

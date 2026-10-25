@@ -112,6 +112,11 @@ describe('readProse — segments', () => {
     expect(info.map[0]).toBe(3);
   });
 
+  it('reads an inline textarea as RCDATA, not as Markdown', () => {
+    expect(texts('prefix<textarea>buy*Options*</textarea>suffix\n', 'prose')).toEqual(['prefixbuy*Options*suffix']);
+    expect(texts('a<textarea>x&amp;y</textarea>b\n', 'prose')).toEqual(['ax&yb']);
+  });
+
   it('reads an inline script as its raw source, not as Markdown', () => {
     expect(texts('a<script>b&ThickSpace;c *d*</script>e\n', 'literal')).toEqual(['b&ThickSpace;c *d*']);
     expect(texts('a<script>b&ThickSpace;c *d*</script>e\n', 'prose')).toEqual(['ae']);
@@ -213,6 +218,13 @@ describe('readProse — units', () => {
     expect(contextText(source, 'Next')).toBe('');
   });
 
+  it("gives a table inside a list item the item's own blocks as context", () => {
+    const source = '- These contracts were removed:\n\n  | VpfiBuyAdapter | x |\n  |---|---|\n  | qq | b |\n';
+    expect(contextText(source, 'VpfiBuyAdapter')).toBe('- These contracts were removed:');
+    expect(contextText(source, 'qq')).toBe('- These contracts were removed:|| VpfiBuyAdapter | x |');
+    expect(unitText(source, 'These')).toBe('- These contracts were removed:');
+  });
+
   it('fingerprints each paragraph of a quote on its own', () => {
     const source = '> first\n>\n> second\n';
     expect(unitText(source, 'second')).toBe('second');
@@ -227,11 +239,16 @@ describe('readProse — headingChain', () => {
 
   it('keeps each strictly shallower ancestor, up to a level-one heading', () => {
     const source = '# Top\n\n## A\n\n### Deep\n\n## B\n\n**Lead:** in\n\nmention\n';
-    expect(chainAt(source, 'mention')).toEqual(['# Top', '## B', '**Lead:**']);
+    expect(chainAt(source, 'mention')).toEqual(['# Top', '## B', '**Lead:** in']);
   });
 
   it('reads Setext headings at their level', () => {
     expect(chainAt('Title\n=====\n\nSub\n---\n\nmention\n', 'mention')).toEqual(['Title\n=====', 'Sub\n---']);
+  });
+
+  it('governs with the whole of a bold lead-in paragraph, not just its label', () => {
+    const source = '**Status:** These contracts were removed.\n\nOther text.\n\nVpfiBuyAdapter\n';
+    expect(chainAt(source, 'VpfiBuyAdapter')).toEqual(['**Status:** These contracts were removed.']);
   });
 
   it('stops a heading governing when its quote or list item ends', () => {
