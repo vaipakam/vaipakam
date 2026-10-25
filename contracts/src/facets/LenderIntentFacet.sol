@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibPriorityRouting} from "../libraries/LibPriorityRouting.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -752,11 +753,8 @@ contract LenderIntentFacet is
         // Settle coordination — identical rule to the lender claim: settle once
         // the borrower has claimed (or has nothing to claim). Otherwise the loan
         // stays Repaid until the borrower runs their own claim.
-        LibVaipakam.ClaimInfo storage borrowerClaim = s.borrowerClaims[loanId];
-        bool borrowerHasNothing = borrowerClaim.amount == 0 &&
-            borrowerClaim.assetType == LibVaipakam.AssetType.ERC20 &&
-            s.borrowerLifRebate[loanId].rebateAmount == 0;
-        if (borrowerClaim.claimed || borrowerHasNothing) {
+        // #2795 — the shared per-lane rule (a pending surplus row keeps it open).
+        if (!LibCloseoutFreeze.borrowerSideOpen(s, loanId)) {
             LibLifecycle.transitionFromAny(loan, LibVaipakam.LoanStatus.Settled);
             emit LoanSettled(loanId);
         }

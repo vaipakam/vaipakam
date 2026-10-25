@@ -154,6 +154,34 @@ library LibCloseoutFreeze {
     }
 
     /**
+     * @notice Whether the borrower side of `loanId` still has something to
+     *         claim: an unclaimed collateral row that names an amount or an
+     *         NFT, an unclaimed surplus row with an amount, or a pending LIF
+     *         rebate.
+     * @dev    #2795 — the ONE rule for "the borrower side is done", read by
+     *         `ClaimFacet.claimAsBorrower` (which refuses only when it is
+     *         false) and by every lender-side path that settles the loan once
+     *         it is false (`claimAsLender`, the backstop absorb, the lender
+     *         intent's auto-claim). Each lane counts on its OWN flag: a
+     *         terminal that wrote the collateral row claimed (nothing left of
+     *         the collateral) never hides a surplus row held earlier in the
+     *         loan, such as a periodic forced sale's extra.
+     */
+    function borrowerSideOpen(
+        LibVaipakam.Storage storage s,
+        uint256 loanId
+    ) internal view returns (bool) {
+        LibVaipakam.ClaimInfo storage claim = s.borrowerClaims[loanId];
+        if (
+            !claim.claimed &&
+            (claim.amount > 0 || claim.assetType != LibVaipakam.AssetType.ERC20)
+        ) return true;
+        LibVaipakam.ClaimInfo storage surplus = s.borrowerSurplusClaims[loanId];
+        if (!surplus.claimed && surplus.amount > 0) return true;
+        return s.borrowerLifRebate[loanId].rebateAmount > 0;
+    }
+
+    /**
      * @notice Add `amount` of `asset` to the loan's borrower surplus row — the
      *         ONE held row `ClaimFacet.claimAsBorrower` pays as its second lane.
      * @dev    #2795 — a running total, not a single write. A periodic forced

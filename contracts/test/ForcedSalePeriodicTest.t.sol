@@ -18,6 +18,8 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
+import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
+import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {LibCloseoutFreeze} from "../src/libraries/LibCloseoutFreeze.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -336,21 +338,25 @@ contract ForcedSalePeriodicTest is SetupTest {
         assertEq(_held(), held, "the row is unchanged");
     }
 
-    function test_handover_paysTheHeldExtraToTheExitingHolder() public {
-        // Held while flagged, then de-listed: the frozen marker is re-checked
-        // fail-closed at the payout, as at the claim.
+    /// @dev Hold an extra while the borrower is flagged, then de-list them:
+    ///      the row carries the fail-closed marker, re-checked at any payout.
+    function _heldWhileFlaggedThenDelisted() internal returns (uint256 held) {
         MockSanctionsList list = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(list));
         list.setFlagged(borrower, true);
         _toPeriodEnd(1);
         _settle();
-        uint256 held = _held();
+        held = _held();
         assertGt(held, 0);
         list.setFlagged(borrower, false);
+    }
 
-        address incoming = _provisionFundedActor("incoming-borrower", mockCollateralERC20, 10_000 ether);
+    /// @dev A standing borrower offer a replacement borrower funds, taken by
+    ///      `transferObligationViaOffer`.
+    function _incomingBorrowerOffer() internal returns (address incoming, uint256 offerId) {
+        incoming = _provisionFundedActor("incoming-borrower", mockCollateralERC20, 10_000 ether);
         vm.prank(incoming);
-        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
+        offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
                 offerType: LibVaipakam.OfferType.Borrower,
                 lendingAsset: mockERC20,
@@ -380,10 +386,15 @@ contract ForcedSalePeriodicTest is SetupTest {
                 useFullTermInterest: false
             })
         );
+        ERC20Mock(mockERC20).mint(borrower, 2_000 ether);
+    }
+
+    function test_handover_paysTheHeldExtraToTheExitingHolder() public {
+        uint256 held = _heldWhileFlaggedThenDelisted();
+        (address incoming, uint256 offerId) = _incomingBorrowerOffer();
 
         address vault = _vaultOf(borrower);
         uint256 vault0 = _bal(vault);
-        ERC20Mock(mockERC20).mint(borrower, 2_000 ether);
         vm.expectEmit(true, true, true, true, address(diamond));
         emit LibCloseoutFreeze.BorrowerHeldExtraPaid(LOAN, borrower, mockERC20, held);
         vm.prank(borrower);
@@ -392,5 +403,65 @@ contract ForcedSalePeriodicTest is SetupTest {
         assertEq(LoanFacet(address(diamond)).getLoanDetails(LOAN).borrower, incoming);
         assertEq(_held(), 0, "the held row is spent");
         assertEq(vault0 - _bal(vault), held, "paid out of the exiting holder's vault");
+    }
+
+    /// @dev When what leaves the exiting holder's vault on a handover is VPFI
+    ///      (here the principal asset, so the held extra), that vault owner is
+    ///      re-stamped so no fee-tier credit stays on VPFI no longer vaulted.
+    function test_handover_restampsTheExitingHolderWhenVpfiLeaves() public {
+        _heldWhileFlaggedThenDelisted();
+        (, uint256 offerId) = _incomingBorrowerOffer();
+        vm.prank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
+
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(ConsolidationFacet.restampUserVpfiInternal.selector, borrower)
+        );
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(LOAN, offerId);
+        assertEq(_held(), 0);
+    }
+
+    /// @dev #2795 root rule at the claim: a held extra survives a later
+    ///      terminal that leaves the borrower nothing of the collateral (and
+    ///      so writes the collateral row claimed). The lender's claim does not
+    ///      settle the loan over it, and the borrower's claim pays it.
+    function test_zeroSurplusDefault_heldExtraStaysClaimable() public {
+        uint256 held = _heldWhileFlaggedThenDelisted();
+
+        // Past maturity and grace, the collateral is worth a little less than
+        // the debt (LTV above 100% but below the 110% collapse line), so the
+        // liquid default sells it all and leaves the borrower no surplus.
+        vm.warp(startTs + 90 days + LibVaipakam.gracePeriod(90) + 1);
+        mockOraclePrice(mockCollateralERC20, 199 * 1e8, 8);
+        adapter.setOutputMultiplierBps(1990);
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, _calls());
+
+        (, uint256 colAmount, bool colClaimed) =
+            ClaimFacet(address(diamond)).getClaimableAmount(LOAN, false);
+        assertEq(colAmount, 0, "no collateral surplus");
+        assertTrue(colClaimed, "the terminal wrote the collateral row claimed");
+        assertEq(_held(), held, "the held extra is still on its row");
+
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN);
+        assertTrue(
+            LoanFacet(address(diamond)).getLoanDetails(LOAN).status != LibVaipakam.LoanStatus.Settled,
+            "the lender's claim leaves the borrower lane open"
+        );
+
+        uint256 borrower0 = _bal(borrower);
+        vm.prank(borrower);
+        ClaimFacet(address(diamond)).claimAsBorrower(LOAN);
+        assertEq(_bal(borrower) - borrower0, held, "the held extra is paid at the claim");
+        assertEq(
+            uint256(LoanFacet(address(diamond)).getLoanDetails(LOAN).status),
+            uint256(LibVaipakam.LoanStatus.Settled)
+        );
+
+        vm.prank(borrower);
+        vm.expectRevert(IVaipakamErrors.InvalidLoanStatus.selector);
+        ClaimFacet(address(diamond)).claimAsBorrower(LOAN);
     }
 }

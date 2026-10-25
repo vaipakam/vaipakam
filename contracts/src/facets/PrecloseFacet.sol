@@ -1121,6 +1121,23 @@ contract PrecloseFacet is
             ),
             bytes4(0)
         );
+        // Both payouts above leave the STORED borrower's vault (the returned
+        // collateral and the held extra, in the principal asset). When either
+        // is VPFI, re-stamp that vault owner so no fee-tier or staking credit
+        // stays on VPFI that is no longer vaulted.
+        address vpfi = s.vpfiToken;
+        if (
+            vpfi != address(0) &&
+            (loan.collateralAsset == vpfi || loan.principalAsset == vpfi)
+        ) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.restampUserVpfiInternal.selector,
+                    loan.borrower
+                ),
+                bytes4(0)
+            );
+        }
 
         // ── 4. ben's collateral already locked in his vault at offer creation
 

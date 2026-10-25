@@ -440,7 +440,13 @@ export async function probeClaim(
       hasRentalNftReturn ||
       lifRebate > 0n ||
       surplus !== null;
-    return !claimed && actionable
+    // #2795 — ClaimFacet pays each borrower lane on its own flag: a collateral
+    // row already claimed (a close-out that left the borrower nothing of the
+    // collateral writes it so) never hides a pending surplus row or rebate,
+    // and the claim then pays only those lanes.
+    const borrowerOtherLaneOpen = !isLender && (surplus !== null || lifRebate > 0n);
+    const collateralLaneOpen = !claimed;
+    return (collateralLaneOpen && actionable) || borrowerOtherLaneOpen
       ? claimable({
           ...loan,
           claim: {
@@ -449,10 +455,10 @@ export async function probeClaim(
               claimAsset !== '0x0000000000000000000000000000000000000000'
                 ? claimAsset
                 : null,
-            amount,
-            assetType,
-            tokenId,
-            quantity,
+            amount: collateralLaneOpen ? amount : 0n,
+            assetType: collateralLaneOpen ? assetType : AssetType.ERC20,
+            tokenId: collateralLaneOpen ? tokenId : 0n,
+            quantity: collateralLaneOpen ? quantity : 0n,
             heldForLender,
             heldAsset,
             hasRentalNftReturn,

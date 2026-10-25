@@ -13,6 +13,14 @@ replacement borrower first, the held amount is paid to the exiting holder
 along with their released collateral. Before this change the sale used a fixed
 buffer and the lender was credited with everything above the charges.
 
+The borrower's claim now pays each of its parts on its own flag (remaining
+collateral, held proceeds, a pending fee rebate) and refuses only when all of
+them are paid or empty, so an extra held earlier in the loan is still paid
+when the loan later ends with nothing of the collateral left for the
+borrower; the lender's claim no longer settles the loan while it is unpaid.
+The app's claim list follows the same rule. When an obligation handover moves
+VPFI out of the exiting borrower's vault, their VPFI standing is refreshed.
+
 The rule lives in one place, a new forced-sale facet that sizes the sale,
 sells it through the usual swap failover and splits the proceeds lender first.
 Every figure of each sale is published in one new event (debt, the amount the

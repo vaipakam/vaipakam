@@ -726,11 +726,8 @@ contract ClaimFacet is
         emit BackstopAbsorbedLoan(loanId, nftOwner, due, absorbed);
 
         // Settle if the borrower side is already done / has nothing.
-        LibVaipakam.ClaimInfo storage borrowerClaim = s.borrowerClaims[loanId];
-        bool borrowerHasNothing = borrowerClaim.amount == 0 &&
-            borrowerClaim.assetType == LibVaipakam.AssetType.ERC20 &&
-            s.borrowerLifRebate[loanId].rebateAmount == 0;
-        if (borrowerClaim.claimed || borrowerHasNothing) {
+        // #2795 — the shared per-lane rule (a pending surplus row keeps it open).
+        if (!LibCloseoutFreeze.borrowerSideOpen(s, loanId)) {
             LibLifecycle.transition(
                 loan,
                 LibVaipakam.LoanStatus.Defaulted,
@@ -1183,13 +1180,19 @@ contract ClaimFacet is
         // never withdraw the frozen surplus. Keep the loan un-Settled while a
         // pending (unclaimed) surplus row exists, so `claimAsBorrower` stays
         // reachable to pay it out.
-        LibVaipakam.ClaimInfo storage surplusClaim = s.borrowerSurplusClaims[loanId];
-        uint256 pendingSurplus = surplusClaim.claimed ? 0 : surplusClaim.amount;
-        bool borrowerHasNothing = borrowerClaim.amount == 0 &&
+        // #2795 — {LibCloseoutFreeze.borrowerSideOpen} is that rule, per lane:
+        // a collateral row a terminal wrote claimed (nothing left of the
+        // collateral) no longer settles the loan over a surplus row held
+        // earlier in the loan (a periodic forced sale's extra).
+        bool willSettle = !LibCloseoutFreeze.borrowerSideOpen(s, loanId);
+        // The borrower never ran a claim and never will: no collateral row
+        // with an amount or an NFT, and no surplus row paid out by a claim.
+        // (A claim that paid only a surplus lane leaves `amount == 0` but
+        // marks the surplus row claimed, and has already burned the NFT.)
+        bool borrowerHasNothing = willSettle &&
+            borrowerClaim.amount == 0 &&
             borrowerClaim.assetType == LibVaipakam.AssetType.ERC20 &&
-            s.borrowerLifRebate[loanId].rebateAmount == 0 &&
-            pendingSurplus == 0;
-        bool willSettle = borrowerClaim.claimed || borrowerHasNothing;
+            !s.borrowerSurplusClaims[loanId].claimed;
 
         emit LenderFundsClaimed(
             loanId,
@@ -1276,7 +1279,17 @@ contract ClaimFacet is
         ) revert InvalidLoanStatus();
 
         LibVaipakam.ClaimInfo storage claim = s.borrowerClaims[loanId];
-        if (claim.claimed) revert AlreadyClaimed();
+        // #2795 — root rule: each lane is paid on its OWN flag, and the claim
+        // refuses only when every lane is empty or claimed. A collateral row a
+        // terminal wrote claimed (nothing left of the collateral) never blocks
+        // a surplus row held earlier in the loan (a periodic forced sale's
+        // extra) or a pending rebate.
+        if (!LibCloseoutFreeze.borrowerSideOpen(s, loanId)) {
+            if (claim.claimed) revert AlreadyClaimed();
+            revert NothingToClaim();
+        }
+        // Whether the collateral lane itself is still to be paid.
+        bool payCollateral = !claim.claimed;
 
         // #998 S10 (#1006) — fail-closed release of sanctioned-LOCKED borrower
         // proceeds (surplus / liened collateral / residual). Mirror of the
@@ -1311,23 +1324,16 @@ contract ClaimFacet is
                 LibSanctionedLock.clearFrozenClaimant(s, loanId, false);
             }
         }
-        // NFT collateral claims have amount=0 but tokenId/quantity as payload.
         // Phase 5 / §5.2b adds a second claimable lane: any pending VPFI
         // rebate credited at proper settlement (borrowerLifRebate). Loans
         // that paid LIF in the lending asset, or defaulted/liquidated,
         // have rebateAmount == 0 and no-op that branch below.
-        bool hasNftClaim = claim.assetType != LibVaipakam.AssetType.ERC20;
         uint256 lifRebate = s.borrowerLifRebate[loanId].rebateAmount;
-        // #954 (Codex #981 P2) — a frozen swap-surplus principal (parked in
-        // `loan.borrower`'s vault for the current holder when the holder was
-        // sanctioned at `swapToRepayFull` close) is a SECOND claimable lane in the
-        // principal asset. Read it here so a surplus-only claim (no residual
-        // collateral, no LIF rebate) isn't wrongly rejected as NothingToClaim.
+        // #954 (Codex #981 P2) — the borrower surplus row (a frozen swap
+        // surplus, or #2795 a periodic forced sale's held extra) is a further
+        // lane in the principal asset, paid below on its own flag.
         LibVaipakam.ClaimInfo storage surplusClaim = s.borrowerSurplusClaims[loanId];
         uint256 surplusAmt = surplusClaim.claimed ? 0 : surplusClaim.amount;
-        if (claim.amount == 0 && !hasNftClaim && lifRebate == 0 && surplusAmt == 0) {
-            revert NothingToClaim();
-        }
 
         // Verify caller owns the borrower's Vaipakam position NFT
         LibAuth.requireBorrowerNftOwner(loan);
@@ -1401,41 +1407,8 @@ contract ClaimFacet is
         LibSanctionedLock.beginMoveOut(s, loan.borrower);
 
         // Transfer claimable collateral from borrower's vault to claimant
-        if (claim.assetType == LibVaipakam.AssetType.ERC20) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    loan.borrower,
-                    claim.asset,
-                    msg.sender,
-                    claim.amount
-                ),
-                VaultWithdrawFailed.selector
-            );
-        } else if (claim.assetType == LibVaipakam.AssetType.ERC721) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC721.selector,
-                    loan.borrower,
-                    claim.asset,
-                    claim.tokenId,
-                    msg.sender
-                ),
-                VaultWithdrawFailed.selector
-            );
-        } else if (claim.assetType == LibVaipakam.AssetType.ERC1155) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                    loan.borrower,
-                    claim.asset,
-                    claim.tokenId,
-                    claim.quantity,
-                    msg.sender
-                ),
-                VaultWithdrawFailed.selector
-            );
-        }
+        // (skipped when the collateral lane was already claimed, #2795).
+        if (payCollateral) _payCollateralLane(loan.borrower, claim);
 
         // #569 round-8 P2 (#578) — pay out the liened collateral the claim
         // row couldn't carry (captured above). The lien was released just
@@ -1508,7 +1481,7 @@ contract ClaimFacet is
         // cross-call. There is no VPFI to restamp without a token anyway.
         if (
             s.vpfiToken != address(0) &&
-            (claim.asset == s.vpfiToken ||
+            ((payCollateral && claim.asset == s.vpfiToken) ||
                 extraLienedAsset == s.vpfiToken ||
                 // #954 (Codex #981 P2) — a VPFI swap-surplus that just left
                 // loan.borrower's vault via the payout above is a FOURTH form VPFI
@@ -1584,7 +1557,7 @@ contract ClaimFacet is
             loanId,
             msg.sender,
             claim.asset,
-            claim.amount,
+            payCollateral ? claim.amount : 0,
             // §3.11 — newBothClaimed signals "loan is about to settle"
             // (NFTs about to burn) — see LenderFundsClaimed for rationale.
             willSettle
@@ -1597,6 +1570,51 @@ contract ClaimFacet is
     }
 
     // ─── Internal Helpers ─────────────────────────────────────────────────────
+
+    /// @dev Pay the borrower claim's collateral lane (ERC-20, ERC-721 or
+    ///      ERC-1155) from `vaultOwner`'s vault to the caller, the verified
+    ///      borrower-position holder. Split out of {claimAsBorrower} so the
+    ///      claim can skip a lane that was already claimed (#2795).
+    function _payCollateralLane(
+        address vaultOwner,
+        LibVaipakam.ClaimInfo storage claim
+    ) private {
+        if (claim.assetType == LibVaipakam.AssetType.ERC20) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
+                    vaultOwner,
+                    claim.asset,
+                    msg.sender,
+                    claim.amount
+                ),
+                VaultWithdrawFailed.selector
+            );
+        } else if (claim.assetType == LibVaipakam.AssetType.ERC721) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaultFactoryFacet.vaultWithdrawERC721.selector,
+                    vaultOwner,
+                    claim.asset,
+                    claim.tokenId,
+                    msg.sender
+                ),
+                VaultWithdrawFailed.selector
+            );
+        } else if (claim.assetType == LibVaipakam.AssetType.ERC1155) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaultFactoryFacet.vaultWithdrawERC1155.selector,
+                    vaultOwner,
+                    claim.asset,
+                    claim.tokenId,
+                    claim.quantity,
+                    msg.sender
+                ),
+                VaultWithdrawFailed.selector
+            );
+        }
+    }
 
     /// @dev #2440 — whether the lender side of `loanId` still has a claim to
     ///      run: a claim a close-out recorded (keyed on its asset, so a forced
