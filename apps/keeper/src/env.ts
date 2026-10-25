@@ -177,14 +177,15 @@ interface BaseEnv {
   LIQ_CONFIDENCE_MIN_CHECKS?: string;
   /** wall-clock days that eligible streak must also span (default 3) */
   LIQ_CONFIDENCE_MIN_WINDOW_DAYS?: string;
-  // Tier-3 "battle-tested elsewhere" advisory — 2-of-3 ensemble in
-  // `liquidityConfidence.ts::battleTestedElsewhere`. All thresholds
-  // in plain USD; all optional with sensible defaults.
-  /** Signal ① — min USD TVL on one of {Aave v3, Compound v3, Morpho-blue}.
-   *  Default $10M. */
+  // Tier-3 "battle-tested elsewhere" advisory in
+  // `liquidityConfidence.ts::battleTestedElsewhere`: signal ① required, plus
+  // one of ② / ③ (#2746). All thresholds in plain USD; all optional with
+  // sensible defaults.
+  /** Signal ① — min USD TVL of an Aave v3 / Compound v3 pool that enables the
+   *  asset as collateral. Default $10M. */
   LIQ_TIER3_MIN_TVL_USD?: string;
-  /** Disable signal ① entirely (`1` / `true`). When disabled the
-   *  ensemble becomes 2-of-2 (stricter). Default off. */
+  /** Disable signal ① entirely (`1` / `true`). It is the required signal, so
+   *  with it disabled no asset is promoted to Tier 3. Default off. */
   LIQ_TIER3_DISABLE_DEFI_LISTING?: string;
   /** Signal ② — min USD circulating market cap (CoinGecko). Default $1B. */
   LIQ_TIER3_MIN_MCAP_USD?: string;

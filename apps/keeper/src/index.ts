@@ -62,8 +62,8 @@
  *      consecutive eligible ticks spanning ≥ `LIQ_CONFIDENCE_MIN_WINDOW_DAYS`
  *      days; demote immediately on degradation; never above the on-chain
  *      ceiling. Tier-3 promotion additionally needs the "battle-tested
- *      elsewhere" (Aave/Compound/Morpho) advisory — stubbed for v1, so
- *      the relay caps at Tier 2 until it's wired. Fourth consumer of the
+ *      elsewhere" advisory: the asset enabled as collateral on Aave v3 or
+ *      Compound v3, backed by CoinGecko market cap or volume. Fourth consumer of the
  *      signing key (`isKeeperEnabled`); also gated on `depthTieredLtvEnabled`
  *      for the *submit* — the counter is tracked in D1 regardless so the
  *      catch-up after the switch flips is fast.
