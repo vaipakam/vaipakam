@@ -245,8 +245,7 @@ team time to cancel — it does not preserve the exit window it freezes.
     registry-admin family** that also moves value and is rotated *separately* by
     `Handover.s.sol` — the `CcipMessenger`, the VPFI `TokenPool`,
     `VpfiPoolRateGovernor`, `VaipakamRewardMessenger`, the `VPFIMirrorToken`, the
-    `VpfiBuyAdapter` / `VpfiBuyReceiver`, the canonical-only
-    `BuybackRemittanceReceiver`, the canonical **`VPFIToken`** itself
+    canonical-only `BuybackRemittanceReceiver`, the canonical **`VPFIToken`** itself
     (Ownable2Step + UUPS — its owner controls `_authorizeUpgrade`, `setMinter`,
     and pause, and the token pool + `TreasuryFacet.mintVPFI` rely on it, so
     freezing the pool but not the token owner/minter leaves a mint/upgrade lever

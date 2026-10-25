@@ -37,7 +37,7 @@ On every chain the platform deploys to (Base + mirrors), fee revenue in bridgeab
 
 - The platform's settlement paths credit fees into `s.treasuryBalances[token]` at fee-collection time. This is the same path the existing treasury-claim flow uses.
 - The admin allocator (`creditBuybackBudget`) moves a chosen amount of `treasuryBalances[token]` into the buyback budget. This is the on-chain mechanism for "decide this much of our fee accrual goes to buybacks". Sub 3.B / 3.C do NOT auto-route a fixed percentage at accrual time — the split is operator-decided each tranche. A fully-automated split-at-accrual hook is tracked as a Sub 3 add-on follow-up.
-- The accumulator is per-token. ETH from `buyVPFIWithETH` callers is on the **no-convert list** — it's reserved for operational ETH + VPFI/ETH LP seeding, never for cross-chain remittance or treasury conversion.
+- The accumulator is per-token. Native ETH is on the **no-convert list** — it's reserved for operational ETH + VPFI/ETH LP seeding, never for cross-chain remittance or treasury conversion.
 - Tokens are admin-allowlisted per chain via `buybackAllowedToken`. The allow-list gate applies on **mirror** chains only — on the **canonical Base** chain, `creditBuybackBudget` skips the allow-list check (Base-side fees don't need to cross any bridge to reach the consolidated `baseBuybackBudget`, so the bridgeability constraint that motivates the mirror allow-list doesn't apply). On Base the no-convert list (per-token explicit exemption) is the only token-level gate.
 - A per-token tranche cap (`cfgBuybackMaxTranche`) bounds the blast radius of any single commit (defence against operator typo / misconfiguration).
 

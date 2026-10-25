@@ -139,10 +139,7 @@ Equivalent to `review full security-critical` plus:
 - verify owner = admin multisig → governance timelock on every cross-chain
   contract introduced or modified by the PR;
 - confirm `GuardianPausable` is wired on BOTH the send and receive paths
-  for any cross-chain message-handling change;
-- check that `_assertPaymentTokenSane` (or its equivalent guards) covers
-  the chain set the PR touches, per the `VPFIBuyAdapter` payment-token-
-  mode policy in `CLAUDE.md`.
+  for any cross-chain message-handling change.
 
 Use this for PRs touching `contracts/src/crosschain/`,
 `contracts/script/DeployCrosschain.s.sol`,

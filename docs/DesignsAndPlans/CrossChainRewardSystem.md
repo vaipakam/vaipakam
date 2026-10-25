@@ -1,5 +1,11 @@
 # Cross-Chain Reward System (T-087): canonical-centric global staking and instant rebates
 
+> **Removed surface (#687-A, noted in #1728).** This is a dated record. What it
+> says about the cross-chain fixed-rate VPFI buy flow (the buy adapter and
+> receiver, the direct ETH sale, and their events, errors and config) describes
+> code that #687-A deleted. There is no protocol VPFI purchase surface. Read
+> those parts as history, not as instructions; see [`VPFISecuritiesFeatureExcision.md`](VPFISecuritiesFeatureExcision.md).
+
 **Status:** Draft for Codex pre-design review.
 **Parent ToDo:** T-087 (`docs/ToDo.md`).
 **Operator-internal seed:** `docs/internal/RewardSystemRedesigned.md` (informal source-of-truth notes by the project owner; this design doc is the canonical PR-reviewed counterpart).
