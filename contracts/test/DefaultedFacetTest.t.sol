@@ -478,10 +478,10 @@ contract DefaultedFacetTest is Test {
         // Set loanInitMaxLtvBps in risk params (assume owner sets)
         // For mockERC20 collateral: loanInitMaxLtvBps 8000 (80%)
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300, 1000
+        RiskFacet(address(diamond)).updateRiskParams(mockERC20, 8000, 300
         );
         vm.prank(owner);
-        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300, 1000
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 8000, 300
         );
 
         // Mock oracle: Set liquid for mockERC20, illiquid for others.

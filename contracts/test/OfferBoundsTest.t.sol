@@ -183,14 +183,24 @@ contract OfferBoundsTest is SetupTest {
         assertGt(id, 0);
     }
 
-    /// @dev Codex #1101 P2: a liquid collateral asset with a 0 per-asset
-    ///      init-LTV cap is no-borrow at loan-init (`LoanFacet._checkInitialLtvAndHf`
-    ///      rejects any positive LTV against it), so the create bound rejects
-    ///      every offer against it fail-fast — even with generous collateral —
-    ///      keeping create/init parity for the unconfigured-cap case.
-    function test_S15_zeroInitLtvCapCollateralRejected() public {
+    /// @dev #2696: an unset per-asset init-LTV ceiling is NO ceiling, not a
+    ///      no-borrow cap (Codex #1101 P2 had read it as no-borrow, mirroring the
+    ///      loan-init gate of the time). Any liquid ERC-20 may back a loan, so a
+    ///      generously collateralised offer against an unconfigured asset is
+    ///      admitted, and the health-factor floor alone bounds it.
+    function test_S15_unsetInitLtvCeilingIsNoCeiling() public {
+        TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(mockCollateralERC20, 0);
+        uint256 id = _createLender(1000 ether, 5000 ether);
+        assertGt(id, 0, "an unconfigured liquid collateral is borrowable");
+    }
+
+    /// @dev #2696: the health-factor floor still binds without a ceiling.
+    ///      At $1 / $1 the 1.5 floor needs at least 1,667 of collateral per
+    ///      1,000 borrowed even at the highest (90%) tier liquidation
+    ///      threshold, so 1,500 is refused whatever tier the asset is in.
+    function test_S15_unsetInitLtvCeilingKeepsHealthFactorFloor() public {
         TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(mockCollateralERC20, 0);
         vm.expectPartialRevert(LibOfferBounds.MinCollateralBelowFloor.selector);
-        _createLender(1000 ether, 5000 ether); // generous collateral, still rejected (no-borrow)
+        _createLender(1000 ether, 1500 ether);
     }
 }

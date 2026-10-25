@@ -701,10 +701,10 @@ contract RiskAccessAcceptGateTest is SetupTest {
         // #998 S15 (#900) — a derived-tier-0 collateral is a REAL liquid ERC-20
         // (positive init-LTV) that is depth-demoted for RISK-ACCESS only; only its
         // `getEffectiveLiquidityTier` (mocked 0 above) drops, not its loan-init LTV.
-        // Give it a borrowable init-LTV so `createOffer` clears the S15 no-borrow
-        // floor guard (which would otherwise reject an unconfigured, init-LTV-0
-        // collateral up front) — the preview classification still comes from the
-        // mocked tier, so the derived-tier-0 assertion below is unchanged.
+        // Give it an explicit init-LTV ceiling so the offer's admission shape is
+        // pinned (an unset row would mean "no extra ceiling", #2696) — the
+        // preview classification still comes from the mocked tier, so the
+        // derived-tier-0 assertion below is unchanged.
         TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(
             mockIlliquidERC20, 8000
         );

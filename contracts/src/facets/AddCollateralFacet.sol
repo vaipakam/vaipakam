@@ -266,7 +266,7 @@ contract AddCollateralFacet is DiamondReentrancyGuard, IVaipakamErrors {
             newHf >= LibVaipakam.effectiveLoanMinHealthFactor(loan.minHealthFactorAtInit) &&
             newLtv <= LibVaipakam.effectiveLoanInitLtvCapBps(
                 loan.initLtvCapBpsAtInit,
-                s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps
+                LibVaipakam.assetInitLtvCeilingBps(loan.collateralAsset)
             )
         ) {
             _cureFallback(loanId, loan);

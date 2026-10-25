@@ -16,7 +16,6 @@ import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {TreasuryFacet} from "../../src/facets/TreasuryFacet.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
-import {RevertProbe} from "../lib/RevertProbe.sol";
 import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
 import {LibPausable} from "../../src/libraries/LibPausable.sol";
 
@@ -418,18 +417,5 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
     function _netInitiationFee(uint256 lifBps) internal view returns (uint256) {
         uint256 gross = (LOAN_AMOUNT * lifBps) / 10_000;
         return gross - (gross * ConfigFacet(diamond).getLifMatcherFeeBps()) / 10_000;
-    }
-
-    /// @dev Requires `data`, sent to the Diamond as `caller`, to revert with
-    ///      exactly `expectedRevert` (selector and arguments). Runs in the
-    ///      simulation only, through `RevertProbe`.
-    function _requireRefused(
-        address caller,
-        bytes memory data,
-        bytes memory expectedRevert,
-        string memory failure
-    ) internal {
-        (bool ok, bytes memory ret) = RevertProbe.call(caller, diamond, data);
-        require(!ok && keccak256(ret) == keccak256(expectedRevert), failure);
     }
 }

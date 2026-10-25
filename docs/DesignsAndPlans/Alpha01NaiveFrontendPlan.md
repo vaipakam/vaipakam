@@ -5,7 +5,10 @@
 > and **#1854 deleted `apps/defi`, `apps/alpha` and `apps/alpha01` outright**
 > and renamed `apps/alpha02` → **`apps/app`** (`app.vaipakam.com`,
 > `@vaipakam/app`, Worker `vaipakam-app`). `defi.vaipakam.com`,
-> `alpha.vaipakam.com` and `alpha01.vaipakam.com` are retired. The naive-first
+> `alpha.vaipakam.com` and `alpha01.vaipakam.com` are retired. The
+> `packages/defi-client` package this plan introduced was left orphaned by that
+> cutover and **deleted in #2538**; `apps/app` keeps the one shipping copy of
+> its offer schema and accept-terms code. The naive-first
 > product principles this doc set out live on in `apps/app`; the paths,
 > package names, URLs, retirement targets and open checkboxes below are kept
 > verbatim as the record of what was planned and are **not** current

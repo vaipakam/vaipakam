@@ -156,7 +156,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         // per-asset cap, so a depth-tiered loan can't shed its tier buffer.
         uint256 loanInitMaxLtvBps = LibVaipakam.effectiveLoanInitLtvCapBps(
             loan.initLtvCapBpsAtInit,
-            s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps
+            LibVaipakam.assetInitLtvCeilingBps(loan.collateralAsset)
         );
         if (simulatedLtv > loanInitMaxLtvBps) revert LTVExceeded();
 
@@ -257,7 +257,7 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         // loan), not the looser live per-asset cap.
         uint256 loanInitMaxLtvBps = LibVaipakam.effectiveLoanInitLtvCapBps(
             loan.initLtvCapBpsAtInit,
-            s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps
+            LibVaipakam.assetInitLtvCeilingBps(loan.collateralAsset)
         );
 
         uint256 low = 0;

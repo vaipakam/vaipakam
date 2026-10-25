@@ -212,7 +212,7 @@ contract PauseGatingTest is SetupTest {
     ///      still apply while paused.
     function test_paused_riskSettersStillConfigurable() public {
         vm.expectRevert(IVaipakamErrors.InvalidAsset.selector);
-        RiskFacet(address(diamond)).updateRiskParams(address(0), 0, 0, 0);
+        RiskFacet(address(diamond)).updateRiskParams(address(0), 0, 0);
         RiskFacet(address(diamond)).setMinHealthFactor(LibVaipakam.MIN_HEALTH_FACTOR);
         assertTrue(AdminFacet(address(diamond)).paused());
     }

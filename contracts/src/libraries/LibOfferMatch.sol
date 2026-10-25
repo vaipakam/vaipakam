@@ -660,12 +660,13 @@ library LibOfferMatch {
         // preview never admits a pair the binding gate would revert. Two
         // regimes, switched by `depthTieredLtvEnabled`:
         if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
-            // ON: the effective init-LTV cap = min(per-asset loanInitMaxLtvBps,
-            // tierMaxInitLtvBps[effectiveTier(collateral)]). A Tier-0 /
-            // no-maxLtv collateral ⇒ cap 0 ⇒ no positive amount works.
+            // ON: the effective init-LTV cap = min(per-asset ceiling,
+            // tierMaxInitLtvBps[effectiveTier(collateral)]). An unset
+            // per-asset row is no ceiling (#2696); a Tier-0 collateral ⇒
+            // cap 0 ⇒ no positive amount works.
             uint8 effTier =
                 OracleFacet(address(this)).getEffectiveLiquidityTier(L.collateralAsset);
-            uint256 maxLtv = s.assetRiskParams[L.collateralAsset].loanInitMaxLtvBps;
+            uint256 maxLtv = LibVaipakam.assetInitLtvCeilingBps(L.collateralAsset);
             // Phase 5 of AutonomousLtvAndOracleFallback.md — read the
             // autonomous tier-LTV cache (peer-derived + bound-checked,
             // refreshable permissionlessly) instead of the governance

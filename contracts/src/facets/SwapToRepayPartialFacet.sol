@@ -514,7 +514,7 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
             ltv >
             LibVaipakam.effectiveLoanInitLtvCapBps(
                 loan.initLtvCapBpsAtInit,
-                LibVaipakam.storageSlot().assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps
+                LibVaipakam.assetInitLtvCeilingBps(loan.collateralAsset)
             )
         ) revert LTVExceeded();
 

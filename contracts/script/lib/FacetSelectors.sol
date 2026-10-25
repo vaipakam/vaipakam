@@ -324,6 +324,17 @@ library FacetSelectors {
         return bytes4(keccak256("previewIntent(address,address,address,address,uint256,uint256)"));
     }
 
+    /// @notice #2696 — the RETIRED four-argument `RiskFacet.updateRiskParams`
+    ///         selector, for the Remove leg of a curated refresh against a
+    ///         Diamond that still routes it. The setter dropped the reserve
+    ///         factor (nothing read it), so its selector changed; left routed,
+    ///         the old entry would stay live on the old build and keep writing
+    ///         the retired field.
+    /// @dev    Computed from the signature: the overload no longer exists in source.
+    function retiredUpdateRiskParamsSelector() internal pure returns (bytes4) {
+        return bytes4(keccak256("updateRiskParams(address,uint256,uint256,uint256)"));
+    }
+
     /// @notice The ETH·day recycle-tariff setter #2489 DELETED from `ConfigFacet`
     ///         (its slot is retained, dead; security review of #2489). A
     ///         `Replace` of the new surface leaves it routed to the OLD
