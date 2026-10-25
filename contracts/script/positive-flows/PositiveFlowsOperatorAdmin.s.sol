@@ -355,9 +355,9 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
     ///        2. A value inside the cap lands and the getter reports it.
     ///        3. The next loan pays the new fee, and the old value comes
     ///           back the same way.
-    ///      The range master flags are not used here: `rangeAmountEnabled`
-    ///      no longer gates offer creation (OfferCreateFacet calls it
-    ///      "now-dead"), so it cannot show a knob affecting a flow (#2812).
+    ///      The range master flags are not used here: they gated nothing
+    ///      and were retired in #2812 (ranged offers are always on), so
+    ///      they could not show a knob affecting a flow.
     /// @dev `ConfigFacet`'s fee ceiling (its private `MAX_FEE_BPS`, 50%),
     ///      which the setter names in `InvalidFeeBps`.
     uint256 private constant FEE_CAP_BPS = 5_000;

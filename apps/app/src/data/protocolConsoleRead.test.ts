@@ -2,7 +2,7 @@
  * #2074 — which source the Protocol Console shows, and why.
  */
 import { describe, expect, it, vi } from 'vitest';
-import type { PublicClient } from 'viem';
+import { encodeAbiParameters, type Hex, type PublicClient } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { PROTOCOL_KNOB_GETTERS, abiOutputNames } from '@vaipakam/lib/protocolKnobs';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
@@ -34,7 +34,6 @@ function snapshot(over: Partial<ProtocolKnobSnapshot> = {}): ProtocolKnobSnapsho
   return {
     values: { treasuryFeeBps: '200', ...allKnobs() } as ProtocolKnobValues,
     unreported: [],
-    flags: {},
     sourceBlock: 100,
     updatedAt: NOW - 60,
     ...over,
@@ -223,15 +222,27 @@ describe('readProtocolConsoleLive — labels only what this build can tie to the
   const CHAIN = 84532;
   const DIAMOND = '0x00000000000000000000000000000000000000d1' as const;
   const host = getDeployment(CHAIN)?.facets?.configFacet;
-  const names = abiOutputNames(DIAMOND_ABI_VIEM, 'getProtocolConfigBundle') ?? [];
 
-  function client(loupeHost: string | undefined) {
+  // #2812 — the bundle is read raw and decoded only at the length this
+  // build's ABI describes. One answer of that shape (every integer 1, the
+  // flag on), and the pre-#2812 one, which carried two more flags.
+  const outputs = (DIAMOND_ABI_VIEM as readonly { type: string; name?: string; outputs?: readonly { type: string }[] }[])
+    .find((e) => e.type === 'function' && e.name === 'getProtocolConfigBundle')!.outputs!;
+  const sample = outputs.map((o) => (o.type === 'bool' ? true : o.type.endsWith(']') ? [1n, 1n, 1n, 1n] : 1n));
+  const THIS_BUILD = encodeAbiParameters(outputs as never, sample as never);
+  const PRE_2812 = `${THIS_BUILD}${'0'.repeat(128)}` as Hex;
+
+  function client(loupeHost: string | undefined, bundleData: Hex = THIS_BUILD) {
     return {
       getBlockNumber: async () => 99n,
+      call: async (args: { blockNumber?: bigint }) => {
+        expect(args.blockNumber).toBe(99n);
+        return { data: bundleData };
+      },
       readContract: async (args: { functionName: string; blockNumber?: bigint }) => {
         expect(args.blockNumber).toBe(99n);
         if (args.functionName === 'facetAddress') return loupeHost;
-        return names.map(() => 1n);
+        throw new Error(`unexpected read ${args.functionName}`);
       },
       multicall: async (args: { contracts: unknown[]; blockNumber?: bigint }) => {
         expect(args.blockNumber).toBe(99n);
@@ -245,6 +256,12 @@ describe('readProtocolConsoleLive — labels only what this build can tie to the
     const r = await readProtocolConsoleLive(client(host), CHAIN, DIAMOND);
     expect(r.blockNumber).toBe(99n);
     expect(r.values.treasuryFeeBps).toBe('1');
+  });
+
+  it('refuses an answer of another length rather than decode it by position (#2812)', async () => {
+    await expect(readProtocolConsoleLive(client(host, PRE_2812), CHAIN, DIAMOND)).rejects.toThrow(
+      /answered 21 words.*describes 19 words/,
+    );
   });
 
   it('refuses to label by position when the deployed host is not the one this build describes', async () => {

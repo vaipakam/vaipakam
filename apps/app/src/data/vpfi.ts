@@ -25,7 +25,8 @@ import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { signalAware } from '../chain/railHealth';
-import { fetchProtocolConfig, protocolConfigFresh } from './indexer';
+import { fetchFreshConfigValues } from './indexer';
+import { readConfigBundleLive } from './protocol';
 import { copy } from '../content/copy';
 
 export const VPFI_DECIMALS = 18;
@@ -56,25 +57,29 @@ export interface VpfiTierRow {
   discount: string;
 }
 
-export interface VpfiTierTable {
-  rows: VpfiTierRow[];
-  /** Formatted first-threshold amount (e.g. "100") for the
-   *  below-minimum no-discount note. Admin-tunable like the rows, so
-   *  the note must be derived from it — never hardcoded (Codex #1175). */
-  floorLabel: string;
-}
+/** The tier table as this chain reports it, or why there is none.
+ *  `loading` is the first read in flight; `unknown` is a read that
+ *  could not produce the two tier lists (no snapshot, and a bundle of
+ *  another shape or a failed RPC). Neither carries figures: the
+ *  thresholds and discounts are admin-tunable, so a default shown in
+ *  their place would read as this chain's live table (#2812 r3). */
+export type VpfiTierTable =
+  | { state: 'loading' }
+  | { state: 'unknown' }
+  | {
+      state: 'live';
+      rows: VpfiTierRow[];
+      /** Formatted first-threshold amount (e.g. "100") for the
+       *  below-minimum no-discount note. Admin-tunable like the rows, so
+       *  the note must be derived from it — never hardcoded (Codex #1175). */
+      floorLabel: string;
+    };
 
 const fmtVpfi = (wei: bigint) =>
   (Number(wei) / 10 ** VPFI_DECIMALS).toLocaleString('en-US', {
     maximumFractionDigits: 0,
   });
 
-/** LIVE tier table — thresholds and discount bps are admin-tunable
- *  (`setVpfiTierThresholds` / `setVpfiTierDiscountBps`), so the
- *  education table must never hardcode them. Bundle tuple indices 7
- *  (thresholds, VPFI wei) and 8 (discount bps) per apps/defi
- *  useProtocolConfig's BundleTuple. Falls back to the deploy defaults
- *  until the read lands. */
 // UX-035 — tiers are `held >= threshold` bands, so Tiers 1 and 2 are
 // half-open intervals [min, next): the boundary value belongs to the
 // HIGHER tier, and a fractional holding just under the next threshold
@@ -88,11 +93,6 @@ const fmtVpfi = (wei: bigint) =>
 // holder of exactly 20,000 VPFI they would get the Tier-4 discount when
 // the contract applies Tier 3's. Sub-first-threshold holdings (no
 // discount) are called out separately in the page.
-const DEFAULT_TIER_SLOTS: TierSlots = {
-  thresholds: [100n * 10n ** 18n, 1_000n * 10n ** 18n, 5_000n * 10n ** 18n, 20_000n * 10n ** 18n],
-  discounts: [1000n, 1500n, 2000n, 2400n],
-};
-
 /** The four tier rows, labelled with the contract's own boundary rules.
  *  Pure; exported for the unit test. Built at RENDER time from the
  *  numbers, so a language switch relabels the table — strings cached
@@ -136,11 +136,15 @@ export function parseTierSlots(t: unknown, d: unknown): TierSlots | null {
   return { thresholds: toB4(t as string[]), discounts: toB4(d as string[]) };
 }
 
+/** LIVE tier table — thresholds and discount bps are admin-tunable
+ *  (`setVpfiTierThresholds` / `setVpfiTierDiscountBps`), so the
+ *  education table must never hardcode them, and shows no figures
+ *  until a read has produced them (see {@link VpfiTierTable}). */
 export function useVpfiTierTable(): VpfiTierTable {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
 
-  const { data } = useQuery({
+  const { data, isError } = useQuery({
     queryKey: ['vpfiTierSlots', readChain.chainId],
     enabled: Boolean(publicClient),
     staleTime: 5 * 60_000,
@@ -151,30 +155,25 @@ export function useVpfiTierTable(): VpfiTierTable {
       // hooks, and falls back to the live chain read when the
       // snapshot is absent or stale. Fee SETTLEMENT never reads this
       // hook — the contract applies tiers on-chain.
-      const snap = await fetchProtocolConfig(readChain.chainId);
-      const fromSnap =
-        snap && protocolConfigFresh(snap.updatedAt)
-          ? parseTierSlots(snap.bundle[7], snap.bundle[8])
-          : null;
-      const { thresholds, discounts } =
-        fromSnap ??
-        (await (async () => {
-          const bundle = (await publicClient!.readContract({
-            address: readChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'getProtocolConfigBundle',
-          })) as readonly unknown[];
-          return {
-            thresholds: bundle[7] as readonly [bigint, bigint, bigint, bigint],
-            discounts: bundle[8] as readonly [bigint, bigint, bigint, bigint],
-          };
-        })());
-      return { thresholds, discounts };
+      // Both sources carry the two tier lists by NAME, as decimal strings
+      // (#2812), so one parser checks either; a list that is absent or of
+      // another shape is never rendered as a tier table.
+      const snap = await fetchFreshConfigValues(readChain.chainId);
+      const fromSnap = snap ? parseTierSlots(snap.tierThresholds, snap.tierDiscountBps) : null;
+      if (fromSnap) return fromSnap;
+      const live = await readConfigBundleLive(publicClient!, readChain.diamondAddress);
+      const fromChain = parseTierSlots(live.tierThresholds, live.tierDiscountBps);
+      if (!fromChain) throw new Error('the configuration bundle carries no tier table');
+      return fromChain;
     },
   });
 
-  const slots = data ?? DEFAULT_TIER_SLOTS;
-  return { rows: tierBandRows(slots), floorLabel: fmtVpfi(slots.thresholds[0]) };
+  // A failed query keeps its last good `data` (react-query), so a
+  // table already read stays shown through a later failed refresh.
+  if (data) {
+    return { state: 'live', rows: tierBandRows(data), floorLabel: fmtVpfi(data.thresholds[0]) };
+  }
+  return isError ? { state: 'unknown' } : { state: 'loading' };
 }
 
 /** LIVE VPFI-token read for submit paths (fail closed with a retry

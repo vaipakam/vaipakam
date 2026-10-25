@@ -291,7 +291,7 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
     ///           share of the initiation fee.
     ///      The switch is put back as the scenario found it.
     function _matchedRefinanceWithinCaps() internal {
-        (, , bool partialFill) = ConfigFacet(diamond).getMasterFlags();
+        bool partialFill = ConfigFacet(diamond).getPartialFillEnabled();
         if (!partialFill) return _skip("partial fills are off (partialFillEnabled=false), so offers cannot be matched");
 
         uint256 oldLoanId = _acceptAs(borrowerKey, _createLenderOffer(lenderKey), address(weth), COLLATERAL_AMOUNT);
@@ -414,10 +414,9 @@ contract PositiveFlowsAdvancedCredit is PositiveFlowsBase {
     function _rangeMatchAndPartialFill() internal {
         // Pre-flight: matching needs `partialFillEnabled` (LibOfferMatch
         // refuses a match with FunctionDisabled while it is off). Skip,
-        // saying so, where it is off. The two range flags returned beside
-        // it gate nothing any more (OfferCreateFacet: "now-dead"), so they
-        // are not read.
-        (, , bool partialFill) = ConfigFacet(diamond).getMasterFlags();
+        // saying so, where it is off. Ranged offers need no flag (always
+        // on; the range master flags were retired in #2812).
+        bool partialFill = ConfigFacet(diamond).getPartialFillEnabled();
         if (!partialFill) return _skip("partial fills are off (partialFillEnabled=false), so offers cannot be matched");
 
         // ── Phase A: Lender posts a ranged offer ─────────────────────

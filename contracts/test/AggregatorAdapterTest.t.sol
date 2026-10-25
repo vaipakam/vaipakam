@@ -113,9 +113,6 @@ contract AggregatorAdapterTest is SetupTest {
         keeper = makeAddr("adapterKeeper");
 
         vm.startPrank(owner);
-        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
-        ConfigFacet(address(diamond)).setRangeRateEnabled(true);
-        ConfigFacet(address(diamond)).setRangeCollateralEnabled(true);
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         LenderIntentFacet(address(diamond)).setLenderIntentEnabled(true);
         AggregatorAdapterFactoryFacet(address(diamond))

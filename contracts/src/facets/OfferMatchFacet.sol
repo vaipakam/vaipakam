@@ -7,7 +7,7 @@ import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
-import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {DiamondPausable, LibPausable} from "../libraries/LibPausable.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
@@ -87,6 +87,21 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         view
         returns (LibOfferMatch.MatchResult memory result)
     {
+        // #2812 — `matchOffers`'s entry guards first, in its order (the pause
+        // modifier, the matcher's sanctions screen, the matching kill-switch),
+        // so a match that would revert on one of them never previews `Ok`.
+        if (LibPausable.paused()) {
+            result.errorCode = LibOfferMatch.MatchError.Paused;
+            return result;
+        }
+        if (LibVaipakam.isSanctionedAddress(matcher)) {
+            result.errorCode = LibOfferMatch.MatchError.Sanctioned;
+            return result;
+        }
+        if (!LibVaipakam.storageSlot().protocolCfg.partialFillEnabled) {
+            result.errorCode = LibOfferMatch.MatchError.MatcherDisabled;
+            return result;
+        }
         result = LibOfferMatch.previewMatch(lenderOfferId, borrowerOfferId);
         // #1219 review — the match's capacity charge is its last step, so it is
         // this preview's last check, for the actor `matchOffers` would charge.

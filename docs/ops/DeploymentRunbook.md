@@ -123,7 +123,7 @@ Three deploy scripts after the 2026-05-10 modernization sweep
   of mid-flight failures.
 - `.history/health-<unix-ts>.log` — sentinel reads (`paused()`,
   `getTreasury()`, `nextOfferId()`, `nextLoanId()`, facet count,
-  `getMasterFlags()`, and the VPFI TokenPool's `rateLimitAdmin` —
+  `getPartialFillEnabled()`, and the VPFI TokenPool's `rateLimitAdmin` —
   per-lane CCIP rate limits themselves are wired later by the
   `ccip-wire` pass via `VpfiPoolRateGovernor`) captured by the
   post-deploy health check on every chain.

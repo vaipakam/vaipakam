@@ -823,18 +823,6 @@ export interface IndexerFreshness {
   updatedAt: number;
 }
 
-/** RPC read-diet PR B — the display protocol-config snapshot
- *  (GET /config/:chainId). null = indexer unconfigured/unreachable or
- *  no row yet → callers fall back to their live chain read. The
- *  `updatedAt` stamp travels with the payload so callers can refuse a
- *  snapshot that has gone stale (indexer wedged for hours). */
-export interface IndexerProtocolConfig {
-  bundle: (string | boolean | number)[];
-  masterFlags: boolean[];
-  sourceBlock: number;
-  updatedAt: number;
-}
-
 /** How far ahead of us a source's clock may legitimately be.
  *
  *  Machine clocks differ by seconds; anything beyond this is not skew,
@@ -865,26 +853,6 @@ export const CONFIG_MAX_AGE_SEC = 24 * 3600;
 export function protocolConfigFresh(updatedAt: number): boolean {
   const age = Date.now() / 1000 - updatedAt;
   return age >= -CLOCK_SKEW_ALLOWANCE_SEC && age < CONFIG_MAX_AGE_SEC;
-}
-
-export async function fetchProtocolConfig(
-  chainId: number,
-): Promise<IndexerProtocolConfig | null> {
-  if (!indexerConfigured()) return null;
-  const res = await getJson<
-    | { available: false }
-    | ({ available: true } & IndexerProtocolConfig)
-  >(`/config/${chainId}`);
-  if (!res || !('available' in res) || res.available !== true) return null;
-  if (!Array.isArray(res.bundle) || !Array.isArray(res.masterFlags)) {
-    return null;
-  }
-  return {
-    bundle: res.bundle,
-    masterFlags: res.masterFlags,
-    sourceBlock: res.sourceBlock,
-    updatedAt: res.updatedAt,
-  };
 }
 
 /** RPC read-diet PR C (§4.2.3) — the additive claim-candidate hint
@@ -1024,9 +992,10 @@ export async function fetchOfferStats(chainId: number): Promise<OfferStats | nul
 
 /* ── Named protocol knobs (/protocol-console) ──────────────────────────
  *
- * `fetchProtocolConfig` above returns the POSITIONAL `bundle`, which is
- * right for the display path that already knows its indices. A console
- * that lists knobs by name must not decode positionally: the release
+ * The endpoint also serves the bundle POSITIONALLY, for outside consumers
+ * with their own decoder. Nothing in this app reads it that way any more
+ * (#2812: the display hooks indexed it by position, and taking two flags out
+ * of the middle of the bundle moved every later field): the release
  * record has a whole incident about hand-typed tuples silently shifting
  * field positions, and a governance parameter shown against the wrong
  * label is worse than one not shown at all.
@@ -1049,8 +1018,8 @@ export interface ProtocolKnobValues {
   maxOfferDurationDays?: string;
   tierThresholds?: string[];
   tierDiscountBps?: string[];
-  rangeAmountEnabled?: boolean;
-  rangeRateEnabled?: boolean;
+  /** The matching kill-switch. (The range master flags that sat beside it
+   *  were retired in #2812.) */
   partialFillEnabled?: boolean;
   // #2071 — the single-output settings read beside the bundle
   // (`PROTOCOL_KNOB_GETTERS` in `@vaipakam/lib/protocolKnobs`, which both the
@@ -1112,7 +1081,10 @@ export interface ProtocolKnobSnapshot {
    *  older indexer, or a row whose settings read failed): then it is not
    *  known which of the settings it would have reported. */
   unreported?: string[];
-  flags: Record<string, boolean>;
+  /** #2812 — the indexer could not decode the bundle (the chain's
+   *  ConfigFacet answered a shape this build does not describe), so the
+   *  snapshot carries none of its figures, and this says why. */
+  bundleUnreported?: string;
   sourceBlock?: number;
   /** Unix SECONDS. Callers MUST surface this — see `protocolConfigFresh`. */
   updatedAt?: number;
@@ -1135,7 +1107,7 @@ export async function fetchProtocolKnobs(
     available?: boolean;
     values?: ProtocolKnobValues;
     unreported?: unknown;
-    flags?: Record<string, boolean>;
+    bundleUnreported?: unknown;
     sourceBlock?: number;
     updatedAt?: number;
     stale?: boolean;
@@ -1145,7 +1117,7 @@ export async function fetchProtocolKnobs(
   return {
     // An available snapshot whose values cannot be trusted to their
     // names is preserved rather than collapsed to `null` — see
-    // `labelsUnavailable`. Everything the response DOES carry (flags,
+    // `labelsUnavailable`. Everything the response DOES carry (the
     // provenance, the staleness verdict) is still true and still worth
     // showing.
     values: res.values ?? {},
@@ -1154,7 +1126,10 @@ export async function fetchProtocolKnobs(
       Array.isArray(res.unreported) && res.unreported.every((u) => typeof u === 'string')
         ? (res.unreported as string[])
         : undefined,
-    flags: res.flags ?? {},
+    bundleUnreported:
+      typeof res.bundleUnreported === 'string' && res.bundleUnreported.length > 0
+        ? res.bundleUnreported
+        : undefined,
     sourceBlock: res.sourceBlock,
     updatedAt: res.updatedAt,
     // CARRY THE VERDICT, DON'T RE-DERIVE IT. The indexer sets `stale`
@@ -1172,4 +1147,30 @@ export async function fetchProtocolKnobs(
         ? res.staleAtBlock
         : undefined,
   };
+}
+
+/**
+ * #2812 — the snapshot's NAMED values, when they may stand in for a chain
+ * read on a display surface: the snapshot exists, carries its labels, is not
+ * known to be stale, and its capture time is within {@link CONFIG_MAX_AGE_SEC}.
+ * `null` otherwise, and the caller reads the chain.
+ *
+ * This replaced a positional reader of the same endpoint. Every display hook
+ * now asks for a field by its name, so a change to the bundle's outputs
+ * leaves a field absent (and the hook on its chain read) instead of moving
+ * a different number into it.
+ */
+export async function fetchFreshConfigValues(chainId: number): Promise<ProtocolKnobValues | null> {
+  if (!indexerConfigured()) return null;
+  const snap = await fetchProtocolKnobs(chainId);
+  if (
+    snap === null ||
+    snap.labelsUnavailable ||
+    snap.stale === true ||
+    typeof snap.updatedAt !== 'number' ||
+    !protocolConfigFresh(snap.updatedAt)
+  ) {
+    return null;
+  }
+  return snap.values;
 }

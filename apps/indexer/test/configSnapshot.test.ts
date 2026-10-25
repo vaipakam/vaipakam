@@ -7,7 +7,8 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { PublicClient } from 'viem';
+import { encodeAbiParameters, type Hex, type PublicClient } from 'viem';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   abiOutputNames,
@@ -42,6 +43,29 @@ const MIGRATION_0072 = readFileSync(
   new URL('../migrations/0072_protocol_config_pause_log.sql', import.meta.url),
   'utf8',
 );
+const MIGRATION_0074 = readFileSync(
+  new URL('../migrations/0074_protocol_config_bundle_unread.sql', import.meta.url),
+  'utf8',
+);
+
+/** The bundle's outputs as this build compiles them (#2812). */
+const BUNDLE_OUTPUTS = (
+  DIAMOND_ABI_VIEM as readonly { type: string; name?: string; outputs?: readonly unknown[] }[]
+).find((e) => e.type === 'function' && e.name === 'getProtocolConfigBundle')!.outputs!;
+/** One answer of this build's shape, and how the snapshot stores it. */
+const SAMPLE_BUNDLE = [
+  200n, 20n, 200n, 600n, 300n, 11000n, 500n,
+  [100n, 200n, 300n, 400n], [1000n, 1500n, 2000n, 2400n],
+  true, 100n, 1800n, 365n,
+] as const;
+const SAMPLE_BUNDLE_DATA = encodeAbiParameters(BUNDLE_OUTPUTS as never, SAMPLE_BUNDLE as never);
+const SAMPLE_SERIALIZED = JSON.parse(serializeTuple(SAMPLE_BUNDLE)) as unknown[];
+/** The pre-#2812 answer: the same first nine values, then the two retired
+ *  range flags before the matcher flag, then the three scalars. 21 words. */
+const PRE_2812_BUNDLE_DATA = `${encodeAbiParameters(
+  BUNDLE_OUTPUTS.slice(0, 9) as never,
+  SAMPLE_BUNDLE.slice(0, 9) as never,
+)}${[1, 1, 1, 100, 1800, 365].map((n) => n.toString(16).padStart(64, '0')).join('')}` as Hex;
 
 /** Env + client stubs for the refresh path: real SQLite behind the D1
  *  shape (the upsert/stale-mark guards ARE SQL), canned reads. */
@@ -59,6 +83,9 @@ function refreshHarness(opts?: {
   /** #2071 — the batched settings read; absent = the client has none, so
    *  that read fails and the row stores no settings. */
   multicall?: (args: { contracts: readonly { functionName: string }[]; blockNumber?: bigint }) => Promise<unknown>;
+  /** #2812 — the raw answer to `getProtocolConfigBundle`; defaults to one of
+   *  this build's shape. */
+  bundleData?: () => Promise<Hex>;
 }) {
   const { db, d1 } = createSqliteD1([
     MIGRATION_0035,
@@ -66,15 +93,21 @@ function refreshHarness(opts?: {
     MIGRATION_0067,
     MIGRATION_0070,
     MIGRATION_0072,
+    MIGRATION_0074,
   ]);
   const reads: string[] = [];
   const client = {
+    // #2812 — the bundle is read raw, so its length can be checked before
+    // anything is decoded; it is the only raw call the refresh makes.
+    call: async () => {
+      reads.push('getProtocolConfigBundle');
+      return { data: opts?.bundleData ? await opts.bundleData() : SAMPLE_BUNDLE_DATA };
+    },
     readContract: async (args: { functionName: string }) => {
       if (args.functionName === 'facetAddress') {
         return opts?.loupeHost ? opts.loupeHost() : BUILD_CONFIG_FACET;
       }
       reads.push(args.functionName);
-      if (args.functionName === 'getMasterFlags') return [true, true, false] as const;
       // #1213 PR 2 — the grace-bucket read rides the same refresh; the
       // retail default is an empty array (compile-time schedule).
       if (args.functionName === 'getGraceBuckets') {
@@ -83,7 +116,7 @@ function refreshHarness(opts?: {
       if (args.functionName === 'getPauseIntervals') {
         return opts?.pauseRead ? opts.pauseRead() : ([[], 0n] as const);
       }
-      return [100n, [1n, 2n, 3n, 4n]] as const;
+      throw new Error(`unexpected read ${args.functionName}`);
     },
     ...(opts?.multicall ? { multicall: opts.multicall } : {}),
   } as unknown as PublicClient;
@@ -326,18 +359,66 @@ describe('configSnapshot', () => {
     });
     expect(h.reads.sort()).toEqual([
       'getGraceBuckets',
-      'getMasterFlags',
       'getPauseIntervals',
       'getProtocolConfigBundle',
     ]);
     expect(h.row()).toMatchObject({ sb: 100, pl: '[]' });
-    expect(JSON.parse(h.row()!.bj)).toEqual(['100', ['1', '2', '3', '4']]);
+    expect(JSON.parse(h.row()!.bj)).toEqual(SAMPLE_SERIALIZED);
     // #2073 — the names this build decoded with are written beside the tuples.
     const names = h.db
       .prepare('SELECT bundle_names_json AS b, master_flags_names_json AS f FROM protocol_config WHERE chain_id = 84532')
       .get() as { b: string | null; f: string | null };
     expect(JSON.parse(names.b!)).toEqual(abiOutputNames('getProtocolConfigBundle'));
-    expect(JSON.parse(names.f!)).toEqual(abiOutputNames('getMasterFlags'));
+    // The retired `getMasterFlags` tuple is no longer read (#2812).
+    expect(names.f).toBeNull();
+  });
+
+  // #2812 — an answer of another length is other code behind the getter.
+  it('stores the bundle as unknown, with the reason, when the answer has another shape', async () => {
+    const h = refreshHarness({ bundleData: async () => PRE_2812_BUNDLE_DATA });
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: h.client,
+      diamond: DIAMOND,
+      scannedEventNames: [],
+      blockNumber: 100n,
+      headBlock: 110n,
+    });
+    const stored = h.db
+      .prepare(
+        `SELECT bundle_json AS bj, bundle_names_json AS b, bundle_unread_reason AS r
+           FROM protocol_config WHERE chain_id = 84532`,
+      )
+      .get() as { bj: string; b: string | null; r: string | null };
+    expect(stored.bj).toBe('[]');
+    expect(stored.b).toBeNull();
+    expect(stored.r).toMatch(/answered 21 words.*describes 19 words/);
+    // The rest of the row is captured as usual.
+    expect(h.row()).toMatchObject({ sb: 100, pl: '[]', gb: '[]' });
+    // The route serves the reason and no figures.
+    const body = (await (
+      await handleConfigSnapshot(84532, { DB: h.env.DB, RPC_BASE_SEPOLIA: SERVED_RPC } as unknown as Env)
+    ).json()) as Record<string, unknown>;
+    expect(body.available).toBe(true);
+    expect(body.bundleUnreported).toBe(stored.r);
+    expect(body).not.toHaveProperty('bundle');
+    expect(body).not.toHaveProperty('values');
+    // A later capture of this build's shape clears the reason.
+    await maybeRefreshProtocolConfig({
+      env: h.env,
+      chainId: 84532,
+      client: refreshHarness().client,
+      diamond: DIAMOND,
+      scannedEventNames: ['FeesConfigSet'],
+      blockNumber: 101n,
+      headBlock: 110n,
+    });
+    expect(
+      (h.db.prepare('SELECT bundle_unread_reason AS r FROM protocol_config WHERE chain_id = 84532').get() as {
+        r: string | null;
+      }).r,
+    ).toBeNull();
   });
 
   // #2073 (Codex #2653 r1) — names are stored only when the loupe shows
@@ -359,7 +440,7 @@ describe('configSnapshot', () => {
         headBlock: 110n,
       });
       // The figures are still captured; only their names are withheld.
-      expect(JSON.parse(h.row()!.bj)).toEqual(['100', ['1', '2', '3', '4']]);
+      expect(JSON.parse(h.row()!.bj)).toEqual(SAMPLE_SERIALIZED);
       const names = h.db
         .prepare('SELECT bundle_names_json AS b, master_flags_names_json AS f FROM protocol_config WHERE chain_id = 84532')
         .get() as { b: string | null; f: string | null };
@@ -702,14 +783,10 @@ describe('configSnapshot', () => {
     /** Store one row with a bundle of the ABI's own arity. */
     /** The names a capture by THIS build records beside the tuples. */
     const BUNDLE_NAMES = abiOutputNames('getProtocolConfigBundle');
-    const FLAG_NAMES = abiOutputNames('getMasterFlags');
 
     async function seed(
       bundle: readonly unknown[],
-      names: { bundle: readonly string[] | null; flags: readonly string[] | null } = {
-        bundle: BUNDLE_NAMES,
-        flags: FLAG_NAMES,
-      },
+      names: { bundle: readonly string[] | null } = { bundle: BUNDLE_NAMES },
     ) {
       const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067]);
       db.prepare(
@@ -724,7 +801,7 @@ describe('configSnapshot', () => {
         1,
         2,
         names.bundle === null ? null : JSON.stringify(names.bundle),
-        names.flags === null ? null : JSON.stringify(names.flags),
+        null,
       );
       return { env: { DB: d1, RPC_BASE_SEPOLIA: SERVED_RPC } as unknown as Env };
     }
@@ -741,8 +818,6 @@ describe('configSnapshot', () => {
       ['100', '200', '300', '400'],
       ['1000', '1500', '2000', '2400'],
       true,
-      true,
-      true,
       '100',
       '1800',
       '365',
@@ -753,19 +828,18 @@ describe('configSnapshot', () => {
       const body = (await (await handleConfigSnapshot(84532, env)).json()) as {
         bundle: unknown[];
         values?: Record<string, unknown>;
-        flags?: Record<string, unknown>;
       };
-      // The positional array stays — it is the apps' wire contract.
+      // The positional array stays, for outside consumers that decode it.
       expect(body.bundle).toEqual(FULL_BUNDLE);
       // ...and the same numbers arrive named.
       expect(body.values?.treasuryFeeBps).toBe('200');
       expect(body.values?.loanInitiationFeeBps).toBe('20');
       expect(body.values?.maxOfferDurationDays).toBe('365');
-      expect(body.flags).toEqual({
-        rangeAmount: true,
-        rangeRate: true,
-        partialFill: false,
-      });
+      // #2812 — the matching kill-switch is a named bundle value; the
+      // retired `getMasterFlags` tuple is served under no key.
+      expect(body.values?.partialFillEnabled).toBe(true);
+      expect(body).not.toHaveProperty('flags');
+      expect(body).not.toHaveProperty('masterFlags');
     });
 
     it('flags a stale-marked row so an outside consumer can skip it', async () => {
@@ -817,7 +891,7 @@ describe('configSnapshot', () => {
       // under the other's name, and equal length would not notice.
       const swapped = [...(BUNDLE_NAMES as string[])];
       [swapped[0], swapped[1]] = [swapped[1], swapped[0]];
-      const { env } = await seed(FULL_BUNDLE, { bundle: swapped, flags: FLAG_NAMES });
+      const { env } = await seed(FULL_BUNDLE, { bundle: swapped });
       const body = (await (await handleConfigSnapshot(84532, env)).json()) as {
         values?: Record<string, unknown>;
       };
@@ -826,11 +900,10 @@ describe('configSnapshot', () => {
     });
 
     it('withholds the labelled view for a row captured before names were recorded', async () => {
-      const { env } = await seed(FULL_BUNDLE, { bundle: null, flags: null });
+      const { env } = await seed(FULL_BUNDLE, { bundle: null });
       const body = (await (await handleConfigSnapshot(84532, env)).json()) as Record<string, unknown>;
       expect(body.bundle).toEqual(FULL_BUNDLE);
       expect(body).not.toHaveProperty('values');
-      expect(body).not.toHaveProperty('flags');
     });
 
     it('refuses a chain this Worker no longer indexes, even with a stored row (Codex #2653 r1)', async () => {
@@ -915,7 +988,7 @@ describe('configSnapshot', () => {
       });
       await refresh(h);
       // The bundle refresh is unaffected.
-      expect(JSON.parse(h.row()!.bj)).toEqual(['100', ['1', '2', '3', '4']]);
+      expect(JSON.parse(h.row()!.bj)).toEqual(SAMPLE_SERIALIZED);
       expect(knobColumn(h)).toBeNull();
     });
 
@@ -923,7 +996,7 @@ describe('configSnapshot', () => {
     const FULL_BUNDLE = [
       '200', '20', '200', '600', '300', '11000', '500',
       ['100', '200', '300', '400'], ['1000', '1500', '2000', '2400'],
-      true, true, true, '100', '1800', '365',
+      true, '100', '1800', '365',
     ];
     async function serve(knobs: string | null, bundleNames: readonly string[] | null = BUNDLE_NAMES) {
       const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039, MIGRATION_0067, MIGRATION_0070]);

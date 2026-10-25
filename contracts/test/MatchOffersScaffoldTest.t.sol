@@ -8,6 +8,7 @@ import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
 
 /**
  * @title MatchOffersScaffoldTest
@@ -33,21 +34,17 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
  *         + sanctions defaults from `setupHelper()`.
  */
 contract MatchOffersScaffoldTest is SetupTest {
-    // The Range Orders Phase 1 master flags default to `false` on a
-    // fresh deploy (`LibVaipakam.Storage.protocolCfg` zero-init). The
-    // smoke check below flips them to ON in `setUp` so any test that
-    // inherits this file lands on the partial-fill code paths #102
-    // introduced.
+    // The matching kill-switch (`partialFillEnabled`) defaults to
+    // `false` on a fresh deploy (`LibVaipakam.Storage.protocolCfg`
+    // zero-init). `setUp` flips it ON so any test that inherits this
+    // file lands on the partial-fill code paths #102 introduced.
     function setUp() public {
         setupHelper();
 
-        // Flip every Range Orders Phase 1 + #102 kill-switch on. Tests
-        // that need to exercise the OFF path can re-disable in their
-        // own scope.
+        // Flip the #102 matching kill-switch on (ranged offers need no
+        // flag, #2812). Tests that need to exercise the OFF path can
+        // re-disable it in their own scope.
         vm.startPrank(owner);
-        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
-        ConfigFacet(address(diamond)).setRangeRateEnabled(true);
-        ConfigFacet(address(diamond)).setRangeCollateralEnabled(true);
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         vm.stopPrank();
     }
@@ -143,5 +140,48 @@ contract MatchOffersScaffoldTest is SetupTest {
         );
         vm.prank(sanctionedMatcher);
         OfferMatchFacet(address(diamond)).matchOffers(0, 0);
+    }
+
+    // ─── #2812 — previewMatch reports matchOffers's entry guards ────────
+    // `previewMatch`'s `Ok` promises `matchOffers` would succeed at this
+    // block, so the three guards `matchOffers` runs before the match core
+    // must preview as their own codes, in its order. The offer ids are the
+    // never-created (0, 0) pair, whose core verdict is a non-Ok code: each
+    // assertion below therefore proves the guard ran BEFORE the core.
+
+    function test_previewMatch_matcherDisabled_whenKillSwitchOff() public {
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setPartialFillEnabled(false);
+        LibOfferMatch.MatchResult memory r =
+            OfferMatchFacet(address(diamond)).previewMatch(0, 0, address(this), address(this));
+        assertEq(uint8(r.errorCode), uint8(LibOfferMatch.MatchError.MatcherDisabled), "switch off previews MatcherDisabled");
+    }
+
+    function test_previewMatch_sanctionedMatcher() public {
+        MockSanctionsList oracle = new MockSanctionsList();
+        address sanctionedMatcher = makeAddr("sanctionedMatcher");
+        oracle.setFlagged(sanctionedMatcher, true);
+        vm.startPrank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+        // Switch off too: the sanctions screen precedes it in matchOffers.
+        ConfigFacet(address(diamond)).setPartialFillEnabled(false);
+        vm.stopPrank();
+        LibOfferMatch.MatchResult memory r =
+            OfferMatchFacet(address(diamond)).previewMatch(0, 0, sanctionedMatcher, sanctionedMatcher);
+        assertEq(uint8(r.errorCode), uint8(LibOfferMatch.MatchError.Sanctioned), "sanctioned matcher previews Sanctioned");
+    }
+
+    function test_previewMatch_paused_precedesOtherGuards() public {
+        MockSanctionsList oracle = new MockSanctionsList();
+        address sanctionedMatcher = makeAddr("sanctionedMatcher");
+        oracle.setFlagged(sanctionedMatcher, true);
+        vm.startPrank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+        ConfigFacet(address(diamond)).setPartialFillEnabled(false);
+        AdminFacet(address(diamond)).pause();
+        vm.stopPrank();
+        LibOfferMatch.MatchResult memory r =
+            OfferMatchFacet(address(diamond)).previewMatch(0, 0, sanctionedMatcher, sanctionedMatcher);
+        assertEq(uint8(r.errorCode), uint8(LibOfferMatch.MatchError.Paused), "pause is the first guard");
     }
 }

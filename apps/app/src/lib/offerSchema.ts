@@ -94,25 +94,25 @@ export interface OfferFormState {
    *  flag is set by whichever side authored the offer. Snapshotted to
    *  `Loan.allowsPartialRepay` at init and read by `RepayFacet.repayPartial`. */
   allowsPartialRepay: boolean;
-  /** Range Orders Phase 1 — upper bound of the amount range. Empty
-   *  string ⇒ single-value mode (auto-collapses to `amountMax = 0`
-   *  in the payload, which the contract reads as "match exactly
-   *  `amount`"). Only populated by the UI when the
-   *  `rangeAmountEnabled` master flag is on AND the user is in
-   *  Advanced mode. */
+  /** Range Orders — upper bound of the amount range. Empty string ⇒
+   *  single-value mode (auto-collapses to `amountMax = 0` in the payload,
+   *  which the contract reads as "match exactly `amount`"). The contract
+   *  always accepts a range: the range master flags that once claimed to
+   *  gate it gated nothing and were retired in #2812. No form input
+   *  populates this field today, so it stays empty. */
   amountMax: string;
-  /** Range Orders Phase 1 — upper bound of the interest-rate range
-   *  (entered as a percent like the base `interestRate` field, e.g.
-   *  "5.5"). Empty ⇒ single-value mode. Gated on `rangeRateEnabled`
-   *  + Advanced mode in the UI. */
+  /** Range Orders — upper bound of the interest-rate range (entered as a
+   *  percent like the base `interestRate` field, e.g. "5.5"). Empty ⇒
+   *  single-value mode. Always accepted by the contract (#2812); no form
+   *  input populates it today. */
   interestRateMax: string;
   /** Issue #164 — borrower-side upper bound of the collateral range.
    *  Empty ⇒ single-value mode (auto-collapses to
    *  `collateralAmountMax = 0` in the payload, which the contract
    *  reads as "lock exactly `collateralAmount`"). Lender offers must
    *  leave this empty — the contract rejects a lender offer with
-   *  `collateralAmountMax > collateralAmount` regardless of the master
-   *  flag. The UI input lands with #165 (basic/advanced parity); for
+   *  `collateralAmountMax > collateralAmount` (the borrower-side
+   *  collateral range flag was retired in #2812). The UI input lands with #165 (basic/advanced parity); for
    *  now the field stays empty everywhere and the contract sees
    *  single-value collateral on every offer. */
   collateralAmountMax: string;

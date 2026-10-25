@@ -333,7 +333,7 @@ contract PositiveFlowsTimed is PositiveFlowsBase {
     ///      offer is filled. `OfferFacetCancelCooldownTest` covers the gate's
     ///      edges; these scenarios show it holds, then lets go, on a chain.
     function _cancelCooldownApplies() internal view returns (bool) {
-        (, , bool partialFillOn) = ConfigFacet(diamond).getMasterFlags();
+        bool partialFillOn = ConfigFacet(diamond).getPartialFillEnabled();
         return partialFillOn;
     }
 

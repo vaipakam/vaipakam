@@ -95,9 +95,6 @@ contract BorrowerPartialFillTest is SetupTest {
         //    reachable. The single-fill-fallback scenario re-disables
         //    `partialFillEnabled` in its own scope.
         vm.startPrank(owner);
-        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
-        ConfigFacet(address(diamond)).setRangeRateEnabled(true);
-        ConfigFacet(address(diamond)).setRangeCollateralEnabled(true);
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         vm.stopPrank();
 

@@ -8,6 +8,30 @@
       "from": "assetRiskParams[].reserveFactorBps",
       "to": "assetRiskParams[].retiredReserveFactorBps",
       "reason": "#2696 (owner decision 2026-10-25): the per-asset reserve factor was never read by any fee path and is retired; the slot keeps its place and is no longer written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 125,
+      "offset": 6,
+      "from": "protocolCfg.rangeAmountEnabled",
+      "to": "protocolCfg.retiredRangeAmountEnabled",
+      "reason": "#2812 (owner decision 2026-10-25): ranged offers are always on, so the range master flags gate nothing; their setters and getters are removed and the slot is no longer written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 125,
+      "offset": 7,
+      "from": "protocolCfg.rangeRateEnabled",
+      "to": "protocolCfg.retiredRangeRateEnabled",
+      "reason": "#2812 (owner decision 2026-10-25): ranged offers are always on, so the range master flags gate nothing; their setters and getters are removed and the slot is no longer written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 125,
+      "offset": 9,
+      "from": "protocolCfg.rangeCollateralEnabled",
+      "to": "protocolCfg.retiredRangeCollateralEnabled",
+      "reason": "#2812 (owner decision 2026-10-25): ranged offers are always on, so the range master flags gate nothing; their setters and getters are removed and the slot is no longer written. Same type and position; marked retired, not repurposed."
     }
   ]
 }

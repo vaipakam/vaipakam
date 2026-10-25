@@ -58,14 +58,9 @@ contract PreviewAcceptTest is SetupTest {
         // offer-time HF / LTV bounds. No expected figure depends on the price.
         mockOraclePrice(mockCollateralERC20, 50e8, 8);
 
-        // Range / range-rate / range-collateral on; partial-fill OFF.
+        // Partial-fill OFF; ranged offers need no flag (always on, #2812).
         // The preview is a direct-accept dry-run; the partial-fill
         // gate is on `matchOffers` and doesn't touch this surface.
-        vm.startPrank(owner);
-        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
-        ConfigFacet(address(diamond)).setRangeRateEnabled(true);
-        ConfigFacet(address(diamond)).setRangeCollateralEnabled(true);
-        vm.stopPrank();
     }
 
     // ─────────────────────────────────────────────────────────────────

@@ -117,6 +117,10 @@
       "types": "./src/protocolKnobs.ts",
       "default": "./src/protocolKnobs.ts"
     },
+    "./staticReturn": {
+      "types": "./src/staticReturn.ts",
+      "default": "./src/staticReturn.ts"
+    },
     "./activityRefs": {
       "types": "./src/activityRefs.ts",
       "default": "./src/activityRefs.ts"

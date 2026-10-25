@@ -20,7 +20,7 @@ import {
   LABELLED_GETTER_HOST,
   PROTOCOL_KNOB_GETTERS,
   abiDescribesGetterAt,
-  abiOutputNames,
+  readProtocolConfigBundle,
   readProtocolKnobGetters,
 } from '@vaipakam/lib/protocolKnobs';
 import { CLOCK_SKEW_ALLOWANCE_SEC, type ProtocolKnobSnapshot, type ProtocolKnobValues } from './indexer';
@@ -91,12 +91,6 @@ export interface ChainConsoleRead {
   blockNumber: bigint;
 }
 
-function serialize(v: unknown): unknown {
-  if (typeof v === 'bigint') return v.toString();
-  if (Array.isArray(v)) return v.map(serialize);
-  return v;
-}
-
 /**
  * Read every value the console shows from the Diamond, all at one block: the
  * configuration bundle, labelled by the names in the compiled ABI, and the
@@ -109,7 +103,10 @@ function serialize(v: unknown): unknown {
  * (`abiDescribesGetterAt`). A length check alone would let an in-place
  * upgrade that reorders same-typed outputs put a real fee under the wrong
  * name. When it cannot be shown, this throws, and the page falls back as
- * for any failed read rather than labelling by position.
+ * for any failed read rather than labelling by position. So does an answer
+ * whose length differs from the one this build's ABI describes (#2812,
+ * through the shared `readProtocolConfigBundle`): that is other code behind
+ * the getter, and a positional decode of it would move every later field.
  *
  * Throws if the block, the bundle, the host check or the batched read fails.
  */
@@ -118,8 +115,6 @@ export async function readProtocolConsoleLive(
   chainId: number,
   diamond: `0x${string}`,
 ): Promise<ChainConsoleRead> {
-  const names = abiOutputNames(DIAMOND_ABI_VIEM, 'getProtocolConfigBundle');
-  if (names === null) throw new Error('the compiled ABI does not name the configuration bundle');
   const blockNumber = await client.getBlockNumber();
   const [labelsHold, bundle, knobs] = await Promise.all([
     abiDescribesGetterAt({
@@ -130,23 +125,15 @@ export async function readProtocolConsoleLive(
       expectedHost: getDeployment(chainId)?.facets?.[LABELLED_GETTER_HOST.getProtocolConfigBundle],
       blockNumber,
     }),
-    client.readContract({
-      address: diamond,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'getProtocolConfigBundle',
-      blockNumber,
-    }) as Promise<readonly unknown[]>,
+    readProtocolConfigBundle({ client, diamond, abi: DIAMOND_ABI_VIEM, blockNumber }),
     readProtocolKnobGetters({ client, diamond, abi: DIAMOND_ABI_VIEM, blockNumber }),
   ]);
   if (!labelsHold) {
     throw new Error('this build cannot show its names describe the deployed configuration code');
   }
-  if (bundle.length !== names.length) {
-    throw new Error('the configuration bundle does not match the compiled ABI');
-  }
-  const bundleValues = Object.fromEntries(names.map((n, i) => [n, serialize(bundle[i])]));
+  if (bundle.kind === 'unreadable') throw new Error(bundle.reason);
   return {
-    values: { ...bundleValues, ...knobs.values } as ProtocolKnobValues,
+    values: { ...bundle.values, ...knobs.values } as ProtocolKnobValues,
     unreported: knobs.unreported,
     blockNumber,
   };

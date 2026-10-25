@@ -70,9 +70,6 @@ contract SignedOfferMatcherTest is SetupTest {
         // matcher code paths are reachable. The kill-switch case re-disables
         // `partialFillEnabled` in its own scope.
         vm.startPrank(owner);
-        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
-        ConfigFacet(address(diamond)).setRangeRateEnabled(true);
-        ConfigFacet(address(diamond)).setRangeCollateralEnabled(true);
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         vm.stopPrank();
     }

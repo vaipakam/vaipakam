@@ -1,0 +1,22 @@
+-- #2812 — record why a captured configuration bundle is unknown.
+--
+-- The indexer decodes `getProtocolConfigBundle` only when the answer has the
+-- length its own ABI describes. A different length means the ConfigFacet
+-- behind the getter is not the code the indexer was compiled against (#2812
+-- removed two flags from the middle of the bundle, so an older facet answers
+-- 21 words where the new ABI describes 19), and a positional decode of it
+-- would store real numbers under the wrong fields. Such a capture stores no
+-- figures; this column says why:
+--
+--   bundle_unread_reason — the mismatch in words. NULL when the bundle was
+--                          decoded, or the row predates this column.
+--
+-- The rest of the row (the grace schedule, the pause log, the settings read
+-- beside the bundle) is captured as usual.
+--
+-- Additive: one NULLable column; the deployed code neither reads nor writes
+-- it. `master_flags_json` and `master_flags_names_json`, which held the
+-- retired `getMasterFlags` tuple, stay until the code that no longer reads
+-- them has shipped (#2840); dropping them here would break the Worker
+-- still serving when this lands.
+ALTER TABLE protocol_config ADD COLUMN bundle_unread_reason TEXT;

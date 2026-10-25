@@ -2123,6 +2123,7 @@
       "noGasDiscount": "VPFI 割引はネットワーク gas を減らしません。",
       "withdrawWarning": "VPFI を引き出すと、今後の手数料割引が下がる可能性があります。",
       "belowMinNote": "{{floor}} VPFI 未満の保有では手数料割引はありません。",
+      "tierTableUnknown": "現在このネットワークから割引ティアを読み取れないため、ここには表示していません。",
       "notOnThisChain": "{{chain}} では VPFI 入金はまだ利用できません。Vaipakam の他の機能は VPFI なしで動作します。",
       "tokenChanged": "レビュー後に VPFI トークン設定が変わりました。何も承認されていません — 更新後の数値を確認して再試行してください。",
       "tokenCheckRetry": "現在 VPFI トークンを確認できませんでした — 何も承認されていません。少し待って再試行してください。",
@@ -2836,9 +2837,7 @@
       "autoPause": "自動停止の継続時間",
       "maxOfferDuration": "オファーの最大期間",
       "flagsHeading": "機能フラグ",
-      "rangeAmount": "金額レンジのオファー",
-      "rangeRate": "金利レンジのオファー",
-      "partialFill": "部分約定",
+      "partialFill": "注文マッチング（部分約定）",
       "tiersHeading": "VPFI 割引ティア",
       "tiers": "ティア",
       "tierThreshold": "ティア {{n}} のしきい値",
@@ -2919,7 +2918,8 @@
       "autoRefinanceHint": "オフにすると、キーパーと注文マッチャーによる借り換えの完了が止まります。借り手自身による借り換えや、貸し手による借り換えリクエストの直接受諾は引き続き行えます。",
       "autoExtendHint": "オフにすると、借り手が直接求めるものも含め、ローンのその場での延長はすべてブロックされます。",
       "numeraireFeed": "基準通貨建てETH価格フィード",
-      "numeraireFeedHint": "基準通貨でETHの価格を示すChainlinkフィードです。基準通貨と一緒に変更されます。"
+      "numeraireFeedHint": "基準通貨でETHの価格を示すChainlinkフィードです。基準通貨と一緒に変更されます。",
+      "partialFillHint": "オフのときは注文マッチャーが拒否し、受諾されたオファーは一度だけ約定します。オンのときは、レンジ付きオファーを複数回のマッチングで約定できます。レンジ付きオファー自体は常に利用できます。"
     },
     "forcedClose": {
       "title": "このローンは延滞しています",
