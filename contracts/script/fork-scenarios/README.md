@@ -6,8 +6,8 @@ preclosesses, defaults, liquidates, and probes the sanctions / KYC / illiquid
 gates — accounting every movement of value to the wei.
 
 It exists alongside, not instead of, the Solidity flow scripts
-(`AnvilNewPositiveFlows.s.sol` and siblings, catalogued in
-[`docs/TestScopes/AdvancedUserGuideTestMatrix.md`](../../../docs/TestScopes/AdvancedUserGuideTestMatrix.md)).
+(`PositiveFlows.s.sol` and its modules under `script/positive-flows/`, catalogued
+in [`docs/TestScopes/PositiveFlowCoverage.md`](../../../docs/TestScopes/PositiveFlowCoverage.md)).
 Those are the canonical on-chain flows and they need `forge`. This driver
 answers a different question — *does the deployment that is live right now
 behave as documented* — and it needs only Node, because it reads the

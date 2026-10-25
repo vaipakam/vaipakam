@@ -36,7 +36,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *         HF-watcher warning band) are deferred to unit tests.
  *
  *         Run order: anvil-bootstrap.sh first, then this script.
- *         AnvilNewPositiveFlows.s.sol can run before this script —
+ *         PositiveFlows.s.sol (or any of its modules) can run before this script —
  *         the partial-flow scenarios use fresh participants /
  *         allowances so they don't conflict with positive-flow
  *         end-state.
@@ -444,7 +444,7 @@ contract AnvilNewPartialFlows is Script {
     ///      A full unmocked list→accept→completeLoanSale drive on Anvil is a
     ///      follow-up (#927 re-enables the listing UI); this scenario currently
     ///      documents the fixed posting step. Instant-exit alternative:
-    ///      `sellLoanViaBuyOffer` (AnvilNewPositiveFlows N15).
+    ///      `sellLoanViaBuyOffer` (PositiveFlowsAdvancedCredit PF-230).
     function _scenarioPtLoanSaleOfferPosted() internal {
         console.log("");
         console.log("=== P-T: Loan-sale offer posting (fixed, #951) ===");

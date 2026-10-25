@@ -1604,7 +1604,8 @@ See [`docs/DesignsAndPlans/Roadmap.md`](docs/DesignsAndPlans/Roadmap.md) for the
 fork plan.
 
 The Sepolia test scripts (`SepoliaActiveLoan.s.sol`,
-`SepoliaOpenOffers.s.sol`, `SepoliaPositiveFlows.s.sol`) call
+`SepoliaOpenOffers.s.sol`) and the positive-flow fixture
+(`script/positive-flows/PositiveFlowsBase.sol`) call
 `updateKYCTier(...)` / `setTradeAllowance(...)` defensively but those
 calls are no-ops while enforcement is off and trade-pair checks are
 unconditional. They can stay.

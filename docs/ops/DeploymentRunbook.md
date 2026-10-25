@@ -882,15 +882,20 @@ After peers are wired, sanity-check every chain via the
 chain-agnostic flow scripts:
 
 ```bash
-forge script script/PositiveFlows.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
 forge script script/PartialFlows.s.sol  --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
 # Repeat for ARB_SEPOLIA_RPC_URL and OP_SEPOLIA_RPC_URL.
 ```
 
-`PositiveFlows.s.sol` chains together SepoliaPositiveFlows (15
-legacy lifecycle scenarios) + AnvilNewPositiveFlows (18
-new-features scenarios) for a 33-scenario full-positive sweep.
-`PartialFlows.s.sol` does the same shape for 13 partial midpoints.
+`PartialFlows.s.sol` stands up 13 partial midpoints.
+
+`PositiveFlows.s.sol` is **not** a post-deploy check for a shared chain, and
+refuses one (#848): its fixture re-points the Diamond's oracle, sanctions
+oracle and risk parameters at mocks it deploys, which on a live testnet would
+replace the chain's real price and sanctions sources. To check that a live
+deployment behaves as documented, drive it on a local fork with the
+`contracts/script/fork-scenarios/` driver instead. Run `PositiveFlows.s.sol` on
+a local Anvil (section 5a), or on a Diamond deployed for the rehearsal with
+`POSITIVE_FLOWS_ALLOW_CHAIN_ID` set to that chain's id.
 
 ### 4. Recovery from a mid-flight failure
 
@@ -946,7 +951,11 @@ each item is checked:
       address.
 - [ ] `PositiveFlows.s.sol` + `PartialFlows.s.sol` green on every
       chain — capture the broadcast logs in
-      `docs/internal/RehearsalReports/<date>/`.
+      `docs/internal/RehearsalReports/<date>/`. The positive flows run
+      only against a Diamond deployed for the rehearsal, with
+      `POSITIVE_FLOWS_ALLOW_CHAIN_ID` set to that chain's id: their
+      fixture replaces the Diamond's oracle and sanctions sources with
+      mocks, so never point them at a Diamond anything live reads.
 - [ ] `deployment_source.json` on every chain points at the same
       monorepo commit + clean working tree (`monorepoCommit` ends
       WITHOUT ` (dirty)`).
@@ -1766,12 +1775,15 @@ export NEW_BORROWER_ADDRESS=0x976EA74026E726554dB657fA54763abd0C3a0aa9
 
 cd contracts
 
-# Positive — 18 scenarios end-to-end (matchOffers, range orders, partial
-# repay, refinance, preclose option-2/3, recovery, sanctions Tier-1/2,
-# keeper auth, VPFI staking + discount + claim, unstake, pause asset/global,
-# treasury surface, master-flag dormancy, sellLoanViaBuyOffer):
-ionice -c 2 -n 0 forge script script/AnvilNewPositiveFlows.s.sol \
-  --rpc-url http://localhost:8545 --broadcast --slow
+# Positive — every module under script/positive-flows/ (lifecycle backbone,
+# advanced credit, vault + VPFI, keeper authority, operator surfaces), each
+# scenario logged under its PF-### flow id. Mine a fresh block first: an idle
+# Anvil's head can be hours old, and a signed accept simulated at that time
+# arrives expired. `--disable-block-gas-limit` because a script's whole run is
+# one simulated frame (see the script's header):
+cast rpc evm_mine --rpc-url http://localhost:8545
+ionice -c 2 -n 0 forge script script/PositiveFlows.s.sol \
+  --rpc-url http://localhost:8545 --broadcast --slow --disable-block-gas-limit
 
 # Partial — 7 UI-testable midpoint states (offer states, partial repay,
 # collateral doubled, keeper enabled, refinance offer posted, stray token,
@@ -1786,17 +1798,21 @@ ionice -c 2 -n 0 forge script script/AnvilNegativeFlows.s.sol \
   --rpc-url http://localhost:8545 --broadcast --slow
 ```
 
-Each script must exit `EXIT=0` and log its `*** PASSED ***` banner. Skipped
-scenarios with their unit-test pointers are listed at the bottom of each
-script's banner — those revert paths live in `forge test` because Anvil
-`--broadcast` cannot advance chain time mid-script.
+Each script must exit `EXIT=0`. The positive flows log `[PF-###] PASS` per
+scenario and a passed/skipped count per module; a `[PF-###] SKIP` line says why
+that scenario could not run here, and is a skip, not a pass. The other two
+scripts log a `*** PASSED ***` banner, with skipped scenarios and their
+unit-test pointers listed at the bottom. Paths that need chain time to pass
+live in `forge test`, because Anvil `--broadcast` cannot advance chain time
+mid-script.
 
 ### 5b. Testnet smoke tests (after the Anvil sweep is green)
 
-Run the `Sepolia*` family on the target testnet first, then execute on mainnet forks:
+Run the `Sepolia*` family on the target testnet first, then execute on mainnet
+forks. The positive-flow suite is not part of this step: it refuses a shared
+chain (see section 3), and the fork-scenarios driver covers a live deployment.
 
 ```bash
-forge script script/SepoliaPositiveFlows.s.sol --rpc-url $RPC_URL --broadcast
 forge script script/SepoliaActiveLoan.s.sol   --rpc-url $RPC_URL --broadcast
 ```
 
@@ -1814,8 +1830,10 @@ entry points instead — each composes the legacy + new halves and runs
 them in append order (no merge of state, just one phase after the other):
 
 ```bash
-# Full positive flow — 33 scenarios (15 legacy + 18 new):
-forge script script/PositiveFlows.s.sol --rpc-url $RPC_URL --broadcast --slow
+# Full positive flow — every module under script/positive-flows/ (a local
+# Anvil, or a rehearsal Diamond named in POSITIVE_FLOWS_ALLOW_CHAIN_ID):
+forge script script/PositiveFlows.s.sol --rpc-url $RPC_URL --broadcast --slow \
+  --disable-block-gas-limit
 
 # Full partial flow — 13 UI-testable midpoint states (6 legacy + 7 new):
 forge script script/PartialFlows.s.sol  --rpc-url $RPC_URL --broadcast --slow
@@ -1837,10 +1855,10 @@ no further configuration.
 When to use which:
 - **Full sweep on a new chain** → use the `*Flows.s.sol` wrappers
   (this section). One forge invocation per flow type instead of two.
-- **Re-run a specific subset** (e.g. just the new-features positive
-  scenarios) → invoke the underlying script directly
-  (`AnvilNewPositiveFlows.s.sol`, etc.). Useful when iterating on a
-  single feature surface.
+- **Re-run a specific subset** → invoke one module directly
+  (`script/positive-flows/PositiveFlowsAdvancedCredit.s.sol`, etc.), or one
+  scenario with `ONLY_SCENARIO=PF-230-floor`. Every module builds its own
+  fixture, so it runs alone.
 - **Anvil regression sweep** → keep using the per-script form in 5a;
   the Anvil bootstrap leaves the chain in a known state that maps
   one-to-one to each underlying script's expectations.

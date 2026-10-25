@@ -1,5 +1,16 @@
 # Advanced-User-Guide-driven Test Matrix
 
+> **The positive-flow half of this matrix describes a retired layout.**
+> `SepoliaPositiveFlows.s.sol` and `AnvilNewPositiveFlows.s.sol` were split
+> into the modules under
+> [`contracts/script/positive-flows/`](../../contracts/script/positive-flows/)
+> (#848), and each scenario now runs under the `PF-###` id of its row in
+> [`PositiveFlowCoverage.md`](PositiveFlowCoverage.md), whose "Script module
+> map" is the current record of which module walks which flow.
+> `PositiveFlowsBase.sol` maps the old `1`-`15` and `N1`-`N26` labels used
+> below to those ids. The partial and negative scripts named here are
+> unchanged.
+
 > **A sibling surface, not a replacement.** These scripts run under `forge`
 > against a freshly-bootstrapped diamond and are the canonical flow coverage.
 > [`ForkVerification-BaseSepolia-2026-09-24.md`](ForkVerification-BaseSepolia-2026-09-24.md)
