@@ -21,12 +21,12 @@
  * A field of the configuration bundle is picked BY NAME (`bundleField`), its
  * position looked up in the compiled ABI, never written as a number: #2812
  * took two flags out of the middle of the bundle and moved
- * `maxOfferDurationDays` from position 14 to 12. What this does not do is
- * the app's answer-shape check (`@vaipakam/lib/staticReturn`): `read` hands
- * back viem's positional decode, so against a Diamond whose ConfigFacet is
- * not this build's, the picked value can be a neighbouring field. The live
- * drives run only after a deploy, against a chain refreshed to the build
- * under review; bringing the shape check into these drives is #2841.
+ * `maxOfferDurationDays` from position 14 to 12. The answer itself is
+ * decoded only at the shape this build's ABI describes: `read` goes through
+ * the driver's `livePublicClient`, which applies the app's answer-shape rule
+ * (`@vaipakam/lib/staticReturn`) and ends the run BLOCKED when a Diamond's
+ * ConfigFacet answers in another shape (#2841), so a name never picks a
+ * neighbouring field out of a different build's answer.
  */
 import configFacetAbi from '@vaipakam/contracts/abis/ConfigFacet.json' with { type: 'json' };
 

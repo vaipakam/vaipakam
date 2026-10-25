@@ -84,7 +84,6 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 import {
   ContractFunctionRevertedError,
-  createPublicClient,
   http,
   numberToHex,
 } from 'viem';
@@ -103,7 +102,7 @@ import {
   forcedCloseVerdict,
   reconcileEligibility,
 } from './forcedCloseCard.mjs';
-import { requireSiteUrl } from './driver.mjs';
+import { livePublicClient, requireSiteUrl } from './driver.mjs';
 import {
   expectedPostureFrom,
   postureCopyFrom,
@@ -356,7 +355,7 @@ const WRITE_SHAPED = /^(eth_send|eth_sign|personal_sign|wallet_send)/;
  */
 const MALFORMED_RPC = '<malformed json-rpc>';
 
-const pub = createPublicClient({ transport: http(RPC) });
+const pub = livePublicClient({ transport: http(RPC) });
 
 /**
  * #2355 — the three switches the posture banner is derived from, read the

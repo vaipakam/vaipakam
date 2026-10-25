@@ -12,7 +12,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPublicClient, http, parseAbi } from 'viem';
+import { http, parseAbi } from 'viem';
 import {
   blocked,
   blockedSync,
@@ -20,6 +20,7 @@ import {
   ensureConnected,
   launch,
   LivePreconditionError,
+  livePublicClient,
   precondition,
   requireSiteUrl,
   SITE,
@@ -76,7 +77,7 @@ const WRITE_ABI = parseAbi([
   'function setVaultRiskTier(uint8 level)',
   'function setRiskStrictMode(bool enabled)',
 ]);
-const pub = createPublicClient({
+const pub = livePublicClient({
   transport: http(process.env.BASE_SEPOLIA_RPC ?? 'https://sepolia.base.org'),
 });
 const TIER_LABELS = [/Blue-chip only/i, /Broad liquid/i, /Illiquid \/ custom/i];

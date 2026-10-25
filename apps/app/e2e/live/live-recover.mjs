@@ -40,7 +40,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPublicClient, http, parseAbi } from 'viem';
+import { http, parseAbi } from 'viem';
 import {
   exitWithVerdict,
   blocked,
@@ -48,6 +48,7 @@ import {
   ensureConnected,
   watchPageRpc,
   launch,
+  livePublicClient,
   precondition,
   requireSiteUrl,
   SITE,
@@ -104,7 +105,7 @@ const ORACLE_ABI = parseAbi([
 /** The probe the page itself makes of a configured oracle (`Recover.tsx`
  *  `probeSanctionsOracle`): a benign `isSanctioned(0x0)` must answer. */
 const ORACLE_PROBE_ABI = parseAbi(['function isSanctioned(address) view returns (bool)']);
-const pub = createPublicClient({
+const pub = livePublicClient({
   transport: http(process.env.BASE_SEPOLIA_RPC ?? 'https://sepolia.base.org'),
 });
 const ZERO = '0x0000000000000000000000000000000000000000';

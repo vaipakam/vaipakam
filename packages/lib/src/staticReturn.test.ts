@@ -41,6 +41,18 @@ const ABI = [
   { type: 'function', name: 'one', stateMutability: 'view', inputs: [], outputs: [{ name: 'v', type: 'uint8' }] },
   { type: 'function', name: 'text', stateMutability: 'view', inputs: [], outputs: [{ name: 's', type: 'string' }] },
   { type: 'function', name: 'list', stateMutability: 'view', inputs: [], outputs: [{ name: 'l', type: 'uint256[]' }] },
+  // #2841 — one name, two overloads with different answers.
+  { type: 'function', name: 'over', stateMutability: 'view', inputs: [], outputs: [{ name: 'v', type: 'uint256' }] },
+  {
+    type: 'function',
+    name: 'over',
+    stateMutability: 'view',
+    inputs: [{ name: 'id', type: 'uint256' }],
+    outputs: [
+      { name: 'a', type: 'uint256' },
+      { name: 'b', type: 'uint256' },
+    ],
+  },
 ] as const satisfies Abi;
 
 /** A client whose every call answers `data`, recording the block asked for. */
@@ -68,6 +80,11 @@ describe('staticReturnBytes', () => {
     expect(staticReturnBytes(ABI, 'text')).toBeNull();
     expect(staticReturnBytes(ABI, 'list')).toBeNull();
     expect(staticReturnBytes(ABI, 'absent')).toBeNull();
+  });
+
+  it('describes the overload the arguments pick (#2841)', () => {
+    expect(staticReturnBytes(ABI, 'over', [])).toBe(32);
+    expect(staticReturnBytes(ABI, 'over', [1n])).toBe(64);
   });
 
   it("describes the config bundle as this build compiles it", () => {
@@ -108,6 +125,16 @@ describe('readStaticReturn', () => {
     expect(
       await readStaticReturn({ client: answering(undefined).client, address: DIAMOND, abi: ABI, functionName: 'pair' }),
     ).toMatchObject({ kind: 'shape-mismatch', gotBytes: 0 });
+  });
+
+  it('checks and decodes against the overload the arguments pick (#2841)', async () => {
+    const { client } = answering(`0x${word(3)}${word(4)}`);
+    expect(
+      await readStaticReturn({ client, address: DIAMOND, abi: ABI, functionName: 'over', args: [1n] }),
+    ).toEqual({ kind: 'decoded', outputs: [3n, 4n] });
+    expect(
+      await readStaticReturn({ client, address: DIAMOND, abi: ABI, functionName: 'over', args: [] }),
+    ).toMatchObject({ kind: 'shape-mismatch', gotBytes: 64, expectedBytes: 32 });
   });
 
   it('will not read a dynamic getter at all', async () => {

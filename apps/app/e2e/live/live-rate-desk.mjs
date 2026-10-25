@@ -87,7 +87,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { decodeFunctionResult, encodeFunctionData, pad, parseUnits, toEventSelector } from 'viem';
+import { decodeFunctionResult, pad, parseUnits, toEventSelector } from 'viem';
 import {
   addressOf,
   blockedSync,
@@ -375,14 +375,11 @@ function verifyCancelled(offerId, minBlock) {
     // serve `0x` where the next serves good data (#2107 round 7).
     // Verified against the live Base Sepolia Diamond that this returns
     // exactly what `readContract` did.
-    read: async (blockNumber) => {
-      const { data } = await pub.call({
-        to: DIAMOND,
-        data: encodeFunctionData({ abi: ABI, functionName: 'getOffer', args: [offerId] }),
-        blockNumber,
-      });
-      return data ?? '0x';
-    },
+    // `readRaw` applies the answer-shape rule to those bytes first
+    // (#2841), so an answer from another build of the facet is refused
+    // rather than decoded by position into a zero creator.
+    read: (blockNumber) =>
+      pub.readRaw({ address: DIAMOND, abi: ABI, functionName: 'getOffer', args: [offerId], blockNumber }),
     decode: (data) => decodeFunctionResult({ abi: ABI, functionName: 'getOffer', data }),
     accept: (offer) => ZERO_CREATOR.test(String(offer.creator)),
     timeoutMs: 90_000,

@@ -411,6 +411,33 @@ Which failures are preconditions, driver by driver:
   of this is pinned by `e2e/live/watchPageRpc.test.mjs` — this helper was
   wrong seven times, each time in a way that read as correct, so it is
   unit-tested rather than trusted.
+- **A drive's own chain read in a shape this build does not describe
+  (#2841)** — never decoded, and a PASS reached after one is BLOCKED. viem
+  decodes a static-output answer by position and ignores trailing data, so
+  against a Diamond whose facet is not the build under review a tuple read
+  gives a neighbouring field without an error, and a drive would use it in
+  a PASS/FAIL check. Every drive therefore makes its public client with
+  `livePublicClient` (`driver.mjs`). Its `readContract`, `multicall` and
+  `readRaw` (the checked bytes, for a write confirmation that decodes them
+  itself) apply the app's answer-shape rule (`@vaipakam/lib/staticReturn`,
+  loaded through tsx): an answer to a static-output getter of any other
+  length is not decoded, the read throws `LiveShapeMismatchError`, and the
+  reason is recorded. A process `exit` listener in the driver applies that
+  record: a PASS the drive reaches after swallowing the error, and an
+  uncaught mismatch, end BLOCKED with the reason. A FAIL stands, with the
+  reason added, because it can rest on evidence the mismatch does not
+  touch (a malformed or write request from the page, which several drives
+  collect themselves), and BLOCKED would hide that defect; BLOCKED and
+  UNDETERMINED stand likewise. Applied at the exit rather than in each
+  drive's catch because the drives have dozens of exits and their catches
+  classify failures differently. Dynamic-output reads, simulations, the
+  injected wallet's forwarding of the page's own requests and
+  `pageSanctionsReads.mjs` (which decodes the page's own traffic to learn
+  what the page was told) are outside the rule. Pinned by
+  `shapeCheckedClient.test.mjs` (same value and error as viem wherever the
+  shape matches) and `liveClients.test.mjs` (the exit rule in a child
+  process; no drive constructing another client or making a raw
+  `eth_call`).
 - **Cleanup capacity, for any drive that MUTATES shared chain state** —
   reserved BEFORE the mutation, not discovered after it, and read at the
   PENDING block so an aborted earlier run's un-mined spend counts. Asset
