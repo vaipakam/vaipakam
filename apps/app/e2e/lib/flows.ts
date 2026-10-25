@@ -122,13 +122,21 @@ export async function postLenderOffer(page: Page): Promise<void> {
 }
 
 /** Shared review-step tail of both accept paths: consent (re-ticked
- *  through late-disclosure resets), sign, wait for the done card. */
-export async function signAcceptReview(page: Page): Promise<void> {
-  const accept = page.getByRole('button', { name: /borrow this now/i });
+ *  through late-disclosure resets), sign, wait for the done card. The
+ *  sign button is the borrower's by default; a lender funding a borrow
+ *  request (or buying a listed position) passes its own. A position
+ *  purchase opens no loan, so its done card reads differently and the
+ *  buyer passes that title too. */
+export async function signAcceptReview(
+  page: Page,
+  submit: RegExp = /borrow this now/i,
+  done: RegExp = /loan opened|what happens next/i,
+): Promise<void> {
+  const accept = page.getByRole('button', { name: submit });
   await expect(accept).toBeVisible({ timeout: 30_000 });
   await consentAndWaitEnabled(page, accept);
   await accept.click();
-  await expect(page.getByText(/loan opened|what happens next/i)).toBeVisible({
+  await expect(page.getByText(done)).toBeVisible({
     timeout: 120_000,
   });
 }
