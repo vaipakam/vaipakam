@@ -755,6 +755,51 @@ const copySource = {
       'The Push choice you made earlier for this wallet is kept, and alerts resume on Push once sending is back.',
     pushNotSaved:
       'Your other settings were saved, but Push wasn’t switched on: this deployment can’t send Push payment reminders right now.',
+    // #2723 — paid Push billing consent. Every figure is read from the
+    // chain on the network named; whether anything charges the fee is the
+    // alert service's own answer, and the card says which it is.
+    paidTitle: 'Paid Push alerts',
+    paidFee: tmpl(
+      'On {{chain}}, paid Push alerts cost {{fee}} VPFI per loan side. The fee is paid from the free VPFI in your vault to the protocol, at most once for each loan you’re on, on the first paid Push alert about it. Telegram alerts are always free.',
+      ['chain', 'fee'],
+    ),
+    paidNotBilled: tmpl(
+      'Paid Push alerts aren’t billed on {{chain}} right now: nothing charges this fee here yet, so there’s nothing to agree to.',
+      ['chain'],
+    ),
+    paidBilledUnknown: tmpl(
+      'We couldn’t check whether paid Push alerts are billed on {{chain}}, so agreeing to pay isn’t offered right now.',
+      ['chain'],
+    ),
+    paidConsentNone: tmpl(
+      'You haven’t agreed to pay this fee on {{chain}}, so it can’t be charged to you.',
+      ['chain'],
+    ),
+    paidConsentCovers: tmpl(
+      'You’ve agreed to pay up to {{cap}} VPFI per loan side on {{chain}}. That covers the current fee.',
+      ['cap', 'chain'],
+    ),
+    paidConsentBelow: tmpl(
+      'You’ve agreed to pay up to {{cap}} VPFI per loan side on {{chain}}. That’s less than the current fee, so it can’t be charged to you unless you agree to the new fee.',
+      ['cap', 'chain'],
+    ),
+    paidRaiseNote:
+      'If the fee goes up later, it can’t be charged to you until you agree to the new amount.',
+    paidAgree: tmpl('Agree to pay up to {{fee}} VPFI per loan side', ['fee']),
+    paidWithdraw: 'Withdraw my agreement',
+    paidWithdrawNote:
+      'You can withdraw it at any time, even while the protocol is paused. A fee already charged for a loan isn’t refunded.',
+    paidLowVault: tmpl(
+      'Your vault holds {{free}} free VPFI, less than the {{fee}} VPFI fee, so a paid Push alert can’t be charged until you add VPFI to your vault.',
+      ['free', 'fee'],
+    ),
+    paidReadFailed:
+      'We couldn’t read your paid Push agreement from the chain. Please try again later.',
+    paidAgreed: tmpl('Saved: you’ve agreed to pay up to {{fee}} VPFI per loan side on {{chain}}.', [
+      'fee',
+      'chain',
+    ]),
+    paidWithdrawn: tmpl('Withdrawn: paid Push fees can’t be charged to you on {{chain}}.', ['chain']),
     loanNudge: 'Want a Telegram warning if this loan gets risky? Set up alerts in Settings.',
   },
   notifications: {

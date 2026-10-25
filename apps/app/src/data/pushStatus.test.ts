@@ -4,7 +4,7 @@
  * Alerts card states rather than reading as "available" or "unavailable".
  */
 import { describe, it, expect } from 'vitest';
-import { parsePushStatus } from './alerts';
+import { parsePushBilling, parsePushStatus } from './alerts';
 
 const CHANNEL = '0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b';
 
@@ -50,5 +50,28 @@ describe('parsePushStatus', () => {
     expect(parsePushStatus({ available: true, channel: '0x1234', scope: 'agent' })).toEqual({
       kind: 'unknown',
     });
+  });
+});
+
+// #2723 — on which chains the service bills paid Push, read strictly: only a
+// list of chain ids means anything, and a malformed list is not half-read.
+describe('parsePushBilling', () => {
+  it('reads the list the service states, an empty one included', () => {
+    expect(parsePushBilling({ billedChainIds: [] })).toEqual({ kind: 'known', chainIds: [] });
+    expect(parsePushBilling({ billedChainIds: [84532, 421614] })).toEqual({
+      kind: 'known',
+      chainIds: [84532, 421614],
+    });
+  });
+
+  it('is unknown — never "not billed" — when the service did not say', () => {
+    expect(parsePushBilling(null)).toEqual({ kind: 'unknown' });
+    expect(parsePushBilling({ available: true, channel: CHANNEL, scope: 'agent' })).toEqual({
+      kind: 'unknown',
+    });
+    expect(parsePushBilling({ billedChainIds: 'none' })).toEqual({ kind: 'unknown' });
+    expect(parsePushBilling({ billedChainIds: [84532, '421614'] })).toEqual({ kind: 'unknown' });
+    expect(parsePushBilling({ billedChainIds: [0] })).toEqual({ kind: 'unknown' });
+    expect(parsePushBilling({ billedChainIds: [1.5] })).toEqual({ kind: 'unknown' });
   });
 });

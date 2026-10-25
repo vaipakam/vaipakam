@@ -2676,6 +2676,28 @@ is the borrower's own money.
   current app then saves the rest again without the opt-in, keeps Push off,
   and says why. An opt-in made earlier is kept through an outage and resumes
   when sending is back; the card says so while sending is unavailable.
+- Paid Push alerts carry an on-chain consent to be charged, and the alerts card
+  shows it plainly. For the network it is on, the card states the fee per loan
+  side in VPFI as currently configured on that network, that it is paid from
+  the free VPFI in the user's vault, at most once for each loan the user is on,
+  on the first paid Push alert about it, and that Telegram alerts are free. It
+  states the most the wallet has agreed to pay and whether that covers the
+  current fee, as the contract judges it; a cap below the current fee is said
+  to be below it, and the card says a later rise in the fee cannot be charged
+  without a new agreement. Figures it could not read are stated as unread,
+  never as zero.
+- Whether paid Push is billed on a network is the alert service's own answer,
+  never inferred from the fee being configured. Agreeing to pay is offered
+  only on a network the service says it bills on, and at the current fee;
+  elsewhere the card says paid Push is not billed there and there is nothing
+  to agree to, or that it could not check, and offers no agreement.
+- Withdrawing the consent is always offered while any is stored — whatever the
+  service says about billing, whether or not an alert service is configured,
+  whatever the Terms state, and while the protocol is paused. A fee already
+  charged for a loan is not refunded, and the card says so.
+- Where a covering consent stands on a billed network and the vault's free
+  VPFI appears to be below the fee, the card warns that a paid alert cannot be
+  charged until VPFI is added; the charge itself remains the authority.
 
 ## Notifications
 
