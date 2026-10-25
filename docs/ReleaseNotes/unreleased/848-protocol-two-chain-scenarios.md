@@ -1,4 +1,4 @@
-## Thread — Protocol two-chain reward and VPFI scenarios (PR #<n>)
+## Thread — Protocol two-chain reward and VPFI scenarios (PR #2825)
 
 A new test suite, `packages/protocol-e2e`, drives the protocol's
 cross-chain positive flows on two local Anvil chains, a canonical Base and a
