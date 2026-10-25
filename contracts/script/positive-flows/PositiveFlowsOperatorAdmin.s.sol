@@ -359,6 +359,10 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
     ///      The range master flags are not used here: `rangeAmountEnabled`
     ///      no longer gates offer creation (OfferCreateFacet calls it
     ///      "now-dead"), so it cannot show a knob affecting a flow (#2812).
+    /// @dev `ConfigFacet`'s fee ceiling (its private `MAX_FEE_BPS`, 50%),
+    ///      which the setter names in `InvalidFeeBps`.
+    uint256 private constant FEE_CAP_BPS = 5_000;
+
     function _feeKnobInsideBounds() internal {
         (uint256 treasuryBps, uint256 originalLifBps) = ConfigFacet(diamond).getFeesConfig();
         console.log("Loan initiation fee bps pre:", originalLifBps);
@@ -370,14 +374,15 @@ contract PositiveFlowsOperatorAdmin is PositiveFlowsBase {
         // Step 1: above the cap is refused, with the cap named.
         _requireRefused(
             admin,
-            abi.encodeWithSelector(ConfigFacet.setFeesConfig.selector, uint16(treasuryBps), uint16(5_001)),
-            abi.encodeWithSelector(ConfigFacet.InvalidFeeBps.selector, uint256(5_001), uint256(5_000)),
+            abi.encodeWithSelector(ConfigFacet.setFeesConfig.selector, uint16(treasuryBps), uint16(FEE_CAP_BPS + 1)),
+            abi.encodeWithSelector(ConfigFacet.InvalidFeeBps.selector, FEE_CAP_BPS + 1, FEE_CAP_BPS),
             "PF-324: an initiation fee above the 50% cap should be refused with InvalidFeeBps"
         );
         console.log("Initiation fee above the cap refused with InvalidFeeBps");
 
-        // Step 2: a value inside the cap lands and is visible.
-        uint256 newLifBps = originalLifBps + 10;
+        // Step 2: a different value inside the cap lands and is visible.
+        // Step down instead of up when the current fee is near the cap.
+        uint256 newLifBps = originalLifBps + 10 <= FEE_CAP_BPS ? originalLifBps + 10 : originalLifBps - 10;
         vm.startBroadcast(adminKey);
         ConfigFacet(diamond).setFeesConfig(uint16(treasuryBps), uint16(newLifBps));
         vm.stopBroadcast();
