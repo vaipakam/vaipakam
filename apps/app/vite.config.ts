@@ -5,10 +5,7 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  applyScriptHashes,
-  scriptHashSources,
-} from './scripts/cspScriptHashes.mjs';
+import { cspScriptHashesPlugin } from '@vaipakam/lib/cspScriptHashes';
 
 // Stamp the commit + build time into the bundle (shown on the Help page)
 // so a tester can always tell which build they're looking at.
@@ -121,43 +118,14 @@ function e2eDeploymentsBundle(): Plugin {
 }
 
 // #43 (ET-017) — the Content-Security-Policy allows inline scripts only by
-// hash. This writes the hashes of the BUILT page's inline scripts into the
-// built `_headers`, replacing the placeholder `_headers.base` carries in
-// `script-src`. Runs after Vite writes the client output (the public
-// directory, and so `_headers`, is in place by then), and throws rather
-// than ship a policy it could not complete. See scripts/cspScriptHashes.mjs.
-/** `file`'s text, or `null` when it does not exist (any other error throws). */
-function readIfPresent(file: string): string | null {
-  try {
-    return fs.readFileSync(file, 'utf8');
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw e;
-  }
-}
-
+// hash. The shared plugin writes the hashes of the BUILT page's inline
+// scripts into the built `_headers`, replacing the placeholder
+// `_headers.base` carries in `script-src`, and throws rather than ship a
+// policy it could not complete. See packages/lib/src/cspScriptHashes.mjs.
 function cspScriptHashes(): Plugin {
-  return {
-    name: 'vaipakam-csp-script-hashes',
-    apply: 'build',
-    writeBundle(options) {
-      const outDir = options.dir;
-      if (!outDir) return;
-      // Each file is read once and its absence handled from that read, so
-      // what is hashed and rewritten is exactly what was read.
-      const page = readIfPresent(path.join(outDir, 'index.html'));
-      // The worker environment of the Cloudflare plugin writes no page.
-      if (page === null) return;
-      const headersFile = path.join(outDir, '_headers');
-      const headers = readIfPresent(headersFile);
-      if (headers === null) {
-        this.error(`[csp] ${headersFile} is missing; run the prebuild (scripts/generate-seo.mjs) first.`);
-      }
-      const sources = scriptHashSources(page);
-      fs.writeFileSync(headersFile, applyScriptHashes(headers, sources));
-      console.log(`[csp] script-src allows ${sources.length} inline script hash(es)`);
-    },
-  };
+  return cspScriptHashesPlugin({
+    missingHeadersHint: 'run the prebuild (scripts/generate-seo.mjs) first.',
+  }) as Plugin;
 }
 
 // #2687 — builds `sw/sw.ts` into `dist/sw.js` beside the app. A second,

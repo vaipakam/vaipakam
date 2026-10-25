@@ -128,10 +128,17 @@
     "./activityParticipants": {
       "types": "./src/activityParticipants.ts",
       "default": "./src/activityParticipants.ts"
+    },
+    "./cspScriptHashes": {
+      "types": "./src/cspScriptHashes.d.mts",
+      "default": "./src/cspScriptHashes.mjs"
     }
   },
   "scripts": {
     "test": "vitest run"
+  },
+  "dependencies": {
+    "parse5": "8.0.1"
   },
   "peerDependencies": {
     "viem": "^2.0.0"

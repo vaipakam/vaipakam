@@ -51,6 +51,7 @@ import {
 import { resolve, dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { policyScriptSources, uncoveredScripts } from '@vaipakam/lib/cspScriptHashes';
 import { LOCALES, ROUTES, EN_ONLY_ROUTES, localizedPath } from './seo-routes.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -205,8 +206,9 @@ async function snapshot(context, route, locale) {
           : `./${locale}${route}`;
     const outDir = resolve(DIST, relDir);
     mkdirSync(outDir, { recursive: true });
-    writeFileSync(join(outDir, 'index.html'), html);
-    return { urlPath, ok: true };
+    const file = join(outDir, 'index.html');
+    writeFileSync(file, html);
+    return { urlPath, ok: true, file };
   } catch (err) {
     return { urlPath, ok: false, error: err.message };
   } finally {
@@ -252,6 +254,30 @@ if (failed.length > 0) {
   for (const f of failed) console.error(`  FAILED ${f.urlPath}: ${f.error}`);
   process.exit(1);
 }
+
+// ---------------------------------------------------------------------
+// The snapshots under the script policy (#43 / ET-017). The build allowed
+// the inline scripts of the BUILT index.html by hash; a snapshot is a page
+// a browser serialised later, and it ships under that same policy. Each
+// inline script a snapshot carries must be one the policy allows, or a
+// visitor's browser refuses it — the boot script that sets the theme and
+// the reading direction before first paint, today. Refused here, so the
+// deploy stops instead of shipping pages whose own policy blocks them. A
+// data block (the structured data) never runs, and is not asked for.
+const policy = policyScriptSources(readFileSync(join(DIST, '_headers'), 'utf8'));
+const blocked = results.flatMap((r) =>
+  uncoveredScripts(readFileSync(r.file, 'utf8'), policy).map((body) => ({ urlPath: r.urlPath, body })),
+);
+if (blocked.length > 0) {
+  for (const b of blocked) {
+    console.error(
+      `  BLOCKED ${b.urlPath}: an inline script the script policy does not allow: ` +
+        `${JSON.stringify(b.body.slice(0, 80))}…`,
+    );
+  }
+  process.exit(1);
+}
+console.log(`[prerender] every snapshot's inline scripts are allowed by the script policy`);
 
 // ---------------------------------------------------------------------
 // Cache-Control for the snapshots (Codex #1309 r9). The hand-written

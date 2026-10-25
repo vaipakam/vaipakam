@@ -1,0 +1,9 @@
+## Thread — the marketing site refuses inline and evaluated script (PR #2846)
+
+The marketing site's content policy allowed any inline script and any text evaluated as code, and it named an analytics loader, a web-font host and a wallet-verification frame. It had been copied from the retired connected app. This site uses none of those, and the two script keywords would let an injected script run with the page's full authority (#43).
+
+The site's `script-src` is now its own origin plus the SHA-256 of its one inline boot script, which sets the theme and the reading direction before first paint. The build computes that hash from the page it actually wrote, the same way the connected app has done since #2694, and fails rather than ship a policy it could not complete. The hashing now lives in the shared library, so both sites use one implementation. It hashes only scripts a browser runs, so the site's structured data, which a browser never runs, needs no allowance. The pre-render step checks every page it writes, for each route and each language, against the completed policy. It stops the deploy if any page carries an inline script the policy does not allow, so a page never ships with a script its own policy blocks.
+
+The policy also drops what the site never loads: Google's tag loader and runtime, Google Fonts, the WalletConnect verify frame and WebSockets. The site now embeds no frame and may not be framed itself. If analytics is added, it comes through the consent pipeline and is added to the policy as a deliberate entry. The `typecheck` step checks the committed policy, so a later edit cannot quietly put an unsafe keyword back.
+
+Still open on #43: locking `connect-src` on both sites to the origins each actually reads, and the deploy-pipeline hygiene, which is account work rather than code.
