@@ -23,6 +23,7 @@ import { type Address, type PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   LABELLED_GETTER_HOST,
+  PROTOCOL_KNOB_SETTER_EVENTS,
   abiDescribesGetterAt,
   abiOutputNames as abiOutputNamesOf,
   readProtocolKnobGetters,
@@ -117,27 +118,15 @@ const CONFIG_EVENT_NAMES: ReadonlySet<string> = new Set([
   'ZeroExProxySet',
   'AllowanceTargetSet',
   'SanctionsOracleSet',
-  // #2071 — setters of the single-output settings published beside the
-  // bundle (`PROTOCOL_KNOB_GETTERS`). `setSequencerUptimeFeed` emits
-  // nothing, so that one value reaches the snapshot on the backstop.
-  'MinHealthFactorSet',
-  'SecondaryOracleMaxDeviationBpsSet',
-  'SecondaryOracleMaxStalenessSet',
-  'PythOracleSet',
-  'PythNumeraireFeedIdSet',
-  'PythMaxStalenessSecondsSet',
-  'PythNumeraireMaxDeviationBpsSet',
-  'PythConfidenceMaxBpsSet',
-  'RewardReporterConfigUpdated',
-  'PeriodicInterestEnabledSet',
-  'NumeraireSwapEnabledSet',
-  'NumeraireUpdated',
-  'MinPrincipalForFinerCadenceSet',
-  'PreNotifyDaysSet',
+  // #2071 — the setters of the single-output settings published beside the
+  // bundle are NOT listed here: each `PROTOCOL_KNOB_GETTERS` entry names its
+  // own setter events and they are added below (Codex #2815 r1), so a new
+  // setting cannot be published without its refresh trigger.
   // Codex #2683 r5 — a cut can replace the code behind any getter the
   // snapshot shows without any setter event, so it refreshes like one; the
   // re-read then re-runs the host binding and withholds labels if it fails.
   'DiamondCut',
+  ...PROTOCOL_KNOB_SETTER_EVENTS,
 ]);
 
 /** #2808 — the events that change the pause-interval log the loan clock

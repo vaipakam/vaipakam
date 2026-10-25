@@ -1,8 +1,10 @@
-// apps/keeper/src/d6Wire.ts
+// packages/lib/src/d6Wire.ts
 //
 // The rooted (d6) remittance wire's day-list commitment, mirrored from
-// `contracts/src/crosschain/RemitWire.sol` so the keeper can index or prove a
-// delivery's chunks. Every rule here is the contract's, restated once:
+// `contracts/src/crosschain/RemitWire.sol` so an off-chain caller can index or
+// prove a delivery's chunks: the keeper's delivery-proof pass, and the
+// protocol's Anvil scenarios (packages/protocol-e2e), which drive the same
+// permissionless calls. Every rule here is the contract's, restated once:
 //
 //   - the funded day list is split into chunks of `D6_CHUNK_DAYS` (16), in
 //     order, the last chunk holding the remainder;
@@ -93,4 +95,21 @@ export function d6VerifyProof(proof: readonly Hex[], root: Hex, leaf: Hex): bool
   let h = leaf;
   for (const p of proof) h = hashPair(h, p);
   return h.toLowerCase() === root.toLowerCase();
+}
+
+/**
+ * The funded days of a remit reservation from its own immutable record
+ * (`fundedDayBits`, Codex #2489 r2): bit `i` set means `dayIds[i]` was funded
+ * — on the wire, in order. Null when the reservation predates the record (an
+ * empty bitmap over a non-empty day list): such a list is never rebuilt from
+ * anything else. Pure; pinned by the tests.
+ */
+export function fundedDaysFromBits(dayIds: readonly bigint[], bits: readonly bigint[]): bigint[] | null {
+  if (dayIds.length > 0 && bits.length === 0) return null;
+  const out: bigint[] = [];
+  for (let i = 0; i < dayIds.length; i++) {
+    const word = bits[i >> 8] ?? 0n;
+    if ((word >> BigInt(i & 255)) & 1n) out.push(dayIds[i]);
+  }
+  return out;
 }

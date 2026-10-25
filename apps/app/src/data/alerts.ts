@@ -101,21 +101,59 @@ export type PushRailState =
   | { kind: 'unavailable'; scope: PushStatusScope }
   | { kind: 'unknown' };
 
-export async function fetchPushStatus(): Promise<PushRailState> {
+/**
+ * #2723 — on which chains the alert service charges the paid-Push fee, as the
+ * service itself states it (`billedChainIds` on `GET /push/status`). Whether
+ * Push is billed is the biller's answer, exactly as whether Push can be sent
+ * is the sender's: the app never infers it from the fee configured on chain,
+ * which is set whether or not anything charges it.
+ *
+ * - `known` — the list as stated; empty means no chain is billed.
+ * - `unknown` — the service could not be asked, or predates the field. Never
+ *   read as "not billed": the card says it could not confirm.
+ */
+export type PushBillingState =
+  | { kind: 'known'; chainIds: readonly number[] }
+  | { kind: 'unknown' };
+
+/** What one `GET /push/status` answers: the rail, and the billing posture. */
+export interface PushStatus {
+  rail: PushRailState;
+  billing: PushBillingState;
+}
+
+const UNKNOWN_PUSH_STATUS: PushStatus = {
+  rail: { kind: 'unknown' },
+  billing: { kind: 'unknown' },
+};
+
+export async function fetchPushStatus(): Promise<PushStatus> {
   const origin = agentOrigin();
-  if (!origin) return { kind: 'unknown' };
+  if (!origin) return UNKNOWN_PUSH_STATUS;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
     const res = await fetch(`${origin}/push/status`, { signal: ctrl.signal });
-    if (!res.ok) return { kind: 'unknown' };
+    if (!res.ok) return UNKNOWN_PUSH_STATUS;
     const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-    return parsePushStatus(data);
+    return { rail: parsePushStatus(data), billing: parsePushBilling(data) };
   } catch {
-    return { kind: 'unknown' };
+    return UNKNOWN_PUSH_STATUS;
   } finally {
     clearTimeout(t);
   }
+}
+
+/** The `billedChainIds` field, read strictly: a list of positive integer
+ *  chain ids, or `unknown`. A malformed entry spoils the whole list, since a
+ *  partly readable answer cannot say which chains it left out. */
+export function parsePushBilling(data: Record<string, unknown> | null): PushBillingState {
+  const ids = data?.billedChainIds;
+  if (!Array.isArray(ids)) return { kind: 'unknown' };
+  if (!ids.every((id) => typeof id === 'number' && Number.isSafeInteger(id) && id > 0)) {
+    return { kind: 'unknown' };
+  }
+  return { kind: 'known', chainIds: ids as number[] };
 }
 
 /** The agent's `GET /push/status` body, read strictly: anything that is not

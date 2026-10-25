@@ -161,9 +161,12 @@ including people who never will.
   in-place extension. The layer-2 sequencer guard is described as holding
   prices both while the sequencer is down and for the hour after it
   returns.
-- A setting whose change announces nothing on chain (today the layer-2
-  sequencer uptime feed) can lag in the indexer's snapshot until its next
-  scheduled refresh. While the console shows the snapshot, that row says so.
+- A setting that can change without announcing it on chain (today the
+  layer-2 sequencer uptime feed, and the ETH reference feed, which one of
+  its two setters changes silently) can lag in the indexer's snapshot until
+  its next scheduled refresh. While the console shows the snapshot, that
+  row says so. Every other published setting names the events that announce
+  its change, and the snapshot refreshes on each of them.
 - The console shows the public indexer's snapshot only while that snapshot
   can stand in for the chain: it is dated, recent enough that the indexer's
   regular refresh is still running, not known to be behind a governance
@@ -2676,6 +2679,39 @@ is the borrower's own money.
   current app then saves the rest again without the opt-in, keeps Push off,
   and says why. An opt-in made earlier is kept through an outage and resumes
   when sending is back; the card says so while sending is unavailable.
+- Paid Push alerts carry an on-chain consent to be charged, and the alerts card
+  shows it plainly. For the network it is on, the card states the fee per loan
+  side in VPFI as currently configured on that network, that it is paid from
+  the free VPFI in the user's vault, at most once for each loan the user is on,
+  on the first paid Push alert about it, and that Telegram alerts are free. It
+  states the most the wallet has agreed to pay and whether that covers the
+  current fee, as the contract judges it; a cap below the current fee is said
+  to be below it. The card says what the agreement protects against in terms
+  of the agreed cap, never the fee of the day: nothing above the cap can be
+  charged, so a rise in the fee is charged without a new agreement while it
+  stays within the cap, and only a fee above the cap needs one. Figures it could not read are stated as unread,
+  never as zero. When a later refresh fails, the figures last read stay on
+  screen labelled as the last successful read that may be out of date, never
+  as the network's current record; agreeing is held until a read succeeds,
+  and withdrawing stays offered. A mined agreement or withdrawal is shown as
+  the recorded cap straight away, but it establishes only the cap: it never
+  marks the fee, or the rest of a failed read, as current.
+- Whether paid Push is billed on a network is the alert service's own answer,
+  never inferred from the fee being configured. Agreeing to pay is offered
+  only on a network the service says it bills on, and at the current fee;
+  elsewhere the card says paid Push is not billed there and there is nothing
+  to agree to, or that it could not check, and offers no agreement.
+- Withdrawing the consent is always offered while any is stored — whatever the
+  service says about billing, whether or not an alert service is configured,
+  whatever the Terms state, and while the protocol is paused. A fee already
+  charged for a loan is not refunded, and the card says so.
+- A confirmation or error from agreeing or withdrawing belongs to the wallet
+  and network it was sent for. After a switch of wallet or network it is no
+  longer shown, including when the write completes after the switch, so one
+  wallet's withdrawal is never presented as covering another wallet.
+- Where a covering consent stands on a billed network and the vault's free
+  VPFI appears to be below the fee, the card warns that a paid alert cannot be
+  charged until VPFI is added; the charge itself remains the authority.
 
 ## Notifications
 

@@ -18,6 +18,7 @@ import {
   serializeTuple,
   shouldRefreshConfig,
 } from '../src/configSnapshot';
+import { PROTOCOL_KNOB_SETTER_EVENTS } from '@vaipakam/lib/protocolKnobs';
 import type { Env } from '../src/env';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
@@ -887,8 +888,10 @@ describe('configSnapshot', () => {
         k: string | null;
       }).k;
 
-    it('refreshes on a setter event of a published setting', () => {
-      for (const name of ['MinHealthFactorSet', 'PythOracleSet', 'PreNotifyDaysSet', 'RewardReporterConfigUpdated']) {
+    it('refreshes on every setter event a published setting declares (Codex #2815 r1)', () => {
+      expect(PROTOCOL_KNOB_SETTER_EVENTS.size).toBeGreaterThan(0);
+      for (const name of PROTOCOL_KNOB_SETTER_EVENTS) expect(isConfigEventName(name), name).toBe(true);
+      for (const name of ['MinHealthFactorSet', 'MinIntentFillNumeraireSet', 'RewardReporterConfigUpdated']) {
         expect(isConfigEventName(name), name).toBe(true);
       }
     });

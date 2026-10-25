@@ -150,6 +150,20 @@ describe('isExitWrite', () => {
     expect(isExitWrite('setVPFIDiscountConsent', [true])).toBe(false);
   });
 
+  it('permits withdrawing paid-Push billing consent, and only with a zero cap', () => {
+    // #2723 — the consent authorises VPFI to leave the vault per loan side;
+    // withdrawing it is an exit, agreeing to pay or raising the cap is not.
+    expect(isExitWrite('setNotificationFeeConsent', [0n])).toBe(true);
+    expect(isExitWrite('setNotificationFeeConsent', [5n * 10n ** 17n])).toBe(false);
+    // An unreadable amount is refused, never read as zero.
+    expect(isExitWrite('setNotificationFeeConsent', [])).toBe(false);
+    expect(isExitWrite('setNotificationFeeConsent', [0])).toBe(false);
+    expect(isExitWrite('setNotificationFeeConsent', ['0'])).toBe(false);
+    // Inside a batch the amount is decoded and read the same way.
+    expect(isExitWrite('multicall', [[call('setNotificationFeeConsent', [0n])]])).toBe(true);
+    expect(isExitWrite('multicall', [[call('setNotificationFeeConsent', [1n])]])).toBe(false);
+  });
+
   it('reads disable-only ARGUMENTS inside a batch, not just selectors', () => {
     // Review round 7 P2: an allowlisted selector doing the opposite of
     // what earned it the allowlist. `MulticallFacet` delegatecalls it

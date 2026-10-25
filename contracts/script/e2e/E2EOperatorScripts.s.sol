@@ -32,7 +32,7 @@ import {SetInteractionLaunch} from "../SetInteractionLaunch.s.sol";
  *         scripts can run on a node that presents a live chain id.
  *
  *         Run with `forge script <this file> --tc <Contract>`; the harness
- *         (`apps/keeper/e2e/mesh/fixture.ts`) does, in the order an operator
+ *         (`packages/anvil-harness/src/mesh.ts`) does, in the order an operator
  *         would. Each script's env is its own — see its header.
  *         `ArtifactRootBase` refuses the redirect anywhere but a local Anvil
  *         node or `forge test`, and refuses any root outside

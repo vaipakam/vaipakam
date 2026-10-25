@@ -53,12 +53,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { toFunctionSelector, type Hex } from 'viem';
 import { runRewardSanctionsHold } from '../../src/rewardSanctionsHold';
 import { listOpenStagingOwners } from '../../src/db';
-import { OVERLAY_ABI, openScenario, type ScenarioChain } from '../harness/chain';
+import { OVERLAY_ABI, openScenario, type KeeperChain } from '../harness/chain';
 import { keeperEnvFor, tickNow, type KeeperHarness } from '../harness/keeperEnv';
 import type { Env } from '../../src/env';
 import { opsBotSink, type OpsBotSink } from '../harness/opsAlerts';
-import { openLoan, repayInFull } from '../harness/lending';
-import { finalizeThrough } from '../harness/rewardDays';
+import { openLoan, repayInFull } from '@vaipakam/anvil-harness/lending';
+import { finalizeThrough } from '@vaipakam/anvil-harness/rewardDays';
 
 const DAY = 86_400;
 const HOUR = 3_600;
@@ -81,7 +81,7 @@ const FORFEITED_REWARD = 0;
  *  1–34, more than one 30-day chunk. */
 const ACCRUED_DAYS = 33;
 
-let sc: ScenarioChain;
+let sc: KeeperChain;
 let k: KeeperHarness;
 let sink: OpsBotSink;
 let env: Env;

@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "Node-only test harness for the local-Anvil tiers: JSON-RPC control of an anvil node (time travel, balances, state dump), spawning one, and deploying the repository's CURRENT contracts onto it from source (contracts/script/e2e/DeployE2EFixture.s.sol), and a local CCIP lane between two such nodes with the relay that carries it (contracts/script/e2e/E2ELocalCcip.sol). Shared by the connected app's e2e suite (apps/app/e2e) and the keeper's Anvil scenarios (apps/keeper/e2e). Never imported by runtime code: it spawns processes and reads the filesystem.",
+  "description": "Node-only test harness for the local-Anvil tiers: JSON-RPC control of an anvil node (time travel, balances, state dump), spawning one, deploying the repository's CURRENT contracts onto it from source (contracts/script/e2e/DeployE2EFixture.s.sol), a local CCIP lane between two such nodes with the relay that carries it (contracts/script/e2e/E2ELocalCcip.sol), the two-chain reward mesh built on them by the operator scripts, and the scenario chain client every suite drives (parties, writes, reads, clock). Shared by the connected app's e2e suite (apps/app/e2e), the keeper's Anvil scenarios (apps/keeper/e2e) and the protocol's (packages/protocol-e2e). Never imported by runtime code: it spawns processes and reads the filesystem.",
   "exports": {
     ".": {
       "types": "./src/index.ts",
@@ -24,10 +24,37 @@
     "./ccipLane": {
       "types": "./src/ccipLane.ts",
       "default": "./src/ccipLane.ts"
+    },
+    "./devKeys": {
+      "types": "./src/devKeys.ts",
+      "default": "./src/devKeys.ts"
+    },
+    "./scenarioChain": {
+      "types": "./src/scenarioChain.ts",
+      "default": "./src/scenarioChain.ts"
+    },
+    "./lending": {
+      "types": "./src/lending.ts",
+      "default": "./src/lending.ts"
+    },
+    "./rewardDays": {
+      "types": "./src/rewardDays.ts",
+      "default": "./src/rewardDays.ts"
+    },
+    "./mesh": {
+      "types": "./src/mesh.ts",
+      "default": "./src/mesh.ts"
+    },
+    "./meshScenario": {
+      "types": "./src/meshScenario.ts",
+      "default": "./src/meshScenario.ts"
     }
   },
   "scripts": {
     "typecheck": "tsc -p . --noEmit"
+  },
+  "dependencies": {
+    "@vaipakam/contracts": "workspace:*"
   },
   "peerDependencies": {
     "viem": "^2.0.0"

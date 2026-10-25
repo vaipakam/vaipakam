@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { planRemitBatch } from '../src/rewardBudgetRemit';
+import { REMIT_FUNDED_DAYS_PER_SEND, planRemitBatch } from '../src/rewardBudgetRemit';
 
 /**
  * The keeper's day-count bound, and the two things that can go wrong with it.
@@ -36,6 +36,10 @@ import { planRemitBatch } from '../src/rewardBudgetRemit';
  *
  *   3. THE BOUND ITSELF, driven through `planRemitBatch` — the function the
  *      pass itself calls, not a restatement of it.
+ *
+ * The pass asks for ONE funded day per send (#2821, its own suite below), so
+ * these cases pass the fan-out cap explicitly: they pin the CEILING the planner
+ * enforces whatever it is asked for.
  */
 const REPO_ROOT = new URL('../../../', import.meta.url).pathname.replace(/\/$/, '');
 const KEEPER_SRC = join(REPO_ROOT, 'apps/keeper/src/rewardBudgetRemit.ts');
@@ -91,6 +95,8 @@ describe('reward-budget remittance fan-out cap', () => {
       window.map((_, i) => (i < riders ? 0n : ONE)),
       window.map((_, i) => i < riders),
       LANE_CAP,
+      0,
+      solidityCap(),
     );
     expect(batch.length).toBe(riders + cap);
     expect(deferred).toBe(fundedDays - cap);
@@ -106,6 +112,8 @@ describe('reward-budget remittance fan-out cap', () => {
       window.map(() => ONE),
       window.map(() => false),
       LANE_CAP,
+      0,
+      solidityCap(),
     );
     expect(batch.length).toBe(cap);
     expect(deferred).toBe(45 - cap);
@@ -127,6 +135,8 @@ describe('reward-budget remittance fan-out cap', () => {
       window.map((_, i) => (i < riders ? 0n : ONE)),
       window.map((_, i) => i < riders),
       LANE_CAP,
+      0,
+      solidityCap(),
     );
     expect(batch.length).toBe(riders + 2); // every rider, plus both funded days
     expect(deferred).toBe(0);
@@ -148,6 +158,8 @@ describe('reward-budget remittance fan-out cap', () => {
       window.map((_, i) => i < riders),
       // A lane cap that admits exactly one funded day, so two are left behind.
       ONE,
+      0,
+      solidityCap(),
     );
     expect(batch.length).toBe(riders + 1);
     expect(deferred).toBe(funded - 1);
@@ -162,6 +174,8 @@ describe('reward-budget remittance fan-out cap', () => {
       window.map(() => ONE),
       window.map(() => false),
       LANE_CAP,
+      0,
+      solidityCap(),
     );
     expect(batch.length).toBe(cap);
     expect(deferred).toBe(0);
@@ -175,6 +189,8 @@ describe('reward-budget remittance fan-out cap', () => {
       window.map(() => 30n * ONE),
       window.map(() => false),
       50n * ONE,
+      0,
+      solidityCap(),
     );
     expect(batch).toEqual([window[0]]);
     expect(total).toBe(30n * ONE);
@@ -189,7 +205,60 @@ describe('reward-budget remittance fan-out cap', () => {
       window.map(() => false),
       LANE_CAP,
       3,
+      solidityCap(),
     );
+    expect(deferred).toBe(3);
+  });
+});
+
+/**
+ * #2821 — one funded day per send. A multi-day send lands on the mirror as one
+ * epoch that the contest withholds while more than one of its days is open, so
+ * an entry spanning two of them is never paid there.
+ */
+describe('reward-budget remittance: one funded day per send (#2821)', () => {
+  it('is the bound the pass uses', () => {
+    expect(REMIT_FUNDED_DAYS_PER_SEND).toBe(1);
+  });
+
+  it('sends the oldest owed day of a backlog and defers the rest', () => {
+    const window = days(3, 8000);
+    const { batch, total, deferred } = planRemitBatch(
+      window,
+      window.map(() => ONE),
+      window.map(() => false),
+      LANE_CAP,
+    );
+    expect(batch).toEqual([window[0]]);
+    expect(total).toBe(ONE);
+    expect(deferred).toBe(2);
+  });
+
+  it('still lets close-only days ride with the one funded day', () => {
+    // Two riders, then two funded days: both riders and the first funded day go.
+    const window = days(4, 8100);
+    const { batch, deferred } = planRemitBatch(
+      window,
+      window.map((_, i) => (i < 2 ? 0n : ONE)),
+      window.map((_, i) => i < 2),
+      LANE_CAP,
+    );
+    expect(batch).toEqual(window.slice(0, 3));
+    expect(deferred).toBe(1);
+  });
+
+  it('never lets a caller exceed the destination fan-out cap', () => {
+    const cap = solidityCap();
+    const window = days(cap + 3, 8200);
+    const { batch, deferred } = planRemitBatch(
+      window,
+      window.map(() => ONE),
+      window.map(() => false),
+      LANE_CAP,
+      0,
+      cap + 100,
+    );
+    expect(batch.length).toBe(cap);
     expect(deferred).toBe(3);
   });
 });

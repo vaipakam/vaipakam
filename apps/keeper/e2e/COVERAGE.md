@@ -34,7 +34,8 @@ ONE bundle per run, and the two suites' bundles name different Diamonds for
   runs `contracts/script/e2e/ConfigureKeeperRewardsFixture.s.sol`, which turns
   the Diamond into a canonical reward chain. Finally it dumps the chain state
   into `e2e/.state/`, which is gitignored.
-- **The two-chain global setup** (`e2e/mesh/fixture.ts`) builds two nodes the
+- **The two-chain global setup** (`e2e/mesh/fixture.ts`, over the shared
+  build in `packages/anvil-harness/src/mesh.ts`) builds two nodes the
   same way, one presenting Base Sepolia (84532) and one Sepolia (11155111),
   and wires them by running the operator scripts themselves — see "The
   two-chain harness" below. Its dumps go to `e2e/.state/mesh/`.
@@ -76,7 +77,9 @@ ONE bundle per run, and the two suites' bundles name different Diamonds for
 
 ## The two-chain harness
 
-`e2e/mesh/fixture.ts` builds it once per run:
+The shared two-chain build (`packages/anvil-harness/src/mesh.ts`, which the
+protocol's scenarios use too) builds it once per run, under the keeper
+suite's own store (`e2e/mesh/fixture.ts`):
 
 1. Two nodes, each deployed from source (`deployFromSource`), presenting
    84532 and 11155111. Each chain's artifact lives under the gitignored
@@ -88,11 +91,12 @@ ONE bundle per run, and the two suites' bundles name different Diamonds for
    both, each naming the other as its one lane; `ConfigureRewardReporter` on
    both (Base expecting reports from both chains, the mirror reporting to
    Base); `SetInteractionLaunch` on both with one shared day 0.
-4. The admin steps no script performs (`ConfigureKeeperMeshFixture.s.sol`):
+4. The admin steps no script performs (`ConfigureMeshRewardsFixture.s.sol`):
    reward custody activated on both; on Base, the reward pool funded and the
-   keeper authorized to remit.
+   keeper (the remitter this suite names) authorized to remit.
 
-Each scenario then starts both nodes from the dumps (`e2e/mesh/mesh.ts`),
+Each scenario then starts both nodes from the dumps (`e2e/mesh/mesh.ts`, over
+the shared `packages/anvil-harness/src/meshScenario.ts`),
 moves both clocks to one shared timestamp on every warp, and pins the
 keeper's `Date` to it.
 

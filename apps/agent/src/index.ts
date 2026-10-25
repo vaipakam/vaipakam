@@ -41,7 +41,9 @@
  *   POST /quote/1inch                       — 1inch v6 aggregator proxy
  *   GET  /quote/readiness                   — which aggregator keys this Worker holds
  *   GET  /push/status                       — whether this Worker can send Push,
- *                                             and as which channel (#2251)
+ *                                             and as which channel (#2251), and
+ *                                             the chains paid Push is billed on
+ *                                             (none today, #2723)
  *   POST /intent/fusion/post                — 1inch Fusion resolver-pickup
  *                                             proxy (T-090 v1.1 Sub 3)
  *   POST /opensea/listing                   — OpenSea Listings API proxy

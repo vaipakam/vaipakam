@@ -1574,6 +1574,7 @@
     "L|vaipakam|631|0|uint256|rewardSanctionsHeldTotal",
     "L|vaipakam|635|0|bool|priorityRoutingPerkArmed",
     "L|vaipakam|641|0|uint256|feeLedgerTotal",
+    "L|vaipakam|642|0|uint256|minIntentFillNumeraire",
     "L|vaipakam|64|0|uint256|interactionCapVpfiPerEth",
     "L|vaipakam|65|0|bool|isCanonicalRewardChain",
     "L|vaipakam|65|1|uint32|localEidLegacyDoNotUse",

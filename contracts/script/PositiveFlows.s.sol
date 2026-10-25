@@ -49,8 +49,10 @@ import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
  *             move between two steps, so here they SKIP wherever the wait
  *             applies and name their staged run,
  *             `script/positive-flows/run-timed.sh`.
- *         The catalog's cross-chain module is not written: no module
- *         rehearses CCIP, and this runner does not claim to.
+ *         The catalog's cross-chain module is not written here: a forge
+ *         script runs on one chain. The cross-chain flows are driven on two
+ *         local Anvil chains by `packages/protocol-e2e` instead, and this
+ *         runner does not claim them.
  *
  *         Selection: `ONLY_SCENARIO=<id>` (a flow id such as `PF-230-floor`)
  *         runs that one scenario in the module that carries it; an id no

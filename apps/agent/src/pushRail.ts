@@ -90,8 +90,26 @@ async function keeperRail(db: D1Database, nowSec: number): Promise<PublishedRail
 }
 
 /**
+ * The chains on which this service charges the paid-Push notification fee
+ * (`NotificationFeeFacet.markNotifBilled`) — none (#2723).
+ *
+ * No sender in this service calls the billing entry point today, so the
+ * honest answer is an empty list, written here rather than read from a
+ * setting: an operator flag could declare billing that no code performs.
+ * The app reads this list before it offers the on-chain consent to be
+ * charged, and offers that consent only on a chain listed here; elsewhere it
+ * says Push is not billed and offers only the withdrawal. A biller that ships
+ * replaces this constant with the chains it actually bills on, from its own
+ * state, and must skip a payer whose consent does not cover the fee or whose
+ * loan is not active (functional spec, "Notification Billing Consent").
+ */
+export const PUSH_BILLED_CHAIN_IDS: readonly number[] = [];
+
+/**
  * `GET /push/status` — whether Push can be sent, for the app to read BEFORE
- * it offers the opt-in (#2251, #2667).
+ * it offers the opt-in (#2251, #2667), and on which chains it is billed
+ * (`billedChainIds`, #2723) — the latter in every answer, whatever the
+ * rail's state, because consent can be withdrawn while the rail is down.
  *
  * The app used to offer the Push rail on its own build-time channel address
  * alone, so a deployment whose signer was unset or malformed said "Push
@@ -111,13 +129,15 @@ export async function handlePushStatus(
   nowSec?: number,
 ): Promise<Response> {
   const status = await servicePushStatus(env, nowSec);
+  const billedChainIds = [...PUSH_BILLED_CHAIN_IDS];
   const body = status.usable
-    ? { available: true, channel: status.channel, scope: status.scope }
+    ? { available: true, channel: status.channel, scope: status.scope, billedChainIds }
     : {
         available: false,
         reason: status.reason,
         ...(status.rail ? { rail: status.rail } : {}),
         scope: status.scope,
+        billedChainIds,
       };
   return new Response(JSON.stringify(body), {
     status: 200,

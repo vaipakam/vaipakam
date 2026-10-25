@@ -29,6 +29,10 @@
       "types": "./src/loanClockSnapshot.ts",
       "default": "./src/loanClockSnapshot.ts"
     },
+    "./d6Wire": {
+      "types": "./src/d6Wire.ts",
+      "default": "./src/d6Wire.ts"
+    },
     "./errorDescription": {
       "types": "./src/errorDescription.ts",
       "default": "./src/errorDescription.ts"
