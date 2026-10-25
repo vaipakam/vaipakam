@@ -475,7 +475,7 @@ contract ForcedSaleFacet is IVaipakamErrors {
             _bookTerminal(s, j.loanId, loan, sp, out);
             _recordUnsold(s, j.loanId, loan, j.unsold, out.collateralSold);
         }
-        _restampBorrower(s, loan, out.borrowerExtraHeld);
+        _restampBorrower(s, loan, out.borrowerExtraHeld, j.kind);
 
         emit ForcedSaleSettled(
             j.loanId,
@@ -671,14 +671,29 @@ contract ForcedSaleFacet is IVaipakamErrors {
     /// @dev One VPFI re-stamp of the stored borrower once the sale has moved
     ///      VPFI out of their vault (VPFI collateral) or into it (a held VPFI
     ///      extra). The fallback entry re-stamps on its own route.
-    function _restampBorrower(LibVaipakam.Storage storage s, LibVaipakam.Loan storage loan, bool extraHeld)
-        private
-    {
+    ///      The time-based default's stamp is the broadcast-FREE one, as it was
+    ///      before the sale moved here (`DefaultedFacet._restampCollateralVpfi`):
+    ///      that permissionless close-out must not revert on the cross-chain
+    ///      tier-push budget, and the mirror tier catches up at the borrower's
+    ///      next broadcasting mutation. The other kinds keep the broadcasting
+    ///      stamp their callers used (the recorded open item in
+    ///      `_CodeVsDocsAudit.md`, left as it is).
+    function _restampBorrower(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        bool extraHeld,
+        ForcedSaleKind kind
+    ) private {
         address vpfi = s.vpfiToken;
         if (vpfi == address(0)) return;
         if (loan.collateralAsset != vpfi && !(extraHeld && loan.principalAsset == vpfi)) return;
         LibFacet.crossFacetCall(
-            abi.encodeWithSelector(ConsolidationFacet.restampUserVpfiInternal.selector, loan.borrower),
+            abi.encodeWithSelector(
+                kind == ForcedSaleKind.TimeBasedDefault
+                    ? ConsolidationFacet.restampUserVpfiLocalInternal.selector
+                    : ConsolidationFacet.restampUserVpfiInternal.selector,
+                loan.borrower
+            ),
             bytes4(0)
         );
     }
