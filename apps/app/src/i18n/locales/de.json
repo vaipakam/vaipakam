@@ -320,6 +320,7 @@
       "unlinkedChainOnly": "Für {{network}} getrennt. Eine Smart-Account-Wallet wird pro Netzwerk getrennt — ist diese Wallet auf anderen Netzwerken verknüpft, trennen Sie jede dort mit ihrer eigenen Signatur.",
       "paidTitle": "Kostenpflichtige Push-Benachrichtigungen",
       "paidFee": "Auf {{chain}} kosten kostenpflichtige Push-Benachrichtigungen {{fee}} VPFI pro Kreditseite. Die Gebühr wird aus dem freien VPFI in deinem Vault an das Protokoll gezahlt, höchstens einmal für jeden Kredit, an dem du beteiligt bist, bei der ersten kostenpflichtigen Push-Benachrichtigung dazu. Telegram-Benachrichtigungen sind immer kostenlos.",
+      "paidBilled": "Der Benachrichtigungsdienst erhebt diese Gebühr für kostenpflichtige Push-Benachrichtigungen auf {{chain}}.",
       "paidNotBilled": "Kostenpflichtige Push-Benachrichtigungen werden auf {{chain}} derzeit nicht abgerechnet: Hier erhebt noch nichts diese Gebühr, also gibt es nichts zuzustimmen.",
       "paidBilledUnknown": "Wir konnten nicht prüfen, ob kostenpflichtige Push-Benachrichtigungen auf {{chain}} abgerechnet werden, daher wird die Zustimmung zur Zahlung gerade nicht angeboten.",
       "paidConsentNone": "Du hast der Zahlung dieser Gebühr auf {{chain}} nicht zugestimmt, daher kann sie dir nicht berechnet werden.",

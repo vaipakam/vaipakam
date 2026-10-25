@@ -320,6 +320,7 @@
       "unlinkedChainOnly": "{{network}} 연결이 해제되었습니다. 스마트 계정 지갑은 네트워크별로 연결이 해제됩니다. 이 지갑이 다른 네트워크에도 연결되어 있다면 각 네트워크에서 해당 서명으로 개별적으로 해제하세요.",
       "paidTitle": "유료 Push 알림",
       "paidFee": "{{chain}}에서 유료 Push 알림은 대출 한쪽당 {{fee}} VPFI입니다. 수수료는 Vault의 사용 가능한 VPFI에서 프로토콜로 지불되며, 참여한 대출마다 최대 한 번, 해당 대출에 대한 첫 유료 Push 알림 시 청구됩니다. Telegram 알림은 항상 무료입니다.",
+      "paidBilled": "알림 서비스는 {{chain}}에서 유료 Push 알림에 이 수수료를 청구합니다.",
       "paidNotBilled": "현재 {{chain}}에서는 유료 Push 알림이 청구되지 않습니다. 아직 이곳에서 이 수수료를 청구하는 것이 없으므로 동의할 것이 없습니다.",
       "paidBilledUnknown": "{{chain}}에서 유료 Push 알림이 청구되는지 확인하지 못해 지금은 지불 동의를 제공하지 않습니다.",
       "paidConsentNone": "{{chain}}에서 이 수수료 지불에 동의하지 않았으므로 청구되지 않습니다.",

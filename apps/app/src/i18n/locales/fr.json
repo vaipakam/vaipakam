@@ -320,6 +320,7 @@
       "unlinkedChainOnly": "Dissocié pour {{network}}. Un portefeuille à compte intelligent se déconnecte réseau par réseau — si ce portefeuille est lié sur d’autres réseaux, dissociez chacun depuis ce réseau avec sa propre signature.",
       "paidTitle": "Alertes Push payantes",
       "paidFee": "Sur {{chain}}, les alertes Push payantes coûtent {{fee}} VPFI par côté de prêt. Les frais sont payés au protocole à partir du VPFI libre de votre Vault, au plus une fois pour chaque prêt auquel vous participez, lors de la première alerte Push payante le concernant. Les alertes Telegram sont toujours gratuites.",
+      "paidBilled": "Le service d’alertes prélève ces frais pour les alertes Push payantes sur {{chain}}.",
       "paidNotBilled": "Les alertes Push payantes ne sont pas facturées sur {{chain}} pour le moment : rien ne prélève encore ces frais ici, il n’y a donc rien à accepter.",
       "paidBilledUnknown": "Nous n’avons pas pu vérifier si les alertes Push payantes sont facturées sur {{chain}}, l’acceptation du paiement n’est donc pas proposée pour le moment.",
       "paidConsentNone": "Vous n’avez pas accepté de payer ces frais sur {{chain}}, ils ne peuvent donc pas vous être facturés.",

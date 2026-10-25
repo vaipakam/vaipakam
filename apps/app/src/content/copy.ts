@@ -763,6 +763,9 @@ const copySource = {
       'On {{chain}}, paid Push alerts cost {{fee}} VPFI per loan side. The fee is paid from the free VPFI in your vault to the protocol, at most once for each loan you’re on, on the first paid Push alert about it. Telegram alerts are always free.',
       ['chain', 'fee'],
     ),
+    paidBilled: tmpl('The alert service charges this fee for paid Push alerts on {{chain}}.', [
+      'chain',
+    ]),
     paidNotBilled: tmpl(
       'Paid Push alerts aren’t billed on {{chain}} right now: nothing charges this fee here yet, so there’s nothing to agree to.',
       ['chain'],

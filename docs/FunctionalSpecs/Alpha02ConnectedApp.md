@@ -2706,7 +2706,10 @@ is the borrower's own money.
   contract's own "no such function" answer counts as an older version; any
   other failure is a failed read.
 - Whether paid Push is billed on a network is the alert service's own answer,
-  never inferred from the fee being configured. Agreeing to pay is offered
+  never inferred from the fee being configured, and the card states that
+  answer in every case: that the service charges the fee there, that it
+  does not, or that it could not check. Whether a fee is being charged is
+  never left to whether a button appears. Agreeing to pay is offered
   only on a network the service says it bills on, and at the current fee;
   elsewhere the card says paid Push is not billed there and there is nothing
   to agree to, or that it could not check, and offers no agreement.

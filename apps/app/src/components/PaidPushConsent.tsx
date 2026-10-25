@@ -49,12 +49,30 @@ import {
   paidPushConsentView,
   useNotificationFeeConsent,
   type MinedConsentWrite,
+  type PaidPushBilled,
 } from '../data/notificationFee';
 import { useVpfi, VPFI_DECIMALS } from '../data/vpfi';
 import { captureTxError } from '../lib/errors';
 import { formatTokenAmountExact } from '../lib/format';
 
 const vpfi = (raw: bigint) => formatTokenAmountExact(raw, VPFI_DECIMALS);
+
+/**
+ * The alert service's billing answer for this network, stated in every case
+ * — billed, not billed, or could not check — so whether a fee is actually
+ * being charged is never left to the presence or absence of a button.
+ */
+function BillingLine({ billed, chainName }: { billed: PaidPushBilled; chainName: string }) {
+  return (
+    <p className="muted" role="status" style={{ margin: 0 }} data-testid="paid-push-billing">
+      {billed === 'billed'
+        ? copy.alerts.paidBilled(chainName)
+        : billed === 'not-billed'
+          ? copy.alerts.paidNotBilled(chainName)
+          : copy.alerts.paidBilledUnknown(chainName)}
+    </p>
+  );
+}
 
 interface PaidPushConsentProps {
   billing: PushBillingState | undefined;
@@ -125,7 +143,6 @@ function PaidPushConsentFor({ billing }: PaidPushConsentProps) {
     // An older Diamond with no consent record: nothing to agree to or
     // withdraw, and whether it can charge the fee is stated as read.
     const legacy = consentQuery.data;
-    const billed = paidPushBilledOn(billing, chainId);
     body = (
       <>
         {consentQuery.isError ? (
@@ -136,13 +153,7 @@ function PaidPushConsentFor({ billing }: PaidPushConsentProps) {
         <p className="muted" style={{ margin: 0 }}>
           {copy.alerts.paidFee(chainName, vpfi(legacy.feeVpfi))}
         </p>
-        {billed !== 'billed' ? (
-          <p className="muted" role="status" style={{ margin: 0 }} data-testid="paid-push-billing">
-            {billed === 'not-billed'
-              ? copy.alerts.paidNotBilled(chainName)
-              : copy.alerts.paidBilledUnknown(chainName)}
-          </p>
-        ) : null}
+        <BillingLine billed={paidPushBilledOn(billing, chainId)} chainName={chainName} />
         <p style={{ margin: 0 }} data-testid="paid-push-consent">
           {copy.alerts.paidPredatesConsent(chainName)}{' '}
           {legacy.billingRouted === true
@@ -176,13 +187,7 @@ function PaidPushConsentFor({ billing }: PaidPushConsentProps) {
         <p className="muted" style={{ margin: 0 }}>
           {copy.alerts.paidFee(chainName, fee)}
         </p>
-        {view.billed !== 'billed' ? (
-          <p className="muted" role="status" style={{ margin: 0 }} data-testid="paid-push-billing">
-            {view.billed === 'not-billed'
-              ? copy.alerts.paidNotBilled(chainName)
-              : copy.alerts.paidBilledUnknown(chainName)}
-          </p>
-        ) : null}
+        <BillingLine billed={view.billed} chainName={chainName} />
         <p style={{ margin: 0 }} data-testid="paid-push-consent">
           {view.consent === 'none'
             ? copy.alerts.paidConsentNone(chainName)

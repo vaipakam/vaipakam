@@ -337,6 +337,7 @@
       "pushNotSaved": "Your other settings were saved, but Push wasn’t switched on: this deployment can’t send Push payment reminders right now.",
       "paidTitle": "Paid Push alerts",
       "paidFee": "On {{chain}}, paid Push alerts cost {{fee}} VPFI per loan side. The fee is paid from the free VPFI in your vault to the protocol, at most once for each loan you’re on, on the first paid Push alert about it. Telegram alerts are always free.",
+      "paidBilled": "The alert service charges this fee for paid Push alerts on {{chain}}.",
       "paidNotBilled": "Paid Push alerts aren’t billed on {{chain}} right now: nothing charges this fee here yet, so there’s nothing to agree to.",
       "paidBilledUnknown": "We couldn’t check whether paid Push alerts are billed on {{chain}}, so agreeing to pay isn’t offered right now.",
       "paidConsentNone": "You haven’t agreed to pay this fee on {{chain}}, so it can’t be charged to you.",
