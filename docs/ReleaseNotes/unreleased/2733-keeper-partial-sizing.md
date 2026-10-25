@@ -1,4 +1,4 @@
-## Keeper — partial liquidations sized from the loan's own threshold (PR #TBD)
+## Keeper — partial liquidations sized from the loan's own threshold (PR #2800)
 
 The keeper's partial-liquidation sizer was reading the wrong number. It took the
 liquidation threshold from the oracle's asset risk profile by position, but that
