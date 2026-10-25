@@ -960,6 +960,13 @@ export interface WorkItem<T> {
   payload: T;
 }
 
+/** An item as the open-work queue holds it: when it was first queued travels
+ *  with it, so a pass can age it on its own clock (#2775). */
+export interface OpenWorkItem<T> extends WorkItem<T> {
+  /** Unix seconds this pass first queued it — the first scan that could reach it. */
+  addedAt: number;
+}
+
 /** Queue `items` as open. Idempotent: an item already queued keeps its row,
  *  so re-discovering a block is harmless. */
 export async function enqueueWork<T>(
@@ -1084,20 +1091,20 @@ export async function listOpenWorkPage<T>(
   diamond: string,
   kind: WorkKind,
   limit: number,
-): Promise<{ items: WorkItem<T>[]; rows: number }> {
+): Promise<{ items: OpenWorkItem<T>[]; rows: number }> {
   const rows = await db
     .prepare(
-      `SELECT item, block, payload FROM keeper_work_open
+      `SELECT item, block, payload, added_at FROM keeper_work_open
         WHERE chain_id = ?1 AND diamond = ?2 AND kind = ?3
         ORDER BY checked_at ASC, block ASC, item ASC LIMIT ?4`,
     )
     .bind(chainId, diamond.toLowerCase(), kind, limit)
-    .all<{ item: string; block: number; payload: string }>();
-  const items: WorkItem<T>[] = [];
+    .all<{ item: string; block: number; payload: string; added_at: number }>();
+  const items: OpenWorkItem<T>[] = [];
   const read = rows.results ?? [];
   for (const r of read) {
     try {
-      items.push({ item: r.item, block: Number(r.block), payload: JSON.parse(r.payload) as T });
+      items.push({ item: r.item, block: Number(r.block), payload: JSON.parse(r.payload) as T, addedAt: Number(r.added_at) });
     } catch {
       console.warn(`[keeper] open work ${kind} item=${r.item}: unreadable payload, left queued`);
     }
