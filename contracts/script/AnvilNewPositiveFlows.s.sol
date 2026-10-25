@@ -37,7 +37,7 @@ import {MockUniswapV3Factory, MockUniswapV3Pool} from "./mocks/MockUniswapV3.sol
 import {MockSanctionsList} from "../test/mocks/MockSanctionsList.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {RevertProbe} from "./lib/RevertProbe.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {MockPoolPricing} from "./lib/MockPoolPricing.sol";
 
 /**
  * @title AnvilNewPositiveFlows
@@ -320,16 +320,11 @@ contract AnvilNewPositiveFlows is Script {
 
     /// @dev #856 — sqrtPriceX96 (Q96) for the mock USDC/WETH pool, priced so the
     ///      pool's Chainlink-feed-valued reserves BALANCE (OracleFacet
-    ///      `_accumulatePoolImpacts` Guard 1). `v3VirtualReserves` gives
-    ///      reserve0 = L·Q96/√P and reserve1 = L·√P/Q96, and the guard requires
-    ///      reserve0·p0/scale0 ≈ reserve1·p1/scale1. Solving for √P:
-    ///        √P = Q96 · sqrt( (p0·scale1) / (p1·scale0) )
-    ///      where token0/token1 are ordered by ADDRESS (as the pool + guard read
-    ///      them), pX is the feed price (8-dec: USDC 1e8, WETH 2000e8) and
-    ///      scaleX = 10^(8 + tokenDecimals) (USDC 1e14, WETH 1e26). Computed at
-    ///      runtime because the mock token addresses — hence the ordering — vary
-    ///      per deploy. `Math.mulDiv` keeps the `·Q192` intermediate from
-    ///      overflowing uint256; the result fits uint160 for these values.
+    ///      `_accumulatePoolImpacts` Guard 1). The derivation lives in
+    ///      {MockPoolPricing} (#848), the one rule every mock-pool script
+    ///      shares, so this suite and {SepoliaPositiveFlows} cannot price the
+    ///      same pair two ways. Feeds are 8-dec (USDC 1e8, WETH 2000e8); the
+    ///      token ordering, and so the quote direction, is resolved there.
     function _mockPoolSqrtPriceX96() internal view returns (uint160) {
         return _mockPoolSqrtPriceX96At(2000e8);
     }
@@ -340,17 +335,9 @@ contract AnvilNewPositiveFlows is Script {
     ///      guard compares the pool's spot against the FEED, so the two must
     ///      travel together or the pool stops being a valid route.
     function _mockPoolSqrtPriceX96At(uint256 pWethE8) internal view returns (uint160) {
-        uint256 pUsdc = 1e8;
-        uint256 scaleUsdc = 1e14; // 10^(8 + 6)
-        uint256 pWeth = pWethE8;
-        uint256 scaleWeth = 1e26; // 10^(8 + 18)
-        (uint256 p0, uint256 scale0, uint256 p1, uint256 scale1) =
-            address(usdc) < address(weth)
-                ? (pUsdc, scaleUsdc, pWeth, scaleWeth)
-                : (pWeth, scaleWeth, pUsdc, scaleUsdc);
-        uint256 q192 = uint256(1) << 192;
-        uint256 sq = Math.sqrt(Math.mulDiv(p0 * scale1, q192, p1 * scale0));
-        return uint160(sq);
+        return MockPoolPricing.sqrtPriceX96(
+            address(usdc), 1e8, usdc.decimals(), address(weth), pWethE8, weth.decimals()
+        );
     }
 
     /// @dev Move the mock WETH price on BOTH sources the Diamond consults: the
@@ -1501,7 +1488,8 @@ contract AnvilNewPositiveFlows is Script {
         console.log("Borrower deposited 2,000 VPFI + opted in to discount path");
 
         // #1555 r3 — CLEAR THE MIN-HISTORY GATE FIRST. `effectiveTierAndBps`
-        // returns tier 0 until the default three-day staking window elapses,
+        // returns tier 0 until the current holding has lasted the minimum
+        // holding period (default three days),
         // and the retired `tryApplyBorrowerLif` took its eligibility from
         // that gated tier. Accepting immediately after the deposit would
         // therefore leave the borrower ineligible, so the no-custody
