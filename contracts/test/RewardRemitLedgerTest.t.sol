@@ -4901,4 +4901,102 @@ contract RewardRemitLedgerTest is SetupTest {
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StrandedReturnConsumedReceipt.selector, 1));
         comp.recordRecoveryCeremony(1, 0, r.recycled);
     }
+
+    // ─── #2760 — why a day does or does not close ─────────────────────────
+
+    function _statuses(uint256[] memory list) internal view returns (RewardRemittanceFacet.RemitDayStatus[] memory) {
+        return remit.quoteRemitDayStatuses(CHAIN_ARB, list);
+    }
+
+    function _status1(uint256 d) internal view returns (RewardRemittanceFacet.RemitDayStatus) {
+        return _statuses(_days(d))[0];
+    }
+
+    /// A status agrees with the planner's figure for the same list: a day is
+    /// `Closeable` exactly when `quoteRemitDayPlans` calls it closeable.
+    function _assertAgrees(uint256[] memory list) internal view {
+        (, bool[] memory closeable) = remit.quoteRemitDayPlans(CHAIN_ARB, list);
+        RewardRemittanceFacet.RemitDayStatus[] memory st = _statuses(list);
+        assertEq(st.length, list.length, "aligned to the input");
+        for (uint256 i; i < list.length; ++i) {
+            assertEq(
+                st[i] == RewardRemittanceFacet.RemitDayStatus.Closeable, closeable[i], "status agrees with the plan"
+            );
+        }
+    }
+
+    function test_Status_OpenRepeatedUnfinalizedThenRemitted() public {
+        _finalizeDay(1);
+        uint256[] memory list = new uint256[](3);
+        list[0] = 1;
+        list[1] = 1;
+        list[2] = 2; // not finalized
+        RewardRemittanceFacet.RemitDayStatus[] memory st = _statuses(list);
+        assertEq(uint8(st[0]), uint8(RewardRemittanceFacet.RemitDayStatus.Closeable), "owed and closeable");
+        assertEq(uint8(st[1]), uint8(RewardRemittanceFacet.RemitDayStatus.Repeated), "the copy is not judged");
+        assertEq(uint8(st[2]), uint8(RewardRemittanceFacet.RemitDayStatus.NotFinalized), "not finalized");
+        _assertAgrees(list);
+
+        _remitDay1ToArb();
+        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.Remitted), "settled by a remit");
+        _assertAgrees(list);
+    }
+
+    function test_Status_ZeroClampCloseReadsClosed() public {
+        _finalizeDay(1);
+        _armDayForArb(1, 100e18, 0);
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 0, 0);
+        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.Closeable), "close-only is closeable");
+        remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), 1e24);
+        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.Closed), "closed with nothing sent");
+    }
+
+    function test_Status_ArmedDayAwaitsItsCommitmentReport() public {
+        _finalizeDay(1);
+        _armDayForArb(1, 100e18, 0);
+        assertEq(
+            uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.AwaitingCommitment), "owed, waiting on the report"
+        );
+        _assertAgrees(_days(1));
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 1e30, 1e30);
+        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.Closeable), "the report releases it");
+    }
+
+    function test_Status_RemitIneligibleDayIsNamed() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.Ineligible), "owed via the manual path");
+        _assertAgrees(_days(1));
+    }
+
+    function test_Status_RecycledDayWithoutBackingIsUnbacked() public {
+        _finalizeDay(1);
+        _armDayForArb(1, 0, 50e18); // recycled-only slice
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
+        mutator.setRecycleBucketRaw(0);
+        mutator.setOutstandingCommitRaw(0, 1_000e18);
+        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.Unbacked), "owed, backing short");
+        _assertAgrees(_days(1));
+        mutator.setRecycleBucketRaw(2_000e18);
+        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.Closeable), "backed again");
+    }
+
+    /// A finalized day that gave this mirror no budget owes nothing and is
+    /// never closed: before the status view it read exactly like an owed,
+    /// gated day.
+    function test_Status_DayWithNoBudgetForTheMirrorOwesNothing() public {
+        rewardMessenger.deliverChainReport(CHAIN_BASE, 1, 10e18, 5e18);
+        rewardMessenger.deliverChainReport(CHAIN_ARB, 1, 0, 0);
+        rewardMessenger.deliverChainReport(CHAIN_OP, 1, 30e18, 15e18);
+        RewardAggregatorFacet(address(diamond)).finalizeDay(1);
+        assertEq(uint8(_status1(1)), uint8(RewardRemittanceFacet.RemitDayStatus.NothingOwed), "nothing owed");
+        _assertAgrees(_days(1));
+    }
+
+    /// The zero value is never `Closeable`, so a status a path forgot to set
+    /// cannot read as one.
+    function test_Status_ZeroValueIsNotCloseable() public pure {
+        assertEq(uint8(RewardRemittanceFacet.RemitDayStatus.NotFinalized), 0);
+        assertTrue(uint8(RewardRemittanceFacet.RemitDayStatus.Closeable) != 0);
+    }
 }

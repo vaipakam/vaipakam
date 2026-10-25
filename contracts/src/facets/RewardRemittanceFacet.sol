@@ -165,13 +165,46 @@ contract RewardRemittanceFacet is
         bool[] closeable;
         uint256[] closedSlices;
         uint256[] residuals;
+        /// @dev Aligned to the INPUT list: each day's {RemitDayStatus}.
+        RemitDayStatus[] status;
         /// @dev The first unfinalized day in INPUT order, reported rather than
         ///      thrown; `anyUnfinalized` says whether it is meaningful.
         uint256 firstUnfinalized;
         bool anyUnfinalized;
     }
 
+    /// @notice Why a day of a remittance plan does or does not close, one value
+    ///         per input day (#2760 remit warning). Read with
+    ///         {quoteRemitDayStatuses}.
+    /// @dev    Produced by the same walk the send applies ({_planBatch} /
+    ///         {_planDay}), so a status is the send's own verdict, not a
+    ///         reconstruction. Before it, a zero, non-closeable day read the
+    ///         same for every reason below, and a keeper could not tell an
+    ///         owed day from one that owed nothing.
+    ///         Settled: `Remitted`, `Closed`. Nothing owed: `NothingOwed`.
+    ///         Still owed: `Ineligible` (funded by the manual-budget path),
+    ///         `AwaitingCommitment` (an armed day whose commitment report is
+    ///         not complete), `Unbacked` (its recycled share fails the net
+    ///         backing gate in THIS batch, after the days listed before it).
+    ///         Not judged: `NotFinalized`, `Repeated` (a later copy of an
+    ///         earlier entry; the first copy carries the verdict).
+    ///         `Closeable`: this batch would close it, possibly moving zero.
+    ///         The zero value is not `Closeable`, so a status left unset can
+    ///         never read as one.
+    enum RemitDayStatus {
+        NotFinalized,
+        Repeated,
+        Remitted,
+        Closed,
+        NothingOwed,
+        Ineligible,
+        AwaitingCommitment,
+        Unbacked,
+        Closeable
+    }
+
     struct DayRemitPlan {
+        RemitDayStatus status;
         bool close;
         uint256 fresh;
         uint256 recycled;
@@ -721,6 +754,7 @@ contract RewardRemittanceFacet is
         plan.closeable = new bool[](n);
         plan.closedSlices = new uint256[](n);
         plan.residuals = new uint256[](n);
+        plan.status = new RemitDayStatus[](n);
         plan.st.armedFrom = s.governorCommitArmedFromDay;
         // Net of what staging records have reserved (Codex #2308 r11): a
         // remit may not send a resolving record's recycled backing away.
@@ -738,14 +772,18 @@ contract RewardRemittanceFacet is
                     ++j;
                 }
             }
-            if (!seen) {
+            if (seen) {
+                plan.status[i] = RemitDayStatus.Repeated;
+            } else {
                 if (!s.dailyGlobalFinalized[dayId]) {
+                    plan.status[i] = RemitDayStatus.NotFinalized;
                     if (!plan.anyUnfinalized) {
                         plan.anyUnfinalized = true;
                         plan.firstUnfinalized = dayId;
                     }
                 } else {
                     DayRemitPlan memory p = _planDay(s, dstChainId, dayId, plan.st.armedFrom);
+                    plan.status[i] = p.status;
                     // The net recycled-backing gate, applied identically for
                     // every caller because it is applied HERE (Codex #1426
                     // r2/r6): a closed day funds only when the post-close
@@ -778,6 +816,8 @@ contract RewardRemittanceFacet is
                         }
                         plan.st.armedFresh += p.armedFreshFull;
                         plan.st.recycledFull += p.recycledFull;
+                    } else if (p.close) {
+                        plan.status[i] = RemitDayStatus.Unbacked;
                     }
                 }
             }
@@ -820,17 +860,29 @@ contract RewardRemittanceFacet is
         uint256 dayId,
         uint256 armedFrom
     ) private view returns (DayRemitPlan memory p) {
-        if (s.rewardBudgetRemitted[dstChainId][dayId] != 0) return p;
-        if (s.dayClosedByRemitId[dstChainId][dayId] != 0) return p;
+        if (s.rewardBudgetRemitted[dstChainId][dayId] != 0) {
+            p.status = RemitDayStatus.Remitted;
+            return p;
+        }
+        if (s.dayClosedByRemitId[dstChainId][dayId] != 0) {
+            p.status = RemitDayStatus.Closed;
+            return p;
+        }
         LibVaipakam.ChainDayCommitments storage c =
             s.chainDayCommitments[dayId][dstChainId];
         // #1222 M3 B2-c — never remit a (chain, day) a force-finalize marked
         // remit-ineligible-pending-reconciliation: its ShareOfPool budget was
         // sized without the chain's real demand. The funding vehicle is the
         // manual-budget path ({remitManualBudget}), never this slice.
-        if (c.remitIneligible) return p;
+        if (c.remitIneligible) {
+            p.status = RemitDayStatus.Ineligible;
+            return p;
+        }
         bool armed = armedFrom != 0 && dayId >= armedFrom;
-        if (armed && !c.complete) return p;
+        if (armed && !c.complete) {
+            p.status = RemitDayStatus.AwaitingCommitment;
+            return p;
+        }
         LibInteractionRewards.ChainDayBudget memory b = LibInteractionRewards
             .chainRewardBudgetSideSplitForDay(s, dstChainId, dayId);
         uint256 grossRecycled = b.recycledLender + b.recycledBorrower;
@@ -839,7 +891,11 @@ contract RewardRemittanceFacet is
         if (localBacking > grossRecycled) localBacking = grossRecycled;
         uint256 sliceFresh = b.freshLender + b.freshBorrower;
         uint256 sliceRecycled = grossRecycled - localBacking;
-        if (sliceFresh + sliceRecycled == 0 && localBacking == 0) return p;
+        if (sliceFresh + sliceRecycled == 0 && localBacking == 0) {
+            p.status = RemitDayStatus.NothingOwed;
+            return p;
+        }
+        p.status = RemitDayStatus.Closeable;
         p.close = true;
         if (armed) {
             p.armedFreshFull = sliceFresh;
@@ -1741,6 +1797,24 @@ contract RewardRemittanceFacet is
         // day reads as zero and not closeable, never as a revert.
         BatchPlan memory plan = _planBatch(LibVaipakam.storageSlot(), dstChainId, dayIds);
         return (plan.perDay, plan.closeable);
+    }
+
+    /**
+     * @notice #2760 — why each day of a remittance plan does or does not
+     *         close: one {RemitDayStatus} per entry of `dayIds`, aligned to
+     *         the input.
+     * @dev    The same plan the send applies ({_planBatch}), so the statuses
+     *         and {quoteRemitDayPlans}' figures for one list always agree: a
+     *         day is `Closeable` exactly when it is `closeable` there.
+     *         `Unbacked` depends on the days listed before it, as the send's
+     *         backing gate does. Tolerant like the other discovery views: no
+     *         input reverts.
+     */
+    function quoteRemitDayStatuses(
+        uint32 dstChainId,
+        uint256[] calldata dayIds
+    ) external view returns (RemitDayStatus[] memory statuses) {
+        return _planBatch(LibVaipakam.storageSlot(), dstChainId, dayIds).status;
     }
 
 
