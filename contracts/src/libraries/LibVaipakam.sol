@@ -10877,9 +10877,22 @@ library LibVaipakam {
     }
 
     /// @notice #901 — the rental days that have ACCRUED and are not yet paid,
-    ///         as of now: days elapsed since `startTime`, capped at the agreed
-    ///         term, minus the days already consumed (`consumedRentalDays`).
-    /// @dev    The single rule for in-term rent owed at a close. Rent is never
+    ///         as of now: the rental days USED since `startTime` (any part of a
+    ///         day counts as the whole day, and at least one day is owed),
+    ///         capped at the agreed term, minus the days already consumed
+    ///         (`consumedRentalDays`).
+    /// @dev    #2741 — counting only COMPLETED days let a renter accept, use
+    ///         what the user right unlocks, and return the NFT the same day
+    ///         (or in the same transaction) for nothing. So elapsed time rounds
+    ///         UP to whole days, with a one-day minimum for a close in the
+    ///         acceptance block. Rounding up, rather than counting every day
+    ///         that has begun, keeps an exact day boundary from billing a day
+    ///         nobody used, which matters at an obligation handover, where the
+    ///         incoming renter's own days start at that instant. A day already
+    ///         paid by the daily deduction or a rental partial is consumed and
+    ///         is not billed twice.
+    ///
+    ///         The single rule for in-term rent owed at a close. Rent is never
     ///         billed past the agreed term: a rental closed after maturity owes
     ///         at most its remaining prepaid days, and the overdue time is
     ///         charged as the rental late fee (drawn from the buffer), not as
@@ -10893,11 +10906,15 @@ library LibVaipakam {
     ///         Never exceeds `remainingRentalDays`.
     function accruedUnpaidRentalDays(Loan storage loan) internal view returns (uint256) {
         uint256 st = uint256(loan.startTime);
-        uint256 elapsed = block.timestamp > st ? (block.timestamp - st) / 1 days : 0;
+        uint256 used = 0;
+        if (block.timestamp >= st) {
+            used = (block.timestamp - st + 1 days - 1) / 1 days;
+            if (used == 0) used = 1;
+        }
         uint256 term = uint256(loan.durationDays);
-        if (elapsed > term) elapsed = term;
+        if (used > term) used = term;
         uint256 consumed = consumedRentalDays(loan);
-        return elapsed > consumed ? elapsed - consumed : 0;
+        return used > consumed ? used - consumed : 0;
     }
 
     /// @notice #641 — a loan's interest-accrual ORIGIN: the dedicated

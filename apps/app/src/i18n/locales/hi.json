@@ -2673,6 +2673,7 @@
       "advancedOptions": "Advanced options",
       "allowPartialRepay": "Borrower को parts में repay करने दें",
       "proRataInterest": "Full term के बजाय सिर्फ used time के लिए interest charge करें (pro-rata)",
+      "rentalWholeDaysNote": "किराया पूरे दिनों में गिना जाता है: दिन का कोई भी हिस्सा पूरा दिन माना जाता है, और कम से कम एक दिन का किराया हमेशा लिया जाता है।",
       "continueToReview": "Review पर जारी रखें",
       "retry": "Retry",
       "beforeYouSign": "Sign करने से पहले",

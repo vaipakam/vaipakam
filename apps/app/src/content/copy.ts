@@ -5888,6 +5888,7 @@ const copySource = {
     advancedOptions: 'Advanced options',
     allowPartialRepay: 'Allow the borrower to repay in parts',
     proRataInterest: 'Charge interest only for time used (pro-rata) instead of the full term',
+    rentalWholeDaysNote: 'Rent is counted in whole days: part of a day counts as a full day, and at least one day is always charged.',
     continueToReview: 'Continue to review',
     retry: 'Retry',
     beforeYouSign: 'Before you sign',

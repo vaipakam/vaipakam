@@ -2673,6 +2673,7 @@
       "advancedOptions": "고급 옵션",
       "allowPartialRepay": "차입자가 나누어 상환할 수 있게 허용",
       "proRataInterest": "전체 기간 대신 사용한 시간만큼만 이자 부과(pro-rata)",
+      "rentalWholeDaysNote": "임대료는 하루 단위로 계산됩니다. 하루 미만도 하루로 계산하며, 최소 하루분은 항상 부과됩니다.",
       "continueToReview": "검토로 계속",
       "retry": "다시 시도",
       "beforeYouSign": "서명 전 확인",
