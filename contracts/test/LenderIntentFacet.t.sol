@@ -286,19 +286,22 @@ contract LenderIntentFacetTest is SetupTest {
         );
     }
 
-    function test_vpfiLendingAsset_reverts() public {
-        // #393 v1-d.1 (Codex P2) — VPFI as the LENDING asset is rejected at the
-        // root: its vault balance drives the fee-discount/staking accounting the
-        // intent fund/fill/withdraw chokepoints don't re-stamp. Configure VPFI
-        // as `mockERC20`, then a mockERC20-lending intent must revert.
+    function test_vpfiLendingAsset_allowed() public {
+        // #2860 — VPFI is an ordinary lending asset for an intent: every vault
+        // movement refreshes the lender's tier record (#1820), so registering
+        // a VPFI-lending intent is accepted like any other asset.
         vm.prank(owner);
         VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
         vm.prank(user);
-        vm.expectRevert(LenderIntentFacet.LenderIntentVpfiLendingUnsupported.selector);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
             MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true
         );
+        LibVaipakam.LenderIntent memory intent =
+            LenderIntentFacet(address(diamond)).getLenderIntent(
+                user, mockERC20, mockCollateralERC20
+            );
+        assertTrue(intent.active, "VPFI-lending intent registered");
     }
 
     function test_vpfiCollateralAsset_allowed() public {

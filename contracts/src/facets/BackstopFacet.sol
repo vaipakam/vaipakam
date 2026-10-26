@@ -260,12 +260,10 @@ contract BackstopFacet is
         if (!s.lenderIntent[vault][lend][coll].active) {
             revert BackstopIntentInactive();
         }
-        // VPFI can't back generic intent capital — its discount/staking accounting
-        // is bypassed by the generic-custody path, so `fundLenderIntent` /
-        // `matchIntent` reject VPFI-denominated lending. `setLenderIntent` blocks it
-        // at the root, but `vpfiToken` can be ROTATED onto `lend` AFTER the intent
-        // row was created; re-check here so this direct treasury seed can't stage
-        // VPFI capital that `matchIntent` would then refuse to fill.
+        // The backstop lends treasury-held capital, and lending the protocol's
+        // own VPFI through it is a separate treasury decision: #2860 opened VPFI
+        // to user lender intents only. Refuse VPFI here so this seed never
+        // stages protocol VPFI as backstop capital.
         if (lend == s.vpfiToken) revert VpfiLendingUnsupported();
         // Honor asset pauses, like `fundLenderIntent` does on the normal on-ramp —
         // an asset-pause incident must not let this seed stage new fillable

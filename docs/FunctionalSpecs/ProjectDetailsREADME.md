@@ -572,7 +572,12 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   collects with their loan-position NFT, so the withdrawal door can never reach —
   and never double-pay — money already owed as a repayment claim. A fill can
   never lend more capital than the lender has funded; an under-funded intent
-  cannot be filled until more is added.
+  cannot be filled until more is added. The platform's own VPFI may be an
+  intent's lending asset like any other priced ERC-20: it may be registered,
+  funded, filled and withdrawn. VPFI an intent holds sits in the lender's own
+  vault, as an offer's escrowed principal does, so it counts toward the
+  lender's fee-discount tier while it is there and leaves that tier the moment
+  a fill lends it out or the lender withdraws it.
 - **On-chain intent discovery.** The protocol maintains an enumerable feed of
   funded, active lender intents so solvers can discover fillable liquidity from
   chain state rather than reconstructing it from historical events. An intent
@@ -653,7 +658,11 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   proceeds may be collateral rather than re-lendable principal); and a loan
   whose lender position was **sold** before repayment cannot be rolled — the
   buyer is owed those proceeds and collects them normally, so a sold position's
-  returns are never diverted into the original lender's intent. The repayment
+  returns are never diverted into the original lender's intent. A loan whose
+  lending asset is VPFI does not roll either: a VPFI repayment's proceeds are
+  reserved for the lender position's holder until they claim them, and a roll
+  cannot release that reservation, so such a loan settles through the normal
+  claim and the lender re-funds the intent if they wish. The repayment
   claim that would have paid a wallet is consumed in the same step as the
   re-commitment, so a rolled loan's funds are never both claimable and re-lent.
 - **On-chain roll discovery.** So an automated roller can find the loans it may

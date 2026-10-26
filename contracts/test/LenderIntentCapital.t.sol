@@ -18,6 +18,7 @@ import {LibMetricsTypes} from "../src/libraries/LibMetricsTypes.sol";
 import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /**
@@ -334,32 +335,40 @@ contract LenderIntentCapitalTest is SetupTest {
         assertEq(_capital(), 0, "exit succeeds despite asset pause");
     }
 
-    /// @dev #393 v1-d.1 Codex round-2 — the root `setLenderIntent` VPFI gate
-    ///      isn't airtight: `vpfiToken` can be rotated to an asset AFTER an
-    ///      intent on it was already stored + funded. The fund on-ramp
-    ///      re-asserts the block before custody moves; the exit stays open so
-    ///      pre-existing capital can be wound down.
-    function test_fund_blockedAfterAssetBecomesVPFI() public {
-        _setIntent();
-        _fund(PRINCIPAL); // funds fine — mockERC20 isn't VPFI yet
-        // Operator rotates vpfiToken to the lending asset post-hoc.
+    /// @dev #2860 — VPFI is an ordinary intent lending asset. Funding moves
+    ///      it into the lender's vault and the tier record follows it there
+    ///      (#1820); withdrawing the un-lent capital takes it back out.
+    function test_vpfiIntent_fundAndWithdraw_tierRecordFollowsCapital() public {
         vm.prank(owner);
         VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
-        // A top-up now reverts at the on-ramp (defense-in-depth).
-        ERC20Mock(mockERC20).mint(lender, PRINCIPAL);
-        vm.prank(lender);
-        ERC20(mockERC20).approve(address(diamond), PRINCIPAL);
-        vm.prank(lender);
-        vm.expectRevert(LenderIntentFacet.LenderIntentVpfiLendingUnsupported.selector);
-        LenderIntentFacet(address(diamond)).fundLenderIntent(
-            mockERC20, mockCollateralERC20, PRINCIPAL
-        );
-        // Exit stays open — the already-funded capital is still withdrawable.
+        _setIntent();
+        _fund(PRINCIPAL);
+        assertEq(_capital(), PRINCIPAL, "VPFI capital funded");
+        assertEq(_tierDayClose(lender), PRINCIPAL, "tier record carries the funded VPFI");
+
         vm.prank(lender);
         LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
             mockERC20, mockCollateralERC20, PRINCIPAL
         );
-        assertEq(_capital(), 0, "pre-existing capital still withdrawable");
+        assertEq(_capital(), 0, "VPFI capital withdrawn");
+        assertEq(_tierDayClose(lender), 0, "tier record follows the withdrawal");
+    }
+
+    /// @dev #2860 — a funded intent whose lending asset becomes VPFI after
+    ///      funding keeps working: a top-up is accepted like any other.
+    function test_fund_acceptedAfterAssetBecomesVPFI() public {
+        _setIntent();
+        _fund(PRINCIPAL);
+        vm.prank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
+        _fund(PRINCIPAL);
+        assertEq(_capital(), 2 * PRINCIPAL, "top-up accepted after the rotation");
+    }
+
+    function _tierDayClose(address who) internal view returns (uint256) {
+        (,, uint120 dayClose,) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(who);
+        return uint256(dayClose);
     }
 
     // ─── 4. matchIntent draws from the lien (under-funding reverts) ─────────
@@ -382,24 +391,26 @@ contract LenderIntentCapitalTest is SetupTest {
         );
     }
 
-    /// @dev #393 v1-d.1 Codex round-3 — a fill is blocked too if `vpfiToken`
-    ///      rotates onto the lending asset of an already-funded intent (the
-    ///      fund/root gates can't catch a row funded before the rotation).
-    ///      Leaves only the wind-down exit (which checkpoints the VPFI rollup).
-    function test_matchIntent_blockedAfterAssetBecomesVPFI() public {
+    /// @dev #2860 — an intent lending VPFI fills like any other: the
+    ///      principal leaves the lender's vault for the borrower and the
+    ///      lender's tier record drops with it (#1820).
+    function test_matchIntent_vpfiLending_fills() public {
+        vm.prank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
         _setIntent();
         _fund(PRINCIPAL);
         address b = _newBorrower("b1");
         uint256 cp = _postBorrower(b);
-        vm.prank(owner);
-        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
         vm.prank(solver);
-        vm.expectRevert(
-            OfferMatchIntentFacet.LenderIntentVpfiLendingUnsupported.selector
-        );
-        OfferMatchIntentFacet(address(diamond)).matchIntent(
+        uint256 loanId = OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );
+        LibVaipakam.Loan memory loan =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(loan.lender, lender, "intent owner is lender of record");
+        assertEq(loan.principalAsset, mockERC20, "VPFI principal");
+        assertEq(_capital(), 0, "capital drawn by the fill");
+        assertEq(_tierDayClose(lender), 0, "tier record follows the disbursement");
     }
 
     // ─── 5. The crux — repaid proceeds can't be double-spent via the exit ───
@@ -570,18 +581,41 @@ contract LenderIntentCapitalTest is SetupTest {
 
     // ─── 6b. Codex #623 round-1 — reject edge cases to the normal claim ─────
 
-    /// @dev #623 P2 — VPFI rotated onto the lending asset post-match: RepayFacet
-    ///      reserved the proceeds, which this roll can't release, so the roll is
-    ///      rejected (VPFI winds down via the normal claim).
+    /// @dev #623 P2 — VPFI rotated onto the lending asset post-match: the roll
+    ///      refuses a VPFI loan (its proceeds settle through the normal claim).
     function test_rollIntentLoan_vpfiRotated_reverts() public {
         uint256 loanId = _fillAndRepay();
         vm.prank(owner);
         VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
         vm.prank(lender);
         vm.expectRevert(
-            LenderIntentFacet.LenderIntentVpfiLendingUnsupported.selector
+            LenderIntentFacet.LenderIntentVpfiRollUnsupported.selector
         );
         LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+    }
+
+    /// @dev #2860 — a VPFI loan filled from an intent and repaid: RepayFacet
+    ///      reserves the proceeds until the position holder claims them, which
+    ///      the roll cannot release, so the roll refuses it and the normal
+    ///      claim pays the lender.
+    function test_rollIntentLoan_vpfiLoan_refusedThenClaimed() public {
+        vm.prank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
+        uint256 loanId = _fillAndRepay();
+        vm.prank(lender);
+        vm.expectRevert(
+            LenderIntentFacet.LenderIntentVpfiRollUnsupported.selector
+        );
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+
+        uint256 walletBefore = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+        assertGt(
+            ERC20(mockERC20).balanceOf(lender),
+            walletBefore,
+            "VPFI proceeds paid by the normal claim"
+        );
     }
 
     /// @dev #623 round-3 P2 — a CANCELLED intent routes its outstanding loans to
