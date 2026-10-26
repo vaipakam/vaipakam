@@ -224,10 +224,10 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     ///         zeroed, 2 = era mismatch, 3 = past the day's expiry (lapse
     ///         flags or the frozen clock words, installed or wire-carried),
     ///         4 = a second arrival while a provisional credit is already
-    ///         held (one provisional receipt binding per day), 5 = the day
-    ///         is permanently V3-unhealable on this rotated mirror (prior
-    ///         state, no recorded era — the confirm/demote hook could never
-    ///         run), 6 = clockless payload (zero finalizedAt — an honest
+    ///         held (one provisional receipt binding per day), 5 = retired
+    ///         (#1944: a day with figures but no recorded era cannot exist
+    ///         once kinds 2 and 5 are gone; never reused), 6 = clockless
+    ///         payload (zero finalizedAt — an honest
     ///         Base refuses such a dispatch, so this is stale or hostile
     ///         and could never settle).
     /// @custom:event-category informational/reward-compensation
@@ -410,45 +410,32 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             return;
         }
 
-        // Codex #1634 r1 — two arrivals that must NOT go provisional:
-        //
-        // (a) A day the w1 rotation gate has made permanently V3-unhealable
-        //     (rotated mirror + prior state + no recorded era): its
-        //     provisional credit could never reach the confirm/demote hook,
-        //     leaving the value outside the reservation forever. Quarantine
-        //     at ingress instead — the same three conjuncts the V3 ingress
-        //     refuses on, threaded verbatim.
-        if (
-            s.rewardEraRotated && era == address(0)
-                && (s.broadcastV2Applied[dayId] || s.knownGlobalSet[dayId])
-        ) {
-            _quarantineCompensation(s, h, dayId, remitter, remitId, amount, 5);
-            return;
-        }
-        // (b) A SECOND compensation while one is already provisional: the
-        //     day holds one provisional receipt binding (era + remitId),
-        //     and overwriting it would demote BOTH packets' pools under the
-        //     last receipt key — the receipt-bounded return could then
-        //     recover at most that one reservation's entitlement, stranding
-        //     the earlier packet. One provisional credit per day;
-        //     conflicting arrivals hold their own receipt-keyed reservation
-        //     until the day's broadcast settles which era governs.
+        // Codex #1634 r1 — a SECOND compensation while one is already
+        // provisional must NOT go provisional: the day holds one
+        // provisional receipt binding (era + remitId), and overwriting it
+        // would demote BOTH packets' pools under the last receipt key — the
+        // receipt-bounded return could then recover at most that one
+        // reservation's entitlement, stranding the earlier packet. One
+        // provisional credit per day; conflicting arrivals hold their own
+        // receipt-keyed reservation until the day's broadcast settles which
+        // era governs. (Its sibling, reason 5, guarded a day with figures
+        // but no recorded era; #1944 retired the wires that could make one.)
         LibVaipakam.DayCompensation storage dcPrior = s.dayCompensation[dayId];
         if (dcPrior.provisional) {
             _quarantineCompensation(s, h, dayId, remitter, remitId, amount, 4);
             return;
         }
-        // (c) A CLOCKLESS payload (zero finalizedAt) cannot settle: an
+        // A CLOCKLESS payload (zero finalizedAt) cannot settle either: an
         //     honest Base refuses such a dispatch outright (#1634 r2 —
         //     {CompensationDayHasNoClock}), so one arriving here is stale
         //     or hostile, and a provisional credit for it would wait on a
-        //     V3 broadcast that can never carry a matching clock. The
+        //     broadcast that can never carry a matching clock. The
         //     token-safe mirror of the Base-side refusal (reason 6).
         if (finalizedAt == 0) {
             _quarantineCompensation(s, h, dayId, remitter, remitId, amount, 6);
             return;
         }
-        // (d) The overtake case can still be PAST ITS TRUE EXPIRY: the wire
+        // And the overtake case can still be PAST ITS TRUE EXPIRY: the wire
         //     carries the full frozen clock words (R4b), so the ingress
         //     evaluates them even with no broadcast state — a delivery
         //     arriving after the day's expiry must never be provisionally
@@ -556,7 +543,7 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // the ledger, backing nothing, carried by no era move — until the day's
         // broadcast confirms it (counted then, by exactly this figure) or demotes
         // it (moved, untouched, to the return reservation). One provisional
-        // credit per day: a second arrival quarantines (case (b) above).
+        // credit per day: a second arrival quarantines (reason 4, above).
         if (provisional) {
             dc.provisionalHeld = SafeCast.toUint128(amount);
             s.rewardBudgetFreshProvisional += amount;

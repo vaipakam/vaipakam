@@ -895,27 +895,31 @@ interface IVaipakamErrors {
     error LapseScheduleMarginViolated(
         uint64 lapseWindowSeconds, uint64 dispatchCutoffGap
     );
-    /// @notice {broadcastGlobalTo} on a day with no frozen lapse clock (a
-    ///         day finalized before the P2-w1 upgrade). There is no
-    ///         authentic clock to heal with — such days broadcast on the V2
-    ///         wire via the ordinary {broadcastGlobal}.
-    error DayHasNoLapseClock(uint256 dayId);
     /// @notice {broadcastGlobalTo}'s destination has no day-scoped
     ///         historical standing for `dayId` (neither included in its
     ///         finalized denominator nor holding a chain-day commitments
     ///         record) — the permissionless heal only re-delivers facts a
     ///         destination already had a stake in.
     error DestinationHasNoDayStanding(uint256 dayId, uint256 destChainId);
-    /// @notice {broadcastGlobalTo} needs the kind-10 single-destination
-    ///         send, which this messenger proxy predates. Unlike the full
-    ///         {broadcastGlobal}, the heal cannot fall back to the V2 wire —
-    ///         kind-5 carries no clock, so a fallback would "succeed" while
-    ///         healing nothing.
-    error MessengerPredatesV3();
-    /// @notice A V3 broadcast arrived carrying a zero `finalizedAt`. An
-    ///         honest Base never sends one (clockless days ride the V2
-    ///         wire), so this fails closed as a re-executable CCIP message.
+    /// @notice A broadcast arrived carrying a zero `finalizedAt`. An honest
+    ///         Base never sends one (finalization freezes the clock in the
+    ///         same call), so this fails closed as a re-executable CCIP
+    ///         message.
     error BroadcastClockMissing(uint256 dayId);
+    /// @notice #1944 — a broadcast reached a Diamond whose reward role is
+    ///         `role` (`LibVaipakam.RewardRole`: 0 Canonical, 2 Unconfigured),
+    ///         which takes none. Only a Mirror (or a Detached former mirror,
+    ///         for an in-flight packet) applies one, because the day delivery
+    ///         gate binds by role: a day stamped while the chain was not yet a
+    ///         mirror could be paid unproven and then re-held once it became
+    ///         one. Fails closed as a re-executable CCIP message.
+    error BroadcastRoleRefused(uint8 role);
+    /// @notice #1944 — a reward broadcast for `dayId` arrived on a chain whose own
+    ///         funding record for that day is already stamped with no
+    ///         broadcast applied: the chain funded the day itself while it was
+    ///         canonical. The record has one writer, so the packet is refused
+    ///         and stays a failed, re-executable message (Codex #2879).
+    error DayFundedLocally(uint256 dayId);
     /// @notice A V3 broadcast named a different Base deployment than the one
     ///         already recorded for this day (§2h constraint 20 — a delayed
     ///         broadcast from a retired deployment must never install its
@@ -951,10 +955,8 @@ interface IVaipakamErrors {
     ///         no frozen lapse clock: such a day can never emit the V3
     ///         broadcast that settles the mirror's classification, so the
     ///         credit would sit provisional forever (or quarantine
-    ///         wrongly). A post-w1 zeroed day heals its clock first
-    ///         (`broadcastGlobalTo`); a day finalized before the clock
-    ///         machinery existed belongs to the w4 legacy-compensation
-    ///         migration (`stampLegacyCompensation`), not this wire.
+    ///         wrongly). On a fresh deploy a finalized day always has its
+    ///         clock, so this is a fail-closed check rather than a route.
     error CompensationDayHasNoClock(uint256 dayId);
     /// @notice #1634 r3 — the R3 dispatch cutoff: a compensation must not
     ///         dispatch within `dispatchCutoffGap` of the day's frozen
@@ -1788,14 +1790,6 @@ interface IVaipakamErrors {
     error DeliveryProofNotBudget(bytes32 packetHash, uint8 kind);
     /// @notice #1944 c1 — the packet's value was disposed of (returned / released), so it funds no day here.
     error DeliveryPacketDisposed(bytes32 packetHash, uint256 disposed);
-    /// @notice #1944 c1 — the delivery gate exists only on a reward-mesh MIRROR: Base funds itself.
-    error DeliveryGateNotMirror();
-    /// @notice #1944 c1 — the delivery gate is one-shot and already armed from day `current`.
-    error DeliveryGateAlreadyArmed(uint256 current);
-    /// @notice #1944 c1 — arming from `fromDay` would re-hold days a cumulative fold already passed (lender
-    ///         cursor `lenderCursor`, borrower `borrowerCursor`): the hold must stay monotone, so the gate only
-    ///         ever arms ahead of both folds.
-    error DeliveryGateBelowFold(uint256 fromDay, uint256 lenderCursor, uint256 borrowerCursor);
     /// @notice A d6 delivery held as its own epoch needs a split that accounts for the whole delivery (3d-1).
     error TransportSplitNotWhole(bytes32 packetHash, uint256 fresh, uint256 recycled, uint256 amount);
     /// @notice The domain under `domainKey` is not in the phase this entry
@@ -1834,16 +1828,6 @@ interface IVaipakamErrors {
     error CustodyPendingSurplusNeedsActiveRole(uint8 role);
     /// @notice Era `era`'s row can fund `room`, less than `amount` (PR C-2).
     error CustodyEraRoomShort(uint64 era, uint256 amount, uint256 room);
-    /// @notice No parked broadcast under `id` (PR C-4).
-    error ParkedBroadcastUnknown(uint256 id);
-    /// @notice Parked broadcast `id` is not in the parked state (`status`: 1 tombstoned, 2 applied).
-    error ParkedBroadcastNotParked(uint256 id, uint8 status);
-    /// @notice The re-supplied broadcast is not the one parked under `id`.
-    error ParkedBroadcastDigestMismatch(uint256 id);
-    /// @notice The gate still refuses parked broadcast `id`: it stays parked.
-    error ParkedBroadcastStillUnroutable(uint256 id);
-    /// @notice Parked broadcast `id` was first received after the next era opened: it exits by tombstone only.
-    error ParkedBroadcastQuarantineOnly(uint256 id);
 
     // ── #1219 (S-4) — service capacity deposits ──
     /// @notice The service capacity deposit channel is dark: posting is refused (withdrawals stand).

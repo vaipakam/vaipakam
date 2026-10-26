@@ -481,12 +481,12 @@ contract RewardRemittanceLensFacet {
      *         gate, day landed) plus this call. The body is the library rule
      *         verbatim, so the view and the rung cannot disagree.
      *
-     *         ROUTING IS LOAD-BEARING once the gate is armed: an unrouted
-     *         selector on an armed mirror turns every claim, sweep and staging
-     *         call into a bubbled `FunctionDoesNotExist`. The gate ships dark
-     *         (`dayDeliveryGateFromDay == 0` returns before the call), which
-     *         covers deploy ORDER only — refresh this facet together with the
-     *         walk facets, never after arming. Reads only.
+     *         ROUTING IS LOAD-BEARING on every mirror: the gate binds by
+     *         role from the first priced day (#1944, no arming step), so an
+     *         unrouted selector on a mirror turns every claim, sweep and
+     *         staging call into a bubbled `FunctionDoesNotExist`. Off a mirror
+     *         the caller's prefix returns before the call. Deploy and refresh
+     *         this facet together with the walk facets. Reads only.
      */
     function dayAwaitsFreshDelivery(uint8 side, uint256 dayId) external view returns (bool) {
         return LibRewardCustody.dayAwaitsFreshDelivery(LibVaipakam.storageSlot(), side, dayId);
@@ -505,8 +505,9 @@ contract RewardRemittanceLensFacet {
      *         awaits — the day owes no fresh value here, or the gate does not
      *         bind it). The figures are returned raw rather than as an enum
      *         so a state added later cannot be mis-decoded by an old reader.
-     * @return gateArmed     The gate binds this day (`fromDay != 0` and
-     *                       `dayId >= fromDay`).
+     * @return gateBinds     The gate binds on this chain: it is a reward-mesh
+     *                       Mirror. The gate binds by role on every day, with
+     *                       no arming step (#1944).
      * @return stamped       Base's per-chain funding stamp for the day has
      *                       landed here.
      * @return freshStamped  That stamp prices a non-zero FRESH half for
@@ -525,7 +526,7 @@ contract RewardRemittanceLensFacet {
         external
         view
         returns (
-            bool gateArmed,
+            bool gateBinds,
             bool stamped,
             bool freshStamped,
             bool landed,
@@ -538,10 +539,7 @@ contract RewardRemittanceLensFacet {
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        {
-            uint256 from = s.dayDeliveryGateFromDay;
-            gateArmed = from != 0 && dayId >= from;
-        }
+        gateBinds = LibVaipakam.rewardRole(s) == LibVaipakam.RewardRole.Mirror;
         {
             LibVaipakam.ChainDayFunding storage f = s.chainDayRecycledFunding[dayId][uint32(block.chainid)];
             stamped = f.stamped;

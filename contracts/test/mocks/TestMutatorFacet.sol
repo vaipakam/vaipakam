@@ -1456,21 +1456,11 @@ contract TestMutatorFacet {
         });
     }
 
-    /// @notice #1222 M3 B2-d3 test-only — clear the mirror's
-    ///         arrival-reservation flag for a day. Lets a test reconstruct
-    ///         the PRE-d3 state FAITHFULLY: apply a broadcast normally (so
-    ///         every stamped field is consistent, as a pre-d3 receiver would
-    ///         have left it), then undo only the reservation — proving a
-    ///         post-upgrade replay completes it.
+    /// @notice Test-only — set the mirror's "day's broadcast applied" flag
+    ///         directly, for a test that needs the flag without staging a
+    ///         whole broadcast.
     function setBroadcastV2AppliedRaw(uint256 dayId, bool applied) external {
         LibVaipakam.storageSlot().broadcastV2Applied[dayId] = applied;
-    }
-
-    function setMirrorCommitReservedRaw(uint256 dayId, bool reserved)
-        external
-    {
-        LibVaipakam.storageSlot().mirrorRecycleCommitReserved[dayId] =
-            reserved;
     }
 
     /// @notice #1222 M3 B2-d3 test-only — set a `(day, chain)` stamp's
@@ -1636,8 +1626,8 @@ contract TestMutatorFacet {
     ///         upgrade (production writes the clock unconditionally at
     ///         `_finalizeAndWrite`, so the pre-upgrade shape is otherwise
     ///         unreachable in a fresh test deployment). Drives the
-    ///         V2-wire-fallback and `DayHasNoLapseClock` heal-refusal
-    ///         paths.
+    ///         clockless-day refusals (`BroadcastClockMissing`,
+    ///         `CompensationDayHasNoClock`).
     function clearDayLapseClockRaw(uint256 dayId) external {
         delete LibVaipakam.storageSlot().dayLapseClock[dayId];
     }
@@ -2355,6 +2345,16 @@ contract TestMutatorFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.rewardBudgetArmedFreshReceived = received;
         s.rewardBudgetArmedFreshPaid = paid;
+    }
+
+    /// @notice #1944 test-only — mark day `dayId` LANDED on this mirror, as the
+    ///         keeper's delivery-proof pass would by proving a delivery's day
+    ///         list. The gate binds on every mirror by role, so a fixture that
+    ///         stands in for the delivered ledger with {setArmedFreshLedgerRaw}
+    ///         must stand in for the landing too. Writes the proof mark only;
+    ///         moves no value.
+    function setDayDeliveryProvedByRaw(uint256 dayId, bytes32 packetHash) external {
+        LibVaipakam.storageSlot().dayDeliveryProvedBy[dayId] = packetHash;
     }
 
     /// @notice #1434 P1-b test-only — read the paid half back, so a test can

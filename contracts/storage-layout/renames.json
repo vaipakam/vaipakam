@@ -32,6 +32,62 @@
       "from": "protocolCfg.rangeCollateralEnabled",
       "to": "protocolCfg.retiredRangeCollateralEnabled",
       "reason": "#2812 (owner decision 2026-10-25): ranged offers are always on, so the range master flags gate nothing; their setters and getters are removed and the slot is no longer written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 396,
+      "offset": 0,
+      "from": "mirrorRecycleCommitReserved",
+      "to": "retiredMirrorRecycleCommitReserved",
+      "reason": "#1944 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the per-day reservation-done flag existed only so a replay could complete a reservation a pre-d3 receiver missed; with kinds 2 and 5 retired the reservation runs once under broadcastV2Applied. The slot keeps its place and is no longer written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 505,
+      "offset": 0,
+      "from": "mirrorKeeperEarmarkApplied",
+      "to": "retiredMirrorKeeperEarmarkApplied",
+      "reason": "#1944 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the per-day keeper-earmark-applied flag existed only so a replay could complete an earmark a pre-#1569 receiver missed; the earmark now applies once under broadcastV2Applied. The slot keeps its place and is no longer written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 436,
+      "offset": 20,
+      "from": "rewardEraRotated",
+      "to": "retiredRewardEraRotated",
+      "reason": "#1944 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the era-rotation flag closed the identity-less kind-2 / kind-5 broadcast wires, which are removed; every day is applied with its era recorded, so it gates nothing. The slot keeps its place and is no longer written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 597,
+      "offset": 0,
+      "from": "parkedBroadcasts",
+      "to": "retiredParkedBroadcasts",
+      "reason": "#1944 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): PR C-4's parked-message lane held kind-2 / kind-5 broadcasts the rotation gate refused; both wires are removed, so nothing parks. The slot keeps its place and is no longer written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 598,
+      "offset": 0,
+      "from": "parkedBroadcastCount",
+      "to": "retiredParkedBroadcastCount",
+      "reason": "#1944 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the parked-message lane's id counter, retired with the lane (kinds 2 and 5 removed). The slot keeps its place and is no longer written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 599,
+      "offset": 0,
+      "from": "custodyEraParkedOpen",
+      "to": "retiredCustodyEraParkedOpen",
+      "reason": "#1944 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the parked-message lane's per-era open count, retired with the lane (kinds 2 and 5 removed). The slot keeps its place and is no longer written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 623,
+      "offset": 0,
+      "from": "dayDeliveryGateFromDay",
+      "to": "retiredDayDeliveryGateFromDay",
+      "reason": "#1944 (owner decision 2026-10-26, 'Retire all three'): the mirror-side delivery gate binds by role from a mirror's first day, so the admin-armed first-day latch is removed with its setter. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
     }
   ]
 }

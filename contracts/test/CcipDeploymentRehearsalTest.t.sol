@@ -17,7 +17,11 @@ import {CcipMessenger} from "../src/crosschain/CcipMessenger.sol";
 import {VPFIMirrorToken} from "../src/crosschain/VPFIMirrorToken.sol";
 import {VpfiPoolRateGovernor} from "../src/crosschain/VpfiPoolRateGovernor.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
-import {ChainDayReport} from "../src/interfaces/IRewardMessenger.sol";
+import {
+    ChainDayReport,
+    IRewardMessenger,
+    RewardBroadcastV3
+} from "../src/interfaces/IRewardMessenger.sol";
 
 import {MockCcipRouter} from "./mocks/MockCcipRouter.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -48,8 +52,8 @@ contract MockRehearsalDiamond {
         ++reportCount;
     }
 
-    function onRewardBroadcastReceived(uint256 day, uint256, uint256, uint256, uint256, uint256, uint256) external {
-        lastBcastDay = day;
+    function onRewardBroadcastV3Received(RewardBroadcastV3 calldata b) external {
+        lastBcastDay = b.v2.dayId;
         ++bcastCount;
     }
 
@@ -373,14 +377,28 @@ contract CcipDeploymentRehearsalTest is Test {
         assertEq(diamondBase.lastReportDay(), 42, "report day");
 
         // BROADCAST — Base → mirror.
-        vm.prank(address(diamondBase));
-        rewardBase.broadcastGlobal{value: fee}(
-            42, 9_000 ether, 4_000 ether, type(uint256).max,
-            0, 0, 0, payable(address(diamondBase))
-        );
+        _broadcastDay42();
         router.deliver(1, SEL_BASE);
         assertEq(diamondMirror.bcastCount(), 1, "mirror got the broadcast");
         assertEq(diamondMirror.lastBcastDay(), 42, "broadcast day");
+    }
+
+    /// @dev Base sends day 42 to the mirror on the one broadcast wire (kind
+    ///      10, #1944). Its own frame: built inline, the struct literals put
+    ///      the rehearsal's frame past the stack.
+    function _broadcastDay42() private {
+        IRewardMessenger.BroadcastV2Shared memory shared;
+        shared.dayId = 42;
+        shared.globalLenderNumeraire18 = 9_000 ether;
+        shared.globalBorrowerNumeraire18 = 4_000 ether;
+        shared.capPayloadLender = type(uint256).max;
+        IRewardMessenger.BroadcastV3Extras memory extras;
+        extras.finalizedAt = uint64(block.timestamp);
+        IRewardMessenger.BroadcastV3PerDest[] memory dests =
+            new IRewardMessenger.BroadcastV3PerDest[](1);
+        dests[0].base.destChainId = MIRROR;
+        vm.prank(address(diamondBase));
+        rewardBase.broadcastDayV3{value: fee}(shared, extras, dests, payable(address(diamondBase)));
     }
 
     // ════════════════════════════════════════════════════════════════════════

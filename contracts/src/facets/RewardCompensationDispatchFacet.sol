@@ -195,15 +195,13 @@ contract RewardCompensationDispatchFacet is
         address messenger = s.crossChainMessenger;
         if (messenger == address(0)) revert RewardBudgetMessengerNotSet();
 
-        // #1634 r2 — a clockless day can never emit the V3 broadcast that
-        // settles the mirror's classification: `_broadcastDayV3` falls back
-        // to the V2 wire permanently for it, V2 installs neither the zeroed
-        // marker nor the era, and the compensation hook never fires — so
-        // the credit would sit provisional forever, outside the recovery
-        // reservation. Fail closed HERE, where the operator can act: a
-        // post-w1 day heals its clock first (permissionless
-        // {RewardAggregatorFacet.broadcastGlobalTo}); a pre-w1 day belongs
-        // to the w4 legacy-compensation migration.
+        // #1634 r2 — a clockless day can never carry the broadcast that
+        // settles the mirror's classification, so the credit would sit
+        // provisional forever, outside the recovery reservation. Fail
+        // closed HERE. On a fresh deploy every finalized day has its clock
+        // (finalization freezes it in the same call, and #1944 retired the
+        // clockless broadcast wires), so this guard is a fail-closed check,
+        // not a live route.
         LibVaipakam.DayLapseClock storage clk = s.dayLapseClock[dayId];
         if (clk.finalizedAt == 0) {
             revert CompensationDayHasNoClock(dayId);
