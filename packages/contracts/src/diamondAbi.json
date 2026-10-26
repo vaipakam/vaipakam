@@ -495,7 +495,7 @@
 {"type":"error","name":"LenderIntentNothingToRoll","inputs":[]},
 {"type":"error","name":"LenderIntentPositionTransferred","inputs":[]},
 {"type":"error","name":"LenderIntentSelfCollateralized","inputs":[]},
-{"type":"error","name":"LenderIntentVpfiLendingUnsupported","inputs":[]},
+{"type":"error","name":"LenderIntentVpfiRollUnsupported","inputs":[]},
 {"type":"error","name":"LenderIntentZeroAddress","inputs":[]},
 {"type":"error","name":"OnlyDiamondInternal","inputs":[]},
 {"type":"function","name":"aggregatorAdapterTemplate","inputs":[],"outputs":[{"name":"","type":"address","internalType":"address"}],"stateMutability":"view"},
