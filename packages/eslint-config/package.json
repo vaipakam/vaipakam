@@ -8,8 +8,8 @@
   },
   "dependencies": {
     "eslint-plugin-react-hooks": "^7.0.1",
-    "eslint-plugin-react-refresh": "^0.5.2",
-    "typescript-eslint": "^8.58.0"
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "typescript-eslint": "^8.72.0"
   },
   "peerDependencies": {
     "eslint": "^9.39.4"
