@@ -172,10 +172,13 @@ It never proposes anything not in the merged bindings file.
 
 ## 7. Launch readiness
 
-The launch step gains a requirement that the Diamond's registry is set and is
-a contract answering `getFeed`. A production chain's declaration also carries
-the registry address, so the Safe reviews which registry the chain prices
-through.
+The launch step gains an eighth requirement: the Diamond's registry
+(`OracleAdminFacet.getFeedRegistryLookup`) is the declared one, the artifact's
+`feedRegistry`, and files a quote (`quoteSymbol`) under both keys the oracle
+asks it under: the primary key (`LibVaipakam.effectivePadDenominator`, the one
+rule the oracle's price path reads too) and the ETH key. The feed count is
+reported, not required. A production chain's declaration carries the registry
+address, so the Safe reviews which registry the chain prices through.
 
 ## 8. Testnets
 
@@ -192,8 +195,7 @@ reaches a chain uses it.
 
 1. Contract, deploy wiring (`DeployFeedRegistry` in every contracts phase,
    `ConfigureOracle`, the mock rigs, the handover and its gate), tests and
-   spec. The launch-readiness check (section 7) lands with it once #2747's
-   readiness change is on main, since both edit the same check list.
+   spec, and the launch-readiness check (section 7).
 2. Drafting tool and the first bindings files.
 3. Feed service.
 4. #2745 on top: secondary oracle keys come from the registered feed's pair

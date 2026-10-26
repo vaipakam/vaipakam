@@ -23,6 +23,7 @@ import {ILaunchGate} from "../../src/interfaces/ILaunchGate.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {LibLaunchReadiness} from "../../src/governance/LibLaunchReadiness.sol";
 import {VaipakamTimelock} from "../../src/governance/VaipakamTimelock.sol";
+import {VaipakamFeedRegistry} from "../../src/oracle/VaipakamFeedRegistry.sol";
 
 /// @dev Whoever owns the Diamond, read live: the route mocks below answer
 ///      their authority reads with it unless a test overrides one.
@@ -313,24 +314,34 @@ contract LaunchPaaDiamondStub {
 }
 
 /// @dev #2747 — a stable quote stand-in: a contract answering `decimals()`
-///      with 6, as USDC does.
+///      with 6, as USDC does, until the test breaks it.
 contract LaunchQuoteStub {
-    function decimals() external pure returns (uint8) {
+    bool internal broken;
+
+    function breakDecimals() external {
+        broken = true;
+    }
+
+    function decimals() external view returns (uint8) {
+        require(!broken, "decimals unreadable");
         return 6;
     }
 }
 
-/// @dev #2747 — a feed registry stand-in answering `getFeed(base, quote)`
-///      from a per-base table, whatever the quote denomination.
-contract LaunchFeedRegistryStub {
-    mapping(address => address) internal feedOf;
-
-    function setFeed(address base, address feed) external {
-        feedOf[base] = feed;
+/// @dev #2747 / #2880 — the quote's price feed as the feed registry accepts
+///      one: it names its pair, answers `decimals()` and reports a fresh
+///      round at a peg price.
+contract LaunchUsdcFeed {
+    function description() external pure returns (string memory) {
+        return "USDC / USD";
     }
 
-    function getFeed(address base, address) external view returns (address) {
-        return feedOf[base];
+    function decimals() external pure returns (uint8) {
+        return 8;
+    }
+
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
+        return (1, 1e8, block.timestamp, block.timestamp, 1);
     }
 }
 
@@ -418,8 +429,6 @@ contract LaunchTest is Test {
     address internal constant PROPOSER = address(0x5AFE);
     address internal constant TREASURY = address(0xBEEF);
     address internal constant VPFI = address(0xF1F1);
-    /// @dev #2747 — the Chainlink feed-registry USD denominator.
-    address internal constant USD_DENOMINATOR = address(0x0000000000000000000000000000000000000348);
     /// @dev The Pauser Safe stand-in the handover appoints.
     address internal constant GUARDIAN = address(0x6A2D);
 
@@ -427,10 +436,12 @@ contract LaunchTest is Test {
     address internal admin;
     address internal weth;
     /// @dev #2747 — the quote asset besides WETH every configured Diamond
-    ///      here carries, priced through `quoteRegistry`, so WETH has a
-    ///      liquidity-tier route.
+    ///      here carries, priced through the chain's feed registry, so WETH
+    ///      has a liquidity-tier route.
     address internal stableQuote;
-    LaunchFeedRegistryStub internal quoteRegistry;
+    /// @dev #2880 — the chain's feed registry, wired by setUp as the
+    ///      configure phase wires it and declared by {_d}.
+    address internal feedRegistry;
     Launch internal launcher;
 
     function setUp() public {
@@ -443,21 +454,45 @@ contract LaunchTest is Test {
         launcher = new Launch();
         new DeployLaunchGate().deploy(DEPLOYER_KEY);
         weth = address(new LaunchWethStub());
-        // #2747 — the configure phase's quote-asset list: WETH plus a quote
-        // besides it that the Diamond prices through the feed registry. A
-        // Diamond born paused still takes config writes.
+        // #2880 — the configure phase points the Diamond at the chain's feed
+        // registry and takes both quote keys from it. #2747 — its quote-asset
+        // list names WETH plus a quote besides it, priced through that
+        // registry. A Diamond born paused still takes config writes.
+        VaipakamFeedRegistry reg = new VaipakamFeedRegistry(admin, admin);
+        feedRegistry = address(reg);
         stableQuote = address(new LaunchQuoteStub());
-        LaunchFeedStub quoteFeed = new LaunchFeedStub();
-        quoteFeed.setPrice(1e8);
-        quoteRegistry = new LaunchFeedRegistryStub();
-        quoteRegistry.setFeed(stableQuote, address(quoteFeed));
         address[] memory paa = new address[](2);
         paa[0] = weth;
         paa[1] = stableQuote;
         vm.startPrank(admin);
+        reg.setDelay(0);
         ConfigFacet(diamond).setPaaAssets(paa);
-        OracleAdminFacet(diamond).setChainlinkRegistry(address(quoteRegistry));
-        OracleAdminFacet(diamond).setUsdChainlinkDenominator(USD_DENOMINATOR);
+        OracleAdminFacet(diamond).setChainlinkRegistry(feedRegistry);
+        OracleAdminFacet(diamond).setUsdChainlinkDenominator(reg.USD());
+        OracleAdminFacet(diamond).setEthChainlinkDenominator(reg.ETH());
+        vm.stopPrank();
+        _setUsdFeed(stableQuote, address(new LaunchUsdcFeed()));
+    }
+
+    /// @dev Register (or, with `feed` zero, remove) `base`'s USD feed in the
+    ///      chain's feed registry: one owner proposal, executed at once under
+    ///      the zero delay a test chain allows.
+    function _setUsdFeed(address base, address feed) internal {
+        VaipakamFeedRegistry reg = VaipakamFeedRegistry(feedRegistry);
+        VaipakamFeedRegistry.Change[] memory cs = new VaipakamFeedRegistry.Change[](1);
+        cs[0] = VaipakamFeedRegistry.Change({
+            base: base,
+            quote: reg.USD(),
+            expectedFeed: reg.getFeed(base, reg.USD()),
+            feed: feed,
+            feedDecimals: feed == address(0) ? 0 : 8,
+            category: VaipakamFeedRegistry.Category.Low,
+            heartbeat: 1 days,
+            pair: feed == address(0) ? "" : "USDC / USD"
+        });
+        vm.startPrank(admin);
+        uint256 id = reg.propose(cs, bytes32(0), 0);
+        reg.execute(id, cs);
         vm.stopPrank();
     }
 
@@ -507,6 +542,7 @@ contract LaunchTest is Test {
     function _d(address registry) internal view returns (LibLaunchReadiness.Declared memory d) {
         d.tokenAdminRegistry = registry;
         d.weth = weth;
+        d.feedRegistry = feedRegistry;
         d.vpfiPool = wiredPool[registry];
         d.rateGovernor = wiredGovernor[registry];
         if (d.vpfiPool != address(0)) d.lanes = _decl(1, 0);
@@ -1492,7 +1528,7 @@ contract LaunchTest is Test {
     ///      WETH would still resolve to tier 0. NOT MET, and the gate refuses.
     function test_WethQuoteRoute_NotMetWhenTheQuoteIsUnpriced() public {
         _configure();
-        quoteRegistry.setFeed(stableQuote, address(0));
+        _setUsdFeed(stableQuote, address(0));
         assertFalse(OracleFacet(diamond).isLiquidityQuoteUsable(stableQuote));
         LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
         assertTrue(c[6].checkable);
@@ -1507,16 +1543,9 @@ contract LaunchTest is Test {
     ///      value its leg either: the same rule the tier search applies.
     function test_WethQuoteRoute_NotMetWhenTheQuoteHasNoDecimals() public {
         _configure();
-        address codeless = address(0x05DC);
-        LaunchFeedStub feed = new LaunchFeedStub();
-        feed.setPrice(1e8);
-        quoteRegistry.setFeed(codeless, address(feed));
-        address[] memory paa = new address[](2);
-        paa[0] = weth;
-        paa[1] = codeless;
-        vm.prank(admin);
-        ConfigFacet(diamond).setPaaAssets(paa);
-        assertFalse(OracleFacet(diamond).isLiquidityQuoteUsable(codeless));
+        assertTrue(OracleFacet(diamond).isLiquidityQuoteUsable(stableQuote));
+        LaunchQuoteStub(stableQuote).breakDecimals();
+        assertFalse(OracleFacet(diamond).isLiquidityQuoteUsable(stableQuote));
         LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
         assertTrue(c[6].checkable);
         assertFalse(c[6].met);
@@ -1555,6 +1584,73 @@ contract LaunchTest is Test {
         c = _gate().checks(stub, _d(address(0)));
         assertTrue(c[6].checkable);
         assertFalse(c[6].met);
+    }
+
+    /// @dev #2880 — the Diamond prices through the declared registry, which
+    ///      files a quote under both keys the oracle asks it under: met, with
+    ///      the feed count reported rather than required.
+    function test_FeedRegistry_MetWhenDeclaredAndKeyed() public {
+        _configure();
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertEq(c[7].label, "the declared feed registry keys every price lookup");
+        assertTrue(c[7].checkable && c[7].met);
+        assertEq(
+            c[7].detail,
+            "the Diamond prices through the declared registry, which files a quote under both keys and holds 1 feed(s)"
+        );
+    }
+
+    /// @dev #2880 — no registry configured: only WETH would be priced, so
+    ///      NOT MET, and a testnet launch refuses.
+    function test_FeedRegistry_NotMetWhenUnset() public {
+        vm.chainId(84532);
+        _configure();
+        vm.prank(admin);
+        OracleAdminFacet(diamond).setChainlinkRegistry(address(0));
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertTrue(c[7].checkable);
+        assertFalse(c[7].met);
+        assertEq(c[7].detail, "no feed registry configured (setChainlinkRegistry), so only WETH is priced: run the configure phase");
+        vm.expectRevert(bytes("Launch: a readiness check is NOT MET - complete the deploy phase it names, then re-run"));
+        launcher.launch(diamond, _d(address(0)), address(0), admin, ADMIN_KEY);
+    }
+
+    /// @dev #2880 — a registry other than the declared one is refused, and
+    ///      one with nothing declared to compare against is not checkable.
+    function test_FeedRegistry_OtherThanDeclaredRefused_UndeclaredNotChecked() public {
+        _configure();
+        LibLaunchReadiness.Declared memory d = _d(address(0));
+        d.feedRegistry = address(new VaipakamFeedRegistry(admin, admin));
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, d);
+        assertTrue(c[7].checkable);
+        assertFalse(c[7].met);
+        assertEq(c[7].detail, "the configured feed registry is not the declared one");
+        d.feedRegistry = address(0);
+        c = _gate().checks(diamond, d);
+        assertFalse(c[7].checkable);
+        assertEq(c[7].detail, "no feed registry declared to compare the configured one against");
+    }
+
+    /// @dev #2880 — a key the registry files nothing under means every
+    ///      lookup under it misses: the primary key and the ETH key are each
+    ///      checked.
+    function test_FeedRegistry_NotMetWhenAKeyIsUnregistered() public {
+        _configure();
+        vm.prank(admin);
+        OracleAdminFacet(diamond).setEthChainlinkDenominator(address(0xEEEE));
+        LibLaunchReadiness.Check[] memory c = _gate().checks(diamond, _d(address(0)));
+        assertFalse(c[7].met);
+        assertEq(c[7].detail, "the registry files no quote under the oracle's ETH key, so every asset/ETH lookup misses");
+        vm.startPrank(admin);
+        OracleAdminFacet(diamond).setEthChainlinkDenominator(VaipakamFeedRegistry(feedRegistry).ETH());
+        OracleAdminFacet(diamond).setUsdChainlinkDenominator(address(0x0349));
+        vm.stopPrank();
+        c = _gate().checks(diamond, _d(address(0)));
+        assertFalse(c[7].met);
+        assertEq(
+            c[7].detail,
+            "the registry files no quote under the oracle's primary key (the predominant or numeraire denominator), so every primary lookup misses"
+        );
     }
 
     /// @dev `--skip-vpfi`: no VPFI token and none declared. Both CCIP checks

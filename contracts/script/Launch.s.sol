@@ -646,7 +646,9 @@ contract Launch is Script {
     ///             names for the Safe to verify against the chain's official
     ///             bridge registry (no on-chain record says which token is
     ///             the chain's bridged WETH9). The gate then refuses any
-    ///             other.
+    ///             other;
+    ///           - the feed registry: the artifact's `feedRegistry` (#2880),
+    ///             the only registry the Diamond may price through.
     function declaredFromEnv(address diamond) public view returns (LibLaunchReadiness.Declared memory d) {
         d.tokenAdminRegistry = vm.envOr("CCIP_TOKEN_ADMIN_REGISTRY", address(0));
         d.vpfiPool = Deployments.readVpfiTokenPoolOptional();
@@ -666,6 +668,7 @@ contract Launch is Script {
             d.weth = w;
         } catch {}
         d.mirrorToken = !Deployments.isCanonicalVpfiChainId(block.chainid);
+        d.feedRegistry = Deployments.readFeedRegistryOptional();
     }
 
     /// @dev How a launch record names its gate: nothing for a plain unpause,
@@ -758,6 +761,8 @@ contract Launch is Script {
         console.log("      WETH:", declared.weth);
         console.log("        verify it against the chain's official bridge registry: the bridged WETH9,");
         console.log("        never the wrapped native token (OracleAdminFacet.setWethContract policy)");
+        console.log("      feed registry (the artifact's feedRegistry):", declared.feedRegistry);
+        console.log("        the chain's VaipakamFeedRegistry; its owner and veto are proven by the handover gate");
         console.log("    handover - the governance state the launch is bound to:");
         console.log("      admin key, which must hold no role:", d.handover.deployKey);
         console.log("      Diamond owner:", d.handover.owner);

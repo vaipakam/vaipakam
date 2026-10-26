@@ -595,7 +595,7 @@ even for the gap between the deploy and the handover.
    count**, both read in the state where it proved every role's holders;
    the wrapper records the two together (`handover-gate.proof`) for the
    launch phase and the verify report.
-2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the seven launch
+2. Run `deploy-mainnet.sh <slug> --phase launch`. It reads the eight launch
    requirements off the chain and refuses unless every one is met, the
    Timelock holds `UNPAUSER_ROLE` and owns the Diamond, the admin key holds
    no Diamond role at all, and the role epoch and the Timelock's call count
@@ -646,7 +646,14 @@ even for the gap between the deploy and the handover.
      skips a quote it cannot price, so the check asks the Diamond's own
      quote test (`isLiquidityQuoteUsable`): a stablecoin with a peg
      reference but no asset price feed is NOT MET. Whether that pool is
-     deep enough for a higher tier is measured per loan, not here.
+     deep enough for a higher tier is measured per loan, not here;
+   - the Diamond pricing through the declared feed registry (#2880): the
+     artifact's `feedRegistry`, the chain's `VaipakamFeedRegistry`, whose
+     owner and veto the handover gate proved. The registry must file a quote
+     under both keys the oracle asks it under (the primary denominator and
+     the ETH one), or every lookup under that key misses. How many feeds it
+     holds is printed, not required: WETH prices without it, and the feed
+     service fills it under the registry's own delay.
 
    The launch checks the chain against these DECLARED values rather than
    against itself: a check that only read the configuration back would

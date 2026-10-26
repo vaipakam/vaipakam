@@ -10,6 +10,8 @@ Configure now points the Diamond at the recorded registry on every chain and tak
 
 A drafting tool now writes each chain's bindings file from Chainlink's directory. It keeps only standard low- and medium-risk price feeds quoted in USD or ETH, with no shutdown date. It drafts a binding only when CoinGecko, CoinMarketCap and the chain's official token list all name the same single token address. It then reads the feed and the token on chain the way the registry will. Anything else goes to a review list with every source's answer, and nothing is drafted for it. Every feed it leaves out is listed with the reason. The owner can add entries by hand, each naming where its address came from. The API keys stay on the machine that runs the tool and are never printed.
 
-Still to come under #2880: the service that proposes and executes the merged bindings, and a launch-readiness check that the registry is set. #2745 (secondary oracle keys from the registered pair name) builds on this.
+The launch step gains an eighth readiness check: the Diamond must price through the registry the deployment records, and that registry must file a quote under both keys the oracle asks it under, so no lookup misses a feed for want of a key. The production launch proposal names the registry for the Safe to review. How many feeds it holds is reported, not required, since WETH prices without it.
+
+Still to come under #2880: the service that proposes and executes the merged bindings. #2745 (secondary oracle keys from the registered pair name) builds on this.
 
 Part of #2880.

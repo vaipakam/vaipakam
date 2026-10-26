@@ -48,14 +48,15 @@ contract OracleAdminFacet {
     uint256 internal constant MAX_TIER_REFERENCE_ASSETS = 20;
 
     /**
-     * @notice Sets the Chainlink Feed Registry address used by
-     *         OracleFacet for asset/USD and asset/ETH lookups.
+     * @notice Sets the feed registry OracleFacet uses for asset/USD and
+     *         asset/ETH lookups: the chain's `VaipakamFeedRegistry` (#2880),
+     *         which every chain deploys, since Chainlink runs its own
+     *         registry on Ethereum mainnet only.
      * @dev Owner-only (enforced inside `LibVaipakam.setChainlinkRegistry`).
-     *      Setting to `address(0)` disables registry-based price lookups —
-     *      correct for l2 deployments where the Feed Registry is not
-     *      available; OracleFacet then falls through to the direct
-     *      `ethNumeraireFeed` path for WETH.
-     * @param registry The Chainlink Feed Registry contract address.
+     *      Setting `address(0)` leaves WETH as the only priced asset (read
+     *      from the direct `ethNumeraireFeed`); the launch readiness check
+     *      refuses a chain in that state.
+     * @param registry The feed registry contract address.
      */
     function setChainlinkRegistry(address registry) external {
         LibVaipakam.setChainlinkRegistry(registry);
@@ -156,6 +157,24 @@ contract OracleAdminFacet {
     ///      the oracle's acceptance rules.
     function getWethContract() external view returns (address) {
         return LibVaipakam.storageSlot().wethContract;
+    }
+
+    /// @notice #2880 — the feed registry the oracle prices through and the
+    ///         two quote keys it passes to it: the primary key (the
+    ///         predominant denominator, or the numeraire's while that is
+    ///         unset, {LibVaipakam.effectivePadDenominator}) and the ETH key
+    ///         of the asset/ETH fallback.
+    /// @dev Read by the launch readiness check, which requires the registry
+    ///      to be the declared one and to have a quote registered under each
+    ///      key, so no lookup can miss a feed by asking under a key the
+    ///      registry does not file under.
+    function getFeedRegistryLookup()
+        external
+        view
+        returns (address registry, address padDenominator, address ethDenominator)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.chainlnkRegistry, LibVaipakam.effectivePadDenominator(), s.ethChainlinkDenominator);
     }
 
     /**

@@ -11973,6 +11973,18 @@ library LibVaipakam {
         return v == bytes32(0) ? bytes32("usd") : v;
     }
 
+    /// @notice #2880 — the quote key the oracle's primary lookup passes to
+    ///         the feed registry: the predominant denominator, or, while it
+    ///         is unset (the pre-T-048 path), the numeraire's denominator.
+    ///         The ONE statement of that rule, read by the oracle's price
+    ///         path and by the launch readiness check, so the check asks the
+    ///         registry about the key the oracle actually uses.
+    function effectivePadDenominator() internal view returns (address pad) {
+        Storage storage s = storageSlot();
+        pad = s.predominantDenominator;
+        if (pad == address(0)) pad = s.numeraireChainlinkDenominator;
+    }
+
     /// @notice T-048 — `true` when the active numeraire's Chainlink
     ///         denomination matches the PAD denomination. On retail
     ///         (both default to `Denominations.USD`), this returns

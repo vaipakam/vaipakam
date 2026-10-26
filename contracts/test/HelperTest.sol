@@ -3093,7 +3093,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](35);
+        selectors = new bytes4[](36);
         selectors[0] = OracleAdminFacet.setChainlinkRegistry.selector;
         selectors[1] = OracleAdminFacet.setUsdChainlinkDenominator.selector;
         selectors[2] = OracleAdminFacet.setEthChainlinkDenominator.selector;
@@ -3129,6 +3129,9 @@ contract HelperTest {
         selectors[32] = OracleAdminFacet.setTierReferenceAssets.selector;
         selectors[33] = OracleAdminFacet.getTierReferenceAssets.selector;
         selectors[34] = OracleAdminFacet.getWethContract.selector;
+        // #2880 — the launch readiness check reads the feed registry the
+        // oracle prices through and the two quote keys it asks it under.
+        selectors[35] = OracleAdminFacet.getFeedRegistryLookup.selector;
         return selectors;
     }
 

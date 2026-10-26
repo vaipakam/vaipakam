@@ -727,8 +727,7 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         address asset
     ) private view returns (uint256 price, uint8 decimals) {
         address weth = s.wethContract;
-        address padDenom = s.predominantDenominator;
-        if (padDenom == address(0)) padDenom = s.numeraireChainlinkDenominator;
+        address padDenom = LibVaipakam.effectivePadDenominator();
         address ethPadAnchor = s.ethPadFeed;
         if (ethPadAnchor == address(0)) ethPadAnchor = s.ethNumeraireFeed;
 
