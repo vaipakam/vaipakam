@@ -1,4 +1,4 @@
-## Rewards — the deploy now sets the zeroed-day lapse schedule (PR #TBD)
+## Rewards — the deploy now sets the zeroed-day lapse schedule (PR #2919)
 
 A fresh canonical reward chain used to launch with no lapse schedule at all.
 That is the schedule's version 0, under which a zeroed day never lapses and
