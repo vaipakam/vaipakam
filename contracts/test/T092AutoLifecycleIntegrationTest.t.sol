@@ -440,10 +440,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     function test_ExtendInPlace_RealLoan_RequiresBothSideConsent() public {
         // Active loan with neither side's extend consent set →
         // extendLoanInPlace reverts BothSideAutoExtendRequired.
-        // Warp past the 1-day "too soon after start" guard so the
-        // executor reaches the auth + consent stage.
+        // Warp into the extension window (#2738) so the executor reaches
+        // the auth + consent stage.
         uint256 loanId = _buildActiveLoan();
-        vm.warp(block.timestamp + 2 days);
+        _warpToExtendWindow(loanId);
         vm.expectRevert(
             AutoLifecycleFacet.BothSideAutoExtendRequired.selector
         );
@@ -455,8 +455,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
 
     /// @dev Build an active ERC20 loan with both-side auto-extend caps set and
     ///      the borrower vault pre-funded to cover accrued interest, so a
-    ///      subsequent {extendLoanInPlace} succeeds. Warps 2 days past the
-    ///      "too soon after start" accrual guard. Caller stamps the fee
+    ///      subsequent {extendLoanInPlace} succeeds. Warps to the opening of
+    ///      the loan's extension window (#2738). Caller stamps the fee
     ///      entitlement as needed before extending.
     function _setupExtendableLoan() internal returns (uint256 loanId) {
         loanId = _buildActiveLoan();
@@ -477,8 +477,83 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             borrower, mockERC20, 10 ether
         );
 
-        // Past the 1-day "too soon after start" accrual guard.
-        vm.warp(block.timestamp + 2 days);
+        _warpToExtendWindow(loanId);
+    }
+
+    /// @dev Warp to the moment the loan's extension window opens (#2738).
+    function _warpToExtendWindow(uint256 loanId) internal {
+        (uint64 opensAt, ) = _f().getAutoExtendWindow(loanId);
+        vm.warp(opensAt);
+    }
+
+    // ─── #2738 — the extension window and the grace invariant ────────
+
+    /// @notice #2738 — the window opens three days before the effective
+    ///         maturity and closes at the grace end.
+    function test_2738_ExtendWindow_OpensThreeDaysBeforeMaturity() public {
+        uint256 loanId = _buildActiveLoan();
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        uint256 maturity = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
+        (uint64 opensAt, uint64 closesAt) = _f().getAutoExtendWindow(loanId);
+        assertEq(uint256(opensAt), maturity - 3 days, "opens 3 days before maturity");
+        assertEq(uint256(closesAt), maturity + LibVaipakam.gracePeriod(l.durationDays), "closes at grace end");
+    }
+
+    /// @notice #2738 — an extension before the window opens is refused, so a
+    ///         loan is never re-termed early in its term.
+    function test_2738_Extend_RefusedBeforeTheWindowOpens() public {
+        uint256 loanId = _setupExtendableLoan();
+        (uint64 opensAt, ) = _f().getAutoExtendWindow(loanId);
+        vm.warp(uint256(opensAt) - 1);
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(AutoLifecycleFacet.AutoExtendWindowNotOpen.selector, uint256(opensAt))
+        );
+        _f().extendLoanInPlace(loanId, 500, 45);
+        vm.warp(opensAt);
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 45);
+    }
+
+    /// @notice #2738 — a later end that lands in a smaller grace bucket would
+    ///         make the loan defaultable sooner: refused. The 30-day loan has
+    ///         a 3-day grace; a 4-day term from the window opening ends a day
+    ///         after maturity but earns only a 1-hour grace.
+    function test_2738_Extend_RefusedWhenItShortensGrace() public {
+        uint256 loanId = _setupExtendableLoan();
+        (, uint64 closesAt) = _f().getAutoExtendWindow(loanId);
+        uint256 newGraceEnd = block.timestamp + 4 days + LibVaipakam.gracePeriod(4);
+        assertLt(newGraceEnd, uint256(closesAt), "precondition: the short term ends grace sooner");
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                AutoLifecycleFacet.ExtensionShortensGrace.selector, newGraceEnd, uint256(closesAt)
+            )
+        );
+        _f().extendLoanInPlace(loanId, 500, 4);
+        // A term whose grace end is no sooner goes through.
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 6);
+    }
+
+    /// @notice #2738 — a pause moves the window with the loan's deadlines
+    ///         (LibLoanClock), so time spent paused never eats into it.
+    function test_2738_ExtendWindow_MovesWithAPause() public {
+        uint256 loanId = _buildActiveLoan();
+        (uint64 opensBefore, uint64 closesBefore) = _f().getAutoExtendWindow(loanId);
+        vm.warp(vm.getBlockTimestamp() + 1 days);
+        AdminFacet(address(diamond)).pause();
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        AdminFacet(address(diamond)).unpause();
+        (uint64 opensAfter, uint64 closesAfter) = _f().getAutoExtendWindow(loanId);
+        assertEq(uint256(opensAfter), uint256(opensBefore) + 2 days, "opens two paused days later");
+        assertEq(uint256(closesAfter), uint256(closesBefore) + 2 days, "closes two paused days later");
+    }
+
+    /// @notice #2738 — the window read refuses a loan that is not active.
+    function test_2738_ExtendWindow_RefusedForAnUnknownLoan() public {
+        vm.expectRevert(AutoLifecycleFacet.LoanNotActive.selector);
+        _f().getAutoExtendWindow(999_999);
     }
 
     /// @notice #2407 — an in-place extension rewrites the rate, term and

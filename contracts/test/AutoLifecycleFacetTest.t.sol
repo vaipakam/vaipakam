@@ -212,7 +212,8 @@ contract AutoLifecycleFacetTest is SetupTest {
         assertTrue(AutoLifecycleFacet.AutoExtendRateOutOfBand.selector != bytes4(0));
         assertTrue(AutoLifecycleFacet.AutoExtendExpiryExceedsCap.selector != bytes4(0));
         assertTrue(AutoLifecycleFacet.AutoExtendDurationOutOfRange.selector != bytes4(0));
-        assertTrue(AutoLifecycleFacet.AutoExtendTooSoonAfterStart.selector != bytes4(0));
+        assertTrue(AutoLifecycleFacet.AutoExtendWindowNotOpen.selector != bytes4(0));
+        assertTrue(AutoLifecycleFacet.ExtensionShortensGrace.selector != bytes4(0));
         assertTrue(AutoLifecycleFacet.AutoExtendEndTimeOverflow.selector != bytes4(0));
     }
 }
