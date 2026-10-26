@@ -29,6 +29,8 @@ import {
   type PeriodicSettleDeps,
 } from '../src/periodicSettle';
 import type { ServerOrchestrationResult } from '../src/serverQuotes';
+import type { ForcedSaleSurface } from '@vaipakam/lib/routeBuilder';
+import { surfaceFacet } from './helpers/forcedSaleSurface';
 
 beforeEach(() => armHeldFence());
 
@@ -67,6 +69,8 @@ function revertWith(errorName: string): Error {
 }
 
 interface Scene {
+  /** The forced-sale surface the Diamond routes. */
+  surface?: ForcedSaleSurface | 'mixed';
   /** The plan as read on each call, in order (the last one repeats). */
   plans?: ForcedSalePlan[];
   loan?: GraceLoan;
@@ -97,6 +101,11 @@ function harness(scene: Scene) {
           return scene.hf ?? 2n * 10n ** 18n;
         case 'isLoanDefaultable':
           return scene.defaultable ?? false;
+        case 'facetAddress': {
+          const host = surfaceFacet((args.args as readonly Hex[])[0], scene.surface);
+          if (host === undefined) throw new Error('unexpected selector');
+          return host;
+        }
         case 'previewForcedSale': {
           expect(args.args).toEqual([LOAN_ID, FORCED_SALE_KIND_PERIODIC]);
           planBlocks.push(args.blockNumber);
@@ -242,6 +251,16 @@ describe('attemptPeriodicSettle', () => {
     const h = harness({ plans: [SALE], calls: 0 });
     const out = await attemptPeriodicSettle(h.deps, LOAN_ID);
     expect(out.kind === 'skipped' && out.reason).toMatch(/^no-route sell=/);
+    expect(h.writes).toEqual([]);
+  });
+
+  it('sends nothing to a Diamond deployed before #2796, and reads no plan', async () => {
+    const h = harness({ surface: 'whole', plans: [SALE] });
+    await expect(attemptPeriodicSettle(h.deps, LOAN_ID)).resolves.toEqual({
+      kind: 'skipped',
+      reason: 'surface=whole (a pre-#2796 Diamond has no sized settlement)',
+    });
+    expect(h.planBlocks).toEqual([]);
     expect(h.writes).toEqual([]);
   });
 

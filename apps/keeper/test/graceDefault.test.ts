@@ -11,6 +11,7 @@ import { armHeldFence } from './helpers/epochFence';
 import {
   decodeFunctionData,
   keccak256,
+  parseAbi,
   type Abi,
   type Address,
   type Hex,
@@ -24,6 +25,8 @@ import {
   SWAP_ADAPTER_SUCCEEDED_TOPIC,
   SWAP_ALL_ADAPTERS_FAILED_TOPIC,
 } from '@vaipakam/lib/routeBuilder';
+import { FORCED_SALE_SURFACE_SELECTORS, type ForcedSaleSurface } from '@vaipakam/lib/routeBuilder';
+import { surfaceFacet } from './helpers/forcedSaleSurface';
 import { attemptCloseOut } from '../src/closeOut';
 import { attemptErrorReason } from '../src/keeperSend';
 import { SendPastDeadline } from '../src/submissionQueue';
@@ -94,6 +97,9 @@ interface Scene {
   /** `previewForcedSale(loanId, TimeBasedDefault)` as read on each call, in
    *  order (the last one repeats): the early read, then the gate's. */
   plans?: (Plan | 'revert')[];
+  /** The forced-sale surface the Diamond routes, per surface read in order
+   *  (the last one repeats): the attempt's first read, then the gate's. */
+  surfaces?: (ForcedSaleSurface | 'mixed')[];
 }
 
 interface Plan {
@@ -111,6 +117,9 @@ const NO_SALE: Plan = { debt: 0n, need: 0n, sell: 0n, floor: 0n, covered: false,
 
 const SIGNED: Hex = '0x02f86b0182';
 
+/** The pre-#2796 whole-collateral `triggerDefault(loanId, adapterCalls)`. */
+const WHOLE_DEFAULT_ABI = parseAbi(['function triggerDefault(uint256 loanId, (uint256 adapterIdx, bytes data)[] adapterCalls)']);
+
 function harness(scene: Scene) {
   const writes: unknown[] = [];
   const previews: unknown[] = [];
@@ -119,6 +128,7 @@ function harness(scene: Scene) {
   let planReads = 0;
   const plans = scene.plans ?? [PLAN];
   const planBlocks: (bigint | undefined)[] = [];
+  let surfaceReads = 0;
   const client = {
     getBlockNumber: async () => 100n,
     getTransactionCount: async (args: { blockTag: string }) =>
@@ -143,8 +153,14 @@ function harness(scene: Scene) {
         case 'calculateHealthFactor':
           if (typeof scene.hf === 'function') return scene.hf();
           return scene.hf ?? 2n * 10n ** 18n;
-        case 'facetAddress':
-          return scene.boundedListing === false ? A(0) : A(0xfa);
+        case 'facetAddress': {
+          const selector = (args.args as readonly Hex[])[0];
+          const surfaces = scene.surfaces ?? ['sized'];
+          const surface = surfaces[Math.min(surfaceReads, surfaces.length - 1)];
+          // Each surface read asks about this selector once, and last.
+          if (selector === FORCED_SALE_SURFACE_SELECTORS.whole.triggerLiquidation) surfaceReads += 1;
+          return surfaceFacet(selector, surface) ?? (scene.boundedListing === false ? A(0) : A(0xfa));
+        }
         case 'isLoanDefaultable':
           if (scene.defaultable === null) throw new Error('rpc down');
           return scene.defaultable ?? true;
@@ -183,7 +199,7 @@ function harness(scene: Scene) {
     // The send is prepare → sign → broadcast; what was asked for is
     // recorded at the prepare, decoded, so tests read it like a call.
     prepareTransactionRequest: async (args: { data: Hex }) => {
-      writes.push(decodeFunctionData({ abi: DefaultedFacetABI as Abi, data: args.data }));
+      writes.push(decodeFunctionData({ abi: [...(DefaultedFacetABI as Abi), ...WHOLE_DEFAULT_ABI], data: args.data }));
       return args;
     },
     signTransaction: async () => SIGNED,
@@ -328,6 +344,53 @@ describe('attemptGraceDefault', () => {
     const out = await attemptGraceDefault(h.deps, LOAN_ID);
     expect(out).toMatchObject({ kind: 'submitted', sellAmount: whole });
     expect(h.routeSizes).toEqual([whole]);
+  });
+
+  describe('a Diamond deployed before #2796 (the whole-collateral surface)', () => {
+    it('quotes the whole collateral, reads no plan, and sends the whole-collateral form', async () => {
+      // A plan read would revert: the whole surface has none.
+      const h = harness({ ending: 'sale', calls: 2, surfaces: ['whole'], plans: ['revert'] });
+      const out = await attemptGraceDefault(h.deps, LOAN_ID);
+      expect(out).toEqual({
+        kind: 'submitted',
+        tx: keccak256(SIGNED),
+        preview: 'sale',
+        calls: 2,
+        sellAmount: LIQUID.collateralAmount,
+      });
+      expect(h.routeSizes).toEqual([LIQUID.collateralAmount]);
+      expect(h.planBlocks).toEqual([]);
+      const w = h.writes[0] as { functionName: string; args: readonly unknown[] };
+      expect(w.functionName).toBe('triggerDefault');
+      expect(w.args).toHaveLength(2);
+      expect(w.args[0]).toBe(LOAN_ID);
+      // The preview simulated the same form.
+      const preview = h.previews[0] as { calls: { data: Hex }[] };
+      expect(preview.calls[0].data.slice(0, 10)).toBe(FORCED_SALE_SURFACE_SELECTORS.whole.triggerDefault);
+    });
+
+    it('sends the in-kind close in the whole-collateral form too', async () => {
+      const h = harness({ ending: 'other', defaulted: true, calls: 0, surfaces: ['whole'], hf: 5n * 10n ** 17n });
+      const out = await attemptCloseOut(h.deps, LOAN_ID, 'in-kind');
+      expect(out).toMatchObject({ kind: 'submitted', calls: 0, sellAmount: 0n });
+      const w = h.writes[0] as { functionName: string; args: readonly unknown[] };
+      expect(w.args).toEqual([LOAN_ID, []]);
+    });
+
+    it('sends nothing to a Diamond routing part of each surface', async () => {
+      const h = harness({ ending: 'sale', surfaces: ['mixed'] });
+      const out = await attemptGraceDefault(h.deps, LOAN_ID);
+      expect(out.kind === 'skipped' && out.reason).toMatch(/^surface-mixed:the Diamond routes neither forced-sale surface whole/);
+      expect(h.routes).toEqual([]);
+      expect(h.writes).toEqual([]);
+    });
+
+    it('sends nothing when the Diamond was cut between the first read and the gate', async () => {
+      const h = harness({ ending: 'sale', surfaces: ['whole', 'sized'] });
+      const out = await attemptGraceDefault(h.deps, LOAN_ID);
+      expect(out).toEqual({ kind: 'skipped', reason: 'gate:surface-changed (whole->sized)' });
+      expect(h.writes).toEqual([]);
+    });
   });
 
   it('does NOT send a route that would fall into the full-collateral fallback', async () => {
