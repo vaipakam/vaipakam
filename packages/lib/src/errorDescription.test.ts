@@ -227,6 +227,37 @@ describe('redactSecrets', () => {
     for (const k of ['K1', 'K2', 'K3', 'K4']) expect(said).not.toContain(k);
   });
 
+  it('removes a host with a subdomain standing alone, as a DNS failure names it', () => {
+    expect(redactSecrets('getaddrinfo ENOTFOUND KEY2.quiknode.pro')).toBe('getaddrinfo ENOTFOUND <redacted host>');
+    expect(redactSecrets('connect ETIMEDOUT KEY2.quiknode.pro:443.')).toBe('connect ETIMEDOUT <redacted host>.');
+    expect(redactSecrets('to user@KEY5.rpc.example failed')).not.toContain('KEY5');
+  });
+
+  it('keeps a two-label name, a stack position and a name inside a path', () => {
+    for (const kept of [
+      'Object.keys is not a function',
+      'D1_ERROR: no such column: main.loans.grace_end',
+      '    at fetch (chunk.abc123.js:12:3)',
+      '    at run (/srv/app/node.modules.cache/x.js:1:2)',
+      'connect ECONNREFUSED 127.0.0.1:8545',
+    ]) {
+      expect(redactSecrets(kept)).toBe(kept);
+    }
+  });
+
+  it('removes a quoted credential value through its closing quote', () => {
+    expect(redactSecrets('{"password":"alpha&bravo charlie","n":1}')).toBe('{"password":"<redacted>","n":1}');
+    expect(redactSecrets(`secret: 'a, b; c' next`)).toBe(`secret: '<redacted>' next`);
+    expect(redactSecrets('{"token": "x\\"y z", "ok":true}')).toBe('{"token": "<redacted>", "ok":true}');
+    // A value cut off before its closing quote is removed to the end.
+    expect(redactSecrets('{"apiKey":"half of a k')).toBe('{"apiKey":"<redacted>"');
+  });
+
+  it('is idempotent', () => {
+    const once = redactSecrets('apikey=K1 {"token":"a b"} KEY2.quiknode.pro https://x.example/K');
+    expect(redactSecrets(once)).toBe(once);
+  });
+
   it('removes a Telegram bot token', () => {
     expect(redactSecrets('bot 123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw0 failed')).not.toContain('AAHdq');
   });
@@ -245,6 +276,18 @@ describe('redactedError', () => {
     expect(said).toContain('Error: read failed ← HttpRequestError: HTTP request failed.');
     expect(said).not.toContain('SUPERSECRETAPIKEY');
     expect(said).not.toContain('base-sepolia.example.com');
+  });
+
+  it('keeps a DNS failure under a real viem error without its host', () => {
+    const dns = Object.assign(new Error('getaddrinfo ENOTFOUND KEY2.quiknode.pro'), {
+      code: 'ENOTFOUND',
+      hostname: 'KEY2.quiknode.pro',
+    });
+    const err = new HttpRequestError({ url: 'https://KEY2.quiknode.pro/TOKEN9/', cause: dns });
+    const said = redactedError(err);
+    expect(said).toContain('getaddrinfo ENOTFOUND <redacted host>');
+    expect(said).not.toContain('KEY2');
+    expect(said).not.toContain('TOKEN9');
   });
 
   it('keeps a bounded number of stack frames', () => {

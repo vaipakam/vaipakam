@@ -40,24 +40,53 @@
 import { extractRevertName } from './decodeContractError';
 
 /**
- * Remove every URL and every credential-shaped token from `text` (#2759).
+ * The field names whose value is a credential wherever it appears: a query
+ * parameter, a header, a JSON or form field.
+ */
+const CREDENTIAL_FIELD =
+  '(?:api[-_]?key|apikey|access[-_]?token|token|secret|password|passwd|authorization|auth|key|x-api-key)';
+
+/**
+ * Remove every URL, every host with a subdomain and every credential-shaped
+ * token from `text` (#2759).
  *
- * The one redaction rule every formatter here applies. A URL is removed
- * whole, host included, because some providers put the key in the
- * subdomain; that covers a URL written without its scheme too
- * (`host.tld/path`). Outside a URL it removes the value of a key-like query
- * or header field (`apikey=`, `token:`, `Authorization: Bearer …`) and a
- * Telegram bot token. It does not remove 32-byte hex values: transaction and
- * order hashes are what an operator searches a log for.
+ * The one redaction rule every formatter here applies. Three things are
+ * removed whole, each by its SHAPE rather than by where it appears:
+ *
+ * - **A URL**, host included, with or without its scheme (`host.tld/path`).
+ * - **A host with a subdomain** (`KEY.quiknode.pro`), standing alone. A
+ *   provider issues the labels in front of its own domain per customer, and
+ *   some put the key there, so a DNS or connect failure that names only the
+ *   host (`getaddrinfo ENOTFOUND KEY.quiknode.pro`) carries the key with no
+ *   URL around it. A two-label name (`loans.grace_end`, `Object.keys`,
+ *   `index.js`) is not a host with a subdomain and stays, and so does a file
+ *   position in a stack frame (`chunk.abc.js:12:3`) or a name inside a path.
+ * - **The value of a credential field** (`apikey=`, `token:`,
+ *   `"password":"…"`, `Authorization: Bearer …`). A quoted value is removed
+ *   through its closing quote, escaped quotes and all, so a value holding a
+ *   space, `&` or `,` does not leave its tail behind; an unquoted one ends
+ *   where a query, header or JSON value ends.
+ *
+ * A Telegram bot token is removed too. It does not remove 32-byte hex
+ * values: transaction and order hashes are what an operator searches a log
+ * for.
  */
 export function redactSecrets(text: string): string {
   return text
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, '<redacted url>')
-    .replace(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?\/[^\s"'<>)]*/gi, '<redacted url>')
+    .replace(/(?<![\w./\\-])(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?\/[^\s"'<>)]*/gi, '<redacted url>')
+    .replace(
+      /(?<![\w./\\-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.){2,}[a-z]{2,}(?![\w-]|\.[a-z0-9])(?::\d+(?![\d:]))?(?!:\d)/gi,
+      '<redacted host>',
+    )
     .replace(/\b(bearer|basic)\s+[a-z0-9._~+/=-]+/gi, '$1 <redacted>')
     .replace(
-      /\b(api[-_]?key|apikey|access[-_]?token|token|secret|password|passwd|authorization|auth|key|x-api-key)(["']?\s*[:=]\s*["']?)(?!<redacted)[^\s"'&,;}]+/gi,
-      '$1$2<redacted>',
+      new RegExp(`\\b(${CREDENTIAL_FIELD}["']?\\s*[:=]\\s*)(["'])(?:\\\\[\\s\\S]|(?!\\2)[^\\\\])*(?:\\2|$)`, 'gi'),
+      '$1$2<redacted>$2',
+    )
+    .replace(
+      new RegExp(`\\b(${CREDENTIAL_FIELD}["']?\\s*[:=]\\s*)(?!["']|<redacted)[^\\s"'&,;}]+`, 'gi'),
+      '$1<redacted>',
     )
     .replace(/\b\d{6,}:[a-z0-9_-]{30,}\b/gi, '<redacted token>');
 }
