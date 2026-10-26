@@ -18,7 +18,9 @@
  *
  * A caught value is: the binding of a `catch (x)` clause; the first parameter
  * of a function passed to `.catch(...)` or as the second argument of
- * `.then(...)`; and any local declared or assigned as a bare alias of one.
+ * `.then(...)`; its `.cause`, which is the error it wraps (#2757: viem's
+ * failure, URL and key included, rides there under a wrapper's harmless
+ * message); and any local declared or assigned as a bare alias of one.
  *
  * Refused, for a caught value `x`:
  * - `String(x)`, `x.toString()`, `JSON.stringify(x)`;
@@ -33,7 +35,8 @@
  * only use is a yes/no test inside the Worker: the argument of `.test(...)`
  * on a regular expression literal or a named one, or the receiver of
  * `.includes`, `.startsWith` or `.endsWith`. Passing `x` on to another function, rethrowing it, or naming
- * it as a `cause` moves the value without making text from it.
+ * it as a `cause` moves the value without making text from it. Every rule
+ * here applies to `x.cause` as it does to `x`.
  *
  * What this does not see, and does not claim to: a helper that receives a
  * caught value as an ordinary parameter and makes text from it there. Its
@@ -199,8 +202,15 @@ function climbContainers(node: ts.Node): ts.Node {
   }
 }
 
-/** What, if anything, a use of the caught identifier `id` turns into text. */
-function textForm(id: ts.Identifier): { form: string; at: ts.Node } | null {
+/** Whether `n` reads the `cause` of the expression it accesses. */
+function isCauseAccess(n: ts.Node): n is ts.PropertyAccessExpression | ts.ElementAccessExpression {
+  if (ts.isPropertyAccessExpression(n)) return n.name.text === 'cause';
+  return ts.isElementAccessExpression(n) && ts.isStringLiteral(n.argumentExpression) && n.argumentExpression.text === 'cause';
+}
+
+/** What, if anything, a use of the caught value `id` turns into text. `id` is
+ *  the caught identifier, or a `.cause` read from one (itself a caught value). */
+function textForm(id: ts.Expression): { form: string; at: ts.Node } | null {
   const self = climb(id);
   const p = self.parent;
 
@@ -221,12 +231,13 @@ function textForm(id: ts.Identifier): { form: string; at: ts.Node } | null {
     }
   }
 
+  if (isCauseAccess(p) && p.expression === self) return textForm(p);
   if (ts.isPropertyAccessExpression(p) && p.expression === self) {
     if (TEXT_FIELDS.has(p.name.text)) return { form: `.${p.name.text}`, at: p };
     if (p.name.text === 'toString' && ts.isCallExpression(p.parent) && p.parent.expression === p) {
       return { form: '.toString()', at: p.parent };
     }
-    return null; // x.name / x.code / x.status / x.cause / anything else read
+    return null; // x.name / x.code / x.status / anything else read
   }
   if (ts.isElementAccessExpression(p) && p.expression === self) {
     const arg = p.argumentExpression;
@@ -296,7 +307,8 @@ export function findUnformattedErrorText(fileName: string, source: string): Unfo
           value = n.right;
         }
         if (value) {
-          const v = unwrap(value);
+          let v = unwrap(value);
+          while (isCauseAccess(v)) v = unwrap(v.expression);
           if (ts.isIdentifier(v) && names.has(v.text)) {
             for (const t of target) {
               if (!names.has(t)) {

@@ -2767,7 +2767,7 @@ async function runChainPass(
           console.error(
             `[chainIndexer] chain ${chainId}: block ${blockNumber}'s time could not be read; ` +
               `the scan stops before it and the next pass retries`,
-            err.cause,
+            redactedError(err.cause),
           );
           stoppedAt = blockNumber;
           stoppedForBlockTime = true;
