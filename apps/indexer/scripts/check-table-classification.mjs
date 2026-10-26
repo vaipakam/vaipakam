@@ -186,6 +186,11 @@ const CLASSIFICATION = {
   // #2667 — not a chain projection, but the same treatment as a snapshot of
   // live state: the keeper republishes it each watcher run, and a restored
   // copy would answer for a configuration the keeper may no longer have.
+  // One-time-use marks for signed alert requests (#2753), each kept only
+  // until its request could no longer pass the agent's age check (about
+  // eleven minutes). Nothing in it is worth restoring: an archived row has
+  // long expired.
+  signed_request_use: { class: 'replay-derived', reason: 'one-time-use marks for signed alert requests, each kept ~11 minutes; an archived copy is always expired' },
   push_rail_status: { class: 'replay-derived', reason: "the keeper's Push rail readiness, republished every watcher run; a restored copy would vouch for a stale configuration" },
   recycle_backing_snapshot: { class: 'replay-derived', reason: 'periodic snapshot of live contract state; re-captured by the scheduled pass, and a restored copy would republish a stale backing verdict' },
   recycle_series_state: { class: 'replay-derived', reason: 'one-time activity_events backfill marker; meaningless without the projection it guards' },

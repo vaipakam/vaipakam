@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  buildDueDateOptOutMessage,
+  buildAlertSettingsMessage,
   buildTelegramLinkMessage,
   buildTelegramTestMessage,
   buildTelegramUnlinkMessage,
@@ -59,19 +59,52 @@ describe('buildTelegramUnlinkMessage', () => {
   });
 });
 
-describe('buildDueDateOptOutMessage', () => {
+describe('buildAlertSettingsMessage (#2754)', () => {
+  const BANDS = { warnHf: 1.5, alertHf: 1.2, criticalHf: 1.05 };
+
   it('produces the frozen byte sequence, verbatim', () => {
-    expect(buildDueDateOptOutMessage(WALLET, 84532, 1747000000)).toBe(
-      'Vaipakam — Mute due-date payment reminders\n' +
+    expect(
+      buildAlertSettingsMessage(
+        WALLET,
+        84532,
+        { bands: BANDS, dueDateReminders: false, pushAlerts: true },
+        1747000000,
+      ),
+    ).toBe(
+      'Vaipakam — Save alert settings\n' +
         '\n' +
-        'I request that payment due-date reminders for the wallet below\n' +
-        'be switched off. Signing this message proves ownership of the\n' +
-        'wallet. It is not a transaction and costs no gas.\n' +
+        'I request that the alert settings below be saved for the wallet\n' +
+        'below. A setting marked unchanged keeps its saved value. Signing\n' +
+        'this message proves ownership of the wallet. It is not a\n' +
+        'transaction and costs no gas.\n' +
+        '\n' +
+        'Health-factor alerts: warn at 1.5, alert at 1.2, critical at 1.05\n' +
+        'Due-date payment reminders: off\n' +
+        'Push alerts: switch on\n' +
         '\n' +
         `Wallet: ${LOWER}\n` +
         'Chain id: 84532\n' +
         'Issued at (unix): 1747000000',
     );
+  });
+
+  it('says unchanged for every field the save leaves alone', () => {
+    const msg = buildAlertSettingsMessage(WALLET, 84532, {}, 1);
+    expect(msg).toContain('Health-factor alerts: unchanged');
+    expect(msg).toContain('Due-date payment reminders: unchanged');
+    expect(msg).toContain('Push alerts: unchanged');
+  });
+
+  it('names each value, so a signature for one save is not one for another', () => {
+    const msgs = [
+      {},
+      { bands: BANDS },
+      { bands: { ...BANDS, criticalHf: 1.01 } },
+      { dueDateReminders: true },
+      { dueDateReminders: false },
+      { pushAlerts: true as const },
+    ].map((change) => buildAlertSettingsMessage(WALLET, 84532, change, 1));
+    expect(new Set(msgs).size).toBe(msgs.length);
   });
 });
 
@@ -96,7 +129,8 @@ describe('the four messages as a family', () => {
   const builders = [
     buildTelegramLinkMessage,
     buildTelegramUnlinkMessage,
-    buildDueDateOptOutMessage,
+    (wallet: string, chainId: number, issuedAt: number) =>
+      buildAlertSettingsMessage(wallet, chainId, {}, issuedAt),
     buildTelegramTestMessage,
   ];
 

@@ -39,14 +39,15 @@
  * under the advanced-mode reveal.
  */
 import {
-  buildDueDateOptOutMessage,
+  buildAlertSettingsMessage,
   buildTelegramLinkMessage,
   buildTelegramTestMessage,
   buildTelegramUnlinkMessage,
 } from '@vaipakam/lib/alertsMessage';
+import type { AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { copy } from '../content/copy';
 
-/* The four signed messages come from `@vaipakam/lib/alertsMessage`
+/* The four signed messages (link, unlink, save settings, test alert) come from `@vaipakam/lib/alertsMessage`
  * (#2014) — ONE builder per action, imported by both this client and
  * the agent Worker, because the Worker reconstructs the exact bytes
  * to recover the signer and a drifted character rejects every
@@ -365,9 +366,10 @@ export interface SaveAlertPrefsOptions {
    *  bands mean "no change" and the agent preserves the stored
    *  values (server defaults only when no record exists at all). */
   bandsChanged?: boolean;
-  /** Wallet signer — required when the save switches the due-date
-   *  reminder off (the agent refuses an unsigned opt-out). */
-  signMessage?: (message: string) => Promise<string>;
+  /** Wallet signer — required on EVERY save (#2754): the agent stores
+   *  nothing that is not signed over a message naming exactly what the
+   *  save changes. */
+  signMessage: (message: string) => Promise<string>;
 }
 
 /** Persist the outcome toggles as the agent's thresholds row. The
@@ -386,7 +388,7 @@ export async function saveAlertPrefs(
   wallet: `0x${string}`,
   chainId: number,
   prefs: AlertPrefs,
-  opts: SaveAlertPrefsOptions = {},
+  opts: SaveAlertPrefsOptions,
 ): Promise<PushSaveOutcome> {
   // Bands travel ONLY when this save is the user changing the risky
   // lane (#2000) — mirroring the due-date field's omission rule. Sent
@@ -395,43 +397,46 @@ export async function saveAlertPrefs(
   // a floor-band opt-out made on another device; the client cannot
   // tell defaults from state, but it can tell exactly which saves
   // touched the lane, which is the narrower and sufficient signal.
-  const sendBands = Boolean(opts.bandsChanged);
-  let optOutProof: { issuedAt: number; signature: string } | null = null;
-  if (opts.dueDateChanged && !prefs.repayDue) {
-    if (!opts.signMessage) {
-      throw new Error('switching the reminder off needs a wallet signature');
-    }
-    const issuedAt = Math.floor(Date.now() / 1000);
-    optOutProof = {
-      issuedAt,
-      signature: await opts.signMessage(
-        buildDueDateOptOutMessage(wallet, chainId, issuedAt),
-      ),
+  const bands: AlertBands | undefined = opts.bandsChanged
+    ? prefs.risky
+      ? { warnHf: prefs.warnHf, alertHf: prefs.alertHf, criticalHf: prefs.criticalHf }
+      : FLOOR_BANDS
+    : undefined;
+  // One signed request per attempt (#2754, #2753): the wallet signs a
+  // message naming exactly what this save changes, built from the same
+  // values the body carries, and the agent accepts each signed request
+  // once. So a repeat without the Push opt-in is a different change and
+  // is signed again.
+  const attempt = async (withPush: boolean) => {
+    const change: AlertSettingsChange = {
+      ...(bands ? { bands } : {}),
+      ...(opts.dueDateChanged ? { dueDateReminders: prefs.repayDue } : {}),
+      // One-way by backend design (COALESCE): only sent when enabling.
+      ...(withPush && prefs.pushEnabled ? { pushAlerts: true as const } : {}),
     };
-  }
-  // The lane's CURRENT wire expression — used when this save changed
-  // the lane, and by the rollout shim below.
-  const laneBands: AlertBands = prefs.risky
-    ? { warnHf: prefs.warnHf, alertHf: prefs.alertHf, criticalHf: prefs.criticalHf }
-    : FLOOR_BANDS;
-  const body = (withBands: boolean, withPush = true) => ({
-    wallet,
-    chain_id: chainId,
-    ...(withBands
-      ? {
-          warn_hf: laneBands.warnHf,
-          alert_hf: laneBands.alertHf,
-          critical_hf: laneBands.criticalHf,
-        }
-      : {}),
-    ...(opts.dueDateChanged
-      ? { notify_maturity_approaching: prefs.repayDue }
-      : {}),
-    ...(optOutProof ?? {}),
-    // One-way by backend design (COALESCE): only sent when enabling.
-    ...(withPush && prefs.pushEnabled ? { push_channel: 'subscribed' } : {}),
-  });
-  let res = await post('/thresholds', body(sendBands));
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const signature = await opts.signMessage(
+      buildAlertSettingsMessage(wallet, chainId, change, issuedAt),
+    );
+    return post('/thresholds', {
+      wallet,
+      chain_id: chainId,
+      ...(change.bands
+        ? {
+            warn_hf: change.bands.warnHf,
+            alert_hf: change.bands.alertHf,
+            critical_hf: change.bands.criticalHf,
+          }
+        : {}),
+      ...(change.dueDateReminders !== undefined
+        ? { notify_maturity_approaching: change.dueDateReminders }
+        : {}),
+      ...(change.pushAlerts ? { push_channel: 'subscribed' } : {}),
+      issuedAt,
+      signature,
+    });
+  };
+  let res = await attempt(true);
   // #2251 (Codex #2665 r1) — the agent refuses a NEW Push opt-in it cannot
   // honour by refusing the WHOLE save with a 409, so that an app bundle
   // from before this change reads it as a failure rather than as "Push is
@@ -440,33 +445,20 @@ export async function saveAlertPrefs(
   let pushRefused = false;
   if (res.status === 409 && res.data?.error === 'push-unavailable') {
     pushRefused = true;
-    res = await post('/thresholds', body(sendBands, false));
-  }
-  // Rollout shim (#2005 round 1 P2): the app and the agent deploy
-  // independently, and an app deployed FIRST sends bandless saves to
-  // a parser that still requires all three — every due-date or push
-  // save would 400, a held user unable to mute a reminder being the
-  // worst of it. A bandless save refused as `invalid-payload` is
-  // retried ONCE with the lane's current bands — the pre-#2000 wire,
-  // no worse than every save before this change — so an out-of-order
-  // window degrades to the old behaviour instead of breaking. The
-  // shim never fires against the new agent (which accepts bandless
-  // bodies), costs nothing once both sides are current, and the
-  // deployment order that avoids it entirely (agent first) is stated
-  // in the release note.
-  if (!res.ok && res.status === 400 && !sendBands) {
-    if (res.data?.error === 'invalid-payload') {
-      res = await post('/thresholds', body(true, !pushRefused));
-    }
+    res = await attempt(false);
   }
   if (!res.ok) {
-    if (res.status === 503) {
-      if (res.data?.error === 'optout-unavailable') {
-        // Rollout window: the agent can't store an opt-out until its
-        // storage migration lands. Honest, plain-words failure — the
-        // opposite of silently pretending the switch worked.
-        throw new Error(copy.alerts.optoutUnavailable);
-      }
+    if (res.status === 503 && res.data?.error === 'optout-unavailable') {
+      // Rollout window: the agent can't store an opt-out until its
+      // storage migration lands. Honest, plain-words failure — the
+      // opposite of silently pretending the switch worked.
+      throw new Error(copy.alerts.optoutUnavailable);
+    }
+    if (res.status === 503 && res.data?.error === 'verification-unavailable') {
+      throw new Error(copy.alerts.signatureCheckUnavailable);
+    }
+    if (res.status === 409 && res.data?.error === 'request-already-used') {
+      throw new Error(copy.alerts.requestAlreadyUsed);
     }
     throw new Error(`saving alert settings failed (${res.status})`);
   }

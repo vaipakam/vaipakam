@@ -339,7 +339,9 @@
       "paidPredatesNotBillable": "Diese Version hat auch keinen Abrechnungsaufruf, daher kann die Gebühr auf {{chain}} nicht erhoben werden.",
       "paidPredatesBillingUnknown": "Wir konnten nicht prüfen, ob diese Version die Gebühr erheben kann.",
       "paidAgreed": "Gespeichert: Du hast zugestimmt, bis zu {{fee}} VPFI pro Kreditseite auf {{chain}} zu zahlen.",
-      "paidWithdrawn": "Zurückgezogen: Gebühren für kostenpflichtige Push-Benachrichtigungen können dir auf {{chain}} nicht berechnet werden."
+      "paidWithdrawn": "Zurückgezogen: Gebühren für kostenpflichtige Push-Benachrichtigungen können dir auf {{chain}} nicht berechnet werden.",
+      "signatureCheckUnavailable": "Deine Einstellungen wurden nicht gespeichert: Der Benachrichtigungsdienst konnte deine Signatur gerade nicht prüfen. Bitte versuche es in Kürze erneut.",
+      "requestAlreadyUsed": "Deine Einstellungen wurden nicht gespeichert: Diese Signatur wurde bereits verwendet. Speichere erneut, um eine neue Anfrage zu signieren."
     },
     "notifications": {
       "bellLabel": "Benachrichtigungen",

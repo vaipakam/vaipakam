@@ -2671,8 +2671,12 @@ is the borrower's own money.
 
 - Alerts are optional and outcome-oriented.
 - Users may link an external delivery channel for repayment and risk reminders.
-- Link, unlink, and preference changes that affect delivery require proof of
-  wallet ownership. Ownership proven by one network's account contract (a
+- Link, unlink, a test alert and every preference change require proof of
+  wallet ownership: a free signature over a plain message naming what the
+  request does, which for a preference save means each setting it changes
+  and its new value. Each signed request is accepted once, so one that was
+  captured cannot be presented again; a save that is refused for that reason
+  asks the user to sign again rather than failing silently. Ownership proven by one network's account contract (a
   smart-account wallet) counts for that network alone: an unlink under such
   proof disconnects that network's alerts only, and the confirmation says
   so — an ordinary wallet's signature proves its keyholder everywhere and

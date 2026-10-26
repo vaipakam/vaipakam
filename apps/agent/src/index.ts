@@ -88,7 +88,7 @@
  * chain.
  */
 
-import { resolveEnv, WORKER_NAME, type Env, type WorkerEnv } from './env';
+import { getChainConfigs, resolveEnv, WORKER_NAME, type Env, type WorkerEnv } from './env';
 import {
   hasD1Binding,
   maintenanceRefusal,
@@ -129,13 +129,14 @@ import {
   hasStoredPushOptIn,
   upsertThresholds,
 } from './db';
-import { extractLinkCode, sendMessage, type TelegramUpdate } from './telegram';
+import { extractLinkCode, isTelegramDelivery, sendMessage, type TelegramUpdate } from './telegram';
 import { handshakeExpired, handshakeLinked, testAlert } from './i18n';
 import {
+  authoriseAlertRequest,
   parseSignedLinkRequest,
-  verifySignedLinkRequest,
+  type LinkVerifyResult,
 } from './linkAuth';
-import { chainVerifyGate } from './walletSigVerify';
+import type { AlertSettingsChange } from '@vaipakam/lib/alertsMessage';
 import { isTickDue } from '@vaipakam/lib/cronCadence';
 import { AGENT_TICK_CADENCE_MINUTES } from './tickCadence';
 
@@ -275,6 +276,7 @@ export default {
         console.error('[agent] sweepExpiredLinks pass failed:', err);
       }),
     );
+
   },
 
   async fetch(req: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
@@ -393,6 +395,14 @@ export default {
       return new Response('Forbidden', { status: 403 });
     }
 
+    // #2754 — the signed alert writes share one per-IP limiter, taken
+    // before any signature work, so a caller spraying bodies is turned
+    // away at the cost of one counter.
+    if (ALERT_WRITE_ROUTES.has(`${req.method} ${url.pathname}`)) {
+      if (!(await alertWriteAllowed(resolved, req))) {
+        return json({ error: 'rate-limited' }, 429, resolveAllowedOrigin(req, resolved));
+      }
+    }
     if (url.pathname === '/thresholds' && req.method === 'PUT') {
       return handlePutThresholds(req, resolved);
     }
@@ -525,6 +535,70 @@ export default {
 
 // ─── HTTP handlers ─────────────────────────────────────────────────
 
+/** The alert-family writes, each signed by the wallet (#2754). */
+const ALERT_WRITE_ROUTES = new Set([
+  'PUT /thresholds',
+  'POST /link/telegram',
+  'POST /unlink/telegram',
+  'POST /telegram/test',
+]);
+
+/** Per-IP gate on the alert writes (#2754). The binding is declared in
+ *  wrangler.jsonc; it is absent only in unit tests, where nothing is
+ *  limited. The signature is the real gate; this bounds the cost of
+ *  bodies that fail it. */
+async function alertWriteAllowed(env: Env, req: Request): Promise<boolean> {
+  const limiter = env.ALERT_WRITE_RATELIMIT;
+  if (!limiter) return true;
+  const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown';
+  return (await limiter.limit({ key: ip })).success;
+}
+
+/** The answer to a signed alert request that was not authorised. A
+ *  repeat of an accepted request and a check that could not run each
+ *  have their own error name, so the app can say "sign again" or "try
+ *  again shortly" rather than "the signature is wrong". */
+function refusal(
+  result: Extract<LinkVerifyResult, { ok: false }>,
+  corsOrigin: string,
+): Response {
+  const error =
+    result.status === 409
+      ? 'request-already-used'
+      : result.status === 503
+        ? 'verification-unavailable'
+        : 'verification_failed';
+  return json(
+    {
+      error,
+      reason: result.reason,
+    },
+    result.status,
+    corsOrigin,
+  );
+}
+
+/** What a parsed settings save changes, in the shape the signed message
+ *  names (#2754). Built from the same parsed body that is written, so
+ *  the signature and the stored row cannot describe different saves. */
+export function settingsChangeOf(parsed: PutThresholdsBody): AlertSettingsChange {
+  return {
+    ...(parsed.warn_hf !== undefined
+      ? {
+          bands: {
+            warnHf: parsed.warn_hf,
+            alertHf: parsed.alert_hf as number,
+            criticalHf: parsed.critical_hf as number,
+          },
+        }
+      : {}),
+    ...(parsed.notify_maturity_approaching !== undefined
+      ? { dueDateReminders: parsed.notify_maturity_approaching }
+      : {}),
+    ...(parsed.push_channel ? { pushAlerts: true as const } : {}),
+  };
+}
+
 async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
   const corsOrigin = resolveAllowedOrigin(req, env);
   let body: unknown;
@@ -536,44 +610,31 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
   const parsed = parsePutThresholds(body);
   if (!parsed) return json({ error: 'invalid-payload' }, 400, corsOrigin);
 
-  // NOTE: this handler trusts the `wallet` field in the JSON body for
-  // plain settings writes — fine, because the Worker's only output to
-  // that wallet is a Telegram alert linked to a chat the real wallet
-  // holder controls, and band tampering stays bounded (the strictly-
-  // decreasing >1.0 rule keeps a final pre-liquidation warning).
-  //
-  // The ONE write that needs more is DISABLING the due-date reminder
-  // (#1056 round 6): notify_maturity_approaching=false silences both
-  // due-date lanes (agent reminder + keeper pre-grace warning), which
-  // is the same alert-suppression threat that got /unlink/telegram
-  // signed. So an opt-out write must carry the EIP-191 ownership
-  // proof over the mute-scoped message; opted-in / field-absent
-  // writes stay signature-free.
-  if (parsed.notify_maturity_approaching === false) {
-    const signed = parseSignedLinkRequest(body);
-    if (!signed.ok) {
-      return json(
-        { error: 'signature-required', reason: signed.reason },
-        401,
-        corsOrigin,
-      );
-    }
-    const verified = await verifySignedLinkRequest(
-      signed.req,
-      Math.floor(Date.now() / 1000),
-      env,
-      'mute-duedate',
-      undefined,
-      chainVerifyGate(env, req),
-    );
-    if (!verified.ok) {
-      return json(
-        { error: 'verification_failed', reason: verified.reason },
-        verified.status,
-        corsOrigin,
-      );
-    }
+  // #2754 — the watcher only watches chains this deployment is
+  // configured for, so a save for any other chain would create watcher
+  // state nothing reads.
+  if (!getChainConfigs(env).some((c) => c.id === parsed.chain_id)) {
+    return json({ error: 'chain-not-configured' }, 400, corsOrigin);
   }
+  // #2754 — EVERY settings write carries the wallet's signature over a
+  // message naming exactly what it saves. The body's wallet used to be
+  // trusted for everything but an opt-out, so a non-browser caller with
+  // a spoofed Origin could rewrite any wallet's bands and Push opt-in.
+  // The signed wallet and chain are read from the same body fields the
+  // write uses, so the signature covers the row it writes.
+  const signed = parseSignedLinkRequest(body);
+  if (!signed.ok) {
+    return json(
+      { error: 'signature-required', reason: signed.reason },
+      401,
+      corsOrigin,
+    );
+  }
+  const authorised = await authoriseAlertRequest(req, env, signed.req, {
+    action: 'save-settings',
+    settings: settingsChangeOf(parsed),
+  });
+  if (!authorised.ok) return refusal(authorised, corsOrigin);
   // #2251 — a NEW Push opt-in is accepted only where Push can honour it: the
   // same answer `GET /push/status` gives, so both senders' rails when the
   // keeper's is known (#2667); see `decidePushOptIn` for what is refused and
@@ -597,9 +658,6 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
     );
   }
   const { write, push } = decision;
-  // If the threshold settings ever start to drive on-chain actions,
-  // extend the signed-payload requirement to every write so
-  // msg.sender parity is cryptographic.
   try {
     await upsertThresholds(env.DB, write);
   } catch (err) {
@@ -658,21 +716,8 @@ async function handleIssueTelegramLink(
       corsOrigin,
     );
   }
-  const verified = await verifySignedLinkRequest(
-    parsed.req,
-    Math.floor(Date.now() / 1000),
-    env,
-    'link',
-    undefined,
-    chainVerifyGate(env, req),
-  );
-  if (!verified.ok) {
-    return json(
-      { error: 'verification_failed', reason: verified.reason },
-      verified.status,
-      corsOrigin,
-    );
-  }
+  const verified = await authoriseAlertRequest(req, env, parsed.req, 'link');
+  if (!verified.ok) return refusal(verified, corsOrigin);
 
   const code = await issueTelegramLinkCode(
     env.DB,
@@ -719,21 +764,8 @@ async function handleUnlinkTelegram(
       corsOrigin,
     );
   }
-  const verified = await verifySignedLinkRequest(
-    parsed.req,
-    Math.floor(Date.now() / 1000),
-    env,
-    'unlink',
-    undefined,
-    chainVerifyGate(env, req),
-  );
-  if (!verified.ok) {
-    return json(
-      { error: 'verification_failed', reason: verified.reason },
-      verified.status,
-      corsOrigin,
-    );
-  }
+  const verified = await authoriseAlertRequest(req, env, parsed.req, 'unlink');
+  if (!verified.ok) return refusal(verified, corsOrigin);
   // The clear's SCOPE follows the authority that signed (#2013 round
   // 3 P1). An ECDSA key is the wallet's universal controller, so its
   // unlink honours the privacy promise wallet-wide (see
@@ -794,21 +826,8 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
     );
   }
   const now = Math.floor(Date.now() / 1000);
-  const verified = await verifySignedLinkRequest(
-    parsed.req,
-    now,
-    env,
-    'test-alert',
-    undefined,
-    chainVerifyGate(env, req),
-  );
-  if (!verified.ok) {
-    return json(
-      { error: 'verification_failed', reason: verified.reason },
-      verified.status,
-      corsOrigin,
-    );
-  }
+  const verified = await authoriseAlertRequest(req, env, parsed.req, 'test-alert', now);
+  if (!verified.ok) return refusal(verified, corsOrigin);
   const linked = await getTelegramChatId(
     env.DB,
     parsed.req.wallet,
@@ -862,6 +881,12 @@ async function handleTelegramWebhook(
 ): Promise<Response> {
   if (!env.TG_BOT_TOKEN) {
     return new Response('bot-not-configured', { status: 503 });
+  }
+  // Only Telegram's own deliveries (#2753): the webhook is registered
+  // with a secret derived from the bot token, and Telegram returns it
+  // on every update. Anything else is refused before its body is read.
+  if (!(await isTelegramDelivery(req, env.TG_BOT_TOKEN))) {
+    return new Response('unauthorized', { status: 401 });
   }
 
   let update: TelegramUpdate;
@@ -1035,7 +1060,18 @@ export function parsePutThresholds(x: unknown): PutThresholdsBody | null {
     }
     if ((b.critical_hf as number) <= 1) return null;
   }
-  const push = typeof b.push_channel === 'string' ? b.push_channel : null;
+  // #2754 — the only Push value a save can carry is the opt-in the app
+  // sends; anything else is a bad request rather than a string stored
+  // under a signature that only said "switch on".
+  if (b.push_channel !== undefined && b.push_channel !== null && b.push_channel !== 'subscribed') {
+    return null;
+  }
+  // Bands must be finite: the signed message writes them with String(n).
+  for (const k of ['warn_hf', 'alert_hf', 'critical_hf'] as const) {
+    if (b[k] !== undefined && !Number.isFinite(b[k])) return null;
+  }
+  if (!Number.isSafeInteger(b.chain_id) || (b.chain_id as number) <= 0) return null;
+  const push = b.push_channel === 'subscribed' ? 'subscribed' : null;
   return {
     wallet: b.wallet,
     chain_id: b.chain_id,

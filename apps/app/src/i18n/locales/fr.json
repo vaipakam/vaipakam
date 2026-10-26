@@ -339,7 +339,9 @@
       "paidPredatesNotBillable": "Cette version n’a pas non plus d’appel de facturation : les frais ne peuvent donc pas être prélevés sur {{chain}}.",
       "paidPredatesBillingUnknown": "Nous n’avons pas pu vérifier si cette version peut prélever les frais.",
       "paidAgreed": "Enregistré : vous avez accepté de payer jusqu’à {{fee}} VPFI par côté de prêt sur {{chain}}.",
-      "paidWithdrawn": "Retiré : les frais d’alertes Push payantes ne peuvent plus vous être facturés sur {{chain}}."
+      "paidWithdrawn": "Retiré : les frais d’alertes Push payantes ne peuvent plus vous être facturés sur {{chain}}.",
+      "signatureCheckUnavailable": "Vos réglages n’ont pas été enregistrés : le service d’alertes n’a pas pu vérifier votre signature pour le moment. Veuillez réessayer dans un instant.",
+      "requestAlreadyUsed": "Vos réglages n’ont pas été enregistrés : cette signature a déjà été utilisée. Enregistrez à nouveau pour signer une nouvelle demande."
     },
     "notifications": {
       "bellLabel": "Notifications",

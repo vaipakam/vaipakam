@@ -3,7 +3,7 @@ import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import type { Env } from '../src/env';
 import type { ChainSigChecker } from '../src/walletSigVerify';
 import {
-  buildDueDateOptOutMessage,
+  buildAlertSettingsMessage,
   buildTelegramLinkMessage,
   buildTelegramTestMessage,
   buildTelegramUnlinkMessage,
@@ -38,6 +38,9 @@ const NEVER: ChainSigChecker = async () => {
 const CHAIN_ENV = { RPC_BASE_SEPOLIA: 'http://rpc.test' } as Env;
 const DENY: ChainSigChecker = async () => false;
 const CONFIRM: ChainSigChecker = async () => true;
+
+const SETTINGS = { bands: { warnHf: 1.5, alertHf: 1.2, criticalHf: 1.05 }, dueDateReminders: false };
+const SAVE_SETTINGS = { action: 'save-settings', settings: SETTINGS } as const;
 
 async function signedBody(
   account: PrivateKeyAccount,
@@ -129,9 +132,9 @@ describe('verifySignedLinkRequest', () => {
     expect(v.ok).toBe(true);
   });
 
-  it('accepts the owner signature for the mute-duedate action', async () => {
+  it('accepts the owner signature for a settings save it names', async () => {
     const signature = await ACCOUNT_A.signMessage({
-      message: buildDueDateOptOutMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+      message: buildAlertSettingsMessage(ACCOUNT_A.address, CHAIN_ID, SETTINGS, NOW),
     });
     const parsed = parseSignedLinkRequest({
       wallet: ACCOUNT_A.address,
@@ -140,8 +143,38 @@ describe('verifySignedLinkRequest', () => {
       signature,
     });
     if (!parsed.ok) throw new Error('parse failed');
-    const v = await verifySignedLinkRequest(parsed.req, NOW, EMPTY_ENV, 'mute-duedate', NEVER);
+    const v = await verifySignedLinkRequest(parsed.req, NOW, EMPTY_ENV, SAVE_SETTINGS, NEVER);
     expect(v.ok).toBe(true);
+  });
+
+  it('refuses a settings signature presented for a different save (#2754)', async () => {
+    // The signature covers what the save changes, so a captured one
+    // cannot carry other bands, another due-date choice or a Push opt-in.
+    const signature = await ACCOUNT_A.signMessage({
+      message: buildAlertSettingsMessage(ACCOUNT_A.address, CHAIN_ID, SETTINGS, NOW),
+    });
+    const parsed = parseSignedLinkRequest({
+      wallet: ACCOUNT_A.address,
+      chain_id: CHAIN_ID,
+      issuedAt: NOW,
+      signature,
+    });
+    if (!parsed.ok) throw new Error('parse failed');
+    for (const settings of [
+      { ...SETTINGS, bands: { warnHf: 3, alertHf: 2, criticalHf: 1.5 } },
+      { ...SETTINGS, dueDateReminders: true },
+      { ...SETTINGS, pushAlerts: true as const },
+      { bands: SETTINGS.bands },
+    ]) {
+      const v = await verifySignedLinkRequest(
+        parsed.req,
+        NOW,
+        CHAIN_ENV,
+        { action: 'save-settings', settings },
+        DENY,
+      );
+      expect(v.ok).toBe(false);
+    }
   });
 
   it('accepts the owner signature for the test-alert action', async () => {
@@ -168,8 +201,8 @@ describe('verifySignedLinkRequest', () => {
     const unlinkSig = await ACCOUNT_A.signMessage({
       message: buildTelegramUnlinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
     });
-    const muteSig = await ACCOUNT_A.signMessage({
-      message: buildDueDateOptOutMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+    const saveSig = await ACCOUNT_A.signMessage({
+      message: buildAlertSettingsMessage(ACCOUNT_A.address, CHAIN_ID, SETTINGS, NOW),
     });
     const testSig = await ACCOUNT_A.signMessage({
       message: buildTelegramTestMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
@@ -177,8 +210,8 @@ describe('verifySignedLinkRequest', () => {
     for (const [signature, action] of [
       [linkSig, 'unlink'],
       [unlinkSig, 'link'],
-      [linkSig, 'mute-duedate'],
-      [muteSig, 'unlink'],
+      [linkSig, SAVE_SETTINGS],
+      [saveSig, 'unlink'],
       [testSig, 'link'],
       [linkSig, 'test-alert'],
       [testSig, 'unlink'],

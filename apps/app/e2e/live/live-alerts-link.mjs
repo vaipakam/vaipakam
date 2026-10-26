@@ -2,7 +2,8 @@
 // end on production app, now that the agent ships with app in
 // FRONTEND_ORIGIN (the original 403) AND the link request requires a
 // wallet signature (#1056). Expects: click Link Telegram → wallet
-// signs the ownership proof → a 6-digit code renders.
+// signs the ownership proof → a link code renders (24 symbols since
+// #2753; the six-digit code it replaced was guessable).
 import { ensureConnected, launch, visit } from './driver.mjs';
 
 const { page, done } = await launch({ role: 'lender' });
@@ -24,7 +25,7 @@ await linkBtn.click();
 // trip a moment.
 await page.waitForTimeout(6000);
 const body = await page.locator('body').innerText();
-const codeMatch = body.match(/\b(\d{6})\b/);
+const codeMatch = body.match(/\b([ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{24})\b/);
 const hasIssueCopy = body.includes('Open our bot');
 const errorBanner = await page.locator('.banner-danger').innerText().catch(() => '');
 console.log('code shown:', codeMatch?.[1] ?? 'NONE');

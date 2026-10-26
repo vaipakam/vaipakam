@@ -1570,6 +1570,7 @@ DELETE FROM recycle_backing_snapshot; \
 DELETE FROM prenotify_scan_cursor; \
 DELETE FROM prenotify_pass; \
 DELETE FROM push_rail_status; \
+DELETE FROM signed_request_use; \
 DELETE FROM indexer_deployment; \
 DELETE FROM indexer_cursor"
 ```
@@ -1586,6 +1587,14 @@ Push rail readiness, which the keeper republishes on every watcher run.
 Clearing it costs at most a minute of the agent's `GET /push/status`
 answering for its own rail alone. Keeping it would let a restored row vouch for a
 configuration the keeper may no longer have.
+
+`signed_request_use` (#2753) is the agent's record of which signed alert
+requests it has already accepted, each row kept about eleven minutes. An
+archived copy is always expired, so there is nothing to restore. Clearing it
+has one stated cost: a request a wallet signed in the last eleven minutes
+before the clear could be presented once more until its signature ages out.
+Every such request is one its wallet did sign, for the action it names, and
+the agent's per-IP write limit still applies.
 
 What the pre-notify lane has examined in its current pass (#2230) lives on
 the `loans` rows themselves, in the `prenotify_examined_*` columns, so

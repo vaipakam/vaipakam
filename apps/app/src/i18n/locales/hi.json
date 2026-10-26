@@ -339,7 +339,9 @@
       "paidPredatesNotBillable": "इस संस्करण में बिलिंग कॉल भी नहीं है, इसलिए {{chain}} पर शुल्क नहीं लिया जा सकता।",
       "paidPredatesBillingUnknown": "हम यह जाँच नहीं सके कि यह संस्करण शुल्क ले सकता है या नहीं।",
       "paidAgreed": "सहेजा गया: आपने {{chain}} पर प्रति लोन पक्ष अधिकतम {{fee}} VPFI देने की सहमति दी है।",
-      "paidWithdrawn": "वापस लिया गया: {{chain}} पर सशुल्क Push अलर्ट का शुल्क आपसे नहीं लिया जा सकता।"
+      "paidWithdrawn": "वापस लिया गया: {{chain}} पर सशुल्क Push अलर्ट का शुल्क आपसे नहीं लिया जा सकता।",
+      "signatureCheckUnavailable": "आपकी settings save नहीं हुईं — alert service अभी आपका signature check नहीं कर सकी। कृपया थोड़ी देर बाद फिर कोशिश करें।",
+      "requestAlreadyUsed": "आपकी settings save नहीं हुईं — वह signature पहले ही इस्तेमाल हो चुका है। नया request sign करने के लिए फिर से save करें।"
     },
     "notifications": {
       "bellLabel": "Notifications",
