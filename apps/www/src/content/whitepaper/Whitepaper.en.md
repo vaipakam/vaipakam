@@ -718,7 +718,7 @@ Swap venues participate in settlement only through the governance-controlled ada
 
 ### 9.1 Price Sourcing and the Active Numeraire
 
-Pricing is **Chainlink-led**. `OracleFacet.getAssetPrice` returns asset prices denominated in the **active protocol numeraire** — a governance-defined unit configured entirely through oracle-layer inputs: the Chainlink ETH/numeraire feed, the Feed Registry denominator for direct lookups, the numeraire symbol used for symbol-derived secondary-oracle queries, and the optional Pyth cross-check feed id. The post-deploy default numeraire is USD. Because LTV and HF are ratios, the numeraire unit cancels — risk math is unit-agnostic — while absolute-value comparisons compare numeraire-priced values against numeraire-denominated stored thresholds directly.
+Pricing is **Chainlink-led**. `OracleFacet.getAssetPrice` returns asset prices denominated in the **active protocol numeraire** — a governance-defined unit configured entirely through oracle-layer inputs: the Chainlink ETH/numeraire feed, the Feed Registry denominator for direct lookups, the numeraire symbol used as the quote side of secondary-oracle queries (each asset is asked about under the name of its registered Chainlink pair, never its token symbol), and the optional Pyth cross-check feed id. The post-deploy default numeraire is USD. Because LTV and HF are ratios, the numeraire unit cancels — risk math is unit-agnostic — while absolute-value comparisons compare numeraire-priced values against numeraire-denominated stored thresholds directly.
 
 Retrieval is hybrid and layered:
 

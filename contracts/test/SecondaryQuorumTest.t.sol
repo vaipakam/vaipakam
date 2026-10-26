@@ -14,6 +14,8 @@ import {HelperTest} from "./HelperTest.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
+import {IFeedRegistryPairBase} from "../src/interfaces/IFeedRegistryPairBase.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 
 /**
  * @title SecondaryQuorumTest
@@ -28,7 +30,7 @@ import {ArtifactDeploy} from "../script/lib/ArtifactDeploy.sol";
  *   - Some Disagree AND no Agree → revert {OraclePriceDivergence}.
  *
  * Coverage: each per-source Unavailable trigger (zero address,
- * symbol unreadable, no data, stale data, zero value), Agree /
+ * no registered identity, no data, stale data, zero value), Agree /
  * Disagree boundaries against the deviation tolerance, the 7
  * meaningful aggregate combinations of Agree/Disagree/Unavailable
  * (skipping symmetric duplicates), and the chain-level deviation /
@@ -181,6 +183,21 @@ contract SecondaryQuorumTest is Test {
             abi.encodeWithSignature("getFeed(address,address)", asset, mockDenom),
             abi.encode(feed)
         );
+        // #2745 - the registered pair's base symbol is the asset's identity
+        // for the secondary sources ("ETH / USD" -> "ETH").
+        _mockPairBase(asset, bytes32("ETH"));
+    }
+
+    function _mockPairBase(address asset, bytes32 symbol) internal {
+        vm.mockCall(
+            mockRegistry,
+            abi.encodeCall(IFeedRegistryPairBase.pairBase, (asset, mockDenom)),
+            abi.encode(symbol)
+        );
+    }
+
+    function _tellorQueryId(string memory lowerSymbol) internal pure returns (bytes32) {
+        return keccak256(abi.encode("SpotPrice", abi.encode(lowerSymbol, "usd")));
     }
 
     /// @dev Stub Tellor to return the requested price (1e18-scaled per
@@ -550,25 +567,94 @@ contract SecondaryQuorumTest is Test {
         assertEq(price, CHAINLINK_PRICE_8DEC);
     }
 
-    function testQuorumSymbolUnreadableSilentlySkipsSecondary() public {
-        // Token whose symbol() reverts → derived queryId can't be
-        // produced. All secondaries treated as Unavailable.
-        address brokenToken = makeAddr("brokenToken");
-        vm.mockCallRevert(
-            brokenToken,
-            abi.encodeWithSignature("symbol()"),
-            "no symbol"
-        );
-        // Need a Chainlink feed for this asset to reach the secondary
-        // path (otherwise primary errors first).
-        _mockRegistryFeed(brokenToken, mockFeed);
+    // #2745 - the secondary sources are keyed on the asset's registered
+    // identity (its Chainlink pair's base symbol), never on its symbol().
+
+    function testIdentity_tokenSymbolIsNeverRead() public {
+        // A token whose symbol() reverts, and one that answers a malformed
+        // string, both price normally, and Tellor is still consulted.
+        _enableTellor();
+        _mockTellorDisagree();
+        vm.mockCallRevert(mockAsset, abi.encodeWithSignature("symbol()"), "no symbol");
+        vm.expectRevert(OracleFacet.OraclePriceDivergence.selector);
+        OracleFacet(address(diamond)).getAssetPrice(mockAsset);
+
+        // offset 32, length word far past the returndata: the old decode
+        // reverted the whole price read on this reply.
+        vm.mockCall(mockAsset, abi.encodeWithSignature("symbol()"), abi.encode(uint256(32), uint256(1e9)));
+        _mockTellorAgree();
+        (uint256 price, ) = _readPrice();
+        assertEq(price, CHAINLINK_PRICE_8DEC);
+    }
+
+    function testIdentity_queryFollowsTheRegistryNotTheSymbol() public {
+        // The token renames itself "WBTC"; the query still asks for the
+        // registered identity ("eth"), never for the token's choice.
         _enableTellor();
         _mockTellorAgree();
+        vm.mockCall(mockAsset, abi.encodeWithSignature("symbol()"), abi.encode("WBTC"));
+        vm.expectCall(
+            mockTellor,
+            abi.encodeWithSignature(
+                "getDataBefore(bytes32,uint256)",
+                _tellorQueryId("eth"),
+                block.timestamp - LibVaipakam.TELLOR_DISPUTE_BUFFER
+            )
+        );
+        _readPrice();
+    }
 
-        (uint256 price, ) = OracleFacet(address(diamond)).getAssetPrice(brokenToken);
-        // Chainlink primary returned; secondary skipped silently
-        // because symbol() reverts. Soft fallback applies.
+    function testIdentity_unregisteredIdentitySkipsEverySecondary() public {
+        // Priced through Chainlink, but no registered identity: every
+        // secondary reads Unavailable, so even a disagreeing one is not
+        // asked (graceful Chainlink-only fallback).
+        _mockPairBase(mockAsset, bytes32(0));
+        _enableTellor();
+        _mockTellorDisagree();
+        (uint256 price, ) = _readPrice();
         assertEq(price, CHAINLINK_PRICE_8DEC);
+        (uint8 agreeing, uint8 disagreeing) =
+            OracleFacet(address(diamond)).countLiveSecondaryOracleFeeds(mockAsset);
+        assertEq(agreeing, 0);
+        assertEq(disagreeing, 0);
+    }
+
+    function testIdentity_malformedRegistryReplyReadsAsUnavailable() public {
+        // A registry reply that is not exactly one word never reverts the
+        // price read; it reads as no identity.
+        vm.mockCall(
+            mockRegistry,
+            abi.encodeCall(IFeedRegistryPairBase.pairBase, (mockAsset, mockDenom)),
+            abi.encode(uint256(32), uint256(1e9))
+        );
+        _enableTellor();
+        _mockTellorDisagree();
+        (uint256 price, ) = _readPrice();
+        assertEq(price, CHAINLINK_PRICE_8DEC);
+
+        vm.mockCallRevert(
+            mockRegistry,
+            abi.encodeCall(IFeedRegistryPairBase.pairBase, (mockAsset, mockDenom)),
+            "registry down"
+        );
+        (price, ) = _readPrice();
+        assertEq(price, CHAINLINK_PRICE_8DEC);
+    }
+
+    function testIdentity_wethIsKeyedAsEth() public {
+        // WETH is priced from the ETH anchor feed, so its identity is ETH
+        // with no registry entry needed.
+        _enableTellor();
+        _mockTellorAgree();
+        vm.expectCall(
+            mockTellor,
+            abi.encodeWithSignature(
+                "getDataBefore(bytes32,uint256)",
+                _tellorQueryId("eth"),
+                block.timestamp - LibVaipakam.TELLOR_DISPUTE_BUFFER
+            )
+        );
+        OracleFacet(address(diamond)).getAssetPrice(mockWeth);
     }
 
     // Configuration knobs.
@@ -777,8 +863,10 @@ contract SecondaryQuorumTest is Test {
 
     // ─── #665 — the Tellor dispute buffer ───────────────────────────────
 
+    /// @dev The asset's registered identity is "ETH" (setUp), so Tellor is
+    ///      asked about "eth" whatever the token's own symbol says (#2745).
     function _tellorQueryId() internal pure returns (bytes32) {
-        return keccak256(abi.encode("SpotPrice", abi.encode("weth", "usd")));
+        return _tellorQueryId("eth");
     }
 
     function testTellorBuffer_readsOnlyValuesOlderThanTheBuffer() public {

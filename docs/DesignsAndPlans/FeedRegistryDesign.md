@@ -210,4 +210,13 @@ reaches a chain uses it.
 2. Drafting tool and the first bindings files.
 3. Feed service.
 4. #2745 on top: secondary oracle keys come from the registered feed's pair
-   name, with an optional per-token pin.
+   name. The registry publishes it as `pairBase(base, quote)` (the text
+   before the pair's last " / ", zero when unregistered or longer than a
+   word), and OracleFacet asks it under the same quotes, in the same order,
+   as the primary price read; WETH's identity is ETH because it is priced
+   from the ETH anchor feed. The per-token pin first sketched here was not
+   built: the pair name is already reviewed and governed with the feed, and
+   a name the secondary sources do not know only reads as Unavailable (the
+   Chainlink-only fallback), never as another asset's price. An asset with
+   no registered pair (an industrial-fork direct-feed override) gets no
+   secondary check, which the oracle docs state.
