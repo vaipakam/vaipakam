@@ -17,6 +17,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
+import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -414,7 +415,7 @@ contract ForcedSalePeriodicTest is SetupTest {
 
     /// @dev When what leaves the exiting holder's vault on a handover is VPFI
     ///      (here the principal asset, so the held extra), that vault owner is
-    ///      re-stamped so no fee-tier credit stays on VPFI no longer vaulted.
+    ///      refreshed (#1820) so no fee-tier credit stays on VPFI no longer vaulted.
     function test_handover_restampsTheExitingHolderWhenVpfiLeaves() public {
         _heldWhileFlaggedThenDelisted();
         (, uint256 offerId) = _incomingBorrowerOffer();
@@ -423,7 +424,7 @@ contract ForcedSalePeriodicTest is SetupTest {
 
         vm.expectCall(
             address(diamond),
-            abi.encodeWithSelector(ConsolidationFacet.restampUserVpfiInternal.selector, borrower)
+            abi.encodeWithSelector(VPFIDiscountAccumulatorFacet.syncTierRecord.selector, borrower)
         );
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(LOAN, offerId);
@@ -502,7 +503,7 @@ contract ForcedSalePeriodicTest is SetupTest {
     }
 
     /// @dev On a VPFI-principal loan, holding the extra in the stored
-    ///      borrower's vault re-stamps them, so the VPFI they now hold counts.
+    ///      borrower's vault refreshes their tier record, so the VPFI they now hold counts.
     function test_heldVpfiExtra_restampsTheStoredBorrower() public {
         _toPeriodEnd(1);
         vm.prank(owner);
@@ -510,7 +511,7 @@ contract ForcedSalePeriodicTest is SetupTest {
         _walletRefuses(borrower);
         vm.expectCall(
             address(diamond),
-            abi.encodeWithSelector(ConsolidationFacet.restampUserVpfiInternal.selector, borrower)
+            abi.encodeWithSelector(VPFIDiscountAccumulatorFacet.syncTierRecord.selector, borrower)
         );
         _settle();
         assertGt(_held(), 0);

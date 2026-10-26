@@ -134,17 +134,11 @@ library LibVPFIDiscount {
      *         shared `s.encumbered` bucket — which legitimately holds the
      *         user's OWN liens / intent / offer capital and must stay in-tier.
      *
-     *         Takes the balance as an argument and never re-reads it: every
-     *         stamp caller feeds `rollupUserDiscount` a *post-mutation*
-     *         balance computed before storage is written (deposit/withdraw/
-     *         fee-deduction), so re-reading `protocolTrackedVaultBalance`
-     *         here would miscount an in-flight mutation (Codex #986 r3). The
-     *         `frozen` counter, by contrast, only changes at freeze/claim —
-     *         never mid deposit/withdraw — so reading it from storage is safe.
+     *         The tier record reads it with the tracked balance as it stands
+     *         after the write that triggered the refresh (#1820).
      *
      * @param user            Vault owner whose tier balance is being computed.
-     * @param postMutationBal Post-mutation vault VPFI balance the caller has
-     *                        already computed for this stamp.
+     * @param postMutationBal The vault owner's tracked VPFI balance.
      * @return The frozen-adjusted balance to stamp the tier from.
      */
     function tierVpfiBalance(
@@ -174,165 +168,13 @@ library LibVPFIDiscount {
         return actualBalance < trackedAfter ? actualBalance : trackedAfter;
     }
 
-    // ─── Time-weighted discount rollup (§5.2a) ───────────────────────────────
-
-    /**
-     * @notice Close the current period on `user`'s VPFI discount accumulator
-     *         and re-stamp the BPS against the **post-mutation** balance.
-     *
-     * @dev Load-bearing ordering invariant: call this at every vault-VPFI
-     *      balance mutation, passing the balance that will be in effect
-     *      after the mutation. The closing period is attributed to the
-     *      stamp left by the PRIOR rollup — whatever tier was in effect
-     *      from then until now. Re-stamping at the post-mutation balance
-     *      seeds the next period at the tier the user actually holds going
-     *      forward. Pre-mutation re-stamp (the pre-Phase 5 behaviour) let
-     *      a user keep collecting a high-tier stamp after unstaking down
-     *      to tier-0, defeating anti-gaming on both the lender yield-fee
-     *      and borrower LIF discounts.
-     *
-     *      Read-only callers (loan-init snapshot, yield-fee settlement
-     *      before any balance change) pass the live balance — no mutation
-     *      happens, so pre == post.
-     *
-     *      First call per user self-seeds (no accrual for a period we
-     *      never measured). Pre-upgrade users and brand-new users both
-     *      start at `cumulativeDiscountBpsSeconds = 0` with the stamped
-     *      BPS matching the supplied `balPostMutation`.
-     *
-     * @param user            Address whose discount state is being rolled up.
-     * @param balPostMutation Vault VPFI balance that will be in effect for
-     *                        the next period. For snapshot-only callers,
-     *                        the live balance.
-     */
-    function rollupUserDiscount(
-        address user,
-        uint256 balPostMutation
-    ) internal {
-        // T-087 Sub 1.B — route through {VPFIDiscountAccumulatorFacet}
-        // to keep the heavy ring-buffer + lifecycle bytecode out of
-        // every settlement-facet's inlined surface (see that facet's
-        // top-of-file rationale for the EIP-170 motivation). The
-        // wrapper preserves the public library API so call sites
-        // stay unchanged.
-        //
-        // Low-level call + silent fallback: many bespoke unit-test
-        // fixtures (LoanFacetTest, RepayFacetTest, ...) build a
-        // minimal diamond that doesn't cut the accumulator facet
-        // because they don't exercise the discount path. A direct
-        // typed call would revert `FunctionDoesNotExist`. The
-        // silent fallback preserves the pre-T-087 semantics on
-        // those fixtures (the rollup becomes a no-op) while
-        // production deployments + the SetupTest fixture get the
-        // full accumulator behaviour.
-        // Codex Sub 2.D round-3 P1 #1 — the outer-wrapper silent
-        // fallback on `FunctionDoesNotExist()` is only safe when
-        // we KNOW the revert can't have come from the broadcast
-        // path. The accumulator's own broadcast call is gated on
-        // `rewardMessenger != 0`, so if the messenger is unset
-        // the accumulator never reaches the broadcast facet and
-        // a returned `FunctionDoesNotExist` selector unambiguously
-        // means "the accumulator facet itself isn't cut" — silent
-        // fallback is correct for minimal-fixture tests.
-        //
-        // If the messenger IS set, however, the accumulator WILL
-        // attempt the broadcast call, and a `FunctionDoesNotExist`
-        // selector could equally well come from a missing
-        // ProtocolBroadcastFacet cut OR a misconfigured messenger
-        // contract — both are real production bugs that must
-        // bubble to the caller, not be silently swallowed.
-        // #954 (Codex #981/#986 §2.2) — every tier stamp funnels through this
-        // wrapper, so applying the frozen-owed exclusion HERE covers every
-        // caller (deposit/withdraw/fee/consolidation/loan-init) uniformly and
-        // future-proofs new call sites. `balPostMutation` is already the
-        // post-mutation balance the caller computed; `tierVpfiBalance` only
-        // subtracts the frozen-owed counter, never re-reads the mutating
-        // balance.
-        balPostMutation = tierVpfiBalance(user, balPostMutation);
-        address messenger = LibVaipakam.storageSlot().rewardMessenger;
-        (bool ok, bytes memory returnData) = address(this).call(
-            abi.encodeWithSelector(
-                VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector,
-                user,
-                balPostMutation
-            )
-        );
-        if (!ok) {
-            if (messenger == address(0)) {
-                // Unconfigured — selector-discriminator silent
-                // fallback safely handles minimal-fixture diamonds.
-                bytes4 functionDoesNotExistSelector = bytes4(
-                    keccak256(bytes("FunctionDoesNotExist()"))
-                );
-                if (
-                    returnData.length >= 4
-                        && bytes4(returnData) == functionDoesNotExistSelector
-                ) {
-                    return;
-                }
-            }
-            // Either the messenger is wired (production / configured
-            // testnet — any revert IS a real bug) or a non-selector
-            // revert raced through unconfigured paths. Bubble in
-            // both cases.
-            assembly {
-                revert(add(32, returnData), mload(returnData))
-            }
-        }
-    }
-
-    /**
-     * @notice RL-1 (VpfiRecyclingLoopClosureDesign §6) — broadcast-FREE
-     *         sibling of {rollupUserDiscount}. Identical local accumulator
-     *         writes (frozen-owed exclusion included), but routes to
-     *         {VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal}, which
-     *         never attempts the CCIP tier push.
-     *
-     * @dev Used by the Diamond-funded vault credit primitive on the reward
-     *      claim-to-vault path. It was introduced because the broadcast
-     *      push could revert (an empty budget, a misconfigured messenger);
-     *      since #898 / #911 the push only defers on those, and #2849
-     *      tracks retiring this variant. The push is committed by the
-     *      user's next broadcasting rollup.
-     *
-     *      Silent-fallback rule is SIMPLER than {rollupUserDiscount}'s: the
-     *      local entry never reaches the broadcast facet, so a returned
-     *      `FunctionDoesNotExist()` selector can only mean "the accumulator
-     *      facet isn't cut" (minimal-fixture test diamonds) — safe to no-op
-     *      regardless of messenger configuration. Every other revert
-     *      bubbles.
-     *
-     * @param user            Address whose discount state is being rolled up.
-     * @param balPostMutation Vault VPFI balance in effect after the caller's
-     *                        mutation.
-     */
-    function rollupUserDiscountLocal(
-        address user,
-        uint256 balPostMutation
-    ) internal {
-        balPostMutation = tierVpfiBalance(user, balPostMutation);
-        (bool ok, bytes memory returnData) = address(this).call(
-            abi.encodeWithSelector(
-                VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal.selector,
-                user,
-                balPostMutation
-            )
-        );
-        if (!ok) {
-            bytes4 functionDoesNotExistSelector = bytes4(
-                keccak256(bytes("FunctionDoesNotExist()"))
-            );
-            if (
-                returnData.length >= 4
-                    && bytes4(returnData) == functionDoesNotExistSelector
-            ) {
-                return;
-            }
-            assembly {
-                revert(add(32, returnData), mload(returnData))
-            }
-        }
-    }
+    // ─── Time-weighted discount record (§5.2a) ───────────────────────────────
+    //
+    // #1820 — the record is refreshed at the two writers of the tier
+    // balance (`LibVaipakam.recordVaultDeposit` / `recordVaultWithdraw`, and
+    // the frozen-owed writes in `LibTierExclusion` / `LibCloseoutFreeze`),
+    // through `LibTierRecord.refresh`, never at the facet that moved the
+    // VPFI. See `docs/DesignsAndPlans/TierRecordSeamDesign.md`.
 
     /// @notice T-087 Sub 1.B — read entry point used by every fee-charging
     ///         path on Base. Returns the user's EFFECTIVE_TIER and the
@@ -782,10 +624,10 @@ library LibVPFIDiscount {
      *         average. Under the real rule that lender is held at tier 1,
      *         not somewhere between: a minimum is not a proportion.
      *
-     *         `rollupUserDiscount` is NOT a prerequisite of this read.
-     *         Rollup belongs at MUTATION sites, so the day history is
-     *         written when a balance actually moves; the read then extends
-     *         the last written day forward. Settlement deliberately does
+     *         A record refresh is NOT a prerequisite of this read. The
+     *         record is refreshed where the tier balance is written (#1820),
+     *         so the day history is written when a balance actually moves;
+     *         the read then extends the last written day forward. Settlement deliberately does
      *         not roll up — see the T-087 note in {settleBorrowerLifProper},
      *         which cites `PrecloseFacet`'s EIP-170 budget as the reason.
      *
@@ -913,25 +755,13 @@ library LibVPFIDiscount {
         uint256 vaultBal = IERC20(vpfi).balanceOf(borrowerVault);
         if (vaultBal < vpfiRequired) return (false, 0);
 
-        // T-054 PR-2 — clamp checkpoint balance against the tracked
-        // counter so unsolicited dust isn't counted as stake.
-        uint256 prevTracked = s.protocolTrackedVaultBalance[borrower][vpfi];
-        uint256 newStakedBal = clampToTracked(
-            vaultBal - vpfiRequired,
-            prevTracked - vpfiRequired
-        );
-
         // Withdraw VPFI from borrower's vault into Diamond custody (the
         // Diamond holds it until settlement splits it between rebate and
         // treasury). The withdraw reverts on insufficient balance /
-        // vault misconfiguration; silent-fallback via the call wrapper.
-        // #569 Codex #572 round-4 P2 — the encumbrance guard can now
-        // revert this withdraw when the borrower's VPFI is locked as loan
-        // collateral. The staking + discount checkpoints are therefore
-        // stamped ONLY AFTER a successful withdraw (below), so the
-        // silent-fallback path (`ok == false`) can't leave reward state
-        // stamped as if VPFI had moved when the vault balance didn't
-        // change.
+        // vault misconfiguration (#569: including VPFI locked as loan
+        // collateral); silent-fallback via the call wrapper. The withdraw
+        // refreshes the borrower's tier record itself (#1820), so a failed
+        // one leaves the record untouched.
         (bool ok, ) = address(this).call(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -942,14 +772,6 @@ library LibVPFIDiscount {
             )
         );
         if (!ok) return (false, 0);
-
-        // Rollup the borrower's discount accumulator at the post-
-        // mutation balance now that the withdraw has committed. Seeds
-        // the stamp so the next period's accrual reflects the tier the
-        // borrower actually holds from here on. The prior rollup (at
-        // `_snapshotBorrowerDiscount`) closed the period at the pre-
-        // withdraw stamp.
-        rollupUserDiscount(borrower, newStakedBal);
 
         return (true, vpfiRequired);
     }
@@ -1243,12 +1065,6 @@ library LibVPFIDiscount {
         address lenderVault = s.userVaipakamVaults[lender];
         if (lenderVault == address(0) || vpfi == address(0)) return (false, 0);
 
-        // T-087 Sub 1.B — no pre-withdraw rollup. EFFECTIVE_BPS is an
-        // instant read; the second rollup AFTER the withdraw at the
-        // bottom of this function still captures the post-mutation
-        // balance for the ring buffer + lifecycle bookkeeping.
-        // Dropping this duplicate rollup keeps PrecloseFacet under
-        // EIP-170.
         uint256 vaultBal = IERC20(vpfi).balanceOf(lenderVault);
         uint256 prevTracked = s.protocolTrackedVaultBalance[lender][vpfi];
 
@@ -1267,25 +1083,16 @@ library LibVPFIDiscount {
         // return a positive `vpfiRequired` for a lender with little/no
         // protocol-tracked VPFI, unsolicited VPFI dust sent directly to the
         // vault could satisfy the raw `vaultBal` check above while
-        // `prevTracked < vpfiRequired` — underflowing `prevTracked - vpfiRequired`
-        // below and reverting settlement instead of falling back to the
-        // no-token-move direct-reduction bump. Bail to the fallback here.
+        // `prevTracked < vpfiRequired`, and the withdraw would then fail on
+        // the tracked counter. Bail to the no-token-move direct-reduction
+        // fallback here, before any call.
         if (prevTracked < vpfiRequired) return (false, 0);
 
-        // 3. Checkpoint staking accrual at the post-mutation balance.
-        //    Mirrors the pattern at every other vault-mutation site.
-        //    Clamped against tracked-after-withdraw.
-        uint256 newStakedBal = clampToTracked(
-            vaultBal - vpfiRequired,
-            prevTracked - vpfiRequired
-        );
-
-        // #569 Codex #572 round-4 P2 — stamp the staking + discount
-        // checkpoints ONLY AFTER a successful withdraw. The encumbrance
-        // guard can now revert this withdraw when the lender's VPFI is
-        // locked as loan collateral; on that silent-fallback path
-        // (`ok == false`) we must not leave reward state stamped as if
-        // VPFI had moved.
+        // #569 — the encumbrance guard can revert this withdraw when the
+        // lender's VPFI is locked as loan collateral; that is the
+        // silent-fallback path (`ok == false`). The withdraw refreshes the
+        // lender's tier record itself (#1820), so a failed one leaves the
+        // record untouched.
         address treasury = LibFacet.getTreasury();
         (bool ok, ) = address(this).call(
             abi.encodeWithSelector(
@@ -1297,12 +1104,6 @@ library LibVPFIDiscount {
             )
         );
         if (!ok) return (false, 0);
-
-        // 4. Re-stamp the accumulator at the post-mutation balance now
-        //    that the withdraw has committed. Zero elapsed between this
-        //    call and step 1 — purely a stamp refresh so the next period
-        //    accrues at the tier the lender actually holds from here on.
-        rollupUserDiscount(lender, newStakedBal);
 
         LibFacet.recordTreasuryAccrual(vpfi, vpfiRequired);
         return (true, vpfiRequired);

@@ -7,6 +7,7 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 import {LibLoanClock} from "./LibLoanClock.sol";
+import {LibTierRecord} from "./LibTierRecord.sol";
 // Numeraire generalization (b1) (T-047 prep): the INumeraireOracle interface that
 // Phase 1+2 introduced for numeraire→USD boundary conversion is no
 // longer needed — `OracleFacet.getAssetPrice` now returns numeraire-
@@ -2702,13 +2703,11 @@ library LibVaipakam {
     /**
      * @notice Per-user VPFI discount accumulator. Drives the time-weighted
      *         lender yield-fee discount (docs/GovernanceConfigDesign.md §5.2a).
-     *         Updated on every vault-VPFI balance mutation and at every
-     *         offer-accept / yield-fee settlement. Ordering invariant: the
-     *         accompanying `rollupUserDiscount(user, postMutationBalance)`
-     *         call runs at the mutation site; the closing period carries
-     *         the bps stamp left by the prior rollup (the tier that was in
-     *         effect across the just-closed window), and the re-stamp uses
-     *         the post-mutation balance to seed the next period.
+     *         Refreshed at every write of the tier balance (#1820:
+     *         {recordVaultDeposit} / {recordVaultWithdraw} and the frozen-owed
+     *         writes) and at loan start, from the balance in storage after the
+     *         write; the closing period carries the bps stamp left by the
+     *         prior refresh, and the post-write balance seeds the next one.
      *
      * @dev Packed layout:
      *        slot 0: uint16 (2) + uint64 (8) = 10 bytes → fits comfortably
@@ -3970,9 +3969,8 @@ library LibVaipakam {
         //      staked VPFI no matter what other checks were
         //      bypassed. Load-bearing safety property.
         //
-        // The VPFI discount accumulator (`LibVPFIDiscount.rollupUserDiscount`)
-        // also clamps to `min(balanceOf, tracked)` so unsolicited VPFI
-        // dust does NOT inflate the tier.
+        // The VPFI tier record (#1820) reads this counter, never the raw
+        // `balanceOf`, so unsolicited VPFI dust does NOT inflate the tier.
         //
         // Underflow on withdraw means a withdrawal fired without a
         // matching deposit — that's an accounting bug somewhere upstream
@@ -12312,7 +12310,13 @@ library LibVaipakam {
         address token,
         uint256 amount
     ) internal {
-        storageSlot().protocolTrackedVaultBalance[user][token] += amount;
+        Storage storage s = storageSlot();
+        s.protocolTrackedVaultBalance[user][token] += amount;
+        // #1820 — this and {recordVaultWithdraw} are the only writers of the
+        // tracked balance the VPFI fee-discount tier reads, so a change to a
+        // user's tracked VPFI refreshes their tier record here, on every
+        // path, instead of at each facet that moves VPFI (see LibTierRecord).
+        if (amount != 0 && token == s.vpfiToken && token != address(0)) LibTierRecord.refresh(user);
     }
 
     /// @notice Internal accountant for protocol-withdrawn ERC-20
@@ -12327,7 +12331,10 @@ library LibVaipakam {
         address token,
         uint256 amount
     ) internal {
-        storageSlot().protocolTrackedVaultBalance[user][token] -= amount;
+        Storage storage s = storageSlot();
+        s.protocolTrackedVaultBalance[user][token] -= amount;
+        // #1820 — see {recordVaultDeposit}.
+        if (amount != 0 && token == s.vpfiToken && token != address(0)) LibTierRecord.refresh(user);
     }
 
     // ─── #1123 — fail-closed position-movement restriction ─────────────

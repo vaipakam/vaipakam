@@ -112,7 +112,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](265); // pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](266); // #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -446,7 +446,8 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.getStakeRollupStateRaw.selector;
         // #1817 — establish a genuine pre-existing staker lifecycle before a
         // flow that must reset it at a mid-transaction zero balance.
-        selectors[n++] = TestMutatorFacet.restampUserVpfiRaw.selector;
+        selectors[n++] = TestMutatorFacet.refreshTierRecordRaw.selector;
+        selectors[n++] = TestMutatorFacet.guardedVpfiOutAndBackRaw.selector;
         // Governor PR-3a — recycle-bucket forfeit-routing scaffolding.
         selectors[n++] = TestMutatorFacet.setRewardEntryForfeitedRaw.selector;
         // Governor PR-3b — day-pool stamp test scaffolding.
@@ -1383,16 +1384,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](4);
         selectors[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
         selectors[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
         selectors[2] = ConsolidationFacet.eagerConsolidateToHolder.selector;
         selectors[3] = ConsolidationFacet.eagerConsolidateBothSides.selector;
-        selectors[4] = ConsolidationFacet
-            .restampCollateralVpfiAfterWithdraw
-            .selector;
-        selectors[5] = ConsolidationFacet.restampUserVpfiInternal.selector;
-        selectors[6] = ConsolidationFacet.restampUserVpfiLocalInternal.selector;
     }
 
     function getDefaultedFacetSelectors()
@@ -1885,22 +1881,19 @@ contract HelperTest {
     }
 
     /// T-087 Sub 1.B — single-home accumulator facet (ring-buffer math +
-    /// lifecycle bookkeeping). Both selectors gated to
-    /// `msg.sender == address(this)`; library wrappers in
+    /// lifecycle bookkeeping). `syncTierRecord` and `effectiveTierAndBps`
+    /// are gated to `msg.sender == address(this)`; {LibTierRecord} and
     /// {LibVPFIDiscount} reach them via cross-facet calls.
     function getVpfiDiscountAccumulatorFacetSelectors()
         public
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
-        selectors[0] = VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector;
+        selectors = new bytes4[](3);
+        selectors[0] = VPFIDiscountAccumulatorFacet.syncTierRecord.selector;
         selectors[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
         // T-087 Sub 2.A — projected tier-expiry view.
         selectors[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
-        // RL-1 — broadcast-free rollup for the vault credit primitive.
-        selectors[3] =
-            VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal.selector;
         return selectors;
     }
 
@@ -1924,7 +1917,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](10);
         selectors[0] = ProtocolBroadcastFacet.protocolBroadcastTierUpdate.selector;
         selectors[1] = ProtocolBroadcastFacet.topUpBroadcastBudget.selector;
         selectors[2] = ProtocolBroadcastFacet.withdrawBudget.selector;
@@ -1934,6 +1927,7 @@ contract HelperTest {
         selectors[6] = ProtocolBroadcastFacet.getTierPushStatus.selector;
         selectors[7] = ProtocolBroadcastFacet.getTierPushSpacingSec.selector;
         selectors[8] = ProtocolBroadcastFacet.setTierPushSpacingSec.selector;
+        selectors[9] = ProtocolBroadcastFacet.flushTierPushes.selector;
         return selectors;
     }
 

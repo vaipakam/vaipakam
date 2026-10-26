@@ -4,7 +4,6 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
-import {LibVPFIDiscount} from "./LibVPFIDiscount.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
@@ -44,24 +43,11 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *      (`InsufficientRecycleBacking` reverts if the tokens are not on the
  *      Diamond), which is why the withdraw MUST precede the credit.
  *
- *      Discount restamp (#973 / "L26"): moving VPFI out of a user's vault
- *      must re-stamp their time-weighted discount accumulator at the
- *      post-mutation balance — otherwise the payer keeps a stale
- *      fee-tier/staking stamp on VPFI that has already left. Every other
- *      VPFI-debit path does this; the pre-M1 bill path skipped it. The
- *      re-route closes that gap with a `rollupUserDiscount` call placed
- *      after the withdrawal and before the recycle credit — "tail" was
- *      loose wording for a call that is not last.
- *
- *      What the position actually buys, stated precisely because #1349
- *      first got this wrong: it must come AFTER the withdrawal, so the
- *      tracked balance it stamps is the post-mutation one. That is the
- *      whole ordering requirement. It does NOT make the rollback atomic —
- *      a revert unwinds the entire transaction wherever the call sits, so
- *      moving it after the credit would not preserve credited state on
- *      failure. The earlier wording called the position "load-bearing" for
- *      that reason and implied a guarantee that ordinary EVM revert
- *      semantics already provide unconditionally.
+ *      Discount record (#973 / "L26"): moving VPFI out of a user's vault
+ *      must refresh their fee-discount tier record — otherwise the payer
+ *      keeps a stale tier on VPFI that has already left. Since #1820 the
+ *      vault withdrawal does that itself, at the write, as every VPFI
+ *      movement does; the bill writes no stamp of its own.
  */
 library LibNotificationFee {
     /// @notice Emitted when a loan-side's first notification triggers a
@@ -218,7 +204,8 @@ library LibNotificationFee {
         //    write — the billed flag stays false until they top up VPFI.
         //    #1566 closure 2 — snapshot the Diamond's balance first: the
         //    bucket credit in step 3 is a delta-checked OPERATION that
-        //    verifies the balance actually rose by the tariff.
+        //    verifies the balance actually rose by the tariff. The
+        //    withdraw refreshes the payer's tier record itself (#1820).
         uint256 balanceBefore = IERC20(vpfi).balanceOf(address(this));
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             payer,
@@ -227,16 +214,7 @@ library LibNotificationFee {
             vpfiAmount
         );
 
-        // 2. Restamp the payer's time-weighted discount accumulator at the
-        //    post-mutation tracked balance (#973/L26). `vaultWithdrawERC20`
-        //    has already decremented the tracked counter, so the current
-        //    tracked balance IS the post-mutation staked figure.
-        LibVPFIDiscount.rollupUserDiscount(
-            payer,
-            s.protocolTrackedVaultBalance[payer][vpfi]
-        );
-
-        // 3. Credit the recycle bucket now that the tariff sits on the
+        // 2. Credit the recycle bucket now that the tariff sits on the
         //    Diamond — the first live non-forfeit absorption class
         //    (governor §4.1 Layer 0). refId = loanId for per-loan
         //    observability on the `VpfiRecycled` feed. The tag is the

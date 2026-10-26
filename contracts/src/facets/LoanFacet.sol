@@ -11,7 +11,7 @@ import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
-import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibTierRecord} from "../libraries/LibTierRecord.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -975,55 +975,20 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         }
     }
 
-    /// @dev Roll up the lender's VPFI-discount day history at loan init,
-    ///      against the protocol-tracked stake. That is ALL it does.
-    ///
-    ///      It wrote no anchor and froze no window even before #1981 — the
-    ///      header did, until r2, still describe the pre-T-087 mechanism
-    ///      ("freeze the post-rollup counter value onto the Loan — every
-    ///      subsequent yield-fee settlement subtracts this anchor to get the
-    ///      average discount over just this loan's lifetime"). No settlement
-    ///      subtracts anything; each reads the party's effective tier at the
-    ///      fee moment. See {LibVPFIDiscount.lenderHoldTierDiscountBps}.
-    ///
-    ///      The NAME is the same stale claim — nothing is snapshotted — and
-    ///      is left alone here only to keep this review's diff to the
-    ///      correction; it is worth renaming with the storage-layout cleanup
-    ///      that retires `lenderDiscountAccAtInit`. Docs §5.2a.
+    /// @dev Refresh the lender's VPFI fee-discount tier record at loan
+    ///      start, with no balance change: time alone can change a tier (the
+    ///      minimum-stake gate passing, a day leaving the look-back), and the
+    ///      record must be current when the loan begins. It writes no
+    ///      per-loan anchor; each fee reads the party's effective tier at the
+    ///      fee moment ({LibVPFIDiscount.lenderHoldTierDiscountBps}). Same
+    ///      seam as every vault movement ({LibTierRecord}, #1820).
     function _snapshotLenderDiscount(LibVaipakam.Loan storage loan) private {
-        // T-087 Sub 1.B — rollup against the protocol-tracked stake
-        // (NOT raw vault balance), per design §3 reuse row +
-        // Codex round-7 P1 #7. The `lenderDiscountAccAtInit` slot
-        // stays in place but is vestigial under the new design
-        // (loan-window averaging replaced by instant EFFECTIVE_BPS
-        // lookup at fee time — see {LibVPFIDiscount.lenderHoldTierDiscountBps}
-        // for the rewire). Left at 0; deferring removal until storage-
-        // layout cleanup in a later sub-card so loupe-readable layout
-        // stays byte-identical for now.
-        address lender = loan.lender;
-        uint256 lenderBal = LibVPFIDiscount.trackedVpfiBalance(lender);
-        LibVPFIDiscount.rollupUserDiscount(lender, lenderBal);
+        LibTierRecord.refresh(loan.lender);
     }
 
-    /// @dev Borrower mirror of {_snapshotLenderDiscount} (Phase 5 / §5.2b) —
-    ///      a rollup of the borrower's day history at loan init, and nothing
-    ///      else. Same correction as its sibling (#1981 r2): this header
-    ///      claimed it "anchors the time-weighted borrower LIF-discount
-    ///      window so the proper-settlement helper … can compute the average
-    ///      discount BPS over the loan's lifetime", which T-087 Sub 1.B
-    ///      removed. {LibVPFIDiscount.settleBorrowerLifProper} sizes the
-    ///      rebate from the borrower's effective tier at settlement.
-    ///
-    ///      The gaming vector that clause credited to the anchor is still
-    ///      defeated, one level down: the effective tier requires continuous
-    ///      stake tenure and is clamped to the lowest tier over the stake's
-    ///      history. So the property survives; the stated mechanism does not.
+    /// @dev Borrower mirror of {_snapshotLenderDiscount}.
     function _snapshotBorrowerDiscount(LibVaipakam.Loan storage loan) private {
-        // T-087 Sub 1.B — borrower mirror of {_snapshotLenderDiscount}.
-        // Rollup against protocol-tracked stake, no loan-window anchor.
-        address borrower = loan.borrower;
-        uint256 borrowerBal = LibVPFIDiscount.trackedVpfiBalance(borrower);
-        LibVPFIDiscount.rollupUserDiscount(borrower, borrowerBal);
+        LibTierRecord.refresh(loan.borrower);
     }
 
     function _copyFinancialFields(

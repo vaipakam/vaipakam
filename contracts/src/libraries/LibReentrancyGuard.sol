@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibTierRecord} from "./LibTierRecord.sol";
+
 /**
  * @title LibReentrancyGuard
  * @notice Diamond-safe reentrancy guard using ERC-7201 namespaced storage.
@@ -40,8 +42,18 @@ library LibReentrancyGuard {
         rs.status = ENTERED;
     }
 
+    /// @dev Ends the guarded action. Users whose VPFI tier record changed
+    ///      during it were queued by {LibTierRecord}; their tier is pushed to
+    ///      the mirrors here, once each, while the guard is still held, so
+    ///      no cross-chain call ever runs with the guard down (#1820).
     function _exit() internal {
+        LibTierRecord.flushIfPending();
         _storage().status = NOT_ENTERED;
+    }
+
+    /// @dev Whether a guarded action is in progress.
+    function entered() internal view returns (bool) {
+        return _storage().status == ENTERED;
     }
 }
 

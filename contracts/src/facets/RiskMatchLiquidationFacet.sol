@@ -343,9 +343,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///      its current NFT holder via a few-byte cross-facet call (one body
     ///      each, compiled once). Both-side eager consolidation BEFORE settlement
     ///      re-anchors every leg's borrower/lender to the live holder so the
-    ///      collateral lien + reward entry + VPFI checkpoint follow it; the
-    ///      post-withdraw restamp keeps VPFI tier/staking honest after a leg's
-    ///      collateral leaves the vault. Tier2 skip-not-block; FallbackPending
+    ///      collateral lien + reward entry + VPFI checkpoint follow it (each
+    ///      vault movement refreshes the owner's VPFI tier record at the write,
+    ///      #1820). Tier2 skip-not-block; FallbackPending
     ///      legs are a benign no-op (`consolidateToHolder` excludes them: the
     ///      episode's custody row and lien stay keyed to the stored borrower
     ///      until it ends). Proceeds were already
@@ -368,16 +368,6 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 ConsolidationFacet.eagerConsolidateBothSides.selector,
-                loanId
-            ),
-            bytes4(0)
-        );
-    }
-
-    function _restampCollIM(uint256 loanId) private {
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector,
                 loanId
             ),
             bytes4(0)
@@ -480,16 +470,6 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         _settleFallbackOrTransitionPostMatch(la, r.movedZ, r.paidX, r.paidX - r.incentiveX);
         _settleFallbackOrTransitionPostMatch(lb, r.movedX, r.paidY, r.paidY - r.incentiveY);
         _settleFallbackOrTransitionPostMatch(lc, r.movedY, r.paidZ, r.paidZ - r.incentiveZ);
-
-        // #691 / #658 — each leg's collateral was withdrawn for the swap;
-        // restamp each holder's VPFI tier/staking (no-op for non-VPFI). Keyed
-        // off the live `la/lb/lc` storage pointers (`.id`) rather than the
-        // `loanId*` params so those params' live range ends at the leg
-        // consume/settle calls above — keeping the deep tail of this viaIR
-        // stack-ceiling executor under the limit.
-        _restampCollIM(la.id);
-        _restampCollIM(lb.id);
-        _restampCollIM(lc.id);
     }
 
     /// @dev #1566 slice 2 — consume one leg's collateral on the PAYING loan,
@@ -515,8 +495,8 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///
     ///      Order is row, then lien, then withdraw: the move-out order
     ///      `FallbackCustodyFacet` uses, so the VPFI tier exclusion drops
-    ///      before the balance does and the stamp never dips below its final
-    ///      value (the executors' closing restamp settles it).
+    ///      before the balance does and the record never dips below its final
+    ///      value (each write refreshes it, #1820).
     function _consumeLeg(
         uint256 payingLoanId,
         uint256 moved,
@@ -722,13 +702,6 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // by Leg X (movedX − incentiveX); symmetrically for lb.
         _settleFallbackOrTransitionPostMatch(la, r.movedY, r.paidX, r.paidX - r.incentiveX);
         _settleFallbackOrTransitionPostMatch(lb, r.movedX, r.paidY, r.paidY - r.incentiveY);
-
-        // #691 / #658 — both legs' collateral was withdrawn for the swap;
-        // restamp each holder's VPFI tier/staking (no-op for non-VPFI). Keyed
-        // off `la/lb` (`.id`) so the `loanId*` params' live range ends at the
-        // leg consume/settle calls above (viaIR stack headroom).
-        _restampCollIM(la.id);
-        _restampCollIM(lb.id);
     }
 
     /// @dev Internal helper for `triggerInternalMatchLiquidation` —

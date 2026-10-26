@@ -442,14 +442,6 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 partialFillRefund
             );
         }
-        // #658 PR-B — re-stamp the holder's VPFI tier/staking after the net
-        // collateral movement above (the consumed slice left the holder's vault;
-        // the unconsumed residual was re-liened back). No-op for non-VPFI
-        // collateral. Mirrors the swapToRepayPartial restamp + the liquidation
-        // family.
-        if (loan.collateralAsset == s.vpfiToken) {
-            LibConsolidation.restampUserVpfi(loan.borrower);
-        }
         s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.collateralAsset,
             amount: unconsumedCollateral,

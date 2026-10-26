@@ -2200,14 +2200,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// #594 — standalone holder-only consolidation entry points.
     function _getConsolidationFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](4);
         s[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
         s[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
         s[2] = ConsolidationFacet.eagerConsolidateToHolder.selector;
         s[3] = ConsolidationFacet.eagerConsolidateBothSides.selector;
-        s[4] = ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector;
-        s[5] = ConsolidationFacet.restampUserVpfiInternal.selector;
-        s[6] = ConsolidationFacet.restampUserVpfiLocalInternal.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {
@@ -2853,25 +2850,22 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     /// T-087 Sub 1.B — single-home accumulator facet (ring-buffer
-    /// math + lifecycle bookkeeping). Both selectors are gated to
-    /// `msg.sender == address(this)` so an EOA can never invoke
-    /// them directly; library wrappers route through the Diamond's
-    /// fallback. See {VPFIDiscountAccumulatorFacet.sol} for the
-    /// extraction rationale.
+    /// math + lifecycle bookkeeping). `syncTierRecord` (#1820, the one
+    /// refresh entry `LibTierRecord` reaches) and `effectiveTierAndBps`
+    /// are gated to `msg.sender == address(this)` so an EOA can never
+    /// invoke them directly. See {VPFIDiscountAccumulatorFacet.sol} for
+    /// the extraction rationale.
     function _getVpfiDiscountAccumulatorSelectors()
         internal
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](4);
-        s[0] = VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector;
+        s = new bytes4[](3);
+        s[0] = VPFIDiscountAccumulatorFacet.syncTierRecord.selector;
         s[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
         // T-087 Sub 2.A — projected tier-expiry view (off-chain
         // monitoring + Sub 2.B CCIP payload source + test inspection).
         s[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
-        // RL-1 — broadcast-free rollup used by the Diamond-funded vault
-        // credit primitive on the reward claim-to-vault path.
-        s[3] = VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal.selector;
     }
 
     /// T-087 Sub 2.C — mirror-side tier-push receiver facet. Both
@@ -2892,15 +2886,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     /// T-087 Sub 2.D — protocol-funded mirror broadcast orchestrator.
-    /// `protocolBroadcastTierUpdate` is gated to `msg.sender ==
-    /// address(this)`; the accumulator's rollup path reaches it via
-    /// the diamond's fallback.
+    /// `protocolBroadcastTierUpdate` and `flushTierPushes` are gated to
+    /// `msg.sender == address(this)`; the accumulator's refresh and the
+    /// reentrancy guard's release reach them via the diamond's fallback.
     function _getProtocolBroadcastSelectors()
         internal
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](9);
+        s = new bytes4[](10);
         s[0] = ProtocolBroadcastFacet.protocolBroadcastTierUpdate.selector;
         s[1] = ProtocolBroadcastFacet.topUpBroadcastBudget.selector;
         s[2] = ProtocolBroadcastFacet.withdrawBudget.selector;
@@ -2910,6 +2904,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[6] = ProtocolBroadcastFacet.getTierPushStatus.selector;
         s[7] = ProtocolBroadcastFacet.getTierPushSpacingSec.selector;
         s[8] = ProtocolBroadcastFacet.setTierPushSpacingSec.selector;
+        s[9] = ProtocolBroadcastFacet.flushTierPushes.selector;
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {

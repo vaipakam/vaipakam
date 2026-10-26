@@ -135,12 +135,12 @@ contract LenderIntentFacet is
     /// @notice A diamond-internal-only entry was called externally.
     error OnlyDiamondInternal();
     /// @notice VPFI cannot be an intent's LENDING asset (#393 v1-d.1, Codex
-    ///         P2). VPFI's vaulted balance drives the fee-discount tier +
-    ///         staking rewards, which the generic vault chokepoints the intent
-    ///         fund / fill / withdraw paths use do NOT re-stamp
-    ///         (`LibVPFIDiscount.rollupUserDiscount`). Lending VPFI through an
-    ///         intent would silently drift that accounting, so it is rejected
-    ///         at the root (registration) — VPFI as COLLATERAL stays supported.
+    ///         P2). The reason given then — the generic vault chokepoints the
+    ///         intent paths use did not refresh the fee-discount tier — no
+    ///         longer holds: since #1820 every chokepoint does. The rule
+    ///         itself is unchanged here; whether to lift it is a separate
+    ///         product decision (#2860). VPFI as
+    ///         COLLATERAL stays supported.
     error LenderIntentVpfiLendingUnsupported();
     /// @notice `rollIntentLoan` was called on a loan that didn't originate from
     ///         an intent, or isn't in the clean fully-Repaid state auto-roll
@@ -220,10 +220,9 @@ contract LenderIntentFacet is
         if (lendingAsset == collateralAsset) {
             revert LenderIntentSelfCollateralized();
         }
-        // #393 v1-d.1 (Codex P2) — VPFI may not be the LENDING asset: its vault
-        // balance is load-bearing for the fee-discount tier + staking rewards,
-        // which the generic vault chokepoints used by the intent fund / fill /
-        // withdraw paths don't re-stamp. Reject at the root so no VPFI-lending
+        // #393 v1-d.1 (Codex P2) — VPFI may not be the LENDING asset (see
+        // {LenderIntentVpfiLendingUnsupported} for why the original reason no
+        // longer holds since #1820). Reject at the root so no VPFI-lending
         // intent can ever exist (fund / matchIntent / withdraw all require an
         // active intent, so this single gate covers the whole lifecycle). VPFI
         // as collateral is unaffected.
@@ -400,8 +399,8 @@ contract LenderIntentFacet is
         // the on-ramp, BEFORE custody moves. The `setLenderIntent` gate alone
         // isn't airtight: `vpfiToken` can be configured/rotated AFTER an intent
         // row was stored (or a pre-gate intent could survive an upgrade), and
-        // such a row would otherwise fund VPFI through the generic chokepoint
-        // with no discount/staking rollup. Blocking funding here transitively
+        // such a row would otherwise fund VPFI the rule above refuses (see
+        // {LenderIntentVpfiLendingUnsupported}). Blocking funding here transitively
         // blocks `matchIntent` too (it can only draw funded capital), so no
         // VPFI-denominated intent capital can ever form. The exit
         // (`withdrawLenderIntentCapital`) stays open so any pre-existing such
@@ -481,24 +480,9 @@ contract LenderIntentFacet is
         // #393 v1-d.1 (Codex round-3 P2) — this is the ONLY VPFI-as-lending path
         // left open (fund + matchIntent reject VPFI): the wind-down of capital
         // that became VPFI-denominated via a post-funding `vpfiToken` rotation.
-        // The generic withdraw below doesn't re-stamp the VPFI discount/staking
-        // accounting, so do it here (mirrors `VPFIDiscountFacet.withdrawVPFIFromVault`)
-        // — else a lender keeps a stale high VPFI tier after pulling the VPFI
-        // out. No-op for every non-VPFI lending asset (the common case).
+        // The withdraw below refreshes the lender's VPFI tier record itself
+        // (#1820), so pulling VPFI out lowers their tier at once.
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (lendingAsset == s.vpfiToken) {
-            address vault = s.userVaipakamVaults[msg.sender];
-            uint256 prevBal = IERC20(lendingAsset).balanceOf(vault);
-            uint256 prevTracked = s.protocolTrackedVaultBalance[msg.sender][
-                lendingAsset
-            ];
-            // Post-withdraw vault VPFI, clamped to the tracked counter so
-            // unsolicited dust can't inflate the re-stamped tier.
-            uint256 newBal = LibVPFIDiscount.clampToTracked(
-                prevBal - amount, prevTracked - amount
-            );
-            LibVPFIDiscount.rollupUserDiscount(msg.sender, newBal);
-        }
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             msg.sender,
             lendingAsset,

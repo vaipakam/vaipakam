@@ -3,7 +3,6 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
-import {LibVPFIDiscount} from "./LibVPFIDiscount.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
@@ -194,14 +193,10 @@ library LibFeeEntitlement {
                 cStar
             )
         {
-            // pulled — fall through to rollup + credit
+            // pulled (the withdraw refreshed the party's tier record, #1820)
         } catch {
             revert FeeEntitlementFullOptInFailed(party);
         }
-        LibVPFIDiscount.rollupUserDiscount(
-            party,
-            s.protocolTrackedVaultBalance[party][vpfi]
-        );
         LibVpfiRecycle.creditFullTariff(loanId, cStar, balanceBefore);
         return (LibVaipakam.FeeEntitlementMode.Full, cStar);
     }

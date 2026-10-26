@@ -33,7 +33,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
  *           is written in one place.
  *         - EIP-170. RiskFacet, DefaultedFacet and PrecloseFacet sit within a
  *           few hundred bytes of the limit and cannot absorb a multi-step row
- *           move (vault transfer, lien, tracked balance, event, restamp).
+ *           move (vault transfer, lien, tracked balance, event).
  *
  *         The custody rule (S2b, #2141). No user-owned asset rests in the
  *         Diamond's own balance when a transaction ends. When the swap fails,
@@ -78,10 +78,8 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
  *         exclusion (a FallbackPending loan keeps the row out of
  *         `loan.borrower`'s tier, as it did when the custody sat in the
  *         Diamond), and the row's mutators notify the exclusion host
- *         themselves. A vault withdrawal does not restamp, so every entry
- *         that moves VPFI out of the vault ends with ONE broadcast-free local
- *         restamp of `loan.borrower` after its last move ({_restampIfVpfi});
- *         without it the stamp keeps counting VPFI that already left.
+ *         themselves. Every vault movement refreshes the owner's tier record
+ *         at the write (#1820), so no entry here stamps the tier itself.
  *
  *         Every mutating entry is Diamond-internal (`msg.sender ==
  *         address(this)`, reached through {LibFacet.crossFacetCall}) and is
@@ -229,12 +227,11 @@ contract FallbackCustodyFacet is IVaipakamErrors {
     ///            Then the check that the row equals the snapshot total, so
     ///            the row and the split agree from birth.
     ///         3. The Active -> FallbackPending transition. Its exclusion sync
-    ///            installs the FallbackPending clause (VPFI collateral) and
-    ///            restamps the borrower ONCE, at the deposited balance minus
-    ///            the row, so the tier never sees the collateral leave and
-    ///            come back as a dip. Step 2 cannot restamp: the loan is still
-    ///            Active and carries no exclusion record, so its notifies are
-    ///            no-ops.
+    ///            installs the FallbackPending clause (VPFI collateral), which
+    ///            refreshes the borrower's tier record at the deposited balance
+    ///            minus the row (#1820). Step 2 changes no exclusion: the loan
+    ///            is still Active and carries no exclusion record, so its
+    ///            notifies are no-ops.
     ///         4. NFT statuses, then the three entry events. DefaultedFacet
     ///            still emits its own `LoanFallbackPending` after this returns.
     ///         Reads no caller context: the body depends only on `loanId`,
@@ -389,7 +386,6 @@ contract FallbackCustodyFacet is IVaipakamErrors {
     ///         The restore is required, not cosmetic: the backstop path may
     ///         return without disposing after a failed retry (zero lender
     ///         slice), and the custody must then be exactly where it was.
-    ///         Ends with one local restamp when the collateral is VPFI.
     ///         Observability caveat (RL-2): the pull emits `VaultVpfiDebited`
     ///         for VPFI and the restore has no credit counterpart there, so a
     ///         failed VPFI retry understates the borrower's reward-retention
@@ -446,7 +442,6 @@ contract FallbackCustodyFacet is IVaipakamErrors {
             if (restored < held) _absorbCustodyShortfall(s, loanId, held - restored);
             _requireSnapshotMatchesRow(loanId);
         }
-        _restampIfVpfi(s, c, borrower);
     }
 
     // --- In-kind distribution ---------------------------------------------
@@ -476,7 +471,6 @@ contract FallbackCustodyFacet is IVaipakamErrors {
     ///         with nothing moved: a snapshot a partial internal match scaled
     ///         to nothing, whose proceeds already sit in `heldForLender`. The
     ///         row also bounds a repeat: a second call finds it at 0.
-    ///         Ends with one local restamp when the collateral is VPFI.
     /// @param loanId           The FallbackPending loan whose snapshot is distributed.
     /// @param lenderSliceOwner Vault owner that receives the lender slice.
     /// @param lenderMove       `ToLender` or `ToBackstop`, the label of that move.
@@ -527,13 +521,6 @@ contract FallbackCustodyFacet is IVaipakamErrors {
             LibFallbackCustody.debit(
                 loanId, retainedForBorrower, LibFallbackCustody.Move.RetainedForBorrower, borrower
             );
-        }
-        _restampIfVpfi(s, c, borrower);
-        // The lender's vault gained the lender slice: its tier follows the same rule as the
-        // borrower's (every protocol action that moves VPFI through a vault refreshes that
-        // user's tier). A backstop receiver is a protocol vault with no tier to restamp.
-        if (lenderMove == LibFallbackCustody.Move.ToLender && toLenderSlice > 0) {
-            _restampIfVpfi(s, c, lenderSliceOwner);
         }
     }
 
@@ -592,8 +579,8 @@ contract FallbackCustodyFacet is IVaipakamErrors {
     ///      snapshot has absorbed.
     ///      At entry the loan is still Active and carries no exclusion
     ///      record, so steps 2 and 3 notify nothing whichever comes first and
-    ///      the transition's sync does the one restamp; on a restore the
-    ///      credit's notify is the restamp and the lien increment changes no
+    ///      the transition's sync installs the exclusion; on a restore the
+    ///      credit's notify re-installs it and the lien increment changes no
     ///      exclusion. One order therefore serves both.
     function _custodyIntoVault(
         LibVaipakam.Storage storage s,
@@ -686,21 +673,6 @@ contract FallbackCustodyFacet is IVaipakamErrors {
         } else {
             arrived = LibSanctionedLock.depositLockedFromVault(s, borrower, to, loanId, asset, amount);
         }
-    }
-
-    /// @dev The final local restamp after a host entry moved VPFI custody
-    ///      out of (or back into) `borrower`'s vault. Broadcast-free on
-    ///      purpose: these entries run inside must-complete close-outs and
-    ///      claims, and a broadcasting stamp can revert on an exhausted CCIP
-    ///      budget (the close-out rule `EncumbranceMutateFacet` documents).
-    ///      The mirror-chain tier picks the change up at the owner's next
-    ///      broadcasting mutation. No-op for any other collateral.
-    function _restampIfVpfi(
-        LibVaipakam.Storage storage s,
-        address asset,
-        address borrower
-    ) private {
-        if (asset == s.vpfiToken) LibConsolidation.restampUserVpfiLocal(borrower);
     }
 
     // --- Internal ---------------------------------------------------------

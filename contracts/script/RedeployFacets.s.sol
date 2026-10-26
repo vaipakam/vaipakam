@@ -90,6 +90,9 @@ contract RedeployFacets is Script {
     /// @notice #668 / #935 - the target Diamond predates the loan clock (the
     ///         global pause credit); see {_requireLoanClock}.
     error PredatesLoanClock(address diamond);
+    /// @notice #1820 - the target Diamond predates the tier record seam; see
+    ///         {_requireTierRecordSeam}.
+    error PredatesTierRecordSeam(address diamond);
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -143,6 +146,9 @@ contract RedeployFacets is Script {
         // #668 / #935 - and one from before the loan clock; see
         // {_requireLoanClock}.
         _requireLoanClock(diamond);
+        // #1820 - and one from before the tier record seam; see
+        // {_requireTierRecordSeam}.
+        _requireTierRecordSeam(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -189,19 +195,15 @@ contract RedeployFacets is Script {
         // entries. Those selectors are NEW (added in #658), so a curated
         // RiskFacet-only refresh would leave the upgraded RiskFacet calling
         // unrouted selectors and bubble a revert mid-liquidation. Redeploy
-        // ConsolidationFacet alongside and cut its selectors (Replace the two
-        // pre-existing #594 standalone entries, Add the four #658 internal-only
-        // ones — partitioned by live routing, same as the #394 HF-floor knob).
+        // ConsolidationFacet alongside and cut its selectors (partitioned by
+        // live routing, same as the #394 HF-floor knob).
         ConsolidationFacet consolidationFacet = ConsolidationFacet(ArtifactDeploy.deploy(type(ConsolidationFacet).name));
-        // #1817 (Codex #1819 r9 P1) — the refreshed sale facets' intermediate
-        // checkpoints reach `VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal`
-        // through ConsolidationFacet, and `LibVPFIDiscount.rollupUserDiscountLocal`
-        // deliberately NO-OPS on `FunctionDoesNotExist` (its minimal-fixture
-        // rule). So on a diamond that predates the RL-1 local selector, omitting
-        // the accumulator here doesn't revert — every intermediate debit/zero
-        // checkpoint is silently skipped and prior staking tenure survives a
-        // zero-balance round trip. Deploy it alongside and route its FULL
-        // surface (partitioned by live routing below).
+        // #1817 / #1820 — every refreshed facet that moves VPFI refreshes the
+        // owner's tier record through `VPFIDiscountAccumulatorFacet.syncTierRecord`,
+        // and `LibTierRecord.refresh` deliberately NO-OPS on
+        // `FunctionDoesNotExist` (its minimal-fixture rule). Deploy the
+        // accumulator alongside and route its FULL surface (partitioned by
+        // live routing below) so its code is the refreshed facets' build.
         VPFIDiscountAccumulatorFacet accumulatorFacet =
             VPFIDiscountAccumulatorFacet(ArtifactDeploy.deploy(type(VPFIDiscountAccumulatorFacet).name));
         // #1123 — VaipakamNFTFacet inlines the fail-closed movement gate into
@@ -349,10 +351,9 @@ contract RedeployFacets is Script {
         (bytes4[] memory refiToAdd, bytes4[] memory refiToReplace) =
             _partitionByRouting(diamond, _refinanceSelectors());
         // #1817 r9 — the accumulator's surface, same Add/Replace-by-routing
-        // split: on a current diamond all four are routed (Replace); on a
-        // pre-RL-1 diamond `rollupUserDiscountLocal` is new (Add) — the half
-        // that keeps the refreshed sale facets' intermediate checkpoints from
-        // silently no-oping through the library's FunctionDoesNotExist rule.
+        // split. {_requireTierRecordSeam} has already refused a Diamond that
+        // does not route `syncTierRecord`, so on every accepted target the
+        // whole surface is routed (Replace).
         (bytes4[] memory accToAdd, bytes4[] memory accToReplace) =
             _partitionByRouting(diamond, _accumulatorSelectors());
         // #954 (Codex #981 r-EIP170 P2) — ClaimFacet gained a NEW selector
@@ -849,6 +850,24 @@ contract RedeployFacets is Script {
         }
     }
 
+    /// @dev #1820 - refuse a Diamond from before the tier record seam. The
+    ///      seam moved the VPFI tier refresh out of every facet that moves
+    ///      VPFI and into the two writers of the tier balance, and the push
+    ///      into the reentrancy guard's release, which every guarded facet
+    ///      inlines. This curated set carries only some of those facets: run
+    ///      across the boundary, a facet left on old code would still call the
+    ///      retired rollup and restamp selectors and revert, while a refreshed
+    ///      one would queue pushes nothing flushes. Crossing the boundary is a
+    ///      fresh deploy or `RefreshAllFacetsInPlace`, never this refresh. The
+    ///      marker is the routing of `VPFIDiscountAccumulatorFacet.syncTierRecord`,
+    ///      which the seam introduced. Called before the broadcast starts.
+    function _requireTierRecordSeam(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(VPFIDiscountAccumulatorFacet.syncTierRecord.selector)
+                == address(0)
+        ) revert PredatesTierRecordSeam(diamond);
+    }
+
     function _replace(address facet, bytes4[] memory selectors)
         internal
         pure
@@ -1139,38 +1158,28 @@ contract RedeployFacets is Script {
 
     /// @dev #658 — full ConsolidationFacet selector set, mirrors
     ///      `DeployDiamond._getConsolidationFacetSelectors` (kept in lockstep).
-    ///      Indices 0-1 are the #594 standalone holder entries (already routed
-    ///      on a current diamond → Replace); 2-5 are the #658 internal-only
-    ///      eager + post-withdraw-restamp entries the refreshed liquidation /
-    ///      close-out hosts cross-call (new → Add). `_partitionByRouting` sorts
-    ///      them by live routing so this is correct against any target diamond
-    ///      version. Index 6 is the #1817 broadcast-free restamp twin the
-    ///      refreshed sale hosts cross-call on every intermediate checkpoint —
-    ///      omitting it here leaves an upgraded diamond reverting
-    ///      `FunctionDoesNotExist` on every VPFI direct sale.
+    ///      Indices 0-1 are the #594 standalone holder entries; 2-3 are the
+    ///      #658 internal-only eager entries the refreshed liquidation /
+    ///      close-out hosts cross-call. `_partitionByRouting` sorts them by
+    ///      live routing. The #658 / #1817 restamp entries were retired with
+    ///      the tier record seam (#1820), which this script refuses to cross.
     function _consolidationSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](4);
         s[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
         s[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
         s[2] = ConsolidationFacet.eagerConsolidateToHolder.selector;
         s[3] = ConsolidationFacet.eagerConsolidateBothSides.selector;
-        s[4] = ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector;
-        s[5] = ConsolidationFacet.restampUserVpfiInternal.selector;
-        s[6] = ConsolidationFacet.restampUserVpfiLocalInternal.selector;
     }
 
     /// @dev #1817 r9 — full VPFIDiscountAccumulatorFacet selector set, mirrors
     ///      `DeployDiamond._getVPFIDiscountAccumulatorSelectors` (kept in
     ///      lockstep). The whole surface is carried per the #778/#779 rule —
     ///      a Replace that misses an already-routed selector leaves it on the
-    ///      old implementation (split Diamond). Index 3 is the RL-1
-    ///      broadcast-free rollup the refreshed sale facets' intermediate
-    ///      checkpoints depend on.
+    ///      old implementation (split Diamond).
     function _accumulatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
-        s[0] = VPFIDiscountAccumulatorFacet.rollupUserDiscount.selector;
+        s = new bytes4[](3);
+        s[0] = VPFIDiscountAccumulatorFacet.syncTierRecord.selector;
         s[1] = VPFIDiscountAccumulatorFacet.effectiveTierAndBps.selector;
         s[2] = VPFIDiscountAccumulatorFacet.getTierExpirySec.selector;
-        s[3] = VPFIDiscountAccumulatorFacet.rollupUserDiscountLocal.selector;
     }
 }

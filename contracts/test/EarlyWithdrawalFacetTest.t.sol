@@ -6283,7 +6283,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // buyer's ENTIRE vaulted VPFI, so the sale's principal pull troughs
         // at exactly zero. Stamp the buyer NOW so they carry a live staker
         // lifecycle (non-zero start) into the sale.
-        TestMutatorFacet(address(diamond)).restampUserVpfiRaw(newLender);
+        TestMutatorFacet(address(diamond)).refreshTierRecordRaw(newLender);
         (uint40 buyerStart0, , , ) =
             TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
         assertTrue(buyerStart0 != 0, "fixture: buyer is an active staker pre-sale");
@@ -6372,7 +6372,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         // Pre-stamp: the lender is an active staker (their vault holds the
         // held VPFI plus the offer's escrow).
-        TestMutatorFacet(address(diamond)).restampUserVpfiRaw(lender);
+        TestMutatorFacet(address(diamond)).refreshTierRecordRaw(lender);
         (uint40 start0, , , ) =
             TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
         assertTrue(start0 != 0, "fixture: lender is an active staker pre-sale");
@@ -6441,7 +6441,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @notice #1817 (#1503 item 27) — LISTED-route mirror of the direct-sale
     ///         restamp test: `completeLoanSale`'s VPFI settlement block must
     ///         checkpoint the seller (captured pre-migration) and the buyer.
-    function test_1817_listedSaleCompletionRestampsBothParties() public {
+    function test_1817_listedSaleCompletionRefreshesBothParties() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 1000, true, 7 days);
@@ -6478,18 +6478,19 @@ contract EarlyWithdrawalFacetTest is Test {
         assertEq(sellerStart0, 0, "fixture: seller unstamped before completion");
         assertEq(buyerStart0, 0, "fixture: buyer unstamped before completion");
 
+        // #1820 — the seller's record is refreshed inside the vault withdraw
+        // of the held migration (the tracked-balance writer), which this
+        // fixture mocks, so the seller side is pinned as that withdraw.
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, lender, mockERC20)
+        );
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
         vm.clearMockedCalls();
 
-        (uint40 sellerStart1, , , ) =
-            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
         (uint40 buyerStart1, , , ) =
             TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
-        assertTrue(
-            sellerStart1 != 0,
-            "seller's VPFI checkpoint restamped at listed-sale completion"
-        );
         assertTrue(
             buyerStart1 != 0,
             "buyer's VPFI checkpoint restamped at listed-sale completion"

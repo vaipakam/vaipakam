@@ -292,15 +292,6 @@ contract SwapToRepayPartialFacet is DiamondReentrancyGuard, DiamondPausable, IVa
             _incrementLienAtSwapToRepayPartial(loanId, partialFillRefund);
         }
 
-        // #594 Codex #657 round-4 — the eager consolidation above checkpointed
-        // the holder's VPFI tier/staking at the FULL pre-swap balance; the swap
-        // just consumed the net (swap-amount minus any partial-fill refund) out
-        // of their vault. Re-stamp at the post-swap balance so the holder
-        // doesn't keep fee-tier/staking credit on VPFI that was swapped away.
-        // No-op for non-VPFI collateral.
-        if (loan.collateralAsset == s.vpfiToken) {
-            LibConsolidation.restampUserVpfi(loan.borrower);
-        }
 
         // ── Accrued-interest split + partial bound ───────────────────
         // Pass-2 A3 (#1191) — CREDIT any periodic-settled interest so the swap

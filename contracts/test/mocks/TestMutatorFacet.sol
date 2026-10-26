@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {LibTierRecord} from "../../src/libraries/LibTierRecord.sol";
+import {LibReentrancyGuard} from "../../src/libraries/LibReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibEntitlement} from "../../src/libraries/LibEntitlement.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
@@ -152,14 +154,25 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().mandatoryVaultVersion = version;
     }
 
-    /// @notice #1817 test-only — run the REAL tier restamp for `user` at
-    ///         their current (tracked-clamped) vault VPFI balance, exactly as
-    ///         the production mutation sites do. Lets a test establish a
+    /// @notice #1817 / #1820 test-only — run the REAL tier record refresh
+    ///         for `user` at their current tracked vault VPFI balance, exactly
+    ///         as the production balance writers do. Lets a test establish a
     ///         genuine pre-existing staker lifecycle (non-zero
     ///         `currentStakeStartSec`) before exercising a flow that must
     ///         reset it.
-    function restampUserVpfiRaw(address user) external {
-        LibConsolidation.restampUserVpfi(user);
+    function refreshTierRecordRaw(address user) external {
+        LibTierRecord.refresh(user);
+    }
+
+    /// @notice #1820 test-only — one guarded action that takes `amount` of
+    ///         `user`'s tracked VPFI out and puts it back (counter only, no
+    ///         token moves): two tier-balance writes, one push at the end.
+    function guardedVpfiOutAndBackRaw(address user, uint256 amount) external {
+        LibReentrancyGuard._enter();
+        address vpfi = LibVaipakam.storageSlot().vpfiToken;
+        LibVaipakam.recordVaultWithdraw(user, vpfi, amount);
+        LibVaipakam.recordVaultDeposit(user, vpfi, amount);
+        LibReentrancyGuard._exit();
     }
 
     /// @notice RL-1 test-only — inspect the T-087 accumulator's lifecycle +

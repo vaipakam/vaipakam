@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibERC721} from "./LibERC721.sol";
+import {LibTierRecord} from "./LibTierRecord.sol";
 
 /**
  * @title  LibTierExclusion
@@ -142,12 +143,11 @@ library LibTierExclusion {
     );
 
     /// @notice Recompute both sides' exclusion for `loanId` and apply the
-    ///         difference to `frozenVpfiOwedByVault`.
-    /// @return changed Vault owners whose excluded amount changed (zero
-    ///         entries unused; an owner may repeat). The caller restamps them
-    ///         so the change reaches the tier now rather than at the owner's
-    ///         next vault mutation.
-    function sync(uint256 loanId) internal returns (address[4] memory changed) {
+    ///         difference to `frozenVpfiOwedByVault`. Each owner whose
+    ///         excluded amount changes has their tier record refreshed at
+    ///         the write ({LibTierRecord}, #1820), so the change reaches the
+    ///         tier now rather than at the owner's next vault mutation.
+    function sync(uint256 loanId) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         LibVaipakam.LoanStatus st = loan.status;
@@ -155,20 +155,18 @@ library LibTierExclusion {
             st == LibVaipakam.LoanStatus.Defaulted ||
             st == LibVaipakam.LoanStatus.InternalMatched ||
             st == LibVaipakam.LoanStatus.Settled;
-        (changed[0], changed[1]) = _syncSide(s, loan, loanId, true, terminal);
-        (changed[2], changed[3]) = _syncSide(s, loan, loanId, false, terminal);
+        _syncSide(s, loan, loanId, true, terminal);
+        _syncSide(s, loan, loanId, false, terminal);
     }
 
-    /// @dev One side of {sync}. Returns the vault owner whose charge was
-    ///      reduced (`released`) and the one whose charge was raised
-    ///      (`charged`), each zero when unchanged.
+    /// @dev One side of {sync}.
     function _syncSide(
         LibVaipakam.Storage storage s,
         LibVaipakam.Loan storage loan,
         uint256 loanId,
         bool lenderSide,
         bool terminal
-    ) private returns (address released, address raised) {
+    ) private {
         address stored = lenderSide ? loan.lender : loan.borrower;
 
         // Fold a pre-#2342 swap-to-repay-FULL freeze record into the new
@@ -185,7 +183,6 @@ library LibTierExclusion {
             } else {
                 s.frozenVpfiOwedBorrowerSurplus[loanId] = 0;
             }
-            released = stored;
         }
 
         address charged;
@@ -223,16 +220,15 @@ library LibTierExclusion {
             if (legacy != 0) {
                 emit TierExclusionUpdated(loanId, lenderSide, charged, amount);
             }
-            return (released, address(0));
+            return;
         }
 
         if (prevCharged != address(0) && prevAmount != 0) {
             _decrease(s, prevCharged, prevAmount);
-            released = prevCharged;
         }
         if (charged != address(0) && amount != 0) {
             s.frozenVpfiOwedByVault[charged] += amount;
-            raised = charged;
+            LibTierRecord.refresh(charged);
         }
         if (lenderSide) {
             s.tierExclusionLenderVault[loanId] = charged;
@@ -246,7 +242,8 @@ library LibTierExclusion {
 
     /// @dev Floored decrement: the aggregate is a sum of per-loan records, so
     ///      it cannot legitimately go below a record; the floor keeps any
-    ///      pre-existing drift from bricking a close-out.
+    ///      pre-existing drift from bricking a close-out. The owner's tier
+    ///      record is refreshed after the write (#1820).
     function _decrease(
         LibVaipakam.Storage storage s,
         address owner,
@@ -254,5 +251,6 @@ library LibTierExclusion {
     ) private {
         uint256 cur = s.frozenVpfiOwedByVault[owner];
         s.frozenVpfiOwedByVault[owner] = cur > by ? cur - by : 0;
+        LibTierRecord.refresh(owner);
     }
 }

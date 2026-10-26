@@ -247,8 +247,10 @@ contract PerkFacet is
         // 1. Pull the spend into Diamond custody. Reverts if the buyer has no
         //    vault or too little VPFI — the same failure surface the
         //    notification tariff presents, and for the same reason.
-        //    #1566 closure 2 — snapshot first: the bucket credit in step 3
+        //    #1566 closure 2 — snapshot first: the bucket credit in step 2
         //    is a delta-checked operation that verifies the balance rose.
+        //    Spending VPFI lowers the buyer's hold tier; the withdraw
+        //    refreshes their tier record at that moment (#1820).
         uint256 balanceBefore = IERC20(vpfi).balanceOf(address(this));
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             msg.sender,
@@ -257,16 +259,7 @@ contract PerkFacet is
             spend
         );
 
-        // 2. Re-stamp the payer's time-weighted discount accumulator at the
-        //    POST-mutation tracked balance. Spending VPFI lowers the buyer's
-        //    hold tier, and the accumulator has to learn that at the moment it
-        //    happens or the buyer keeps a tier they no longer hold (#973/L26).
-        LibVPFIDiscount.rollupUserDiscount(
-            msg.sender,
-            s.protocolTrackedVaultBalance[msg.sender][vpfi]
-        );
-
-        // 3. Credit the bucket now the tokens are on the Diamond, through the
+        // 2. Credit the bucket now the tokens are on the Diamond, through the
         //    perk's own delta-checked operation.
         LibVpfiRecycle.creditSpendGatedPerk(perkId, spend, balanceBefore);
         s.perkSpendCumulative += spend;
