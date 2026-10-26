@@ -575,37 +575,75 @@ function parseLegalHoldRequest(
   };
 }
 
-/** Append one row to the immutable legal-hold audit trail. This
- *  table is never updated or deleted from — it is the defensible
- *  record of which admin took which hold action, when, and which
- *  legal document authorised it. */
-async function appendLegalHoldAudit(
-  db: D1Database,
-  at: number,
-  action: string,
+/** The audit trail's bound columns, in bind order. `at` is not among
+ *  them: it is the database's clock at the write (see below). */
+const AUDIT_COLUMNS =
+  'action, wallet_hash, admin_wallet, detail, legal_doc_ref, legal_doc_sha256';
+
+/** The audit row's values, in {@link AUDIT_COLUMNS} order. */
+function auditValues(
+  action: LegalHoldRequest['action'],
   walletHashHex: string,
   adminWallet: string,
   detail: string,
   legalDocRef: string | null,
   legalDocSha256: string | null,
-): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO diag_legal_hold_audit
-         (at, action, wallet_hash, admin_wallet, detail,
-          legal_doc_ref, legal_doc_sha256)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .bind(
-      at,
-      action,
-      walletHashHex,
-      adminWallet.toLowerCase(),
-      detail,
-      legalDocRef,
-      legalDocSha256,
-    )
-    .run();
+): unknown[] {
+  return [action, walletHashHex, adminWallet.toLowerCase(), detail, legalDocRef, legalDocSha256];
+}
+
+/**
+ * Apply one legal-hold action: its change to `diag_legal_holds` and its
+ * row in the immutable `diag_legal_hold_audit` trail, in ONE D1 batch
+ * (#1488).
+ *
+ * A D1 batch is a single transaction, so the trail can never record an
+ * action that did not apply, never miss one that did, and orders
+ * concurrent actions on the same wallet the way they actually happened.
+ * Run as separate statements, a `lift` landing between a
+ * `set-disclosure`'s hold check and its update appended a
+ * `set-disclosure` for a wallet with no hold: a record the restore's
+ * replay treats as tampering, which would fail every later nightly
+ * archive. The trail is the defensible record of which admin took which
+ * hold action, when, and on which legal document, so it is written by
+ * the same transaction as the state it describes.
+ *
+ * The row's `at`, and the hold's own timestamps, are the database's clock
+ * at the write (`unixepoch()`), not the request's arrival: a request that
+ * spent seconds uploading its document would otherwise be stamped before
+ * an action that committed ahead of it, and the replay, which orders by
+ * `at`, would read the two in the wrong order.
+ *
+ * The audit row of a `set-disclosure` is written only when a hold exists
+ * inside that transaction (`WHERE EXISTS`), and the caller answers 404
+ * when the update matched no row. A `place` and a `lift` always append:
+ * both apply whether or not a hold existed (a `lift` of no hold is a
+ * no-op the replay reads as one).
+ *
+ * Returns how many hold rows the state change touched.
+ */
+async function applyLegalHoldAction(
+  db: D1Database,
+  change: D1PreparedStatement,
+  audit: unknown[],
+  auditOnlyIfHeld: boolean,
+): Promise<number> {
+  const placeholders = audit.map(() => '?').join(', ');
+  const auditStmt = auditOnlyIfHeld
+    ? db
+        .prepare(
+          `INSERT INTO diag_legal_hold_audit (at, ${AUDIT_COLUMNS})
+           SELECT unixepoch(), ${placeholders}
+            WHERE EXISTS (SELECT 1 FROM diag_legal_holds WHERE wallet_hash = ?)`,
+        )
+        .bind(...audit, audit[1])
+    : db
+        .prepare(
+          `INSERT INTO diag_legal_hold_audit (at, ${AUDIT_COLUMNS}) VALUES (unixepoch(), ${placeholders})`,
+        )
+        .bind(...audit);
+  const [changed] = await db.batch([change, auditStmt]);
+  return changed?.meta.changes ?? 0;
 }
 
 /**
@@ -773,23 +811,23 @@ export async function handleDiagLegalHold(
     // Upsert — re-placing a hold refreshes the reason, the cited
     // legal document, and the timestamp; it leaves any existing
     // disclosure flag untouched.
-    await env.DB
-      .prepare(
-        `INSERT INTO diag_legal_holds
-           (wallet_hash, hold_reason, disclosure_allowed, disclosure_note,
-            legal_doc_ref, legal_doc_sha256, created_at, updated_at)
-         VALUES (?, ?, 0, NULL, ?, ?, ?, ?)
-         ON CONFLICT(wallet_hash) DO UPDATE SET
-           hold_reason      = excluded.hold_reason,
-           legal_doc_ref    = excluded.legal_doc_ref,
-           legal_doc_sha256 = excluded.legal_doc_sha256,
-           updated_at       = excluded.updated_at`,
-      )
-      .bind(hash, holdReason ?? '', docRef, docSha, nowSeconds, nowSeconds)
-      .run();
-    await appendLegalHoldAudit(
-      env.DB, nowSeconds, 'place', hash, signer, holdReason ?? '',
-      docRef, docSha,
+    await applyLegalHoldAction(
+      env.DB,
+      env.DB
+        .prepare(
+          `INSERT INTO diag_legal_holds
+             (wallet_hash, hold_reason, disclosure_allowed, disclosure_note,
+              legal_doc_ref, legal_doc_sha256, created_at, updated_at)
+           VALUES (?, ?, 0, NULL, ?, ?, unixepoch(), unixepoch())
+           ON CONFLICT(wallet_hash) DO UPDATE SET
+             hold_reason      = excluded.hold_reason,
+             legal_doc_ref    = excluded.legal_doc_ref,
+             legal_doc_sha256 = excluded.legal_doc_sha256,
+             updated_at       = excluded.updated_at`,
+        )
+        .bind(hash, holdReason ?? '', docRef, docSha),
+      auditValues('place', hash, signer, holdReason ?? '', docRef, docSha),
+      false,
     );
     return json(
     { ok: true, legalDocRef: docRef, legalDocSha256: docSha },
@@ -799,12 +837,11 @@ export async function handleDiagLegalHold(
   }
 
   if (action === 'lift') {
-    await env.DB
-      .prepare(`DELETE FROM diag_legal_holds WHERE wallet_hash = ?`)
-      .bind(hash)
-      .run();
-    await appendLegalHoldAudit(
-      env.DB, nowSeconds, 'lift', hash, signer, '', docRef, docSha,
+    await applyLegalHoldAction(
+      env.DB,
+      env.DB.prepare(`DELETE FROM diag_legal_holds WHERE wallet_hash = ?`).bind(hash),
+      auditValues('lift', hash, signer, '', docRef, docSha),
+      false,
     );
     return json(
     { ok: true, legalDocRef: docRef, legalDocSha256: docSha },
@@ -816,29 +853,31 @@ export async function handleDiagLegalHold(
   // action === 'set-disclosure' — toggle the per-wallet disclosure
   // flag on an existing hold. Returns 404 if no hold exists, so an
   // admin can't accidentally arm disclosure for a wallet that was
-  // never held.
-  const existing = await getLegalHold(env.DB, hash);
-  if (!existing) {
+  // never held. The check is the update itself, inside the same
+  // transaction as the audit row, so a concurrent `lift` cannot fall
+  // between them (#1488).
+  const updated = await applyLegalHoldAction(
+    env.DB,
+    env.DB
+      .prepare(
+        `UPDATE diag_legal_holds
+            SET disclosure_allowed = ?, disclosure_note = ?, updated_at = unixepoch()
+          WHERE wallet_hash = ?`,
+      )
+      .bind(disclosureAllowed ? 1 : 0, disclosureNote ?? null, hash),
+    auditValues(
+      'set-disclosure',
+      hash,
+      signer,
+      `disclosure_allowed=${disclosureAllowed ? 1 : 0}; note=${disclosureNote ?? ''}`,
+      docRef,
+      docSha,
+    ),
+    true,
+  );
+  if (updated === 0) {
     return json({ error: 'no_hold_for_wallet' }, 404, corsOrigin);
   }
-  await env.DB
-    .prepare(
-      `UPDATE diag_legal_holds
-          SET disclosure_allowed = ?, disclosure_note = ?, updated_at = ?
-        WHERE wallet_hash = ?`,
-    )
-    .bind(disclosureAllowed ? 1 : 0, disclosureNote ?? null, nowSeconds, hash)
-    .run();
-  await appendLegalHoldAudit(
-    env.DB,
-    nowSeconds,
-    'set-disclosure',
-    hash,
-    signer,
-    `disclosure_allowed=${disclosureAllowed ? 1 : 0}; note=${disclosureNote ?? ''}`,
-    docRef,
-    docSha,
-  );
   return json(
     { ok: true, legalDocRef: docRef, legalDocSha256: docSha },
     200,

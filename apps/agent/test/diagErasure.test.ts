@@ -64,6 +64,13 @@ class FakeD1 {
   prepare(sql: string) {
     return new FakeStmt(this, sql);
   }
+  /** Sequential, like D1's batch; the atomicity itself is proved
+   *  against real SQLite in diagLegalHoldAtomic.test.ts. */
+  async batch(stmts: FakeStmt[]) {
+    const out = [];
+    for (const st of stmts) out.push(await st.run());
+    return out;
+  }
 }
 
 class FakeStmt {
@@ -87,7 +94,8 @@ class FakeStmt {
     throw new Error('FakeD1: unhandled first(): ' + s);
   }
 
-  async run(): Promise<void> {
+  async run(): Promise<{ meta: { changes: number } }> {
+    const done = (changes: number) => ({ meta: { changes } });
     const s = this.sql;
     if (s.includes('DELETE FROM diag_errors')) {
       const wh = this.args[0] as string;
@@ -97,7 +105,7 @@ class FakeStmt {
       if (!s.includes('diag_legal_holds')) {
         throw new Error('FakeD1: a diag_errors delete without the legal-hold condition');
       }
-      if (this.db.holds.some((h) => h.wallet_hash === wh)) return;
+      if (this.db.holds.some((h) => h.wallet_hash === wh)) return done(0);
       if (s.includes('chain_id')) {
         // #2013 r5 — the chain-scoped erase a contract-verified
         // signer is limited to.
@@ -108,11 +116,14 @@ class FakeStmt {
       } else {
         this.db.errors = this.db.errors.filter((e) => e.wallet_hash !== wh);
       }
-      return;
+      return done(0);
     }
     if (s.includes('INSERT INTO diag_legal_holds')) {
-      const [wallet_hash, hold_reason, legal_doc_ref, legal_doc_sha256, created_at, updated_at] =
-        this.args as [string, string, string | null, string | null, number, number];
+      // The timestamps are the database's clock (`unixepoch()`).
+      const [wallet_hash, hold_reason, legal_doc_ref, legal_doc_sha256] =
+        this.args as [string, string, string | null, string | null];
+      const created_at = nowSec();
+      const updated_at = created_at;
       const existing = this.db.holds.find((h) => h.wallet_hash === wallet_hash);
       if (existing) {
         existing.hold_reason = hold_reason;
@@ -131,31 +142,38 @@ class FakeStmt {
           updated_at,
         });
       }
-      return;
+      return done(1);
     }
     if (s.includes('DELETE FROM diag_legal_holds')) {
       const wh = this.args[0] as string;
+      const before = this.db.holds.length;
       this.db.holds = this.db.holds.filter((h) => h.wallet_hash !== wh);
-      return;
+      return done(before - this.db.holds.length);
     }
     if (s.includes('UPDATE diag_legal_holds')) {
-      const [disclosure_allowed, disclosure_note, updated_at, wallet_hash] =
-        this.args as [number, string | null, number, string];
+      const [disclosure_allowed, disclosure_note, wallet_hash] =
+        this.args as [number, string | null, string];
+      const updated_at = nowSec();
       const h = this.db.holds.find((x) => x.wallet_hash === wallet_hash);
       if (h) {
         h.disclosure_allowed = disclosure_allowed;
         h.disclosure_note = disclosure_note;
         h.updated_at = updated_at;
       }
-      return;
+      return done(h ? 1 : 0);
     }
     if (s.includes('INSERT INTO diag_legal_hold_audit')) {
-      const [at, action, wallet_hash, admin_wallet, detail, legal_doc_ref, legal_doc_sha256] =
-        this.args as [number, string, string, string, string | null, string | null, string | null];
+      const at = nowSec();
+      const [action, wallet_hash, admin_wallet, detail, legal_doc_ref, legal_doc_sha256] =
+        this.args as [string, string, string, string | null, string | null, string | null];
+      // The set-disclosure audit row is conditioned on a hold existing.
+      if (s.includes('WHERE EXISTS') && !this.db.holds.some((h) => h.wallet_hash === wallet_hash)) {
+        return done(0);
+      }
       this.db.audit.push({
         at, action, wallet_hash, admin_wallet, detail, legal_doc_ref, legal_doc_sha256,
       });
-      return;
+      return done(1);
     }
     throw new Error('FakeD1: unhandled run(): ' + s);
   }
