@@ -161,8 +161,11 @@ abstract contract TestnetMockOracleRig is Test, DeployTestnetMocks {
         oa.setEthUsdFeed(address(ethFeed));
         oa.setUniswapV3Factory(address(univ3));
 
-        address[] memory paa = new address[](1);
+        // [weth, mUSDC] — mirrors DeployTestnetMocks: mUSDC gives WETH
+        // itself a tier route (#2747; the setter refuses WETH alone).
+        address[] memory paa = new address[](2);
         paa[0] = address(weth);
+        paa[1] = address(mUSDC);
         ConfigFacet(address(diamond)).setPaaAssets(paa);
 
         RiskFacet(address(diamond)).updateRiskParams(address(tLIQ), 8000, 300);

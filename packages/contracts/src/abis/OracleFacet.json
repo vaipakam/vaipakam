@@ -369,6 +369,25 @@
   },
   {
     "type": "function",
+    "name": "isLiquidityQuoteUsable",
+    "inputs": [
+      {
+        "name": "quote",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "usable",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "refreshTierLtvCache",
     "inputs": [],
     "outputs": [],
@@ -2452,6 +2471,11 @@
   {
     "type": "error",
     "name": "OraclePriceDivergence",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PaaNeedsNonWethQuote",
     "inputs": []
   },
   {

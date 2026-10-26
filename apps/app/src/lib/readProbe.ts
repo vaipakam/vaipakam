@@ -12,7 +12,7 @@ import type { Transport } from "viem";
  * so no rule over the attempts can tell a recovered retry from a read the
  * page went without.
  *
- * The app can say, from two places, and reports both:
+ * The app can say, from three places, and reports all of them:
  *
  *   - ITS RPC TRANSPORT ({@link probeTransport}). Every chain read the app
  *     makes goes through the transports `chain/wagmi.ts` builds, and the
@@ -27,6 +27,11 @@ import type { Transport } from "viem";
  *     The cache also says when a query is WAITING to retry, so a driver
  *     can wait for that to settle instead of mistaking it for a served
  *     read.
+ *   - ITS INDEXER FETCH ({@link probeIndexerRead}, #2784). Every indexer
+ *     read goes through `getJson` in `data/indexer.ts`, which turns any
+ *     failure into `null` and the page into an "unavailable" state. A
+ *     hook's `null` is a success to the query cache, so only the fetch
+ *     itself can say the read went unserved, and why.
  *
  * INERT unless a function named {@link READ_PROBE_BINDING} exists on the
  * page before the app starts (a driver installs it with Playwright's
@@ -35,9 +40,11 @@ import type { Transport } from "viem";
  * cache is not subscribed.
  *
  * What it sends is a SUMMARY: an RPC request's method and outcome, a
- * query's key and outcome, and an error's cause chain reduced to names,
- * codes, revert data and the short message. Never a request's parameters
- * or a response's result. A script able to install the function could
+ * query's key and outcome, an indexer read's route and outcome, and an
+ * error's cause chain reduced to names, codes, revert data and the short
+ * message. Never a request's parameters or a response's result: an
+ * indexer route keeps its path words and query names, and every value
+ * (an address, an id, a query value) is replaced (see {@link indexerRoute}). A script able to install the function could
  * already watch these reads itself, so the report gives it nothing new;
  * it is read-only and cannot change any read.
  *
@@ -53,7 +60,7 @@ export const READ_PROBE_BINDING = "__vaipakamReadProbe";
  * The report's shape version. A driver refuses a version it does not
  * know rather than guessing at fields.
  */
-export const READ_PROBE_VERSION = 1;
+export const READ_PROBE_VERSION = 2;
 
 /** One link of an error's cause chain, outermost first. */
 export interface ReadProbeErrorLink {
@@ -79,6 +86,20 @@ export type ReadProbeEvent =
       method: string;
       ok: boolean;
       error?: ReadProbeErrorLink[];
+    }
+  /** An indexer read left the app's `getJson`. */
+  | { v: V; kind: "indexer-start"; seq: number; route: string; chainId?: number }
+  /** …and came back, once. `failure` says why a read was not served. */
+  | {
+      v: V;
+      kind: "indexer-settled";
+      seq: number;
+      route: string;
+      chainId?: number;
+      ok: boolean;
+      failure?: IndexerReadFailure;
+      /** The HTTP status, for `failure: "http"`. */
+      status?: number;
     }
   /** A query's fetch failed and it will try again. */
   | {
@@ -108,6 +129,21 @@ export type ReadProbeEvent =
       hadData: boolean;
       error?: ReadProbeErrorLink[];
     };
+
+/**
+ * Why an indexer read was not served:
+ *   - `unconfigured`: the build names no indexer origin, so nothing was sent;
+ *   - `timeout`: no answer within the app's limit;
+ *   - `network`: the request did not complete (offline, DNS, CORS, TLS);
+ *   - `http`: the indexer answered with a non-2xx status;
+ *   - `body`: a 2xx whose body was not JSON.
+ */
+export type IndexerReadFailure = "unconfigured" | "timeout" | "network" | "http" | "body";
+
+/** One indexer read's outcome, as `data/indexer.ts` observes it. */
+export type IndexerReadOutcome<T> =
+  | { ok: true; value: T }
+  | { ok: false; failure: IndexerReadFailure; status?: number };
 
 const MAX_CHAIN = 8;
 const MAX_TEXT = 300;
@@ -239,6 +275,72 @@ export function probeTransport(
     return { ...inner, request };
   };
   return probed;
+}
+
+/** A path word: letters, then letters, digits or dashes. */
+const ROUTE_WORD = /^[a-z][a-z0-9-]*$/i;
+
+/**
+ * An indexer path as a route: its path words and query names, with every
+ * value replaced, so the report names WHICH read failed without carrying
+ * an address, an id or a cursor. `/loans/7?chainId=84532&owner=0xab…`
+ * becomes `/loans/:v?chainId=&owner=`.
+ */
+export function indexerRoute(path: string): string {
+  const [pathname = "", query] = path.split("?", 2);
+  const words = pathname
+    .split("/")
+    .map((seg) => (seg === "" || ROUTE_WORD.test(seg) ? seg : ":v"))
+    .join("/");
+  if (query === undefined) return words;
+  const names = query
+    .split("&")
+    .filter((pair) => pair !== "")
+    .map((pair) => `${pair.split("=", 1)[0]}=`);
+  return `${words}?${names.join("&")}`;
+}
+
+/** The chain an indexer path names in its `chainId` query, if one. */
+function indexerChainOf(path: string): { chainId?: number } {
+  const query = path.split("?", 2)[1];
+  if (query === undefined) return {};
+  const id = Number(new URLSearchParams(query).get("chainId"));
+  return Number.isSafeInteger(id) && id > 0 ? { chainId: id } : {};
+}
+
+let indexerSeq = 0;
+
+/**
+ * Run one indexer read and report its outcome to the driver, if one is
+ * installed. `read` is the fetch itself; what it resolves to is returned
+ * unchanged, so the probe can never change a read.
+ */
+export async function probeIndexerRead<T>(
+  path: string,
+  read: () => Promise<IndexerReadOutcome<T>>,
+  host: object = globalThis,
+): Promise<IndexerReadOutcome<T>> {
+  // Looked up per read (one property read): a driver installs its binding
+  // before any page script runs, and nothing is cached that could outlive it.
+  const send = reporterOf(host);
+  if (!send) return read();
+  const seq = ++indexerSeq;
+  const route = indexerRoute(path);
+  const chain = indexerChainOf(path);
+  send({ v: READ_PROBE_VERSION, kind: "indexer-start", seq, route, ...chain });
+  const outcome = await read();
+  send({
+    v: READ_PROBE_VERSION,
+    kind: "indexer-settled",
+    seq,
+    route,
+    ...chain,
+    ok: outcome.ok,
+    ...(outcome.ok
+      ? {}
+      : { failure: outcome.failure, ...(outcome.status !== undefined ? { status: outcome.status } : {}) }),
+  });
+  return outcome;
 }
 
 /**
