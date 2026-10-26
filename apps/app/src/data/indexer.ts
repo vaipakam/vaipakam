@@ -11,6 +11,7 @@
 import type { ProtocolKnobKey } from '@vaipakam/lib/protocolKnobs';
 import type { SignedOrderWire } from '../lib/signedOffer';
 import { indexerOrigin, indexerWsOrigin as wsOriginOf } from '../lib/endpoints';
+import { probeIndexerRead, type IndexerReadOutcome } from '../lib/readProbe';
 
 const TIMEOUT_MS = 4_000;
 
@@ -39,22 +40,41 @@ export function indexerWsOrigin(): string | null {
  * error mapping could drift from this one. The `T` is a claim about the
  * body, not a check of it: a caller that renders the result must validate
  * it, which is exactly what the recycling module does.
+ *
+ * Each read's outcome, and why one failed, goes to a live-review driver
+ * when one is installed (#2784): the `null` a caller gets is "unavailable"
+ * to the page and a success to the query cache, so this is the only place
+ * an unserved indexer read can be seen.
  */
 export async function getJson<T>(path: string): Promise<T | null> {
+  const outcome = await probeIndexerRead(path, () => fetchIndexerJson<T>(path));
+  return outcome.ok ? outcome.value : null;
+}
+
+/** One indexer GET, with the reason it failed when it did. */
+async function fetchIndexerJson<T>(path: string): Promise<IndexerReadOutcome<T>> {
   const root = baseUrl();
-  if (!root) return null;
+  if (!root) return { ok: false, failure: 'unconfigured' };
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
+  let res: Response;
   try {
-    const res = await fetch(root + path, {
+    res = await fetch(root + path, {
       method: 'GET',
       headers: { Accept: 'application/json' },
       signal: ac.signal,
     });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
   } catch {
-    return null;
+    clearTimeout(timer);
+    return { ok: false, failure: ac.signal.aborted ? 'timeout' : 'network' };
+  }
+  try {
+    if (!res.ok) return { ok: false, failure: 'http', status: res.status };
+    return { ok: true, value: (await res.json()) as T };
+  } catch {
+    // The body is read under the same timer, so an abort mid-body is a
+    // timeout, and anything else is a body that was not JSON.
+    return { ok: false, failure: ac.signal.aborted ? 'timeout' : 'body' };
   } finally {
     clearTimeout(timer);
   }
