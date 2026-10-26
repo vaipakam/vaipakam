@@ -40,11 +40,10 @@ operation. These page.
 | `attribution-ceiling` | `attributed ≤ reported` | Day credits beyond the reported cumulative would feed the `Ā` absorption average with absorption that never happened, and Base would size real reward budget against it. |
 | `availability-formula` | `avail == reported − max(0, consumed − released)` | The operator view and the funding pass call one shared helper precisely so they cannot drift. Re-deriving it off-chain catches a deployed implementation that is no longer the function the plan and specs assume. |
 | `base-self-inert` | The per-chain COMMITMENT fields under the canonical chain's own id — `consumed`, `retired`, `released`, `outstanding` — are zero | Base is never a "local" funder in the commit split: its slice comes from the same bucket the global ledger governs, so it books no per-chain instruction against itself. Non-zero here means it double-booked, corrupting the global reservation *and* netting its own bucket twice. Note this is **not** every field — Base records its own chain in the ledger at day-close, so `reported`, `attributed` and `avail` are legitimately non-zero under its own id and are deliberately not checked. |
-| `base-ahead-of-chain` | Base's accepted cumulatives never exceed the chain's own | Base accepts clamped, lagging copies. Trailing is normal; leading is impossible without a spoofed or replayed report. The `relocated` leg (#1452) compares Base's acknowledged recycled share with the chain's relocated custody: leading there means an arrival was credited as absorption instead of relocated. This is also what makes the B2-d5 custody exclusion observable — the chain's own reported figure nets relocated custody out, so Base reading higher means it folded its own remitted top-up back in as that chain's local absorption. |
+| `base-ahead-of-chain` | Base's accepted cumulatives never exceed the chain's own | Base accepts clamped, lagging copies. Trailing is normal; leading is impossible without a spoofed or replayed report. The `relocated` leg (#1452) compares Base's acknowledged recycled share with the chain's relocated custody: leading there means an arrival was credited as absorption instead of relocated. This is also what makes the B2-d5 custody exclusion observable — the chain's own reported figure never includes relocated custody, so Base reading higher means it folded its own remitted top-up back in as that chain's local absorption. |
 | `consumed-cap` | `consumed − released ≤ reported`, per chain (governor §7 #6) | Base can never instruct a chain to fund more than it reported absorbing, net of what it released un-spent — `_mirrorAvailable` bounds every instruction, and `MeshLedger.invariant.t.sol` asserts it on-chain. Checked **separately** rather than inferred from the availability formula, because that formula saturates: if this bound broke, `expectedAvail` would floor to zero, the on-chain `avail` would agree, and every other check would stay green while over-instruction went completely invisible. |
 | `bucket-coverage` | `bucket + releasedRemitStranded ≥ outstanding`, per chain (the stranded term applies only when BOTH the mesh config and the chain itself agree it is canonical — **on a stale snapshot the chain's own same-block claim decides alone**, since pairing an old snapshot with today's topology compares two points in time and pages a former canonical chain for its healthy pre-demotion state) | Reservation on arrival is **unclamped** — the mirror adds whatever Base instructed, bounded only by Base's model. This is the check that catches the model over-stating the bucket. |
-| `bucket-composition` | `creditedRaw + relocated + reattributedIn ≤ bucket + paidOut + releasedRemitStranded + repatriatedOut + reattributedOut` (exact) **and** the reverse, `destinations ≤ claimed + slack` — the two reattribution terms are a reclassification's (#1566 closure 2 cutover PR 2); the identity has ONE on-chain implementation, `LibVpfiRecycle.compositionSides`, which the seed ceremony reads, and this is its independent restatement | Every recycled credit lands in the bucket exactly once, so the lifetime cumulatives can never claim more than the bucket actually received. Sees a **B2-d5 custody exclusion** regression that mislabels or double-counts an arrival, in either direction — but NOT one that never labels it at all (that moves both sides equally; #1452). See below. |
-| `reported-derivation` | `reported == max(creditedRaw, bucket + paidOut + repatriatedOut + reattributedOut − relocated − reattributedIn)` | The published lifetime-absorption figure is re-derived here from the raw slots at the same block. Catches the exclusion being dropped from the pre-upgrade floor branch, which binds on a Diamond refreshed over live pre-#1222 state. |
+| `bucket-composition` | `credited + relocated + reattributedIn ≤ bucket + paidOut + releasedRemitStranded + repatriatedOut + reattributedOut` (exact) **and** the reverse, `destinations ≤ claimed + slack` — the two reattribution terms are a reclassification's (#1566 closure 2 cutover PR 2). Always CRITICAL: every chain is a fresh deploy, so no bucket legitimately lacks a counter behind it (#2875 retired the un-seeded advisory) | Every recycled credit lands in the bucket exactly once, so the lifetime cumulatives can never claim more than the bucket actually received. Sees a **B2-d5 custody exclusion** regression that mislabels or double-counts an arrival, in either direction — but NOT one that never labels it at all (that moves both sides equally; #1452). See below. |
 | `role-consistency` | The mesh config and the chain's own `isCanonicalRewardChain` agree | The two are independently mutable and nothing on-chain reconciles them. The flag decides whether `closeDay` writes locally or reports to Base, and it authorises the canonical-only remittance surface — so a mirror carrying it is a split-brain mesh that can close its own days and release remittances while Base still expects reports from it. |
 
 **On bucket coverage applying to every chain (#1444).** This originally
@@ -132,9 +131,8 @@ allowance — the remit gate and `_recycleFundable` use the raw bucket.
 
 **What it does not catch, stated plainly (#1452).** An arrival routed
 through the ordinary recycled credit instead of the custody-relocation
-one raises `creditedRaw` and `bucket` TOGETHER. Both composition bounds
-compare those two sides, so both stay satisfied, and `reported-derivation`
-agrees because it reads the same slots — while the receiving chain is now
+one raises `credited` and `bucket` TOGETHER. Both composition bounds
+compare those two sides, so both stay satisfied — while the receiving chain is now
 reporting Base's own already-remitted top-up as its own local absorption
 and Base will re-offer it as that chain's funding. `base-ahead-of-chain`
 is directionally incapable here: Base's copy ratchets toward the chain's
@@ -152,11 +150,13 @@ that exceeds the chain's relocated custody. The acknowledgement follows the
 delivery's credit, so Base's figure trails the chain's like every other leg
 of that check; leading it means an arrival was credited as absorption.
 
-The `reported-derivation` check is a deliberate **second implementation**
-of `LibVpfiRecycle.creditedCumulative`. That independence is the point,
-but it means a legitimate change to the library's derivation must be
-mirrored in `invariants.ts` in the same change, or this check will alarm
-on correct behaviour.
+**`reported-derivation` is retired (#2875).** It re-derived the published
+cumulative from a pre-upgrade floor (`max(credited, bucket + paidOut + … −
+relocated − …)`) to catch the relocation subtraction being dropped from that
+floor. Every chain is a fresh deploy, so the floor is gone: the published
+cumulative IS the stored counter, both views read the same slot, and the
+check would compare one number with itself. The relocation exclusion stays
+covered by `bucket-composition`.
 
 **On the bucket-coverage tolerance.** The comparison allows
 `BUCKET_COVERAGE_TOLERANCE_WEI` of slack (default 1e15 = 0.001 VPFI)
@@ -469,8 +469,7 @@ coverage boundary in that same section. That is the Worker's remaining
 untested seam.
 
 *(Resolved since the initial version: the custody-exclusion gap that was
-tracked as **#1446** is now covered by `bucket-composition` +
-`reported-derivation` above, and the canonical bucket-coverage gap tracked
+tracked as **#1446** is now covered by `bucket-composition` above, and the canonical bucket-coverage gap tracked
 as **#1444** is closed by the released-remit stranded cumulative. Neither needed
 the event-stream scanning originally assumed — both are computable from
 the raw stored slots at a pinned block.)*

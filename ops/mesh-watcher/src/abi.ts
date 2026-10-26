@@ -58,9 +58,8 @@ export const REWARD_CUSTODY_ABI = rewardCustodyAbi as unknown as Abi;
  *  facet, for the two REATTRIBUTION cumulatives a reclassification moves
  *  (`getReconciliationTotals`): credit moved into the bucket or its payout
  *  figure by a correction (claimed), and out of them (a destination). Both
- *  are terms of the bucket-composition identity and of the reported
- *  cumulative's floor, so the composition bound and the derivation
- *  re-statement need them exactly as they need the repatriated-out term.
+ *  are terms of the bucket-composition identity, so the composition bound
+ *  needs them exactly as it needs the repatriated-out term.
  *  Its own import for the same attribution reason as the repatriation ABI:
  *  a chain not yet refreshed with the facet reverts this read alone. */
 export const REWARD_RECONCILIATION_ABI = rewardReconciliationAbi as unknown as Abi;
@@ -135,19 +134,15 @@ const EXPECTED_VIEWS: ReadonlyArray<{
     inputs: [],
     outputs: ['retiredCumulative:uint256', 'releasedCumulative:uint256'],
   },
-  // #1444 / #1446 — the RAW stored slots. Every other read above exposes a
-  // figure the contract DERIVES, which is fine for reporting and useless for
-  // verification: a regression in the derivation inflates the published value
-  // and Base's accepted copy of it together, so no comparison between them
-  // can see it. These three let this Worker re-derive the published figures
-  // and disagree with the chain.
+  // #1444 / #1446 — the stored counters the bucket-composition and
+  // bucket-coverage relations need, read beside the custody position at one
+  // pinned block.
   {
     name: 'getRecycleCompositionPosition',
     inputs: [],
     outputs: [
-      'creditedRaw:uint256',
+      'credited:uint256',
       'releasedRemitStranded:uint256',
-      'accountingSeeded:bool',
       'isCanonicalRewardChain:bool',
       // #1662 P2-w6 r2 — the RESOLVED counterpart of the stranded
       // figure: locally-stranded recycled value that is no longer in
@@ -216,8 +211,7 @@ const EXPECTED_VIEWS: ReadonlyArray<{
     facet: 'repatriation',
   },
   // Chain-local: the repatriated-outflow cumulative — a DESTINATION term
-  // in the §7 #8 bucket composition and part of the reported-cumulative
-  // floor re-derivation.
+  // in the §7 #8 bucket composition.
   {
     name: 'getRepatriationPosition',
     inputs: [],

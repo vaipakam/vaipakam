@@ -139,7 +139,6 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         returns (
             uint256 raw,
             uint256 releasedStranded,
-            bool seeded,
             uint256 relocated,
             uint256 bucket,
             uint256 reported,
@@ -148,14 +147,14 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         )
     {
         RewardAggregatorFacet agg = RewardAggregatorFacet(address(diamond));
-        (raw, releasedStranded, seeded, , ) = agg.getRecycleCompositionPosition();
+        (raw, releasedStranded, , ) = agg.getRecycleCompositionPosition();
         (relocated, bucket, reported) = agg.getRecycleCustodyPosition();
         (, , outstanding, paidOut) = agg.getGovernorCommitState();
     }
 
     /// @dev The composition bound of #1446.
     function _assertComposition(string memory ctx) internal view {
-        (uint256 raw, uint256 releasedStranded, , uint256 relocated, uint256 bucket, , uint256 paidOut, ) =
+        (uint256 raw, uint256 releasedStranded, uint256 relocated, uint256 bucket, , uint256 paidOut, ) =
             _composition();
         assertLe(
             raw + relocated,
@@ -164,17 +163,14 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         );
     }
 
-    /// @dev The derivation of #1446: the reported cumulative reproduced from
-    ///      the raw slots.
+    /// @dev #2875 — the reported cumulative is the stored absorption
+    ///      counter itself: there is no derived floor on a fresh Diamond.
     function _assertDerivation(string memory ctx) internal view {
-        (uint256 raw, , , uint256 relocated, uint256 bucket, uint256 reported, uint256 paidOut, ) = _composition();
-        uint256 gross = bucket + paidOut;
-        uint256 floorTerm = gross > relocated ? gross - relocated : 0;
-        uint256 expected = raw >= floorTerm ? raw : floorTerm;
+        (uint256 raw, , , , uint256 reported, , ) = _composition();
         assertEq(
             reported,
-            expected,
-            string.concat("derivation: reported == max(raw, bucket+paidOut-relocated) @ ", ctx)
+            raw,
+            string.concat("derivation: reported == the stored counter @ ", ctx)
         );
     }
 
@@ -306,7 +302,7 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
 
         // Base tops up 23 recycled inside a 30-token delivery.
         _d6(address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 23e18, 0, bytes32(0));
-        (uint256 raw, , , uint256 relocated, uint256 bucket, , , ) =
+        (uint256 raw, , uint256 relocated, uint256 bucket, , , ) =
             _composition();
         assertEq(relocated, 23e18, "fixture: custody relocated");
         assertEq(bucket, 63e18, "fixture: bucket took the top-up");
@@ -320,8 +316,8 @@ contract RewardRemitLedgerPreActivationTest is SetupTest {
         _assertDerivation("after relocation");
         assertEq(raw, 40e18, "the RAW counter must not move on relocation");
 
-        // Consuming moves the custody value from one term of the derived
-        // floor into the other — the exclusion has to survive that.
+        // Consuming moves the custody value from the bucket to the payout
+        // figure — the exclusion has to survive that.
         mutator.consumeRecycleRaw(63e18);
         assertEq(
             ConfigFacet(address(diamond)).getRecycleBucket(), 0, "drained"

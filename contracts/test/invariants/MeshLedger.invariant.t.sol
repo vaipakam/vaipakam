@@ -482,7 +482,7 @@ contract MeshLedgerInvariant is Test {
     function invariant_GlobalRecycledCommitWithinBucket() public view {
         (, , uint256 outstandingRecycled, ) = _agg().getGovernorCommitState();
         (, uint256 bucket, ) = _agg().getRecycleCustodyPosition();
-        (, uint256 stranded, , , ) = _agg().getRecycleCompositionPosition();
+        (, uint256 stranded, , ) = _agg().getRecycleCompositionPosition();
         assertEq(
             stranded,
             0,
@@ -506,7 +506,7 @@ contract MeshLedgerInvariant is Test {
     /// relocation raises the left side twice against a right side that moved
     /// once, and fails here. No comparison of the REPORTED cumulative can
     /// see that, on this chain or against Base's accepted copy, because both
-    /// derive from the same helper and would inflate together.
+    /// read the same counter and would inflate together.
     ///
     /// What it does NOT catch (#1452, filed): a relocation arrival routed
     /// through ordinary `credit` rather than `creditCustodyRelocated`. That
@@ -520,7 +520,7 @@ contract MeshLedgerInvariant is Test {
     /// Inequality rather than equality: `consume` floors the bucket at zero
     /// for bounded cap-trim dust, which can only widen the right side.
     function invariant_BucketCompositionWithinDestinations() public view {
-        (uint256 raw, uint256 stranded, , , ) =
+        (uint256 raw, uint256 stranded, , ) =
             _agg().getRecycleCompositionPosition();
         (uint256 relocated, uint256 bucket, ) =
             _agg().getRecycleCustodyPosition();

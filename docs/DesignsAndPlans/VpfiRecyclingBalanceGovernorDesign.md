@@ -773,6 +773,10 @@ sits at the single canonical point (Base finalization):
    regression this invariant exists to catch. The slack is a separate
    constant because `consume`'s bucket floor widens this direction only.
 
+   *(Superseded by #2875: the exception below, the seeded flag and the
+   derived floor are retired. Every chain is a fresh deploy, so the relation
+   holds from deployment and a mismatch always pages.)*
+
    EXCEPTION: while a chain has never run any recycled credit
    (`recycleAccountingSeeded == false` — a Diamond refreshed over live
    pre-#1222 state), its historical bucket legitimately has no counter

@@ -182,9 +182,7 @@ contract RewardReporterFacet is
         // the MONOTONIC cumulative (Base's availability ledger self-heals from
         // it across missed reports) and the day-bucketed credit total for the
         // closing day (`Ā`'s per-day attribution). `dayId` is strictly past,
-        // so its `recycledCreditedByDay` bucket is complete. Read through the
-        // library helper so a diamond refreshed over live pre-#1222 state
-        // reports its pre-upgrade absorption too (Codex #1413 r5).
+        // so its `recycledCreditedByDay` bucket is complete.
         // #1222 M3 B3 — and this chain's commitment-RETIREMENT cumulatives
         // ride the same day-close, so Base can close its per-chain
         // reservation ledger and give back availability for commitments this
@@ -196,7 +194,7 @@ contract RewardReporterFacet is
             dayId: dayId,
             lenderNumeraire18: lenderNumeraire18,
             borrowerNumeraire18: borrowerNumeraire18,
-            recycledCumulative18: LibVpfiRecycle.creditedCumulative(s),
+            recycledCumulative18: s.recycleCreditedCumulative,
             recycledForDay18: s.recycledCreditedByDay[dayId],
             commitRetiredCumulative18: s.recycleCommitRetiredCumulative,
             commitReleasedCumulative18: s.recycleCommitReleasedCumulative,
