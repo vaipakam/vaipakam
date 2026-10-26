@@ -1802,20 +1802,12 @@ contract TestMutatorFacet {
         return LibCollateralSettlement.liveFloor(loanId, asOfTimestamp);
     }
 
-    function getPrincipalPlusAccruedInterest(uint256 loanId, uint256 asOfTimestamp)
+    function getSaleLegs(uint256 loanId, uint256 asOfTimestamp)
         external
         view
-        returns (uint256)
+        returns (uint256 lenderLeg, uint256 treasuryLeg)
     {
-        return LibCollateralSettlement.principalPlusAccruedInterest(loanId, asOfTimestamp);
-    }
-
-    function getTreasuryAndPrecloseFee(uint256 loanId, uint256 asOfTimestamp)
-        external
-        view
-        returns (uint256)
-    {
-        return LibCollateralSettlement.treasuryAndPrecloseFee(loanId, asOfTimestamp);
+        return LibCollateralSettlement.saleLegs(loanId, asOfTimestamp);
     }
 
     /// @notice Test-only direct write to `protocolCfg.treasuryFeeBps` so

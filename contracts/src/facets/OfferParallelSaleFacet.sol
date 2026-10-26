@@ -177,14 +177,16 @@ contract OfferParallelSaleFacet is
     ///         `!offerConsumedBySale`) and not already have a live
     ///         parallel-sale binding.
     ///
-    ///         Pre-loan floor (§19.3 round-3.3 + round-3.4):
-    ///           `floor = (principal + projectedFirstPeriodInterest)
+    ///         Pre-loan floor: the most the live floor
+    ///         (`LibCollateralSettlement.liveFloor` = principal + interest
+    ///         + late fee) can reach before the grace boundary if a lender
+    ///         accepts first, grossed up by the listing buffer:
+    ///           `floor = (principal + worstCaseInterest + maxLateFee)
     ///                    × (10000 + cfgPrepayListingBufferBps) / 10000`
-    ///         where `projectedFirstPeriodInterest =
-    ///         LibEntitlement.proRataInterest(principal, rateBps,
-    ///         min(1, durationDays))` — at-most-one day of interest as
-    ///         the hedge against the loan being accepted between sale-
-    ///         listing and sale-fill. No treasury fee addend.
+    ///         where `worstCaseInterest` is pro-rata at the offer's highest
+    ///         acceptable rate over `durationDays + grace`, and `maxLateFee`
+    ///         is the late fee at the grace boundary (#2740). The treasury
+    ///         share is a cut of that interest, so it needs no addend.
     ///
     ///         Fee-aware: the per-leg fee schedule lifts the floor by
     ///         `sum(feeLegs.startAmount)`; comparison runs against the
@@ -573,8 +575,8 @@ contract OfferParallelSaleFacet is
         // ── Pre-loan floor computation (§19.3, Codex round-3 + 4 +
         //    user-direction) ────────────────────────────────────────
         //
-        // The pre-loan floor hedges the FULL DURATION's interest +
-        // explicit treasury fee. This makes the pre-loan and active-
+        // The pre-loan floor hedges the FULL DURATION's interest (and,
+        // since #2740, the late fee). This makes the pre-loan and active-
         // loan floors converge: a buyer fill post-acceptance always
         // covers the lender's settlement entitlement (which routes
         // through `LibEntitlement.settlementInterest` — full coupon
@@ -593,13 +595,16 @@ contract OfferParallelSaleFacet is
         // ceiling exactly. Defensive guard for the structurally-
         // impossible case rather than load-bearing.
         //
-        // **Why explicit treasury addend (Codex round-4 P2 #2)**: the
-        // protocol's `cfgTreasuryFeeBps` is governance-configurable
-        // beyond the typical 1% default; relying on `buffer` to absorb
-        // it would let a high-fee governance config push the floor
-        // below `lenderLeg + treasuryLeg` at fill time. Compute the
-        // treasury share explicitly on the hedged interest so the
-        // floor always covers it.
+        // **No treasury addend (#2740)**: the treasury's share is a cut
+        // OF the interest, not a charge on top of it — the live floor a
+        // fill must clear is `lenderLeg + treasuryLeg = principal +
+        // interest + late fee` (`LibCollateralSettlement.liveFloor`), so
+        // hedging the interest hedges the treasury share with it.
+        //
+        // **Late-fee addend (#2740)**: a fill inside grace closes the loan
+        // as a late repayment and owes the late fee. Hedge the largest one
+        // reachable before the grace boundary (the fee only grows, and
+        // fills past the boundary are refused).
         // Codex round-6 P2 #1 — keep-listing-live + the post-grace
         // block (round-5 P1 #2) means fills can still happen up to
         // `graceEnd = startTime + durationDays*1d + gracePeriod(durationDays)`.
@@ -628,10 +633,11 @@ contract OfferParallelSaleFacet is
         uint256 interest = LibEntitlement.proRataInterest(
             offer.amount, worstCaseRateBps, hedgeDays
         );
-        uint256 treasuryCutOnInterest =
-            (interest * LibVaipakam.cfgTreasuryFeeBps()) / 10_000;
+        uint256 lateFeeHedge = (offer.amount
+            * LibVaipakam.lateFeeBpsAt(0, LibVaipakam.gracePeriod(offer.durationDays)))
+            / LibVaipakam.BASIS_POINTS;
         uint256 floor = (
-            (offer.amount + interest + treasuryCutOnInterest)
+            (offer.amount + interest + lateFeeHedge)
                 * (10_000 + s.cfgPrepayListingBufferBps)
         ) / 10_000;
         uint256 feeSum = 0;

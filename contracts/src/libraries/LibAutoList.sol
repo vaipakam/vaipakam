@@ -244,7 +244,7 @@ library LibAutoList {
         //     NEVER fires. An at-equality Dutch listing stays
         //     unfillable until grace expiry (when DefaultedFacet
         //     takes over) — many days, not one block.
-        //   - **Pro-rata loans**: `principalPlusAccruedInterest`
+        //   - **Pro-rata loans**: the lender leg (`saleLegs`)
         //     accrues on WHOLE-DAY boundaries, not per block. So
         //     the b_cond_2 recovery window is up to 24h, not one
         //     block.

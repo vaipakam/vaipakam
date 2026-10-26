@@ -112,7 +112,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](267); // #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](266); // #2740 -getPrincipalPlusAccruedInterest -getTreasuryAndPrecloseFee +getSaleLegs (was 267); #2736 +setTierLtvCacheRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -370,8 +370,7 @@ contract HelperTest {
         // T-086 step 3 — LibCollateralSettlement view proxies + raw
         // treasury-fee setter for the focused floor-formula tests.
         selectors[n++] = TestMutatorFacet.getLiveFloor.selector;
-        selectors[n++] = TestMutatorFacet.getPrincipalPlusAccruedInterest.selector;
-        selectors[n++] = TestMutatorFacet.getTreasuryAndPrecloseFee.selector;
+        selectors[n++] = TestMutatorFacet.getSaleLegs.selector;
         selectors[n++] = TestMutatorFacet.setTreasuryFeeBpsRaw.selector;
         // T-086 step 10 — test-only direct invoke of LibPrepayCleanup.
         selectors[n++] = TestMutatorFacet.invokePrepayCleanup.selector;

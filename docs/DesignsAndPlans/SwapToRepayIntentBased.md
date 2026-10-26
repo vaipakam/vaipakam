@@ -570,7 +570,11 @@ address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new
      "reject fee-on-transfer collateral via balance-delta probe at
      commit" — that fix becomes a defense-in-depth backup; the
      allowlist is the primary gate.
-  4. **Live floor re-check** (Codex round-2 P1 #8 + round-10 P1 #5):
+  4. **Live floor re-check** (Codex round-2 P1 #8 + round-10 P1 #5).
+     *#2740: the sale legs are now the full-repayment split, late fee
+     included, so the floor below is `LibCollateralSettlement.liveFloor`
+     and the fill checks it once, in the settlement waterfall that pays
+     out. The separate re-check described here was retired.*
      recompute the live floor including late fees, since
      `IVaipakamPrepayContext.getPrepayContext` currently uses
      `LibCollateralSettlement.principalPlusAccruedInterest` plus

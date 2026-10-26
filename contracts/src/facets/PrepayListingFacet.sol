@@ -122,18 +122,11 @@ contract PrepayListingFacet is
         ctx.collateralTokenId = loan.collateralTokenId;
         ctx.collateralQuantity = loan.collateralQuantity;
 
-        // Floor legs — these route through `LibCollateralSettlement`
-        // which reads `LibVaipakam.storageSlot()` internally. Because
-        // THIS call runs inside the diamond proxy via delegatecall,
-        // the storage slot resolves against the DIAMOND's storage —
-        // the loan record + cfgTreasuryFeeBps + (eventually)
-        // cfgPrecloseFeeBps all read live values.
-        ctx.lenderLeg = LibCollateralSettlement.principalPlusAccruedInterest(
-            loanId, asOfTimestamp
-        );
-        ctx.treasuryLeg = LibCollateralSettlement.treasuryAndPrecloseFee(
-            loanId, asOfTimestamp
-        );
+        // Floor legs — the repayment split at `asOfTimestamp`, through
+        // `LibCollateralSettlement` (#2740). This call runs inside the
+        // diamond, so the library reads the DIAMOND's loan record.
+        (ctx.lenderLeg, ctx.treasuryLeg) =
+            LibCollateralSettlement.saleLegs(loanId, asOfTimestamp);
 
         // Grace boundary = startTime + durationDays + gracePeriod(durationDays).
         // The duration-tiered grace bucket is governance-tunable via
@@ -472,10 +465,8 @@ contract PrepayListingFacet is
         // full-duration interest hedge, but re-check here as defense-
         // in-depth (matches the active-loan path's lender/treasury
         // short-paid revert posture).
-        uint256 lenderLeg =
-            LibCollateralSettlement.principalPlusAccruedInterest(loanId, block.timestamp);
-        uint256 treasuryLeg =
-            LibCollateralSettlement.treasuryAndPrecloseFee(loanId, block.timestamp);
+        (uint256 lenderLeg, uint256 treasuryLeg) =
+            LibCollateralSettlement.saleLegs(loanId, block.timestamp);
         if (amount < lenderLeg + treasuryLeg) {
             revert ProceedsBelowLenderTreasury(
                 offerId, amount, lenderLeg + treasuryLeg

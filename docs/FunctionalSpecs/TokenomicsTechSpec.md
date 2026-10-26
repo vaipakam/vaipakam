@@ -658,24 +658,30 @@ Lender rules:
 - **the VPFI-debit delivery is consent-only.** Because settlement consolidates the lender slot to the current position-NFT holder, the VPFI-payment delivery (which debits that holder's vault) requires that holder's own consent — an unsolicited transfer of a Full-stamped position can never spend a non-consenting recipient's VPFI. A Full lender without consent always receives the `+10%` through the no-token-move direct-reduction path regardless of peg state
 - the bump is honored on the **primary** lender-yield settlement paths (terminal repay, preclose direct close, refinance, auto-lifecycle held by the recorded lender) and on the **swap-to-repay** paths (full close-out, partial, and the Fusion swap-to-repay intent fill). On the paths that do not consolidate the lender to the current position-NFT holder — swap-to-repay-partial, the intent fill, and the secondary paths still pending below — the discount is keyed on the **current holder**, since the hold-tier discount is an instantaneous per-address read and the Full `+10%` is loan-scoped. Of the paths once listed as pending, five now honor it: preclose obligation-transfer, preclose offset, **partial repay**, **periodic-interest** (its ordinary leg), and the **auto-lifecycle transferred-position** case each resolve the lender's eligibility the same way, keyed on the settling party.
 
-**The collateral prepay-SALE terminals are NOT part of this blocker, and an
-earlier revision of this section wrongly put them in it.** They do pay a raw
-`LibCollateralSettlement.treasuryAndPrecloseFee` leg with no eligibility call —
-that observation was correct — but the lender does not bear that fee, so there
-is no lender discount to deliver. The sale waterfall pays **three separate
-consideration legs**: the lender receives `principal + accrued interest`
-**gross** (`principalPlusAccruedInterest`, whose `settlementInterestNet` is net
-of `loan.interestSettled` — interest already paid — not net of any fee), the
-treasury leg is **added on top** out of the sale price, and the **borrower's**
-residual is what it reduces. On a repayment the lender receives interest minus
-the cut; on a prepay sale the lender receives the whole of it.
+**The collateral-sale terminals ARE inside the rule since #2740, and do not
+honor it yet.** A prepay or parallel collateral sale that closes the loan now
+owes what a full repayment owes and splits it the same way
+(`LibCollateralSettlement.saleLegs`): the treasury leg is the ordinary cut OF
+the lender's interest and late fee, and the lender receives the rest. So the
+lender bears the yield fee there exactly as on a repayment, and §F2's "at every
+lender-yield settlement" reaches these terminals. Neither honors the discount:
+the loan-keyed listing pays its treasury leg to the treasury directly inside the
+marketplace fill, and the parallel-sale settlement pays it with no eligibility
+call. (The swap-to-repay intent fill, the third sale-shaped close, already
+resolves it through the host.)
 
-Applying the Full bump to that treasury leg would therefore shrink the treasury
-take and **enlarge the borrower's residual** — a lender-purchased entitlement
-subsidising the borrower. That is an accounting change, not the F2 rule, and it
-would need an explicit owner decision widening the entitlement before any
-implementation. The earlier revision verified the mechanism (a raw fee leg, no
-resolver) and inferred the harm without checking who pays.
+An earlier revision of this section excluded these terminals on the ground that
+the lender did not bear the fee, which was then true: the sale legs paid the
+lender its whole interest and added the treasury leg on top, out of the
+borrower's remainder. #2740 removed that charge-on-top because it made a sale
+cost the borrower more than repaying, and with it the ground for the exclusion.
+
+Delivering the discount on the loan-keyed listing is not a resolver call: the
+treasury leg leaves inside the marketplace fill, before any Diamond code can
+shift it, so the order shape has to change (for example, routing that leg
+through the Diamond's settlement hook). That is a design step, and it is a
+third family on the cut-over blocker below, tracked with the parallel-sale
+settlement in #2876.
 
 **Refinance is a separate case and is NOT safe.** It honors the stamp, but resolves it against the STORED lender rather than the current position-NFT holder. It attempts a Tier-2 consolidation first — and that consolidation is skip-not-block, declining rather than reverting for a sanctioned holder or an excluded lender state — so on a transferred position the stored field can still be stale when the resolve runs. With the peg configured, the previous lender's vault funds a discount the buyer receives. Refinance therefore belongs in the current-holder blocker below, not in the list above. **Rental-prepay is no longer a blocker and never could have been** — a rental cannot carry the paid Full stamp at all, because the tariff is charged only on ERC-20 originations and a rental pays no loan-initiation fee to be tariffed alongside. There is no rental lender who paid `C*` and could be owed the bump.
 
@@ -685,12 +691,13 @@ What IS outstanding is the **recovery** set, and it has **five** entry points: *
 
 **This is a CODE DIVERGENCE from a frozen decision, not an open question.** The rev-8 §F2 statement (`VpfiAbsorptionDistributionFormulaRedesign.md` → `### F2 — Lender yield fee`, the frozen source; this document has no §F2 of its own) is *"at every lender-yield settlement"*, and the PR-6 requirements forbid settlement math that ignores Full; the four-item enumeration above is a list of the paths that were implemented, not a definition of where the entitlement applies. Recovered interest is lender interest — this section itself has the ordinary yield-fee cut taken from it — so the recovery paths are inside the frozen rule and are simply not honoring it yet. Recording them as an "intended exclusion" would silently narrow a ratified product decision, and only the owner can do that.
 
-> **IMPLEMENTED IN THE TREE (#1383).** Everything the criterion below asks for is now written: all five recovery entry points resolve the discount through `LibLenderYieldFeeHost`, refinance is re-keyed, and partial liquidation's payout pays the current holder. **That is not the same as discharged.** The cut-over gate is about what is LIVE ON A GIVEN DIAMOND, and this fix has not been deployed anywhere — the criterion stands as the thing to verify by readback, per the GovernanceRunbook's M7 Step 1. Two coverage limits worth stating: the automated tests cover the payout re-key and the discount mechanism on the ordinary liquidation path (both mutation-verified); the other four entry points, the refinance re-key and the rental leg share that same helper but have no test of their own yet.
+> **IMPLEMENTED IN THE TREE (#1383), except family 3, which #2740 added and #2876 tracks.** Everything else the criterion below asks for is now written: all five recovery entry points resolve the discount through `LibLenderYieldFeeHost`, refinance is re-keyed, and partial liquidation's payout pays the current holder. **That is not the same as discharged.** The cut-over gate is about what is LIVE ON A GIVEN DIAMOND, and this fix has not been deployed anywhere — the criterion stands as the thing to verify by readback, per the GovernanceRunbook's M7 Step 1. Two coverage limits worth stating: the automated tests cover the payout re-key and the discount mechanism on the ordinary liquidation path (both mutation-verified); the other four entry points, the refinance re-key and the rental leg share that same helper but have no test of their own yet.
 
-**The divergence is the remaining hard blocker on the `feeEntitlementEnabled` cut-over,** and it is discharged only by clearing **two independent families**:
+**The divergence is the remaining hard blocker on the `feeEntitlementEnabled` cut-over,** and it is discharged only by clearing **three independent families**:
 
   1. **the five recovery entry points** must honor the bump on recovered lender interest;
-  2. **refinance** must be re-keyed onto the current holder — its defect is that the wrong party is debited, which is independent of whether recovered interest is entitled at all.
+  2. **refinance** must be re-keyed onto the current holder — its defect is that the wrong party is debited, which is independent of whether recovered interest is entitled at all;
+  3. **the two collateral-sale terminals** (the loan-keyed listing and the parallel-sale settlement) must honor the discount on the interest share the lender now bears there (#2740, #2876).
 
 **Partial liquidation carries a SECOND, larger defect that fixing the resolver does not touch,** and the criterion requires that too. `RiskFacet.triggerPartialLiquidation` deposits the whole recovered lender share into `loan.lender`'s vault (`:1216`) and **deliberately writes no `s.lenderClaims[loanId]`** (`:1210`) — the comment records the reason: claims are reserved for terminal events, and this path leaves the loan Active. Every other recovery entry pairs its deposit with a claim record (`RiskFacet:845` / `:1550`, `RiskSplitLiquidationFacet:296`, `DefaultedFacet:514` / `:729`), and `ClaimFacet.claimAsLender` is `ownerOf`-gated, so on those paths the current holder is who is ultimately paid. Partial has no such route. On a transferred position where the skip-not-block consolidation declined, the previous lender receives **the payment itself**, permanently, and the current holder has nothing to claim against. Discharging #1947 therefore requires the partial-liquidation payout to be keyed on — or safely parked for — `ownerOf(lenderTokenId)`, not only its discount resolver. A fix that satisfies the resolver requirement alone leaves a fund-loss path open.
 
