@@ -28,7 +28,11 @@ const body = await page.locator('body').innerText();
 const codeMatch = body.match(/\b([ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{24})\b/);
 const hasIssueCopy = body.includes('Open our bot');
 const errorBanner = await page.locator('.banner-danger').innerText().catch(() => '');
-console.log('code shown:', codeMatch?.[1] ?? 'NONE');
+// The code itself is a live one-time credential: whoever sends it to the
+// bot first links their Telegram chat to this wallet's alerts. Results from
+// these drives are pasted into PR threads, so only whether one rendered is
+// printed, never the code (#2765).
+console.log('code shown:', codeMatch ? `yes (${codeMatch[1].length} symbols, redacted)` : 'NONE');
 console.log('issue copy shown:', hasIssueCopy);
 if (errorBanner) console.log('error banner:', errorBanner.slice(0, 300));
 await done();
