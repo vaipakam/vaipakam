@@ -47,7 +47,7 @@ describe('liquidationSaleSizes', () => {
 describe('pickSplitLegs — per unit sold', () => {
   const quotes = (...legs: [string, bigint][]): ServerOrchestrationResult =>
     ({
-      ranked: legs.map(([kind, expectedOutput], i) => ({ kind, expectedOutput, call: { adapterIdx: BigInt(i), data: '0x' } })),
+      ranked: legs.map(([kind, expectedOutput], i) => ({ kind, expectedOutput, call: { adapterIdx: BigInt(i), data: '0x' }, adapter: '0x00000000000000000000000000000000000000a1' })),
       calls: [],
       failed: [],
       route: null,
@@ -76,7 +76,7 @@ describe('pickSplitLegs — per unit sold', () => {
 describe('pickSplitLegs — every leg clears its own share of the floor (#2724)', () => {
   const quotes = (...legs: [string, bigint][]): ServerOrchestrationResult =>
     ({
-      ranked: legs.map(([kind, expectedOutput], i) => ({ kind, expectedOutput, call: { adapterIdx: BigInt(i), data: '0x' } })),
+      ranked: legs.map(([kind, expectedOutput], i) => ({ kind, expectedOutput, call: { adapterIdx: BigInt(i), data: '0x' }, adapter: '0x00000000000000000000000000000000000000a1' })),
       calls: [],
       failed: [],
       route: null,
