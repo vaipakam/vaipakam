@@ -99,7 +99,6 @@ export const DOC_COVERAGE: Readonly<Record<string, DocCoverage>> = {
   'Per-chain surplus flag multiple (`recycleSurplusMultiple`)': { notShown: 'rewards-and-recycling' },
   'Governor commitment arming (`governorCommitArmedFromDay`)': { notShown: 'rewards-and-recycling' },
   'Expected source chain ids (`expectedSourceChainIds`)': { notShown: 'rewards-and-recycling' },
-  'Zeroed-day lapse schedule (`setLapseSchedule`)': { notShown: 'rewards-and-recycling' },
   'Repatriation endpoints (`repatriationEndpoints`, `repatriationTokenAdminRegistry`)': {
     notShown: 'rewards-and-recycling',
   },
