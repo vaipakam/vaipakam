@@ -69,9 +69,7 @@ const BROWSER = new Set(['apps/app', 'apps/www', 'packages/i18n']);
  * Sites not yet moved, each with the change that moves it. An entry must
  * still match, so it is removed in the change that clears it.
  */
-const PENDING: Array<{ path: RegExp; why: string }> = [
-  { path: /^apps\/indexer\/src\/loanRoutes\.ts$/, why: 'in flight under #2757; moved after it lands' },
-];
+const PENDING: Array<{ path: RegExp; why: string }> = [];
 
 function serverSourceFiles(): string[] {
   const out: string[] = [];

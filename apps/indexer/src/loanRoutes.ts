@@ -20,6 +20,7 @@ import {
   pauseInForceAt,
 } from '@vaipakam/lib/loanClock';
 import { readLoanClockSnapshot, type LoanClockSnapshotRead } from '@vaipakam/lib/loanClockSnapshot';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 import { chainNotServed, parseChainId, requestedChainId } from './servedChain';
 import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
 import {
@@ -325,7 +326,7 @@ export async function handleLoansActive(req: Request, env: Env): Promise<Respons
         : null;
     return jsonResponse({ chainId, loans, nextBefore: next });
   } catch (err) {
-    console.error('[loanRoutes] active failed', err);
+    console.error('[loanRoutes] active failed', redactedError(err));
     return jsonResponse({ error: 'active-failed' }, 500);
   }
 }
@@ -447,7 +448,7 @@ export async function handleLoanById(
     }
     return jsonResponse(payload);
   } catch (err) {
-    console.error('[loanRoutes] byId failed', err);
+    console.error('[loanRoutes] byId failed', redactedError(err));
     return jsonResponse({ error: 'byId-failed' }, 500);
   }
 }
@@ -519,7 +520,7 @@ export async function handleLoansByParticipant(
         : null;
     return jsonResponse({ chainId, side, address: addr, loans, nextBefore: next });
   } catch (err) {
-    console.error('[loanRoutes] byParticipant failed', err);
+    console.error('[loanRoutes] byParticipant failed', redactedError(err));
     return jsonResponse({ error: 'byParticipant-failed' }, 500);
   }
 }
@@ -582,7 +583,7 @@ export async function handleLoansByCurrentHolder(
         : null;
     return jsonResponse({ chainId, address: addr, loans, nextBefore: next });
   } catch (err) {
-    console.error('[loanRoutes] byCurrentHolder failed', err);
+    console.error('[loanRoutes] byCurrentHolder failed', redactedError(err));
     return jsonResponse({ error: 'byCurrentHolder-failed' }, 500);
   }
 }
@@ -668,7 +669,7 @@ export async function handleActivity(req: Request, env: Env): Promise<Response> 
         const r = await repairObservationsPage(env.DB, chainId, { loanId, before }, limit).all<RepairObservationRow>();
         observations = r.results ?? [];
       } catch (err) {
-        console.warn('[loanRoutes] activity: repaired-loan endings not read; served as unknown', err);
+        console.warn('[loanRoutes] activity: repaired-loan endings not read; served as unknown', redactedError(err));
         observations = null;
       }
     }
@@ -692,7 +693,7 @@ export async function handleActivity(req: Request, env: Env): Promise<Response> 
       wantObservations ? { chainId, events, repairObservations, nextBefore } : { chainId, events, nextBefore },
     );
   } catch (err) {
-    console.error('[loanRoutes] activity failed', err);
+    console.error('[loanRoutes] activity failed', redactedError(err));
     return jsonResponse({ error: 'activity-failed' }, 500);
   }
 }
@@ -904,7 +905,7 @@ export async function handleClaimables(
       truncated,
     });
   } catch (err) {
-    console.error('[loanRoutes] claimables failed', err);
+    console.error('[loanRoutes] claimables failed', redactedError(err));
     return jsonResponse({ error: 'claimables-failed' }, 500);
   }
 }
@@ -1021,7 +1022,7 @@ export async function handleClaimCandidates(
     }
     return jsonResponse({ chainId, address: addr, candidates, truncated });
   } catch (err) {
-    console.error('[loanRoutes] claim-candidates failed', err);
+    console.error('[loanRoutes] claim-candidates failed', redactedError(err));
     return jsonResponse({ error: 'claim-candidates-failed' }, 500);
   }
 }
@@ -1290,7 +1291,7 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
         : null,
     });
   } catch (err) {
-    console.error('[loanRoutes] stats failed', err);
+    console.error('[loanRoutes] stats failed', redactedError(err));
     return jsonResponse({ error: 'stats-failed' }, 500);
   }
 }
@@ -1404,7 +1405,7 @@ export async function handleLoansRecent(req: Request, env: Env): Promise<Respons
     };
     return jsonResponse({ chainId, loans, nextBefore: next, scope, unplaced });
   } catch (err) {
-    console.error('[loanRoutes] recent failed', err);
+    console.error('[loanRoutes] recent failed', redactedError(err));
     return jsonResponse({ error: 'recent-failed' }, 500);
   }
 }
@@ -1546,7 +1547,7 @@ export async function handleLoansTimeseries(
 
     return jsonResponse({ chainId, range: rangeRaw, buckets });
   } catch (err) {
-    console.error('[loanRoutes] timeseries failed', err);
+    console.error('[loanRoutes] timeseries failed', redactedError(err));
     return jsonResponse({ error: 'timeseries-failed' }, 500);
   }
 }
@@ -1737,7 +1738,7 @@ export async function handleLoansRateCandles(
       'Cache-Control': 'public, max-age=60',
     });
   } catch (err) {
-    console.error('[loanRoutes] rate-candles failed', err);
+    console.error('[loanRoutes] rate-candles failed', redactedError(err));
     return jsonResponse({ error: 'rate-candles-failed' }, 500);
   }
 }
@@ -1919,7 +1920,7 @@ export async function handleLoansByHistoricalParticipant(
         : null;
     return jsonResponse({ chainId, wallet, loans, nextBefore: next });
   } catch (err) {
-    console.error('[loanRoutes] by-participant failed', err);
+    console.error('[loanRoutes] by-participant failed', redactedError(err));
     return jsonResponse({ error: 'by-participant-failed' }, 500);
   }
 }
@@ -2091,7 +2092,7 @@ export async function handleNotifications(
       { 'Cache-Control': 'no-store' },
     );
   } catch (err) {
-    console.error('[loanRoutes] notifications failed', err);
+    console.error('[loanRoutes] notifications failed', redactedError(err));
     return jsonResponse({ error: 'notifications-failed' }, 500);
   }
 }
