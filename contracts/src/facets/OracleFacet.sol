@@ -1040,9 +1040,12 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///         that the price was wrong counted toward trusting it. The split
     ///         lets the gate count only agreement and refuse on any dissent.
     ///         The selector is unchanged (a selector is the name and the
-    ///         parameter types); a gate compiled against the old one-word
-    ///         return refuses to decode this two-word reply and reverts, so a
-    ///         mixed-version Diamond fails closed.
+    ///         parameter types). A gate compiled against the old one-word
+    ///         return would still decode this reply: it reads the first
+    ///         word, now the agreeing count, so it would count agreement
+    ///         only but would not refuse on dissent. The gate and this view
+    ///         are inlined into and hosted by facets of one fresh deploy, so
+    ///         no chain runs that mix.
     ///
     ///         Reverts only if the primary (Chainlink) read itself reverts
     ///         (e.g. sequencer down), which the backstop callers are already
