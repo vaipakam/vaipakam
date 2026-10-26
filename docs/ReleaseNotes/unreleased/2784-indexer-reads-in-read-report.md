@@ -1,4 +1,4 @@
-## Thread — the live read report covers the app's indexer reads (PR #TBD)
+## Thread — the live read report covers the app's indexer reads (PR #2897)
 
 The live position drive asks the deployed app which of its reads went unserved. Until now the app answered for its chain reads and its query cache, but not for its reads from the indexer. Those go through one fetch helper that turns any failure into "unavailable", and the query cache counts that as a success. A live run could therefore pass while part of a page had been built without indexer data, with an empty-looking panel read as a healthy one.
 
