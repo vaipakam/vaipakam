@@ -256,7 +256,7 @@ export async function settleBy<T>(work: Promise<T>, deadline: number, onCut: () 
 export class PastRunDeadline extends Error {}
 
 /** The client READ methods a pass uses, each refused past the deadline. */
-const DEADLINE_GUARDED = new Set(['readContract', 'multicall', 'simulateContract', 'call', 'getLogs']);
+const DEADLINE_GUARDED = new Set(['readContract', 'multicall', 'simulateContract', 'call', 'getLogs', 'getCode', 'getBytecode', 'getStorageAt']);
 
 /**
  * `client` with every READ refused once `deadline` has passed — the ONE place

@@ -25,6 +25,11 @@
 //           the canonical instance (`isCanonical`), and forwards it to the
 //           Base Diamond (`diamond`), the one Base's Diamond names (its
 //           reporter config's messenger).
+//   and the report itself: this chain's reward messenger carries a day-report
+//           shape, Base's reward messenger takes the same one (each read from
+//           its own code, shape.ts; Base refuses a report of another size on
+//           delivery), and where that is the B4 report of a pre-#2790 deploy,
+//           this Diamond's reporter sends B4 rather than an older shape.
 //
 // A chain's CCIP selector is the one the deploy scripts configure its lanes
 // with (`@vaipakam/contracts/ccip-selectors`, pinned to them); a chain that
@@ -43,6 +48,7 @@ import { ABI, MESSENGER_ABI } from './constants';
 import type { ChainRun, PeerReader } from './deps';
 import { known, unknown, type Fact } from './fact';
 import { readOne } from './reads';
+import { diamondSendsB4, messengerShape, shapeName, type ReportShape } from './shape';
 
 const CCIP_ABI = CcipMessengerABI as Abi;
 const same = (a: Address, b: Address) => a.toLowerCase() === b.toLowerCase();
@@ -53,7 +59,7 @@ const same = (a: Address, b: Address) => a.toLowerCase() === b.toLowerCase();
  * none of the links read shows a fault. A known fault is stated even when
  * other links are unread: either holds the close, and the fault says what to fix.
  */
-export async function reportWire(c: ChainRun, base: PeerReader | null, messenger: Address, baseChainId: number): Promise<Fact<string[]>> {
+export async function reportWire(c: ChainRun, base: PeerReader | null, messenger: Address, baseChainId: number, shape: Fact<ReportShape | null>): Promise<Fact<string[]>> {
   const faults: string[] = [];
   const unread: string[] = [];
   const read = async <T>(client: PeerReader['client'], address: Address, abi: Abi, fn: string, args: readonly unknown[], what: string): Promise<T | null> => {
@@ -69,6 +75,19 @@ export async function reportWire(c: ChainRun, base: PeerReader | null, messenger
   const route = await read<bigint>(here, messenger, MESSENGER_ABI, 'baseChainId', [], "where this chain's reward messenger sends reports (its baseChainId)");
   if (route !== null && Number(route) !== baseChainId) {
     faults.push(`this chain's reward messenger ${messenger} sends its reports to chain ${route}, but this Diamond names chain ${baseChainId} as Base (the messenger's setBaseChainId, or the Diamond's reporter config)`);
+  }
+  if (!shape.known) {
+    unread.push(`which day-report shape this chain's reward messenger carries could not be read (${shape.why})`);
+  } else if (shape.value === null) {
+    faults.push(`this chain's reward messenger ${messenger} carries no day-report quote, neither the one report shape (#2621) nor the B4 report, so it cannot send the report closeDay sends`);
+  } else if (shape.value === 'b4') {
+    const b4 = await diamondSendsB4(c);
+    if (!b4.known) unread.push(`whether this Diamond's reporter sends the B4 report its messenger carries could not be read (${b4.why})`);
+    else if (!b4.value) {
+      faults.push(
+        "this chain's reward messenger carries the B4 report, but this Diamond's reporter facet predates the B4 send (closeDay is not routed to the facet that hosts getInterestFrontiers), so it would send an older report, which Base refuses after its fee is paid for a day it has finalized",
+      );
+    }
   }
   const transport = await read<Address>(here, messenger, MESSENGER_ABI, 'messenger', [], "this chain's reward messenger's transport");
   if (transport !== null && same(transport, zeroAddress)) faults.push(`this chain's reward messenger ${messenger} has no transport set`);
@@ -137,6 +156,14 @@ export async function reportWire(c: ChainRun, base: PeerReader | null, messenger
   if (same(rewardOnBase, zeroAddress)) {
     faults.push("Base's Diamond names no reward messenger");
     return result();
+  }
+  const theirs = await messengerShape(there, rewardOnBase, `${c.where}: report channel, the day-report shape Base's reward messenger takes`);
+  if (!theirs.known) {
+    unread.push(`which day-report shape Base's reward messenger ${rewardOnBase} takes could not be read (${theirs.why})`);
+  } else if (shape.known && shape.value !== null && theirs.value !== shape.value) {
+    faults.push(
+      `this chain sends ${shapeName(shape.value)}, and Base's reward messenger ${rewardOnBase} takes ${theirs.value === null ? 'neither shape this keeper knows' : shapeName(theirs.value)}; Base refuses a report of another size on delivery (PayloadSizeMismatch), after its fee is paid here`,
+    );
   }
   const itsTransport = await read<Address>(there, rewardOnBase, MESSENGER_ABI, 'messenger', [], "Base's reward messenger's transport");
   if (itsTransport !== null && !same(itsTransport, remote)) {

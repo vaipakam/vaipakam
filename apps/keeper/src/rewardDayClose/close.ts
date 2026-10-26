@@ -20,6 +20,12 @@
 // the messenger its report left through, and one other than the one checked
 // is recorded.
 //
+// The report goes out in the shape the report channel read this chain's
+// messenger carries and Base's takes (shape.ts, wire.ts): the one report shape
+// on a fresh deploy, or the B4 report on a chain deployed before #2790 (the
+// live testnets, #2866), whose route to Base is the messenger's own
+// configuration rather than a rule the contract holds.
+//
 // A close refused because the interest fold has not reached the day
 // (`ChainReportFrontierShort`) is preceded by `advanceInterestFrontiers`.
 
@@ -28,13 +34,14 @@ import { FRONTIER_SHORT } from './constants';
 import type { ChainRun } from './deps';
 import { shortErr } from './errors';
 import { reportFee } from './reads';
+import type { ReportShape } from './shape';
 import { reportSentVia } from './plan';
 import type { Sender } from './sender';
 import type { DayStore, DispatchRecord } from './store';
 
 /** Close `days` (each unreported here), oldest first. Mirror only: `mirror`
- *  carries the messenger the checks read and the chain this Diamond names as
- *  Base. Returns
+ *  carries the messenger the checks read, the chain this Diamond names as
+ *  Base, and the report shape the channel read both ends take. Returns
  *  the days closed, and the closes whose report left through a messenger
  *  other than the one checked. */
 export async function closeDays(
@@ -42,7 +49,7 @@ export async function closeDays(
   store: DayStore,
   sender: Sender,
   days: readonly number[],
-  mirror: { messenger: Address; baseChainId: number } | null,
+  mirror: { messenger: Address; baseChainId: number; shape: ReportShape } | null,
 ): Promise<{ closed: number[]; dispatched: Map<number, DispatchRecord> }> {
   const closed: number[] = [];
   const dispatched = new Map<number, DispatchRecord>();
@@ -51,7 +58,7 @@ export async function closeDays(
     let fee = 0n;
     if (mirror !== null) {
       // eslint-disable-next-line no-await-in-loop
-      const q = await reportFee(c.deps.client, mirror.messenger, mirror.baseChainId, d);
+      const q = await reportFee(c.deps.client, mirror.messenger, mirror.baseChainId, d, mirror.shape);
       if (q === 'unread') {
         console.error(`[keeper] rewardDayClose ${c.where}: report fee for day ${d} unread, the RPC did not answer; left for the next run`);
         sender.noteUnread(`close:${d}`, 'the report fee');
