@@ -1,4 +1,4 @@
-## Thread — Test wallet answers only the site under test (PR #TBD)
+## Thread — Test wallet answers only the site under test (PR #2917)
 
 The live-review drivers inject a test wallet into the browser so a drive can
 connect, sign and send transactions with the funded testnet wallets. Until now
