@@ -57,7 +57,7 @@
  *     [--out <path>]
  */
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, getAddress, http, isAddress, parseAbi } from 'viem';
@@ -451,6 +451,19 @@ async function fetchBytes(url, headers = {}) {
   return Buffer.from(await res.arrayBuffer());
 }
 
+/** The file a re-run replaces, or `{}` on a first run. One read, no
+ *  separate existence check, so nothing can change between the two. */
+function readExisting(path) {
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (err) {
+    if (err?.code === 'ENOENT') return {};
+    throw err;
+  }
+  return JSON.parse(text);
+}
+
 const sha256 = (bytes) => `0x${createHash('sha256').update(bytes).digest('hex')}`;
 const todayUtc = () => new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
@@ -463,7 +476,7 @@ async function main(argv) {
   if (missing.length) throw new Error(`missing ${missing.join(' and ')} (environment or --env-file)`);
 
   const out = resolve(args.out ?? join(REPO, 'contracts', 'deployments', args.chain, 'feed-bindings.json'));
-  const existing = existsSync(out) ? JSON.parse(readFileSync(out, 'utf8')) : {};
+  const existing = readExisting(out);
   const manual = checkManual(existing.manual ?? []);
 
   // 1. Directory.
