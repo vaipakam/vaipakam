@@ -17,6 +17,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {RehearsalChain} from "./lib/RehearsalChain.sol";
 
 /**
  * @title SepoliaActiveLoan
@@ -46,6 +47,8 @@ contract SepoliaActiveLoan is Script {
     uint256 constant COLLATERAL_AMOUNT = 1e18;    // 1 mWETH (~$2000 @ $2000/ETH)
 
     function run() external {
+        // Points the Diamond at mocks it deploys: never on a shared Diamond (#2763).
+        RehearsalChain.requireRehearsalChain("SepoliaActiveLoan");
         diamond = Deployments.readDiamond();
         // Phase-1 2-EOA topology: deployerKey funds + deploys mocks,
         // adminKey signs role-gated Diamond calls.

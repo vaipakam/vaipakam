@@ -63,7 +63,7 @@ actions:
               - network: 84532                                        # Base Sepolia
                 eventEmitted:
                   contract:
-                    address: 0x804Bc3E9625548e50c1B589b25111783A632D964   # Diamond
+                    address: "0x804Bc3E9625548e50c1B589b25111783A632D964"   # Diamond
                   name: LoanInitiated
         execution_type: parallel
 
@@ -79,7 +79,7 @@ actions:
               - network: 421614                                       # Arb Sepolia
                 eventEmitted:
                   contract:
-                    address: 0x17Fe0D808F8971D7A14994a1205ee6AFd949Be91
+                    address: "0x17Fe0D808F8971D7A14994a1205ee6AFd949Be91"
                   name: LoanInitiated
         execution_type: parallel
 
@@ -95,7 +95,7 @@ actions:
               - network: 11155111                                     # Sepolia
                 eventEmitted:
                   contract:
-                    address: 0xD2903cbb8Bb0f34fbb688a6E381Dc6c73056DB1c
+                    address: "0xD2903cbb8Bb0f34fbb688a6E381Dc6c73056DB1c"
                   name: LoanInitiated
         execution_type: parallel
 

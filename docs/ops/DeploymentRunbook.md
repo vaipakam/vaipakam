@@ -306,11 +306,15 @@ Worker's `secrets_store_secrets` block when in doubt.
 
 Verify against the STORE, not a Worker: re-run the `secret list`
 command above and confirm the name is present. (A per-Worker
-`npx wrangler secret list` cannot see store-bound values — and note
-that `verify_rpc_secret_on_worker()` in the deploy scripts still
-checks per-Worker secrets, a latent mismatch tracked as **#1492**;
-until it lands, that preflight can hard-fail even when the store is
-correctly provisioned.)
+`npx wrangler secret list` cannot see store-bound values.) The deploy
+scripts' preflight does the same: `check_chain_rpc_secret` in
+`contracts/script/lib/worker-secrets.sh`, the one copy all three
+scripts source, reads the Worker's own `secrets_store_secrets` block
+and looks for the bound entry in that store, falling back to the
+Worker's own secrets only for a binding the config does not route
+through the store (#1492, #2763). A store or secret list it cannot
+read refuses the phase with its own message; it is never taken as
+"present".
 
 ### Auto post-deploy steps performed by the script
 
@@ -878,24 +882,26 @@ handovers (e.g. when one chain's Safe SDK lands earlier than another's).
 
 ### 3. Smoke tests (positive + partial flow sweeps)
 
-After peers are wired, sanity-check every chain via the
-chain-agnostic flow scripts:
+None of the flow scripts is a post-deploy check for a shared chain, and each
+refuses one (#848, #2763): `PositiveFlows.s.sol`, `PartialFlows.s.sol`,
+`NegativeFlows.s.sol` and the `Sepolia*` seeding scripts all re-point the
+Diamond's oracle (and, for some, its sanctions oracle and risk parameters) at
+mocks they deploy, which on a live testnet would replace the chain's real price
+and sanctions sources. They share one guard (`script/lib/RehearsalChain.sol`):
+a local Anvil always runs, a production chain never does, and a known testnet
+runs only when `REHEARSAL_ALLOW_CHAIN_ID` names it, for a Diamond deployed for
+the rehearsal.
+
+To check that a live deployment behaves as documented, drive it on a local
+fork with the `contracts/script/fork-scenarios/` driver instead. Run the flow
+scripts on a local Anvil (section 5a), or on a rehearsal Diamond:
 
 ```bash
-forge script script/PartialFlows.s.sol  --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
-# Repeat for ARB_SEPOLIA_RPC_URL and OP_SEPOLIA_RPC_URL.
+REHEARSAL_ALLOW_CHAIN_ID=84532 \
+  forge script script/PartialFlows.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
 ```
 
 `PartialFlows.s.sol` stands up 13 partial midpoints.
-
-`PositiveFlows.s.sol` is **not** a post-deploy check for a shared chain, and
-refuses one (#848): its fixture re-points the Diamond's oracle, sanctions
-oracle and risk parameters at mocks it deploys, which on a live testnet would
-replace the chain's real price and sanctions sources. To check that a live
-deployment behaves as documented, drive it on a local fork with the
-`contracts/script/fork-scenarios/` driver instead. Run `PositiveFlows.s.sol` on
-a local Anvil (section 5a), or on a Diamond deployed for the rehearsal with
-`POSITIVE_FLOWS_ALLOW_CHAIN_ID` set to that chain's id.
 
 ### 4. Recovery from a mid-flight failure
 
@@ -953,7 +959,7 @@ each item is checked:
       chain — capture the broadcast logs in
       `docs/internal/RehearsalReports/<date>/`. The positive flows run
       only against a Diamond deployed for the rehearsal, with
-      `POSITIVE_FLOWS_ALLOW_CHAIN_ID` set to that chain's id: their
+      `REHEARSAL_ALLOW_CHAIN_ID` set to that chain's id: their
       fixture replaces the Diamond's oracle and sanctions sources with
       mocks, so never point them at a Diamond anything live reads.
 - [ ] `deployment_source.json` on every chain points at the same
@@ -1821,12 +1827,15 @@ mid-script.
 
 ### 5b. Testnet smoke tests (after the Anvil sweep is green)
 
-Run the `Sepolia*` family on the target testnet first, then execute on mainnet
-forks. The positive-flow suite is not part of this step: it refuses a shared
-chain (see section 3), and the fork-scenarios driver covers a live deployment.
+Run the `Sepolia*` family against a rehearsal Diamond on the target testnet
+first, then execute on mainnet forks. Like the flow suites, these scripts point
+the Diamond at their own mocks, so they refuse a shared chain unless
+`REHEARSAL_ALLOW_CHAIN_ID` names it (see section 3); the fork-scenarios driver
+covers a live deployment.
 
 ```bash
-forge script script/SepoliaActiveLoan.s.sol   --rpc-url $RPC_URL --broadcast
+REHEARSAL_ALLOW_CHAIN_ID=<chain id> \
+  forge script script/SepoliaActiveLoan.s.sol   --rpc-url $RPC_URL --broadcast
 ```
 
 Manual checks post-smoke:
@@ -1844,14 +1853,15 @@ them in append order (no merge of state, just one phase after the other):
 
 ```bash
 # Full positive flow — every module under script/positive-flows/ (a local
-# Anvil, or a rehearsal Diamond named in POSITIVE_FLOWS_ALLOW_CHAIN_ID):
+# Anvil, or a rehearsal Diamond named in REHEARSAL_ALLOW_CHAIN_ID):
 forge script script/PositiveFlows.s.sol --rpc-url $RPC_URL --broadcast --slow \
   --disable-block-gas-limit
 
-# Full partial flow — 13 UI-testable midpoint states (6 legacy + 7 new):
+# Full partial flow — 13 UI-testable midpoint states (6 legacy + 7 new)
+# (same chain rule as the positive flow):
 forge script script/PartialFlows.s.sol  --rpc-url $RPC_URL --broadcast --slow
 
-# Full negative flow — 9 gate verifications:
+# Full negative flow — 9 gate verifications (same chain rule):
 forge script script/NegativeFlows.s.sol --rpc-url $RPC_URL --broadcast --slow
 ```
 

@@ -59,7 +59,7 @@ import {PositiveFlowsTimed} from "./positive-flows/PositiveFlowsTimed.s.sol";
  *         module carries is refused.
  *
  *         Where it may run: a local Anvil, or a chain named in
- *         `POSITIVE_FLOWS_ALLOW_CHAIN_ID` (see {PositiveFlowsBase}: the fixture
+ *         `REHEARSAL_ALLOW_CHAIN_ID` (see {PositiveFlowsBase}: the fixture
  *         re-points the Diamond's oracle and sanctions oracle at its mocks).
  *
  *         How to run it (#848; both flags are REQUIRED, and neither is a

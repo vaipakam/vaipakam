@@ -5,7 +5,10 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
+import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
 
 /**
  * @title  ConfigureV2Factories
@@ -35,10 +38,11 @@ import {Deployments} from "./lib/Deployments.sol";
  *         deploys a fork at a non-canonical address (rare).
  *
  *         Required env vars:
- *           - `DEPLOYER_PRIVATE_KEY` — the ADMIN_ROLE-bearing
- *             signer. On post-handover deployments this is the
- *             TimelockController-scheduled execution, not a direct
- *             EOA call — wrap accordingly in your safe-batch builder.
+ *           - `ADMIN_PRIVATE_KEY` — the admin EOA, the same signer
+ *             ConfigureCcip / ConfigureNFTImageURIs use for ADMIN_ROLE
+ *             setters. It signed with `DEPLOYER_PRIVATE_KEY` until #2763,
+ *             which holds no ADMIN_ROLE once the admin is split from the
+ *             deployer.
  *
  *         Optional per-chain overrides (env var names):
  *           - `<CHAIN>_UNI_V2_FACTORY`
@@ -50,16 +54,28 @@ import {Deployments} from "./lib/Deployments.sol";
  *           leg disabled on that chain — useful when an audit
  *           specifically excludes a V2 fork.
  *
- *         Idempotent: calling the script twice on the same chain
- *         lands the same final state. The AdminFacet setter emits
- *         a config event on every flip, including the unchanged
- *         case — useful for the audit trail.
+ *         What it does (#2763): reads the three slots the Diamond holds
+ *         now and compares them with the resolved targets.
+ *           - All three already match: it says so and sends nothing.
+ *           - Any differs, and the admin holds ADMIN_ROLE: it sends the
+ *             setter for each slot that differs, INCLUDING a write of
+ *             zero. A chain whose targets are all zero therefore has its
+ *             stale factories cleared, where until #2763 the script
+ *             printed "skipping" and left them in place.
+ *           - Any differs, and the admin does not hold ADMIN_ROLE (after
+ *             the governance handover, the Timelock holds it): it sends
+ *             nothing and refuses, carrying the target and the calldata
+ *             of each setter that differs, to be proposed through the
+ *             Timelock.
+ *
+ *         Idempotent: a second run on the same chain finds the slots
+ *         matching and sends nothing.
  *
  *         Once flipped, the V2 leg of `OracleFacet.getLiquidityTier`
  *         starts contributing on next read. No facet diamond-cut
  *         needed — the route search reads storage live per call.
  */
-contract ConfigureV2Factories is Script {
+contract ConfigureV2Factories is Script, ArtifactRootBase {
     // ─── Canonical V2-fork factory addresses per chain ────────────
     //
     // Uniswap V2: official deployment on Ethereum + Base. Sushiswap V2:
@@ -156,38 +172,83 @@ contract ConfigureV2Factories is Script {
         address diamond = Deployments.readDiamond();
         require(diamond != address(0), "diamond not deployed on this chain");
 
-        (address uni, address sushi, address pancake) = _resolvedFactories();
+        address[3] memory target;
+        (target[0], target[1], target[2]) = _resolvedFactories();
+        AdminFacet admin = AdminFacet(diamond);
+        address[3] memory current = [
+            admin.getUniswapV2Factory(),
+            admin.getSushiswapV2Factory(),
+            admin.getPancakeswapV2Factory()
+        ];
 
         console.log("ConfigureV2Factories");
         console.log("  chainId    :", block.chainid);
         console.log("  diamond    :", diamond);
-        console.log("  uniV2      :", uni);
-        console.log("  sushiV2    :", sushi);
-        console.log("  pancakeV2  :", pancake);
+        _logSlot("uniV2      :", current[0], target[0]);
+        _logSlot("sushiV2    :", current[1], target[1]);
+        _logSlot("pancakeV2  :", current[2], target[2]);
 
-        // If the chain has no V2 forks configured (a testnet that
-        // doesn't host any V2 deployment, or a mainnet operator who
-        // explicitly disabled all three), skip the broadcast. The
-        // setters would emit 3 events writing zeros — semantically a
-        // no-op (storage already zero by default) but wasted gas +
-        // tx-history noise. Reporting + exit-0 is the clean UX.
-        if (uni == address(0) && sushi == address(0) && pancake == address(0)) {
-            console.log("  no V2 factories configured for this chain - skipping");
-            console.log("  (route search stays V3-only on this chain)");
+        bytes[] memory calls = _settersFor(current, target);
+        if (calls.length == 0) {
+            console.log("  all three slots already match - nothing to send");
             return;
         }
 
-        uint256 signerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        vm.startBroadcast(signerKey);
+        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
+        address signer = vm.addr(adminKey);
+        if (!AccessControlFacet(diamond).hasRole(LibAccessControl.ADMIN_ROLE, signer)) {
+            // After the handover the Timelock holds ADMIN_ROLE, so the
+            // change is a proposal, not a broadcast. The calldata rides in
+            // the revert so it reaches the operator however the run is
+            // reported.
+            string memory proposal;
+            for (uint256 i = 0; i < calls.length; i++) {
+                proposal = string.concat(proposal, " [", vm.toString(i + 1), "] ", vm.toString(calls[i]));
+            }
+            revert(
+                string.concat(
+                    "ConfigureV2Factories: ",
+                    vm.toString(signer),
+                    " does not hold ADMIN_ROLE on ",
+                    vm.toString(diamond),
+                    ", so nothing was sent. Propose these calls to that Diamond through the Timelock:",
+                    proposal
+                )
+            );
+        }
 
-        // Each setter emits a config event so the change is publicly
-        // observable. Re-applies are idempotent at the storage level.
-        AdminFacet(diamond).setUniswapV2Factory(uni);
-        AdminFacet(diamond).setSushiswapV2Factory(sushi);
-        AdminFacet(diamond).setPancakeswapV2Factory(pancake);
-
+        vm.startBroadcast(adminKey);
+        // Each setter emits its config event. A zero target is written
+        // like any other, so a stale factory is cleared, not skipped.
+        if (current[0] != target[0]) admin.setUniswapV2Factory(target[0]);
+        if (current[1] != target[1]) admin.setSushiswapV2Factory(target[1]);
+        if (current[2] != target[2]) admin.setPancakeswapV2Factory(target[2]);
         vm.stopBroadcast();
 
-        console.log("  done");
+        console.log("  setters sent:", calls.length);
+    }
+
+    /// @dev The setter calldata for each slot whose current value differs
+    ///      from its target, in uni / sushi / pancake order: the same calls
+    ///      `run()` broadcasts, so a Timelock proposal matches a direct run.
+    function _settersFor(address[3] memory current, address[3] memory target)
+        internal
+        pure
+        returns (bytes[] memory calls)
+    {
+        bytes[3] memory all = [
+            abi.encodeCall(AdminFacet.setUniswapV2Factory, (target[0])),
+            abi.encodeCall(AdminFacet.setSushiswapV2Factory, (target[1])),
+            abi.encodeCall(AdminFacet.setPancakeswapV2Factory, (target[2]))
+        ];
+        uint256 n;
+        for (uint256 i = 0; i < 3; i++) if (current[i] != target[i]) n++;
+        calls = new bytes[](n);
+        n = 0;
+        for (uint256 i = 0; i < 3; i++) if (current[i] != target[i]) calls[n++] = all[i];
+    }
+
+    function _logSlot(string memory label, address current, address target) internal pure {
+        console.log(string.concat("  ", label, " ", vm.toString(current), " -> ", vm.toString(target)));
     }
 }
