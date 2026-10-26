@@ -49,10 +49,12 @@ import {OracleFacet} from "../facets/OracleFacet.sol";
  *         meet or exceed, never the figure itself.
  */
 library LibDiscountedLiquidation {
-    /// @notice Why a discounted liquidation of a loan can or cannot run now,
-    ///         in the order the liquidation checks them. Values are
-    ///         append-only. {Ready} is not the zero value, so an unset
-    ///         reading never says the liquidation can run.
+    /// @notice Why a discounted liquidation of a loan can or cannot run now.
+    ///         Values are append-only, so a value added later sits after
+    ///         {Ready} and the order is not the check order: the liquidation
+    ///         checks {InternalMatchWindow} right after {Healthy}. {Ready} is
+    ///         not the zero value, so an unset reading never says the
+    ///         liquidation can run.
     enum Status {
         Paused, // the protocol is paused (manually or by an auto-pause window)
         Disabled, // the protocol's discount-path switch is off
@@ -61,7 +63,8 @@ library LibDiscountedLiquidation {
         Healthy, // Health Factor at or above 1
         Untiered, // the collateral has no liquidity tier, so no discount
         Unpriced, // an oracle leg is unavailable, so no seizure can be sized
-        Ready // every check above passed; the figures are the liquidation's
+        Ready, // every check passed; the figures are the liquidation's
+        InternalMatchWindow // #2734: the loan is inside the internal-match priority window
     }
 
     /// @notice A discounted liquidation of one loan, as it would run now.

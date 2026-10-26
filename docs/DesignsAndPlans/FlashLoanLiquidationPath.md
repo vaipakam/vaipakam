@@ -222,8 +222,15 @@ on HF < liquidation_threshold detected:
                    same transaction, #2697 — never estimated off-chain)
                 b. approve diamond for totalDebt, cleared after the call
                 c. diamond.triggerLiquidationDiscounted(loanId, bot, "")
-                d. swap the previewed seizure → principal on best DEX
-                   (the quote is built for exactly that amount)
+                   (refused inside the internal-match priority window,
+                   #2734; the preview names that status first)
+                d. sell the previewed seizure → principal through one
+                   of the Diamond's registered, enabled swap adapters
+                   (#2734), the quote built for exactly that amount with
+                   the adapter as taker; the receiver approves only the
+                   adapter, which pins the allowance target and checks
+                   the call target against its allow-list, and asks it
+                   for at least debt + fee + minProfit
                 e. repay flash-loan + fee from swap proceeds
                 f. keep net profit, at least the tx's own fee in
                    principal units (minProfit), or revert

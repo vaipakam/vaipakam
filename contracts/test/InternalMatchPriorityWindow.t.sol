@@ -10,6 +10,9 @@ import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {liquidationQuote} from "./helpers/ForcedSaleQuote.sol";
+import {LibInternalMatchPriority} from "../src/libraries/LibInternalMatchPriority.sol";
+import {LibDiscountedLiquidation} from "../src/libraries/LibDiscountedLiquidation.sol";
+import {ForcedSaleFacet} from "../src/facets/ForcedSaleFacet.sol";
 
 /**
  * @title InternalMatchPriorityWindow.t.sol
@@ -131,7 +134,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes4 selector = bytes4(reason);
             require(
-                selector != RiskFacet.InternalMatchOnlyBand.selector,
+                selector != LibInternalMatchPriority.InternalMatchOnlyBand.selector,
                 "kill-switch off should not trigger the priority-window gate"
             );
         }
@@ -152,7 +155,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
         uint256 sellQuote = liquidationQuote(address(diamond), LOAN_ID);
         vm.expectRevert(
             abi.encodeWithSelector(
-                RiskFacet.InternalMatchOnlyBand.selector,
+                LibInternalMatchPriority.InternalMatchOnlyBand.selector,
                 uint256(8_600),
                 uint256(8_700)
             )
@@ -182,7 +185,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes4 selector = bytes4(reason);
             require(
-                selector != RiskFacet.InternalMatchOnlyBand.selector,
+                selector != LibInternalMatchPriority.InternalMatchOnlyBand.selector,
                 "LTV at window ceiling should not trigger the gate"
             );
         }
@@ -209,7 +212,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes4 selector = bytes4(reason);
             require(
-                selector != RiskFacet.InternalMatchOnlyBand.selector,
+                selector != LibInternalMatchPriority.InternalMatchOnlyBand.selector,
                 "LTV above window should not trigger the gate"
             );
         }
@@ -233,7 +236,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
         uint256 sellQuote = liquidationQuote(address(diamond), LOAN_ID);
         vm.expectRevert(
             abi.encodeWithSelector(
-                RiskFacet.InternalMatchOnlyBand.selector,
+                LibInternalMatchPriority.InternalMatchOnlyBand.selector,
                 uint256(8_900),
                 uint256(9_000)
             )
@@ -281,7 +284,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                RiskFacet.InternalMatchOnlyBand.selector,
+                LibInternalMatchPriority.InternalMatchOnlyBand.selector,
                 uint256(8_600),
                 uint256(8_700)
             )
@@ -308,7 +311,7 @@ contract InternalMatchPriorityWindowTest is SetupTest {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                RiskFacet.InternalMatchOnlyBand.selector,
+                LibInternalMatchPriority.InternalMatchOnlyBand.selector,
                 uint256(8_600),
                 uint256(8_700)
             )
@@ -316,5 +319,73 @@ contract InternalMatchPriorityWindowTest is SetupTest {
         RiskSplitLiquidationFacet(address(diamond)).triggerLiquidationSplit(
             LOAN_ID, new LibSwap.SplitCall[](0)
         );
+    }
+
+    /// @notice #2734 — the discounted liquidation seizes collateral for an
+    ///         outside liquidator, so it defers to the window like every
+    ///         other external route, through the same rule.
+    function test_discounted_killSwitchOn_ltvBelowWindowCeiling_reverts() public {
+        vm.startPrank(owner);
+        ConfigFacet(address(diamond)).setInternalMatchEnabled(true);
+        ConfigFacet(address(diamond)).setDiscountPathEnabled(true);
+        vm.stopPrank();
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, LOAN_ID),
+            abi.encode(uint256(8_600))
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibInternalMatchPriority.InternalMatchOnlyBand.selector,
+                uint256(8_600),
+                uint256(8_700)
+            )
+        );
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(LOAN_ID, address(this), "");
+    }
+
+    /// @notice #2734 — the discounted liquidation's preview reads the same
+    ///         rule, so a keeper reading it never plans a run the liquidation
+    ///         would refuse. Above the ceiling the window no longer applies.
+    function test_discountedPreview_namesTheWindow() public {
+        vm.startPrank(owner);
+        ConfigFacet(address(diamond)).setInternalMatchEnabled(true);
+        ConfigFacet(address(diamond)).setDiscountPathEnabled(true);
+        vm.stopPrank();
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, LOAN_ID),
+            abi.encode(uint256(8_600))
+        );
+        LibDiscountedLiquidation.Preview memory p =
+            ForcedSaleFacet(address(diamond)).previewDiscountedLiquidation(LOAN_ID);
+        assertEq(
+            uint8(p.status), uint8(LibDiscountedLiquidation.Status.InternalMatchWindow), "in window"
+        );
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, LOAN_ID),
+            abi.encode(uint256(8_700))
+        );
+        p = ForcedSaleFacet(address(diamond)).previewDiscountedLiquidation(LOAN_ID);
+        assertTrue(
+            p.status != LibDiscountedLiquidation.Status.InternalMatchWindow, "at the ceiling the window is over"
+        );
+    }
+
+    /// @notice With the switch off the discounted route never asks the LTV.
+    function test_discounted_killSwitchOff_windowNotConsulted() public {
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setDiscountPathEnabled(true);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, LOAN_ID),
+            abi.encode(uint256(8_600))
+        );
+        LibDiscountedLiquidation.Preview memory p =
+            ForcedSaleFacet(address(diamond)).previewDiscountedLiquidation(LOAN_ID);
+        assertTrue(p.status != LibDiscountedLiquidation.Status.InternalMatchWindow, "switch off");
     }
 }
