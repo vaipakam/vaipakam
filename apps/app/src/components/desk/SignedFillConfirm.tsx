@@ -25,7 +25,7 @@
  * submit preflights re-check that funding live so a taker never pays
  * gas into `SignedOfferInsufficientFreeBalance`.
  */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { CircleCheck } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
@@ -45,6 +45,8 @@ import {
 } from '../../contracts/preflights';
 import { assertWalletNotSanctionedLive } from '../../data/sanctions';
 import { ConsentLabel } from '../ConsentLabel';
+import { LifecycleTermsList } from '../LifecycleTermsList';
+import { reviewedTermsFromOrder } from '../../contracts/acceptReview';
 import {
   FullTariffOptIn,
   FULL_TARIFF_OFF,
@@ -83,6 +85,10 @@ export function SignedFillConfirm({
   const signTerms = useSignedOfferAcceptTermsSigning();
 
   const o = signed.order;
+  // #2725 — every term the fill signature binds, built from the order this
+  // card displays; the lifecycle rows below render from it and the signer
+  // refuses to sign anything else.
+  const reviewed = useMemo(() => reviewedTermsFromOrder(o), [o]);
   const isLenderOrder = Number(o.offerType) === 0;
   // The taker's escrowed leg (see the header note). Role amount for a
   // borrower order is its `amount` (the direct-accept headline the
@@ -249,6 +255,7 @@ export function SignedFillConfirm({
       // legs, risk-terms hash) BEFORE the wallet is asked to sign.
       const { payload, orderHash } = await signTerms.sign({
         order: o,
+        reviewed,
         consent,
         // #1355 — undefined (⇒ non-Full) unless the taker engaged it.
         fullTariff: fullTariff.full ? fullTariff : undefined,
@@ -414,6 +421,8 @@ export function SignedFillConfirm({
             )
           : '…'}
       </p>
+
+      <LifecycleTermsList terms={reviewed} />
 
       {Number(o.assetType) === 0 ? (
         // #1355 — ERC-20 fills only (a rental order bears no tariff).

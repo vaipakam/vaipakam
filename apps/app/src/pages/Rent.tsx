@@ -22,8 +22,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CircleCheck, Images, KeyRound, LoaderCircle } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { useQueryClient } from '@tanstack/react-query';
-import { encodeFunctionData } from 'viem';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { encodeFunctionData, type Address } from 'viem';
 import { copy } from '../content/copy';
 import {
   disablePermit2ForSession,
@@ -38,6 +38,12 @@ import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { SimulationPreview } from '../components/SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
+import {
+  lifecycleFromOffer,
+  type LifecycleTerms,
+  type ReviewedAcceptTerms,
+} from '../contracts/acceptReview';
+import { LifecycleTermsList } from '../components/LifecycleTermsList';
 import { ensureAllowance, isAddressLike, useTokenBalance, useTokenMeta } from '../contracts/erc20';
 import {
   makeStepper,
@@ -54,6 +60,7 @@ import {
   verdictFingerprint,
 } from '../data/tokenSecurity';
 import { flowDisabled } from '../lib/killSwitch';
+import { idleAware } from '../lib/idle';
 import {
   ensureNftApproval,
   readNftOwnershipLive,
@@ -722,6 +729,7 @@ function RentNftFlow() {
   const { address, walletChain, readChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+  const readClient = usePublicClient({ chainId: readChain.chainId });
   const { write } = useDiamondWrite();
   const permit2 = usePermit2Signing();
   const { sign: signAcceptTerms } = useAcceptTermsSigning();
@@ -934,11 +942,66 @@ function RentNftFlow() {
     };
   }, [selected, prepayMeta.data, totalPrepay, bufferBps]);
 
+  // #2725 — the lifecycle terms the accept signature binds, read LIVE from
+  // the listing (the indexer row carries only some of them) together with
+  // its linked loan. The review lists every one and the signer compares each
+  // against what it signs. A failed refresh counts as unread.
+  const rentLifecycleQuery = useQuery({
+    queryKey: ['offerLifecycle', readChain.chainId, selected?.offerId, 'rent'],
+    enabled: step === 'review' && Boolean(readClient) && Boolean(selected),
+    staleTime: 30_000,
+    refetchInterval: idleAware(60_000),
+    queryFn: async () => {
+      const offerId = BigInt(selected!.offerId);
+      const [o, linked] = await Promise.all([
+        readClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getOffer',
+          args: [offerId],
+        }) as Promise<Record<string, unknown>>,
+        readClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getOfferLinkedLoanId',
+          args: [offerId],
+        }) as Promise<bigint>,
+      ]);
+      return lifecycleFromOffer(o, linked);
+    },
+  });
+  const rentLifecycle: LifecycleTerms | undefined = rentLifecycleQuery.isError
+    ? undefined
+    : rentLifecycleQuery.data;
+  // Consent is given against the terms on screen: when the listed terms
+  // change (first arrival included), the tick does not carry over. Adjusted
+  // during render, like OfferFlow's assertion epoch, so no frame can sign
+  // against consent that predates the change.
+  const rentLifecycleFp = rentLifecycle
+    ? [
+        rentLifecycle.useFullTermInterest,
+        rentLifecycle.allowsPartialRepay,
+        rentLifecycle.allowsPrepayListing,
+        rentLifecycle.allowsParallelSale,
+        rentLifecycle.periodicInterestCadence,
+        rentLifecycle.refinanceTargetLoanId,
+        rentLifecycle.linkedLoanId,
+        rentLifecycle.parallelSaleOrderHash,
+      ].join(':')
+    : 'pending';
+  const [seenRentLifecycleFp, setSeenRentLifecycleFp] = useState(rentLifecycleFp);
+  if (seenRentLifecycleFp !== rentLifecycleFp) {
+    setSeenRentLifecycleFp(rentLifecycleFp);
+    if (consent) setConsent(false);
+  }
+
   // #1028 — operator kill switch (position-opening flows only).
   const killed = flowDisabled('nft-rent');
   const canSign =
     allChecksPass(checks) &&
     receipt !== null &&
+    // #2725 — every lifecycle term the signature binds has been read and shown.
+    rentLifecycle !== undefined &&
     Boolean(walletClient) &&
     Boolean(publicClient) &&
     !prepaySecBlocked &&
@@ -1059,30 +1122,50 @@ function RentNftFlow() {
           throw new Error(copy.tokenSecurity.gateChanged(copy.rent.prepaymentTokenLabel));
         }
       }
+      // #2725 — EVERY term the signature binds, as this review showed it; the
+      // signer compares each against the canonical terms before the wallet
+      // prompt.
+      if (!rentLifecycle) {
+        throw new Error(copy.match.termsChanged);
+      }
+      const reviewedRentTerms: ReviewedAcceptTerms = {
+        offerCreator: selected.creator as Address,
+        offerType: selected.offerType,
+        lendingAsset: selected.lendingAsset as Address,
+        collateralAsset: selected.collateralAsset as Address,
+        amount: BigInt(selected.amount),
+        collateralAmount: BigInt(selected.collateralAmount),
+        interestRateBps: BigInt(selected.interestRateBps),
+        durationDays: BigInt(selected.durationDays),
+        tokenId: BigInt(selected.tokenId),
+        collateralTokenId: BigInt(selected.collateralTokenId),
+        quantity: BigInt(selected.quantity || '1'),
+        collateralQuantity: BigInt(selected.collateralQuantity),
+        assetType: selected.assetType,
+        collateralAssetType: selected.collateralAssetType,
+        prepayAsset: selected.prepayAsset as Address,
+        ...rentLifecycle,
+        // #2728 — the rental review discloses the NFT leg's own model up
+        // front (it stays in custody, fees are prepaid, nothing is
+        // liquidated on price), so that leg is acknowledged. The review
+        // shows no collateral leg, so none is acknowledged: a listing whose
+        // collateral reads illiquid is refused before signing rather than
+        // signed against a disclosure the renter never saw.
+        illiquidLegs: { lending: true, collateral: false },
+      };
       let signed: Awaited<ReturnType<typeof signAcceptTerms>>;
       try {
         stepper.next('sign');
         signed = await signAcceptTerms({
           offerId: BigInt(selected.offerId),
           consent,
-          expected: {
-            lendingAsset: selected.lendingAsset,
-            prepayAsset: selected.prepayAsset,
-            amount: BigInt(selected.amount),
-            durationDays: selected.durationDays,
-            tokenId: BigInt(selected.tokenId),
-            quantity: BigInt(selected.quantity || '1'),
-            assetType: selected.assetType,
-            // Rentals disclose their own model up front (NFT custody,
-            // prepaid fees, no price-based liquidation) — the illiquid
-            // re-check is for ERC-20 loan pairs.
-            illiquidWarned: true,
-          },
+          expected: reviewedRentTerms,
         });
       } catch (err) {
         if (err instanceof Error && err.message === copy.match.termsChanged) {
           void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
           void queryClient.invalidateQueries({ queryKey: ['offer'] });
+          void queryClient.invalidateQueries({ queryKey: ['offerLifecycle'] });
         }
         throw err;
       }
@@ -1333,6 +1416,24 @@ function RentNftFlow() {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">{copy.rent.preparingReview}</p>}
+            {rentLifecycle ? (
+              <LifecycleTermsList terms={rentLifecycle} />
+            ) : rentLifecycleQuery.isError ? (
+              <div className="banner banner-warn" role="alert">
+                <span className="banner-body">{copy.acceptTerms.checkFailed}</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => void rentLifecycleQuery.refetch()}
+                >
+                  {copy.offerFlow.retry}
+                </button>
+              </div>
+            ) : (
+              <p className="muted" style={{ margin: 0 }}>
+                {copy.acceptTerms.checking}
+              </p>
+            )}
             {prepaySecBlocked ? (
               <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
                 <span className="banner-body">

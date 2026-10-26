@@ -27,7 +27,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { CircleCheck, LoaderCircle, Search } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { encodeFunctionData } from 'viem';
+import { encodeFunctionData, type Address } from 'viem';
 import { useActiveChain } from '../chain/useActiveChain';
 import { getSupportedChain } from '../chain/chains';
 import { useMode } from '../app/ModeContext';
@@ -107,6 +107,13 @@ import {
 } from '../lib/errors';
 import { copy } from '../content/copy';
 import { ConsentLabel } from './ConsentLabel';
+import { LifecycleTermsList } from './LifecycleTermsList';
+import {
+  lifecycleFromOffer,
+  type LifecycleTerms,
+  type ReviewedAcceptTerms,
+  type ReviewedIlliquidLegs,
+} from '../contracts/acceptReview';
 import {
   FullTariffOptIn,
   FULL_TARIFF_OFF,
@@ -698,6 +705,43 @@ export function OfferFlow({ side }: { side: Side }) {
     offsetData === undefined ? undefined : offsetReviewBlock(offsetData);
   const offsetReviewReady = acceptIsOffset && offsetBlock === null;
 
+  // #2725 — the lifecycle terms the accept signature binds (interest mode,
+  // schedule, partial repay, prepay listing, parallel sale, a live listing,
+  // a refinance target, the linked loan), read LIVE from the offer — the
+  // indexer row carries only some of them. The review lists every one
+  // (`LifecycleTermsList`) and the signer compares each against what it is
+  // about to sign, so the user never signs a lifecycle term they were not
+  // shown. A failed refresh counts as unread, like the other live reviews.
+  const offerLifecycleKey = [
+    'offerLifecycle',
+    readChain.chainId,
+    selected?.offerId,
+    linkedLoan.data,
+  ];
+  const offerLifecycle = useQuery({
+    queryKey: offerLifecycleKey,
+    enabled:
+      mode === 'accept' &&
+      Boolean(readClient) &&
+      Boolean(selected) &&
+      linkedLoan.data !== undefined,
+    staleTime: 30_000,
+    refetchInterval: idleAware(60_000),
+    queryFn: async () => {
+      const o = (await readClient!.readContract({
+        address: readChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getOffer',
+        args: [BigInt(selected!.offerId)],
+      })) as Record<string, unknown>;
+      return lifecycleFromOffer(o, BigInt(linkedLoan.data!));
+    },
+  });
+  const lifecycle: LifecycleTerms | undefined = offerLifecycle.isError
+    ? undefined
+    : offerLifecycle.data;
+  const lifecycleKnown = mode !== 'accept' || lifecycle !== undefined;
+
   const lockedAmount = useMemo(() => {
     if (mode === 'accept' && selected) {
       if (side === 'borrower') return BigInt(selected.collateralAmount);
@@ -948,10 +992,10 @@ export function OfferFlow({ side }: { side: Side }) {
   // re-review that still shows no warning — an inescapable loop), and
   // indexer-united because a live blip must not hide a warning the
   // row already carries.
-  const indexerSaysIlliquid =
-    mode === 'accept' &&
-    selected !== null &&
-    (selected.principalLiquidity === 1 || selected.collateralLiquidity === 1);
+  const indexerLendingIlliquid =
+    mode === 'accept' && selected !== null && selected.principalLiquidity === 1;
+  const indexerCollateralIlliquid =
+    mode === 'accept' && selected !== null && selected.collateralLiquidity === 1;
   const liqLegA = mode === 'post' ? form.lendingAsset : (selected?.lendingAsset ?? '');
   const liqLegB =
     mode === 'post' ? form.collateralAsset : (selected?.collateralAsset ?? '');
@@ -983,14 +1027,20 @@ export function OfferFlow({ side }: { side: Side }) {
           failClosed: true,
         }),
       ]);
-      return lending || collateral;
+      // Per leg (#2728): the signer acknowledges exactly the legs the
+      // review showed as illiquid, so the review must know which.
+      return { lending, collateral };
     },
   });
   // The liquidity answer gates a DISCLOSURE — signing waits until it
   // is known (in accept mode the indexer flags alone don't count:
   // they can lag the chain in BOTH directions).
   const liquidityKnown = legLiquidity.data !== undefined;
-  const reviewIsIlliquid = indexerSaysIlliquid || legLiquidity.data === true;
+  const reviewIlliquidLegs: ReviewedIlliquidLegs = {
+    lending: indexerLendingIlliquid || legLiquidity.data?.lending === true,
+    collateral: indexerCollateralIlliquid || legLiquidity.data?.collateral === true,
+  };
+  const reviewIsIlliquid = reviewIlliquidLegs.lending || reviewIlliquidLegs.collateral;
 
   // The liquidity query resolves asynchronously — if the illiquid
   // warning appears AFTER the user already ticked consent, that
@@ -1205,7 +1255,10 @@ export function OfferFlow({ side }: { side: Side }) {
           : '';
         // The offer's interest MODE changes what early repayment costs
         // — state it in the consent text (ProjectDetailsREADME).
-        const acceptModeNote = interestModeNote(selected.useFullTermInterest, side);
+        // #2725 — from the LIVE offer, the same value the lifecycle list
+        // shows and the signer binds; no receipt until it is read.
+        if (!lifecycle) return null;
+        const acceptModeNote = interestModeNote(lifecycle.useFullTermInterest, side);
 
         if (side === 'borrower') {
           // #2523 — an offset offer's terms ARE the taker's loan, so the
@@ -1307,6 +1360,7 @@ export function OfferFlow({ side }: { side: Side }) {
     refinanceKnown,
     refinanceBlocked,
     refinanceInfo,
+    lifecycle,
   ]);
 
   const isOwnSelectedOffer =
@@ -1454,6 +1508,23 @@ export function OfferFlow({ side }: { side: Side }) {
           : '?'
     }`,
     `sale:${saleFingerprint ?? ''}`,
+    // #2725 — the lifecycle terms the review lists and the signature binds.
+    `life:${
+      lifecycle
+        ? [
+            lifecycle.useFullTermInterest,
+            lifecycle.allowsPartialRepay,
+            lifecycle.allowsPrepayListing,
+            lifecycle.allowsParallelSale,
+            lifecycle.periodicInterestCadence,
+            lifecycle.refinanceTargetLoanId,
+            lifecycle.linkedLoanId,
+            lifecycle.parallelSaleOrderHash,
+          ].join(':')
+        : mode === 'accept'
+          ? 'pending'
+          : '0'
+    }`,
     // #1679 r1 F1 — these settle ASYNCHRONOUSLY. While they are pending the
     // receipt shows fallback numbers and `fees.ready`/`grace.ready` hold the
     // button closed; when the live values land, the receipt and the gate
@@ -1564,6 +1635,8 @@ export function OfferFlow({ side }: { side: Side }) {
     // unmatured, seller settlement funding covered); an OFFSET link once
     // its own review is (#2523, below); any other link never signs here.
     linkedLoanKnown &&
+    // #2725 — every lifecycle term the signature binds has been read and shown.
+    lifecycleKnown &&
     (!acceptIsLoanSale || saleReviewReady) &&
     // #2523 — an OFFSET link signs once its own review is positively clear
     // (earlier loan active, term fits, no swap order, poster funded). A
@@ -1998,6 +2071,34 @@ export function OfferFlow({ side }: { side: Side }) {
       if (acceptIsLoanSale && !saleReviewed) {
         throw new Error(copy.match.termsChanged);
       }
+      // #2725 — the lifecycle terms the review listed; without them there is
+      // nothing reviewed to compare the signature against.
+      if (!lifecycle) {
+        throw new Error(copy.match.termsChanged);
+      }
+      const reviewedAcceptTerms: ReviewedAcceptTerms = {
+        offerCreator: selected.creator as Address,
+        offerType: selected.offerType,
+        lendingAsset: selected.lendingAsset as Address,
+        collateralAsset: selected.collateralAsset as Address,
+        amount: saleReviewed ? saleReviewed.principal : offerPrincipal(selected),
+        collateralAmount: saleReviewed
+          ? saleReviewed.collateralAmount
+          : BigInt(selected.collateralAmount),
+        interestRateBps: BigInt(offerRateBps(selected)),
+        durationDays: saleReviewed
+          ? BigInt(saleReviewed.durationDays)
+          : BigInt(selected.durationDays),
+        tokenId: BigInt(selected.tokenId),
+        collateralTokenId: BigInt(selected.collateralTokenId),
+        quantity: BigInt(selected.quantity),
+        collateralQuantity: BigInt(selected.collateralQuantity),
+        assetType: selected.assetType,
+        collateralAssetType: selected.collateralAssetType,
+        prepayAsset: selected.prepayAsset as Address,
+        ...lifecycle,
+        illiquidLegs: reviewIlliquidLegs,
+      };
       if (saleReviewed) {
         // The review's settlement/maturity/status gates ran on a CACHED
         // read — the loan can move inside the refetch window, and the
@@ -2138,27 +2239,11 @@ export function OfferFlow({ side }: { side: Side }) {
         // #1355 — the review screen's Full tariff opt-in. Undefined
         // (⇒ non-Full) unless the user engaged the control.
         fullTariff: fullTariff.full ? fullTariff : undefined,
-        expected: {
-          lendingAsset: selected.lendingAsset,
-          collateralAsset: selected.collateralAsset,
-          amount: saleReviewed ? saleReviewed.principal : offerPrincipal(selected),
-          interestRateBps: BigInt(offerRateBps(selected)),
-          collateralAmount: saleReviewed
-            ? saleReviewed.collateralAmount
-            : BigInt(selected.collateralAmount),
-          durationDays: saleReviewed
-            ? Number(saleReviewed.durationDays)
-            : selected.durationDays,
-          // The interest MODE the reviewed consent line described — a
-          // stale indexer flag must abort before the wallet prompt
-          // like any other reviewed term.
-          useFullTermInterest: selected.useFullTermInterest,
-          // What the review actually SHOWED (indexer flags ∪ live
-          // read). If a leg flips illiquid between review and sign,
-          // the signer aborts and the re-review — live-driven — now
-          // renders the warning, so consent can be re-given against it.
-          illiquidWarned: reviewIsIlliquid,
-        },
+        // #2725 — EVERY term the signature binds, as this review showed it.
+        // The signer compares each against the canonical terms before the
+        // wallet prompt; #2728 — and acknowledges only the legs shown here
+        // as illiquid.
+        expected: reviewedAcceptTerms,
       });
     } catch (err) {
       if (err instanceof Error && err.message === copy.match.termsChanged) {
@@ -2171,6 +2256,7 @@ export function OfferFlow({ side }: { side: Side }) {
         // against the same stale review.
         void queryClient.invalidateQueries({ queryKey: ['offerSaleReview'] });
         void queryClient.invalidateQueries({ queryKey: ['offerLinkedLoan'] });
+        void queryClient.invalidateQueries({ queryKey: ['offerLifecycle'] });
       }
       throw err;
     }
@@ -2978,6 +3064,28 @@ export function OfferFlow({ side }: { side: Side }) {
           </div>
           <div className="card">
             {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">{copy.offerFlow.preparingReview}</p>}
+            {mode === 'accept' ? (
+              lifecycle ? (
+                <LifecycleTermsList terms={lifecycle} />
+              ) : offerLifecycle.isError ? (
+                // Same dead-Sign-button rule as the other live checks: name
+                // the blocked check and offer the retry.
+                <div className="banner banner-warn" role="alert">
+                  <span className="banner-body">{copy.acceptTerms.checkFailed}</span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => void offerLifecycle.refetch()}
+                  >
+                    {copy.offerFlow.retry}
+                  </button>
+                </div>
+              ) : (
+                <p className="muted" style={{ margin: 0 }}>
+                  {copy.acceptTerms.checking}
+                </p>
+              )
+            ) : null}
             {receipt ? (
               <SimulationPreview tx={simTx} result={preSign.result} />
             ) : null}
