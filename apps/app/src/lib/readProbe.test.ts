@@ -6,6 +6,8 @@ import {
   READ_PROBE_BINDING,
   READ_PROBE_VERSION,
   attachReadProbe,
+  indexerRoute,
+  probeIndexerRead,
   probeTransport,
   queryChainOf,
   readProbeErrorChain,
@@ -269,5 +271,71 @@ describe("queryChainOf", () => {
     const settled = kinds(events, "query-settled");
     expect(settled[0]).toMatchObject({ chainId: 1 });
     expect(settled[1]).not.toHaveProperty("chainId");
+  });
+});
+
+describe("probeIndexerRead (#2784)", () => {
+  const served = async () => ({ ok: true as const, value: { rows: ["0xsecret"] } });
+
+  it("runs the read unreported when no driver installed a report", async () => {
+    const host = {};
+    expect(await probeIndexerRead("/loans/7?chainId=84532", served, host)).toEqual({
+      ok: true,
+      value: { rows: ["0xsecret"] },
+    });
+    expect(host).toEqual({});
+  });
+
+  it("reports a served read once, by route and chain, never its values", async () => {
+    const { events, host } = driver();
+    await probeIndexerRead("/loans/by-participant/0xAbC0?chainId=84532&cursor=99", served, host);
+    expect(events).toEqual([
+      {
+        v: READ_PROBE_VERSION,
+        kind: "indexer-start",
+        seq: expect.any(Number),
+        route: "/loans/by-participant/:v?chainId=&cursor=",
+        chainId: 84532,
+      },
+      {
+        v: READ_PROBE_VERSION,
+        kind: "indexer-settled",
+        seq: (events[0] as { seq: number }).seq,
+        route: "/loans/by-participant/:v?chainId=&cursor=",
+        chainId: 84532,
+        ok: true,
+      },
+    ]);
+    const text = JSON.stringify(events);
+    expect(text).not.toContain("0xAbC0");
+    expect(text).not.toContain("99");
+    expect(text).not.toContain("secret");
+  });
+
+  it.each([
+    ["unconfigured", undefined],
+    ["timeout", undefined],
+    ["network", undefined],
+    ["http", 503],
+    ["body", undefined],
+  ] as const)("reports a read that failed with %s, and returns it unchanged", async (failure, status) => {
+    const { events, host } = driver();
+    const outcome = { ok: false as const, failure, ...(status === undefined ? {} : { status }) };
+    expect(await probeIndexerRead("/activity?chainId=421614", async () => outcome, host)).toBe(outcome);
+    expect(kinds(events, "indexer-settled")).toEqual([
+      expect.objectContaining({ ok: false, failure, chainId: 421614, ...(status ? { status } : {}) }),
+    ]);
+  });
+
+  it("names no chain for a path that names none", async () => {
+    const { events, host } = driver();
+    await probeIndexerRead("/offers/markets", served, host);
+    expect(events[0]).not.toHaveProperty("chainId");
+  });
+
+  it("keeps path words and query names, and replaces every value", () => {
+    expect(indexerRoute("/offers/active?chainId=1&limit=50&")).toBe("/offers/active?chainId=&limit=");
+    expect(indexerRoute("/offers/12?chainId=1")).toBe("/offers/:v?chainId=");
+    expect(indexerRoute("/signed-offers")).toBe("/signed-offers");
   });
 });

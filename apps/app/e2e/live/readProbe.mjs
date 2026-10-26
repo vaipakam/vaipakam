@@ -12,8 +12,9 @@
  * recovered retry read as an outage, and an exhausted read cleared by an
  * unrelated sibling read as served.
  *
- * The app knows, from two places, and reports both to a driver that
- * installed {@link READ_PROBE_BINDING} before load (`src/lib/readProbe.ts`):
+ * The app knows, from three places, and reports all of them to a driver
+ * that installed {@link READ_PROBE_BINDING} before load
+ * (`src/lib/readProbe.ts`):
  *
  *   - ITS RPC TRANSPORT reports each request once, with its method, when
  *     the request comes back after viem's retries and fallbacks. This is
@@ -23,6 +24,11 @@
  *   - ITS QUERY CACHE reports a query that settled in error once its
  *     retries were spent (a decode error, an exception in the query's own
  *     code), and a query waiting to retry, so the drive can wait for it.
+ *   - ITS INDEXER FETCH (`getJson`, #2784) reports each indexer read once,
+ *     by route, with why it was not served: no indexer configured, a
+ *     timeout, a network failure, a non-2xx status or a body that was not
+ *     JSON. `getJson` hands its caller `null` for all of them and the page
+ *     shows "unavailable", which the query cache records as a success.
  *
  * Both announce nothing until the app calls `armed` on load, so a build
  * without the report is told apart from a clean page.
@@ -35,6 +41,11 @@
  *     trusted (BLOCKED);
  *   - one whose cause is a reachable provider rejecting the request as
  *     malformed is a defect in what the page sent (FAIL);
+ *   - an indexer read that was not served, for any of the reasons above,
+ *     is UNSERVED too: the page built that part without indexer data, and
+ *     a silent fallback must not read as an empty-but-healthy result. A
+ *     non-2xx is not split into "the indexer answered" and "it did not":
+ *     the app's contract treats every one as "couldn't load";
  *   - one whose cause is the EVM answering (a revert) is information the
  *     app is expected to handle, and one the app cancelled itself is no
  *     failure to serve; both are reported, neither decides. A revert is an
@@ -58,16 +69,16 @@
  * have for a failed RPC, over the cause chain the app sends. Anything that
  * rule does not positively recognise as an answer is unserved.
  *
- * WHAT IT DOES NOT SEE: the indexer reads the app fetches outside both
- * (its `getJson` helper turns any failure into `null`). This drive has
- * never judged indexer availability; the gap is tracked as its own issue.
+ * An indexer read carries its chain only when its path names one in a
+ * `chainId` query; one that names none is judged against the observed
+ * chain, the rule a query follows.
  */
 import { EXECUTING_METHODS, classifyRpcFailure } from './rpc-verdict.mjs';
 
 /** The page global the app reports through (`src/lib/readProbe.ts`). */
 export const READ_PROBE_BINDING = '__vaipakamReadProbe';
 /** The one report shape this drive reads (`src/lib/readProbe.ts`). */
-export const READ_PROBE_VERSION = 1;
+export const READ_PROBE_VERSION = 2;
 
 /**
  * The app's cause chain as an error `classifyRpcFailure` can read: nested
@@ -146,6 +157,8 @@ const isChain = (c) => Array.isArray(c);
 const isCount = (n) => typeof n === 'number' && Number.isFinite(n);
 /** A query's chain is optional; when sent it must be a chain id. */
 const optionalChain = (c) => c === undefined || (Number.isSafeInteger(c) && c > 0);
+/** Why an indexer read was not served (`IndexerReadFailure` in the app). */
+const INDEXER_FAILURES = new Set(['unconfigured', 'timeout', 'network', 'http', 'body']);
 
 /**
  * A per-page record of what the app reported.
@@ -165,16 +178,19 @@ export function createReadProbe({
   const pageOf = (id) => {
     let p = pages.get(id);
     if (!p) {
-      p = { armed: 0, rpc: new Map(), retrying: new Map(), settled: [], refused: [] };
+      p = { armed: 0, rpc: new Map(), indexer: new Map(), retrying: new Map(), settled: [], refused: [] };
       pages.set(id, p);
     }
     return p;
   };
   const refuse = (p, event) =>
-    p.refused.push(`report kind ${JSON.stringify(event.kind)} carrying unexpected fields`);
+    p.refused.push(
+      `report kind ${JSON.stringify(event.kind)} carrying unexpected fields — update this drive to read it`,
+    );
   /** The page's reads that have not reached an outcome, as stable keys. */
   const pendingKeys = (p) => [
     ...[...p.rpc.entries()].filter(([, r]) => !r.done).map(([seq]) => `rpc:${seq}`),
+    ...[...p.indexer.entries()].filter(([, r]) => !r.done).map(([seq]) => `indexer:${seq}`),
     ...[...p.retrying.keys()].map((h) => `query:${h}`),
   ];
   return {
@@ -182,7 +198,15 @@ export function createReadProbe({
     record(id, event) {
       const p = pageOf(id);
       if (!event || typeof event !== 'object' || event.v !== READ_PROBE_VERSION) {
-        p.refused.push(`report version ${JSON.stringify(event?.v)} (this drive reads ${READ_PROBE_VERSION})`);
+        // An older build is named as one, so the remedy is a deploy, not a
+        // change to this drive (#2784 moved the version to 2).
+        const older = Number.isSafeInteger(event?.v) && event.v < READ_PROBE_VERSION;
+        p.refused.push(
+          `report version ${JSON.stringify(event?.v)} (this drive reads ${READ_PROBE_VERSION})` +
+            (older
+              ? ' — the deployed build predates this drive; deploy a current build, then re-run'
+              : ' — update this drive to read it'),
+        );
         return;
       }
       switch (event.kind) {
@@ -202,6 +226,25 @@ export function createReadProbe({
             done: true,
             ok: event.ok,
             error: event.ok ? null : event.error,
+          });
+          return;
+        }
+        case 'indexer-start':
+          if (!isCount(event.seq) || typeof event.route !== 'string' || !optionalChain(event.chainId)) break;
+          p.indexer.set(event.seq, { route: event.route, chainId: event.chainId ?? null, done: false });
+          return;
+        case 'indexer-settled': {
+          if (!isCount(event.seq) || typeof event.route !== 'string' || !optionalChain(event.chainId)) break;
+          if (typeof event.ok !== 'boolean') break;
+          if (!event.ok && !INDEXER_FAILURES.has(event.failure)) break;
+          if (event.status !== undefined && !isCount(event.status)) break;
+          p.indexer.set(event.seq, {
+            route: event.route,
+            chainId: event.chainId ?? null,
+            done: true,
+            ok: event.ok,
+            failure: event.ok ? null : event.failure,
+            status: event.status ?? null,
           });
           return;
         }
@@ -301,9 +344,19 @@ export function judgeReadProbe(page, { chainId = null } = {}) {
     if (offChain) out.elsewhere.push(line);
     else place(verdict, line);
   }
-  // A query names its chain only when its key does; one that names none
-  // is judged against the observed chain, never excused.
+  // A query names its chain only when its key does, and an indexer read
+  // only when its path does; one that names none is judged against the
+  // observed chain, never excused.
   const queryOffChain = (q) => chainId !== null && q.chainId !== null && q.chainId !== chainId;
+  for (const r of page?.indexer?.values() ?? []) {
+    if (r.done && r.ok) continue;
+    const line = r.done
+      ? `indexer GET ${r.route} — not served: ${r.failure}${r.status !== null ? ` (HTTP ${r.status})` : ''}`
+      : `indexer GET ${r.route} — still in flight when the page was judged`;
+    if (queryOffChain(r)) out.elsewhere.push(line);
+    else if (r.done) out.unserved.push(line);
+    else out.pending.push(line);
+  }
   for (const q of page?.retrying?.values() ?? []) {
     const line = `query ${q.queryKey} — still waiting to retry when the page was judged`;
     if (queryOffChain(q)) out.elsewhere.push(line);
