@@ -51,6 +51,29 @@
   },
   {
     "type": "function",
+    "name": "getFeedRegistryLookup",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "registry",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "padDenominator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "ethDenominator",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getPeerProtocolAddresses",
     "inputs": [],
     "outputs": [
