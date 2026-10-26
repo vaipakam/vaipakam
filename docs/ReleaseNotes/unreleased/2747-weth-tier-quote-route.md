@@ -1,4 +1,4 @@
-## Thread — WETH always has a liquidity-tier quote route (PR #TBD)
+## Thread — WETH always has a liquidity-tier quote route (PR #2890)
 
 The liquidity-tier search never quotes an asset against itself, so WETH can
 only be tiered through a quote asset other than WETH. A fresh Diamond's quote
