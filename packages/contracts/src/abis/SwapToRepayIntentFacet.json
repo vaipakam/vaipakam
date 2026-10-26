@@ -85,25 +85,17 @@
   },
   {
     "type": "function",
-    "name": "forceCancelIntentIfHFBelowOrRevert",
+    "name": "forceCancelIntentFor",
     "inputs": [
       {
         "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "forceCancelIntentIfPastDefaultOrRevert",
-    "inputs": [
+      },
       {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "reason",
+        "type": "uint8",
+        "internalType": "enum SwapToRepayIntentFacet.ForceCancelReason"
       }
     ],
     "outputs": [],
@@ -198,24 +190,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "internalForceCancelIntent",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "reason",
-        "type": "uint8",
-        "internalType": "enum SwapToRepayIntentFacet.ForceCancelReason"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
