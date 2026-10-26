@@ -48,8 +48,8 @@ interface IVaipakamPrepayContext {
         //    `asOfTimestamp`. The executor uses these as the live floor
         //    + grace + recipient bindings for the fill. Caller passes
         //    `block.timestamp` at fill time so the read is current.
-        uint256 lenderLeg;       // LibCollateralSettlement.principalPlusAccruedInterest
-        uint256 treasuryLeg;     // LibCollateralSettlement.treasuryAndPrecloseFee
+        uint256 lenderLeg;       // LibCollateralSettlement.saleLegs: principal + lender share
+        uint256 treasuryLeg;     // LibCollateralSettlement.saleLegs: treasury share
         uint256 graceEnd;        // startTime + duration*1d + LibVaipakam.gracePeriod
         address lenderNftOwner;  // VaipakamNFTFacet.ownerOf(loan.lenderTokenId)
         address borrowerNftOwner;// VaipakamNFTFacet.ownerOf(loan.borrowerTokenId)
@@ -66,9 +66,9 @@ interface IVaipakamPrepayContext {
     /// @notice Bundle every value the executor needs into a single view
     ///         call. Implementation on the diamond reads from
     ///         `LibVaipakam.storageSlot().loans[loanId]` + invokes
-    ///         `LibCollateralSettlement.principalPlusAccruedInterest`
-    ///         and `treasuryAndPrecloseFee` + reads `cfgTreasuryFeeBps`
-    ///         + reads `treasury` + resolves the lender / borrower NFT
+    ///         `LibCollateralSettlement.saleLegs` (the repayment split at
+    ///         `asOfTimestamp`, #2740) + reads `treasury` + resolves the
+    ///         lender / borrower NFT
     ///         current holders. Pure read; no state mutation.
     /// @param  loanId         Loan to look up.
     /// @param  asOfTimestamp  The block timestamp to evaluate

@@ -532,7 +532,7 @@ contract SwapToRepayIntentFacet is
 
         // ── §5.1 step 7: minOutput floor (Codex round-10 P1 #5 +
         //    round-11 P1 #3 — must add late fee on top of getPrepayContext) ─
-        uint256 minOut = _commitMinOut(loanId, endTime);
+        uint256 minOut = _commitMinOut(loanId);
 
         // ── §5.1 step 7b: size the auction lot to the debt (#2322) ──
         // The spec's full-close rule, shared with `swapToRepayFull`
@@ -1049,17 +1049,16 @@ contract SwapToRepayIntentFacet is
         uint256 endTime = LibLoanClock.maturity(loan);
         if (block.timestamp > endTime + LibVaipakam.gracePeriod(loan.durationDays))
             revert RepaymentPastGracePeriod();
-        (lot, minTakerAmount) = _sizeCommitLot(loan, _commitMinOut(loanId, endTime));
+        (lot, minTakerAmount) = _sizeCommitLot(loan, _commitMinOut(loanId));
     }
 
     /// @dev §5.1 step 7 — the least `takerAmount` a commit accepts: the live
-    ///      settlement floor (lender leg + treasury leg + late fee, Codex
-    ///      round-10 P1 #5 + round-11 P1 #3) grossed up by the auction buffer.
+    ///      settlement floor (`LibCollateralSettlement.liveFloor`: principal
+    ///      + interest + late fee, split between lender and treasury as a
+    ///      repayment splits it, #2740) grossed up by the auction buffer.
     ///      The ONE place the commit and its preview derive it from.
-    function _commitMinOut(uint256 loanId, uint256 endTime) private view returns (uint256) {
-        uint256 floor_ = LibCollateralSettlement.principalPlusAccruedInterest(loanId, block.timestamp)
-            + LibCollateralSettlement.treasuryAndPrecloseFee(loanId, block.timestamp)
-            + LibVaipakam.calculateLateFee(loanId);
+    function _commitMinOut(uint256 loanId) private view returns (uint256) {
+        uint256 floor_ = LibCollateralSettlement.liveFloor(loanId, block.timestamp);
         return (floor_ * (
             LibVaipakam.BASIS_POINTS + LibVaipakam.cfgIntentMinOutputBufferBpsEffective()
         )) / LibVaipakam.BASIS_POINTS;

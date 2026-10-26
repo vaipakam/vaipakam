@@ -158,15 +158,18 @@ Both rules apply:
 
 ### 5.2 Live-debt enforcement at the line-item level
 
-ERC-1271 (called by Seaport at match time) recomputes:
+ERC-1271 (called by Seaport at match time) recomputes the full-repayment split at that instant (`LibSettlement.computeRepayment`, read through `LibCollateralSettlement.saleLegs`, #2740):
 
 ```
-liveFloor(loanId, block.timestamp)
-    = principal + accruedInterest(block.timestamp)
-    + (treasuryFeeBps + precloseFeeBps) × accruedInterest(block.timestamp) / 10000
+owed        = settlementInterestNet(t) + lateFee(t)
+treasuryLeg = owed × treasuryFeeBps / 10000          (the loan's snapshotted rate)
+lenderLeg   = principal + owed − treasuryLeg
+liveFloor   = lenderLeg + treasuryLeg = principal + settlementInterestNet(t) + lateFee(t)
 ```
 
-The signed order's `consideration[0].endAmount` (lender amount) MUST be `≥ principal + accruedInterest(block.timestamp)`. The signed order's `consideration[1].endAmount` (treasury amount) MUST be `≥ (treasuryFeeBps + precloseFeeBps) × accruedInterest / 10000`. The total of `consideration[0] + consideration[1] + consideration[2]` (borrower remainder) MUST equal the order's signed price.
+The signed order's `consideration[0].endAmount` (lender amount) MUST be `≥ lenderLeg`. The signed order's `consideration[1].endAmount` (treasury amount) MUST be `≥ treasuryLeg`. The total of `consideration[0] + consideration[1] + consideration[2]` (borrower remainder) MUST equal the order's signed price.
+
+The treasury's share is a cut OF the interest and late fee, as on every repayment, not a charge on top of the lender's whole interest. An earlier revision of this section added `(treasuryFeeBps + precloseFeeBps) × accruedInterest` on top of `principal + accruedInterest`; that made a sale cost the borrower more than repaying, and #2740 retired it. No preclose fee exists; one would enter the shared split for every close-out, not this formula alone. `lateFee(t)` is non-zero only after the due date, inside grace (fills past grace are refused).
 
 If any line item is below the live floor, ERC-1271 returns invalid → Seaport rejects the match. The borrower must `updatePrepayListing` (which re-signs with the live amounts) before a fill can succeed. The 2% buffer at listing time gives ~hours-of-fillability headroom depending on APR.
 
@@ -205,8 +208,8 @@ Seaport order:
   offer:
     [collateral NFT (ERC721 single token OR ERC1155 with full-balance amount)]
   consideration:
-    [lender:    principal + accruedInterest                              → lenderNFT.ownerOf(loan.lenderNftId)]
-    [treasury:  (treasuryFeeBps + precloseFeeBps) × accruedInterest/10000 → s.treasury]
+    [lender:    lenderLeg   (principal + owed − treasury cut, §5.2)       → lenderNFT.ownerOf(loan.lenderNftId)]
+    [treasury:  treasuryLeg (treasuryFeeBps × owed / 10000, §5.2)         → s.treasury]
     [borrower:  askPrice - lender - treasury  (≥ 0)                       → borrowerNFT.ownerOf(loan.borrowerNftId)]
 ```
 
@@ -242,11 +245,11 @@ function validateOrder(ZoneParameters calldata params) external returns (bytes4)
     uint256 floor = LibCollateralSettlement.liveFloor(ctx.loanId, block.timestamp);
     require(params.consideration.length == 3, "Bad consideration shape");
     require(
-        params.consideration[0].amount >= principalPlusAccruedInterest(ctx.loanId),
+        params.consideration[0].amount >= lenderLeg, // saleLegs(ctx.loanId, block.timestamp), §5.2
         "Lender short-paid"
     );
     require(
-        params.consideration[1].amount >= treasuryAndPrecloseFee(ctx.loanId),
+        params.consideration[1].amount >= treasuryLeg,
         "Treasury short-paid"
     );
     require(
@@ -2836,7 +2839,7 @@ askAtFloor" check into a three-condition test. The rotation MUST fire if
       DefaultedFacet takes over) — many days, not one
       block.
     - **Pro-rata loans**:
-      `LibCollateralSettlement.principalPlusAccruedInterest`
+      the lender leg (`LibCollateralSettlement.saleLegs`)
       accrues on WHOLE-DAY boundaries, not per block. So
       the b_cond_2 recovery window is up to 24h, not one
       block.
@@ -4315,7 +4318,7 @@ Round-7 §18.5 B-cond-2 enforces today).
 | Phase | Floor formula |
 | --- | --- |
 | **Pre-loan** (offer pending; no loan exists yet) | **Round-3.4 against Codex round-3 P2 #5 / P2 #6 line 4265 + line 4820 — supersedes the round-3.3 "convergent splitTreasury" framing which was structurally wrong (no lender has funded yet, so no protocol cut on interest applies).** `floor = (offer.principal + projectedFirstPeriodInterest) × (10_000 + cfgPrepayListingBufferBps) / 10_000` where `projectedFirstPeriodInterest = LibEntitlement.proRataInterest(offer.principal, offer.interestRateBps, _projectedHedgeDays(offer.durationDays))` and the hedge-days helper is the pure math `_projectedHedgeDays = durationDays >= 1 ? 1 : durationDays` (charges at-most-one day of interest as the HEDGE against the eventual lender accepting between sale-listing and sale-fill — not as a fee anybody collects in the pre-loan branch). **No treasury fee addend.** At pre-loan fill time the entire sale proceeds (`consideration[0]`) credit to the borrower's vault balance — there is no lender accrual to split, no protocol-cut-of-interest to collect. The treasury / preclose fee only applies post-acceptance, when the loan exists; if a lender accepts the offer before the sale fills, the listing transitions to the active-loan order whose floor takes over (Scenario B in §19.4). The hedge ensures that a borrower can't list at a price that would leave the eventual lender underpaid after one day of interest accrual. **Source-of-truth note:** `LibEntitlement.proRataInterest` is the canonical interest primitive shared with PrecloseFacet / RefinanceFacet / RepayFacet / LibCollateralSettlement / RiskFacet / DefaultedFacet (see [[feedback_check_existing_primitives_before_coding]]); the unit-bug class round-3.2 fixed becomes structurally impossible because the helper carries the day-unit semantics. |
-| **Post-loan** (`loan.status == Active`, in repayment OR grace) | Existing Round-4 / Round-7 formula: `floor = (pctx.lenderLeg + pctx.treasuryLeg) × (10_000 + cfgPrepayListingBufferBps) / 10_000`. **Round-3.4 against Codex round-3 P2 #6 line 4266 — corrects the round-3.3 prose claim that this sum equalled `principal + accruedInterest` (gross).** The actual implementation at `PrepayListingFacet.sol:111-115` sets `lenderLeg = LibCollateralSettlement.principalPlusAccruedInterest(...)` (= principal + interest the LENDER expects) and `treasuryLeg = LibCollateralSettlement.treasuryAndPrecloseFee(...)` (= a SEPARATE treasury / preclose fee on top — NOT a lender-vs-treasury split of the gross interest). The sum is therefore `principal + accruedInterest + treasuryAndPrecloseFee`. The pre-loan formula DOES NOT converge to this shape — pre-loan lacks the separate treasury / preclose addend because no loan exists. The two formulas are different by design; §19.2's `askPrice >= floor` invariant still works uniformly because each phase reads its own correctly-computed floor. |
+| **Post-loan** (`loan.status == Active`, in repayment OR grace) | Existing Round-4 / Round-7 formula: `floor = (pctx.lenderLeg + pctx.treasuryLeg) × (10_000 + cfgPrepayListingBufferBps) / 10_000`. **#2740 supersedes the leg definitions described in the rest of this cell:** both legs now come from the full-repayment split (§5.2), so `lenderLeg + treasuryLeg = principal + interest + late fee`, and the pre-loan floor hedges that amount (worst-case interest over term + grace, plus the late fee at the grace boundary) with no treasury addend. **Round-3.4 against Codex round-3 P2 #6 line 4266 — corrects the round-3.3 prose claim that this sum equalled `principal + accruedInterest` (gross).** The actual implementation at `PrepayListingFacet.sol:111-115` sets `lenderLeg = LibCollateralSettlement.principalPlusAccruedInterest(...)` (= principal + interest the LENDER expects) and `treasuryLeg = LibCollateralSettlement.treasuryAndPrecloseFee(...)` (= a SEPARATE treasury / preclose fee on top — NOT a lender-vs-treasury split of the gross interest). The sum is therefore `principal + accruedInterest + treasuryAndPrecloseFee`. The pre-loan formula DOES NOT converge to this shape — pre-loan lacks the separate treasury / preclose addend because no loan exists. The two formulas are different by design; §19.2's `askPrice >= floor` invariant still works uniformly because each phase reads its own correctly-computed floor. |
 
 **Two-order construction at offer-accept (round-2 against Codex
 round-1 P1 #1; round-3 refinements per Raja P1 #1 + P1 #2 +
