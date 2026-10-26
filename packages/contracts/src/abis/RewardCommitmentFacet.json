@@ -24,26 +24,6 @@
   },
   {
     "type": "function",
-    "name": "armLapseTerminals",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "armShortLapseClock",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "clearCompQuote",
     "inputs": [
       {
@@ -345,19 +325,6 @@
         "name": "dispatchCutoffGap",
         "type": "uint64",
         "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getLapseTerminalsArmed",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -731,29 +698,6 @@
   },
   {
     "type": "function",
-    "name": "stampLegacyCompensation",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "remitter",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "remitId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "submitCommitmentBatch",
     "inputs": [
       {
@@ -1027,43 +971,6 @@
   },
   {
     "type": "event",
-    "name": "LapseTerminalsArmed",
-    "inputs": [],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LegacyCompensationStamped",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "receiptKey",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "lenderShare18",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerShare18",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "MirrorRewardDeploymentSet",
     "inputs": [
       {
@@ -1101,19 +1008,6 @@
         "name": "shortfallBorrower18",
         "type": "uint256",
         "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ShortLapseClockArmed",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "indexed": true,
         "internalType": "uint256"
       }
     ],
@@ -1722,22 +1616,6 @@
   },
   {
     "type": "error",
-    "name": "CompFundedSeedInvalid",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "chainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "CompQuoteAlreadyDispatched",
     "inputs": [
       {
@@ -1921,17 +1799,6 @@
         "name": "chainId",
         "type": "uint32",
         "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "CompensationDayHasNoClock",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ]
   },
@@ -2755,16 +2622,6 @@
   },
   {
     "type": "error",
-    "name": "LapseTerminalsAlreadyArmed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LapseTerminalsNotArmed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "LapseWindowOutOfBounds",
     "inputs": [
       {
@@ -2778,17 +2635,6 @@
     "type": "error",
     "name": "LaunchGateCallInvalid",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LegacyDayNotStampable",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -2835,32 +2681,10 @@
   },
   {
     "type": "error",
-    "name": "LegacyReceiptUnusable",
-    "inputs": [
-      {
-        "name": "receiptKey",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "LegacySliceNotPending",
     "inputs": [
       {
         "name": "entryId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "LegacyStampQuoteMissing",
-    "inputs": [
-      {
-        "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -4623,22 +4447,6 @@
   },
   {
     "type": "error",
-    "name": "SafeCastOverflowedUintDowncast",
-    "inputs": [
-      {
-        "name": "bits",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "SaleAboveHeldCeiling",
     "inputs": [
       {
@@ -4983,28 +4791,6 @@
   },
   {
     "type": "error",
-    "name": "ShortLapseClockAlreadyArmed",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ShortLapseClockUnarmed",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ShortLapseDeadlineNotReached",
     "inputs": [
       {
@@ -5033,6 +4819,17 @@
   {
     "type": "error",
     "name": "ShortLapseNotShort",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ShortLapseQuoteMissing",
     "inputs": [
       {
         "name": "dayId",
