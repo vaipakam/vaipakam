@@ -290,7 +290,7 @@ export function decideForcedClose(input: ForcedCloseInput): ForcedCloseReadiness
 
   // A live swap-to-repay intent commit is deliberately NOT a blocker
   // here. `triggerDefault` opens by calling
-  // `forceCancelIntentIfPastDefaultOrRevert`, which force-cancels the
+  // `forceCancelIntentFor(loanId, TimeDefaultDue)`, which force-cancels the
   // commit and proceeds once the loan is past `endTime + grace` — and
   // we only reach this line when `defaultable` is true, which is that
   // same condition. Pre-grace commits keep their window, but a
