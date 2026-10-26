@@ -200,19 +200,26 @@ let a later success of the same method and params clear a failure, and
 that erred both ways: a slow recovered retry read as an outage, and an
 exhausted read cleared by an unrelated sibling read as served.
 
-So the drive asks the page, from two places in the app (`src/lib/readProbe.ts`,
+So the drive asks the page, from three places in the app (`src/lib/readProbe.ts`,
 inert unless a driver installed `__vaipakamReadProbe` before load):
 - the app's RPC transport, wrapped OUTSIDE viem's retries and fallback,
   reports each request's FINAL outcome once, with its method and chain.
   That covers a hook that turns a failed read into "unavailable" instead
   of throwing, which no query sees as an error;
 - the query cache reports a query waiting to retry, and its settlement
-  once its retries are spent.
+  once its retries are spent;
+- the app's indexer fetch (`getJson`, #2784) reports each indexer read
+  once, by route (path words and query names, never a value), with why it
+  was not served: no indexer configured, a timeout, a network failure, a
+  non-2xx status or a body that was not JSON. `getJson` hands its caller
+  `null` for all of them and the page shows "unavailable", which the query
+  cache records as a success, so only the fetch can report it.
 
 `live/readProbe.mjs` judges it per page, after waiting a bounded 20 s for
 any request still in flight or query still waiting to retry:
-- a request that finally failed without the provider answering, or a
-  query that settled in error, is an unserved read, BLOCKED;
+- a request that finally failed without the provider answering, a
+  query that settled in error, or an indexer read that was not served, is
+  an unserved read, BLOCKED;
 - a read still unsettled after that wait is unserved too, BLOCKED;
 - a reachable provider refusing the request as malformed is a FAIL;
 - a revert is an answer only for a method that executes code
@@ -221,7 +228,8 @@ any request still in flight or query still waiting to retry:
   another chain (the ENS lookup on mainnet) is listed apart: an RPC
   request always carries its chain, a query only when its key names one;
 - a loaded page that never announced the report is BLOCKED, naming a
-  build that predates #1672.
+  build that predates #1672, and a report in an older version (1, before
+  #2784) is BLOCKED naming the build as older than the drive.
 
 The wire ledger now decides only what one response proves: a malformed
 request or envelope is a FAIL wherever it happened, the same rule
@@ -232,9 +240,8 @@ result nor error) is BLOCKED as a misread, because a
 call there can be handed another call's answer and succeed in the page.
 Any other failed attempt is named beside an unserved read, or stated as
 recovered wire noise when every page reported every read served. A later
-success of the same read is not credited to an earlier failure. Reads the
-app makes to the indexer over HTTP, not through its RPC client, are not
-covered by the report. The driver's OWN reads need none of this, because
+success of the same read is not credited to an earlier failure. The
+driver's OWN reads need none of this, because
 there the client exhausts its retries internally and throws once.
 
 Checking OUR client's chain is not checking the PAGE's. The injected

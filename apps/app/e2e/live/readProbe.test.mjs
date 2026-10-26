@@ -23,6 +23,7 @@ import {
   READ_PROBE_BINDING as APP_BINDING,
   READ_PROBE_VERSION as APP_VERSION,
   attachReadProbe,
+  probeIndexerRead,
   probeTransport,
   readProbeErrorChain,
 } from '../../src/lib/readProbe.ts';
@@ -33,6 +34,9 @@ import {
  * the app's own transport wrapper and cache subscription into this file's
  * judge.
  */
+
+/** The report version both halves speak. */
+const V = READ_PROBE_VERSION;
 
 const rpcError = (code, message, data) =>
   new RpcRequestError({
@@ -124,10 +128,10 @@ describe('judgeReadProbe', () => {
 
   it('sorts RPC outcomes and query settlements by what they say about the read', () => {
     const p = createReadProbe();
-    p.record(1, { v: 1, kind: 'armed' });
+    p.record(1, { v: V, kind: 'armed' });
     const rpc = (seq, method, ok, error) => {
-      p.record(1, { v: 1, kind: 'rpc-start', seq, chainId: 84532, method });
-      p.record(1, { v: 1, kind: 'rpc-settled', seq, chainId: 84532, method, ok, ...(error ? { error } : {}) });
+      p.record(1, { v: V, kind: 'rpc-start', seq, chainId: 84532, method });
+      p.record(1, { v: V, kind: 'rpc-settled', seq, chainId: 84532, method, ok, ...(error ? { error } : {}) });
     };
     rpc(1, 'eth_call', true);
     rpc(2, 'eth_call', false, [{ name: 'HttpRequestError', message: 'HTTP request failed. https://rpc.example/KEY' }]);
@@ -135,7 +139,7 @@ describe('judgeReadProbe', () => {
     rpc(4, 'eth_blockNumber', false, [{ code: 3, data: '0x08c379a0' }]);
     rpc(5, 'eth_call', false, [{ code: -32602 }]);
     p.record(1, {
-      v: 1,
+      v: V,
       kind: 'query-settled',
       queryHash: 'h1',
       queryKey: '["loanDetails",7]',
@@ -145,7 +149,7 @@ describe('judgeReadProbe', () => {
       error: [{ name: 'AbiDecodingDataSizeTooSmallError' }],
     });
     p.record(1, {
-      v: 1,
+      v: V,
       kind: 'query-settled',
       queryHash: 'h2',
       queryKey: '["q"]',
@@ -172,22 +176,22 @@ describe('judgeReadProbe', () => {
 
   it('holds a read still unsettled as pending, not as served', () => {
     const p = createReadProbe();
-    p.record(1, { v: 1, kind: 'armed' });
-    p.record(1, { v: 1, kind: 'rpc-start', seq: 9, chainId: 84532, method: 'eth_call' });
-    p.record(1, { v: 1, kind: 'query-retrying', queryHash: 'h', queryKey: '["k"]', failureCount: 1 });
+    p.record(1, { v: V, kind: 'armed' });
+    p.record(1, { v: V, kind: 'rpc-start', seq: 9, chainId: 84532, method: 'eth_call' });
+    p.record(1, { v: V, kind: 'query-retrying', queryHash: 'h', queryKey: '["k"]', failureCount: 1 });
     const j = p.of(1, { chainId: 84532 });
     expect(j.pending).toHaveLength(2);
     expect(j.unserved).toEqual([]);
     // A retry that was served closes the pending entry.
-    p.record(1, { v: 1, kind: 'query-settled', queryHash: 'h', queryKey: '["k"]', outcome: 'ok', failureCount: 1, hadData: false });
-    p.record(1, { v: 1, kind: 'rpc-settled', seq: 9, chainId: 84532, method: 'eth_call', ok: true });
+    p.record(1, { v: V, kind: 'query-settled', queryHash: 'h', queryKey: '["k"]', outcome: 'ok', failureCount: 1, hadData: false });
+    p.record(1, { v: V, kind: 'rpc-settled', seq: 9, chainId: 84532, method: 'eth_call', ok: true });
     expect(p.of(1, { chainId: 84532 }).pending).toEqual([]);
   });
 
   it('lists a read on another chain without judging it', () => {
     const p = createReadProbe();
-    p.record(1, { v: 1, kind: 'rpc-start', seq: 1, chainId: 1, method: 'eth_call' });
-    p.record(1, { v: 1, kind: 'rpc-settled', seq: 1, chainId: 1, method: 'eth_call', ok: false, error: [{ name: 'HttpRequestError' }] });
+    p.record(1, { v: V, kind: 'rpc-start', seq: 1, chainId: 1, method: 'eth_call' });
+    p.record(1, { v: V, kind: 'rpc-settled', seq: 1, chainId: 1, method: 'eth_call', ok: false, error: [{ name: 'HttpRequestError' }] });
     const j = p.of(1, { chainId: 84532 });
     expect(j.unserved).toEqual([]);
     expect(j.elsewhere).toHaveLength(1);
@@ -197,10 +201,10 @@ describe('judgeReadProbe', () => {
   it('lists a query whose key names another chain, and judges one that names none', () => {
     const p = createReadProbe();
     const err = [{ name: 'ContractFunctionZeroDataError' }];
-    p.record(1, { v: 1, kind: 'armed' });
-    p.record(1, { v: 1, kind: 'query-settled', queryHash: 'a', queryKey: '["ensName"]', chainId: 1, outcome: 'error', failureCount: 1, hadData: false, error: err });
-    p.record(1, { v: 1, kind: 'query-settled', queryHash: 'b', queryKey: '["loan"]', outcome: 'error', failureCount: 1, hadData: false, error: err });
-    p.record(1, { v: 1, kind: 'query-retrying', queryHash: 'c', queryKey: '["ensAvatar"]', chainId: 1, failureCount: 1 });
+    p.record(1, { v: V, kind: 'armed' });
+    p.record(1, { v: V, kind: 'query-settled', queryHash: 'a', queryKey: '["ensName"]', chainId: 1, outcome: 'error', failureCount: 1, hadData: false, error: err });
+    p.record(1, { v: V, kind: 'query-settled', queryHash: 'b', queryKey: '["loan"]', outcome: 'error', failureCount: 1, hadData: false, error: err });
+    p.record(1, { v: V, kind: 'query-retrying', queryHash: 'c', queryKey: '["ensAvatar"]', chainId: 1, failureCount: 1 });
     const j = p.of(1, { chainId: 84532 });
     expect(j.elsewhere).toHaveLength(2);
     expect(j.unserved).toHaveLength(1);
@@ -211,22 +215,94 @@ describe('judgeReadProbe', () => {
 
   it('refuses a query chain that is not a chain id', () => {
     const p = createReadProbe();
-    p.record(1, { v: 1, kind: 'query-retrying', queryHash: 'c', queryKey: '[]', chainId: '1', failureCount: 1 });
-    p.record(1, { v: 1, kind: 'query-settled', queryHash: 'd', queryKey: '[]', chainId: 0, outcome: 'ok', failureCount: 0, hadData: true });
+    p.record(1, { v: V, kind: 'query-retrying', queryHash: 'c', queryKey: '[]', chainId: '1', failureCount: 1 });
+    p.record(1, { v: V, kind: 'query-settled', queryHash: 'd', queryKey: '[]', chainId: 0, outcome: 'ok', failureCount: 0, hadData: true });
     expect(p.of(1).refused).toHaveLength(2);
   });
 
   it('refuses a report shape it does not read, rather than reading it as clean', () => {
     const p = createReadProbe();
-    p.record(1, { v: 2, kind: 'armed' });
-    p.record(1, { v: 1, kind: 'query-settled', queryHash: 'h', queryKey: 7, outcome: 'error' });
-    p.record(1, { v: 1, kind: 'rpc-settled', seq: 1, chainId: 84532, method: 'eth_call', ok: false });
-    p.record(1, { v: 1, kind: 'settled-error' });
+    p.record(1, { v: V + 1, kind: 'armed' });
+    p.record(1, { v: V, kind: 'query-settled', queryHash: 'h', queryKey: 7, outcome: 'error' });
+    p.record(1, { v: V, kind: 'rpc-settled', seq: 1, chainId: 84532, method: 'eth_call', ok: false });
+    p.record(1, { v: V, kind: 'settled-error' });
     p.record(1, null);
     const j = p.of(1);
     expect(j.armed).toBe(false);
     expect(j.refused).toHaveLength(5);
-    expect(j.refused[0]).toContain('version 2');
+    expect(j.refused[0]).toContain(`version ${V + 1}`);
+  });
+});
+
+describe('indexer reads (#2784)', () => {
+  const indexer = (p, seq, route, settled, chainId) => {
+    const chain = chainId === undefined ? {} : { chainId };
+    p.record(1, { v: V, kind: 'indexer-start', seq, route, ...chain });
+    if (settled) p.record(1, { v: V, kind: 'indexer-settled', seq, route, ...chain, ...settled });
+  };
+
+  it('judges a read that was not served as unserved, naming the route and why', () => {
+    const p = createReadProbe();
+    p.record(1, { v: V, kind: 'armed' });
+    indexer(p, 1, '/loans/stats?chainId=', { ok: true }, 84532);
+    indexer(p, 2, '/activity?chainId=', { ok: false, failure: 'http', status: 503 }, 84532);
+    indexer(p, 3, '/offers/markets?chainId=', { ok: false, failure: 'timeout' }, 84532);
+    indexer(p, 4, '/loans/:v?chainId=', { ok: false, failure: 'unconfigured' });
+    const j = p.of(1, { chainId: 84532 });
+    expect(j.unserved).toEqual([
+      'indexer GET /activity?chainId= — not served: http (HTTP 503)',
+      'indexer GET /offers/markets?chainId= — not served: timeout',
+      'indexer GET /loans/:v?chainId= — not served: unconfigured',
+    ]);
+  });
+
+  it('holds a read in flight as pending, and lists one on another chain apart', () => {
+    const p = createReadProbe();
+    indexer(p, 1, '/activity?chainId=', null, 84532);
+    indexer(p, 2, '/activity?chainId=', { ok: false, failure: 'network' }, 1);
+    const j = p.of(1, { chainId: 84532 });
+    expect(j.pending).toEqual(['indexer GET /activity?chainId= — still in flight when the page was judged']);
+    expect(j.elsewhere).toHaveLength(1);
+    expect(j.unserved).toEqual([]);
+  });
+
+  it('refuses an indexer report it cannot read', () => {
+    const p = createReadProbe();
+    p.record(1, { v: V, kind: 'indexer-settled', seq: 1, route: '/a', ok: false });
+    p.record(1, { v: V, kind: 'indexer-settled', seq: 2, route: '/a', ok: false, failure: 'gone' });
+    p.record(1, { v: V, kind: 'indexer-start', seq: 3, route: 7 });
+    p.record(1, { v: V, kind: 'indexer-settled', seq: 4, route: '/a', ok: false, failure: 'http', status: '503' });
+    expect(p.of(1).refused).toHaveLength(4);
+  });
+
+  it("waits for the app's in-flight indexer read, and judges what it reports", async () => {
+    const probe = createReadProbe();
+    const host = { [READ_PROBE_BINDING]: (e) => probe.record(1, e) };
+    let answer;
+    const read = probeIndexerRead(
+      '/activity?chainId=84532&wallet=0x00000000000000000000000000000000000000aa',
+      () => new Promise((r) => (answer = r)),
+      host,
+    );
+    expect(probe.of(1, { chainId: 84532 }).pending).toHaveLength(1);
+    const settling = probe.settle(1, { timeoutMs: 5_000, pollMs: 1 });
+    answer({ ok: false, failure: 'http', status: 502 });
+    await read;
+    await settling;
+    const j = probe.of(1, { chainId: 84532 });
+    expect(j.pending).toEqual([]);
+    expect(j.unserved).toEqual(['indexer GET /activity?chainId=&wallet= — not served: http (HTTP 502)']);
+    expect(j.refused).toEqual([]);
+  });
+});
+
+describe('a report from an older build (#2784)', () => {
+  it('names the build as older, so the remedy is a deploy', () => {
+    const p = createReadProbe();
+    p.record(1, { v: V - 1, kind: 'armed' });
+    const [line] = p.of(1).refused;
+    expect(line).toContain('the deployed build predates this drive');
+    expect(p.of(1).armed).toBe(false);
   });
 });
 
@@ -247,11 +323,11 @@ describe('settle', () => {
 
   it('waits for the reads unsettled when it was called, and no others', async () => {
     const probe = clocked((t, p) => {
-      if (t === 300) p.record(1, { v: 1, kind: 'rpc-settled', seq: 1, chainId: 84532, method: 'eth_call', ok: true });
+      if (t === 300) p.record(1, { v: V, kind: 'rpc-settled', seq: 1, chainId: 84532, method: 'eth_call', ok: true });
       // A poll that starts while waiting is not waited for.
-      if (t === 100) p.record(1, { v: 1, kind: 'rpc-start', seq: 2, chainId: 84532, method: 'eth_blockNumber' });
+      if (t === 100) p.record(1, { v: V, kind: 'rpc-start', seq: 2, chainId: 84532, method: 'eth_blockNumber' });
     });
-    probe.record(1, { v: 1, kind: 'rpc-start', seq: 1, chainId: 84532, method: 'eth_call' });
+    probe.record(1, { v: V, kind: 'rpc-start', seq: 1, chainId: 84532, method: 'eth_call' });
     await probe.settle(1, { timeoutMs: 5_000 });
     const j = probe.of(1, { chainId: 84532 });
     expect(j.pending).toHaveLength(1);
@@ -263,7 +339,7 @@ describe('settle', () => {
     const probe = clocked(() => {
       slept += 1;
     });
-    probe.record(1, { v: 1, kind: 'query-retrying', queryHash: 'h', queryKey: '["k"]', failureCount: 1 });
+    probe.record(1, { v: V, kind: 'query-retrying', queryHash: 'h', queryKey: '["k"]', failureCount: 1 });
     await probe.settle(1, { timeoutMs: 1_000 });
     expect(slept).toBe(10);
     expect(probe.of(1).pending).toHaveLength(1);

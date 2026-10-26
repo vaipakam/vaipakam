@@ -871,7 +871,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](19);
+        selectors = new bytes4[](20);
         selectors[0] = OracleFacet.checkLiquidity.selector;
         selectors[1] = OracleFacet.getAssetPrice.selector;
         selectors[2] = OracleFacet.calculateLTV.selector;
@@ -903,6 +903,8 @@ contract HelperTest {
         selectors[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
         // #666 — the price read that tells a missing price from a distrusted one.
         selectors[18] = OracleFacet.getAssetPriceStatus.selector;
+        // #2747 — the tier search's quote-leg test (launch readiness reads it).
+        selectors[19] = OracleFacet.isLiquidityQuoteUsable.selector;
         return selectors;
     }
 

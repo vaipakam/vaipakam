@@ -2207,8 +2207,8 @@ const malformedRpc = [];
 const rpcLedger = [];
 
 /**
- * What each page reported about its reads, from its RPC transport and its
- * query cache (#1672). Filled through the binding installed below, keyed
+ * What each page reported about its reads, from its RPC transport, its
+ * query cache (#1672) and its indexer fetch (#2784). Filled through the binding installed below, keyed
  * by the page's cohort, and judged per visit just before the page closes.
  */
 const readProbe = createReadProbe();
@@ -8620,14 +8620,15 @@ if (wire.misread.length) {
 }
 // #1672 — a read the page asked for and never got, as the app itself
 // reports it: an RPC request that failed after viem's retries, a query
-// that settled in error, or either still unsettled when the page was
-// judged — and not because the chain answered. The page ran without that
+// that settled in error, an indexer read that was not served (#2784), or
+// any of them still unsettled when the page was judged — and not because
+// the chain answered. The page ran without that
 // data, so what was observed on it is not a statement about the app. Same
 // class as the gate above.
 if (unservedReads.length) {
   console.log(
-    `\nBLOCKED: ${unservedReads.length} read(s) were left unserved, as the page's own RPC client` +
-      ` and query cache reported them.`,
+    `\nBLOCKED: ${unservedReads.length} read(s) were left unserved, as the page's own RPC client,` +
+      ` query cache and indexer fetch reported them.`,
   );
   for (const u of unservedReads.slice(0, 6)) {
     console.log(`  ${u.path}: ${u.line}`);
@@ -8636,7 +8637,10 @@ if (unservedReads.length) {
       .slice(0, 3)
       .forEach((a) => console.log(`      wire: ${a.why} → ${a.url}`));
   }
-  console.log(`  → an RPC endpoint did not answer in time. Nothing observed on those pages can be trusted; re-run.`);
+  console.log(
+    `  → an RPC endpoint or the indexer did not serve a read the page made. Nothing observed on those` +
+      ` pages can be trusted; re-run.`,
+  );
   process.exit(2);
 }
 // #1672 — without the report, whether every read was served cannot be
@@ -8650,7 +8654,7 @@ if (readUnreported.length || readRefused.length) {
         ` — the deployed build predates #1672. Deploy a build that carries it, then re-run.`,
     );
   }
-  readRefused.slice(0, 4).forEach((r) => console.log(`  ${r} — update this drive to read it.`));
+  readRefused.slice(0, 4).forEach((r) => console.log(`  ${r}.`));
   process.exit(2);
 }
 // #1633 item 4 — the site itself was not served, which no other gate

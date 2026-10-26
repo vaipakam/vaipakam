@@ -440,8 +440,11 @@ abstract contract PositiveFlowsBase is Script {
         OracleAdminFacet(diamond).setWethContract(address(weth));
         OracleAdminFacet(diamond).setEthUsdFeed(address(wethFeedRef));
         OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3Ref));
-        address[] memory paa = new address[](1);
+        // WETH plus a quote other than WETH, so WETH itself has a tier
+        // route (#2747; the setter refuses WETH alone).
+        address[] memory paa = new address[](2);
         paa[0] = address(weth);
+        paa[1] = address(usdc);
         ConfigFacet(diamond).setPaaAssets(paa);
 
         RiskFacet(diamond).updateRiskParams(address(usdc), 8000, 300);

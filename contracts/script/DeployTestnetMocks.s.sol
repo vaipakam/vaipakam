@@ -549,15 +549,18 @@ contract DeployTestnetMocks is Script {
         oa.setEthUsdFeed(ethUsdFeedAddr);
         oa.setUniswapV3Factory(address(univ3));
 
-        // Pin the PAA quote list to [weth]. When `paaAssets` is already
-        // populated on a chain, OracleFacet routes the liquidity search
-        // over that list instead of the WETH fallback — a WETH-only
-        // mock factory would then be invisible to `checkLiquidity(tLIQ)`
-        // even with correct prices. The Anvil flow performs the same
-        // reset for the same reason (Codex #982 review).
+        // Pin the PAA quote list to [weth, mUSDC], both of which the mock
+        // factory pools. When `paaAssets` is already populated on a chain,
+        // OracleFacet routes the liquidity search over that list instead of
+        // the WETH fallback — a quote the mock factory does not pool would
+        // leave `checkLiquidity(tLIQ)` blind even with correct prices (Codex
+        // #982 review). mUSDC is the quote besides WETH that gives WETH
+        // itself a depth-tier route through the mUSDC/WETH pool; the setter
+        // refuses WETH alone, which would leave WETH at tier 0 (#2747).
         {
-            address[] memory paa = new address[](1);
+            address[] memory paa = new address[](2);
             paa[0] = weth;
+            paa[1] = liquidToken2;
             ConfigFacet(diamond).setPaaAssets(paa);
         }
 
