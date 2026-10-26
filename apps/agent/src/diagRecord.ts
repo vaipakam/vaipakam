@@ -62,6 +62,7 @@
 
 import type { Env } from './env';
 import { isHexAddress, walletHash } from './diagHash';
+import { DIAG_RECORD_NOT_HELD } from './diagRetention';
 
 const FRONTEND_TIMESTAMP_MAX_DRIFT_SECONDS = 6 * 60 * 60; // 6 hours
 
@@ -425,14 +426,18 @@ export async function handleDiagRecord(
 /** Cron-driven retention prune. Runs once per scheduled tick (the
  *  hf-watcher already cron-runs every 5 min, so this fires often
  *  enough — adds at most one DELETE per tick, no measurable cost).
- *  Reads DIAG_RETENTION_DAYS (default 90, clamped >= 1). */
+ *  Reads DIAG_RETENTION_DAYS (default 90, clamped >= 1).
+ *
+ *  A record under legal hold is kept however old it is (#2758): the
+ *  prune deletes only through `DIAG_RECORD_NOT_HELD`, the condition the
+ *  erasure path uses too. */
 export async function pruneOldDiagErrors(env: Env): Promise<void> {
   const rawDays = env.DIAG_RETENTION_DAYS ?? '90';
   const parsed = Number(rawDays);
   const days = isFinite(parsed) ? Math.max(1, Math.floor(parsed)) : 90;
   const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
   await env.DB
-    .prepare(`DELETE FROM diag_errors WHERE recorded_at < ?`)
+    .prepare(`DELETE FROM diag_errors WHERE recorded_at < ? AND ${DIAG_RECORD_NOT_HELD}`)
     .bind(cutoff)
     .run();
 }

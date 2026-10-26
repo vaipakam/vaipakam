@@ -2643,7 +2643,7 @@ override per-environment via `wrangler vars` or the dashboard):
 | Var | Default | What it does |
 |---|---|---|
 | `DIAG_SAMPLE_RATE` | `1.0` | Random write sampling. Drop to `0.1` to write 10% when error volume spikes. |
-| `DIAG_RETENTION_DAYS` | `90` | Cron-driven prune deletes rows older than this. Bumped on every 5-min tick. |
+| `DIAG_RETENTION_DAYS` | `90` | Cron-driven prune deletes rows older than this, except rows under a legal hold (`diag_legal_holds`), which no delete path removes (#2758). Bumped on every 5-min tick. |
 | `DIAG_RECORD_RATELIMIT.simple.limit` / `period` | `60 / 60` | Per-IP rate limit. Tune in the `unsafe.bindings` block. |
 
 **Frontend coupling** — **none today, and that is the important part.**
@@ -2683,10 +2683,15 @@ npx wrangler d1 execute vaipakam-warm --remote \
   --command "SELECT * FROM diag_errors WHERE id = '<UUID>'"
 ```
 
-If the row exists with a matching error fingerprint, the
-report came from a real session. If not, the user fabricated
-or altered the UUID — the surrounding error metadata in their
-issue body is unverified.
+**A row is not proof that a report is genuine.** `POST /diag/record`
+accepts a record from any caller that passes its origin check and rate
+limit, under an id the caller chooses, and the server issues nothing that
+could later show a row came from a real app session (#2758). So a row with
+a matching error fingerprint says only that someone recorded that error
+under that id; a missing row says the id was never recorded (or was
+pruned). Use a row as context for the report, never as evidence of who
+sent it or that it happened, and never as grounds to act on a user's
+funds or account.
 
 **Privacy note**: the `diag_errors` table stores only what
 the existing GitHub-issue prefill already publishes (redacted

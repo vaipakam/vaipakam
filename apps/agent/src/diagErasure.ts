@@ -71,6 +71,7 @@ import {
 import type { Env } from './env';
 import { isHexAddress, walletHash } from './diagHash';
 import { isProtocolAdmin, type AdminVerifier } from './diagAdminAuth';
+import { DIAG_RECORD_NOT_HELD } from './diagRetention';
 import {
   chainVerifyGate,
   isValidSignatureShape,
@@ -325,7 +326,6 @@ export async function handleDiagErasure(
   }
 
   const hash = await walletHash(parsed.req.wallet, env.DIAG_WALLET_HMAC_KEY);
-  const hold = await getLegalHold(env.DB, hash);
 
   // Legal hold present → retain everything for this wallet-hash.
   // Hold absent → delete the rows the signer's AUTHORITY covers
@@ -339,20 +339,24 @@ export async function handleDiagErasure(
   // chain-scoped authority's reach (nothing ties them to the chain
   // that vouched) and wait for the universal key or support. Either
   // way the response below is identical.
-  if (!hold) {
-    if (verified.via === 'chain') {
-      await env.DB
-        .prepare(
-          `DELETE FROM diag_errors WHERE wallet_hash = ? AND chain_id = ?`,
-        )
-        .bind(hash, verified.chainId)
-        .run();
-    } else {
-      await env.DB
-        .prepare(`DELETE FROM diag_errors WHERE wallet_hash = ?`)
-        .bind(hash)
-        .run();
-    }
+  //
+  // The hold is read inside each DELETE (`DIAG_RECORD_NOT_HELD`, the
+  // condition the retention prune uses too, #2758), not looked up
+  // first, so a hold placed between a lookup and the delete cannot be
+  // missed.
+  if (verified.via === 'chain') {
+    await env.DB
+      .prepare(
+        `DELETE FROM diag_errors
+          WHERE wallet_hash = ? AND chain_id = ? AND ${DIAG_RECORD_NOT_HELD}`,
+      )
+      .bind(hash, verified.chainId)
+      .run();
+  } else {
+    await env.DB
+      .prepare(`DELETE FROM diag_errors WHERE wallet_hash = ? AND ${DIAG_RECORD_NOT_HELD}`)
+      .bind(hash)
+      .run();
   }
 
   // INVARIANT 1: uniform response, no branching on RETENTION state,
