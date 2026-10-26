@@ -59,6 +59,7 @@ import {
 } from './db';
 import { reportSendError } from './submissionQueue';
 import { readCutoffMs } from './runWindow';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 const COMMIT_ABI = RewardCommitmentFacetABI as Abi;
 const REPORTER_ABI = RewardReporterFacetABI as Abi;
@@ -112,7 +113,7 @@ export async function runCommitmentReport(env: Env, tick: PassTick): Promise<voi
       try {
         await reportFromMirror(env, chain, tick.deadlineMs);
       } catch (err) {
-        console.error(`[keeper] commitmentReport chain=${chain.id} failed:`, err);
+        console.error(`[keeper] commitmentReport chain=${chain.id} failed:`, redactedError(err));
       }
     }),
   );
@@ -314,7 +315,7 @@ async function reportFromMirror(env: Env, chain: ChainConfig, deadlineMs: number
     } catch (err) {
       // Benign races (a competing tick advanced the cursor, the stamp landing
       // mid-scan, etc.) — log and let the next tick re-evaluate.
-      reportSendError(`[keeper] commitmentReport chain=${chain.id} day=${d}`, err, `skipped: ${(err as Error).message}`, console.log);
+      reportSendError(`[keeper] commitmentReport chain=${chain.id} day=${d}`, err, `skipped: ${redactedError(err, { stack: false })}`, console.log);
     }
   }
 }
@@ -405,7 +406,7 @@ export async function submitSide(
       reportSendError(
         `[keeper] commitmentReport chain=${chainId} day=${day} side=${side}`,
         err,
-        `batch not confirmed (resumes from the on-chain cursor / frontier next tick): ${(err as Error).message}`,
+        `batch not confirmed (resumes from the on-chain cursor / frontier next tick): ${redactedError(err, { stack: false })}`,
         console.warn,
       );
       return false;
@@ -492,7 +493,7 @@ export async function submitSide(
     await putCommitmentScanFrontier(env.KEEPER_DB, chainId, Number(day), side, frontier, lastSubmitted);
   } catch (err) {
     console.warn(
-      `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} frontier persist failed (rescan next tick): ${(err as Error).message}`,
+      `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} frontier persist failed (rescan next tick): ${redactedError(err, { stack: false })}`,
     );
   }
   if (aborted || cutShort || (!frontierReached && budget.pages <= 0)) {

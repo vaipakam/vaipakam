@@ -66,6 +66,7 @@ import { buildKeeperContext, passIsArmed } from './keeper';
 import { reportSendError } from './submissionQueue';
 import { runIndex } from './runWindow';
 import { pagedWalk } from './rotate';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 const ADMIN_ABI: Abi = AdminFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
@@ -110,7 +111,7 @@ export async function runAutoLifecycle(env: Env, tick: PassTick): Promise<void> 
       } catch (err) {
         console.error(
           `[keeper] autoLifecycle chain=${chain.id} failed:`,
-          err,
+          redactedError(err),
         );
       }
     }),
@@ -255,7 +256,7 @@ async function tryExtend(
     // Most reverts here are benign (loan in last day, grace
     // expired, both-side consent flipped between read + write).
     // Log at info, not error.
-    reportSendError(`[keeper] autoLifecycle extend loan=${loanIdBig}`, err, `skipped: ${(err as Error).message}`, console.log);
+    reportSendError(`[keeper] autoLifecycle extend loan=${loanIdBig}`, err, `skipped: ${redactedError(err, { stack: false })}`, console.log);
     return false;
   }
 }

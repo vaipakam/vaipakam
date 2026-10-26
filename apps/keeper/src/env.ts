@@ -1,5 +1,6 @@
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { resolveD1Binding } from '@vaipakam/lib/d1Maintenance';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /**
  * This Worker's deployed name, used as the label on a D1 refusal so an
@@ -427,7 +428,7 @@ async function readSecret(
     return await b.get();
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('[env] Secrets Store fetch failed; treating as unset:', err);
+    console.error('[env] Secrets Store fetch failed; treating as unset:', redactedError(err));
     return undefined;
   }
 }

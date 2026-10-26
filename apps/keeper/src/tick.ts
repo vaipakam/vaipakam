@@ -22,6 +22,7 @@ import { KEEPER_PASSES, cadenceSkipReason, runDeadline } from './passSchedule';
 import { claimRunnerLease } from './runnerLease';
 import { adoptKeeperDeployments } from './keeperEpoch';
 import { armEpochFence } from './epochFence';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 /**
  * Run one pass and report what it cost.
  *
@@ -53,7 +54,7 @@ async function timedPass(name: string, run: () => Promise<void>): Promise<void> 
     // eslint-disable-next-line no-console
     console.error(
       `[keeper] ${name} pass failed after ${Date.now() - startedAt}ms:`,
-      err,
+      redactedError(err),
     );
   }
 }
@@ -140,7 +141,7 @@ export async function runKeeperTick(
     await adoptKeeperDeployments(resolved, chains);
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.warn(`[keeper] tick declined: could not reconcile the private state with each chain's Diamond (${String(err)})`);
+    console.warn(`[keeper] tick declined: could not reconcile the private state with each chain's Diamond (${redactedError(err, { stack: false })})`);
     return;
   }
 

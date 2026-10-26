@@ -9,6 +9,7 @@ import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibDelivery} from "../libraries/LibDelivery.sol";
@@ -269,6 +270,12 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///         (smaller fraction, different adapter mix, or full
     ///         {triggerLiquidation}).
     error PartialSwapAllFailed();
+
+    /// @notice #2731 — the slice's proceeds, after its charges, do not cover
+    ///         the interest accrued on the loan's current segment. A partial
+    ///         liquidation restarts the accrual clock, so it must pay that
+    ///         interest in full; sell a larger slice or liquidate in full.
+    error PartialMustCoverInterest(uint256 repaid, uint256 interestDue);
 
     // ─── FlashLoanLiquidationPath.md — discount-path declarations ─────
 
@@ -620,7 +627,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // this loan, the cross-facet call is skipped entirely and we
         // proceed straight to the standard liquidation flow.
         if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
-            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentFor(
+                loanId, SwapToRepayIntentFacet.ForceCancelReason.HFBelowLiquidationThreshold
+            );
         }
         // Tier-1 sanctions gate. The 3% liquidator bonus flows to
         // msg.sender — value receipt by a sanctioned wallet, blocked.
@@ -884,7 +893,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // this loan, the cross-facet call is skipped entirely and we
         // proceed straight to the standard liquidation flow.
         if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
-            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentFor(
+                loanId, SwapToRepayIntentFacet.ForceCancelReason.HFBelowLiquidationThreshold
+            );
         }
         // Tier-1 sanctions gate — the dynamic incentive bonus flows to
         // msg.sender, so value-receipt blocked for sanctioned addresses.
@@ -1013,9 +1024,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         if (!swapSuccess) revert PartialSwapAllFailed();
 
         // Debt accounting at partial time. Late fee = 0 by the in-term
-        // guard above. interestPortion = currentBorrow - principal.
-        uint256 currentBorrowBalance = LibEntitlement.currentBorrowBalance(loan);
-        uint256 interestPortion = currentBorrowBalance - loan.principal;
+        // guard above. The segment's interest is the gross accrual less the
+        // periodic credit already forwarded to the lender (`interestSettled`);
+        // credit beyond the accrual carries to the residual loan (#2731).
+        (uint256 interestPortion, uint256 settledCarried) =
+            LibEntitlement.splitSettledInterest(loan, LibEntitlement.grossBorrowInterest(loan));
 
         // #2796 — the charges are on what the slice REPAYS, not on the
         // proceeds beside it: `repaid = ⌊P·BPS / (BPS + b + f)⌋`, bonus
@@ -1044,25 +1057,22 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // The repaid amount goes to the debt in order: interest first
         // (treasury cut on it via splitTreasury), then principal. NO
         // late fee — guaranteed zero by the in-term guard.
-        uint256 interestRepaid;
-        uint256 treasuryInterestFee;
-        uint256 principalRepaid;
-        if (afterFees > interestPortion) {
-            interestRepaid = interestPortion;
-            (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRepaid);
-            principalRepaid = afterFees - interestRepaid;
-        } else {
-            interestRepaid = afterFees;
-            (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRepaid);
-            principalRepaid = 0;
-        }
-        // #1383 — one resolve for both branches above. Same rule as the
-        // terminal path; this entry does not end the loan but still takes the
-        // ordinary cut from the interest it recovers.
+        //
+        // #2731 — the slice must pay the segment's interest in full. The
+        // accrual clock restarts below, so interest a short slice left unpaid
+        // would be forgiven: the lender would lose it and the health factor
+        // would rise by debt that was written off, not repaid. A keeper turned
+        // away here sells a larger slice or liquidates in full.
+        // So the interest repaid is exactly `interestPortion`.
+        if (afterFees < interestPortion) revert PartialMustCoverInterest(afterFees, interestPortion);
+        (uint256 treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestPortion);
+        uint256 principalRepaid = afterFees - interestPortion;
+        // #1383 — same rule as the terminal path; this entry does not end the
+        // loan but still takes the ordinary cut from the interest it recovers.
         (, treasuryInterestFee) = LibLenderYieldFeeHost.resolve(
             loanId,
             LibERC721.ownerOf(loan.lenderTokenId),
-            interestRepaid,
+            interestPortion,
             treasuryInterestFee
         );
 
@@ -1161,14 +1171,18 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 remainingDays = (endTime - block.timestamp) / 1 days;
         loan.interestAccrualStart = uint64(block.timestamp);
         loan.interestRemainingDays = uint16(remainingDays);
-        // #915 (Codex #1087 r1 P2) — the residual loan restarts its accrual
-        // clock at `now`, so any periodic-settled interest (already credited via
-        // `currentBorrowBalance` when the slice debt was priced above, and paid
-        // interest-first from the swap proceeds) belongs to the closed pre-partial
-        // window. Clear it so the shared `interestSettled` credit is not netted a
-        // SECOND time on the residual loan's next settlement (which would
-        // underpay the lender).
-        loan.interestSettled = 0;
+        // #915 / #2731 — the residual loan restarts its accrual clock at
+        // `now`, so the periodic credit this slice's interest was netted
+        // against is consumed: only the gross interest it covered is taken off,
+        // and any excess (a periodic settlement can deliver more than has
+        // accrued by now) carries to the residual loan, as `repayPartial`
+        // keeps it (#1191). Clearing it outright would forfeit interest the
+        // borrower already paid; keeping it whole would net it a second time.
+        loan.interestSettled = settledCarried;
+        // #2731 — the interest this slice paid the lender counts toward the
+        // current period, as every other mid-period payment does; otherwise the
+        // periodic settlement would sell collateral for it again.
+        LibPeriodicInterest.creditInterestPaid(loan, loanId, interestPortion);
 
         // Post-mutation HF check. Strictly improves AND must reach >= 1.
         // `currentBorrow` re-derives from the now-reduced principal, so this
@@ -1194,7 +1208,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             swappedCollateral,
             proceeds,
             principalRepaid,
-            interestRepaid,
+            interestPortion,
             hfAfter
         );
     }
@@ -1310,7 +1324,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // this loan, the cross-facet call is skipped entirely and we
         // proceed straight to the standard liquidation flow.
         if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
-            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
+            SwapToRepayIntentFacet(address(this)).forceCancelIntentFor(
+                loanId, SwapToRepayIntentFacet.ForceCancelReason.HFBelowLiquidationThreshold
+            );
         }
         // Tier-1 sanctions gate — `msg.sender` authored the trade and
         // earns the discount-net-of-execution-cost profit.

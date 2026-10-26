@@ -42,6 +42,8 @@
  * the holder either way.
  */
 
+import { redactedError } from '@vaipakam/lib/errorDescription';
+
 /** How long a claim lasts without renewal. Ticks renew every minute. */
 export const LEASE_TTL_MS = 10 * 60_000;
 
@@ -111,7 +113,7 @@ export async function claimRunnerLease(
   } catch (err) {
     return {
       held: false,
-      reason: `could not claim the one-runner lease (${err instanceof Error ? err.message : String(err)})`,
+      reason: `could not claim the one-runner lease (${redactedError(err, { stack: false })})`,
     };
   }
 }

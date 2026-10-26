@@ -1079,26 +1079,24 @@ contract HelperTest {
     {
         // T-087 Sub 3.B — preInteraction / postInteraction /
         // isValidSignature moved to IntentDispatchFacet.
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](8);
         selectors[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
         selectors[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
         selectors[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
         selectors[3] = SwapToRepayIntentFacet.getIntentCommit.selector;
         // §5.8 layer 2 force-cancel surface (onlyDiamondInternal) —
-        // wired via crossFacetCall from the HF-liquidation +
-        // time-default entry points.
-        selectors[4] = SwapToRepayIntentFacet.internalForceCancelIntent.selector;
-        selectors[5] = SwapToRepayIntentFacet.forceCancelIntentIfHFBelowOrRevert.selector;
-        selectors[6] = SwapToRepayIntentFacet.forceCancelIntentIfPastDefaultOrRevert.selector;
+        // one entry, called with its trigger by the HF-liquidation,
+        // time-default and periodic-shortfall paths (#2732).
+        selectors[4] = SwapToRepayIntentFacet.forceCancelIntentFor.selector;
         // Codex round-2 PR #420 P2 — dapp read surface; without
         // routing this through the diamond cut the borrower can't
         // mirror the canonical extension bytes the commit gate
         // requires.
-        selectors[7] = SwapToRepayIntentFacet.canonicalExtension.selector;
+        selectors[5] = SwapToRepayIntentFacet.canonicalExtension.selector;
         // #2322 — read-only preview of the debt-sized auction lot.
-        selectors[8] = SwapToRepayIntentFacet.previewSwapToRepayIntentLot.selector;
+        selectors[6] = SwapToRepayIntentFacet.previewSwapToRepayIntentLot.selector;
         // #1566 slice 3 — the census's custody read.
-        selectors[9] = SwapToRepayIntentFacet.getIntentCustody.selector;
+        selectors[7] = SwapToRepayIntentFacet.getIntentCustody.selector;
     }
 
     /// @notice T-087 Sub 3.B — IntentDispatchFacet selectors.
