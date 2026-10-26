@@ -49,6 +49,7 @@ import { readCutoffMs, runIndex } from './runWindow';
 import { pagedWalk } from './rotate';
 import { maybeAutonomousLiquidate, passIsArmed, resetKeeperDedupe } from './keeper';
 import { recordHfBandNotifications, type HfReading } from './hfBandNotifications';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
 const RISK_ABI: Abi = RiskFacetABI as Abi;
@@ -132,7 +133,7 @@ export async function runLiquidator(env: Env, tick: PassTick): Promise<void> {
         bandQueue.push({ chain, readings });
       } catch (err) {
         console.error(
-          `[keeper] runLiquidator chain=${chain.name} err=${String(err).slice(0, 250)}`,
+          `[keeper] runLiquidator chain=${chain.name} err=${redactedError(err, { stack: false }).slice(0, 250)}`,
         );
       }
     }),
@@ -182,7 +183,7 @@ async function liquidatePassForChain(
     pinnedBlock = await client.getBlockNumber();
   } catch (err) {
     console.error(
-      `[keeper] liquidator chain=${chain.name} getBlockNumber failed: ${String(err).slice(0, 200)}`,
+      `[keeper] liquidator chain=${chain.name} getBlockNumber failed: ${redactedError(err, { stack: false }).slice(0, 200)}`,
     );
     return [];
   }
@@ -197,7 +198,7 @@ async function liquidatePassForChain(
     })) as bigint;
   } catch (err) {
     console.error(
-      `[keeper] liquidator chain=${chain.name} getActiveLoansCount failed: ${String(err).slice(0, 200)}`,
+      `[keeper] liquidator chain=${chain.name} getActiveLoansCount failed: ${redactedError(err, { stack: false }).slice(0, 200)}`,
     );
     return [];
   }
@@ -248,7 +249,7 @@ async function liquidatePassForChain(
       })) as readonly bigint[];
     } catch (err) {
       console.error(
-        `[keeper] liquidator chain=${chain.name} page off=${off} failed: ${String(err).slice(0, 200)}`,
+        `[keeper] liquidator chain=${chain.name} page off=${off} failed: ${redactedError(err, { stack: false }).slice(0, 200)}`,
       );
       pagesComplete = false;
       break;
@@ -419,7 +420,7 @@ async function rememberIlliquidAtFinality(
     finalized = block.number;
   } catch (err) {
     console.log(
-      `[keeper] liquidator chain=${chain.name} finalized block unavailable; ${seen.length} illiquid loan(s) stay in the scan: ${String(err).slice(0, 200)}`,
+      `[keeper] liquidator chain=${chain.name} finalized block unavailable; ${seen.length} illiquid loan(s) stay in the scan: ${redactedError(err, { stack: false }).slice(0, 200)}`,
     );
     return;
   }
@@ -500,7 +501,7 @@ async function hfBandPass(
     );
   } catch (err) {
     console.error(
-      `[keeper] hf-band pass chain=${chain.name} failed (fail-open): ${String(err).slice(0, 200)}`,
+      `[keeper] hf-band pass chain=${chain.name} failed (fail-open): ${redactedError(err, { stack: false }).slice(0, 200)}`,
     );
   }
 }

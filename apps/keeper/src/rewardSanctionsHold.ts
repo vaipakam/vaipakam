@@ -79,6 +79,7 @@ import {
   watchSanctionsOwners,
 } from './db';
 import { OPS_POST_TIMEOUT_MS, resolveOpsAlerts, sendOpsAlertDigest, sendOpsNoticeDigest, type OpsAlertEntry } from './opsAlert';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 const ABI = [
   ...(InteractionRewardsLensFacetABI as Abi),
@@ -541,7 +542,7 @@ export async function runRewardSanctionsHold(env: Env, tick: PassTick): Promise<
       try {
         await observeChain(env, chain, deadline);
       } catch (err) {
-        console.error(`[keeper] rewardSanctionsHold chain=${chain.id} failed:`, err);
+        console.error(`[keeper] rewardSanctionsHold chain=${chain.id} failed:`, redactedError(err));
       }
     }),
   );

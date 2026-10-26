@@ -32,6 +32,7 @@ import {
 } from './db';
 import { AlertDelivery, publishRailStatus } from './alertDelivery';
 import { formatAlert, pushTitle } from './i18n';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 // Diamond ABIs sourced from `@vaipakam/contracts/abis` — same per-facet
 // JSONs the indexer Worker imports. Drops the hand-typed parseAbi
@@ -77,7 +78,7 @@ export async function runWatcher(env: Env): Promise<void> {
     } catch (err) {
       // Keep the loop going — one bad RPC shouldn't kill the whole tick.
       console.error(
-        `[watcher] chain=${chain.name} id=${chain.id} err=${String(err).slice(0, 300)}`,
+        `[watcher] chain=${chain.name} id=${chain.id} err=${redactedError(err, { stack: false }).slice(0, 300)}`,
       );
     }
   }
@@ -203,7 +204,7 @@ async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): 
         }
       } catch (err) {
         console.error(
-          `[watcher] loan=${loanId} chain=${chain.name} err=${String(err).slice(0, 200)}`,
+          `[watcher] loan=${loanId} chain=${chain.name} err=${redactedError(err, { stack: false }).slice(0, 200)}`,
         );
       }
     }

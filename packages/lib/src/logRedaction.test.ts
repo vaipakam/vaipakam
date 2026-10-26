@@ -70,7 +70,6 @@ const BROWSER = new Set(['apps/app', 'apps/www', 'packages/i18n']);
  * still match, so it is removed in the change that clears it.
  */
 const PENDING: Array<{ path: RegExp; why: string }> = [
-  { path: /^apps\/keeper\/src\//, why: "#2759's keeper half, which the keeper thread owns" },
   { path: /^apps\/indexer\/src\/loanRoutes\.ts$/, why: 'in flight under #2757; moved after it lands' },
   {
     path: /^apps\/indexer\/src\/(recycleRoutes|rewardRoutes)\.ts$/,

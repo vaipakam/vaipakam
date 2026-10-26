@@ -69,7 +69,7 @@ import {
   type KeeperContext,
 } from './keeper';
 import { reportSendError } from './submissionQueue';
-import { summarizeFailure } from '@vaipakam/lib/errorDescription';
+import { summarizeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { ROLL_MIN_VALUE_TO_GAS, judgeRollValue } from './rollGasFloor';
 import { estimateTxFeeWei, txFeeUnpricedReason } from './txFee';
 
@@ -669,7 +669,7 @@ async function submitMatch(
       chain: ctx.wallet.chain,
     });
   } catch (err) {
-    const errStr = String(err);
+    const errStr = redactedError(err, { stack: false });
     // FunctionDisabled(3) — the partialFillEnabled master kill-switch.
     // Log once per chain per warm isolate; keep polling so a governance
     // flip is picked up without a restart.
@@ -870,7 +870,7 @@ async function submitIntentFill(
       chain: ctx.wallet.chain,
     });
   } catch (err) {
-    const errStr = String(err);
+    const errStr = redactedError(err, { stack: false });
     // partialFillEnabled (3) or lenderIntentEnabled (4) master flag off.
     if (errStr.includes('FunctionDisabled')) {
       if (!killSwitchLogged.get(ctx.chainId)) {
@@ -964,7 +964,7 @@ export async function priorityState(
     if (r[2] === true) return 'capacity';
     return r[3] === true ? 'credit' : 'blocked';
   } catch (err) {
-    const msg = String(err);
+    const msg = redactedError(err, { stack: false });
     if (/FunctionDoesNotExist|0xa9ad62f8/.test(msg)) {
       if (!priorityGetterMissingLogged.get(ctx.chainId)) {
         console.log(`[matcher] chain=${ctx.chainId} priority routing is not deployed on this Diamond: no credit can unlock a fill while capacity is spent`);
@@ -1312,7 +1312,7 @@ async function submitRoll(
       chain: ctx.wallet.chain,
     });
   } catch (err) {
-    const errStr = String(err);
+    const errStr = redactedError(err, { stack: false });
     // KeeperAccessRequired — the keeper isn't AUTO_ROLL-delegated for this loan's
     // owner; every later loan with the SAME owner is equally unrollable, so the
     // caller skips them rather than re-probing each.
@@ -1412,7 +1412,7 @@ async function runIntentRollPass(
         account: ctx.wallet.account,
       });
     } catch (err) {
-      if (String(err).includes('KeeperAccessRequired')) {
+      if (redactedError(err, { stack: false }).includes('KeeperAccessRequired')) {
         unauthorizedOwners.add(loan.owner.toLowerCase());
       } else {
         console.log(
