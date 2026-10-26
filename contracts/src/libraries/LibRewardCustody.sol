@@ -4136,11 +4136,20 @@ library LibRewardCustody {
     ///          2. not a Mirror — Base funds itself; Unconfigured / Detached are
     ///             bounded elsewhere (Detached's delivered bound is zero).
     ///          3. landed — the wait is over.
-    ///          4. no stamp — the day's broadcast has not landed here. Every
-    ///             broadcast stamps the day in the same call that sets its
-    ///             denominator (#1944 retired the kind-2 wire, which did
-    ///             not), and the fold already halts on the missing
-    ///             denominator (`knownGlobalSet`), so nothing prices it yet.
+    ///          4. no broadcast applied the day here — either it has not
+    ///             landed yet, or the day was funded LOCALLY. The fact read is
+    ///             `broadcastV2Applied`, the write-once flag only the
+    ///             broadcast apply sets, in the same call that stamps the day
+    ///             and sets its denominator — not the stamp itself, which
+    ///             `finalizeDay` also writes for Base's own days. A former
+    ///             canonical chain moved to Mirror therefore keeps its
+    ///             self-funded days unheld: Base never sent them, so no
+    ///             delivery could ever land them (Codex #2879). Ingress
+    ///             refuses a broadcast for a day already funded here
+    ///             (`DayFundedLocally`), so the flag cannot rise later on such
+    ///             a day either. Before a broadcast lands, the fold already
+    ///             halts on the missing denominator (`knownGlobalSet`), so
+    ///             nothing prices the day yet.
     ///          5. never reported — Base's interest figure for this chain is 0,
     ///             so nothing is owed. `chainReportSentAt` is write-once in the
     ///             transaction that reads the totals, which also freezes step 8.
@@ -4155,8 +4164,8 @@ library LibRewardCustody {
     ) internal view returns (bool) {
         if (LibVaipakam.rewardRole(s) != LibVaipakam.RewardRole.Mirror) return false;
         if (dayDeliveryLanded(s, d)) return false;
+        if (!s.broadcastV2Applied[d]) return false;
         LibVaipakam.ChainDayFunding storage f = s.chainDayRecycledFunding[d][uint32(block.chainid)];
-        if (!f.stamped) return false;
         if (s.chainReportSentAt[d] == 0) return false;
         if (s.dayCapThreshold18[d] == 0) return false;
         if (side != 1 && _sideOwesFresh(s, f, d, 0)) return true;

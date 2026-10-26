@@ -1666,4 +1666,40 @@ contract RewardDayDeliveryGatePreActivationTest is RewardDayDeliveryGateBase {
         assertFalse(_awaits(2, 1), "Unconfigured: nothing waits");
         assertApproxEqAbs(_claim(), expected, 1e6, "Unconfigured pays as today");
     }
+
+    // ─────────────── cell 18: a former canonical's own days ───────────────
+
+    /**
+     * @notice Cell 18 -- a day this chain funded ITSELF, while it was
+     *         canonical, is never held once the chain is a mirror: Base sent
+     *         it nothing, so no delivery could land it. The day carries every
+     *         input that holds an owed day (its own stamp with a fresh half,
+     *         the denominator, the report, a cap threshold, interest) except a
+     *         broadcast. A broadcast for that day is then refused by name, so
+     *         the record keeps one writer and the gate never rises on it later.
+     * @dev    Mutation: read the stamp instead of `broadcastV2Applied` in step
+     *         4 and the first assertion fails; drop the ingress refusal and the
+     *         broadcast overwrites the local record.
+     */
+    function test_1944_18_AFormerCanonicalsOwnDays_AreNeverHeld() public {
+        _gateBinds();
+        uint32 self = uint32(block.chainid);
+        _closeLocal(1, 1e18, 0);
+        // What `finalizeDay` wrote here while this chain was canonical.
+        _mut().setChainDayFundingRaw(1, self, 1e18, 0);
+        _mut().setKnownGlobalDailyInterest(1, 1e18, 1e18, true);
+        _mut().setDayCapThreshold18(1, type(uint256).max);
+        assertFalse(_awaits(0, 1), "a locally funded day is not held");
+        assertFalse(_gd(1).awaitsLender, "the operator read agrees");
+
+        uint256 snap = vm.snapshotState();
+        _mut().setBroadcastV2AppliedRaw(1, true);
+        assertTrue(_awaits(0, 1), "contrast: the same day, applied by a broadcast, waits");
+        vm.revertToState(snap);
+
+        _rep().setRewardMessenger(address(messenger));
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.DayFundedLocally.selector, uint256(1)));
+        messenger.deliverBroadcastV2(_armedPacket(1));
+        assertFalse(_awaits(0, 1), "still unheld after the refused broadcast");
+    }
 }

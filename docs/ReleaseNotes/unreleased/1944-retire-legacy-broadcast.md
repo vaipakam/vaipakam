@@ -42,6 +42,12 @@ paid from it: a mirror, or a chain detached from rewards. A chain with no
 reward role, or the canonical chain, refuses it by name, and the refusal stays
 a failed, re-executable message.
 
+Only a day whose funding arrived by a broadcast can be held. A chain that was
+canonical and is later made a mirror funded its own days while canonical;
+nothing was ever sent to it for them, so those days are never held, and a
+broadcast that later arrives for one of them is refused by name instead of
+overwriting the chain's own record of the day.
+
 The retired storage fields are renamed in place and recorded in the storage
 layout's rename list, so the layout stays append-only. Like the rest of this
 build, it reaches a chain only by fresh deploy (owner decision O1 = A); no live

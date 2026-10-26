@@ -445,6 +445,17 @@ contract RewardReporterFacet is
             }
             return;
         }
+        // One writer per own-chain funding record (Codex #2879). On a mirror
+        // only this apply stamps it; a record already stamped with no
+        // broadcast applied was written by `finalizeDay` while this chain was
+        // canonical, and that day was funded here. Overwriting it would price
+        // the day twice and reserve its recycled commit a second time, and
+        // would make the delivery gate hold a day a fold may already have
+        // passed. Refused by name: the packet stays a failed, re-executable
+        // message.
+        if (s.chainDayRecycledFunding[b.dayId][selfId].stamped) {
+            revert DayFundedLocally(b.dayId);
+        }
 
         s.knownGlobalLenderInterestNumeraire18[b.dayId] =
             b.globalLenderNumeraire18;

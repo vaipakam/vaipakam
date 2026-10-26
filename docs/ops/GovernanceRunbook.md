@@ -2127,6 +2127,10 @@ still unarmed.
 The gate binds on every mirror by its reward role, from the mirror's first day.
 There is no arming step and no setting to read (owner decision 2026-10-26,
 "Retire all three"; the one-shot `setDayDeliveryGateFromDay` latch is removed).
+Only a day a broadcast applied there can be held: a chain moved from canonical
+to mirror never holds the days it funded itself, and a broadcast for one of
+them fails `DayFundedLocally(dayId)` (a re-executable message that should
+stay failed; Base never meant to fund that day there).
 A mirror holds any day that owes it fresh funding until a budget delivery
 PROVEN to list that day has landed there, whichever of the broadcast and the
 delivery arrives first. While a day is held, the chain's reward cursor stops before

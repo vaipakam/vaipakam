@@ -914,6 +914,12 @@ interface IVaipakamErrors {
     ///         mirror could be paid unproven and then re-held once it became
     ///         one. Fails closed as a re-executable CCIP message.
     error BroadcastRoleRefused(uint8 role);
+    /// @notice #1944 — a reward broadcast for `dayId` arrived on a chain whose own
+    ///         funding record for that day is already stamped with no
+    ///         broadcast applied: the chain funded the day itself while it was
+    ///         canonical. The record has one writer, so the packet is refused
+    ///         and stays a failed, re-executable message (Codex #2879).
+    error DayFundedLocally(uint256 dayId);
     /// @notice A V3 broadcast named a different Base deployment than the one
     ///         already recorded for this day (§2h constraint 20 — a delayed
     ///         broadcast from a retired deployment must never install its
