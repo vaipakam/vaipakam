@@ -39,6 +39,7 @@ import {
   type SeaportOrderComponents,
 } from '@vaipakam/lib/prepayOrderShape';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 import type { Env } from './env';
 
 /**
@@ -338,7 +339,7 @@ export async function indexerPublishPrepayListing(
   } catch (err) {
     return {
       published: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: redactedError(err, { stack: false }),
     };
   }
 }

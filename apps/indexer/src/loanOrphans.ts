@@ -65,6 +65,7 @@
 
 import { affords, plus, type Cost, type TickBudget } from './subrequestBudget';
 import { discloseQuarantineReleases, quarantineReleaseStatement } from './loanQuarantine';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /** What one move costs the invocation: three batches (the snapshot, the
  *  move, the marker release after it), all of them D1 — no chain read — and
@@ -239,7 +240,7 @@ export async function withdrawOrphanLoan(
       console.warn(
         `[loanOrphans] chain ${chainId}: loan ${loanId} was withdrawn but its ` +
           `quarantine marker could not be released; the stale report will name it`,
-        err,
+        redactedError(err),
       );
     }
   }

@@ -30,6 +30,7 @@
 import { type Env } from './env';
 import { chainNotServed, requestedChainId } from './servedChain';
 import { EXPECTED_SCAN_CADENCE_SEC } from './chainIngestDO';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -357,7 +358,7 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
         : null,
     });
   } catch (err) {
-    console.error('[offerRoutes] stats failed', err);
+    console.error('[offerRoutes] stats failed', redactedError(err));
     return jsonResponse({ error: 'stats-failed' }, 500);
   }
 }
@@ -464,7 +465,7 @@ export async function handleOffersMarkets(req: Request, env: Env): Promise<Respo
     }));
     return jsonResponse({ chainId, markets, truncated });
   } catch (err) {
-    console.error('[offerRoutes] markets failed', err);
+    console.error('[offerRoutes] markets failed', redactedError(err));
     return jsonResponse({ error: 'markets-failed' }, 500);
   }
 }
@@ -549,7 +550,7 @@ export async function handleOffersActive(req: Request, env: Env): Promise<Respon
         : null;
     return jsonResponse({ chainId, offers, nextBefore: next });
   } catch (err) {
-    console.error('[offerRoutes] active failed', err);
+    console.error('[offerRoutes] active failed', redactedError(err));
     return jsonResponse({ error: 'active-failed' }, 500);
   }
 }
@@ -580,7 +581,7 @@ export async function handleOfferById(
     if (!row) return jsonResponse({ error: 'not-found' }, 404);
     return jsonResponse(toJson(row));
   } catch (err) {
-    console.error('[offerRoutes] byId failed', err);
+    console.error('[offerRoutes] byId failed', redactedError(err));
     return jsonResponse({ error: 'byId-failed' }, 500);
   }
 }
@@ -625,7 +626,7 @@ export async function handleOffersByCreator(
         : null;
     return jsonResponse({ chainId, creator: addr, offers, nextBefore: next });
   } catch (err) {
-    console.error('[offerRoutes] byCreator failed', err);
+    console.error('[offerRoutes] byCreator failed', redactedError(err));
     return jsonResponse({ error: 'byCreator-failed' }, 500);
   }
 }
@@ -679,7 +680,7 @@ export async function handleOffersByCurrentHolder(
         : null;
     return jsonResponse({ chainId, address: addr, offers, nextBefore: next });
   } catch (err) {
-    console.error('[offerRoutes] byCurrentHolder failed', err);
+    console.error('[offerRoutes] byCurrentHolder failed', redactedError(err));
     return jsonResponse({ error: 'byCurrentHolder-failed' }, 500);
   }
 }
@@ -724,7 +725,7 @@ export async function handleOffersRecent(req: Request, env: Env): Promise<Respon
         : null;
     return jsonResponse({ chainId, offers, nextBefore: next });
   } catch (err) {
-    console.error('[offerRoutes] recent failed', err);
+    console.error('[offerRoutes] recent failed', redactedError(err));
     return jsonResponse({ error: 'recent-failed' }, 500);
   }
 }

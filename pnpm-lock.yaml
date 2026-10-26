@@ -398,6 +398,9 @@ importers:
       '@vaipakam/contracts':
         specifier: workspace:*
         version: link:../contracts
+      typescript:
+        specifier: ^6.0.0
+        version: 6.0.3
       viem:
         specifier: ^2.48.4
         version: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)
@@ -435,6 +438,9 @@ importers:
       '@pushprotocol/restapi':
         specifier: ^1.7.32
         version: 1.7.32(@types/react@19.2.14)(bufferutil@4.1.0)(ethers@6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(react@19.2.6)(typescript@6.0.3)(utf-8-validate@5.0.10)
+      '@vaipakam/lib':
+        specifier: workspace:*
+        version: link:../lib
       ethers:
         specifier: ^6.13.0
         version: 6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)

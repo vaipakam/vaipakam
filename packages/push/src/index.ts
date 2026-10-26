@@ -35,6 +35,7 @@
 
 import * as PushAPI from '@pushprotocol/restapi';
 import { Wallet, getAddress } from 'ethers';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 const CAIP_PREFIX = 'eip155:1';
 
@@ -267,9 +268,7 @@ export async function sendPush(
     );
   } catch (err) {
     // Exceptional, so here the subscriber IS the diagnostic.
-    console.error(
-      `[push] send failed subscriber=${payload.subscriber} err=${String(err).slice(0, 200)}`,
-    );
+    console.error(`[push] send failed subscriber=${payload.subscriber}`, redactedError(err));
     return 'failed';
   }
   return 'accepted';

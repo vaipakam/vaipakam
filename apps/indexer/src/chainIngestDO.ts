@@ -61,6 +61,7 @@ import {
 } from './chainIndexer';
 import { readJsonBody } from '@vaipakam/lib/requestBody';
 import { callerKey } from '@vaipakam/lib/rateLimit';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /** The scan trigger the Worker posts: a chain id and an optional target
  *  block (#2756). */
@@ -733,7 +734,7 @@ export class ChainIngestDO {
         // recovery invalidation even though its idempotent re-scan counts zero.
         await this.state.storage.put({ pendingBroadcast: true });
         // eslint-disable-next-line no-console
-        console.error(`[chainIngestDO] scan failed for chain ${chainId}`, err);
+        console.error(`[chainIngestDO] scan failed for chain ${chainId}`, redactedError(err));
         await this.rearmOrFinish(attempts);
         return;
       }

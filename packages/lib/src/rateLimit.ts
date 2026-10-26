@@ -30,6 +30,7 @@
  * locations can each spend that much. It is a bound, not an exact global
  * meter (that would need a Durable Object).
  */
+import { redactedError } from './errorDescription';
 
 /** A Cloudflare built-in rate-limit binding. */
 export type RateLimitBinding = {
@@ -56,7 +57,7 @@ export async function takeSlot(
   try {
     return (await binding.limit({ key })).success ? 'taken' : 'refused';
   } catch (err) {
-    console.error('[rate-limit] binding threw; refusing the request', err);
+    console.error('[rate-limit] binding threw; refusing the request', redactedError(err));
     return 'unavailable';
   }
 }

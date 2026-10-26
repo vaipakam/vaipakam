@@ -689,6 +689,11 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   pause and a separate Role-A switch). A borrower opts an individual borrow offer
   into backstop eligibility by setting a future deadline; that deadline must fall a
   genuine minimum interval after the offer is posted and strictly before it expires.
+  The opt-in describes the offer as it stood when the borrower opted in, so any
+  later change to the offer's amount, rate or collateral withdraws it: the borrower
+  opts in again and waits the minimum interval out on the new terms. The terms the
+  backstop funds are therefore always terms that sat in the market for that
+  interval, never terms set in the same block as the fill.
   Once the deadline passes and if the offer is still valid, unfilled, and backed by
   liquid oracle-priced collateral within the protocol's risk limits, anyone may
   trigger the backstop to fund the loan from treasury at the backstop's
@@ -770,7 +775,8 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   - **`Aon`** ("All-or-Nothing"): the offer admits exactly one
     full-size fill, sized to `offer.amount`. Requires `amount ==
     amountMax` at create (an amount range under AON is structurally
-    meaningless — only the full fill is reachable). A matcher
+    meaningless — only the full fill is reachable), and keeps it through
+    every later edit of the offer. A matcher
     attempting a partial fill against an AON offer reverts with a
     typed `AonRequiresFullFill` error carrying the offending offer
     id, the required full size, and the would-be partial size.
@@ -834,8 +840,21 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   `createOffer` enforces: positive amount / collateral, range
   ordering (`amountMax >= amount`, etc.), `interestRateBpsMax <=
   MAX_INTEREST_BPS`, lender single-value collateral
-  (`collateralAmountMax == collateralAmount`), per-asset pause, and
-  sanctions screening on the creator.
+  (`collateralAmountMax == collateralAmount`), a rental's and an
+  all-or-nothing offer's single-value amount, per-asset pause, and
+  sanctions screening on the creator. Create and modify apply one
+  shared definition of a well-formed offer, so no edit can produce an
+  offer a create would have refused.
+- An ERC-20 loan offer against ERC-20 collateral always carries a
+  positive collateral amount, at create and through every edit. The
+  only offer allowed to carry none is the protocol's own lender-sale
+  vehicle (lender early withdrawal, "Option 2: Create a New Offer
+  Through the Borrower-Offer Path"), whose collateral is the
+  linked live loan's; no creator can post a zero-collateral offer
+  directly, so a lender can never fund a loan backed by nothing, even
+  against illiquid collateral that is valued at zero.
+- An edit to an offer that was opted into the treasury backstop
+  withdraws that opt-in (see the backstop rule above).
 - Partial-fill bound: the new ceiling cannot fall below the portion
   already committed to live loans — `amountMax >= amountFilled` and
   `collateralAmountMax >= collateralAmountFilled`. The remaining
@@ -3228,6 +3247,7 @@ All functions are pure `view` functions (zero gas for callers when invoked via R
 - **A Public Endpoint Reads Only A Bounded Request:** Every request body a public off-chain service accepts is read only up to a stated size for that route, and a larger body is refused as too large before the service holds the rest of it. A body that is not valid data is refused under one shared name, the same on every service, so the platform's own pages and integrators can tell the two refusals apart from each other and from a business-rule refusal.
 - **The Cheapest Answer Comes First:** A public route gives every answer that costs it nothing — a chain it does not serve, a credential it does not hold, a request it would refuse anyway — before it spends a chain read or an upstream call on that request. A request the service will never act on must not cost it a chain read.
 - **The Live Update Channel Is Bounded:** The channel that tells the platform's pages when chain data has changed admits only the platform's own pages, meters new connections per caller under the same rule as every other limit (a missing or failing limiter refuses), and caps how many connections it holds for each chain and for each caller. A page that is refused stays on ordinary refreshing, so a full channel delays an update, never hides one. The channel carries only the signal that something changed; the data itself is always read from the same public read routes as before.
+- **A Failure Is Reported Without The Credentials It Touched:** When an off-chain service reports a failure, in its own log, an operator alert, a stored record or a response, the report never carries a provider address or key. Chain-provider addresses embed the operator's key and the libraries that call them repeat the full address in their errors, so a failure's text is passed through one shared redaction before it is written anywhere: every web address is removed whole, so is a provider host name that carries a per-customer label in front of the provider's domain (a lookup failure names the host alone), and so is any key-, token- or password-shaped value, in full even when it is quoted and holds spaces or separators. What an operator needs to tell failures apart stays: the kind of failure, its message with those values removed, the chain of causes, and where in the code it happened. Shortening a message is not redaction, because the address sits near its start.
 
 ### Testing and Auditing
 

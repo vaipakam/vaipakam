@@ -103,6 +103,7 @@ import {
 import { readBodyText } from '@vaipakam/lib/requestBody';
 import { isListedOrigin } from '@vaipakam/lib/originAllowList';
 import { slotRefusalStatus, takeCallerSlot } from '@vaipakam/lib/rateLimit';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 // #757 — the per-chain ingest Durable Object. Re-exported from the Worker
 // entry so `wrangler.jsonc`'s `durable_objects` binding can resolve the class.
@@ -284,7 +285,7 @@ export default {
             body: JSON.stringify({ chainId: chain.id, targetBlock: '0' }),
           }).catch((err) => {
             // eslint-disable-next-line no-console
-            console.error(`[indexer] DO ping failed for chain ${chain.id}:`, err);
+            console.error(`[indexer] DO ping failed for chain ${chain.id}:`, redactedError(err));
           }),
         );
       }
@@ -294,7 +295,7 @@ export default {
       ingest.push(
         runChainIndexer(resolved, budget).catch((err) => {
           // eslint-disable-next-line no-console
-          console.error('[indexer] runChainIndexer pass failed:', err);
+          console.error('[indexer] runChainIndexer pass failed:', redactedError(err));
         }),
       );
     }
@@ -355,7 +356,7 @@ export default {
         return captureBackingSnapshot(resolved, target.id, tickMinutes).catch((err) => {
           // One chain's RPC blip must not wedge the tick.
           // eslint-disable-next-line no-console
-          console.error(`[indexer] backing snapshot failed for ${target.id}:`, err);
+          console.error(`[indexer] backing snapshot failed for ${target.id}:`, redactedError(err));
         });
       });
     }
@@ -363,14 +364,14 @@ export default {
     runPass(
       pruneOldCancelledOffers(resolved).catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[indexer] pruneOldCancelledOffers pass failed:', err);
+        console.error('[indexer] pruneOldCancelledOffers pass failed:', redactedError(err));
       }),
     );
     // #757 — prune the webhook delivery dedupe table (short retention window).
     runPass(
       pruneOldWebhookDeliveries(resolved).catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[indexer] pruneOldWebhookDeliveries pass failed:', err);
+        console.error('[indexer] pruneOldWebhookDeliveries pass failed:', redactedError(err));
       }),
     );
     // T-086 step 14 round 2 — retry the OpenSea publish for rows whose inline
@@ -393,7 +394,7 @@ export default {
     afterIngestPass(() =>
       sweepUnpublishedListings(resolved, budget).catch((err) => {
         // eslint-disable-next-line no-console
-        console.error('[indexer] sweepUnpublishedListings pass failed:', err);
+        console.error('[indexer] sweepUnpublishedListings pass failed:', redactedError(err));
       }),
     );
     // WHAT THE TICK ACTUALLY SPENT, once every pass has settled. `allSettled`
@@ -838,7 +839,7 @@ async function handleChainEventWebhook(
     });
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('[indexer] webhook DO forward threw:', err);
+    console.error('[indexer] webhook DO forward threw:', redactedError(err));
     // Don't record the dedupe row → Alchemy's retry re-forwards (5xx).
     return new Response('forward failed', { status: 502 });
   }

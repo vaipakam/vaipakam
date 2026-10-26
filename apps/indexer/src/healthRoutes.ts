@@ -38,6 +38,7 @@
  */
 import { CURSOR_KIND } from './chainIndexer';
 import { schemaGate, type SchemaCheck } from './schemaGate';
+import { redactedError } from '@vaipakam/lib/errorDescription';
 
 /** The narrow D1 surface this route reads. */
 interface D1Like {
@@ -200,7 +201,7 @@ export async function handleIngestHealth(db: D1Like, configuredChains: number[])
   try {
     return new Response(JSON.stringify(await readIngestHealth(db, configuredChains)), { status: 200, headers: HEADERS });
   } catch (err) {
-    console.error(`[indexer] /health/ingest read failed: ${(err as Error).message}`);
+    console.error('[indexer] /health/ingest read failed', redactedError(err));
     return new Response(JSON.stringify({ error: 'ingest state could not be read' }), {
       status: 503,
       headers: HEADERS,
