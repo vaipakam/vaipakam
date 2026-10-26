@@ -13,6 +13,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {RehearsalChain} from "./lib/RehearsalChain.sol";
 
 /**
  * @title SepoliaOpenOffers
@@ -67,6 +68,8 @@ contract SepoliaOpenOffers is Script {
     }
 
     function run() external {
+        // Points the Diamond at mocks it deploys: never on a shared Diamond (#2763).
+        RehearsalChain.requireRehearsalChain("SepoliaOpenOffers");
         diamond = _resolveDiamond();
         deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         adminKey = vm.envUint("ADMIN_PRIVATE_KEY");

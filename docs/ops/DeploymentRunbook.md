@@ -78,7 +78,7 @@ Three deploy scripts after the 2026-05-10 modernization sweep
 | `launch` | — | `Launch.s.sol` — the ONE first unpause (#945, #946). The `contracts` phase leaves the Diamond **paused** (it used to unpause at the end of that phase, before any price feed, sanctions screen or swap route existed). This phase reads six launch requirements off the chain and prints each as `met`, `NOT MET` or `NOT CHECKED`: treasury set, sanctions oracle set to a contract that answers `isSanctioned(address)` with a boolean (the Diamond reads a failing oracle as "not sanctioned"), the declared WETH configured, an 18-decimal token contract, and priced by the Diamond's own oracle from the ETH reference feed right now (`getAssetPriceStatus(getWethContract())` is `Priced`, so a missing, stale, malformed or distrusted feed is `NOT MET` by the oracle's own rules), at least one enabled swap adapter, VPFI routed through the declared pool, and exactly the declared lanes on that pool, with every lane's inbound and outbound rate limits enabled and inside the `VpfiPoolRateGovernor` bounds. The chain is checked against DECLARED values (`Launch.declaredFromEnv`), never against itself: the pool the chain's CCIP `TokenAdminRegistry` (`CCIP_TOKEN_ADMIN_REGISTRY`) maps the Diamond's VPFI token to must be the artifact's `vpfiTokenPool` (which `handover-gate` proves Timelock-owned, registry-routed and bound to the rate governor; the gate re-reads at execution that the registry administrator, pool owner and governor owner are the Diamond's owner and the pool's rate admin is the artifact's `vpfiPoolRateGovernor`), and its lanes must be exactly `CCIP_LANE_CHAIN_IDS` (resolved from `CCIP_LANE_CHAIN_IDS_<SLUG>` as `ccip-wire` does), none missing and none extra, each reaching exactly the peer the remote chain's artifact records: its VPFI token (`vpfiToken` on Base, `vpfiMirror` on a mirror) and its `vpfiTokenPool` as the only remote pool (read through the helper `ccip-wire` wires them with). On a mirror chain the VPFI token's own mint authority (`tokenPool()`) must be the routed pool and the token owned by the Diamond's owner with no transfer pending. The WETH is the configured one, printed in the proposal for the Safe to verify against the chain's bridge registry. With the registry unset both CCIP checks are `NOT CHECKED`; with no lane set declared the lane check is `NOT CHECKED`; with no VPFI token and nothing declared (`--skip-vpfi`) both are met as not applicable. **Testnet**: refuses on any `NOT MET`; `NOT CHECKED` (for example a chain with no VPFI pool) is reported and allowed. The admin key unpauses while it holds `UNPAUSER_ROLE` and the Diamond has never been live (it carries no first-unpause record); after a rehearsal handover the Timelock batch is printed instead, and then every check must be `met`. **Mainnet**: run AFTER `handover` and `handover-gate` (it refuses without the gate's marker). Every check must be `met` (`NOT CHECKED` refuses too), the Timelock must hold `UNPAUSER_ROLE` and own the Diamond, the admin key must hold no Diamond role at all, the role epoch and the Timelock's call count must still be the ones `handover-gate` recorded (refused without them, or once a role has changed hands or the Timelock has executed any call since: re-run `handover-gate`), and the LaunchGate must be deployed. It broadcasts nothing: it prints the Timelock `scheduleBatch` call for the governance Safe to propose, the `executeBatch` call for after the delay, and the operation's current state, so the first unpause waits out the same 48h window as any governance action. The operation is ONE call, `AdminFacet.launch(epoch, gate, LaunchGate.assertReady(diamond, declared, handover))`, with the declared registry, pool, rate governor, lanes and WETH and the handover (admin key, Diamond owner, proven role epoch, and the count of calls the Timelock had executed when `handover-gate` proved the topology) in the calldata. The Diamond makes the gate call itself, refuses one that is not `assertReady` for itself, and unpauses only when it returns: the six checks, the owner, the admin key holding no Diamond role and the role epoch are read again on-chain inside the execution, so if one stopped holding during the delay (including a role granted to anyone) the execution reverts and the Diamond stays paused. The launch must also be the Timelock's NEXT call: any other Timelock call executed after `handover-gate` proved the topology (a `diamondCut`, a pool ownership transfer, a rate-governor upgrade, anything) refuses the proposal or, once it is scheduled, reverts it with `TimelockActedDuringDelay`, because not every such effect can be read back on-chain; execute or cancel other queued operations first, then run `handover-gate` and print the proposal. The Diamond records the gate its first unpause went through. The epoch is the pause count when the proposal was printed, so a Guardian pause or watcher auto-pause during the delay also makes it revert; re-run the phase for a fresh proposal after such an incident. Re-run the phase after `executeBatch` to mark it done. The phase is marked only when `Launch.s.sol --sig "requireLaunched()"` passes, never from the pause bit: the Diamond's own first-unpause record (on mainnet it must name the Timelock and this checkout's LaunchGate: a Timelock operation that only unpauses is refused, and so is a first unpause through any other contract answering `assertReady`, since what it checked is unknown), on a testnet a first unpause outside a launch gate counts only while no answered check is `NOT MET`, paused now or not. After the launch every check is still read, and one that is `NOT MET` now is reported beside the launch record rather than hidden. Otherwise the phase refuses, so an unpause outside this step is never recorded as a launch. The record is read first: once the Diamond has been live, a re-run during an incident pause reports the launch and proposes nothing. The verify phases print the same decision (`report()`), so they never call a deployment launchable that the launch would refuse, including before the handover. The swap-route check counts an adapter only when it is enabled, has code and answers `adapterName()`. The mainnet sanctions oracle comes from `ConfigureSanctionsOracle`, which refuses mainnets until the #2443 adder host is decided, so a mainnet launch refuses until then. |
 | `abi-sync` | — | Runs the export scripts: `exportFrontendAbis.sh` + `exportFrontendDeployments.sh` + `exportSubgraphAbis.sh` + `exportTenderlyAlerts.sh` + (sibling repo present) `exportAbis.sh` for the keeper-bot. |
 | `cf-app` / `cf-www` | — | Build + `wrangler deploy` apps/app (the dApp) / apps/www (marketing). |
-| `cf-keeper` / `cf-indexer` / `cf-agent` | — | `pnpm run deploy` of each Worker. All three bind the shared `vaipakam-warm` D1. Only `cf-indexer` APPLIES pending migrations (D1 Edit), verifies them, then publishes; `cf-keeper` / `cf-agent` verify the schema read-only and refuse to publish while a migration is pending — run `cf-indexer` first on a migration-bearing release (#2214 / #2409). Each verifies the chain-specific `RPC_<CHAIN>` secret is set on the Worker (hard-fail if missing). |
+| `cf-keeper` / `cf-indexer` / `cf-agent` | — | `pnpm run deploy` of each Worker. All three bind the shared `vaipakam-warm` D1. Only `cf-indexer` APPLIES pending migrations (D1 Edit), verifies them, then publishes; `cf-keeper` / `cf-agent` verify the schema read-only and refuse to publish while a migration is pending — run `cf-indexer` first on a migration-bearing release (#2214 / #2409). Each checks the Worker can read the chain's `RPC_<CHAIN>`: the entry its `secrets_store_secrets` binds must exist in that store with the workers scope (hard-fail if missing or if the store cannot be listed). A chain the Worker's config binds no RPC for refuses on `cf-indexer` and `cf-agent`, and is reported and skipped on `cf-keeper`, whose chain set is what its config binds (#2763). |
 | `verify` | — | Read-only smoke checks: `paused()` (an unpaused Diamond with no `launch` marker fails verify: something unpaused it outside the launch step), the launch readiness report (`Launch.s.sol --sig "report()"`, the same five checks the `launch` phase acts on), `getTreasury()`, facet count (exact-matches the live `DiamondLoupe.facetAddresses().length` against `addresses.json` `.facetCount` recorded at deploy — fails on any mismatch, not just a low count), master flag state, and the VPFI TokenPool rate-limit **wiring**: the pool's `getRateLimitAdmin()` must be the `VpfiPoolRateGovernor` (which range-bounds every value and refuses to disable a lane's limit) and `getSupportedChains()` must be non-empty — refuses to mark verify-done otherwise. **Known limit of the automated check**: it does NOT read each lane's limiter config, so an interrupted `ccip-wire` run can leave a lane present but with its rate limit disabled (or zeroed) and still pass verify. **Manual operator step (required)**: after verify, for EVERY expected lane read the pool's per-lane limiter state (`cast call $POOL 'getCurrentOutboundRateLimiterState(uint64)((uint128,uint32,bool,uint128,uint128))' <remoteChainSelector>` and the `getCurrentInboundRateLimiterState` equivalent; the returned tuple is `(tokens, lastUpdated, isEnabled, capacity, rate)`) and confirm `isEnabled == true` with the finite capacity/rate values from the design §10 starting numbers (capacity 50,000 VPFI, refill ≈5.8 VPFI/s) before proceeding to handover. **On a freshly wired lane `tokens` reads near 0, and that is expected, not a fault**: a bucket the rate governor sets on a lane added with no limit starts EMPTY and refills at its rate (CCIP keeps the smaller of the new capacity and the tokens already in the bucket, which is none). Until it refills, a crossing larger than what has accrued is refused with `TokenRateLimitReached(minWaitInSeconds, available, token)`: at the starting numbers a 100 VPFI transfer needs about 17 s after wiring, and a full 50,000 VPFI bucket about 2.4 h. This applies to the first reward-budget remittance too, so leave the lane to refill before sending a large one (#2852). (Hardening follow-up: extend the verify phase to read per-lane limiter configs itself. The former BuyAdapter rate-limit-cap check is gone with the adapter, #687-A.) |
 | `pause-rehearsal` (testnet only) | `--mode {calldata\|check\|unpause-calldata}` | Sub-5-min N-chain simultaneous-pause drill. `--mode calldata` (default) prints `pause()` calldata for the operator to sign through the Pauser Safe UI; `--mode check` reads `paused()` on every contract and reports elapsed wall-clock vs the 300s budget; `--mode unpause-calldata` prints the inverse for cleanup. Refused on mainnet. |
 
@@ -306,11 +306,18 @@ Worker's `secrets_store_secrets` block when in doubt.
 
 Verify against the STORE, not a Worker: re-run the `secret list`
 command above and confirm the name is present. (A per-Worker
-`npx wrangler secret list` cannot see store-bound values — and note
-that `verify_rpc_secret_on_worker()` in the deploy scripts still
-checks per-Worker secrets, a latent mismatch tracked as **#1492**;
-until it lands, that preflight can hard-fail even when the store is
-correctly provisioned.)
+`npx wrangler secret list` cannot see store-bound values.) The deploy
+scripts' preflight does the same: `check_chain_rpc_secret` in
+`contracts/script/lib/worker-secrets.sh`, the one copy all three
+scripts source, reads the Worker's own `secrets_store_secrets` block
+and looks for the bound entry in that store (#1492, #2763). Since every
+Worker binds every RPC it reads from the store, a chain whose RPC its
+config does not bind is a chain it does not serve: the indexer and the
+agent refuse (every deployed chain must be indexed and served), the
+keeper reports it and moves on (its chain set is what its config binds;
+it deliberately omits Polygon and Polygon Amoy). A store listing it
+cannot read refuses the phase with its own message; it is never taken
+as "present".
 
 ### Auto post-deploy steps performed by the script
 
@@ -878,24 +885,26 @@ handovers (e.g. when one chain's Safe SDK lands earlier than another's).
 
 ### 3. Smoke tests (positive + partial flow sweeps)
 
-After peers are wired, sanity-check every chain via the
-chain-agnostic flow scripts:
+None of the flow scripts is a post-deploy check for a shared chain, and each
+refuses one (#848, #2763): `PositiveFlows.s.sol`, `PartialFlows.s.sol`,
+`NegativeFlows.s.sol` and the `Sepolia*` seeding scripts all re-point the
+Diamond's oracle (and, for some, its sanctions oracle and risk parameters) at
+mocks they deploy, which on a live testnet would replace the chain's real price
+and sanctions sources. They share one guard (`script/lib/RehearsalChain.sol`):
+a local Anvil always runs, a production chain never does, and a known testnet
+runs only when `REHEARSAL_ALLOW_CHAIN_ID` names it, for a Diamond deployed for
+the rehearsal.
+
+To check that a live deployment behaves as documented, drive it on a local
+fork with the `contracts/script/fork-scenarios/` driver instead. Run the flow
+scripts on a local Anvil (section 5a), or on a rehearsal Diamond:
 
 ```bash
-forge script script/PartialFlows.s.sol  --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
-# Repeat for ARB_SEPOLIA_RPC_URL and OP_SEPOLIA_RPC_URL.
+REHEARSAL_ALLOW_CHAIN_ID=84532 \
+  forge script script/PartialFlows.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
 ```
 
 `PartialFlows.s.sol` stands up 13 partial midpoints.
-
-`PositiveFlows.s.sol` is **not** a post-deploy check for a shared chain, and
-refuses one (#848): its fixture re-points the Diamond's oracle, sanctions
-oracle and risk parameters at mocks it deploys, which on a live testnet would
-replace the chain's real price and sanctions sources. To check that a live
-deployment behaves as documented, drive it on a local fork with the
-`contracts/script/fork-scenarios/` driver instead. Run `PositiveFlows.s.sol` on
-a local Anvil (section 5a), or on a Diamond deployed for the rehearsal with
-`POSITIVE_FLOWS_ALLOW_CHAIN_ID` set to that chain's id.
 
 ### 4. Recovery from a mid-flight failure
 
@@ -953,7 +962,7 @@ each item is checked:
       chain — capture the broadcast logs in
       `docs/internal/RehearsalReports/<date>/`. The positive flows run
       only against a Diamond deployed for the rehearsal, with
-      `POSITIVE_FLOWS_ALLOW_CHAIN_ID` set to that chain's id: their
+      `REHEARSAL_ALLOW_CHAIN_ID` set to that chain's id: their
       fixture replaces the Diamond's oracle and sanctions sources with
       mocks, so never point them at a Diamond anything live reads.
 - [ ] `deployment_source.json` on every chain points at the same
@@ -1821,12 +1830,15 @@ mid-script.
 
 ### 5b. Testnet smoke tests (after the Anvil sweep is green)
 
-Run the `Sepolia*` family on the target testnet first, then execute on mainnet
-forks. The positive-flow suite is not part of this step: it refuses a shared
-chain (see section 3), and the fork-scenarios driver covers a live deployment.
+Run the `Sepolia*` family against a rehearsal Diamond on the target testnet
+first, then execute on mainnet forks. Like the flow suites, these scripts point
+the Diamond at their own mocks, so they refuse a shared chain unless
+`REHEARSAL_ALLOW_CHAIN_ID` names it (see section 3); the fork-scenarios driver
+covers a live deployment.
 
 ```bash
-forge script script/SepoliaActiveLoan.s.sol   --rpc-url $RPC_URL --broadcast
+REHEARSAL_ALLOW_CHAIN_ID=<chain id> \
+  forge script script/SepoliaActiveLoan.s.sol   --rpc-url $RPC_URL --broadcast
 ```
 
 Manual checks post-smoke:
@@ -1844,14 +1856,15 @@ them in append order (no merge of state, just one phase after the other):
 
 ```bash
 # Full positive flow — every module under script/positive-flows/ (a local
-# Anvil, or a rehearsal Diamond named in POSITIVE_FLOWS_ALLOW_CHAIN_ID):
+# Anvil, or a rehearsal Diamond named in REHEARSAL_ALLOW_CHAIN_ID):
 forge script script/PositiveFlows.s.sol --rpc-url $RPC_URL --broadcast --slow \
   --disable-block-gas-limit
 
-# Full partial flow — 13 UI-testable midpoint states (6 legacy + 7 new):
+# Full partial flow — 13 UI-testable midpoint states (6 legacy + 7 new)
+# (same chain rule as the positive flow):
 forge script script/PartialFlows.s.sol  --rpc-url $RPC_URL --broadcast --slow
 
-# Full negative flow — 9 gate verifications:
+# Full negative flow — 9 gate verifications (same chain rule):
 forge script script/NegativeFlows.s.sol --rpc-url $RPC_URL --broadcast --slow
 ```
 

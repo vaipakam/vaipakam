@@ -18,6 +18,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {RehearsalChain} from "./lib/RehearsalChain.sol";
 
 /**
  * @title BaseSepoliaPartialFlows
@@ -61,6 +62,8 @@ contract BaseSepoliaPartialFlows is Script {
     uint256 constant DAILY_FEE = 10e6;            // 10 mUsdc / day rental
 
     function run() external {
+        // Points the Diamond at mocks it deploys: never on a shared Diamond (#2763).
+        RehearsalChain.requireRehearsalChain("BaseSepoliaPartialFlows");
         diamond = Deployments.readDiamond();
         deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         deployer = vm.addr(deployerKey);
