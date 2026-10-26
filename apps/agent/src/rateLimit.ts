@@ -77,6 +77,24 @@ export function takeCallerSlot(
 }
 
 /**
+ * The status and error name for a slot that was not taken, or `null` when
+ * it was: the one mapping every refusal uses, so a caller that reports a
+ * refusal inside a larger answer (the OpenSea offers walk) names it the
+ * same way a whole-route refusal does. See {@link slotRefusal}.
+ */
+export function slotRefusalStatus(
+  outcome: SlotOutcome,
+  refusedError = 'rate-limited',
+): { status: 429 | 503; error: string } | null {
+  if (outcome === 'taken') return null;
+  if (outcome === 'refused') return { status: 429, error: refusedError };
+  return {
+    status: 503,
+    error: outcome === 'unconfigured' ? 'rate-limit-binding-missing' : 'rate-limit-unavailable',
+  };
+}
+
+/**
  * The HTTP answer for a slot that was not taken, or `null` when it was.
  *
  * `refused` is 429: the caller may try again later. `unconfigured` and
@@ -91,13 +109,9 @@ export function slotRefusal(
   corsOrigin: string,
   refusedError = 'rate-limited',
 ): Response | null {
-  if (outcome === 'taken') return null;
-  const [status, error] =
-    outcome === 'refused'
-      ? [429, refusedError]
-      : outcome === 'unconfigured'
-        ? [503, 'rate-limit-binding-missing']
-        : [503, 'rate-limit-unavailable'];
+  const refusal = slotRefusalStatus(outcome, refusedError);
+  if (!refusal) return null;
+  const { status, error } = refusal;
   return new Response(JSON.stringify({ error }), {
     status,
     headers: {

@@ -149,9 +149,12 @@ export function parseOrderComponents(raw: unknown): OrderComponents | null {
   const zone = address(o.zone);
   const offer = items(o.offer, item);
   const consideration = items(o.consideration, (v) => {
+    // `item` refuses anything that is not an object, so `v` is read for its
+    // recipient only once it has parsed as one.
     const base = item(v);
+    if (!base) return null;
     const recipient = address((v as Record<string, unknown>).recipient);
-    return base && recipient ? { ...base, recipient } : null;
+    return recipient ? { ...base, recipient } : null;
   });
   const orderType = smallInt(o.orderType, MAX_ORDER_TYPE);
   const startTime = uint(o.startTime);

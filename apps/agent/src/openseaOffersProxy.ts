@@ -42,7 +42,7 @@
  */
 
 import type { Env } from './env';
-import { slotRefusal, takeCredentialSlot } from './rateLimit';
+import { slotRefusal, slotRefusalStatus, takeCredentialSlot } from './rateLimit';
 
 const OPENSEA_HOST: Record<number, string> = {
   1: 'api.opensea.io',
@@ -121,10 +121,12 @@ export async function handleOpenSeaOffers(
   // for the worst case (`1 + 2 × MAX_PAGES` slots) before the slug lookup,
   // so a request for an NFT OpenSea does not know cost seven slots for one
   // real call, and a stream of those emptied the shared budget for every
-  // borrower. A refused slot stops the walk; what was already fetched is
-  // returned and marked `truncated`, never presented as the whole list.
-  const spend = async (): Promise<boolean> =>
-    (await takeCredentialSlot(env, 'opensea')) === 'taken';
+  // borrower. A slot not taken stops the walk; what was already fetched is
+  // returned and marked `truncated`, never presented as the whole list,
+  // and the leg names why it stopped with the same status and error the
+  // whole-route refusal would use, so a limiter that could not count (503)
+  // is never reported as a spent budget (429).
+  const spend = async () => slotRefusalStatus(await takeCredentialSlot(env, 'opensea'), 'upstream-quota');
 
   const headers = {
     'X-API-KEY': apiKey,
@@ -204,11 +206,12 @@ export async function handleOpenSeaOffers(
   // the clamp + foot-gun-safety rationale.
   const fetchPaginated = async (
     initialUrl: string | null,
-  ): Promise<{ status: number; body: string; truncated: boolean } | null> => {
+  ): Promise<LegResult | null> => {
     if (!initialUrl) return null;
     const all: unknown[] = [];
     let lastStatus = 0;
     let truncated = false;
+    let stoppedBy: string | undefined;
     // Codex round-16 P2 review #328 — track whether ANY page
     // succeeded. If page 1 succeeds and page 2 fails, we want
     // to return the page-1 offers + a synthetic 200 status so
@@ -220,11 +223,14 @@ export async function handleOpenSeaOffers(
       ? `${initialUrl}&limit=100`
       : `${initialUrl}?limit=100`;
     for (let i = 0; i < MAX_PAGES && url; i++) {
-      if (!(await spend())) {
-        // The budget ran out mid-walk: with no page yet the leg reports
-        // the quota; otherwise it keeps what it has and says it stopped.
+      const refusal = await spend();
+      if (refusal) {
+        // No slot for this page: with no page yet the leg reports the
+        // refusal's own status; otherwise it keeps what it has and says it
+        // stopped. Either way `stoppedBy` names the refusal.
         if (anyPageSucceeded) truncated = true;
-        else lastStatus = 429;
+        else lastStatus = refusal.status;
+        stoppedBy = refusal.error;
         break;
       }
       const page = await fetch(url, { headers })
@@ -259,6 +265,7 @@ export async function handleOpenSeaOffers(
       status: lastStatus,
       body: JSON.stringify({ offers: all }),
       truncated,
+      ...(stoppedBy ? { stoppedBy } : {}),
     };
   };
 
@@ -284,14 +291,24 @@ export async function handleOpenSeaOffers(
   return jsonResponse(aggregated, 200, resolvedOrigin);
 }
 
-function tryParseUpstream(
-  res: { status: number; body: string; truncated: boolean },
-): { status: number; body: unknown; truncated: boolean } {
+/** One offers leg as fetched: the status the leg answers with, its body,
+ *  whether the walk stopped before OpenSea's last page, and, when the
+ *  credential budget stopped it, the refusal's error name. */
+interface LegResult {
+  status: number;
+  body: string;
+  truncated: boolean;
+  stoppedBy?: string;
+}
+
+function tryParseUpstream(res: LegResult): Omit<LegResult, 'body'> & { body: unknown } {
+  let body: unknown = res.body;
   try {
-    return { status: res.status, body: JSON.parse(res.body), truncated: res.truncated };
+    body = JSON.parse(res.body);
   } catch {
-    return { status: res.status, body: res.body, truncated: res.truncated };
+    // Not JSON: forwarded as the raw text.
   }
+  return { ...res, body };
 }
 
 function jsonResponse(

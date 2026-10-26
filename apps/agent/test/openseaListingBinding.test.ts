@@ -86,6 +86,9 @@ describe('parseOrderComponents', () => {
       null,
       { ...RAW, offer: [] },
       { ...RAW, consideration: [{ ...RAW.consideration[0], recipient: 'nope' }] },
+      { ...RAW, consideration: [null] },
+      { ...RAW, offer: [null] },
+      { ...RAW, consideration: ['x'] },
       { ...RAW, startTime: 1790000000 }, // a number where a decimal string is required
       { ...RAW, salt: '0x2a' },
       { ...RAW, orderType: 9 },

@@ -246,6 +246,33 @@ describe('the OpenSea offers walk is charged as spent', () => {
     expect(body.collection_offers?.truncated).toBe(true);
     expect(body.item_offers?.truncated).toBe(true);
     expect(body.collection_offers?.status).toBe(200);
+    expect(body.collection_offers).toMatchObject({ stoppedBy: 'upstream-quota' });
+  });
+
+  it('reports a limiter that cannot count on a leg as 503, never as a spent budget', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchSpy = vi.fn(async () =>
+      new Response(JSON.stringify({ nft: { collection: 'c' } }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    // The slug lookup's slot is taken; every slot after it throws.
+    let calls = 0;
+    const budget: RateLimitBinding = {
+      limit: async () => {
+        if (calls++ === 0) return { success: true };
+        throw new Error('limiter down');
+      },
+    };
+    const res = await worker.fetch(
+      call('GET', path),
+      rawEnv({ OPENSEA_OFFERS_RATELIMIT: allow(), OPENSEA_UPSTREAM_RATELIMIT: budget, OPENSEA_API_KEY: secret('k') }),
+      ctx(),
+    );
+    const body = (await res.json()) as Record<string, { status: number; stoppedBy?: string } | null>;
+    for (const leg of [body.collection_offers, body.item_offers]) {
+      expect(leg).toMatchObject({ status: 503, stoppedBy: 'rate-limit-unavailable', truncated: false });
+    }
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });
 
