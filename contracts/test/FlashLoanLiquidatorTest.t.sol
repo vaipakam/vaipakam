@@ -16,6 +16,9 @@ import {
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {LibDiscountedLiquidation} from "../src/libraries/LibDiscountedLiquidation.sol";
+import {ISwapAdapter} from "../src/interfaces/ISwapAdapter.sol";
+import {ZeroExAggregatorAdapter} from "../src/adapters/ZeroExAggregatorAdapter.sol";
+import {AggregatorAdapterBase} from "../src/adapters/AggregatorAdapterBase.sol";
 
 /// @title FlashLoanLiquidatorTest
 /// @notice Unit tests for the FlashLoanLiquidator reference contract
@@ -32,6 +35,9 @@ contract FlashLoanLiquidatorTest is Test {
     MockBalancerV2Vault balancerVault;
     MockDiamond diamond;
     MockSwapAggregator swap;
+    /// The Diamond-registered aggregator adapter every run sells through
+    /// (#2734): pinned allowance target and allow-listed call target `swap`.
+    ZeroExAggregatorAdapter adapter;
 
     ERC20Mock principal;
     ERC20Mock collateral;
@@ -86,6 +92,11 @@ contract FlashLoanLiquidatorTest is Test {
         swap.setIO(address(collateral), address(principal));
         swap.setRateMul(105);   // 1.05× = 5% profitable swap
         swap.setRateDiv(100);
+
+        address[] memory targets = new address[](1);
+        targets[0] = address(swap);
+        adapter = new ZeroExAggregatorAdapter(address(this), address(swap), targets);
+        diamond.addSwapAdapter(address(adapter));
     }
 
     // ─── Constructor guards ──────────────────────────────────────────
@@ -148,9 +159,7 @@ contract FlashLoanLiquidatorTest is Test {
             LOAN_ID,
             COLLATERAL_SEIZED,
             0,
-            address(swap),
-            address(swap),
-            _swapCalldata()
+            address(adapter), _adapterData()
         );
     }
 
@@ -161,9 +170,7 @@ contract FlashLoanLiquidatorTest is Test {
             LOAN_ID,
             COLLATERAL_SEIZED,
             0,
-            address(swap),
-            address(swap),
-            _swapCalldata()
+            address(adapter), _adapterData()
         );
     }
 
@@ -229,17 +236,23 @@ contract FlashLoanLiquidatorTest is Test {
         assertEq(nester.nestedRevert(), FlashLoanLiquidator.NotInFlight.selector, "replay refused");
     }
 
+    /// The nesting route behind its own registered aggregator adapter, which
+    /// pins the nester as both allowance and call target.
     function _nester() internal returns (NestingSwap nester) {
         nester = new NestingSwap(liquidator, aavePool, balancerVault, swap, principal);
         principal.mint(address(nester), 10_000 ether);
+        address[] memory targets = new address[](1);
+        targets[0] = address(nester);
+        ZeroExAggregatorAdapter nestAdapter = new ZeroExAggregatorAdapter(address(this), address(nester), targets);
+        diamond.addSwapAdapter(address(nestAdapter));
+        nester.setAdapter(address(nestAdapter));
     }
 
     function _runAaveVia(NestingSwap nester) internal {
-        bytes memory cd = abi.encodeWithSelector(
-            NestingSwap.swap.selector, address(collateral), address(principal), COLLATERAL_SEIZED
-        );
+        bytes memory data = nester.adapterData();
+        address nestAdapter = nester.adapter();
         vm.prank(owner);
-        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(nester), address(nester), cd);
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, nestAdapter, data);
     }
 
     // ─── Happy paths ─────────────────────────────────────────────────
@@ -252,9 +265,7 @@ contract FlashLoanLiquidatorTest is Test {
             LOAN_ID,
             COLLATERAL_SEIZED,
             0,
-            address(swap),
-            address(swap),
-            _swapCalldata()
+            address(adapter), _adapterData()
         );
 
         // Net profit = swap proceeds (1102.5 ether) - debt (1000) - fee (0.5)
@@ -277,9 +288,7 @@ contract FlashLoanLiquidatorTest is Test {
             LOAN_ID,
             COLLATERAL_SEIZED,
             0,
-            address(swap),
-            address(swap),
-            _swapCalldata()
+            address(adapter), _adapterData()
         );
 
         // Balancer V2 mock has zero fee — net profit = swap proceeds - debt
@@ -294,28 +303,26 @@ contract FlashLoanLiquidatorTest is Test {
 
     // ─── Unprofitable trade reverts ─────────────────────────────────
 
+    /// @dev #2734 — the adapter is told what the run needs back (debt, fee
+    ///      and `minProfit`) and refuses a sale that delivers less.
     function testRevertsWhenSwapProceedsBelowDebtPlusFee() public {
-        // Tighten the swap rate to 0.99× — proceeds = 1039.5 ether,
-        // which is BELOW debt + fee (1000.5 ether). Wait, 1039.5 > 1000.5.
-        // Let me make it 0.95× = 997.5 ether < 1000.5.
+        // 0.95× = 997.5 ether < debt + fee 1000.5.
         swap.setRateMul(95);
         swap.setRateDiv(100);
 
         vm.prank(owner);
         vm.expectRevert(
             abi.encodeWithSelector(
-                FlashLoanLiquidator.InsufficientPostSwapBalance.selector,
-                FLASH_LOAN_AMOUNT + FLASH_FEE,
-                (COLLATERAL_SEIZED * 95) / 100
+                AggregatorAdapterBase.InsufficientOutput.selector,
+                (COLLATERAL_SEIZED * 95) / 100,
+                FLASH_LOAN_AMOUNT + FLASH_FEE
             )
         );
         liquidator.liquidateViaAaveV3(
             LOAN_ID,
             COLLATERAL_SEIZED,
             0,
-            address(swap),
-            address(swap),
-            _swapCalldata()
+            address(adapter), _adapterData()
         );
     }
 
@@ -325,14 +332,17 @@ contract FlashLoanLiquidatorTest is Test {
         swap.setShouldRevert(true);
 
         vm.prank(owner);
-        vm.expectRevert(FlashLoanLiquidator.SwapFailed.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                AggregatorAdapterBase.RouterCallFailed.selector,
+                abi.encodeWithSignature("Error(string)", "swap reverted")
+            )
+        );
         liquidator.liquidateViaAaveV3(
             LOAN_ID,
             COLLATERAL_SEIZED,
             0,
-            address(swap),
-            address(swap),
-            _swapCalldata()
+            address(adapter), _adapterData()
         );
     }
 
@@ -351,9 +361,7 @@ contract FlashLoanLiquidatorTest is Test {
             LOAN_ID,
             COLLATERAL_SEIZED,
             0,
-            address(swap),
-            address(swap),
-            _swapCalldata()
+            address(adapter), _adapterData()
         );
     }
 
@@ -370,9 +378,7 @@ contract FlashLoanLiquidatorTest is Test {
             LOAN_ID,
             COLLATERAL_SEIZED,
             0,
-            address(swap),
-            address(swap),
-            _swapCalldata()
+            address(adapter), _adapterData()
         );
     }
 
@@ -381,11 +387,14 @@ contract FlashLoanLiquidatorTest is Test {
     /// @dev The contract keeps earned profit until the owner sweeps it.
     ///      A swap that under-delivers must revert even when that
     ///      standing balance could cover the shortfall.
+    ///      Run through an adapter that ignores its minimum, so the
+    ///      liquidator's own balance check is what refuses it.
     function testRevertsWhenLossIsCoveredOnlyByStandingBalance() public {
         uint256 standing = 500 ether;
         principal.mint(address(liquidator), standing);
         swap.setRateMul(95); // proceeds 997.5 < debt + fee 1000.5
         swap.setRateDiv(100);
+        LaxAdapter lax = _laxAdapter();
 
         vm.prank(owner);
         vm.expectRevert(
@@ -399,9 +408,7 @@ contract FlashLoanLiquidatorTest is Test {
             LOAN_ID,
             COLLATERAL_SEIZED,
             0,
-            address(swap),
-            address(swap),
-            _swapCalldata()
+            address(lax), _adapterData()
         );
     }
 
@@ -428,9 +435,7 @@ contract FlashLoanLiquidatorTest is Test {
             LOAN_ID,
             COLLATERAL_SEIZED,
             0,
-            address(swap),
-            address(swap),
-            _swapCalldata()
+            address(adapter), _adapterData()
         );
         assertEq(
             principal.balanceOf(address(liquidator)),
@@ -462,12 +467,10 @@ contract FlashLoanLiquidatorTest is Test {
             LOAN_ID,
             COLLATERAL_SEIZED,
             0,
-            address(swap),
-            address(swap),
-            _swapCalldata()
+            address(adapter), _adapterData()
         );
         assertEq(collateral.balanceOf(address(liquidator)), standingCollateral, "standing collateral untouched");
-        assertEq(collateral.allowance(address(liquidator), address(swap)), 0, "no allowance left");
+        assertEq(collateral.allowance(address(liquidator), address(adapter)), 0, "no allowance left");
     }
 
     // ─── Withdraw path ───────────────────────────────────────────────
@@ -480,9 +483,7 @@ contract FlashLoanLiquidatorTest is Test {
             LOAN_ID,
             COLLATERAL_SEIZED,
             0,
-            address(swap),
-            address(swap),
-            _swapCalldata()
+            address(adapter), _adapterData()
         );
 
         uint256 profit = principal.balanceOf(address(liquidator));
@@ -504,7 +505,7 @@ contract FlashLoanLiquidatorTest is Test {
         uint256 debt = 987 ether;
         diamond.setDebt(debt);
         vm.prank(owner);
-        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(swap), address(swap), _swapCalldata());
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(adapter), _adapterData());
         assertEq(aavePool.lastAmount(), debt, "flash-borrowed the previewed debt");
         assertEq(principal.allowance(address(liquidator), address(diamond)), 0, "no Diamond allowance left");
     }
@@ -514,7 +515,7 @@ contract FlashLoanLiquidatorTest is Test {
     function testDiamondAllowanceClearedAfterTrigger() public {
         diamond.setPull(FLASH_LOAN_AMOUNT - 1 ether);
         vm.prank(owner);
-        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(swap), address(swap), _swapCalldata());
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(adapter), _adapterData());
         assertEq(principal.allowance(address(liquidator), address(diamond)), 0, "allowance cleared");
     }
 
@@ -528,7 +529,7 @@ contract FlashLoanLiquidatorTest is Test {
                 uint8(LibDiscountedLiquidation.Status.Healthy)
             )
         );
-        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(swap), address(swap), _swapCalldata());
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(adapter), _adapterData());
     }
 
     /// @dev Refused before any flash loan when the preview already delivers
@@ -541,7 +542,7 @@ contract FlashLoanLiquidatorTest is Test {
             )
         );
         liquidator.liquidateViaBalancerV2(
-            LOAN_ID, COLLATERAL_SEIZED + 1, 0, address(swap), address(swap), _swapCalldata()
+            LOAN_ID, COLLATERAL_SEIZED + 1, 0, address(adapter), _adapterData()
         );
         assertEq(aavePool.lastAmount(), 0, "no flash loan taken");
     }
@@ -556,7 +557,7 @@ contract FlashLoanLiquidatorTest is Test {
                 FlashLoanLiquidator.SeizureBelowQuote.selector, COLLATERAL_SEIZED - 1, COLLATERAL_SEIZED
             )
         );
-        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(swap), address(swap), _swapCalldata());
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(adapter), _adapterData());
     }
 
     /// @dev Only the quoted amount is offered to the swap; the rest of the
@@ -577,14 +578,17 @@ contract FlashLoanLiquidatorTest is Test {
             SWAP_PROCEEDS - FLASH_LOAN_AMOUNT - FLASH_FEE
         );
         vm.prank(owner);
-        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(swap), address(swap), _swapCalldata());
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(adapter), _adapterData());
         assertEq(collateral.balanceOf(address(liquidator)), 50 ether, "unsold seizure kept");
-        assertEq(collateral.allowance(address(liquidator), address(swap)), 0, "no allowance left");
+        assertEq(collateral.allowance(address(liquidator), address(adapter)), 0, "no allowance left");
     }
 
-    /// @dev The run must keep `minProfit` on top of the flash-loan fee.
+    /// @dev The run must keep `minProfit` on top of the flash-loan fee:
+    ///      the adapter is asked for it, and the liquidator checks its own
+    ///      balance whatever the adapter does (here one ignoring its minimum).
     function testMinProfitIsEnforced() public {
         uint256 profit = SWAP_PROCEEDS - FLASH_LOAN_AMOUNT - FLASH_FEE;
+        LaxAdapter lax = _laxAdapter();
         vm.prank(owner);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -594,15 +598,95 @@ contract FlashLoanLiquidatorTest is Test {
             )
         );
         liquidator.liquidateViaAaveV3(
-            LOAN_ID, COLLATERAL_SEIZED, profit + 1, address(swap), address(swap), _swapCalldata()
+            LOAN_ID, COLLATERAL_SEIZED, profit + 1, address(lax), _adapterData()
         );
 
         vm.prank(owner);
-        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, profit, address(swap), address(swap), _swapCalldata());
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, profit, address(adapter), _adapterData());
         assertEq(principal.balanceOf(address(liquidator)), profit, "exactly the floor kept");
     }
 
+    // ─── #2734 — the sale runs only through a Diamond-routed adapter ──
+
+    /// @dev A swap target named directly (the quote API's own router) is not
+    ///      a registered adapter, so the run is refused before any flash loan.
+    function testRefusesAnAdapterTheDiamondDoesNotRoute() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(FlashLoanLiquidator.SwapAdapterNotRouted.selector, address(swap)));
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(swap), _swapCalldata());
+        assertEq(aavePool.lastAmount(), 0, "no flash loan taken");
+    }
+
+    /// @dev Governance disabling the venue on the Diamond disables it here.
+    function testRefusesAnAdapterTheDiamondDisabled() public {
+        diamond.setDisabled(address(adapter), true);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(FlashLoanLiquidator.SwapAdapterNotRouted.selector, address(adapter)));
+        liquidator.liquidateViaBalancerV2(LOAN_ID, COLLATERAL_SEIZED, 0, address(adapter), _adapterData());
+    }
+
+    /// @dev A hostile quote naming a call target outside the adapter's
+    ///      allow-list (here the principal token, to move this contract's
+    ///      standing profit) is refused by the adapter, and the approval
+    ///      never reaches anything but the adapter.
+    function testHostileQuoteTargetIsRefusedByTheAdapter() public {
+        principal.mint(address(liquidator), 500 ether);
+        bytes memory hostile = abi.encode(
+            address(principal), abi.encodeWithSelector(IERC20.transfer.selector, attacker, 500 ether)
+        );
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(AggregatorAdapterBase.SwapTargetNotAllowed.selector, address(principal))
+        );
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(adapter), hostile);
+        assertEq(principal.balanceOf(attacker), 0, "nothing moved");
+    }
+
+    /// @dev Only the adapter is ever approved, and the approval is cleared.
+    function testOnlyTheAdapterIsApprovedAndItIsCleared() public {
+        vm.prank(owner);
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(adapter), _adapterData());
+        assertEq(collateral.allowance(address(liquidator), address(adapter)), 0, "adapter allowance cleared");
+        assertEq(collateral.allowance(address(liquidator), address(swap)), 0, "router never approved");
+    }
+
+    /// @dev The event reports the collateral the adapter actually took: a
+    ///      router filling part of the order leaves the rest here.
+    function testCollateralSoldIsMeasured() public {
+        swap.setFillBps(8_000); // sells 80% of what it is offered
+        swap.setRateMul(130); // at a rate that still repays the run
+        uint256 sold = (COLLATERAL_SEIZED * 8_000) / 10_000;
+        uint256 proceeds = (sold * 130) / 100;
+        vm.expectEmit(true, true, true, true, address(liquidator));
+        emit FlashLoanLiquidator.FlashLoanLiquidationCompleted(
+            LOAN_ID,
+            address(principal),
+            address(collateral),
+            FLASH_LOAN_AMOUNT,
+            FLASH_FEE,
+            COLLATERAL_SEIZED,
+            sold,
+            proceeds,
+            proceeds - FLASH_LOAN_AMOUNT - FLASH_FEE
+        );
+        vm.prank(owner);
+        liquidator.liquidateViaAaveV3(LOAN_ID, COLLATERAL_SEIZED, 0, address(adapter), _adapterData());
+        assertEq(collateral.balanceOf(address(liquidator)), COLLATERAL_SEIZED - sold, "unsold part returned");
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────
+
+    /// The quote bytes the registered aggregator adapter takes.
+    function _adapterData() internal view returns (bytes memory) {
+        return abi.encode(address(swap), _swapCalldata());
+    }
+
+    /// A registered adapter that ignores its minimum output, so a test can
+    /// reach the liquidator's own balance check.
+    function _laxAdapter() internal returns (LaxAdapter lax) {
+        lax = new LaxAdapter();
+        diamond.addSwapAdapter(address(lax));
+    }
 
     function _swapCalldata() internal view returns (bytes memory) {
         return abi.encodeWithSelector(
@@ -718,6 +802,16 @@ contract MockDiamond {
     function setPull(uint256 a) external { pullOverride = a; }
     function setStatus(LibDiscountedLiquidation.Status s) external { status = s; }
 
+    address[] internal adapters;
+    mapping(address => bool) internal disabled;
+
+    function addSwapAdapter(address a) external { adapters.push(a); }
+    function setDisabled(address a, bool d) external { disabled[a] = d; }
+
+    /// Mimics `AdminFacet.getSwapAdapters` / `isSwapAdapterDisabled`.
+    function getSwapAdapters() external view returns (address[] memory) { return adapters; }
+    function isSwapAdapterDisabled(address a) external view returns (bool) { return disabled[a]; }
+
     /// Mimics `ForcedSaleFacet.previewDiscountedLiquidation`.
     function previewDiscountedLiquidation(uint256)
         external
@@ -752,6 +846,7 @@ contract MockSwapAggregator {
     uint256 public rateMul = 100;
     uint256 public rateDiv = 100;
     bool public shouldRevert;
+    uint256 public fillBps = 10_000;
 
     // forge-lint: disable-next-line(mixed-case-function)
     function setIO(address sell, address buy) external {
@@ -761,6 +856,7 @@ contract MockSwapAggregator {
     function setRateMul(uint256 v) external { rateMul = v; }
     function setRateDiv(uint256 v) external { rateDiv = v; }
     function setShouldRevert(bool v) external { shouldRevert = v; }
+    function setFillBps(uint256 v) external { fillBps = v; }
 
     function swap(
         address sell,
@@ -770,7 +866,8 @@ contract MockSwapAggregator {
         if (shouldRevert) revert("swap reverted");
         require(sell == sellToken, "wrong sell");
         require(buy == buyToken, "wrong buy");
-        // Pull sell-token via approval
+        // Pull sell-token via approval (a partial fill takes less).
+        amount = (amount * fillBps) / 10_000;
         IERC20(sell).transferFrom(msg.sender, address(this), amount);
         // Send buy-token at the configured rate
         uint256 proceeds = (amount * rateMul) / rateDiv;
@@ -788,6 +885,7 @@ contract NestingSwap {
     MockBalancerV2Vault immutable balancer;
     MockSwapAggregator immutable honest;
     IERC20 immutable principal;
+    address public adapter;
     Via via;
     bytes params;
     bytes4 public nestedRevert;
@@ -804,6 +902,18 @@ contract NestingSwap {
         balancer = b;
         honest = h;
         principal = p;
+    }
+
+    function setAdapter(address ad) external {
+        adapter = ad;
+    }
+
+    /// The adapter quote bytes routing a sale through this contract.
+    function adapterData() public view returns (bytes memory) {
+        return abi.encode(
+            address(this),
+            abi.encodeWithSelector(this.swap.selector, honest.sellToken(), address(principal), 1_050 ether)
+        );
     }
 
     function arm(Via v, bytes calldata p) external {
@@ -846,10 +956,36 @@ contract NestingSwap {
                 collateralAsset: honest.sellToken(),
                 sellAmount: 1_050 ether,
                 minProfit: 0,
-                swapTarget: address(this),
-                swapAllowanceTarget: address(this),
-                swapCalldata: abi.encodeWithSelector(this.swap.selector, honest.sellToken(), address(principal), 1_050 ether)
+                swapAdapter: adapter,
+                adapterData: adapterData()
             })
         );
+    }
+}
+
+/// A registered adapter that sells through the aggregator but ignores
+/// `minOutputAmount`, standing in for a venue whose own check is weaker
+/// than the run needs.
+contract LaxAdapter is ISwapAdapter {
+    function adapterName() external pure returns (string memory) {
+        return "Lax";
+    }
+
+    function execute(
+        address inputToken,
+        address outputToken,
+        uint256 inputAmount,
+        uint256, /* minOutputAmount, ignored */
+        address recipient,
+        bytes calldata adapterData
+    ) external returns (uint256 outputAmount) {
+        (address target, bytes memory cd) = abi.decode(adapterData, (address, bytes));
+        IERC20(inputToken).transferFrom(msg.sender, address(this), inputAmount);
+        IERC20(inputToken).approve(target, inputAmount);
+        uint256 before = IERC20(outputToken).balanceOf(address(this));
+        (bool ok,) = target.call(cd);
+        require(ok, "lax swap");
+        outputAmount = IERC20(outputToken).balanceOf(address(this)) - before;
+        IERC20(outputToken).transfer(recipient, outputAmount);
     }
 }

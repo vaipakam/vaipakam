@@ -44,6 +44,7 @@ import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
 import {ForcedSaleFacet} from "./ForcedSaleFacet.sol";
+import {LibInternalMatchPriority} from "../libraries/LibInternalMatchPriority.sol";
  // Phase 7a — ordered adapter failover for liquidation swaps
 
 /**
@@ -140,14 +141,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///         window; HF-based liquidation is blocked to avoid swapping
     ///         against stale Chainlink / AMM state.
     error SequencerUnhealthy();
-
-    /// @notice External `triggerLiquidation` blocked because the loan
-    ///         is still inside the internal-match priority window
-    ///         `[liquidationLtvBpsAtInit,
-    ///          liquidationLtvBpsAtInit + cfgExternalLiquidationPriorityWindowBps)`.
-    ///         Above that, external opens up; below it the loan isn't
-    ///         liquidatable at all.
-    error InternalMatchOnlyBand(uint256 currentLtvBps, uint256 windowCeilingBps);
 
     // MAX_LIQUIDATION_SLIPPAGE_BPS consolidated in LibVaipakam
 
@@ -705,26 +698,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // internal-match auto-dispatch above owned its own lien adjustment.
 
         // ── Internal-match priority window (B.2 / PR4) ─────────────────
-        // When the kill-switch is on AND auto-dispatch above didn't fire
-        // (no candidate found), the external swap-liquidation path is
-        // blocked for a configurable LTV band immediately above the
-        // loan's snapshotted liquidation threshold — giving internal
-        // matchers a clean priority slot. Above that band, external
-        // opens up (worst case: ~2% LTV deterioration vs today, well
-        // within the bad-debt buffer guaranteed by
-        // MAX_TIER_LIQUIDATION_LTV_BPS = 9500 + MAX window = 500 ⇒ 100%).
-        if (s.protocolCfg.internalMatchEnabled) {
-            uint256 currentLtv = RiskFacet(address(this)).calculateLTV(loanId);
-            uint256 floor = uint256(loan.liquidationLtvBpsAtInit);
-            uint256 windowCeiling = floor + LibVaipakam.cfgExternalLiquidationPriorityWindowBps();
-            // HF < 1 already implies LTV >= floor for liquid collateral,
-            // so only the upper bound needs gating. A zero floor (illiquid
-            // loan with no snapshot) means we never enter the window
-            // and external proceeds — safe by construction.
-            if (floor > 0 && currentLtv < windowCeiling) {
-                revert InternalMatchOnlyBand(currentLtv, windowCeiling);
-            }
-        }
+        // The auto-dispatch above found no internal match, so the window
+        // rule decides whether the external swap may run now. One rule for
+        // every external route ({LibInternalMatchPriority}, #2734).
+        LibInternalMatchPriority.requireOutside(loanId, loan);
 
         // Execution routing (README §1): HF-based liquidation requires the
         // collateral to be swappable on the live network. If the active-
@@ -932,24 +909,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         if (liquidity != LibVaipakam.LiquidityStatus.Liquid)
             revert NonLiquidAsset();
 
-        // #395 (Codex r3 P2) — preserve internal-match priority. When the
-        // kill-switch is on, the external-swap liquidation paths are blocked
-        // for a configurable LTV band immediately above the loan's snapshotted
-        // liquidation threshold, giving internal matchers a clean priority
-        // slot. `triggerLiquidation` enforces this (after a failed
-        // auto-dispatch); the partial path must defer the same way, or a
-        // keeper could use `triggerPartialLiquidation` to dump collateral
-        // externally mid-window and bypass the ordering. A partial is a
-        // smaller action than a full internal match, so it does NOT itself
-        // auto-dispatch — it just declines to external-swap inside the window.
-        if (s.protocolCfg.internalMatchEnabled) {
-            uint256 windowLtv = RiskFacet(address(this)).calculateLTV(loanId);
-            uint256 floorBps = uint256(loan.liquidationLtvBpsAtInit);
-            uint256 windowCeiling = floorBps + LibVaipakam.cfgExternalLiquidationPriorityWindowBps();
-            if (floorBps > 0 && windowLtv < windowCeiling) {
-                revert InternalMatchOnlyBand(windowLtv, windowCeiling);
-            }
-        }
+        // #395 (Codex r3 P2) — preserve internal-match priority: a keeper
+        // must not use the partial route to sell collateral externally
+        // mid-window. A partial does NOT itself auto-dispatch; it just
+        // declines inside the window ({LibInternalMatchPriority}, #2734).
+        LibInternalMatchPriority.requireOutside(loanId, loan);
 
         // Fraction bounds: (0, cap]. cap is governance-tunable, default
         // 10_000 (no cap — keeper picks the smallest fraction that
@@ -1377,6 +1341,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // WHEN liquidation becomes available.
         uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loanId);
         if (hf >= LibVaipakam.HF_SCALE) revert HealthFactorNotLow();
+
+        // #2734 — the discounted route seizes collateral for an outside
+        // liquidator, so it defers to an internal match inside the priority
+        // window like every other external route. It does not auto-dispatch.
+        LibInternalMatchPriority.requireOutside(loanId, loan);
 
         // #658 — discounted liquidation is a both-side close-out (lender debt +
         // borrower surplus); consolidate transferred sides to current holders

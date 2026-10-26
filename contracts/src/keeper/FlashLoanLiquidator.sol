@@ -13,14 +13,20 @@ import {
     IFlashLoanRecipient
 } from "../interfaces/IBalancerV2Vault.sol";
 import {LibDiscountedLiquidation} from "../libraries/LibDiscountedLiquidation.sol";
+import {ISwapAdapter} from "../interfaces/ISwapAdapter.sol";
 
 /// @title IDiscountedLiquidationDiamond
-/// @dev   The two Diamond selectors this receiver calls. The preview's return
+/// @dev   The Diamond selectors this receiver calls. The preview's return
 ///        type is the Diamond's own ({LibDiscountedLiquidation.Preview}), so
 ///        the two can never decode differently; importing the library adds no
 ///        bytecode here, and this contract stays deployable without the
-///        Diamond's code.
+///        Diamond's code. The two swap-adapter reads are the registry the
+///        Diamond's own liquidations route through (#2734).
 interface IDiscountedLiquidationDiamond {
+    function getSwapAdapters() external view returns (address[] memory adapters);
+
+    function isSwapAdapterDisabled(address adapter) external view returns (bool);
+
     function previewDiscountedLiquidation(uint256 loanId)
         external
         view
@@ -67,8 +73,9 @@ interface IDiscountedLiquidationDiamond {
  *           - `receiveFlashLoan` — Balancer V2 callback shape.
  *           - `_runLiquidation` — shared post-flash-loan flow:
  *             approve the DIAMOND, trigger the discounted
- *             liquidation, swap the seized collateral back to the
- *             principal asset via OWNER-supplied calldata.
+ *             liquidation, sell the seized collateral back to the
+ *             principal asset through one of the Diamond's
+ *             registered swap adapters.
  *           - `withdraw` / `rescueToken` — OWNER can pull profits
  *             OR rescue stuck tokens.
  *
@@ -89,15 +96,25 @@ interface IDiscountedLiquidationDiamond {
  *             the callback to execute. A callback with no matching
  *             commitment (a direct call, a nested or repeated
  *             loan) reverts `NotInFlight`.
- *           - Swap calldata is provided OFF-CHAIN by the keeper
- *             bot (e.g. 0x v2 / 1inch v6 quote). The contract
- *             validates the post-swap balance covers the
- *             flash-loan repayment; insufficient balance reverts
- *             the whole tx (including the discounted-liquidation
- *             call — borrower state is preserved).
- *           - `swapTarget` and `swapAllowanceTarget` are
- *             OWNER-supplied per-call (not stored) so the bot can
- *             route via different aggregators per loan.
+ *           - The sale runs through a swap adapter the DIAMOND has
+ *             registered and not disabled, the same governed venues
+ *             its own liquidations sell through (#2734). This
+ *             contract approves only that adapter, for exactly the
+ *             amount sold, and clears the approval after. The
+ *             adapter enforces its own rule on the off-chain quote
+ *             bytes the keeper passes (`adapterData`): for an
+ *             aggregator adapter a pinned allowance target and an
+ *             allow-listed call target, so a bad or hostile quote
+ *             can neither redirect the approval nor call an
+ *             arbitrary contract. Before #2734 the quote's own
+ *             target and allowance target were approved and called
+ *             directly.
+ *           - The adapter must deliver at least the flash loan,
+ *             its fee and `minProfit`, and the contract checks its
+ *             own balance after the run as well; a shortfall
+ *             reverts the whole tx (including the
+ *             discounted-liquidation call — borrower state is
+ *             preserved).
  */
 contract FlashLoanLiquidator is
     IFlashLoanSimpleReceiver,
@@ -148,9 +165,8 @@ contract FlashLoanLiquidator is
         address collateralAsset;
         uint256 sellAmount;
         uint256 minProfit;
-        address swapTarget;
-        address swapAllowanceTarget;
-        bytes swapCalldata;
+        address swapAdapter;
+        bytes adapterData;
     }
 
     // ─── Errors ──────────────────────────────────────────────────────
@@ -162,7 +178,6 @@ contract FlashLoanLiquidator is
     ///      committed to, or a provider that returned without calling back.
     error NotInFlight();
     error ProviderNotConfigured();
-    error SwapFailed();
     error InsufficientPostSwapBalance(uint256 needed, uint256 got);
     error InvalidTokenArrayLength(uint256 length);
     /// @notice The Diamond's preview says the loan cannot be liquidated on
@@ -172,14 +187,18 @@ contract FlashLoanLiquidator is
     /// @notice The liquidation delivers less collateral than the swap
     ///         calldata was quoted to sell.
     error SeizureBelowQuote(uint256 seized, uint256 sellAmount);
+    /// @notice `adapter` is not one of the Diamond's registered swap
+    ///         adapters, or governance has disabled it.
+    error SwapAdapterNotRouted(address adapter);
 
     // ─── Events ──────────────────────────────────────────────────────
 
     /// @notice Emitted at the end of every successful
     ///         flash-loan-funded liquidation. Includes the gross +
     ///         net profit for off-chain accounting. `collateralSold` is what
-    ///         the swap was quoted for; any seized collateral above it stays
-    ///         here as standing balance until the owner withdraws it.
+    ///         the adapter actually took (it returns any input it did not
+    ///         sell); any seized collateral above it stays here as standing
+    ///         balance until the owner withdraws it.
     event FlashLoanLiquidationCompleted(
         uint256 indexed loanId,
         address indexed principalAsset,
@@ -270,26 +289,25 @@ contract FlashLoanLiquidator is
     ///                             repaying the flash loan and its fee. The
     ///                             keeper sets it to the transaction's fee,
     ///                             so a run never nets less than its gas.
-    /// @param swapTarget           DEX / aggregator contract our
-    ///                             swap calldata will target
-    ///                             (e.g. 0x Settler, 1inch router).
-    /// @param swapAllowanceTarget  ERC-20 allowance recipient for
-    ///                             the swap — sometimes ≠
-    ///                             `swapTarget` (0x v2 / Permit2
-    ///                             pattern).
-    /// @param swapCalldata         Pre-computed swap calldata selling
-    ///                             `sellAmount` of collateral for principal.
+    /// @param swapAdapter          One of the Diamond's registered, enabled
+    ///                             swap adapters ({SwapAdapterNotRouted}
+    ///                             otherwise).
+    /// @param adapterData          That adapter's quote bytes for selling
+    ///                             `sellAmount` of collateral for principal
+    ///                             (for an aggregator adapter,
+    ///                             `abi.encode(callTarget, calldata)`), the
+    ///                             same shape the Diamond's own liquidation
+    ///                             try-list carries.
     function liquidateViaAaveV3(
         uint256 loanId,
         uint256 sellAmount,
         uint256 minProfit,
-        address swapTarget,
-        address swapAllowanceTarget,
-        bytes calldata swapCalldata
+        address swapAdapter,
+        bytes calldata adapterData
     ) external onlyOwner {
         if (AAVE_V3_POOL == address(0)) revert ProviderNotConfigured();
         (address principalAsset, uint256 debt, bytes memory params) = _prepare(
-            loanId, sellAmount, minProfit, swapTarget, swapAllowanceTarget, swapCalldata
+            loanId, sellAmount, minProfit, swapAdapter, adapterData
         );
         _expectedRun = _runHash(AAVE_V3_POOL, params);
         IAaveV3Pool(AAVE_V3_POOL).flashLoanSimple(
@@ -316,13 +334,12 @@ contract FlashLoanLiquidator is
         uint256 loanId,
         uint256 sellAmount,
         uint256 minProfit,
-        address swapTarget,
-        address swapAllowanceTarget,
-        bytes calldata swapCalldata
+        address swapAdapter,
+        bytes calldata adapterData
     ) external onlyOwner {
         if (BALANCER_V2_VAULT == address(0)) revert ProviderNotConfigured();
         (address principalAsset, uint256 debt, bytes memory params) = _prepare(
-            loanId, sellAmount, minProfit, swapTarget, swapAllowanceTarget, swapCalldata
+            loanId, sellAmount, minProfit, swapAdapter, adapterData
         );
         address[] memory tokens = new address[](1);
         tokens[0] = principalAsset;
@@ -340,17 +357,21 @@ contract FlashLoanLiquidator is
     }
 
     /// @dev Read the Diamond's preview, refuse a run the preview already
-    ///      rules out, and pack the callback's parameters. Refusing here,
-    ///      before any flash loan, means a keeper's gas estimate names the
-    ///      reason instead of a provider's revert.
+    ///      rules out or whose adapter the Diamond does not route, and pack
+    ///      the callback's parameters. Refusing here, before any flash loan,
+    ///      means a keeper's gas estimate names the reason instead of a
+    ///      provider's revert. The adapter is checked once, here: only the
+    ///      Diamond's governance can change its registry, and no governance
+    ///      call can run between this read and the callback in the same
+    ///      transaction.
     function _prepare(
         uint256 loanId,
         uint256 sellAmount,
         uint256 minProfit,
-        address swapTarget,
-        address swapAllowanceTarget,
-        bytes calldata swapCalldata
+        address swapAdapter,
+        bytes calldata adapterData
     ) private view returns (address principalAsset, uint256 debt, bytes memory params) {
+        _requireRoutedAdapter(swapAdapter);
         LibDiscountedLiquidation.Preview memory p =
             IDiscountedLiquidationDiamond(DIAMOND).previewDiscountedLiquidation(loanId);
         if (p.status != LibDiscountedLiquidation.Status.Ready) {
@@ -365,11 +386,24 @@ contract FlashLoanLiquidator is
                 collateralAsset: p.collateralAsset,
                 sellAmount: sellAmount,
                 minProfit: minProfit,
-                swapTarget: swapTarget,
-                swapAllowanceTarget: swapAllowanceTarget,
-                swapCalldata: swapCalldata
+                swapAdapter: swapAdapter,
+                adapterData: adapterData
             })
         );
+    }
+
+    /// @dev `adapter` must be in the Diamond's swap-adapter registry and not
+    ///      disabled there — the venues the Diamond's own liquidations may
+    ///      sell through, governed by the same role.
+    function _requireRoutedAdapter(address adapter) private view {
+        IDiscountedLiquidationDiamond d = IDiscountedLiquidationDiamond(DIAMOND);
+        if (adapter != address(0) && !d.isSwapAdapterDisabled(adapter)) {
+            address[] memory adapters = d.getSwapAdapters();
+            for (uint256 i = 0; i < adapters.length; ++i) {
+                if (adapters[i] == adapter) return;
+            }
+        }
+        revert SwapAdapterNotRouted(adapter);
     }
 
     // ─── Provider callbacks ──────────────────────────────────────────
@@ -479,9 +513,11 @@ contract FlashLoanLiquidator is
         // 1–3. Pay the debt and measure the seizure.
         uint256 collateralSeized = _seize(r, principalAsset, totalDebt);
 
-        // 4. Swap `sellAmount` of collateral → principal using off-chain
-        // calldata quoted for exactly that amount.
-        uint256 swapProceeds = _swap(r, principalAsset);
+        // 4. Sell `sellAmount` of collateral → principal through the
+        // adapter, which must deliver at least the debt, the fee and
+        // `minProfit` (what step 5 needs back from the sale).
+        (uint256 collateralSold, uint256 swapProceeds) =
+            _swap(r, principalAsset, totalDebt + fee + r.minProfit);
 
         // 5. This run must cover its own flash-loan fee and `minProfit`
         // without touching the standing balance it started with.
@@ -498,7 +534,7 @@ contract FlashLoanLiquidator is
             totalDebt,
             fee,
             collateralSeized,
-            r.sellAmount,
+            collateralSold,
             swapProceeds,
             finalBalance - needed /* this run's net profit */
         );
@@ -528,22 +564,30 @@ contract FlashLoanLiquidator is
         if (collateralSeized < r.sellAmount) revert SeizureBelowQuote(collateralSeized, r.sellAmount);
     }
 
-    /// @dev Offer exactly `sellAmount` of collateral to the swap and return
-    ///      the principal it delivered. The keeper bot computed the route +
-    ///      min-output; if the realised proceeds do not cover the flash loan,
-    ///      its fee and `minProfit`, the caller's balance check reverts the
-    ///      whole tx.
-    function _swap(Run memory r, address principalAsset) private returns (uint256 swapProceeds) {
-        if (r.sellAmount == 0) return 0;
-        IERC20(r.collateralAsset).forceApprove(r.swapAllowanceTarget, r.sellAmount);
+    /// @dev Offer exactly `sellAmount` of collateral to the run's adapter,
+    ///      which must deliver at least `minOutput` of principal to this
+    ///      contract or revert, and return what it took and what arrived.
+    ///      The approval is to the adapter alone, for exactly `sellAmount`,
+    ///      and is cleared after. An adapter returns any input it did not
+    ///      sell, so the collateral sold is measured, not assumed. The
+    ///      caller's balance check stays the authoritative test of the run.
+    function _swap(Run memory r, address principalAsset, uint256 minOutput)
+        private
+        returns (uint256 collateralSold, uint256 swapProceeds)
+    {
+        if (r.sellAmount == 0) return (0, 0);
+        IERC20 collateral = IERC20(r.collateralAsset);
+        uint256 collateralBefore = collateral.balanceOf(address(this));
         uint256 principalBefore = IERC20(principalAsset).balanceOf(address(this));
-        (bool ok, ) = r.swapTarget.call(r.swapCalldata);
-        if (!ok) revert SwapFailed();
+        collateral.forceApprove(r.swapAdapter, r.sellAmount);
+        ISwapAdapter(r.swapAdapter).execute(
+            r.collateralAsset, principalAsset, r.sellAmount, minOutput, address(this), r.adapterData
+        );
+        collateral.forceApprove(r.swapAdapter, 0);
+        uint256 collateralAfter = collateral.balanceOf(address(this));
+        collateralSold = collateralBefore > collateralAfter ? collateralBefore - collateralAfter : 0;
         uint256 principalAfter = IERC20(principalAsset).balanceOf(address(this));
         swapProceeds = principalAfter > principalBefore ? principalAfter - principalBefore : 0;
-        // Clean up the allowance — defence-in-depth against an
-        // aggregator that pulled less than approved.
-        IERC20(r.collateralAsset).forceApprove(r.swapAllowanceTarget, 0);
     }
 
     // ─── Owner withdraw / rescue ─────────────────────────────────────
