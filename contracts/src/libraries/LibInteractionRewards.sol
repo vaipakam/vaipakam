@@ -1237,16 +1237,16 @@ library LibInteractionRewards {
     ///        - **An unarmed day prices from the stamp once one has landed**
     ///          ({_sideFreshHalf}). "Pre-cutover days keep the legacy
     ///          schedule" above now holds only where no stamp exists: Base,
-    ///          which never stamps its own unarmed records; a mirror before
-    ///          the V2 broadcast; a kind-2-only day. On a mirror the stamp is
+    ///          which never stamps its own unarmed records, and a mirror
+    ///          before the day's broadcast lands. On a mirror the stamp is
     ///          what Base funds — ZERO for a destination excluded from the
     ///          day's denominator, the exhausted floor at the 69M cap — and
     ///          the schedule priced there paid a day the chain was never
     ///          funded for. Not latched: it is the root fix of a live
     ///          fund-loss shape, not part of the gate. Canonical prices as
     ///          before.
-    ///        - **A delivery rung after both branches.** On a mirror whose
-    ///          gate is armed (`dayDeliveryGateFromDay`), a day pricing a
+    ///        - **A delivery rung after both branches.** On a mirror (the
+    ///          gate binds by role, from the first day), a day pricing a
     ///          non-zero FRESH half for this side halts until a budget packet
     ///          PROVEN to list it has landed, whichever of the two Base
     ///          messages arrives first. That is a wait on a message, and it
@@ -1350,9 +1350,8 @@ library LibInteractionRewards {
         // legacy entry slice, both sweeps, staging and domain pricing and the
         // previews through `_rpnReady` — one rung, no per-site guard. The
         // commitment twin {dailyDeltaForCommitment} reads the stamp directly
-        // and is deliberately NOT behind it. Dark (`dayDeliveryGateFromDay ==
-        // 0`) the rung costs one SLOAD and halts nothing; it moves no value
-        // either way.
+        // and is deliberately NOT behind it. Off a mirror the rung costs the
+        // role read and halts nothing; it moves no value either way.
         if (freshHalf != 0 && LibRewardCustody.callDayAwaitsFreshDelivery(s, uint8(side), d)) {
             return (0, 0, true);
         }
@@ -1372,8 +1371,7 @@ library LibInteractionRewards {
     ///      excluded, the exhausted floor at the 69M cap. Pricing
     ///      `halfPoolForDay` there — as every unarmed route did — paid a day
     ///      the destination was never funded for. Base never stamps its own
-    ///      unarmed records and a kind-2-only broadcast writes no per-chain
-    ///      stamp, so those read the schedule exactly as before.
+    ///      unarmed records, so those read the schedule exactly as before.
     ///
     ///      NOT dark: with the delivery gate off this still changes mirror
     ///      pricing on excluded and exhausted unarmed days, deliberately — a

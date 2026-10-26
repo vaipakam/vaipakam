@@ -301,7 +301,7 @@
     ],
     "outputs": [
       {
-        "name": "gateArmed",
+        "name": "gateBinds",
         "type": "bool",
         "internalType": "bool"
       },

@@ -84,6 +84,7 @@ import {
   type RecycleBackingVerdict,
 } from '@vaipakam/contracts/recycle-backing';
 
+import { redactedError } from '@vaipakam/lib/errorDescription';
 import type { Env } from './env';
 import { getChainConfigs, getDeployedChainCount } from './env';
 import { DO_PATH_CADENCE_MINUTES } from './cronRouting';
@@ -1224,7 +1225,7 @@ async function readStoredBacking(
       asOf: row.block_time,
     };
   } catch (err) {
-    console.warn(`[recycling] backing snapshot read failed: ${String(err)}`);
+    console.warn('[recycling] backing snapshot read failed', redactedError(err));
     return BACKING_UNAVAILABLE('read-failed');
   }
 }
@@ -1919,9 +1920,9 @@ export async function handleRecyclingSeries(
       backing: await readBacking(env, chainId),
     });
   } catch (err) {
-    return liveJsonResponse(
-      { error: 'recycling-series query failed', detail: String(err) },
-      500,
-    );
+    // The cause stays in the log, redacted: a public response carries no
+    // error text, which can hold an RPC URL with its key (#2759).
+    console.error('[recycling] series query failed', redactedError(err));
+    return liveJsonResponse({ error: 'recycling-series query failed' }, 500);
   }
 }

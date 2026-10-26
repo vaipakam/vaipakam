@@ -57,8 +57,9 @@ import type { Env } from './env';
 
 export interface ServerQuoteRequest {
   chainId: number;
-  /** The Diamond whose adapter list the route is built against — and the
-   *  caller the testnet mock checks it would pay. */
+  /** The Diamond whose adapter list the route is built against — and,
+   *  unless `seller` names another, the caller the testnet mock checks it
+   *  would pay. */
   diamond: Address;
   sellToken: Address;
   buyToken: Address;
@@ -71,6 +72,9 @@ export interface ServerQuoteRequest {
    *  liquidity-confidence pass, which only measures a price, passes its
    *  own. */
   slippageBps?: number;
+  /** The contract that hands the adapter its input. Omitted, the Diamond;
+   *  the flash-loan branch names its FlashLoanLiquidator (#2734). */
+  seller?: Address;
   /** The fetch aggregator quotes go through. Omitted, the global one; a
    *  pass that caps its requests passes its budget's. */
   fetchFn?: typeof fetch;
@@ -82,6 +86,10 @@ export interface ServerRankedQuote {
   kind: SwapVenueKind;
   expectedOutput: bigint;
   call: ServerAdapterCall;
+  /** The adapter at `call.adapterIdx` in the roster this route was built
+   *  from — the contract a caller outside the Diamond (the
+   *  FlashLoanLiquidator, #2734) names instead of an index. */
+  adapter: Address;
 }
 
 export interface ServerOrchestrationResult {
@@ -251,6 +259,7 @@ export async function orchestrateServerQuotes(
     sale: { sellToken: req.sellToken, buyToken: req.buyToken, sellAmount: req.sellAmount },
     aggregators,
     slippageBps: req.slippageBps,
+    seller: req.seller,
   });
   const failed = route.outcomes
     .filter((o) => o.outcome !== 'quoted')
@@ -270,8 +279,17 @@ export async function orchestrateServerQuotes(
       route.outcomes.every((o) => o.outcome === 'declined');
     return { ranked: [], calls: [], failed, route, noQuote, marketDeclined };
   }
-  const ranked: ServerRankedQuote[] = route.candidates.flatMap((c) =>
-    c.expectedOutput === null ? [] : [{ kind: c.kind, expectedOutput: c.expectedOutput, call: c.call }],
-  );
+  const slotAddress = new Map<bigint, Address>();
+  for (const kindSlots of Object.values(read.roster)) {
+    for (const slot of kindSlots ?? []) slotAddress.set(BigInt(slot.idx), slot.address);
+  }
+  const ranked: ServerRankedQuote[] = route.candidates.flatMap((c) => {
+    const adapter = slotAddress.get(c.call.adapterIdx);
+    // Every candidate is built from a roster slot, so the address is always
+    // there; a candidate without one is not one this result can name.
+    return c.expectedOutput === null || adapter === undefined
+      ? []
+      : [{ kind: c.kind, expectedOutput: c.expectedOutput, call: c.call, adapter }];
+  });
   return { ranked, calls: route.calls, failed, route, noQuote: null, marketDeclined: false };
 }

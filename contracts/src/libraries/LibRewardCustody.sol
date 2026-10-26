@@ -124,15 +124,6 @@ library LibRewardCustody {
     ///         earliest listed day's era, a compensation's day's era).
     /// @custom:event-category state-change/reward-custody
     event IngressPacketEraStamped(bytes32 indexed packetHash, uint64 indexed era);
-    /// @notice PR C-4 — an era-less broadcast the rotation gate refused was PARKED under `id`, counted against era `era`.
-    /// @custom:event-category state-change/reward-custody
-    event BroadcastParked(uint256 indexed id, uint8 kind, uint256 indexed dayId, uint64 indexed era, bool quarantineOnly);
-    /// @notice PR C-4 — parked broadcast `id` was tombstoned by the operator with `reason`.
-    /// @custom:event-category state-change/reward-custody
-    event ParkedBroadcastTombstoned(uint256 indexed id, bytes32 reason);
-    /// @notice PR C-4 — parked broadcast `id` passed the gate on retry and was applied.
-    /// @custom:event-category state-change/reward-custody
-    event ParkedBroadcastApplied(uint256 indexed id);
 
     /// @notice Fresh funding was credited to the delivered ledger's received
     ///         side, and its custody attributed under the §5c deficit split.
@@ -1087,8 +1078,7 @@ library LibRewardCustody {
     ///         per-day closure proof — which anyone may run — and nothing staged
     ///         holding its row (#1566 PR C revision: no manual step). A closed era
     ///         owes nothing; value a packet of it still holds exits later by the
-    ///         era routing rule ({creditFreshToEraFromRow}), and a parked copy of a
-    ///         closed day's broadcast installs nothing that prices an obligation.
+    ///         era routing rule ({creditFreshToEraFromRow}).
     function finalizeCustodyEra(LibVaipakam.Storage storage s, uint64 era, LibVaipakam.RewardRole role)
         internal
         returns (uint256 amount, bool toPending)
@@ -1405,56 +1395,6 @@ library LibRewardCustody {
         if (p.custodyEra == era) return;
         p.custodyEra = era;
         emit IngressPacketEraStamped(h, era);
-    }
-
-    // ── Slice 4 PR C-4 — the parked-message lane ──
-
-    /// @notice Park an era-less broadcast the rotation gate refused: a record
-    ///         with a disposition in place of a transport-side revert, counted
-    ///         against the custody era live at receipt.
-    function parkBroadcast(LibVaipakam.Storage storage s, uint8 kind, uint256 dayId, bytes32 digest)
-        internal
-        returns (uint256 id)
-    {
-        id = ++s.parkedBroadcastCount;
-        uint64 era = s.custodyEraCurrent;
-        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
-        pb.kind = kind;
-        pb.receivedAt = uint64(block.timestamp);
-        pb.custodyEraAtReceipt = era;
-        pb.dayId = dayId;
-        pb.digest = digest;
-        pb.quarantineOnly = era != 0;
-        ++s.custodyEraParkedOpen[era];
-        emit BroadcastParked(id, kind, dayId, era, pb.quarantineOnly);
-    }
-
-    /// @notice The retry guard: the entry exists, is parked, is the broadcast
-    ///         re-supplied, and is not quarantine-only.
-    function requireParkedRetryable(LibVaipakam.Storage storage s, uint256 id, bytes32 digest) internal view {
-        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
-        if (pb.receivedAt == 0) revert IVaipakamErrors.ParkedBroadcastUnknown(id);
-        if (pb.status != 0) revert IVaipakamErrors.ParkedBroadcastNotParked(id, pb.status);
-        if (pb.digest != digest) revert IVaipakamErrors.ParkedBroadcastDigestMismatch(id);
-        if (pb.quarantineOnly) revert IVaipakamErrors.ParkedBroadcastQuarantineOnly(id);
-    }
-
-    /// @notice A retry passed the gate: the entry is applied and leaves its era's open count.
-    function parkedBroadcastApplied(LibVaipakam.Storage storage s, uint256 id) internal {
-        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
-        pb.status = 2;
-        --s.custodyEraParkedOpen[pb.custodyEraAtReceipt];
-        emit ParkedBroadcastApplied(id);
-    }
-
-    /// @notice The operator's recorded disposition of a parked entry the gate refuses.
-    function tombstoneParkedBroadcast(LibVaipakam.Storage storage s, uint256 id, bytes32 reason) internal {
-        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
-        if (pb.receivedAt == 0) revert IVaipakamErrors.ParkedBroadcastUnknown(id);
-        if (pb.status != 0) revert IVaipakamErrors.ParkedBroadcastNotParked(id, pb.status);
-        pb.status = 1;
-        --s.custodyEraParkedOpen[pb.custodyEraAtReceipt];
-        emit ParkedBroadcastTombstoned(id, reason);
     }
 
     /// @notice The §5c deficit split, in ONE place: of a fresh credit of
@@ -4182,12 +4122,34 @@ library LibRewardCustody {
     ///         tests are one-way or write-once, so a day a fold passed is never
     ///         later found held.
     ///
-    ///          1. gate dark or `d` below the gate's first day — today's order.
+    ///          1. (retired) the arming latch. The gate binds by ROLE alone,
+    ///             on every day from a mirror's first: there is no arming step
+    ///             and no first day to set (#1944, owner decision 2026-10-26
+    ///             "Retire all three"). It reads no setting, so no later admin
+    ///             write can re-hold a day a fold already passed. The old
+    ///             latch refused a first day at or below the fold cursors for
+    ///             that reason; its role-change twin is closed at ingress
+    ///             instead: a broadcast stamps a day only on a Mirror, or on a
+    ///             Detached former mirror whose zero delivered bound pays no
+    ///             fresh day (`BroadcastRoleRefused`), so no day is stamped
+    ///             and folded unproven before the chain becomes a mirror.
     ///          2. not a Mirror — Base funds itself; Unconfigured / Detached are
-    ///             bounded elsewhere.
+    ///             bounded elsewhere (Detached's delivered bound is zero).
     ///          3. landed — the wait is over.
-    ///          4. no stamp — a kind-2-only day carries no inclusion to read;
-    ///             it stays as today (stated residual).
+    ///          4. no broadcast applied the day here — either it has not
+    ///             landed yet, or the day was funded LOCALLY. The fact read is
+    ///             `broadcastV2Applied`, the write-once flag only the
+    ///             broadcast apply sets, in the same call that stamps the day
+    ///             and sets its denominator — not the stamp itself, which
+    ///             `finalizeDay` also writes for Base's own days. A former
+    ///             canonical chain moved to Mirror therefore keeps its
+    ///             self-funded days unheld: Base never sent them, so no
+    ///             delivery could ever land them (Codex #2879). Ingress
+    ///             refuses a broadcast for a day already funded here
+    ///             (`DayFundedLocally`), so the flag cannot rise later on such
+    ///             a day either. Before a broadcast lands, the fold already
+    ///             halts on the missing denominator (`knownGlobalSet`), so
+    ///             nothing prices the day yet.
     ///          5. never reported — Base's interest figure for this chain is 0,
     ///             so nothing is owed. `chainReportSentAt` is write-once in the
     ///             transaction that reads the totals, which also freezes step 8.
@@ -4200,12 +4162,10 @@ library LibRewardCustody {
         uint8 side,
         uint256 d
     ) internal view returns (bool) {
-        uint256 from = s.dayDeliveryGateFromDay;
-        if (from == 0 || d < from) return false;
         if (LibVaipakam.rewardRole(s) != LibVaipakam.RewardRole.Mirror) return false;
         if (dayDeliveryLanded(s, d)) return false;
+        if (!s.broadcastV2Applied[d]) return false;
         LibVaipakam.ChainDayFunding storage f = s.chainDayRecycledFunding[d][uint32(block.chainid)];
-        if (!f.stamped) return false;
         if (s.chainReportSentAt[d] == 0) return false;
         if (s.dayCapThreshold18[d] == 0) return false;
         if (side != 1 && _sideOwesFresh(s, f, d, 0)) return true;
@@ -4268,17 +4228,18 @@ library LibRewardCustody {
     ///      STATICCALL, so the inlining reward facets carry this encode/decode
     ///      once each rather than the predicate's body. The prefix is read
     ///      HERE, before the call, and is a strict subset of the view's own
-    ///      first tests, so the two cannot disagree: a dark gate, a day below
-    ///      it, or a landed day makes no call at all — which keeps the dark
-    ///      path at one SLOAD on every chain and keeps an unrouted lens
-    ///      selector unreachable until an operator arms the gate.
+    ///      first tests, so the two cannot disagree: a chain that is not a
+    ///      Mirror, or a landed day, makes no call at all — which keeps Base,
+    ///      unconfigured and detached chains off the call entirely. On a
+    ///      Mirror the lens selector is therefore load-bearing from the
+    ///      first priced day: a mirror is deployed with its walk facets and
+    ///      the lens together (fresh deploy only).
     function callDayAwaitsFreshDelivery(
         LibVaipakam.Storage storage s,
         uint8 side,
         uint256 d
     ) internal view returns (bool) {
-        uint256 from = s.dayDeliveryGateFromDay;
-        if (from == 0 || d < from) return false;
+        if (LibVaipakam.rewardRole(s) != LibVaipakam.RewardRole.Mirror) return false;
         if (dayDeliveryLanded(s, d)) return false;
         return abi.decode(
             _selfStatic(abi.encodeWithSignature("dayAwaitsFreshDelivery(uint8,uint256)", side, d)),

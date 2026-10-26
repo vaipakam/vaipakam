@@ -4,7 +4,6 @@ pragma solidity 0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
-import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
@@ -31,7 +30,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         NOT `whenNotPaused`, matching {RewardEpochFacet}: nothing here pays
  *         anybody, and a pause must not stall an era's close-out.
  */
-contract RewardEraFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaipakamErrors {
+contract RewardEraFacet is DiamondReentrancyGuard, IVaipakamErrors {
     /// @notice The live era's id.
     function getCustodyEraCurrent() external view returns (uint64) {
         return LibVaipakam.storageSlot().custodyEraCurrent;
@@ -113,24 +112,5 @@ contract RewardEraFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaipak
     function eraHoldProvisional(uint256 amount) external {
         if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
         LibRewardCustody.holdProvisional(LibVaipakam.storageSlot(), amount);
-    }
-
-    /// @notice PR C-4 — one parked legacy broadcast's record.
-    function getParkedBroadcast(uint256 id) external view returns (LibVaipakam.ParkedBroadcast memory) {
-        return LibVaipakam.storageSlot().parkedBroadcasts[id];
-    }
-
-    /// @notice PR C-4 — how many parked broadcasts era `era` still carries open.
-    ///         Informational: an era's finality does not wait on them.
-    function getCustodyEraParkedOpen(uint64 era) external view returns (uint256) {
-        return LibVaipakam.storageSlot().custodyEraParkedOpen[era];
-    }
-
-    /// @notice PR C-4 — the operator's recorded disposition of a parked broadcast
-    ///         the gate refuses: it leaves its era's open count with `reason`.
-    ///         Optional: nothing waits on it — a parked copy of a closed day's
-    ///         broadcast installs nothing that prices an obligation.
-    function tombstoneParkedBroadcast(uint256 id, bytes32 reason) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        LibRewardCustody.tombstoneParkedBroadcast(LibVaipakam.storageSlot(), id, reason);
     }
 }

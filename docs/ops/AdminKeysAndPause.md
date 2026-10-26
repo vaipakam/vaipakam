@@ -103,7 +103,7 @@ User flows: `createOffer`, `acceptOffer`, `initiateLoan`, `repayLoan`, `repayPar
 - `VaultFactoryFacet.upgradeVaultImplementation / setMandatoryVaultUpgrade`
 - `AdminFacet.pause / unpause / paused`
 - Every pure/view function
-- CCIP message ingress to `RewardReporterFacet.onRewardBroadcastReceived` and `RewardAggregatorFacet.onChainReportReceived` (routed CCIP-router → `CcipMessenger._ccipReceive` → `VaipakamRewardMessenger.onCrossChainMessage` → the diamond) — so in-flight messages don't fail-and-retry forever (they still have their own auth gates + the `GuardianPausable` per-contract pause path).
+- CCIP message ingress to `RewardReporterFacet.onRewardBroadcastV3Received` and `RewardAggregatorFacet.onChainReportReceived` (routed CCIP-router → `CcipMessenger._ccipReceive` → `VaipakamRewardMessenger.onCrossChainMessage` → the diamond) — so in-flight messages don't fail-and-retry forever (they still have their own auth gates + the `GuardianPausable` per-contract pause path).
 
 This is audited and enforced by `PauseGatingTest` — any change to the gated set must update that test.
 

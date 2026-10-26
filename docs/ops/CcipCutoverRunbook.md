@@ -404,40 +404,34 @@ flight, in this order when **lowering**:
   when the canonical Base DIAMOND rotates, every mirror's V3-broadcast
   era ground truth rotates with it, in this order:
   1. **Drain the old era's broadcasts first**: let (or force) every
-     in-flight kind-5/kind-10 delivery from the old Base land — or
-     accept their loss — BEFORE step 2. Order matters because step 2
-     is one-way. **Also heal every era-UNKNOWN day now** (#1632 r3):
-     days applied before the mirror's first arming carry no era
-     provenance, and a rotated mirror permanently refuses to attach V3
-     clock facts to them (it can no longer tell which era supplied
-     their figures) — run `broadcastGlobalTo(dayId, mirror)` for each
-     while the old era is still current, or accept them staying
-     clockless forever.
-  2. On every mirror: `RewardReporterFacet.setBaseRewardDeployment(newBaseDiamond)`.
-     A second, DIFFERENT nonzero value is detected as a rotation and
-     **permanently retires the legacy broadcast wires' fresh applies**
-     on that mirror (`LegacyBroadcastRetired`): kind-5/kind-2 packets
-     carry no deployment identity, so after a rotation a retired era's
-     delayed or manually re-executed delivery cannot be told apart
-     from a legitimate one — only the V3 wire (which authenticates its
-     era) keeps applying fresh days. Replays of already-applied days
-     stay idempotent.
+     in-flight kind-10 delivery from the old Base land — or accept
+     their loss — BEFORE step 2. Kind 10 is the only broadcast wire
+     (#1944, generation 8); every applied day carries the era that
+     supplied it, so there is no era-unknown day to heal first.
+  2. On every mirror, through `Detached`: `setBaseChainId(0)`, then
+     `RewardReporterFacet.setBaseRewardDeployment(newBaseDiamond)`, then
+     `setBaseChainId(<Base>)` again. A mirror refuses a direct rebind to
+     a different deployment (`RewardBaseDeploymentRebindRequiresDetach`).
+     After it, a delayed or manually re-executed broadcast from the
+     retired era is refused by name (`BroadcastEraUnauthenticated`) and
+     stays a failed, re-executable CCIP message; it never applies.
+     Replays of already-applied days stay idempotent.
   3. Days whose figures were applied under the OLD era keep their
-     recorded era (the apply-time provenance stamp) and refuse
-     new-era V3 backfills (`BroadcastEraMismatch`) — cross-era
-     combination is the exact state-poisoning this blocks. Such days
-     are the drain/heal ceremony's job, not silent overwrite.
+     recorded era and refuse new-era re-deliveries
+     (`BroadcastEraMismatch`) — cross-era combination is the exact
+     state-poisoning this blocks. Such days are the drain/heal
+     ceremony's job, not silent overwrite.
   The first arming (zero → nonzero) is NOT a rotation; a disarm/re-arm
   cycle of the same address is not one either.
 
-  **On a mirror whose day delivery gate is ARMED (#1944 consequence 1)**, add a
-  per-day readback: before step 2 and again after step 3, read
+  **On every mirror (the day delivery gate binds by role, #1944 consequence 1)**,
+  add a per-day readback: before step 2 and again after step 3, read
   `RewardRemittanceLensFacet.getDayDeliveryState(dayId)` for every day from the
-  gate's first day through the latest applied day and confirm none reports
+  mirror's first applied day through the latest applied day and confirm none reports
   `awaitsLender` or `awaitsBorrower`. A day still awaiting delivery is proven
   first (the GovernanceRunbook's day-delivery-gate steps) or repaired on Base by
   release and re-remit; otherwise it waits across the rotation. A reward-role
-  change on a gate-armed mirror is safe since the custody-era revision: Base stamps
+  change on a mirror is safe for the gate since the custody-era revision: Base stamps
   later remittances with the era the mirror reports, and a delivery in flight for
   the retired era opens its epoch there and lands its days through the epoch route.
 - **Mirror-era registry on Base** (#1434 P2-w3, Codex #1636 r2/r3) —

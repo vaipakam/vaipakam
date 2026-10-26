@@ -1108,6 +1108,17 @@
   },
   {
     "type": "error",
+    "name": "BroadcastRoleRefused",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CadenceNotAllowed",
     "inputs": [
       {
@@ -1893,7 +1904,7 @@
   },
   {
     "type": "error",
-    "name": "DayHasNoLapseClock",
+    "name": "DayFundedLocally",
     "inputs": [
       {
         "name": "dayId",
@@ -1938,43 +1949,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "DeliveryGateAlreadyArmed",
-    "inputs": [
-      {
-        "name": "current",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "DeliveryGateBelowFold",
-    "inputs": [
-      {
-        "name": "fromDay",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "lenderCursor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerCursor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "DeliveryGateNotMirror",
-    "inputs": []
   },
   {
     "type": "error",
@@ -2736,11 +2710,6 @@
   },
   {
     "type": "error",
-    "name": "MessengerPredatesV3",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NFTBurnFailed",
     "inputs": []
   },
@@ -2902,66 +2871,6 @@
       },
       {
         "name": "max",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ParkedBroadcastDigestMismatch",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ParkedBroadcastNotParked",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "status",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ParkedBroadcastQuarantineOnly",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ParkedBroadcastStillUnroutable",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ParkedBroadcastUnknown",
-    "inputs": [
-      {
-        "name": "id",
         "type": "uint256",
         "internalType": "uint256"
       }
