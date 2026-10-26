@@ -404,11 +404,6 @@
   },
   {
     "type": "error",
-    "name": "LenderIntentVpfiLendingUnsupported",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "MatchHFTooLow",
     "inputs": []
   },

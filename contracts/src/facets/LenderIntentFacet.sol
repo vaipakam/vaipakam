@@ -134,14 +134,14 @@ contract LenderIntentFacet is
     error LenderIntentNotActive();
     /// @notice A diamond-internal-only entry was called externally.
     error OnlyDiamondInternal();
-    /// @notice VPFI cannot be an intent's LENDING asset (#393 v1-d.1, Codex
-    ///         P2). The reason given then — the generic vault chokepoints the
-    ///         intent paths use did not refresh the fee-discount tier — no
-    ///         longer holds: since #1820 every chokepoint does. The rule
-    ///         itself is unchanged here; whether to lift it is a separate
-    ///         product decision (#2860). VPFI as
-    ///         COLLATERAL stays supported.
-    error LenderIntentVpfiLendingUnsupported();
+    /// @notice `rollIntentLoan` refuses a loan whose lending asset is VPFI
+    ///         (#2860). A VPFI repayment's proceeds are reserved against the
+    ///         lender's VPFI withdraw path until the position holder claims
+    ///         them (`lenderProceedsEncumbered`), and the roll cannot release
+    ///         that reservation, so such a loan settles through the normal
+    ///         claim. VPFI is otherwise an ordinary lending asset for an
+    ///         intent: it may be registered, funded, filled and withdrawn.
+    error LenderIntentVpfiRollUnsupported();
     /// @notice `rollIntentLoan` was called on a loan that didn't originate from
     ///         an intent, or isn't in the clean fully-Repaid state auto-roll
     ///         requires (defaulted / liquidated / fallback loans must use the
@@ -219,15 +219,6 @@ contract LenderIntentFacet is
         // so an intent advertised as active could never produce a loan.
         if (lendingAsset == collateralAsset) {
             revert LenderIntentSelfCollateralized();
-        }
-        // #393 v1-d.1 (Codex P2) — VPFI may not be the LENDING asset (see
-        // {LenderIntentVpfiLendingUnsupported} for why the original reason no
-        // longer holds since #1820). Reject at the root so no VPFI-lending
-        // intent can ever exist (fund / matchIntent / withdraw all require an
-        // active intent, so this single gate covers the whole lifecycle). VPFI
-        // as collateral is unaffected.
-        if (lendingAsset == LibVaipakam.storageSlot().vpfiToken) {
-            revert LenderIntentVpfiLendingUnsupported();
         }
         // #393 v1-c — `requiresKeeperAuth` is now honoured: a true intent is
         // fillable only by the lender or a solver they've authorized for
@@ -395,19 +386,6 @@ contract LenderIntentFacet is
         if (!s.lenderIntent[msg.sender][lendingAsset][collateralAsset].active) {
             revert LenderIntentNotActive();
         }
-        // #393 v1-d.1 (Codex round-2 P2) — re-assert the VPFI-lending block at
-        // the on-ramp, BEFORE custody moves. The `setLenderIntent` gate alone
-        // isn't airtight: `vpfiToken` can be configured/rotated AFTER an intent
-        // row was stored (or a pre-gate intent could survive an upgrade), and
-        // such a row would otherwise fund VPFI the rule above refuses (see
-        // {LenderIntentVpfiLendingUnsupported}). Blocking funding here transitively
-        // blocks `matchIntent` too (it can only draw funded capital), so no
-        // VPFI-denominated intent capital can ever form. The exit
-        // (`withdrawLenderIntentCapital`) stays open so any pre-existing such
-        // capital can still be wound down.
-        if (lendingAsset == s.vpfiToken) {
-            revert LenderIntentVpfiLendingUnsupported();
-        }
         // #393 v1-d.1 (Codex P2) — respect the per-asset pause on this on-ramp:
         // a paused asset must take no NEW custody commitment (mirrors
         // `createOffer`, which pauses-checks both legs). The exit
@@ -477,10 +455,8 @@ contract LenderIntentFacet is
         LibEncumbrance.unlienIntentCapital(
             msg.sender, lendingAsset, collateralAsset, amount
         );
-        // #393 v1-d.1 (Codex round-3 P2) — this is the ONLY VPFI-as-lending path
-        // left open (fund + matchIntent reject VPFI): the wind-down of capital
-        // that became VPFI-denominated via a post-funding `vpfiToken` rotation.
-        // The withdraw below refreshes the lender's VPFI tier record itself
+        // A VPFI-denominated intent withdraws like any other asset: the
+        // withdraw below refreshes the lender's VPFI tier record itself
         // (#1820), so pulling VPFI out lowers their tier at once.
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
@@ -677,14 +653,13 @@ contract LenderIntentFacet is
         // claim makes but this roll doesn't. Rather than strand it (the NFT is
         // about to burn), reject the loan to the normal claim path.
         if (s.heldForLender[loanId] != 0) revert LenderIntentLoanNotRollable();
-        // #623 Codex round-1 P2 — VPFI rotated onto the lending asset post-match
-        // means RepayFacet RESERVED the proceeds (`lenderProceedsEncumbered`);
+        // #2860 — a VPFI loan's repayment proceeds are RESERVED by RepayFacet
+        // (`lenderProceedsEncumbered`) until the position holder claims them;
         // this roll can't release that reservation, and consuming the claim
         // would block the normal claim from releasing it either → vault stuck
-        // over-encumbered. Reject — VPFI winds down via the normal claim.
-        // (Consistent with v1-d.1's VPFI-lending blocks.)
+        // over-encumbered. Refuse — a VPFI loan settles via the normal claim.
         if (io.lendingAsset == s.vpfiToken) {
-            revert LenderIntentVpfiLendingUnsupported();
+            revert LenderIntentVpfiRollUnsupported();
         }
         // #623 Codex round-3 P1 — reject directly on the PER-LOAN lender-proceeds
         // reservation, not just the aggregate free balance. If the asset was VPFI
