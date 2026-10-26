@@ -23,7 +23,6 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 
-
 /**
  * @title RepayPeriodicFacet
  * @author Vaipakam Developer Team
@@ -360,14 +359,15 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             // live NFT holder here. Stamping it at the terminal is the one
             // item no status fallback can cover (a later ClaimFacet burn
             // would drop the status-derived close). `borrowerClean = true`
-            // (proper close — borrower keeps its reward). Best-effort:
-            // reward bookkeeping is strictly subordinate to the repayment.
-            _rewardHook(
+            // (proper close — borrower keeps its reward). Bubbling (#2739):
+            // a terminal transition closes its reward entry or reverts.
+            LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     InteractionRewardsFacet.terminalRewardClose.selector,
                     loanId,
                     true
-                )
+                ),
+                RewardHookCallFailed.selector
             );
         }
 
@@ -609,19 +609,5 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             out.borrowerExtraHeld,
             msg.sender
         );
-    }
-
-    /// @dev #1067 — best-effort reward close-out hook. The reward window
-    ///      logic lives on {InteractionRewardsFacet}; this facet only needs
-    ///      to fire the self-call at its terminal. Reward bookkeeping is
-    ///      STRICTLY SUBORDINATE to the fund-critical repayment close, so a
-    ///      failed low-level call is intentionally not bubbled. Production
-    ///      always cuts InteractionRewardsFacet; a focused test harness that
-    ///      omits it simply skips reward bookkeeping.
-    function _rewardHook(bytes memory data) private {
-        (bool ok, ) = address(this).call(data);
-        if (!ok) {
-            // best-effort — the close proceeds regardless.
-        }
     }
 }
