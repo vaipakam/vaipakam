@@ -578,7 +578,8 @@ function answerFor(f: AbiFunction, over: Record<string, unknown>): string {
   });
 }
 
-/** The five loans and three offers the fixture serves. */
+/** The five loans and three offers the fixture serves. The offers are
+ *  there to prove the pass never reads them (#2761). */
 const PG_LOANS = 5;
 const PG_OFFERS = 3;
 
@@ -604,10 +605,10 @@ const PG_SEL = Object.fromEntries(
  *
  * The overrides are the ones that keep the pass WALKING rather than returning
  * at a filter: caps enabled (else stage 2 never runs), an Active loan ending
- * 12 h out (inside the 24 h pre-grace window, so stage 3 runs), and
- * borrower-type offers (so the viable-lender pre-check finds no counterparty
- * and does not skip). A fixture that stops the pass early would let a
- * completely unbatched version pass this test.
+ * 12 h out (inside the 24 h pre-grace window, so stage 3 runs). A fixture
+ * that stops the pass early would let a completely unbatched version pass
+ * this test. The book serves lender offers on the loans' own terms, which the
+ * pass must not read: no offer silences the warning (#2761).
  */
 /** The chain's pause record and the loans' schedule for the loan-clock
  *  cases (#2808); the batching test runs on the defaults. */
@@ -636,10 +637,10 @@ function pgAnswer(data: string): string {
         functionName: PG_FNS.offerPage.name,
         result: Array.from({ length: PG_OFFERS }, (_, i) => BigInt(i + 1)) as never,
       });
-    // offerType 1 = Borrower, so no lender counterparty is cached and the
-    // pre-check cannot short-circuit the warning.
+    // offerType 0 = Lender, on the loans' own asset pair: exactly the offer
+    // that used to silence the warning (#2761).
     case PG_SEL.getOffer:
-      return answerFor(PG_FNS.getOffer, { offerType: 1 });
+      return answerFor(PG_FNS.getOffer, { offerType: 0 });
     case PG_SEL.caps:
       return answerFor(PG_FNS.caps, { enabled: true });
     case PG_SEL.details:
@@ -726,7 +727,7 @@ function emptyDb(): unknown {
 }
 
 describe('preGraceWatcher batching (#1896)', () => {
-  it('batches the caps, detail, owner and offer reads — none stays per-item', async () => {
+  it('batches the caps, detail and owner reads — none stays per-item', async () => {
     const { seen, restore } = recordPreGraceCalls();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -752,11 +753,11 @@ describe('preGraceWatcher batching (#1896)', () => {
       expect(b.to).toBe(MULTICALL3_ADDRESS.toLowerCase());
     }
 
-    // 2. All FOUR per-item reads are inside batches and none outside. Split per
-    //    selector rather than checked in aggregate: three of the four are
-    //    separate stages, and one stage falling back to per-item reads while the
-    //    others batch is exactly the partial regression a combined count hides.
-    for (const key of ['caps', 'details', 'ownerOf', 'getOffer'] as const) {
+    // 2. All THREE per-item reads are inside batches and none outside. Split per
+    //    selector rather than checked in aggregate: they are separate stages,
+    //    and one stage falling back to per-item reads while the others batch is
+    //    exactly the partial regression a combined count hides.
+    for (const key of ['caps', 'details', 'ownerOf'] as const) {
       expect(inner, `${key} not batched`).toContain(PG_SEL[key]);
       expect(
         seen.filter((s) => s.selector === PG_SEL[key]),
@@ -768,13 +769,17 @@ describe('preGraceWatcher batching (#1896)', () => {
     //    returned early at any filter would satisfy everything above by simply
     //    not making the later reads.
     expect(inner.filter((s) => s === PG_SEL.ownerOf)).toHaveLength(PG_LOANS);
-    expect(inner.filter((s) => s === PG_SEL.getOffer)).toHaveLength(PG_OFFERS);
 
-    // 4. The whole chain costs a handful of requests. The subrequest ceiling is
-    //    the point of the change, so bound it: one batch per stage plus the four
-    //    count/page scan reads and the one pause-log read (#2808), against
-    //    5 loans + 3 offers = 8 per-item reads before.
-    expect(seen.length).toBeLessThanOrEqual(10);
+    // 4. The offer book is never read (#2761): no offer can silence the
+    //    warning, so there is nothing to read it for.
+    for (const key of ['offerCount', 'offerPage', 'getOffer'] as const) {
+      expect([...seen.map((s) => s.selector), ...inner], `${key} read`).not.toContain(PG_SEL[key]);
+    }
+
+    // 5. The whole chain costs a handful of requests. The subrequest ceiling is
+    //    the point of #1896, so bound it: one batch per stage plus the two
+    //    loan count/page scan reads and the one pause-log read (#2808).
+    expect(seen.length).toBeLessThanOrEqual(6);
   });
 });
 
