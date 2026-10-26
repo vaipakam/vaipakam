@@ -47,7 +47,6 @@ import {
 import { attemptCloseOut } from './closeOut';
 import { parseLiquidationLoan } from './liquidationLoan';
 import { tryMatchLiquidation } from './matchLiquidation';
-import { orchestrateDexDirectQuotes } from './dexDirectQuotes';
 import { describeFailure, redactedError } from '@vaipakam/lib/errorDescription';
 import { inTermOnLoanClock } from './loanClockReads';
 import {
@@ -1126,8 +1125,8 @@ interface FlashLoanBranchArgs {
  *      flash-loan provider configured (Aave V3 / Balancer V2).
  *   2. The operator has armed the chain (`DISCOUNT_PATH_CHAIN_IDS`).
  *   3. The trade (discountedLiquidation.ts): the Diamond's preview says
- *      the liquidation can run, a DEX-direct quote sells exactly its
- *      seizure, and the exact call simulates to a run that keeps at least
+ *      the liquidation can run, one of the Diamond's swap adapters is
+ *      quoted to sell exactly its seizure, and the exact call simulates to a run that keeps at least
  *      its own fee. The Diamond's own discount-path switch is the
  *      preview's `Disabled` status.
  *
@@ -1160,12 +1159,12 @@ async function tryFlashLoanDiscountedPath(
   }
 
   // Gate 3 — the trade itself (#2697, discountedLiquidation.ts): the
-  // Diamond's preview gives the debt and the seizure, the swap is quoted for
-  // exactly that seizure with the FlashLoanLiquidator as taker (an
-  // aggregator's response is taker-specific, so the main flow's
-  // adapter-taker quotes cannot be reused), and the exact call is estimated,
-  // which simulates the whole run. The run must keep at least its own fee,
-  // in the principal token's units, or the liquidator reverts it.
+  // Diamond's preview gives the debt and the seizure, the sale is quoted for
+  // exactly that seizure through the Diamond's own swap adapters (#2734: the
+  // liquidator sells through no other), with the route builder every forced
+  // close uses, and the exact call is estimated, which simulates the whole
+  // run. The run must keep at least its own fee, in the principal token's
+  // units, or the liquidator reverts it.
   const account = ctx.wallet.account;
   if (!account) return false;
   const diamond = chain.diamond as Address;
@@ -1175,19 +1174,26 @@ async function tryFlashLoanDiscountedPath(
     loanId: loanIdBig,
     readPreview: () => readDiscountedLiquidation(publicClient, diamond, loanIdBig),
     quote: async (sellAmount, preview) => {
-      const direct = await orchestrateDexDirectQuotes(env, publicClient, {
+      const res = await orchestrateServerQuotes(env, publicClient, {
         chainId: chain.id,
+        diamond,
         sellToken: preview.collateralAsset,
         buyToken: preview.principalAsset,
         sellAmount,
-        taker: route.liquidator,
+        txOrigin: account.address,
+        seller: route.liquidator,
       });
-      if (direct.ranked.length === 0 && direct.failed.length > 0) {
+      if (res.ranked.length === 0 && res.failed.length > 0) {
         console.log(
-          `[keeper] loan=${loanId} chain=${chain.name} flash-loan dex-direct quotes failed: ${direct.failed.join(',')}`,
+          `[keeper] loan=${loanId} chain=${chain.name} flash-loan quotes failed: ${res.failed.join(',')}`,
         );
       }
-      return direct.ranked;
+      return res.ranked.map((q) => ({
+        kind: q.kind,
+        expectedOutput: q.expectedOutput,
+        adapter: q.adapter,
+        adapterData: q.call.data,
+      }));
     },
     estimateFee: (args) =>
       estimateTxFeeWei(publicClient, chain.id, {

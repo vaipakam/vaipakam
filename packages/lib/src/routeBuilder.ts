@@ -453,8 +453,16 @@ export async function buildCloseOutRoute(deps: {
    *  is only MEASURING a price (the keeper's liquidity-confidence pass)
    *  passes its own. */
   slippageBps?: number;
+  /** The contract that will hand the adapter its input and call it.
+   *  Omitted, the Diamond, as for every close-out it runs itself; the
+   *  keeper's FlashLoanLiquidator sells through the same adapters from its
+   *  own balance (#2734). Only the testnet mock reads it: a mock restricted
+   *  to one caller pays no other. An aggregator quote does not depend on it,
+   *  since its taker is the adapter either way. */
+  seller?: Address;
 }): Promise<CloseOutRoute> {
   const { client, chainId, diamond, sale, aggregators } = deps;
+  const seller = deps.seller ?? diamond;
   // Every enabled instance of a venue is asked, in the Diamond's order:
   // two adapters of one kind (an adapter replacement in progress) each
   // have their own taker and allowlist, so one refusing says nothing
@@ -546,7 +554,7 @@ export async function buildCloseOutRoute(deps: {
         };
       }
       case 'testnetMock': {
-        const out = await quoteTestnetMock(client, slot.address, diamond, sale);
+        const out = await quoteTestnetMock(client, slot.address, seller, sale);
         if (out === 'unanswered') return none('unanswered');
         if (out === null) return none('declined');
         return {

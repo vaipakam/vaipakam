@@ -14,8 +14,8 @@ import {
   planFlashLoanLiquidation,
   type DiscountedLiquidationPreview,
   type FlashLoanPlanDeps,
+  type FlashLoanSaleQuote,
 } from '../src/discountedLiquidation';
-import type { DexDirectQuote } from '../src/dexDirectQuotes';
 
 const DIAMOND = '0x0000000000000000000000000000000000000001' as Address;
 const USDC = '0x00000000000000000000000000000000000000c0' as Address; // 6 decimals
@@ -89,6 +89,9 @@ describe('the preview status', () => {
     expect(discountedStatusReason(0)).toMatch(/paused/);
     expect(discountedStatusReason(1)).toMatch(/switch is off/);
     expect(discountedStatusReason(4)).toMatch(/healthy/);
+    // #2734 — appended after Ready.
+    expect(DISCOUNTED_LIQUIDATION_STATUS[8]).toBe('InternalMatchWindow');
+    expect(discountedStatusReason(8)).toMatch(/internal-match priority window/);
     expect(discountedStatusReason(9)).toMatch(/unknown status 9/);
   });
   it('maps each provider to its entry', () => {
@@ -109,12 +112,11 @@ describe('planFlashLoanLiquidation', () => {
     surplus: 750n * 10n ** 18n,
     ...over,
   });
-  const quote = (expectedOutput: bigint): DexDirectQuote => ({
+  const quote = (expectedOutput: bigint): FlashLoanSaleQuote => ({
     kind: 'zeroex',
     expectedOutput,
-    swapTarget: '0x00000000000000000000000000000000000000a1' as Address,
-    swapAllowanceTarget: '0x00000000000000000000000000000000000000a2' as Address,
-    swapCalldata: '0xdeadbeef' as Hex,
+    adapter: '0x00000000000000000000000000000000000000a1' as Address,
+    adapterData: '0xdeadbeef' as Hex,
   });
   function deps(over: Partial<FlashLoanPlanDeps> = {}) {
     const quoted: bigint[] = [];
@@ -151,7 +153,6 @@ describe('planFlashLoanLiquidation', () => {
       1_050n * 10n ** 18n,
       300_000n,
       '0x00000000000000000000000000000000000000a1',
-      '0x00000000000000000000000000000000000000a2',
       '0xdeadbeef',
     ]);
   });
@@ -166,6 +167,13 @@ describe('planFlashLoanLiquidation', () => {
     const { d, quoted } = deps({ readPreview: async () => ready({ status: 1 }) });
     const plan = await planFlashLoanLiquidation(d);
     expect(plan).toEqual({ kind: 'skip', reason: "not liquidatable: the Diamond's discount-path switch is off" });
+    expect(quoted).toEqual([]);
+  });
+
+  it('waits out the internal-match window rather than quoting', async () => {
+    const { d, quoted } = deps({ readPreview: async () => ready({ status: 8 }) });
+    const plan = await planFlashLoanLiquidation(d);
+    expect(plan.kind === 'skip' && plan.reason).toMatch(/internal-match priority window/);
     expect(quoted).toEqual([]);
   });
 
@@ -249,8 +257,8 @@ describe('planFlashLoanLiquidation', () => {
     expect(read).toBe(false);
   });
 
-  it('skips when no DEX-direct quote answers', async () => {
+  it('skips when no swap adapter quotes the seizure', async () => {
     const { d } = deps({ quote: async () => [] });
-    expect((await planFlashLoanLiquidation(d)).kind).toBe('skip');
+    expect(await planFlashLoanLiquidation(d)).toEqual({ kind: 'skip', reason: 'no swap adapter quoted the seizure' });
   });
 });
