@@ -117,8 +117,12 @@ writes the file:
    sources: CoinGecko's per-chain contract addresses, CoinMarketCap's
    (`/cryptocurrency/info`, which also answers the reverse lookup by address),
    and the chain's official token list. That is the Superchain token list for
-   Base and Optimism, Arbitrum's bridge token list, or the issuer's own page,
-   such as Circle for USDC.
+   Base and Optimism, and Arbitrum's bridge token lists. Ethereum has no list
+   of its own and Polygon's (`api-polygon-tokens.polygon.technology`) no
+   longer resolves, so both read Uniswap Labs' default list, which Arbitrum's
+   bridge lists already carry a copy of; Ethereum also reads the Superchain
+   list's L1 entries. An issuer's own page, such as Circle for USDC, settles a
+   review entry by hand.
 3. It drafts a binding only when exactly one address is named by all three.
    A source may answer with several addresses for one symbol (CoinGecko lists
    every coin that shares it), so the rule is the intersection, and the other

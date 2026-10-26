@@ -73,6 +73,16 @@ export const QUOTES = Object.freeze({
 
 const DIRECTORY = 'https://reference-data-directory.vercel.app';
 const SUPERCHAIN_LIST = 'https://static.optimism.io/optimism.tokenlist.json';
+// Uniswap Labs' default list. The token-list source for Ethereum (which has
+// no list of its own; the Superchain list names only what is bridged to OP)
+// and for Polygon, whose own list endpoint (api-polygon-tokens.polygon.technology)
+// no longer resolves. Arbitrum already reads its arbed copy of the same list.
+const UNISWAP_DEFAULT_LIST = 'https://tokens.uniswap.org';
+// Multicall3, at the same address on every chain here: the chain reads go
+// through it so a whole run's reads land at the pinned block in a few calls,
+// well inside what a pruned node keeps (about 128 blocks; half a minute on
+// Arbitrum).
+const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11';
 
 /**
  * The Phase-1 mainnets (TokenomicsTechSpec §10). `slug` is the deployments
@@ -87,7 +97,7 @@ export const CHAINS = Object.freeze({
     directory: `${DIRECTORY}/feeds-mainnet.json`,
     coingeckoPlatform: 'ethereum',
     cmcPlatforms: ['Ethereum'],
-    tokenLists: [SUPERCHAIN_LIST],
+    tokenLists: [UNISWAP_DEFAULT_LIST, SUPERCHAIN_LIST],
     rpc: 'https://ethereum-rpc.publicnode.com',
   },
   base: {
@@ -122,8 +132,8 @@ export const CHAINS = Object.freeze({
     directory: `${DIRECTORY}/feeds-matic-mainnet.json`,
     coingeckoPlatform: 'polygon-pos',
     cmcPlatforms: ['Polygon'],
-    tokenLists: ['https://api-polygon-tokens.polygon.technology/tokenlists/default.tokenlist.json'],
-    rpc: 'https://polygon-rpc.com',
+    tokenLists: [UNISWAP_DEFAULT_LIST],
+    rpc: 'https://polygon-bor-rpc.publicnode.com',
   },
 });
 
@@ -405,22 +415,35 @@ const FEED_ABI = parseAbi([
 
 /** Every read is pinned to `blockNumber`, the block whose timestamp the
  *  freshness check uses and whose number the file records, so the checks and
- *  the recorded `checkedAtBlock` describe one snapshot. */
+ *  the recorded `checkedAtBlock` describe one snapshot. The reads are batched
+ *  through Multicall3 so they all reach the node while it still holds that
+ *  block's state; one binding's failed read fails that binding only. */
 async function readChain(client, bindings, blockNumber) {
+  const fns = [
+    ['feed', 'description'],
+    ['feed', 'decimals'],
+    ['feed', 'latestRoundData'],
+    ['token', 'decimals'],
+  ];
+  const contracts = bindings.flatMap((b) => fns.map(([who, functionName]) => ({ address: b[who], abi: FEED_ABI, functionName })));
+  const results = await client.multicall({ contracts, blockNumber, allowFailure: true, multicallAddress: MULTICALL3, batchSize: 16_384 });
   const reads = new Map();
-  for (const b of bindings) {
-    try {
-      const [description, feedDecimals, round, tokenDecimals] = await Promise.all([
-        client.readContract({ address: b.feed, abi: FEED_ABI, functionName: 'description', blockNumber }),
-        client.readContract({ address: b.feed, abi: FEED_ABI, functionName: 'decimals', blockNumber }),
-        client.readContract({ address: b.feed, abi: FEED_ABI, functionName: 'latestRoundData', blockNumber }),
-        client.readContract({ address: b.token, abi: FEED_ABI, functionName: 'decimals', blockNumber }),
-      ]);
-      reads.set(b, { description, feedDecimals, answer: round[1], updatedAt: round[3], tokenDecimals });
-    } catch (err) {
-      reads.set(b, { error: (err?.shortMessage ?? 'read reverted').slice(0, 200) });
+  bindings.forEach((b, i) => {
+    const [description, feedDecimals, round, tokenDecimals] = results.slice(i * fns.length, (i + 1) * fns.length);
+    const failed = [description, feedDecimals, round, tokenDecimals].findIndex((r) => r.status !== 'success');
+    if (failed >= 0) {
+      const [who, fn] = fns[failed];
+      reads.set(b, { error: `${who} ${fn}() reverted` });
+      return;
     }
-  }
+    reads.set(b, {
+      description: description.result,
+      feedDecimals: feedDecimals.result,
+      answer: round.result[1],
+      updatedAt: round.result[3],
+      tokenDecimals: tokenDecimals.result,
+    });
+  });
   return reads;
 }
 
