@@ -68,10 +68,11 @@ library RemitWire {
     ///         (#1634 r1): w1 chose inline schedule parameters over a
     ///         mirror-side version table, so the version number alone is
     ///         underivable there and the window itself must travel for the
-    ///         ingress-time expiry evaluation. A clockless day never
-    ///         dispatches at all (#1634 r2 — `CompensationDayHasNoClock`). Fresh-only by construction: the manual-compensation
-    ///         path relocates no recycled custody, so the payload carries no
-    ///         `recycledShare` field at all.
+    ///         ingress-time expiry evaluation. Base dispatches only a
+    ///         finalized day, and finalization freezes the clock, so the
+    ///         words are always present. Fresh-only by construction: the
+    ///         manual-compensation path relocates no recycled custody, so
+    ///         the payload carries no `recycledShare` field at all.
     uint256 internal constant REMIT_WIRE_TAG_P2 =
         uint256(keccak256("vaipakam.remit.wire.p2"));
 

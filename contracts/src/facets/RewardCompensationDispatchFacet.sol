@@ -195,17 +195,10 @@ contract RewardCompensationDispatchFacet is
         address messenger = s.crossChainMessenger;
         if (messenger == address(0)) revert RewardBudgetMessengerNotSet();
 
-        // #1634 r2 — a clockless day can never carry the broadcast that
-        // settles the mirror's classification, so the credit would sit
-        // provisional forever, outside the recovery reservation. Fail
-        // closed HERE. On a fresh deploy every finalized day has its clock
-        // (finalization freezes it in the same call, and #1944 retired the
-        // clockless broadcast wires), so this guard is a fail-closed check,
-        // not a live route.
+        // The day is finalized (checked above), and finalization freezes
+        // its lapse clock in the same call, so the frozen words read here
+        // always exist.
         LibVaipakam.DayLapseClock storage clk = s.dayLapseClock[dayId];
-        if (clk.finalizedAt == 0) {
-            revert CompensationDayHasNoClock(dayId);
-        }
         // #1634 r3 — the R3 dispatch cutoff, enforced NOW rather than with
         // the w4 terminals: the mirror already evaluates expiry from these
         // same frozen words (the r1 fix), so a dispatch inside the cutoff
@@ -451,10 +444,9 @@ contract RewardCompensationDispatchFacet is
                 revert SupplementalReservationNotAcked(closingId, status);
             }
         }
-        // #1656 r1 — the per-side funded record is the bound's base term;
-        // a pre-w4 P2 compensation predates the stamps (both zero), and
-        // treating that as zero funding would admit a second full quote.
-        // The ADMIN seed ({seedCompFunded}) backfills it first.
+        // #1656 r1 — the per-side funded record is the bound's base term.
+        // Every manual compensation dispatch stamps it, so a day closed by
+        // any other remit has none and is not a compensation to top up.
         if (!s.compFundedRecorded[dstChainId][dayId]) {
             revert SupplementalFundedRecordMissing(dayId, dstChainId);
         }
@@ -485,22 +477,14 @@ contract RewardCompensationDispatchFacet is
         if (vpfi == address(0)) revert VPFITokenNotSet();
         address messenger = s.crossChainMessenger;
         if (messenger == address(0)) revert RewardBudgetMessengerNotSet();
-        // Same frozen-clock + R3 cutoff discipline as the manual path: a
-        // supplement dispatched inside the cutoff window could arrive
-        // past expiry and quarantine after the terminal.
-        // #1656 r3 — clock PRESENCE only, no R3 cutoff: the cutoff's
-        // premise (a past-expiry arrival is a GUARANTEED quarantine) does
-        // not hold for supplements — the mirror admits a top-up on a
-        // compensated-and-open day until its §2.5 remediation deadline,
-        // which is mirror-local state Base cannot read. A supplement
-        // racing the short-lapse terminal quarantines token-safely and
-        // returns via w5; refusing here instead would strand every AGED
-        // migrated day's re-opened headroom behind an expiry its
-        // remediation window replaced. The MANUAL path (first
+        // #1656 r3 — no R3 cutoff here, unlike the manual path: the
+        // cutoff's premise (a past-expiry arrival is a GUARANTEED
+        // quarantine) does not hold for supplements — the mirror admits a
+        // top-up on a compensated-and-open day until its §2.5 remediation
+        // deadline, which is mirror-local state Base cannot read. A
+        // supplement racing the short-lapse terminal quarantines
+        // token-safely and returns via w5. The MANUAL path (first
         // compensation) keeps the full cutoff.
-        if (s.dayLapseClock[dayId].finalizedAt == 0) {
-            revert CompensationDayHasNoClock(dayId);
-        }
         // R6 — one in flight per chain.
         {
             uint256 outstanding = s.compensationOutstanding[dstChainId];
@@ -845,76 +829,6 @@ contract RewardCompensationDispatchFacet is
             s.strandedReturnShortfall[remitId], gateCleared
         );
     }
-
-    /// @notice #1434 P2-w4 (#1656 r1) — the per-side funded record was
-    ///         backfilled for a pre-w4 compensation day.
-    /// @custom:event-category informational/reward-compensation
-    event CompFundedSeeded(
-        uint32 indexed dstChainId,
-        uint256 indexed dayId,
-        uint256 lender18,
-        uint256 borrower18
-    );
-
-    /// @notice ADMIN — backfill the per-side funded cumulative for a day
-    ///         whose P2 manual compensation predates the w4 stamps: the
-    ///         supplemental bound and the legacy inventory both read it.
-    /// @dev The split must reproduce the ORIGINAL dispatch exactly: it
-    ///      must sum to the day's recorded scalar funding, fit the
-    ///      standing quote per side, and the record must currently be
-    ///      empty (one-shot). The operator reads the split from the
-    ///      original dispatch's wire record — the same evidence class as
-    ///      the legacy stamp's day binding.
-    function seedCompFunded(
-        uint32 dstChainId,
-        uint256 dayId,
-        uint256 lenderAmount18,
-        uint256 borrowerAmount18
-    ) external onlyCanonical onlyRole(LibAccessControl.ADMIN_ROLE) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        {
-            uint256 closingId = s.dayClosedByRemitId[dstChainId][dayId];
-            if (closingId == 0) {
-                revert SupplementalDayNotClosed(dayId, dstChainId);
-            }
-            // #1656 r7 - the seed records what was CREDITED mirror-side,
-            // so the closing reservation must be ACKED: a Pending
-            // reservation delivered nothing (its remedy is release or
-            // resolution), and seeding it would leave a stale
-            // contribution the r6 release-unwind cannot see (pre-w4
-            // reservations carry zero declared fields) - the replacement
-            // dispatch would then double-count past the quote.
-            uint8 status = s.remitReservations[closingId].status;
-            if (status != 2) {
-                revert SupplementalReservationNotAcked(closingId, status);
-            }
-        }
-        // #1656 r2 — one-shot on the EXISTENCE flag, never the value
-        // pair (a rounded-to-zero reconciliation is a real record).
-        if (s.compFundedRecorded[dstChainId][dayId]) {
-            revert CompFundedSeedInvalid(dayId, dstChainId);
-        }
-        LibVaipakam.CompQuote storage q = s.compQuote[dayId][dstChainId];
-        // #1656 r2 — the seed records what was CREDITED mirror-side: at
-        // most the declared scalar (an already-ACKed short delivery seeds
-        // at the RECEIVED figure, re-opening exactly the supplemental
-        // headroom the shortfall left), each side within the quote.
-        if (
-            lenderAmount18 + borrowerAmount18
-                > s.rewardBudgetRemitted[dstChainId][dayId]
-                || lenderAmount18 > q.lender18
-                || borrowerAmount18 > q.borrower18
-        ) {
-            revert CompFundedSeedInvalid(dayId, dstChainId);
-        }
-        s.compFundedLender18[dstChainId][dayId] = lenderAmount18;
-        s.compFundedBorrower18[dstChainId][dayId] = borrowerAmount18;
-        s.compFundedRecorded[dstChainId][dayId] = true;
-        emit CompFundedSeeded(
-            dstChainId, dayId, lenderAmount18, borrowerAmount18
-        );
-    }
-
 
     /**
      * @dev #1434 P2-w2 — the MANUAL-COMPENSATION dispatch (design §1.3):

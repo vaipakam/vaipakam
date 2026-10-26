@@ -989,29 +989,6 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 0);
     }
 
-    /// @dev #1434 P2-w4 (constraint-19) — the legacy inventory lists only
-    ///      the pre-P2 shape: single-day fresh-only reservations to a
-    ///      frozen-zeroed dest with NO per-side funded record; a post-w4
-    ///      compensation (which always stamps one) never appears.
-    function test_LegacyInventory() public {
-        _finalizeDay(1);
-        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
-        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
-        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
-        mutator.setDayZeroedForDestRaw(1, CHAIN_ARB, true);
-
-        (uint256[] memory ids, uint256 next) =
-            rlens.getLegacyManualReservations(1, 10);
-        assertEq(ids.length, 0, "post-w4 compensation is not legacy");
-        assertEq(next, 2, "page advanced past the scanned id");
-
-        // The pre-w4 legacy shape: same reservation, no funded record.
-        mutator.setCompFundedRaw(CHAIN_ARB, 1, 0, 0);
-        (ids, ) = rlens.getLegacyManualReservations(1, 10);
-        assertEq(ids.length, 1, "legacy shape listed");
-        assertEq(ids[0], 1, "the reservation id");
-    }
-
     /// @dev #1656 r1 — the ACK reconciles the per-side funded cumulative
     ///      from DECLARED to RECEIVED, so a short delivery re-opens
     ///      exactly the supplemental headroom it left.
@@ -1076,28 +1053,17 @@ contract RewardRemitLedgerTest is SetupTest {
         );
     }
 
-    /// @dev #1656 r1 — a pre-w4 P2 compensation has no per-side funded
-    ///      record: the supplemental refuses until the ADMIN seed
-    ///      backfills it (exactly-sum + per-side-quote validated).
-    function test_Supplemental_SeedBackfillsPreW4Record() public {
+    /// @dev #1656 r1 / #2875 — the supplemental's bound reads the per-side
+    ///      funded record every manual compensation dispatch stamps. A day
+    ///      closed by a remit that stamped none is not a compensation day,
+    ///      so the supplemental refuses it.
+    function test_Supplemental_RefusesDayWithoutFundedRecord() public {
         _finalizeDay(1);
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
-        // #1656 r7 - a PENDING closure cannot be seeded (it delivered
-        // nothing; its remedy is release or resolution).
-        mutator.setCompFundedRaw(CHAIN_ARB, 1, 0, 0);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.SupplementalReservationNotAcked.selector,
-                1,
-                uint8(1)
-            )
-        );
-        comp.seedCompFunded(CHAIN_ARB, 1, 2e18, 1e18);
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18);
-        // Stage the pre-w4 shape: funded scalar present, per-side zero
-        // (the ACK's reconciliation re-stamped values; clear them again).
+        // Stage a closing remit with no funded record.
         mutator.setCompFundedRaw(CHAIN_ARB, 1, 0, 0);
 
         vm.expectRevert(
@@ -1108,47 +1074,6 @@ contract RewardRemitLedgerTest is SetupTest {
             )
         );
         comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 0);
-
-        // Seed may not EXCEED the recorded scalar (#1656 r2: at-most,
-        // so an already-ACKed short delivery seeds at received).
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.CompFundedSeedInvalid.selector, 1, CHAIN_ARB
-            )
-        );
-        comp.seedCompFunded(CHAIN_ARB, 1, 3e18, 0.5e18); // sums past 3
-        comp.seedCompFunded(CHAIN_ARB, 1, 2e18, 1e18);
-        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
-        assertEq(fl, 2e18, "seeded");
-        assertEq(fb, 1e18, "seeded");
-        // One-shot.
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.CompFundedSeedInvalid.selector, 1, CHAIN_ARB
-            )
-        );
-        comp.seedCompFunded(CHAIN_ARB, 1, 2e18, 1e18);
-        // Supplemental now bounded normally.
-        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 1e18);
-    }
-
-    /// @dev #1656 r1 — a RELEASED reservation drops from the legacy
-    ///      inventory (the documented pending-hit remedy must converge the
-    ///      empty-inventory activation gate).
-    function test_LegacyInventory_ReleasedDrops() public {
-        _finalizeDay(1);
-        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
-        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
-        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
-        mutator.setDayZeroedForDestRaw(1, CHAIN_ARB, true);
-        mutator.setCompFundedRaw(CHAIN_ARB, 1, 0, 0); // legacy shape
-        (uint256[] memory ids, ) = rlens.getLegacyManualReservations(1, 10);
-        assertEq(ids.length, 1, "listed while pending");
-
-        vm.warp(block.timestamp + 8 days);
-        comp.releaseRemitReservation(1);
-        (ids, ) = rlens.getLegacyManualReservations(1, 10);
-        assertEq(ids.length, 0, "released hit drops from the inventory");
     }
 
     /// @dev #1656 r2 — a severe short delivery whose reconciliation
@@ -1171,34 +1096,6 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.remitSupplementalBudget{value: 0.01 ether}(
             CHAIN_ARB, 1, 2e18, 2e18
         );
-    }
-
-    /// @dev #1656 r2 — the migration seed records the CREDITED figure: an
-    ///      already-ACKed short delivery seeds at received (≤ the declared
-    ///      scalar), re-opening the shortfall's supplemental headroom.
-    function test_Supplemental_SeedAtReceivedBelowDeclared() public {
-        _finalizeDay(1);
-        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
-        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
-        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
-        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18);
-        // Pre-w4 shape (no record) whose historical ACK reported HALF.
-        mutator.setCompFundedRaw(CHAIN_ARB, 1, 0, 0);
-        // Above the declared scalar still refuses…
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.CompFundedSeedInvalid.selector, 1, CHAIN_ARB
-            )
-        );
-        comp.seedCompFunded(CHAIN_ARB, 1, 3e18, 1e18);
-        // …but seeding at the RECEIVED figure (below declared) works.
-        comp.seedCompFunded(CHAIN_ARB, 1, 1e18, 0.5e18);
-        comp.remitSupplementalBudget{value: 0.01 ether}(
-            CHAIN_ARB, 1, 2e18, 1.5e18
-        );
-        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
-        assertEq(fl, 3e18, "back at quote");
-        assertEq(fb, 2e18, "back at quote");
     }
 
     /// @dev #1656 r2 — the FORCED finalize preserves declared funding:
@@ -1244,19 +1141,6 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.remitSupplementalBudget{value: 0.01 ether}(
             CHAIN_ARB, 1, 1e18, 1e18
         );
-    }
-
-    /// @dev #1656 r3 — a rounded-to-zero post-w4 day is NOT a legacy
-    ///      inventory hit (the existence flag governs, not the values).
-    function test_LegacyInventory_RoundedZeroRecordNotListed() public {
-        _finalizeDay(1);
-        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
-        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
-        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
-        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 1); // rounds to 0/0
-        mutator.setDayZeroedForDestRaw(1, CHAIN_ARB, true);
-        (uint256[] memory ids, ) = rlens.getLegacyManualReservations(1, 10);
-        assertEq(ids.length, 0, "recorded day never lists as legacy");
     }
 
     /// @dev #1656 r3 — a forced-finalized compensation's LATE authentic
@@ -1482,24 +1366,6 @@ contract RewardRemitLedgerTest is SetupTest {
             )
         );
         com.clearCompQuote(1, CHAIN_ARB);
-    }
-
-    /// @dev #1634 r2 — a clockless day cannot dispatch a P2 compensation:
-    ///      it can never emit the settling V3 broadcast (the V2-permanent
-    ///      fallback), so the mirror credit would sit provisional forever.
-    ///      Fail-closed at the dispatch, where the operator can heal the
-    ///      clock first (or route a pre-w1 day to the w4 legacy migration).
-    function test_Manual_RefusesClocklessDay() public {
-        _finalizeDay(1);
-        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
-        mutator.clearDayLapseClockRaw(1); // reproduce a pre-w1 day
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.CompensationDayHasNoClock.selector, 1
-            )
-        );
-        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
     }
 
     /// @dev #1634 r3 — the R3 dispatch cutoff: a compensation must not

@@ -120,9 +120,6 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         // T_d unset would floor the capped cumulative at zero; production
         // freezes it at finalize, so stage "cap disabled".
         _mut().setDayCapThreshold18(DAY, type(uint256).max);
-        // #1656 r2 — arm the lapse terminals (the activation gate; the
-        // unarmed posture has its own probe test).
-        _com().armLapseTerminals();
     }
 
     /// @dev Lender-side entries covering `DAY` (per-day 60/25/15, cap 15e18):
@@ -933,66 +930,10 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         assertEq(q3, 3000, "quarter-cutting top-up extends the window");
     }
 
-    function test_legacyStamp_flowAndGates() public {
-        _configureMirror();
-        _zeroedDayG0();
-        address remitter = makeAddr("legacyBase");
-
-        // No receipt.
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                LegacyReceiptUnusable.selector,
-                keccak256(abi.encode(remitter, uint256(7)))
-            )
-        );
-        _com().stampLegacyCompensation(DAY, remitter, 7);
-
-        _mut().setReceivedRemitRaw(remitter, 7, 10e18);
-
-        // Quote incomplete.
-        vm.expectRevert(
-            abi.encodeWithSelector(LegacyStampQuoteMissing.selector, DAY)
-        );
-        _com().stampLegacyCompensation(DAY, remitter, 7);
-
-        _accumulateAllLender();
-        _dispatchQuote(); // quote 20e18 lender / 0 borrower
-        _com().stampLegacyCompensation(DAY, remitter, 7);
-        LibVaipakam.DayCompensation memory dc = RewardRemittanceLensFacet(
-            address(diamond)
-        ).getDayCompensation(DAY);
-        assertTrue(dc.compensated, "stamped compensated");
-        assertEq(uint256(dc.lenderPool18), 10e18, "pro-rata: all lender");
-        assertEq(uint256(dc.borrowerPool18), 0, "zero-quote side gets none");
-        (uint64 firstAt, , ) = _com().getShortLapseDeadline(DAY);
-        assertEq(firstAt, uint64(block.timestamp), "deadline clock started");
-
-        // One receipt, one day; a compensated day is no longer stampable.
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                LegacyReceiptUnusable.selector,
-                keccak256(abi.encode(remitter, uint256(7)))
-            )
-        );
-        _com().stampLegacyCompensation(DAY, remitter, 7);
-        _mut().setReceivedRemitRaw(remitter, 8, 1e18);
-        vm.expectRevert(
-            abi.encodeWithSelector(LegacyDayNotStampable.selector, DAY)
-        );
-        _com().stampLegacyCompensation(DAY, remitter, 8);
-
-        // ADMIN-only.
-        address stranger = makeAddr("stranger");
-        vm.prank(stranger);
-        vm.expectRevert();
-        _com().stampLegacyCompensation(DAY, stranger, 9);
-    }
-
-    function test_lapse_terminalsDarkUntilArmed() public {
-        // #1656 r2 — both permissionless terminals are DARK until the
-        // ADMIN arms them (the constraint-19 activation gate on-chain):
-        // an upgrade window's expired day cannot be lapsed out from
-        // under an unstamped legacy delivery.
+    function test_lapse_terminalsLiveFromDeploy() public {
+        // #2875 — no arming step: on a fresh mirror the full lapse
+        // terminal takes an expired zeroed day with no admin action, and
+        // refuses only until the day's own frozen expiry.
         _configureMirror();
         _mut().setGovernorCommitArmedFromDayRaw(DAY);
         _mut().setDayPoolStampRaw(DAY, 40e18, 20e18);
@@ -1000,18 +941,17 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         _mut().setDayDeliberatelyZeroedRaw(DAY, true);
         uint64 t0 = uint64(block.timestamp);
         _mut().setDayLapseClockRaw(DAY, t0, 1, 7 days, 24 hours);
-        vm.warp(uint256(t0) + 7 days + 1);
 
-        vm.expectRevert(LapseTerminalsNotArmed.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LapseDayNotExpired.selector, DAY, uint256(t0) + 7 days
+            )
+        );
         _com().lapseZeroedDay(DAY);
-        vm.expectRevert(LapseTerminalsNotArmed.selector);
-        _com().lapseShortCompensatedDay(DAY);
 
-        _com().armLapseTerminals();
-        vm.expectRevert(LapseTerminalsAlreadyArmed.selector);
-        _com().armLapseTerminals();
-        assertTrue(_com().getLapseTerminalsArmed(), "armed");
-        _com().lapseZeroedDay(DAY); // now live
+        vm.warp(uint256(t0) + 7 days + 1);
+        _com().lapseZeroedDay(DAY);
+        assertTrue(_com().getLapsedDayLoss(DAY).recorded, "lapsed");
     }
 
     function test_lapse_partialLossRefinesAfterTheTerminal() public {
@@ -1057,45 +997,6 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
             abi.encodeWithSelector(CompQuoteDayLapsed.selector, DAY)
         );
         _com().quoteZeroedDayCompensation(DAY, payable(address(this)));
-    }
-
-    function test_shortLapse_unarmedClockRefusesUntilArmed() public {
-        // #1656 r1 — a pre-w4 compensated day (zero receipt clocks) must
-        // not read a deadline one window past the epoch: the terminal
-        // refuses until the permissionless armer starts the window NOW.
-        _configureMirror();
-        _zeroedDayG0();
-        _accumulateAllLender();
-        _dispatchQuote();
-        _mut().setDayCompensationRaw(DAY, 10e18, 0, true, false);
-        uint64 t0 = uint64(block.timestamp);
-        _mut().setDayLapseClockRaw(DAY, t0, 1, 7 days, 24 hours);
-        // clocks deliberately UNSTAMPED (the pre-upgrade shape)
-
-        vm.warp(uint256(t0) + 30 days); // far past any epoch-shaped deadline
-        vm.expectRevert(
-            abi.encodeWithSelector(ShortLapseClockUnarmed.selector, DAY)
-        );
-        _com().lapseShortCompensatedDay(DAY);
-
-        _com().armShortLapseClock(DAY);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ShortLapseClockAlreadyArmed.selector, DAY
-            )
-        );
-        _com().armShortLapseClock(DAY);
-        // The window now runs from the ARM, not the epoch.
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ShortLapseDeadlineNotReached.selector,
-                DAY,
-                block.timestamp + 7 days
-            )
-        );
-        _com().lapseShortCompensatedDay(DAY);
-        vm.warp(block.timestamp + 7 days + 1);
-        _com().lapseShortCompensatedDay(DAY);
     }
 
     function test_receiptClassificationLifecycle() public {
