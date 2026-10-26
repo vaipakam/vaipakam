@@ -112,7 +112,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](265); // #1944 -setMirrorCommitReservedRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](266); // #1944 +setDayDeliveryProvedByRaw (was 265); #1944 -setMirrorCommitReservedRaw (was 266); #1820 +guardedVpfiOutAndBackRaw (was 265); pre-d6 retirement -setRemitSplitOnWireRaw -unadmitTransportBatchRaw -setPacketDayListRaw +clearPacketAttestedRaw +relocateFreshIngressRaw (was 266); #2621 +setExpectedSourceChainIdsRaw (was 265); #2559 r5 +setPerkCreditsRaw (was 264); #2559 r2 +setPerkStateRaw (was 263); #1219 Codex #2556 r1 +setArmingFeeRateRaw (was 262); #1566 S3 +1-0 (swap-to-repay lot raw) (was 261); #1566 S2b +setFallbackVaultCustodyRaw (was 260); #2459 r6 +setChainConsumedRecycledRaw; #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -504,6 +504,7 @@ contract HelperTest {
             TestMutatorFacet.setRecoveryAttributionRaw.selector;
         // #1434 P1-b - stage / read back the mirror delivered-fresh ledger.
         selectors[n++] = TestMutatorFacet.setArmedFreshLedgerRaw.selector;
+        selectors[n++] = TestMutatorFacet.setDayDeliveryProvedByRaw.selector; // #1944: the gate binds by role
         selectors[n++] = TestMutatorFacet.getArmedFreshPaidRaw.selector;
         // #1434 (Codex #1699 r7) — read back an entry's settlement cursor and
         // processed flag, so a test can assert a SPANNING expiry stamps the
@@ -2414,7 +2415,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](11);
         selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -2424,10 +2425,8 @@ contract HelperTest {
         selectors[6] = RewardRemittanceFacet.onRemitAckReceived.selector;
         selectors[7] = RewardRemittanceFacet.finalizeRemitReservation.selector;
         selectors[8] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
-        // #1944 consequence 1 — the mirror's one-shot day-delivery gate.
-        selectors[10] = RewardRemittanceFacet.setDayDeliveryGateFromDay.selector;
         selectors[9] = RewardRemittanceFacet.backfillRemitHistory.selector; // #2489 r7: the history walk
-        selectors[11] = RewardRemittanceFacet.quoteRemitDayStatuses.selector; // #2760: why a day closes or not
+        selectors[10] = RewardRemittanceFacet.quoteRemitDayStatuses.selector; // #2760: why a day closes or not
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair (mirrors DeployDiamond).

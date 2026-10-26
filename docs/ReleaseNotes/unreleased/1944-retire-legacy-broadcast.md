@@ -18,10 +18,29 @@ calls) that held older-wire packets arriving after a rotation. Because the one
 remaining wire names its deployment, a retired deployment's late or manually
 re-executed broadcast is simply refused by name and stays a failed,
 re-executable message. Base's late inclusion backfill is removed too, so
-finalization is now the only writer of a day's inclusion. Two of the stated
+finalization is now the only writer of a day's inclusion. All three stated
 leftovers of the per-day delivery gate (#1944) close with this: a day applied
-only by the flat broadcast, and a late inclusion backfill on a day the mirror
-had stamped as excluded. One remains: days before the gate's first day.
+only by the flat broadcast, a late inclusion backfill on a day the mirror had
+stamped as excluded, and days before the gate's first day.
+
+The gate also loses its arming step (owner decision 2026-10-26). It used to be
+a one-shot switch an administrator set on each mirror, naming the first day it
+held. It now applies on every mirror by its reward role, from the mirror's
+first day, and never on the canonical chain or on a chain with no reward role.
+There is nothing to arm and nothing that can leave a mirror ungated. The one
+thing a mirror needs is the keeper's delivery-proof pass running there, which
+proves each delivery's days so a delivered day is paid without a manual step;
+without it, a funded day waits for someone to prove its delivery. The delivery
+state readback now reports whether the gate binds on the chain rather than
+whether it was armed.
+
+The arming switch had one more job, which moves to the point where a broadcast
+arrives. It stopped a chain from taking broadcasts and settling days while it
+had no reward role, then becoming a mirror and holding those days again. A
+broadcast is now applied only where the gate binds or where nothing can be
+paid from it: a mirror, or a chain detached from rewards. A chain with no
+reward role, or the canonical chain, refuses it by name, and the refusal stays
+a failed, re-executable message.
 
 The retired storage fields are renamed in place and recorded in the storage
 layout's rename list, so the layout stays append-only. Like the rest of this

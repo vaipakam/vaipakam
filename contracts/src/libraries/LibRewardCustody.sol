@@ -4122,9 +4122,19 @@ library LibRewardCustody {
     ///         tests are one-way or write-once, so a day a fold passed is never
     ///         later found held.
     ///
-    ///          1. gate dark or `d` below the gate's first day — today's order.
+    ///          1. (retired) the arming latch. The gate binds by ROLE alone,
+    ///             on every day from a mirror's first: there is no arming step
+    ///             and no first day to set (#1944, owner decision 2026-10-26
+    ///             "Retire all three"). It reads no setting, so no later admin
+    ///             write can re-hold a day a fold already passed. The old
+    ///             latch refused a first day at or below the fold cursors for
+    ///             that reason; its role-change twin is closed at ingress
+    ///             instead: a broadcast stamps a day only on a Mirror, or on a
+    ///             Detached former mirror whose zero delivered bound pays no
+    ///             fresh day (`BroadcastRoleRefused`), so no day is stamped
+    ///             and folded unproven before the chain becomes a mirror.
     ///          2. not a Mirror — Base funds itself; Unconfigured / Detached are
-    ///             bounded elsewhere.
+    ///             bounded elsewhere (Detached's delivered bound is zero).
     ///          3. landed — the wait is over.
     ///          4. no stamp — the day's broadcast has not landed here. Every
     ///             broadcast stamps the day in the same call that sets its
@@ -4143,8 +4153,6 @@ library LibRewardCustody {
         uint8 side,
         uint256 d
     ) internal view returns (bool) {
-        uint256 from = s.dayDeliveryGateFromDay;
-        if (from == 0 || d < from) return false;
         if (LibVaipakam.rewardRole(s) != LibVaipakam.RewardRole.Mirror) return false;
         if (dayDeliveryLanded(s, d)) return false;
         LibVaipakam.ChainDayFunding storage f = s.chainDayRecycledFunding[d][uint32(block.chainid)];
@@ -4211,17 +4219,18 @@ library LibRewardCustody {
     ///      STATICCALL, so the inlining reward facets carry this encode/decode
     ///      once each rather than the predicate's body. The prefix is read
     ///      HERE, before the call, and is a strict subset of the view's own
-    ///      first tests, so the two cannot disagree: a dark gate, a day below
-    ///      it, or a landed day makes no call at all — which keeps the dark
-    ///      path at one SLOAD on every chain and keeps an unrouted lens
-    ///      selector unreachable until an operator arms the gate.
+    ///      first tests, so the two cannot disagree: a chain that is not a
+    ///      Mirror, or a landed day, makes no call at all — which keeps Base,
+    ///      unconfigured and detached chains off the call entirely. On a
+    ///      Mirror the lens selector is therefore load-bearing from the
+    ///      first priced day: a mirror is deployed with its walk facets and
+    ///      the lens together (fresh deploy only).
     function callDayAwaitsFreshDelivery(
         LibVaipakam.Storage storage s,
         uint8 side,
         uint256 d
     ) internal view returns (bool) {
-        uint256 from = s.dayDeliveryGateFromDay;
-        if (from == 0 || d < from) return false;
+        if (LibVaipakam.rewardRole(s) != LibVaipakam.RewardRole.Mirror) return false;
         if (dayDeliveryLanded(s, d)) return false;
         return abi.decode(
             _selfStatic(abi.encodeWithSignature("dayAwaitsFreshDelivery(uint8,uint256)", side, d)),

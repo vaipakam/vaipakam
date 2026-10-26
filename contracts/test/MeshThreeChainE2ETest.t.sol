@@ -1446,6 +1446,14 @@ contract MeshThreeChainE2ETest is Test {
         // ledger this witness claim is refused at the chokepoint. Seed the
         // ledger so the witness can run, and assert the charge it leaves.
         _mut(ARB).setArmedFreshLedgerRaw(1_000_000 ether, 0);
+        // #1944 — the day delivery gate binds on every mirror by role, so a
+        // day owing fresh funding waits until a delivery proven to list it
+        // lands. This scene sends no remittance; the proof marks stand in
+        // for the deliveries, exactly as the seeded ledger above stands in
+        // for their value.
+        for (uint256 d = 4; d <= 8; ++d) {
+            _mut(ARB).setDayDeliveryProvedByRaw(d, keccak256(abi.encode("witness-delivery", d)));
+        }
         vm.prank(alice);
         (uint256 paid,,) = RewardClaimFacet(arbD).claimInteractionRewards();
         assertGt(paid, 0, "the claim surface is live on this mirror");
@@ -1709,10 +1717,7 @@ contract MeshThreeChainE2ETest is Test {
      *         whose floored share rounds to zero, which this scene does not seed.
      */
     function test_E2E_1944_TheMirrorsDeliveryWait_IsBasesFundedDayList() public {
-        vm.chainId(ARB);
-        RewardRemittanceFacet(arbD).setDayDeliveryGateFromDay(1);
-        vm.chainId(OP);
-        RewardRemittanceFacet(opD).setDayDeliveryGateFromDay(1);
+        // No arming step: the gate binds on every mirror by role (#1944).
         _arm(4);
         _warpPast(6);
 

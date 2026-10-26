@@ -8061,20 +8061,12 @@ library LibVaipakam {
         ///      hostile one cannot compress it into one day. Base-tracked: the mirror
         ///      supplies neither its size (the ceiling trims it) nor its pace.
         mapping(uint32 => uint256) chainAttributionBacklog;
-        /// @dev #1944 consequence 1 — the first day the mirror-side DELIVERY GATE binds
-        ///      from; 0 = gate dark (byte-for-byte today's pricing order, one SLOAD per
-        ///      priced day-side on every chain). One-shot (0 → non-zero once) and
-        ///      Mirror-only, so a wrong value is a `--fresh` matter, never a re-opening
-        ///      of gated days. WHY a latch and not role alone: (a) the wait ends on a
-        ///      PROVEN delivery, which the keeper's `deliveryProof` pass supplies, so
-        ///      arming before that pass runs on the mirror makes every funded day wait
-        ///      on a human;
-        ///      (b) one SLOAD short-circuits Base/Unconfigured and every pre-upgrade day
-        ///      whose pre-3a packet carries no provable list. A mirror past custody era 0
-        ///      may arm it: Base stamps the destination's own reported era and a
-        ///      retired era's delivery opens its epoch (#1566 PR C revision), so no
-        ///      delivery is held inert.
-        uint256 dayDeliveryGateFromDay;
+        /// @dev RETIRED (#1944, owner decision 2026-10-26 "Retire all three"). Was the
+        ///      admin-armed first day of the mirror-side DELIVERY GATE. The gate now binds
+        ///      by role: every day on a Mirror, from its first, with no arming step
+        ///      (`LibRewardCustody.dayAwaitsFreshDelivery`). Same type and position; no
+        ///      longer read or written.
+        uint256 retiredDayDeliveryGateFromDay;
         /// @dev #1944 consequence 1 — the ingress stamp of the FIRST undisposed
         ///      budget packet PROVEN to list `day`, for packets holding NO
         ///      transport batch (a d6 delivery that landed before custody

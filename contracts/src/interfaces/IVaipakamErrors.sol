@@ -898,6 +898,14 @@ interface IVaipakamErrors {
     ///         same call), so this fails closed as a re-executable CCIP
     ///         message.
     error BroadcastClockMissing(uint256 dayId);
+    /// @notice #1944 — a broadcast reached a Diamond whose reward role is
+    ///         `role` (`LibVaipakam.RewardRole`: 0 Canonical, 2 Unconfigured),
+    ///         which takes none. Only a Mirror (or a Detached former mirror,
+    ///         for an in-flight packet) applies one, because the day delivery
+    ///         gate binds by role: a day stamped while the chain was not yet a
+    ///         mirror could be paid unproven and then re-held once it became
+    ///         one. Fails closed as a re-executable CCIP message.
+    error BroadcastRoleRefused(uint8 role);
     /// @notice A V3 broadcast named a different Base deployment than the one
     ///         already recorded for this day (§2h constraint 20 — a delayed
     ///         broadcast from a retired deployment must never install its
@@ -1768,14 +1776,6 @@ interface IVaipakamErrors {
     error DeliveryProofNotBudget(bytes32 packetHash, uint8 kind);
     /// @notice #1944 c1 — the packet's value was disposed of (returned / released), so it funds no day here.
     error DeliveryPacketDisposed(bytes32 packetHash, uint256 disposed);
-    /// @notice #1944 c1 — the delivery gate exists only on a reward-mesh MIRROR: Base funds itself.
-    error DeliveryGateNotMirror();
-    /// @notice #1944 c1 — the delivery gate is one-shot and already armed from day `current`.
-    error DeliveryGateAlreadyArmed(uint256 current);
-    /// @notice #1944 c1 — arming from `fromDay` would re-hold days a cumulative fold already passed (lender
-    ///         cursor `lenderCursor`, borrower `borrowerCursor`): the hold must stay monotone, so the gate only
-    ///         ever arms ahead of both folds.
-    error DeliveryGateBelowFold(uint256 fromDay, uint256 lenderCursor, uint256 borrowerCursor);
     /// @notice A d6 delivery held as its own epoch needs a split that accounts for the whole delivery (3d-1).
     error TransportSplitNotWhole(bytes32 packetHash, uint256 fresh, uint256 recycled, uint256 amount);
     /// @notice The domain under `domainKey` is not in the phase this entry

@@ -693,6 +693,36 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         messenger.deliverBroadcastV3(stale);
     }
 
+    /// #1944 — the day delivery gate binds by ROLE with no arming latch, so a
+    /// broadcast applies only where the gate already binds (Mirror) or can pay
+    /// nothing fresh (Detached). An Unconfigured or canonical Diamond refuses
+    /// it, writing nothing, as a re-executable CCIP message. Straddle: the
+    /// same packet applies once the chain is a mirror, and a Detached former
+    /// mirror still takes an in-flight one.
+    function testV3IngressRefusedOffAMirrorRole() public {
+        _configureMirror(CHAIN_ARB);
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        uint256 snap = vm.snapshotState();
+
+        _mut().setRewardRoleRaw(0, false, false); // Unconfigured
+        vm.expectRevert(abi.encodeWithSelector(BroadcastRoleRefused.selector, uint8(LibVaipakam.RewardRole.Unconfigured)));
+        messenger.deliverBroadcastV3(b);
+        assertFalse(_rep().getBroadcastV2Applied(b.v2.dayId), "Unconfigured: nothing applied");
+
+        _mut().setRewardRoleRaw(CHAIN_BASE, true, true); // Canonical
+        vm.expectRevert(abi.encodeWithSelector(BroadcastRoleRefused.selector, uint8(LibVaipakam.RewardRole.Canonical)));
+        messenger.deliverBroadcastV3(b);
+        vm.revertToState(snap);
+
+        _mut().setRewardRoleRaw(0, false, true); // Detached
+        messenger.deliverBroadcastV3(b);
+        assertTrue(_rep().getBroadcastV2Applied(b.v2.dayId), "Detached: an in-flight packet still applies");
+        vm.revertToState(snap);
+
+        messenger.deliverBroadcastV3(b);
+        assertTrue(_rep().getBroadcastV2Applied(b.v2.dayId), "straddle: a mirror applies it");
+    }
+
     /// Codex #1632 r1 P1 — the FIRST install is the era race the per-day
     /// record cannot defend: with no clock recorded, a retired
     /// deployment's delayed packet must be rejected by the CONFIGURED

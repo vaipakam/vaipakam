@@ -1579,7 +1579,7 @@
     "L|vaipakam|616|0|uint256|rewardBudgetFreshReCredited",
     "L|vaipakam|619|0|bool|sanctionsOracleEverSet",
     "L|vaipakam|620|0|uint256|rewardBudgetFreshProvisional",
-    "L|vaipakam|623|0|uint256|dayDeliveryGateFromDay",
+    "L|vaipakam|623|0|uint256|retiredDayDeliveryGateFromDay",
     "L|vaipakam|631|0|uint256|rewardSanctionsHeldTotal",
     "L|vaipakam|635|0|bool|priorityRoutingPerkArmed",
     "L|vaipakam|641|0|uint256|feeLedgerTotal",

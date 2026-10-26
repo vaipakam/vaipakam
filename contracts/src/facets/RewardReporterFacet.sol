@@ -340,7 +340,7 @@ contract RewardReporterFacet is
     ///      gates (messenger-gated; the packet's embedded `destChainId` must
     ///      equal `block.chainid`, so a delayed delivery after a
     ///      destination-list edit can never apply another chain's figures
-    ///      here).
+    ///      here), plus the role gate (#1944: Mirror or Detached only).
     function _broadcastIngressGates(uint256 destChainId)
         private
         view
@@ -353,6 +353,17 @@ contract RewardReporterFacet is
         }
         if (destChainId != block.chainid) {
             revert BroadcastDestinationMismatch(destChainId);
+        }
+        // #1944 — the day delivery gate binds by ROLE, from a mirror's first
+        // day, with no arming latch to refuse a first day below the folds. So
+        // a stamp may land only where the gate already binds (Mirror) or can
+        // pay nothing fresh (Detached: zero delivered bound). An Unconfigured
+        // chain prices unbounded and the canonical chain funds itself; a day
+        // stamped there could be folded unproven and then re-held on becoming
+        // a mirror, which the walk's re-derivation would halt on.
+        LibVaipakam.RewardRole role = LibVaipakam.rewardRole(s);
+        if (role == LibVaipakam.RewardRole.Unconfigured || role == LibVaipakam.RewardRole.Canonical) {
+            revert BroadcastRoleRefused(uint8(role));
         }
     }
 

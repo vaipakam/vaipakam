@@ -2344,6 +2344,16 @@ contract TestMutatorFacet {
         s.rewardBudgetArmedFreshPaid = paid;
     }
 
+    /// @notice #1944 test-only — mark day `dayId` LANDED on this mirror, as the
+    ///         keeper's delivery-proof pass would by proving a delivery's day
+    ///         list. The gate binds on every mirror by role, so a fixture that
+    ///         stands in for the delivered ledger with {setArmedFreshLedgerRaw}
+    ///         must stand in for the landing too. Writes the proof mark only;
+    ///         moves no value.
+    function setDayDeliveryProvedByRaw(uint256 dayId, bytes32 packetHash) external {
+        LibVaipakam.storageSlot().dayDeliveryProvedBy[dayId] = packetHash;
+    }
+
     /// @notice #1434 P1-b test-only — read the paid half back, so a test can
     ///         assert what a claim CHARGED rather than only what it paid.
     function getArmedFreshPaidRaw() external view returns (uint256) {

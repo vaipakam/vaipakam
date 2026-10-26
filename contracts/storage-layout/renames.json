@@ -80,6 +80,14 @@
       "from": "custodyEraParkedOpen",
       "to": "retiredCustodyEraParkedOpen",
       "reason": "#1944 (owner decision O1 = A: every chain gets a fresh deploy; prelive, no legacy shims): the parked-message lane's per-era open count, retired with the lane (kinds 2 and 5 removed). The slot keeps its place and is no longer written. Same type and position; marked retired, not repurposed."
+    },
+    {
+      "region": "vaipakam",
+      "slot": 623,
+      "offset": 0,
+      "from": "dayDeliveryGateFromDay",
+      "to": "retiredDayDeliveryGateFromDay",
+      "reason": "#1944 (owner decision 2026-10-26, 'Retire all three'): the mirror-side delivery gate binds by role from a mirror's first day, so the admin-armed first-day latch is removed with its setter. The slot keeps its place and is no longer read or written. Same type and position; marked retired, not repurposed."
     }
   ]
 }

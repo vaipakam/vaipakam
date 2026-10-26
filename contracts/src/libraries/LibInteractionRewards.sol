@@ -1245,8 +1245,8 @@ library LibInteractionRewards {
     ///          funded for. Not latched: it is the root fix of a live
     ///          fund-loss shape, not part of the gate. Canonical prices as
     ///          before.
-    ///        - **A delivery rung after both branches.** On a mirror whose
-    ///          gate is armed (`dayDeliveryGateFromDay`), a day pricing a
+    ///        - **A delivery rung after both branches.** On a mirror (the
+    ///          gate binds by role, from the first day), a day pricing a
     ///          non-zero FRESH half for this side halts until a budget packet
     ///          PROVEN to list it has landed, whichever of the two Base
     ///          messages arrives first. That is a wait on a message, and it
@@ -1350,9 +1350,8 @@ library LibInteractionRewards {
         // legacy entry slice, both sweeps, staging and domain pricing and the
         // previews through `_rpnReady` — one rung, no per-site guard. The
         // commitment twin {dailyDeltaForCommitment} reads the stamp directly
-        // and is deliberately NOT behind it. Dark (`dayDeliveryGateFromDay ==
-        // 0`) the rung costs one SLOAD and halts nothing; it moves no value
-        // either way.
+        // and is deliberately NOT behind it. Off a mirror the rung costs the
+        // role read and halts nothing; it moves no value either way.
         if (freshHalf != 0 && LibRewardCustody.callDayAwaitsFreshDelivery(s, uint8(side), d)) {
             return (0, 0, true);
         }

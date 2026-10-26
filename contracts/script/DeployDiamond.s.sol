@@ -3221,7 +3221,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](12);
+        s = new bytes4[](11);
         s[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         s[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         s[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -3231,10 +3231,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[6] = RewardRemittanceFacet.onRemitAckReceived.selector;
         s[7] = RewardRemittanceFacet.finalizeRemitReservation.selector;
         s[8] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
-        // #1944 consequence 1 — the mirror's one-shot day-delivery gate.
-        s[10] = RewardRemittanceFacet.setDayDeliveryGateFromDay.selector;
         s[9] = RewardRemittanceFacet.backfillRemitHistory.selector; // #2489 r7: the history walk
-        s[11] = RewardRemittanceFacet.quoteRemitDayStatuses.selector; // #2760: why a day closes or not
+        s[10] = RewardRemittanceFacet.quoteRemitDayStatuses.selector; // #2760: why a day closes or not
     }
 
     /// #1566 transport epochs PR 3a — the mirror-side ingress half of the
