@@ -27,6 +27,15 @@
  *      the last `THROTTLE_SECONDS`, skip.
  *   7. Send the warning via Telegram + Push, then stamp the dedupe.
  *
+ * No offer in the book silences the warning (#2761). This pass used to skip
+ * a loan when any lender offer loosely matched its asset pair and principal,
+ * ignoring expiry, duration, remaining capacity, rate and collateral terms,
+ * so anyone could suppress a borrower's warning by posting one offer that
+ * would never fill. Deciding viability properly is `previewMatch` per loan,
+ * which still races the offer book. A warning the borrower did not need
+ * costs them little; a missed one can cost them the collateral. So every
+ * opted-in loan inside the window is warned, whatever the book holds.
+ *
  * Gated only on the watcher being enabled (`env.DB` present + at
  * least one chain with a Diamond). Unlike the liquidator + matcher
  * + auto-extend passes, this one doesn't require a signing key — it
@@ -64,7 +73,6 @@ import {
   AutoLifecycleFacetABI,
   LoanFacetABI,
   MetricsFacetABI,
-  OfferCancelFacetABI,
 } from '@vaipakam/contracts/abis';
 import { erc721Abi } from 'viem';
 import type { ChainConfig, Env } from './env';
@@ -81,10 +89,6 @@ import { loanMaturity, pauseInForceAt, readPauseLog, type PauseLog } from '@vaip
 
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
-/** T-092 #547 — `getOffer` (offer hydration) lives on
- *  OfferCancelFacet post the EIP-170 facet split. Used to read the
- *  active offer book for the viable-counterparty pre-check. */
-const OFFER_CANCEL_ABI: Abi = OfferCancelFacetABI as Abi;
 const LOAN_ABI: Abi = LoanFacetABI as Abi;
 
 const SCAN_PAGE = 200n;
@@ -96,9 +100,9 @@ const READ_CHUNK = 100;
  * One `aggregate3` per chunk over a list of items, flattened back into a
  * result array positionally aligned with `items`.
  *
- * All three of this pass's per-loan reads and its offer hydration have the same
- * shape — a list in, one read each, per-entry failure isolation out — so they
- * share this rather than repeating the chunk loop four times.
+ * All three of this pass's per-loan reads have the same shape — a list in,
+ * one read each, per-entry failure isolation out — so they share this rather
+ * than repeating the chunk loop three times.
  */
 async function chunkedRead<T>(
   client: PublicClient,
@@ -141,27 +145,6 @@ interface LoanDetails {
   borrowerTokenId: bigint;
   startTime: bigint;
   durationDays: bigint;
-  principalAsset: Address;
-  principal: bigint;
-  collateralAsset: Address;
-  assetType: number;
-  collateralAssetType: number;
-}
-
-/** T-092 #547 — minimal Offer shape for the viable-counterparty
- *  pre-check. Only the fields needed for matching against a loan's
- *  refinance shape are listed; the full Offer struct has 20+ fields
- *  but the matcher's `previewMatch` does the deeper validation and
- *  we want to keep this scan cheap. */
-interface OfferRow {
-  offerType: number; // 0 = Lender, 1 = Borrower
-  accepted: boolean;
-  lendingAsset: Address;
-  collateralAsset: Address;
-  assetType: number;
-  collateralAssetType: number;
-  amount: bigint;
-  amountMax: bigint;
 }
 
 export async function runPreGraceWatcher(env: Env): Promise<void> {
@@ -233,19 +216,6 @@ async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): 
   const subs = await listThresholdsForChain(env.DB!, chain.id);
   const subsByWallet = new Map(
     subs.map((s) => [s.wallet.toLowerCase(), s]),
-  );
-
-  // T-092 #547 — pull the active offer book once per tick + filter
-  // to lender offers. The viable-counterparty pre-check uses this
-  // cache to skip the pre-grace warning when at least one in-book
-  // lender offer would match the loan's refinance shape. Cuts
-  // false-positive notifications without paying for `previewMatch`
-  // simulation per loan. Soft-capped via `OFFER_SCAN_CAP` so a
-  // chain with a runaway order book can't blow the per-tick budget.
-  const lenderOffers = await _scanLenderOfferBook(
-    publicClient,
-    diamond,
-    chain.id,
   );
 
   const nowSec = Math.floor(Date.now() / 1000);
@@ -345,12 +315,6 @@ async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): 
     const endTime = Number(loanMaturity(loan, pauseLog, BigInt(nowSec)));
     if (endTime <= nowSec) return; // already past its due date
     if (endTime - nowSec > PRE_GRACE_WINDOW_SECONDS) return; // too early
-    // T-092 #547 — viable-counterparty pre-check. When the offer book scan
-    // succeeded (lenderOffers !== null) AND a compatible lender offer exists for
-    // this loan, skip the warning — the matcher will likely fire on the next
-    // tick. When the scan failed or the book exceeded OFFER_SCAN_CAP we fall
-    // back to unconditional warning (lenderOffers === null) — conservative-safe.
-    if (lenderOffers !== null && _hasViableLenderForLoan(loan, lenderOffers)) return;
     due.push({ loanId: loanIdBig, loan, endTime });
   });
   if (due.length === 0) return;
@@ -401,141 +365,6 @@ async function watchChain(env: Env, chain: ChainConfig, alerts: AlertDelivery): 
       );
     }
   }
-}
-
-/** T-092 #547 — soft cap on offers hydrated per tick per chain.
- *  Beyond this the viable-counterparty pre-check is disabled and
- *  all loans get the pre-grace warning (conservative-safe — we
- *  over-warn rather than miss). */
-const OFFER_SCAN_CAP = 500;
-
-/**
- * Scan the active offer book and return the lender offers (the
- * candidate counterparties for a refinance-tagged borrower offer).
- * Soft-capped at OFFER_SCAN_CAP; returns null beyond the cap so
- * callers know to fall back to unconditional warning.
- */
-async function _scanLenderOfferBook(
-  publicClient: PublicClient,
-  diamond: Address,
-  chainId: number,
-): Promise<OfferRow[] | null> {
-  let total: bigint;
-  try {
-    total = (await publicClient.readContract({
-      address: diamond,
-      abi: METRICS_ABI,
-      functionName: 'getActiveOffersCount',
-    })) as bigint;
-  } catch (err) {
-    console.warn(
-      `[keeper] preGraceWatcher offer-count failed chain=${chainId}: ${redactedError(err, { stack: false }).slice(0, 200)}`,
-    );
-    return null;
-  }
-  if (total === 0n) return [];
-  if (total > BigInt(OFFER_SCAN_CAP)) {
-    console.log(
-      `[keeper] preGraceWatcher offer book too large for pre-check chain=${chainId} count=${total} cap=${OFFER_SCAN_CAP}`,
-    );
-    return null;
-  }
-
-  const offerIds: bigint[] = [];
-  for (let cursor = 0n; cursor < total; cursor += SCAN_PAGE) {
-    const limit =
-      cursor + SCAN_PAGE > total ? total - cursor : SCAN_PAGE;
-    try {
-      const page = (await publicClient.readContract({
-        address: diamond,
-        abi: METRICS_ABI,
-        functionName: 'getActiveOffersPaginated',
-        args: [cursor, limit],
-      })) as bigint[];
-      offerIds.push(...page);
-    } catch (err) {
-      console.warn(
-        `[keeper] preGraceWatcher offer-page failed chain=${chainId}: ${redactedError(err, { stack: false }).slice(0, 200)}`,
-      );
-      return null;
-    }
-  }
-
-  // Batched (#1896) — this was one `getOffer` per id, up to OFFER_SCAN_CAP of
-  // them per chain per tick. Per-offer failure isolation is unchanged:
-  // `batchedRead` returns one entry per contract, so a single unhydratable
-  // offer is logged and skipped rather than aborting the pre-check.
-  const offerResults = await chunkedRead(
-    publicClient,
-    offerIds,
-    (offerIdBig) => ({
-      address: diamond,
-      abi: OFFER_CANCEL_ABI,
-      functionName: 'getOffer' as const,
-      args: [offerIdBig] as const,
-    }),
-    `${chainId} getOffer`,
-  );
-
-  const lenderOffers: OfferRow[] = [];
-  offerIds.forEach((offerIdBig, i) => {
-    const r = offerResults[i];
-    if (!r || r.status !== 'success') {
-      console.log(
-        `[keeper] preGraceWatcher offer-hydrate skipped offerId=${offerIdBig}: ${String(
-          r?.error ?? 'no result',
-        ).slice(0, 120)}`,
-      );
-      return;
-    }
-    const o = r.result as Record<string, unknown>;
-    // Only lender offers that haven't already accepted are candidates for
-    // matching a refinance-tagged borrower offer.
-    if (Number(o.offerType) === 0 /* Lender */ && !o.accepted) {
-      lenderOffers.push({
-        offerType: Number(o.offerType),
-        accepted: Boolean(o.accepted),
-        lendingAsset: o.lendingAsset as Address,
-        collateralAsset: o.collateralAsset as Address,
-        assetType: Number(o.assetType),
-        collateralAssetType: Number(o.collateralAssetType),
-        amount: o.amount as bigint,
-        amountMax: o.amountMax as bigint,
-      });
-    }
-  });
-  return lenderOffers;
-}
-
-/**
- * Heuristic compatibility check: at least one in-book lender offer
- * matches the loan's lending + collateral asset pair + can cover
- * the loan's principal. Doesn't simulate previewMatch (would cost
- * gas-equivalent eth_calls per loan); the matcher pass itself
- * does the deeper validation when it actually tries to match.
- * False negatives possible (HF may fail, caps may reject) — the
- * borrower still gets the warning in those cases.
- */
-function _hasViableLenderForLoan(
-  loan: LoanDetails,
-  lenderOffers: OfferRow[],
-): boolean {
-  for (const o of lenderOffers) {
-    if (o.assetType !== loan.assetType) continue;
-    if (o.collateralAssetType !== loan.collateralAssetType) continue;
-    if (
-      o.lendingAsset.toLowerCase() !== loan.principalAsset.toLowerCase()
-    )
-      continue;
-    if (
-      o.collateralAsset.toLowerCase() !== loan.collateralAsset.toLowerCase()
-    )
-      continue;
-    const ceiling = o.amountMax > 0n ? o.amountMax : o.amount;
-    if (ceiling < loan.principal) continue;
-    return true;
-  }
-  return false;
 }
 
 /**
