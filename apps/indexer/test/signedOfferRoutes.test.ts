@@ -624,27 +624,6 @@ describe('GET /signed-offers — per-side price-relevant caps (Codex #1145 r4)',
     );
     expect(offers.map((o) => o.orderHash)).toEqual(['ask-live']);
   });
-
-  it('a pre-#1949 row (no Full opt-in fields) is not served, and does not use up the cap', async () => {
-    // Its signature is over the 28-field typehash: the contract can never
-    // accept it, and a client replaying it would have no value for the
-    // three new fields. Straddle: the same row in the current shape is served.
-    const rows: SeedRow[] = [];
-    for (let i = 0; i < 100; i++) {
-      rows.push({
-        orderHash: `old-${String(i).padStart(3, '0')}`,
-        offerType: 0,
-        rateBps: 100,
-        rateBpsMax: 100,
-        createdAt: 1_000 + i,
-        orderJson: '{"useFullTermInterest":false}',
-      });
-    }
-    rows.push({ orderHash: 'ask-current', offerType: 0, rateBps: 900, rateBpsMax: 900, createdAt: 9_000 });
-    const body = await getBookBody(seedBook(rows));
-    expect(body.offers.map((o) => o.orderHash)).toEqual(['ask-current']);
-    expect(body.truncated).toBe(false);
-  });
 });
 
 // ── GET /signed-offers — truncation flag + signer scope (#1247 PAG-011) ──

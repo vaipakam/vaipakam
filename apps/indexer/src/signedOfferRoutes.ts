@@ -916,13 +916,9 @@ export async function handleSignedOffersGet(
     const now = Math.floor(Date.now() / 1000);
     // One query per side so each cap is applied within a PRICE-ordered
     // slice (see MAX_BOOK_ROWS_PER_SIDE). `orderBy` is a whitelisted
-    // literal chosen here, never caller input.
-    //
-    // #1949 — a row stored before the maker's Full opt-in joined the struct
-    // carries 28 fields. Its signature is over the old typehash, so the
-    // contract can never accept it, and a client replaying it has no value
-    // for the three new fields. It is not depth, so it is not served; the
-    // filter sits in SQL so the per-side cap counts only servable rows.
+    // literal chosen here, never caller input. Every stored order is the
+    // 31-field shape: the route writes nothing else, and migration 0078
+    // removed the pre-#1949 rows this query used to filter out (#1481).
     const perSideCap =
       signer !== null ? SIGNER_BOOK_ROWS_PER_SIDE : MAX_BOOK_ROWS_PER_SIDE;
     const sideQuery = (offerType: 0 | 1, orderBy: string) =>
@@ -936,7 +932,6 @@ export async function handleSignedOffersGet(
             ${signer !== null ? 'AND signer = ?' : ''}
             AND (expires_at = 0 OR expires_at > ?)
             AND (deadline = 0 OR deadline > ?)
-            AND json_extract(order_json, '$.creatorFull') IS NOT NULL
           ORDER BY ${orderBy}, created_at ASC, order_hash
           LIMIT ?`,
       )
